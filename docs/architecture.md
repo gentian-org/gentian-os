@@ -125,22 +125,24 @@ graph TD
 
 ### 3.1 Thin Orchestrator — Delegate, Don't Implement
 
-The orchestrator does **not** call external APIs directly. Instead of importing `pgx` and running `CREATE DATABASE`, it creates a `Database` CR that CloudNativePG reconciles. Instead of calling Keycloak's REST API, it creates a `KeycloakClient` CR that the Keycloak Operator reconciles. The orchestrator's job is sequencing, wiring, and status aggregation — not provisioning.
+The orchestrator's job is sequencing, wiring, and status aggregation — not provisioning. Wherever possible, it creates CRs for existing operators rather than calling external APIs directly. Instead of importing `pgx` and running `CREATE DATABASE`, it creates a `Database` CR that CloudNativePG reconciles.
 
-This reduces the custom code surface dramatically. Each operator is maintained by its upstream community, handles retries and idempotency internally, and is tested independently. The orchestrator only needs to know the CRD schemas of the operators it coordinates, not the internal APIs of every backend system.
+**Pragmatic exception (v1):** Where an operator cannot manage the underlying service — e.g., Keycloak bundled inside Nubus, or LDAP managed by UDM — the orchestrator creates idempotent **Jobs** that call REST APIs. These Jobs behave like operator CRs from the orchestrator's perspective: they are Kubernetes resources with status conditions that the reconciler watches. When the underlying service is eventually unbundled (e.g., standalone Keycloak managed by Keycloak Operator), the Jobs are replaced with operator CRs without changing the reconciler's external interface.
 
-| Kernel resource | Operator | CR created by orchestrator |
-|---|---|---|
-| PostgreSQL database + user | CloudNativePG | `Database`, `Role` |
-| MariaDB database + user | MariaDB Operator (or direct SQL via Job) | `MariaDBDatabase` |
-| Keycloak realm + OIDC client | Keycloak Operator | `KeycloakRealmImport`, `KeycloakClient` |
-| MinIO bucket + IAM user | MinIO Operator | `Tenant` (MinIO), or direct via Job |
-| LDAP bind account | UDM REST API (via Job or lightweight controller) | `Job` with UDM CLI |
-| NATS account + user | NATS Operator (or nsc CLI via Job) | NATS account JWT |
-| Redis ACL user | Redis Operator (or direct via Job) | Operator-specific CR |
-| Secrets sync to K8s | External Secrets Operator | `ExternalSecret` |
-| Postfix + Dovecot (mail ext.) | Helm chart via ArgoCD | `Application` (per-tenant if selfhosted) |
-| ArgoCD Application | — (direct CR creation) | `Application` |
+This reduces the custom code surface dramatically. Each operator is maintained by its upstream community, handles retries and idempotency internally, and is tested independently. The orchestrator only needs to know the CRD schemas of the operators it coordinates (or the Job spec for exceptional cases), not the internal APIs of every backend system.
+
+| Kernel resource | Provisioning method (v1) | Target (post-Nubus) | CR/resource created by orchestrator |
+|---|---|---|---|
+| PostgreSQL database + user | CloudNativePG operator | — (already target) | `Database`, `Role` |
+| MariaDB database + user | MariaDB Operator or SQL Job | MariaDB Operator | `MariaDBDatabase` or `Job` |
+| Keycloak realm + OIDC client | **Job** (Keycloak Admin REST API) | Keycloak Operator | `Job` → `KeycloakRealmImport`, `KeycloakClient` |
+| MinIO bucket + IAM user | MinIO Operator or admin API Job | MinIO Operator | `Tenant` (MinIO) or `Job` |
+| LDAP bind account | **Job** (UDM REST API) | Direct LDAP or operator | `Job` with UDM CLI |
+| NATS account + user | NATS Operator (or nsc CLI via Job) | NATS Operator | NATS account JWT |
+| Redis ACL user | Redis Operator or `redis-cli` Job | Redis Operator | Operator-specific CR or `Job` |
+| Secrets sync to K8s | External Secrets Operator | — (already target) | `ExternalSecret` |
+| Postfix + Dovecot (mail ext.) | Helm chart via ArgoCD | — | `Application` (per-tenant if selfhosted) |
+| ArgoCD Application | — (direct CR creation) | — | `Application` |
 
 > **Future direction — saga pattern:** The current orchestrator uses Kubernetes' built-in retry (requeue on failure) and relies on operator idempotency. At scale, a formal saga pattern with compensating transactions would provide explicit rollback: if Keycloak client creation succeeds but database creation fails, the saga would delete the Keycloak client rather than leaving orphaned resources. This can be implemented using a workflow engine (e.g., Temporal) or explicit phase tracking in the Tenant CR status.
 
@@ -247,6 +249,8 @@ Not all upstream Helm charts support `existingSecret` references. The platform u
 | **Pattern B** (fallback) | Tofu Controller reads from OpenBao and injects via Helm `set_sensitive` | Charts without `existingSecret` support (Nubus, OX App Suite, Postfix, Dovecot) |
 
 Pattern B keeps secrets out of Git and the ArgoCD UI — they remain in memory during Helm apply. The trade-off is reduced ArgoCD visibility (Tofu-managed releases appear as opaque resources). New apps should prefer Pattern A; Pattern B is a pragmatic fallback for upstream charts that cannot be modified.
+
+**Upstream contribution strategy:** The long-term goal is to eliminate Pattern B entirely by contributing `existingSecret` support to the upstream Helm charts that currently require it (Nubus, OX App Suite, Postfix, Dovecot). Each successful upstream merge allows migrating that app from Pattern B to Pattern A — one configuration change in the AppProfile’s `deploymentMethod` field, zero orchestrator code changes. This reduces Tofu Controller dependencies and improves ArgoCD visibility. Track upstream PR status per app.
 
 ### 5.4 Credential Rotation and Pod Restart
 

@@ -150,6 +150,8 @@ gentian-os/
 6. For apps with `optionalIntegrations` using `oidc-token-exchange`, configure token exchange policies between provider and consumer clients
 7. Set Tenant status condition `IdentityReady: True`
 
+**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — create a Job that deletes the Keycloak realm via REST API (cascades all clients). With `Retain` — revoke client secrets but keep the realm and user accounts intact.
+
 **Design note:** Using Jobs instead of Keycloak Operator CRs is a pragmatic choice for Nubus compatibility. The Jobs are idempotent (check-before-create) and the orchestrator tracks completion via Job status conditions. When Nubus is eventually decomposed into standalone components, the Jobs can be replaced with Keycloak Operator CRs without changing the reconciler's external interface.
 
 **Test:**
@@ -198,6 +200,8 @@ gentian-os/
 5. Create `ExternalSecret` CR to sync database credentials into tenant namespace
 6. Set per-app status condition `DatabaseReady: True`
 
+**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete CloudNativePG `Database` and `Role` CRs (operator drops the database). With `Retain` — revoke the Role's login privilege but keep the database and data.
+
 **Migration path from `server/`:** The current setup uses Tofu Controller to deploy PostgreSQL via Helm (Pattern B). CloudNativePG replaces this with operator CRs for database lifecycle management. The shared PostgreSQL cluster itself is still deployed as a kernel service (Layer 120).
 
 **Test:**
@@ -221,6 +225,8 @@ gentian-os/
 5. Create `ExternalSecret` CR to sync database credentials into tenant namespace
 6. Set per-app status condition `DatabaseReady: True`
 
+**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete MariaDB database and user (via operator CR deletion or `DROP DATABASE`/`DROP USER` Job). With `Retain` — revoke user privileges but keep the database.
+
 **Design note:** Architecture §3.1 lists MariaDB Operator as the preferred path, with "direct SQL via Job" as the fallback. Since the MariaDB Operator ecosystem is less mature than CloudNativePG, the Job path is the pragmatic starting point. The reconciler abstracts the provisioning method — switching to operator CRs later requires no changes to the AppProfile or Tenant CR schemas.
 
 **Test:**
@@ -239,6 +245,8 @@ gentian-os/
 2. For apps requiring WebDAV (`kernelRequirements.storage.files.protocol: webdav`): provision via Nextcloud OCS API (create group for tenant, configure share permissions)
 3. Create ExternalSecret CRs for all storage credentials
 4. Set status condition `StorageReady: True`
+
+**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete MinIO bucket and IAM user, remove Nextcloud group and shared folders via OCS API. With `Retain` — revoke IAM credentials but keep bucket contents and Nextcloud data.
 
 **Design note:** MinIO Operator CRs for bucket provisioning if available; otherwise use a lightweight Job that calls the MinIO admin API. This is one of the cases where the orchestrator may use a Job rather than an operator CR, since MinIO Operator's bucket management is limited.
 
@@ -264,6 +272,10 @@ gentian-os/
    - Store connection details in OpenBao
    - Create `ExternalSecret` CR
 3. Set per-app status condition `CacheReady: True`
+
+**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete Redis ACL users (operator CR or `ACL DELUSER` Job), delete per-tenant Memcached deployments (via ArgoCD Application CR deletion). With `Retain` — disable Redis ACL user but keep Memcached instance running (for data recovery).
+
+**Delete path for Ingress (Increment 10):** On Tenant deletion — delete Ingress resources, cert-manager Certificate CRs, and DNS Tofu workspace CR (Tofu removes DNS records). These are always deleted regardless of `deletionPolicy` since they are ephemeral routing resources, not tenant data.
 
 **Design note:** Redis supports ACL users (Redis 6+) for per-app isolation on a shared instance. Memcached has no authentication or namespace isolation, so per-tenant instances are the only safe option. The cost is acceptable — Memcached is lightweight (~64MB per instance).
 
@@ -308,7 +320,7 @@ gentian-os/
 
 For Pattern B apps, the orchestrator creates a `Terraform` CR instead of an ArgoCD `Application` CR. The Tofu Controller reads secrets from OpenBao and injects them via `set_sensitive` during Helm apply. This means Pattern B apps appear in the Tofu Controller dashboard rather than ArgoCD — the AppProfile declares which pattern to use via a `deploymentMethod` field (`argocd` or `tofu-controller`). The orchestrator routes accordingly.
 
-**Long-term goal:** Work with upstream chart maintainers to add `existingSecret` support, migrating apps from Pattern B to Pattern A over time.
+**Long-term goal — eliminate Pattern B by contributing upstream:** Pattern B is a pragmatic workaround, not the target state. The plan is to contribute `existingSecret` support to upstream Helm charts (Nubus, OX App Suite, Postfix, Dovecot) and migrate each app from Pattern B to Pattern A as patches are merged. Each successful upstream contribution removes one Tofu Controller dependency, simplifies the orchestrator (ArgoCD Application CR instead of `Terraform` CR), and improves visibility (app appears in ArgoCD UI instead of Tofu Controller). Track upstream PRs in the AppProfile's `deploymentMethod` field — when a chart gains `existingSecret` support, flip from `tofu-controller` to `argocd` and remove the Tofu module.
 
 **Test:**
 - envtest: Tenant with 3 apps → 3 Application CRs with correct values
@@ -381,39 +393,57 @@ For Pattern B apps, the orchestrator creates a `Terraform` CR instead of an Argo
 
 ---
 
-### Increment 13 — Kernel services as Helm chart
+### Increment 13 — Kernel services as Helm chart + observability
 
-**Goal:** Package the orchestrator + CRDs as a Helm chart (`charts/gentian-os/`) — so a deployment repo can install it with `helm install`.
+**Goal:** Package the orchestrator + CRDs as a Helm chart (`charts/gentian-os/`) with built-in observability — so a deployment repo can install it with `helm install` and immediately get metrics and status visibility.
 
 **Chart contents:**
-- CRD manifests (from `config/crd/`)
+- CRD manifests (from `config/crd/`) — including printer columns for `kubectl get tenants` (STATUS, APPS, READY, MAIL, AGE) and `kubectl get integrationbindings` (CONTRACT, STATUS, AGE)
 - Orchestrator Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding
 - ConfigMap for orchestrator settings (OpenBao address, ArgoCD namespace, defaults)
-- Optional: Prometheus ServiceMonitor for `gentianos_*` metrics
+- Prometheus ServiceMonitor for `gentianos_*` metrics
+- Grafana dashboard ConfigMap (optional, enabled via `grafana.dashboards.enabled`)
+
+**Prometheus metrics (architecture §16):**
+- `gentianos_tenants_total` — total number of tenants
+- `gentianos_tenant_apps_total` — apps per tenant
+- `gentianos_provisioning_duration_seconds` — time to provision a tenant (histogram)
+- `gentianos_reconcile_errors_total` — failed reconciliations by type
+- `gentianos_credentials_age_seconds` — age of oldest credential per tenant
+- `gentianos_integration_bindings_status` — binding health by contract type
+- `gentianos_externalsecrets_sync_status` — ESO sync health per tenant
+- `gentianos_operator_cr_ready_total` — operator CRs in Ready state
+- `gentianos_operator_cr_failed_total` — operator CRs in Failed state
+
+Metrics are exported via the controller-runtime `/metrics` endpoint. Each reconciler (Increments 2–11) instruments its reconcile loop — this increment packages and exposes them.
 
 **Values:**
 - `image.repository`, `image.tag`
 - `openbao.address`, `openbao.authPath`
 - `argocd.namespace`, `argocd.project`
 - `defaults.isolation.mode` (namespace or vcluster)
+- `metrics.serviceMonitor.enabled` (default: true)
 
 **Test:**
-- `helm template` renders valid YAML
+- `helm template` renders valid YAML (including ServiceMonitor)
 - `helm install --dry-run` succeeds on test cluster
 - End-to-end: install chart → create Tenant CR → full provisioning pipeline runs
+- `kubectl get tenants` shows STATUS, APPS, READY, MAIL columns
+- Prometheus scrapes orchestrator metrics endpoint → `gentianos_tenants_total` > 0
 
 ---
 
-### Increment 14 — AppProfiles for kernel apps
+### Increment 14 — AppProfiles for kernel apps + AppProfile update reconciler
 
-**Goal:** Write AppProfile CRs for the always-on kernel apps (not user-installable, but defined as profiles so the orchestrator can provision their infrastructure consistently).
+**Goal:** Write AppProfile CRs for the always-on kernel apps and implement the AppProfile update reconciler (architecture §14.3) — so that bumping a chart version in an AppProfile propagates to all tenants using that profile.
 
 **Profiles to create (from server/ reference):**
 - `nubus.yaml` — Keycloak + UCS LDAP (identity kernel service)
-- `nextcloud.yaml` — WebDAV filesystem
 - `postfix.yaml` — Mail MTA (kernel extension)
 - `dovecot.yaml` — Mail MDA (kernel extension)
 - `intercom-service.yaml` — Cross-app notifications
+
+**Note:** Nextcloud is a kernel service deployed once in `platform-kernel` (not per-tenant). It does **not** get an AppProfile — per-tenant Nextcloud provisioning (groups, folders, sharing) is API-based via OCS REST API Jobs in Increment 7. Nextcloud's kernel deployment is managed by the Layer 100 ApplicationSet, not the orchestrator.
 
 **Note:** OX App Suite is a user-installable app, not a kernel service. Its AppProfile belongs in `gentian-apps` (see Apps-B below), not here.
 
@@ -424,12 +454,22 @@ For Pattern B apps, the orchestrator creates a `Terraform` CR instead of an Argo
 - `provides` (what contracts it offers)
 - `optionalIntegrations` (what peer integrations it supports)
 
+**AppProfile update reconciler (`internal/controller/appprofile_controller.go`):**
+- Watch AppProfile CRs for changes (chart version bump, valueMapping update)
+- On update: list all Tenants referencing this profile via a label index
+- For each affected tenant: re-render valueMapping and update the ArgoCD Application CR (or Tofu Controller `Terraform` CR for Pattern B apps) with the new chart version and values
+- ArgoCD handles the rolling upgrade per tenant
+- Update AppProfile status with affected tenant count and rollout progress
+- This is the mechanism that makes "adding an app to the catalogue is a single-file operation" actually work at scale
+
 **Source:** Reverse-engineer from `server/apps/{app}/` Helm values + `server/tofu/tenant/keycloak-config/` to extract the actual value keys each chart expects.
 
 **Test:**
 - All profiles validate against the AppProfile CRD schema
 - `kubectl apply -f profiles/` succeeds
 - Orchestrator can render correct Helm values from each profile's `valueMapping`
+- AppProfile update test: bump chart version in a profile → all tenants' ArgoCD Applications updated → ArgoCD rolls out new version
+- Rollout tracking: AppProfile status reflects how many tenants have been updated
 
 ---
 
@@ -494,6 +534,8 @@ gentian-deployments/
 **Test:**
 - Automated isolation test suite: create 2 tenants → attempt cross-tenant access at every layer → all denied
 - Penetration-style tests: try to escalate from tenant namespace to kernel namespace
+- **End-to-end deletion test:** create Tenant with 3+ apps → verify all resources provisioned → delete Tenant with `deletionPolicy: Delete` → verify: Keycloak realm deleted, LDAP OU removed, PostgreSQL/MariaDB databases dropped, MinIO buckets deleted, Redis ACL users removed, Memcached instances deleted, Ingress/DNS cleaned up, ExternalSecrets removed, ArgoCD Applications garbage-collected, namespace deleted
+- **Retain test:** create Tenant → delete with `deletionPolicy: Retain` → verify: databases, buckets, and mailboxes still exist but credentials revoked, namespace preserved
 
 ---
 
@@ -514,13 +556,72 @@ gentian-deployments/
 | 10 | Ingress reconciler | Medium | — | Per-tenant Ingress resources + DNS via Tofu |
 | 11 | IntegrationBinding reconciler | Medium | — | Auto-wired cross-app contracts |
 | 12 | OpenBao path restructuring | Medium | — | Architecture-compliant secret tree |
-| 13 | Orchestrator Helm chart | Small | — | Installable via `helm install` |
-| 14 | AppProfiles for kernel apps | Medium | — | Kernel app profiles (Nubus, Nextcloud, mail, intercom) |
+| 13 | Orchestrator Helm chart + observability | Small | — | Installable via `helm install`, Prometheus metrics, printer columns |
+| 14 | AppProfiles + update reconciler | Medium | — | Kernel app profiles (Nubus, mail, intercom) + AppProfile update propagation |
 | 15 | Deployment repo (gentian-deployments) | Medium | 13, 14 | End-to-end validation |
 | 16 | Mail kernel extension | Medium | 3 | Per-tenant mail modes |
 | 17 | Multi-tenant isolation hardening | Medium | 2–8 | Security validation |
 
 Increments 0–1 are prerequisites. Increments 2–11 build the orchestrator one reconciler at a time — each is independently testable. Increment 12 can run in parallel with 2–11. Increments 13–15 integrate everything into a deployable system. Increments 16–17 harden and extend.
+
+---
+
+## Day-2 Operations
+
+The increments above cover initial deployment. This section documents the operational flows that keep the platform running after day 1.
+
+### App upgrades across tenants
+
+When an AppProfile's `chart.version` is bumped (e.g., OpenProject 14.2.0 → 15.0.0 in `gentian-apps`):
+
+1. ArgoCD syncs the updated AppProfile CR to the cluster
+2. The AppProfile update reconciler (Increment 14) lists all Tenants referencing this profile
+3. For each tenant: update the ArgoCD Application CR (or Tofu Controller `Terraform` CR) with the new chart version
+4. ArgoCD performs a rolling upgrade per tenant — health checks gate progression
+5. AppProfile status shows rollout progress (`updated: 47/50 tenants`)
+
+**Canary strategy:** For high-risk upgrades, manually update one test tenant's `spec.apps[].config.chartVersion` override first. Once validated, bump the AppProfile version (which updates all remaining tenants).
+
+### Tenant config changes
+
+When a Tenant CR is updated (apps added/removed, quotas changed):
+
+- **Adding an app:** The orchestrator provisions all required infrastructure (database, OIDC client, S3 bucket, etc.) and creates the ArgoCD Application CR. Existing apps are unaffected.
+- **Removing an app:** The orchestrator deletes the ArgoCD Application CR (ArgoCD uninstalls the Helm release). Per the `deletionPolicy`: `Delete` drops the database/bucket, `Retain` revokes credentials but keeps data. IntegrationBindings involving the removed app are garbage-collected.
+- **Changing quotas:** The namespace reconciler updates ResourceQuotas and LimitRanges. Running pods are unaffected until they restart.
+- **Changing mail mode:** The mail reconciler (Increment 16) transitions between modes — e.g., deploying or removing the per-tenant mail stack.
+
+### Orchestrator upgrades
+
+When the gentian-os Helm chart is bumped to a new version in `gentian-deployments`:
+
+1. ArgoCD detects the version change and deploys the new orchestrator
+2. If CRDs changed: `controller-gen` ensures new fields have defaults; existing CRs remain valid
+3. The new orchestrator reconciles all existing Tenants — idempotent, so no-op for unchanged tenants
+
+**CRD evolution strategy:** Use `v1alpha1` during development. When the schema stabilises, introduce `v1beta1` with a conversion webhook that migrates `v1alpha1` CRs. Serve both versions simultaneously until all CRs are migrated. Never remove a served version without a deprecation cycle.
+
+### Credential rotation
+
+Triggered via annotation: `kubectl annotate tenant acme-corp gentianos.io/rotate-credentials=all`
+
+1. The orchestrator regenerates credentials in OpenBao for the specified scope (`all`, or a specific app name)
+2. ESO detects the change and syncs new secrets to Kubernetes
+3. Stakater Reloader restarts affected pods
+4. The annotation is cleared after rotation completes
+
+### Pattern B elimination via upstream contributions
+
+Pattern B (Tofu Controller `set_sensitive`) is a workaround for Helm charts without `existingSecret` support. The long-term strategy is to contribute `existingSecret` support upstream:
+
+| App | Upstream project | Status | Target |
+|---|---|---|---|
+| Nubus | Univention | — | Add `existingSecret` for Keycloak admin, LDAP bind, PostgreSQL credentials |
+| OX App Suite | Open-Xchange | — | Add `existingSecret` for MariaDB, Redis, S3, SMTP credentials |
+| Postfix | Docker-mailserver or custom chart | — | Add `existingSecret` for SASL, DKIM, relay credentials |
+| Dovecot | Docker-mailserver or custom chart | — | Add `existingSecret` for LDAP bind, TLS credentials |
+
+Each successful merge allows flipping `deploymentMethod` from `tofu-controller` to `argocd` in the AppProfile — one PR per app, zero orchestrator changes. Track progress in the AppProfile's `metadata.annotations`.
 
 ---
 
@@ -576,7 +677,11 @@ Which architecture concepts are addressed by which increment — and which are n
 | §12 CRD Definitions | AppProfile, Tenant, IntegrationBinding, ExternalSecret, Application | 1 | Go types matching §12 examples |
 | §13 OpenTofu — Kernel Seeding | OpenBao path seeding, secret tree | 0, 12 | Copied then restructured |
 | §14 Orchestrator Reconciliation Logic | Create/Update/Delete tenant flows | 2–11 | Built incrementally |
+| §14.2 Tenant Deletion | Full deletion pipeline (9-step sequence) | 2–8, 10, 17 | Delete-path in each reconciler + end-to-end test in Inc 17 |
+| §14.3 AppProfile Update | Chart version propagation to all tenants | 14 | AppProfile update reconciler |
 | §15 Building the Orchestrator | Kubebuilder scaffold, project structure | 0, 13 | Scaffolding + Helm chart |
+| §16 Observability — Prometheus | `gentianos_*` metrics from orchestrator | 13 | 9 metrics exported via controller-runtime, ServiceMonitor in chart |
+| §16 Observability — CRD Status | `kubectl get tenants` shows health | 1, 13 | Printer columns in CRD types, status conditions in reconcilers |
 
 ### Not yet covered (future work)
 
@@ -596,8 +701,6 @@ Which architecture concepts are addressed by which increment — and which are n
 | §10.3 Shell AI Assistant | Portal AI assistant via MCP | Requires MCP registry + adapters | MCP registry |
 | §10.4 Cross-App Agent Orchestration | AI agent as integration layer | Requires MCP servers per app | MCP adapters |
 | §10.5 AI-Assisted Operations | AppProfile generation, health monitoring | Requires stable AppProfile schema + observability | Increments 1, 14 + observability |
-| §16 Observability — Prometheus | `gentianos_*` metrics from orchestrator | Can be added incrementally to reconcilers | Orchestrator (Increment 2+) |
-| §16 Observability — CRD Status | `kubectl get tenants` shows health | Partially covered (status conditions in reconcilers) | Increments 2–11 |
 
 ---
 
