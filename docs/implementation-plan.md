@@ -30,6 +30,20 @@ CRD definitions
 
 We build bottom-up: CRDs first, then the orchestrator reconcilers one kernel function at a time, then tenant lifecycle, then apps.
 
+### Why a custom orchestrator? — Alternatives considered
+
+The thin orchestrator is ~5000 LOC of new Go code. Before committing to that, three alternatives were evaluated:
+
+| Alternative | What it does | Why not |
+|---|---|---|
+| **Crossplane** | Kubernetes-native infrastructure orchestration. Compositions map provider APIs to custom XRDs. | Crossplane Compositions are declarative (no conditional logic). The orchestrator needs conditional behaviour: "if both Nextcloud and OX are in the tenant's app list, create an IntegrationBinding." Crossplane can't express this without a custom provider — which is as much Go code as the orchestrator itself. Also adds a heavyweight control plane (Crossplane runtime + provider pods). |
+| **Kratix** | Platform-as-a-Product framework. Promises define what a platform team offers; Pipelines reconcile them. | Kratix Pipelines are container-based (one container per reconciliation step). This adds image build/push overhead per reconciler change and makes debugging harder than a single Go binary with `envtest`. Kratix is also younger (fewer production references) and introduces its own CRDs/concepts on top of the ones we already need. |
+| **Kyverno generate rules + ArgoCD ApplicationSets** | Policy-driven resource generation. Kyverno watches CRs and generates downstream resources (ExternalSecrets, Applications). | Works for simple "CR A exists → create CR B" patterns. Breaks down for sequenced multi-step provisioning (create database → wait for ready → store credentials in OpenBao → create ExternalSecret → create Application). Kyverno has no concept of ordering, status aggregation, or rollback. |
+
+**Decision: custom orchestrator.** The provisioning logic requires conditional branching (Pattern A vs B, mail modes, optional integrations), ordered sequencing (identity before database before app deployment), and status aggregation across multiple operator CRs. These are the exact things `controller-runtime` is designed for. The alternatives either can't express the logic at all (Kyverno) or require as much custom code as the orchestrator itself (Crossplane provider, Kratix pipeline containers).
+
+The risk of "building too much" is mitigated by the architecture's delegate-don't-implement principle: the orchestrator creates CRs for operators and Jobs, not provisioning logic. Most reconcilers are ~200 LOC of CR creation + status watching.
+
 ---
 
 ## Increments
@@ -79,7 +93,7 @@ gentian-os/
 
 **Files:**
 - `api/v1alpha1/types.go` — shared types (isolation mode, mail mode, deletion policy)
-- `api/v1alpha1/appprofile_types.go` — AppProfile spec (kernelRequirements, provides, optionalIntegrations, chart, valueMapping, extraValues)
+- `api/v1alpha1/appprofile_types.go` — AppProfile spec (kernelRequirements, provides, optionalIntegrations, chart, valueMapping, appSecrets, extraValues)
 - `api/v1alpha1/tenant_types.go` — Tenant spec (domain, isolation, mail, quotas, deletionPolicy, apps list) + status (conditions, provisioned apps, phase)
 - `api/v1alpha1/integrationbinding_types.go` — IntegrationBinding spec (contract, provider, consumer, capabilities, auth) + status (state, conditions, secretRef)
 - `api/v1alpha1/groupversion_info.go` — scheme registration
@@ -90,13 +104,61 @@ gentian-os/
 - Tenant is **cluster-scoped** (owns a namespace)
 - IntegrationBinding is **namespace-scoped** (lives in the tenant's namespace, owned by Tenant CR)
 - `valueMapping` uses typed sub-schemas per kernel requirement (oidc, database, s3, smtp, cache, ldap) — not freeform templates
+- `appSecrets` declares app-internal secrets (admin passwords, session keys, cluster tokens) the orchestrator generates via HMAC-SHA256 and injects — separate from kernel-provided `valueMapping` secrets
 - Validation via `kubebuilder:validation` markers (required fields, enum constraints, regex patterns)
+
+**Required validation — valueMapping spike (must pass before Increment 2):**
+
+Before writing reconcilers that depend on the `valueMapping` schema, validate it against the three hardest apps in `server/`. The spike takes the existing Tofu `set_sensitive` blocks and `values-sensitive.yaml.tftpl` files and attempts to express them as AppProfile `valueMapping` + `extraValues`.
+
+**Spike findings (from `server/` analysis):**
+
+OX App Suite has 12 secret values injected via `templatefile()`. Some map cleanly to `valueMapping` schemas (OIDC, MariaDB, Redis, MinIO/S3). But several are **app-internal secrets** that don't correspond to any kernel requirement:
+
+| Value path | Kernel requirement? | valueMapping fit? |
+|---|---|---|
+| `appsuite.core-mw.masterPassword` | No — OX admin password | `extraValues` only |
+| `appsuite.core-mw.hzGroupPassword` | No — Hazelcast cluster secret | `extraValues` only |
+| `appsuite.core-mw.basicAuthPassword` | No — OX internal API auth | `extraValues` only |
+| `appsuite.core-mw.jolokiaPassword` | No — JMX monitoring auth | `extraValues` only |
+| `global.appsuite.cookieHashSalt` | No — OX cookie signing salt | `extraValues` only |
+| `global.appsuite.shareCryptKey` | No — OX sharing encryption | `extraValues` only |
+| `global.appsuite.sessiondEncryptionKey` | No — OX session encryption | `extraValues` only |
+| `appsuite.core-mw.secretProperties["com.openexchange.oidc.clientSecret"]` | Yes — OIDC | valueMapping (but nested path) |
+| `global.mysql.auth.password` | Yes — MariaDB | valueMapping |
+| `appsuite.core-mw.redis.auth.password` | Yes — Cache | valueMapping |
+| `appsuite.core-mw.propertiesFiles[...].com.openexchange.filestore.s3...secretKey` | Yes — S3 | valueMapping (but deeply nested filesystem path key) |
+| `appsuite.core-mw.propertiesFiles[...].bindDNPassword` | Yes — LDAP | valueMapping (but deeply nested) |
+
+**Conclusions:**
+1. **5 of 12 secrets** are kernel requirements and fit `valueMapping` (OIDC, MariaDB, Redis, S3, LDAP) — but some require deeply nested key paths like `appsuite.core-mw.propertiesFiles./opt/open-xchange/etc/ldapauth.properties.bindDNPassword`
+2. **7 of 12 secrets** are app-internal and can only go through `extraValues` — but they're still secrets, so they need ExternalSecret references, not plain values
+3. **Nubus is worse:** 30 `set_sensitive` values, most are internal (NATS passwords, LDAP search user passwords, provisioning API passwords)
+4. The `valueMapping` schema works for the **kernel-provided** secrets but needs an **app-internal secrets** mechanism
+
+**Schema revision needed:** Add an `appSecrets` field to AppProfile that declares app-internal secrets the orchestrator must generate and inject. These are not kernel requirements — they're random passwords the app needs for internal operation. The orchestrator generates them (HMAC-SHA256), stores them in OpenBao, and syncs them via ExternalSecret:
+
+```yaml
+# In AppProfile spec
+appSecrets:
+  - name: admin_password
+    valuePath: "appsuite.core-mw.masterPassword"
+  - name: hz_group_password
+    valuePath: "appsuite.core-mw.hzGroupPassword"
+  - name: cookie_hash_salt
+    valuePath: "global.appsuite.cookieHashSalt"
+```
+
+This keeps `valueMapping` clean (typed schemas for kernel resources) while handling the reality that most complex charts have 5–10 internal secrets that don't map to any kernel function.
+
+For **Pattern B apps** (where `existingSecret` isn't supported), the `appSecrets` values are injected via Tofu Controller `set_sensitive` alongside the kernel-provided secrets — the `deploymentMethod: tofu-controller` path handles both.
 
 **Test:**
 - `make generate` produces CRD YAML under `config/crd/`
 - `kubectl apply --dry-run=server -f config/crd/` succeeds on a test cluster
 - Unit tests verify deepcopy, defaulting, and validation
 - Example CRs from architecture §12.1–12.3 validate against the generated schema
+- **Spike**: hand-write `ox-appsuite.yaml`, `nubus.yaml`, and `nextcloud.yaml` AppProfile CRs using real value paths from `server/` — all must validate against the generated CRD schema. If any value path can't be expressed, fix the CRD before proceeding.
 
 ---
 
@@ -202,7 +264,11 @@ gentian-os/
 
 **Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete CloudNativePG `Database` and `Role` CRs (operator drops the database). With `Retain` — revoke the Role's login privilege but keep the database and data.
 
-**Migration path from `server/`:** The current setup uses Tofu Controller to deploy PostgreSQL via Helm (Pattern B). CloudNativePG replaces this with operator CRs for database lifecycle management. The shared PostgreSQL cluster itself is still deployed as a kernel service (Layer 120).
+**Migration path from `server/`:** The current setup uses Tofu Controller to deploy PostgreSQL via Helm (Pattern B, chart v2.1.2). CloudNativePG replaces this with operator CRs for database lifecycle management. The shared PostgreSQL cluster itself is still deployed as a kernel service (Layer 120).
+
+**Data migration strategy:** For the existing dev cluster, two options:
+- **Greenfield (recommended for dev):** Deploy a new CloudNativePG cluster alongside the existing Helm-based PostgreSQL. The orchestrator provisions new databases on CloudNativePG. Old databases remain on the Helm-based instance until all apps are migrated, then decommission it.
+- **In-place (for production):** Use `pg_dump`/`pg_restore` to migrate databases from the Helm-based instance to CloudNativePG. Requires a maintenance window per tenant. Document the procedure in `docs/runbooks/`.
 
 **Test:**
 - envtest: Tenant with database-requiring app → Database + Role CRs created
@@ -653,6 +719,7 @@ Which architecture concepts are addressed by which increment — and which are n
 | §3.1 Thin Orchestrator | Delegate to operators, don't implement | 2–11 | Core of the plan (Jobs for Nubus-managed services) |
 | §3.1 Thin Orchestrator — LDAP | LDAP bind account via UDM REST API | 4 | UDM Jobs for per-tenant OUs and bind accounts |
 | §4.1 AppProfile CRD | Cluster-scoped app catalogue | 1, 14 | Types + kernel app profiles |
+| §4.1 AppProfile CRD — appSecrets | App-internal generated secrets (HMAC-SHA256) | 1, 9 | Declared in AppProfile, generated + injected by orchestrator |
 | §4.2 Tenant CRD | Organisation resource | 1, 2 | Types + namespace reconciler |
 | §4.3 IntegrationBinding CRD | Cross-app contract | 1, 11 | Types + reconciler |
 | §4.4 ArgoCD Application (generated) | Per-app-per-tenant deployment | 9 | App deployment reconciler |

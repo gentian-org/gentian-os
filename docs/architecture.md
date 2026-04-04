@@ -201,6 +201,8 @@ This approach has three advantages over freeform templates: the schema can be va
 
 For apps with non-standard value structures, an `extraValues` field allows arbitrary YAML that is merged into the rendered values, providing an escape hatch without compromising the typed path for common cases.
 
+Additionally, an `appSecrets` field declares app-internal secrets (admin passwords, session signing keys, cluster tokens) that don't correspond to any kernel function but must be generated, stored in OpenBao, and injected into the chart. The orchestrator generates these deterministically (HMAC-SHA256 derived from master password + tenant name + app name + secret name) and syncs them via ExternalSecret — or via Tofu Controller `set_sensitive` for Pattern B apps. This keeps `valueMapping` focused on kernel-provided resources while handling the reality that complex charts (e.g., OX App Suite with 7 internal secrets, Nubus with 30) need generated credentials beyond what the kernel provides.
+
 Updating an AppProfile's chart version propagates to all tenants: the orchestrator lists affected tenants via a label index, updates their ArgoCD Applications, and ArgoCD rolls out the upgrade.
 
 ### 4.2 Tenant — The Customer
@@ -753,7 +755,22 @@ spec:
   extraValues:
     smtp:
       port: 587
+
+  # App-internal secrets — not kernel requirements, but random passwords the
+  # app needs for internal operation. The orchestrator generates these (HMAC-SHA256
+  # derived from master password + tenant + app + secret name), stores them in
+  # OpenBao, and syncs them via ExternalSecret. For Pattern B apps, they are
+  # injected via Tofu Controller set_sensitive.
+  appSecrets:
+    - name: admin_password
+      valuePath: "appsuite.core-mw.masterPassword"
+    - name: hz_group_password
+      valuePath: "appsuite.core-mw.hzGroupPassword"
+    - name: cookie_hash_salt
+      valuePath: "global.appsuite.cookieHashSalt"
 ```
+
+> **Why `appSecrets`?** Real-world Helm charts have 5–10 internal secrets (admin passwords, session signing keys, cluster tokens) that don't correspond to any kernel function. These aren't databases, OIDC clients, or S3 buckets — they're app-internal credentials. Without `appSecrets`, every complex app would shove most of its secrets through the `extraValues` escape hatch, defeating the purpose of typed value mapping. `appSecrets` keeps `valueMapping` clean (kernel-provided values) while handling the reality of complex upstream charts.
 
 ### 12.2 Tenant
 
