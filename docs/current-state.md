@@ -1,13 +1,13 @@
 # Gentian OS — Current State vs Architecture
 
-**Date:** 2026-04-04
+**Date:** 2026-04-04 (updated)
 **Source:** `architecture.md` v2.0-draft vs `server/` repository (develop branch)
 
 ---
 
 ## Summary
 
-The `server/` repository implements a functional single-tenant GitOps deployment of OpenDesk components using ArgoCD, OpenBao, ESO, and Tofu Controller. It covers most kernel services but lacks the multi-tenant orchestration layer, CRD abstractions, and contract system described in the architecture.
+The `server/` repository implements a functional single-tenant GitOps deployment of OpenDesk components using ArgoCD, OpenBao, ESO, and Tofu Controller. It covers most kernel services and several of its operational patterns (HMAC-SHA256 secret derivation, Pattern B secret delivery, Stakater Reloader, safety guards on stateful components, root ApplicationSet discovery, matrix generators) have been adopted into the architecture. The primary gaps are the multi-tenant orchestration layer, CRD abstractions, the contract system, and the new agentic AI / MCP integration layer.
 
 ---
 
@@ -35,8 +35,8 @@ The `server/` repository implements a functional single-tenant GitOps deployment
 | Tool | Architecture Role | Current State | Gap |
 |---|---|---|---|
 | **Thin orchestrator (Go)** | Provisioning plane — reacts to Tenant CRs, creates operator CRs, wires secrets, manages IntegrationBindings | **Does not exist** | Entire orchestrator is unbuilt; its responsibilities are split across Tofu modules, shell scripts, and manual YAML |
-| **OpenTofu (via Tofu Controller)** | Infrastructure plane — static kernel provisioning, secret seeding, external resources | Tofu Controller v0.16.1 deployed; modules for OpenBao path seeding, Keycloak config, and Helm releases (Pattern B) | Tofu currently handles app-level provisioning (Helm releases) which architecture assigns to ArgoCD; scope creep into orchestrator territory |
-| **ArgoCD** | Deployment plane — Helm chart deployment, drift detection, rollback | ArgoCD v2.11.3 with ApplicationSets for Pattern A apps | Only handles "Pattern A" apps (those supporting `existingSecret`); Pattern B apps bypass ArgoCD and go through Tofu Controller |
+| **OpenTofu (via Tofu Controller)** | Infrastructure plane — static kernel provisioning, secret seeding, external resources, **Pattern B Helm releases** for secrets-hostile charts | ✅ Tofu Controller v0.16.1 deployed; modules for OpenBao path seeding, Keycloak config, and Helm releases (Pattern B) | Aligned — Pattern B is now an architecture-endorsed fallback for charts without `existingSecret` support |
+| **ArgoCD** | Deployment plane — Helm chart deployment (Pattern A), drift detection, rollback | ✅ ArgoCD v2.11.3 with ApplicationSets for Pattern A apps; root ApplicationSet meta-deployer with matrix generators | Aligned — Pattern A/B split is architecture-endorsed; root ApplicationSet and matrix generators match architecture |
 
 ## 3. CRD Abstraction Model
 
@@ -52,18 +52,22 @@ The `server/` repository implements a functional single-tenant GitOps deployment
 | Aspect | Architecture Target | Current State | Gap |
 |---|---|---|---|
 | **Secret store** | OpenBao with `gentian-os/kernel/...` and `gentian-os/tenants/{name}/apps/{app}/...` paths | OpenBao with `gentian/{env}/databases/...`, `gentian/{env}/keycloak/...` flat paths | Path hierarchy does not match architecture; no tenant dimension |
-| **Secret delivery** | ESO syncs all secrets; Helm charts use `existingSecret` | Two patterns: **Pattern A** (ESO for apps supporting `existingSecret`) and **Pattern B** (Tofu `set_sensitive` for apps that don't) | Pattern B is a workaround; architecture assumes all apps use `existingSecret` via ESO |
-| **Credential rotation** | Passive via orchestrator annotation trigger → OpenBao → ESO → ArgoCD | Stakater Reloader restarts pods on secret changes; no automated rotation trigger | No rotation workflow; Reloader handles reload but not credential regeneration |
-| **Secret seeding** | OpenTofu seeds kernel credentials | `seed-openbao.sh` + Tofu `openbao-paths/` module derives passwords from master password via HMAC-SHA256 | Functional but script-based; architecture envisions pure Tofu seeding |
+| **Secret delivery (Pattern A)** | ESO syncs OpenBao → K8s Secret; chart references via `existingSecret` | ✅ Implemented for Redis, MinIO, Intercom Service | Aligned |
+| **Secret delivery (Pattern B)** | Tofu Controller reads from OpenBao, injects via `set_sensitive` for charts without `existingSecret` | ✅ Implemented for Nubus, OX App Suite, Postfix, Dovecot | Aligned — architecture now endorses Pattern B as a first-class fallback |
+| **Secret seeding** | HMAC-SHA256 derivation from master password; `kv_put_once()` idempotency guard | ✅ `seed-openbao.sh` + Tofu `openbao-paths/` module | Aligned — architecture now specifies deterministic derivation |
+| **Tofu lifecycle guard** | `lifecycle { ignore_changes = [data_json] }` on all OpenBao secrets | ✅ Implemented on all Tofu-managed secrets | Aligned |
+| **Credential rotation** | Orchestrator annotation trigger → OpenBao → ESO → Stakater Reloader rolls pods | ✅ Reloader deployed with `reloader.stakater.com/auto` annotations | Partial — Reloader handles pod restart; no automated credential regeneration workflow yet |
+| **Per-tenant OpenBao policies** | Generated per tenant+app, read-only to app's own paths | Not implemented | No multi-tenancy yet |
 
 ## 5. Deployment Layers
 
 | Layer | Architecture Target | Current State | Gap |
 |---|---|---|---|
-| **000 — Bootstrap** | One-time script installs ArgoCD + Tofu Controller | `scripts/install.sh` (11-step bootstrap) + separate scripts for ArgoCD, OpenBao init | Functional; matches architecture intent |
-| **100 — Kernel** | OpenTofu provisions infra; ArgoCD deploys kernel workloads via sublayers (100–160) | ArgoCD bootstrap apps deploy OpenBao, Tofu Controller, Reloader; Tofu deploys PostgreSQL, MariaDB, Nubus | No explicit sublayer ordering (100/110/120/...); kernel services not decomposed into sequenced layers |
+| **000 — Bootstrap** | One-time script installs ArgoCD + Tofu Controller; safety guards (`prune: false`, `finalizers: []`) on stateful components | ✅ `scripts/install.sh` (11-step bootstrap); OpenBao and Tofu Controller deployed with `prune: false` and `finalizers: []` | Aligned |
+| **Root ApplicationSet** | Meta-deployer watches directory of ApplicationSet manifests; matrix generators for env × app | ✅ `argocd/bootstrap/root-applicationset.yaml` auto-discovers `appsets/` directory; explicit matrix generators used | Aligned |
+| **100 — Kernel** | OpenTofu provisions infra; ArgoCD deploys kernel workloads via sublayers (100–160); Stakater Reloader in Layer 100 | ArgoCD bootstrap apps deploy OpenBao, Tofu Controller, Reloader; Tofu deploys PostgreSQL, MariaDB, Nubus | No explicit sublayer ordering (100/110/120/...); kernel services not decomposed into sequenced layers |
 | **100e — Kernel Extensions** | Mail stack as optional per-tenant extension | Postfix + Dovecot deployed as standard apps | Not modelled as a kernel extension; always-on, not per-tenant |
-| **200 — Apps** | Orchestrator creates per-tenant ArgoCD Applications | ApplicationSets create apps per-environment (dev/staging/prod) | Environment-centric not tenant-centric; no orchestrator |
+| **200 — Apps** | Orchestrator manages tenant ApplicationSet app lists; ArgoCD deploys | ApplicationSets create apps per-environment (dev/staging/prod) | Environment-centric not tenant-centric; no orchestrator |
 
 ## 6. Multi-Tenancy
 
@@ -133,21 +137,51 @@ The `server/` repository implements a functional single-tenant GitOps deployment
 | **Prometheus metrics** | Orchestrator exports `gentianos_*` metrics | No custom metrics | Orchestrator not built |
 | **CRD status** | `kubectl get tenants` shows health | N/A | No CRDs |
 
+## 11. Agentic AI / MCP Integration
+
+| Aspect | Architecture Target | Current State | Gap |
+|---|---|---|---|
+| **MCP registry** | Kernel service tracking which apps expose MCP endpoints per tenant; auto-populated by orchestrator | **Does not exist** | No MCP infrastructure |
+| **MCP kernel requirement** | AppProfile declares `mcp: enabled` with endpoint and auth method | **Does not exist** | No AppProfile CRD; no MCP declaration |
+| **Shell AI assistant** | Univention Portal gains an AI assistant using identity, MCP registry, and OIDC token exchange | **Does not exist** | Portal deployed but no AI assistant integration |
+| **MCP adapters** | Per-app MCP servers exposing tool descriptions (v1: OpenProject, Nextcloud) | **Does not exist** | No MCP servers built for any app |
+| **Cross-app agent orchestration** | AI agent orchestrates multi-app workflows via MCP calls (replaces IPC bus for integration) | **Does not exist** | Entire agentic layer is future work |
+| **AI-assisted operations** | AppProfile generation from Helm charts, tenant provisioning assistant, health monitoring agent | **Does not exist** | Requires stable orchestrator + AppProfile schema first |
+
+---
+
+## Alignment Summary (Patterns Adopted into Architecture)
+
+The following patterns from the current `server/` implementation have been incorporated into the architecture and are **no longer gaps**:
+
+| Pattern | Architecture Section | Current State |
+|---|---|---|
+| Pattern B (Tofu `set_sensitive`) | §3 Tool table, §3.3 Responsibility matrix, §5.3 | ✅ Implemented for Nubus, OX, Postfix, Dovecot |
+| HMAC-SHA256 master password derivation | §5.1 Deterministic derivation | ✅ `seed-openbao.sh` + `openbao-paths/` module |
+| `ignore_changes` lifecycle guard | §5.2 Tofu secret lifecycle | ✅ All Tofu-managed OpenBao secrets |
+| Stakater Reloader | §5.4 Credential rotation, Layer 100 | ✅ Deployed with per-workload annotations |
+| Root ApplicationSet meta-deployer | §6 between Layer 100e and 200 | ✅ `root-applicationset.yaml` watches `appsets/` |
+| Safety guards (`prune: false`, `finalizers: []`) | §6 Layer 000 Bootstrap | ✅ OpenBao and Tofu Controller |
+| Matrix generators | §6 Root ApplicationSet section | ✅ Explicit env × app lists in all ApplicationSets |
+
 ---
 
 ## Priority Gap Summary
 
 | Priority | Gap | Effort | Blocks |
 |---|---|---|---|
-| **P0** | Thin orchestrator (Go) — the core of the architecture | Large | Everything tenant-related |
-| **P0** | CRD definitions (AppProfile, Tenant, IntegrationBinding) | Medium | Orchestrator |
+| **P0** | Thin orchestrator (Go) — the core of the architecture | Large | Everything tenant-related, MCP registry |
+| **P0** | CRD definitions (AppProfile, Tenant, IntegrationBinding) | Medium | Orchestrator, MCP kernel requirement |
 | **P1** | Decompose `server/` into 3-repo structure | Medium | Clean separation of concerns |
-| **P1** | Migrate Pattern B apps to Pattern A (upstream `existingSecret` support or wrapper charts) | Medium | Unified deployment plane |
-| **P1** | Restructure OpenBao paths to architecture schema | Medium | Multi-tenancy |
+| **P1** | Restructure OpenBao paths to architecture schema (per-tenant hierarchy) | Medium | Multi-tenancy |
 | **P2** | Deploy missing apps (Collabora, Element, Jitsi, XWiki, OpenProject) | Medium | Per-app effort |
 | **P2** | CloudNativePG operator for database management via CRs | Medium | Replaces Tofu Helm releases for PostgreSQL |
 | **P2** | Multi-tenant namespace model and isolation | Large | Orchestrator must exist first |
+| **P2** | MCP registry kernel service | Medium | Orchestrator + identity |
+| **P2** | MCP adapters for core apps (OpenProject, Nextcloud) | Medium | Per-app; MCP registry |
+| **P3** | Shell AI assistant (Portal integration) | Medium | MCP registry, OIDC token exchange |
 | **P3** | Backup strategy (pgBackRest, Velero, OpenBao snapshots) | Medium | Independent |
 | **P3** | DKIM/SPF/DMARC automation for mail | Small | Mail extension redesign |
 | **P3** | Notification gateway | Medium | Architecture design needed |
 | **P3** | Observability (Prometheus metrics, CRD status) | Medium | Orchestrator must exist first |
+| **P3** | AI-assisted operations (AppProfile generation, health monitoring agent) | Medium | Stable AppProfile schema, observability stack |
