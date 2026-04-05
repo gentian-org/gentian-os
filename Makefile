@@ -10,6 +10,10 @@ BOILERPLATE := hack/boilerplate.go.txt
 
 IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
+# Envtest binaries — set KUBEBUILDER_ASSETS to override (e.g. in CI via setup-envtest)
+KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
+export KUBEBUILDER_ASSETS
+
 .PHONY: all build generate manifests test lint docker-build clean
 
 all: generate build test

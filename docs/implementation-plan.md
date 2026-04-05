@@ -52,7 +52,7 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 |---|---|---|---|
 | 0 | Project scaffolding | ✅ Done | go.mod, Makefile (`generate`, `manifests`, `build`, `test`, `lint`, `docker-build`), `internal/controller/` stub, `charts/gentian-os/` (Chart.yaml + values.yaml), `kernel/` (tofu modules/platform/tenant, bootstrap, appsets, manifest, eso, openbao, services, values), `scripts/` (5 bootstrapping scripts), Dockerfile (multi-stage distroless), CI pipeline (go/generate/lint/docker jobs). Deployment smoke test is a manual gate requiring a live cluster. |
 | 1 | CRD definitions | ✅ Done | All three CRDs (AppProfile, Tenant, IntegrationBinding) generated. 18 tests pass. Spike: OX, Nubus, Nextcloud sample YAMLs validate. |
-| 2 | Orchestrator skeleton + Tenant namespace reconciler | ⬜ Not started | |
+| 2 | Orchestrator skeleton + Tenant namespace reconciler | ✅ Done | `cmd/main.go` (controller-manager entry point), `internal/controller/tenant_controller.go` (namespace + ResourceQuota + LimitRange + NetworkPolicy + status conditions + finalizer + Retain/Delete deletion policy), 8 envtest integration tests. k8s.io/* upgraded to v0.35.0, controller-runtime v0.23.3. |
 | 3 | Identity reconciler (Keycloak realm + OIDC clients) | ⬜ Not started | |
 | 4 | LDAP reconciler (UDM REST API — per-tenant OUs + bind accounts) | ⬜ Not started | |
 | 5 | Database reconciler (CloudNativePG) | ⬜ Not started | |

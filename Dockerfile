@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24.2-bookworm AS builder
+FROM golang:1.25.0-bookworm AS builder
 
 WORKDIR /workspace
 
@@ -12,8 +12,8 @@ COPY api/ api/
 COPY internal/ internal/
 COPY cmd/ cmd/
 
-# Build the manager binary (entrypoint added in Increment 2)
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager ./cmd/manager/...
+# Build the manager binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager ./cmd/...
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/static:nonroot
