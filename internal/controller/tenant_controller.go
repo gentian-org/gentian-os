@@ -27,7 +27,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -62,6 +64,7 @@ const (
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
 type TenantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -69,9 +72,8 @@ type TenantReconciler struct {
 
 // SetupWithManager registers the controller with the controller-manager.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// mapJobToTenant maps a kernel-namespace Job that carries the tenant label
-	// back to a reconcile request for the owning Tenant.
-	mapJobToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
+	// mapToTenant maps any labelled object back to a reconcile request for the owning Tenant.
+	mapToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
 		tenantName := obj.GetLabels()[tenantLabel]
 		if tenantName == "" {
 			return nil
@@ -79,15 +81,33 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
 	}
 
+	// cnpgDB is an unstructured object used to watch CloudNativePG Database CRs
+	// across all tenant namespaces. Status updates (Ready=True) trigger reconciliation
+	// to advance the database provisioning sequence.
+	cnpgDB := &unstructured.Unstructured{}
+	cnpgDB.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   cnpgGroup,
+		Version: cnpgVersion,
+		Kind:    cnpgDatabaseKind,
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
 		Owns(&corev1.Namespace{}).
 		Watches(
 			&batchv1.Job{},
-			handler.EnqueueRequestsFromMapFunc(mapJobToTenant),
+			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
 				return hasLabel && obj.GetNamespace() == kernelNamespace
+			})),
+		).
+		Watches(
+			cnpgDB,
+			handler.EnqueueRequestsFromMapFunc(mapToTenant),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				_, hasLabel := obj.GetLabels()[tenantLabel]
+				return hasLabel
 			})),
 		).
 		Complete(r)
@@ -160,10 +180,18 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 7. Update status
+	// 7. Database (CloudNativePG Database CRs + psql role Jobs)
+	databaseResult, err := r.ensureDatabase(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 8. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
-	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0
+	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 || databaseResult.RequeueAfter > 0
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -177,7 +205,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if identityResult.RequeueAfter > 0 {
 			return identityResult, nil
 		}
-		return ldapResult, nil
+		if ldapResult.RequeueAfter > 0 {
+			return ldapResult, nil
+		}
+		return databaseResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -195,6 +226,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up LDAP resources before removing the namespace.
 	if err := r.deleteLDAP(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up database resources before removing the namespace.
+	if err := r.deleteDatabase(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
