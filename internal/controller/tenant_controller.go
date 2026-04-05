@@ -65,6 +65,7 @@ const (
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 type TenantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -188,10 +189,19 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 8. Update status
+	// 8. MariaDB (Job-based CREATE DATABASE + CREATE USER + GRANT)
+	mariadbResult, err := r.ensureMariaDB(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 9. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
-	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 || databaseResult.RequeueAfter > 0
+	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
+		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -208,7 +218,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if ldapResult.RequeueAfter > 0 {
 			return ldapResult, nil
 		}
-		return databaseResult, nil
+		if databaseResult.RequeueAfter > 0 {
+			return databaseResult, nil
+		}
+		return mariadbResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -231,6 +244,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up database resources before removing the namespace.
 	if err := r.deleteDatabase(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up MariaDB resources before removing the namespace.
+	if err := r.deleteMariaDB(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
