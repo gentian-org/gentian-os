@@ -33,12 +33,12 @@ import (
 )
 
 const (
-	conditionStorageReady      = "StorageReady"
-	minioProvisionerImage      = "minio/mc:latest"
-	minioAdminSecret           = "minio-admin"
-	nextcloudProvisionerImage  = "curlimages/curl:8.7.1"
-	nextcloudAdminSecret       = "nextcloud-admin"
-	storageRequeueAfter        = 30 * time.Second
+	conditionStorageReady     = "StorageReady"
+	minioProvisionerImage     = "minio/mc:latest"
+	minioAdminSecret          = "minio-admin"
+	nextcloudProvisionerImage = "curlimages/curl:8.7.1"
+	nextcloudAdminSecret      = "nextcloud-admin"
+	storageRequeueAfter       = 30 * time.Second
 )
 
 // ensureStorage provisions per-app MinIO S3 buckets and per-tenant Nextcloud

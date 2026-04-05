@@ -92,6 +92,11 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Kind:    cnpgDatabaseKind,
 	})
 
+	// argocdApp watches ArgoCD Application CRs so that Memcached health transitions
+	// immediately trigger re-reconciliation rather than waiting for the requeue timer.
+	argocdApp := &unstructured.Unstructured{}
+	argocdApp.SetGroupVersionKind(argocdApplicationGVK)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
 		Owns(&corev1.Namespace{}).
@@ -109,6 +114,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
 				return hasLabel
+			})),
+		).
+		Watches(
+			argocdApp,
+			handler.EnqueueRequestsFromMapFunc(mapToTenant),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				_, hasLabel := obj.GetLabels()[tenantLabel]
+				return hasLabel && obj.GetNamespace() == argocdNamespace
 			})),
 		).
 		Complete(r)
@@ -205,11 +218,20 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 10. Update status
+	// 10. Cache (Redis ACL users + Memcached ArgoCD Applications)
+	cacheResult, err := r.ensureCache(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 11. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
-		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 || storageResult.RequeueAfter > 0
+		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
+		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -232,7 +254,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if mariadbResult.RequeueAfter > 0 {
 			return mariadbResult, nil
 		}
-		return storageResult, nil
+		if storageResult.RequeueAfter > 0 {
+			return storageResult, nil
+		}
+		return cacheResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -265,6 +290,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up storage resources before removing the namespace.
 	if err := r.deleteStorage(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up cache resources before removing the namespace.
+	if err := r.deleteCache(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

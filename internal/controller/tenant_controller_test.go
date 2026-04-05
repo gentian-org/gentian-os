@@ -97,6 +97,13 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// argocd namespace is required by the cache reconciler for Memcached Application CRs.
+	if err := testClient.Create(context.Background(), &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "argocd"},
+	}); err != nil {
+		panic(err)
+	}
+
 	code := m.Run()
 
 	cancel()
