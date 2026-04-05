@@ -152,10 +152,19 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 6. Update status
+	// 6. LDAP (UDM OU + groups + bind accounts)
+	ldapResult, err := r.ensureLDAP(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 7. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
-	if identityResult.RequeueAfter > 0 {
+	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0
+	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
@@ -163,9 +172,12 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
-	if identityResult.RequeueAfter > 0 {
+	if provisioning {
 		logger.Info("tenant provisioning in progress", "tenant", tenant.Name)
-		return identityResult, nil
+		if identityResult.RequeueAfter > 0 {
+			return identityResult, nil
+		}
+		return ldapResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -178,6 +190,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up identity resources before removing the namespace.
 	if err := r.deleteIdentity(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up LDAP resources before removing the namespace.
+	if err := r.deleteLDAP(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
