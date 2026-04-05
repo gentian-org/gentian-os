@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -30,9 +31,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -55,6 +60,8 @@ const (
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 type TenantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -62,9 +69,27 @@ type TenantReconciler struct {
 
 // SetupWithManager registers the controller with the controller-manager.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// mapJobToTenant maps a kernel-namespace Job that carries the tenant label
+	// back to a reconcile request for the owning Tenant.
+	mapJobToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
+		tenantName := obj.GetLabels()[tenantLabel]
+		if tenantName == "" {
+			return nil
+		}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
 		Owns(&corev1.Namespace{}).
+		Watches(
+			&batchv1.Job{},
+			handler.EnqueueRequestsFromMapFunc(mapJobToTenant),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				_, hasLabel := obj.GetLabels()[tenantLabel]
+				return hasLabel && obj.GetNamespace() == kernelNamespace
+			})),
+		).
 		Complete(r)
 }
 
@@ -119,14 +144,29 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 5. Update status
-	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
-	tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
-	tenant.Status.Namespace = nsName
-	if err := r.Status().Update(ctx, tenant); err != nil {
+	// 5. Identity (Keycloak realm + OIDC clients)
+	identityResult, err := r.ensureIdentity(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 
+	// 6. Update status
+	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
+	tenant.Status.Namespace = nsName
+	if identityResult.RequeueAfter > 0 {
+		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
+	} else {
+		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
+	}
+	if err := r.Status().Update(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+	if identityResult.RequeueAfter > 0 {
+		logger.Info("tenant provisioning in progress", "tenant", tenant.Name)
+		return identityResult, nil
+	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
 }
@@ -135,6 +175,11 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	nsName := tenantNamespaceName(tenant)
+
+	// Clean up identity resources before removing the namespace.
+	if err := r.deleteIdentity(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
 		logger.Info("deletionPolicy=Delete: removing tenant namespace", "namespace", nsName)
