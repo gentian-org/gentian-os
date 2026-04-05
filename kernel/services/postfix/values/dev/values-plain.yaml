@@ -1,0 +1,48 @@
+# =============================================================================
+# Postfix dev — environment-specific non-secret overrides
+# =============================================================================
+# Secrets injected via set_sensitive in tofu/tenant/infra-workspaces/postfix.tf:
+#   postfix.relayHost.authentication.username.value  (Vault: postfix.relay_username)
+#   postfix.relayHost.authentication.password.value  (Vault: postfix.relay_password)
+#   postfix.staticAuthDB.password.value              (Vault: nubus.smtp_password)
+#   postfix.ldap.password.value                      (Vault: nubus.ldapsearch_postfix)
+# =============================================================================
+
+postfix:
+  # Hostname matches the Helm release name so the service DNS resolves
+  hostname: "postfix-dev"
+
+  # LDAP server for virtual alias lookups (dev)
+  ldap:
+    host: "nubus-dev-ldap-server-primary.gentian-dev.svc.cluster.local"
+
+  # Upstream relay: Gmail SMTP.
+  # Credentials injected via set_sensitive (Vault: gentian/dev/postfix).
+  # Vault secret keys:
+  #   relay_username  →  Gmail address (e.g. user@gmail.com)
+  #   relay_password  →  Gmail App Password (16-char, from Google Account → Security → App passwords)
+  relayHost:
+    enabled: true
+    host: smtp.gmail.com
+    port: 587
+    disableMXLookup: true
+    authentication:
+      enabled: true
+      username:
+        value: "placeholder"  # overridden by set_sensitive
+      password:
+        value: "placeholder"  # overridden by set_sensitive
+
+  # Enable outbound SASL (required when relay is configured)
+  smtpSASLAuthEnable: "yes"
+
+  # Allow relay from cluster pod networks
+  relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

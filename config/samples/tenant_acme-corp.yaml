@@ -1,0 +1,37 @@
+# Example Tenant CR — matches architecture §12.2
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: acme-corp
+spec:
+  displayName: "ACME Corporation"
+  domain: acme.gentianos.example.com
+  adminEmail: admin@acme.example.com
+
+  isolation:
+    mode: namespace
+    ldapOU: "ou=acme-corp"
+    keycloakRealm: acme-corp
+    databasePrefix: acme_
+    s3Prefix: acme-corp-
+
+  mail:
+    mode: selfhosted
+    domain: acme.example.com
+    quotaPerUser: 5Gi
+    rateLimit: 100/h
+
+  quotas:
+    maxApps: 20
+    storage: 100Gi
+    cpu: "8"
+    memory: 16Gi
+
+  deletionPolicy: Retain
+
+  apps:
+    - profile: nextcloud
+    - profile: ox-appsuite
+    - profile: openproject
+      config:
+        replicas: 2

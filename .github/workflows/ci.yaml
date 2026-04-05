@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  go:
+    name: Go — vet, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -race -count=1
+
+      - name: go build
+        run: go build ./...
+
+  generate:
+    name: Verify generated files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install controller-gen
+        run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
+
+      - name: Verify generated deepcopy and CRD YAML are up to date
+        run: make verify-gen
+
+  lint:
+    name: Lint — Go, YAML, shell, Tofu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64
+
+      - name: yamllint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_data: |
+            extends: default
+            rules:
+              line-length:
+                max: 160
+              truthy:
+                allowed-values: ["true", "false", "yes", "no", "on", "off"]
+
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@v2
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.9.0"
+
+      - name: tofu fmt check (modules)
+        run: tofu fmt -check -recursive kernel/tofu/
+
+  docker:
+    name: Docker build (dry-run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (no push)
+        run: docker build -t gentian-os:ci-check .

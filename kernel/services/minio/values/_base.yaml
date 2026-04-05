@@ -1,0 +1,186 @@
+# =============================================================================
+# MinIO app-level defaults (all environments)
+# =============================================================================
+# Layer 2 of the values hierarchy. {env}/values.yaml provides:
+#   auth.rootPassword, provisioning.users[].password, provisioning.resources,
+#   persistence.size, resources, statefulset.replicaCount
+# =============================================================================
+
+# Allow use of OpenDesk mirrored images (not standard Bitnami)
+# storageClass/imagePullSecrets come from values/env/{env}.yaml
+global:
+  security:
+    allowInsecureImages: true
+  ingress:
+    enabled: false
+
+# API Ingress (disabled — internal ClusterIP access)
+apiIngress:
+  enabled: false
+
+# Container Security Context
+containerSecurityContext:
+  enabled: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  privileged: false
+  runAsUser: 1001
+  runAsGroup: 1001
+  runAsNonRoot: true
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# Pod Security Context
+podSecurityContext:
+  enabled: true
+  fsGroup: 1001
+
+# Image — OpenDesk-mirrored Bitnami minio
+image:
+  registry: registry.opencode.de
+  repository: bmi/opendesk/components/community/images-mirror/minio
+  tag: 2025.4.22-debian-12-r1
+  pullPolicy: IfNotPresent
+
+# Volume permissions init container (uses OpenDesk os-shell mirror)
+volumePermissions:
+  enabled: true
+  image:
+    registry: registry.opencode.de
+    repository: bmi/opendesk/components/community/images-mirror/os-shell
+    tag: 12-debian-12-r44
+    pullPolicy: IfNotPresent
+
+# Console ingress (disabled)
+ingress:
+  enabled: false
+
+# Readiness/liveness probes
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 10
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 10
+startupProbe:
+  enabled: true
+  periodSeconds: 10
+  timeoutSeconds: 10
+
+# Mode — standalone (1 node); production can use distributed
+mode: standalone
+
+# Metrics (no Prometheus in this deployment)
+metrics:
+  serviceMonitor:
+    enabled: false
+
+# Network policy (managed at cluster level)
+networkPolicy:
+  enabled: false
+
+# Persistence — size overridden per-env; storageClass from values/env/{env}.yaml
+persistence:
+
+# StatefulSet — drivesPerNode fixed; replicaCount overridden per-env
+statefulset:
+  drivesPerNode: 1
+
+# Provisioning — buckets, policies, and extra commands (no secrets)
+# users[].password and provisioning.resources are in {env}/values.yaml
+provisioning:
+  enabled: true
+  cleanupAfterFinished:
+    enabled: true
+    seconds: 60
+  # Make portal-assets publicly readable
+  extraCommands:
+    - mc anonymous set download provisioning/ums/portal-assets
+  # All OpenDesk S3 buckets
+  buckets:
+    - name: migrations
+      versioning: Suspended
+      withLock: false
+    - name: nextcloud
+      versioning: Suspended
+      withLock: false
+    - name: notes
+      versioning: Versioned
+      withLock: false
+    - name: openproject
+      versioning: Suspended
+      withLock: false
+    - name: openxchange
+      versioning: Suspended
+      withLock: false
+    - name: ums
+      versioning: Suspended
+      withLock: false
+    - name: tofu-state
+      versioning: Suspended
+      withLock: false
+  # Per-bucket IAM policies (no secrets — just ARN statements)
+  policies:
+    - name: migrations-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::migrations]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::migrations/*]
+          effect: Allow
+          actions: [s3:*]
+    - name: nextcloud-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::nextcloud]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::nextcloud/*]
+          effect: Allow
+          actions: [s3:*]
+    - name: notes-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::notes]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::notes/*]
+          effect: Allow
+          actions: [s3:*]
+    - name: openproject-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::openproject]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::openproject/*]
+          effect: Allow
+          actions: [s3:*]
+    - name: openxchange-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::openxchange]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::openxchange/*]
+          effect: Allow
+          actions: [s3:*]
+    - name: ums-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::ums]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::ums/*]
+          effect: Allow
+          actions: [s3:*]
+    - name: tofu-state-bucket-policy
+      statements:
+        - resources: [arn:aws:s3:::tofu-state]
+          effect: Allow
+          actions: [s3:*]
+        - resources: [arn:aws:s3:::tofu-state/*]
+          effect: Allow
+          actions: [s3:*]

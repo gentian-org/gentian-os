@@ -1,0 +1,22 @@
+# =============================================================================
+# Dovecot dev environment — plain (non-secret) overrides
+# =============================================================================
+
+dovecot:
+  mailDomains:
+    - "desk.gentian.org"
+  defaultMailDomain: "desk.gentian.org"
+  ldap:
+    host: "nubus-dev-ldap-server.gentian-dev.svc.cluster.local"
+    base: "dc=swp-ldap,dc=internal"
+    dn: "uid=ldapsearch_dovecot,cn=users,dc=swp-ldap,dc=internal"
+  oidc:
+    introspectionHost: "nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080"
+    clientID:
+      value: "opendesk-dovecot"
+  submission:
+    host: "postfix-dev.gentian-dev.svc.cluster.local:25"
+  loginTrustedNetworks: "10.0.0.0/8"
+
+persistence:
+  size: "10Gi"

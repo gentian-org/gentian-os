@@ -1,0 +1,83 @@
+# OpenBao Transit Helm values
+# ─────────────────────────────────────────────────────────────────────────────
+# This instance acts solely as the auto-unseal engine for the primary OpenBao.
+# It holds NO application secrets — only the single transit/keys/autounseal
+# encryption key that auto-unseals the primary instance after any pod restart.
+#
+# Deliberately minimal:
+#   - No UI             (not needed for a transit-only engine)
+#   - No injector       (ESO handles app secrets; injector is for primary only)
+#   - ClusterIP only    (only the primary OpenBao needs to reach this service)
+#   - 1 Gi PVC          (tiny — only AEAD key material)
+#
+# Sealed by:  Shamir (1-of-1)  — keys stored in Bitwarden › gentian/openbao-transit
+#                                 and in the openbao-transit-unseal k8s Secret.
+# Unsealed:   automatically via the postStart hook below on every pod/node restart.
+#             The unseal key is injected from the openbao-transit-unseal k8s Secret.
+# ─────────────────────────────────────────────────────────────────────────────
+
+server:
+  ha:
+    enabled: false
+
+  # RollingUpdate ensures that when the pod template changes (e.g. new postStart
+  # hook, new image), the pod is automatically restarted with the new spec.
+  # OnDelete (the Helm chart default) caused reboots to restart pods with the
+  # stale spec, leaving the postStart hook absent until a manual pod deletion.
+  statefulSet:
+    updateStrategy: RollingUpdate
+
+  dataStorage:
+    enabled: true
+    storageClass: nfs-csi
+    size: 1Gi
+    accessMode: ReadWriteOnce
+
+  # Report ready even when sealed or uninitialised so `kubectl wait` works
+  # and the primary's seal backend can probe the health endpoint.
+  readinessProbe:
+    enabled: true
+    path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+
+  # Internal-only — primary OpenBao accesses this via cluster DNS.
+  # No NodePort needed.
+  service:
+    type: ClusterIP
+
+  ui:
+    enabled: false
+
+  # Inject the Shamir unseal key from the openbao-transit-unseal k8s Secret.
+  # Created once by: kubectl create secret generic openbao-transit-unseal \
+  #   -n openbao --from-literal=unseal-key=<key-from-bitwarden>
+  extraSecretEnvironmentVars:
+    - envName: TRANSIT_UNSEAL_KEY
+      secretName: openbao-transit-unseal
+      secretKey: unseal-key
+
+  # Automatically unseal on every pod start (node reboot, rolling upgrade, etc.)
+  # Loops with a short sleep until the listener is up, then calls unseal.
+  # Idempotent: bao operator unseal is a no-op when already unsealed.
+  postStart:
+    - /bin/sh
+    - -c
+    - |
+      until bao status 2>/dev/null | grep -q 'Initialized.*true'; do sleep 1; done
+      bao operator unseal "$TRANSIT_UNSEAL_KEY" || true
+
+  standalone:
+    config: |
+      ui = false
+
+      listener "tcp" {
+        tls_disable     = 1
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "file" {
+        path = "/openbao/data"
+      }
+
+# Injector is not needed — ESO handles secret syncing
+injector:
+  enabled: false

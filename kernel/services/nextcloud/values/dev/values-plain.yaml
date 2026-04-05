@@ -1,0 +1,25 @@
+# =============================================================================
+# Nextcloud (AIO) dev — environment-specific non-secret overrides
+# =============================================================================
+# Secrets injected via set_sensitive in tofu/tenant/infra-workspaces/nextcloud.tf.
+# =============================================================================
+
+# env-specific service endpoints
+aio:
+  configuration:
+    database:
+      host: "opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local"
+    cache:
+      host: "redis-dev-master.gentian-infra-dev.svc.cluster.local"
+
+exporter:
+  configuration:
+    server: "http://nextcloud-dev-aio"
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 2Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi

@@ -1,0 +1,20 @@
+# =============================================================================
+# OX App Suite — dev environment overrides
+# =============================================================================
+# Layer 3 of the values hierarchy: dev-specific sizing and resource limits.
+# All secrets are injected by ox.tf via set_sensitive / templatefile().
+# =============================================================================
+
+appsuite:
+  # Mail server hostnames (dev-specific service names — populated once Dovecot and Postfix are up)
+  core-mw:
+    properties:
+      com.openexchange.mail.mailServer: "opendesk-dovecot-dev"
+      com.openexchange.mail.transportServer: "postfix-dev"
+      com.openexchange.mail.filter.server: "opendesk-dovecot-dev"
+  # Dev: minimal resource allocation
+  core:
+    servers:
+      nodes:
+        groupware:
+          replicas: 1

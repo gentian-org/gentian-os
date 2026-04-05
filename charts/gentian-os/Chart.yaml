@@ -1,0 +1,15 @@
+apiVersion: v2
+name: gentian-os
+description: Gentian OS — multi-tenant application orchestrator operator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - gentian
+  - operator
+  - multi-tenant
+  - kubernetes
+maintainers:
+  - name: Gentian team
+sources:
+  - https://github.com/gentian-org/gentian-os

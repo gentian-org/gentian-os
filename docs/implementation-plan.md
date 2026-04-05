@@ -46,6 +46,31 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 
 ---
 
+## Progress
+
+| Increment | Title | Status | Notes |
+|---|---|---|---|
+| 0 | Project scaffolding | ✅ Done | go.mod, Makefile (`generate`, `manifests`, `build`, `test`, `lint`, `docker-build`), `internal/controller/` stub, `charts/gentian-os/` (Chart.yaml + values.yaml), `kernel/` (tofu modules/platform/tenant, bootstrap, appsets, manifest, eso, openbao, services, values), `scripts/` (5 bootstrapping scripts), Dockerfile (multi-stage distroless), CI pipeline (go/generate/lint/docker jobs). Deployment smoke test is a manual gate requiring a live cluster. |
+| 1 | CRD definitions | ✅ Done | All three CRDs (AppProfile, Tenant, IntegrationBinding) generated. 18 tests pass. Spike: OX, Nubus, Nextcloud sample YAMLs validate. |
+| 2 | Orchestrator skeleton + Tenant namespace reconciler | ⬜ Not started | |
+| 3 | Identity reconciler (Keycloak realm + OIDC clients) | ⬜ Not started | |
+| 4 | LDAP reconciler (UDM REST API — per-tenant OUs + bind accounts) | ⬜ Not started | |
+| 5 | Database reconciler (CloudNativePG) | ⬜ Not started | |
+| 6 | MariaDB reconciler | ⬜ Not started | |
+| 7 | Storage reconciler (MinIO buckets + Nextcloud provisioning) | ⬜ Not started | |
+| 8 | Cache reconciler (Redis ACLs + Memcached) | ⬜ Not started | |
+| 9 | App deployment reconciler (ArgoCD Application / Tofu Workspace CRs) | ⬜ Not started | |
+| 10 | Ingress + DNS reconciler | ⬜ Not started | |
+| 11 | IntegrationBinding reconciler | ⬜ Not started | |
+| 12 | OpenBao restructuring (multi-tenant secret paths) | ⬜ Not started | |
+| 13 | Orchestrator Helm chart + observability | ⬜ Not started | |
+| 14 | AppProfile update reconciler | ⬜ Not started | |
+| 15 | gentian-deployments repo setup | ⬜ Not started | |
+| 16 | Mail extension reconciler | ⬜ Not started | |
+| 17 | Hardening + end-to-end tenant lifecycle tests | ⬜ Not started | |
+
+---
+
 ## Increments
 
 ### Increment 0 — Project scaffolding

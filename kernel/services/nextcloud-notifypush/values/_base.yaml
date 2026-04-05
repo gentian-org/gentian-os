@@ -1,0 +1,58 @@
+# =============================================================================
+# Nextcloud Notifypush — app-level defaults (all environments)
+# =============================================================================
+# Pattern B: secrets injected via set_sensitive in nextcloud.tf.
+#
+# Credentials NOT in this file:
+#   configuration.database.auth.password.value      (nextcloud_user_password)
+#   configuration.cache.auth.password.value         (redis auth_password)
+# =============================================================================
+
+image:
+  tag: "2.12.2"
+
+global:
+  domain: desk.gentian.org
+  hosts:
+    nextcloud: files
+
+configuration:
+  # Database — PostgreSQL (same nextcloud_user)
+  database:
+    type: "postgres"
+    # host: env-specific, defined in values/{env}/values-plain.yaml
+    port: "5432"
+    name: "nextcloud"
+    auth:
+      username:
+        value: "nextcloud_user"
+
+  # Cache — Redis
+  cache:
+    auth:
+      enabled: true
+      username:
+        value: "default"
+    # host: env-specific, defined in values/{env}/values-plain.yaml
+    port: "6379"
+    tls: false
+
+  # Trusted proxy
+  trustedProxy: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
+  # Nextcloud AIO service URL (must match the AIO chart's service name: nextcloud-{env}-aio)
+  # nextcloudUrl: env-specific, defined in values/{env}/values-plain.yaml
+
+  logging:
+    level: "info"
+
+# Ingress — notifypush is served under /push on the main nextcloud domain
+ingress:
+  enabled: true
+  ingressClassName: "nginx"
+  host: "files.desk.gentian.org"
+  tls:
+    secretName: "opendesk-nextcloud-tls"
+
+metrics:
+  enabled: true

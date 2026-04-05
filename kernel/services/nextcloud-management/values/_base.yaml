@@ -1,0 +1,172 @@
+# =============================================================================
+# Nextcloud Management — app-level defaults (all environments)
+# =============================================================================
+# Pattern B: secrets injected via set_sensitive in nextcloud.tf.
+# This chart runs a one-time init job that provisiones the Nextcloud instance.
+#
+# Credentials NOT in this file:
+#   configuration.administrator.password.value            (nextcloud admin_password)
+#   configuration.database.auth.password.value            (nextcloud_user_password)
+#   configuration.cache.auth.password.value               (redis auth_password)
+#   configuration.ldap.password.value                     (ldapsearch_nextcloud from nubus)
+#   configuration.objectstore.auth.secretKey.value        (minio nextcloud_password)
+#   configuration.oidc.password.value                     (nextcloud oidc_client_secret)
+#   configuration.opendeskIntegration.centralNavigation.password.value  (portal_shared_secret)
+#   configuration.serverinfo.token.value                  (nextcloud metrics_token)
+#   configuration.smtp.auth.password.value                (smtp_password from nubus)
+# =============================================================================
+
+global:
+  domain: desk.gentian.org
+  hosts:
+    nextcloud: files
+    nubus: portal
+
+# Override the chart's default management image (NC27) with the same AIO image
+# used by the nextcloud chart (NC31).  The management chart runs the container
+# with FS_ENV_RUN_MODE=init, so the AIO entrypoint dispatches to
+# entrypoint_init.php — full install/upgrade/configure — and then exits.
+# Using NC31 here ensures the DB schema and app list (including notify_push)
+# match the runtime image, so the AIO can start cleanly in runtime mode.
+image:
+  registry: "registry.opencode.de"
+  repository: "bmi/opendesk/components/platform-development/images/opendesk-nextcloud"
+  tag: "2.12.2"
+
+# Workaround: the chart hardcodes FS_ENV_CREATE_OCDATA=true which causes the
+# management init container to create .ocdata before running occ install,
+# causing is_state_consistent() to reject the (valid) first-run state.
+# Setting IGNORE_STATE_CONSISTENCY bypasses the guard and allows installation.
+extraEnvVars:
+  - name: FS_ENV_IGNORE_STATE_CONSISTENCY
+    value: "1"
+
+cleanup:
+  deletePodsOnSuccess: true
+  deletePodsOnSuccessTimeout: 60
+  keepPVCOnDelete: false
+
+configuration:
+  # Admin account (username only — password via set_sensitive)
+  administrator:
+    enabled: true
+    username:
+      value: "nextcloud"
+
+  # Database — PostgreSQL
+  database:
+    type: "pgsql"
+    # host: env-specific, defined in values/{env}/values-plain.yaml
+    port: "5432"
+    name: "nextcloud"
+    auth:
+      username:
+        value: "nextcloud_user"
+
+  # Cache — Redis
+  cache:
+    auth:
+      enabled: true
+      username:
+        value: "default"
+    # host: env-specific, defined in values/{env}/values-plain.yaml
+    port: "6379"
+    tls: false
+
+  # LDAP — Nubus LDAP (ldapsearch_nextcloud bind user)
+  ldap:
+    base: "dc=swp-ldap,dc=internal"
+    # host: env-specific — pattern: ldap://nubus-{env}-ldap-server-primary.gentian-{env}.svc.cluster.local
+    # defined in values/{env}/values-plain.yaml
+    dn: "uid=ldapsearch_nextcloud,cn=users,dc=swp-ldap,dc=internal"
+    adminGroupName: "managed-by-attribute-FileshareAdmin"
+
+  # Object store — MinIO
+  objectstore:
+    auth:
+      accessKey:
+        value: "nextcloud_user"
+    bucket: "nextcloud"
+    # host: env-specific — pattern: minio-{env}.gentian-infra-{env}.svc.cluster.local
+    # defined in values/{env}/values-plain.yaml
+    region: "eu-west-1"
+    storageClass: "STANDARD"
+    port: "9000"
+    pathStyle: "true"
+    useSSL: "false"
+
+  # OIDC — Keycloak opendesk realm
+  oidc:
+    username:
+      value: "opendesk-nextcloud"
+
+  # OpenDesk integration — central navigation portal
+  opendeskIntegration:
+    centralNavigation:
+      jsonUrl: "http://ums-portal-server/portal/navigation.json"
+      username:
+        value: "opendesk_username"
+    oxAppSuite:
+      enabled: false
+
+  # SMTP — Postfix relay (opendesk pattern: postfix.{namespace}.svc.cluster.local:587)
+  # host and port are env-specific — defined in values/{env}/values-plain.yaml
+  smtp:
+    auth:
+      enabled: true
+      username:
+        value: "opendesk-system@desk.gentian.org"
+    # host: env-specific — postfix.gentian-{env}.svc.cluster.local
+    port: 587
+    fromAddress: "noreply"
+    mailDomain: "desk.gentian.org"
+    security: "tls"
+    skipVerifyPeer: true
+
+  # Antivirus — disabled until ClamAV ICAP is deployed in the cluster
+  antivirus:
+    enabled: false
+
+  # Notify-push URL (AIO service name)
+  feature:
+    apps:
+      notifyPush:
+        enabled: true
+
+  # Serverinfo / metrics
+  serverinfo: {}
+
+  # Sharing defaults (conservative — no public links)
+  sharing:
+    allowLinks: false
+    allowMailNotification: false
+    allowPublicUpload: false
+    enforceLinksPassword: false
+    enforcePasswordProtection: false
+    defaultInternalExpireEnabled: false
+    defaultInternalExpireEnforced: false
+    defaultInternalExpireDays: "30"
+    defaultExternalExpireEnabled: false
+    defaultExternalExpireEnforced: false
+    defaultExternalExpireDays: "30"
+    sendPasswordMail: "false"
+
+  # Quota
+  quota:
+    default: "10 GB"
+    retentionObligation:
+      trashbin: "auto"
+      versions: "auto"
+
+  # Internationalisation
+  i18n:
+    language:
+      default: "de"
+    locale:
+      default: "de"
+
+  # Trusted proxies (allow ingress-controller)
+  trustedProxies: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
+  # Forbidden filename characters
+  forbiddenChars: "* \" | ? ;"

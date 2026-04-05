@@ -1,0 +1,24 @@
+# External Secrets Operator — Helm values
+# Chart: external-secrets/external-secrets v0.4.1 (app v2.0.1)
+
+# Minimal install — CRDs managed by the chart.
+installCRDs: true
+
+# Single replica is fine for dev.
+replicaCount: 1
+
+# Resource limits (light footprint).
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Webhook and cert-controller are required for ESO v0.9+.
+webhook:
+  replicaCount: 1
+
+certController:
+  replicaCount: 1

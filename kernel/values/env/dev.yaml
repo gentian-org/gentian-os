@@ -1,0 +1,35 @@
+# =============================================================================
+# Cluster-environment defaults for 'dev'
+# =============================================================================
+#
+# Applied as the FIRST Helm values layer for all ApplicationSets targeting
+# this environment. Merge order (later wins):
+#
+#   1. values/env/{env}.yaml          ← this file: cluster-env-wide defaults
+#   2. apps/{app}/values/_base.yaml   ← app-level defaults (same across all envs)
+#   3. apps/{app}/values/{env}/values.yaml  ← env-specific overrides and secrets
+#
+# Only place settings here that are:
+#   - Uniform across ALL apps in this cluster (not app-specific)
+#   - Different between environments (otherwise put in _base.yaml)
+#
+# When adding 'prod', create values/env/prod.yaml with overrides like:
+#   replicaCount: 3
+#   storageClass: longhorn
+# =============================================================================
+
+# Default replica count for dev (single-replica, no HA)
+# Override per-app in _base.yaml if the chart uses a different key
+replicaCount: 1
+
+# Storage class used for all PVCs in this cluster.
+# Bitnami charts read global.storageClass and apply it to every PersistentVolumeClaim.
+# Non-Bitnami charts that don't honour global.storageClass still have this
+# inherited via Helm's global merge semantics.
+# In prod, override with: global.storageClass: longhorn (or similar)
+global:
+  storageClass: nfs-csi
+  # Pull secret for registry.opencode.de — injected by ESO on startup.
+  # Bitnami (and most Helm) charts merge global.imagePullSecrets into every pod spec.
+  imagePullSecrets:
+    - registry-credentials

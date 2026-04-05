@@ -1,0 +1,113 @@
+# =============================================================================
+# Nextcloud (AIO) — app-level defaults (all environments)
+# =============================================================================
+# Credentials NOT in this file:
+#   aio.configuration.database.auth.password.value        → Tofu set_sensitive (nextcloud_user_password)
+#   aio.configuration.statusPhp.password.value            → Tofu set_sensitive (status_password)
+#   exporter.configuration.token.value                    → Tofu set_sensitive (metrics_token)
+#
+# Redis cache credentials (aio.configuration.cache.auth.{username,password}):
+#   → ExternalSecret nextcloud-redis-cache (apps/nextcloud/secrets/dev/externalsecret.yaml)
+#   → Vault key: gentian/dev/redis.auth_password (same source as redis-credentials)
+#   → Reloader watches this secret and restarts the Deployment on ESO refresh
+# =============================================================================
+
+global:
+  domain: desk.gentian.org
+  hosts:
+    nextcloud: files
+
+aio:
+  # Reloader: restart this Deployment whenever any directly referenced Secret
+  # changes. The Redis password is injected from nextcloud-dev-aio-cache; if
+  # that secret is updated (e.g. by a Tofu re-run after Vault rotation), the
+  # pod restarts and picks up the new value automatically.
+  podAnnotations:
+    reloader.stakater.com/auto: "true"
+
+  image:
+    tag: "2.12.2"
+
+  configuration:
+    # Database — PostgreSQL
+    database:
+      type: "pgsql"
+      # host: env-specific, defined in values/{env}/values-plain.yaml
+      port: "5432"
+      name: "nextcloud"
+      auth:
+        username:
+          value: "nextcloud_user"
+
+    # Cache — Redis (DB index 4 for AIO, 5 for PHP)
+    cache:
+      auth:
+        enabled: true
+        username:
+          # Read the Redis username from ESO-managed secret (nextcloud-redis-cache)
+          # so Reloader can detect changes when ESO refreshes from Vault.
+          secret:
+            name: nextcloud-redis-cache
+            key: username
+        password:
+          # Read Redis password from ESO-managed secret — same Vault key as
+          # redis-credentials (gentian/dev/redis.auth_password). Reloader watches
+          # this secret and restarts the pod when ESO refreshes it.
+          secret:
+            name: nextcloud-redis-cache
+            key: password
+      # host: env-specific, defined in values/{env}/values-plain.yaml
+      port: "6379"
+      tls: false
+
+    # Trusted proxies — in-cluster CIDR ranges
+    trustedProxy: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
+    # Status PHP endpoint password (disabled when NC clients/notify-push is enabled)
+    statusPhp:
+      password:
+        enabled: true
+
+  # Ingress
+  ingress:
+    enabled: true
+    ingressClassName: "nginx"
+    host: "files.desk.gentian.org"
+    tls:
+      secretName: "opendesk-nextcloud-tls"
+
+  debug:
+    loglevel: "2"
+
+  # Sync Redis password on every pod start.
+  # The Nextcloud entrypoint only writes the Redis password to config.php during
+  # the initial install. On subsequent restarts it reuses the PVC-persisted
+  # config.php unchanged, causing WRONGPASS if the password rotated since then.
+  # This postStart hook ensures config.php always reflects the current value of
+  # FS_ENV_REDIS_PASSWORD (injected from the nextcloud-redis-cache ESO secret).
+  lifecycleHooks:
+    postStart:
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - |
+            CONFIG=/var/www/html/config/config.php
+            if [ -f "$CONFIG" ] && [ -n "$FS_ENV_REDIS_PASSWORD" ]; then
+              sed -i "s/'password' => '[^']*'/'password' => '$FS_ENV_REDIS_PASSWORD'/" "$CONFIG"
+            fi
+
+  # Fix: image has FS_ENV_PHP_REDIS_FULL_URI="" baked in, so the entrypoint
+  # script sees it as set (empty string ≠ false) and skips building the Redis
+  # session URI → PHP sessions silently drop → OIDC state mismatch on login.
+  # Explicitly compose the URI here using k8s $(VAR) substitution so it
+  # overrides the image default before PHP-FPM starts.
+  extraEnvVars:
+    - name: FS_ENV_PHP_REDIS_FULL_URI
+      value: "tcp://$(FS_ENV_REDIS_HOST):$(FS_ENV_REDIS_PORT)?database=$(FS_ENV_PHP_REDIS_DBINDEX)&auth[pass]=$(FS_ENV_REDIS_PASSWORD)&auth[user]=$(FS_ENV_REDIS_USER)"
+
+# Metrics exporter
+exporter:
+  enabled: true
+  configuration:
+    # server: env-specific (http://nextcloud-{env}-aio), defined in values/{env}/values-plain.yaml

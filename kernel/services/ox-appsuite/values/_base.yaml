@@ -1,0 +1,183 @@
+# =============================================================================
+# OX App Suite — app-level defaults (all environments)
+# =============================================================================
+# Layer 2 of the values hierarchy (merged after values/env/{env}.yaml).
+# Secrets are injected via set_sensitive / templatefile() in
+# tofu/tenant/infra-workspaces/ox.tf — nothing secret lives here.
+#
+# Charts deployed from this values hierarchy:
+#   appsuite-public-sector v2.26.32  — OX App Suite main
+#   opendesk-open-xchange-bootstrap v4.0.2 — SOAP context setup job
+#   ox-connector v0.34.0            — Nubus ↔ OX LDAP schema + user sync
+# =============================================================================
+
+# ── Hostname + MariaDB connection ────────────────────────────────────────────
+# global.mysql is propagated to all subcharts (Helm global values convention).
+# OX connects as root and manages the 'configdb' schema itself.
+# Secrets are injected via templatefile() in ox.tf — placeholders here.
+global:
+  hostname: "oxapps.desk.gentian.org"
+  # Crypto keys injected via templatefile() in ox.tf — placeholders only
+  appsuite:
+    cookieHashSalt: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
+    shareCryptKey: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
+    sessiondEncryptionKey: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
+  mysql:
+    host: "opendesk-mariadb-dev.gentian-infra-dev.svc.cluster.local"
+    database: "configdb"
+    readHost: "opendesk-mariadb-dev.gentian-infra-dev.svc.cluster.local"
+    readDatabase: "configdb"
+    port: 3306
+    auth:
+      user: "root"
+      password: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
+      rootPassword: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
+      readUser: "root"
+      readPassword: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
+
+# ── Appsuite chart configuration ──────────────────────────────────────────────
+# The outer chart is appsuite-public-sector. The alias "appsuite" maps to
+# appsuite-public-sector-base. Sub-charts within it use their chart name as key
+# (e.g. "core-mw:", "ingress:", etc.).
+appsuite:
+  # Disable sub-charts we don't use
+  appsuite-toolkit:
+    enabled: false
+  switchboard:
+    enabled: false
+  istio:
+    enabled: false
+  # Optional components not used in this deployment — must be declared to avoid
+  # nil-pointer errors in ui-middleware-configmap.yaml and similar templates
+  office-web:
+    enabled: false
+  office-user-guide:
+    enabled: false
+  plugins-ui:
+    enabled: false
+  cloud-plugins-ui:
+    enabled: false
+  drive-client-windows-ox:
+    enabled: false
+  core-drive-help:
+    enabled: false
+
+  # Ingress
+  ingress:
+    enabled: true
+    ingressClassName: "nginx"
+    tls:
+      enabled: true
+      existingSecret: "opendesk-ox-tls"
+    appsuite:
+      hosts:
+        - "oxapps.desk.gentian.org"
+    dav:
+      enabled: false
+
+  # ── OX core middleware (core-mw subchart) ─────────────────────────────────
+  # Values are passed to the core-mw subchart via its chart name key "core-mw".
+  # Credentials without "PLACEHOLDER" are non-sensitive; those with placeholder
+  # are overridden by values-sensitive.yaml.tftpl rendered by Tofu templatefile().
+  core-mw:
+    masterAdmin: "admin"
+    # masterPassword, hzGroupPassword, basicAuthPassword, jolokiaPassword injected
+    # by values-sensitive.yaml.tftpl — omitted here to avoid plaintext secrets
+    hzGroupName: "hzgroup"
+    basicAuthLogin: "oxlogin"
+    jolokiaLogin: "jolokia"
+    serverName: "server"
+
+    # Package-level feature flags (individual OSGi bundles).
+    # Feature-group flags (documents, guard, etc.) default to disabled in chart.
+    packages:
+      status:
+        open-xchange-oidc: "enabled"
+        open-xchange-authentication-ldap: "disabled"
+        open-xchange-filestore-s3: "enabled"
+        open-xchange-admin-soap-usercopy: "disabled"
+        open-xchange-admin-user-copy: "disabled"
+
+    # OX system properties (stored in ConfigMap — non-secret)
+    properties:
+      com.openexchange.hostname: "oxapps.desk.gentian.org"
+      com.openexchange.share.guestHostname: "oxapps.desk.gentian.org"
+      com.openexchange.UIWebPath: "/appsuite/"
+      com.openexchange.showAdmin: "false"
+      # OIDC configuration — client secret injected via secretProperties in tftpl
+      com.openexchange.oidc.enabled: "true"
+      com.openexchange.oidc.autologinCookieMode: "ox_direct"
+      com.openexchange.oidc.backchannelLogoutEnabled: "true"
+      com.openexchange.oidc.clientId: "opendesk-oxappsuite"
+      com.openexchange.oidc.contextLookupClaim: "context"
+      com.openexchange.oidc.contextLookupNamePart: "full"
+      com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/auth"
+      com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/opendesk"
+      com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
+      com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
+      com.openexchange.oidc.opTokenEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/token"
+      com.openexchange.oidc.rpRedirectURIAuth: "https://oxapps.desk.gentian.org/appsuite/api/oidc/auth"
+      com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
+      com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://oxapps.desk.gentian.org/appsuite/api/oidc/logout"
+      com.openexchange.oidc.ssoLogout: "true"
+      com.openexchange.oidc.startDefaultBackend: "true"
+      com.openexchange.oidc.userLookupClaim: "opendesk_username"
+      com.openexchange.oidc.userLookupNamePart: "full"
+      com.openexchange.oidc.enablePasswordGrant: "true"
+      com.openexchange.oidc.passwordGrantUserNamePart: "local-part"
+      # OAuth provider
+      com.openexchange.oauth.provider.enabled: "true"
+      com.openexchange.oauth.provider.allowedIssuer: "https://id.desk.gentian.org/realms/opendesk"
+      com.openexchange.oauth.provider.contextLookupClaim: "context"
+      com.openexchange.oauth.provider.contextLookupNamePart: "full"
+      com.openexchange.oauth.provider.jwt.jwksUri: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
+      com.openexchange.oauth.provider.mode: "expect_jwt"
+      com.openexchange.oauth.provider.userLookupNamePart: "full"
+      com.openexchange.oauth.provider.userLookupClaim: "opendesk_username"
+      # Mail — auth and server sources (server hostnames are env-specific, set in dev/values-plain.yaml)
+      com.openexchange.mail.authType: "xoauth2"
+      com.openexchange.mail.loginSource: "name"
+      com.openexchange.mail.mailServerSource: "global"
+      com.openexchange.mail.transport.authType: "xoauth2"
+      com.openexchange.mail.transportServerSource: "global"
+      # Mail filter (sieve) — XOAUTH2, server hostname set per-env
+      com.openexchange.mail.filter.loginType: "global"
+      com.openexchange.mail.filter.credentialSource: "mail"
+      com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
+      # IMAP attachment marker (dovecot extension)
+      com.openexchange.imap.attachmentMarker.enabled: "true"
+      # OX Connector requirements
+      com.openexchange.user.enforceUniqueDisplayName: "false"
+      com.openexchange.folderstorage.database.preferDisplayName: "false"
+
+    # Per-file property overrides (non-sensitive entries only).
+    # Secret entries (secretKey, bindDNPassword) are injected by tftpl.
+    propertiesFiles:
+      /opt/open-xchange/etc/filestore-s3.properties:
+        com.openexchange.filestore.s3.ox-filestore-s3.endpoint: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000"
+        com.openexchange.filestore.s3.ox-filestore-s3.bucketName: "openxchange"
+        com.openexchange.filestore.s3.ox-filestore-s3.accessKey: "openxchange_user"
+        com.openexchange.filestore.s3.ox-filestore-s3.region: "us-east-1"
+        # Path-style needed for MinIO
+        com.openexchange.filestore.s3.ox-filestore-s3.pathStyleAccess: "true"
+      /opt/open-xchange/etc/ldapauth.properties:
+        java.naming.provider.url: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389/dc=swp-ldap,dc=internal"
+        bindDN: "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal"
+        bindOnly: "false"
+      /opt/open-xchange/etc/AdminDaemon.properties:
+        MASTER_ACCOUNT_OVERRIDE: "true"
+      /opt/open-xchange/etc/AdminUser.properties:
+        USERNAME_CHANGEABLE: "true"
+
+    # Redis session store — use the existing gentian-infra-dev Redis instance.
+    # Password injected by values-sensitive.yaml.tftpl.
+    redis:
+      mode: standalone
+      hosts:
+        - "redis-dev-master.gentian-infra-dev.svc.cluster.local:6379"
+
+# ── OX Bootstrap sub-chart configuration ─────────────────────────────────────
+# (set in opendesk-open-xchange-bootstrap helm_release, not here)
+
+# ── OX Connector sub-chart configuration ──────────────────────────────────────
+# (set in ox-connector helm_release, not here)

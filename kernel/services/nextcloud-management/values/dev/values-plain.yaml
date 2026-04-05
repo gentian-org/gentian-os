@@ -1,0 +1,32 @@
+# =============================================================================
+# Nextcloud Management dev — environment-specific non-secret overrides
+# =============================================================================
+# Secrets injected via set_sensitive in tofu/tenant/infra-workspaces/nextcloud.tf.
+# =============================================================================
+
+# env-specific service endpoints
+configuration:
+  database:
+    host: "opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local"
+  cache:
+    host: "redis-dev-master.gentian-infra-dev.svc.cluster.local"
+  ldap:
+    # NOTE: the chart template prepends ldap:// — do NOT include it here
+    host: "nubus-dev-ldap-server-primary.gentian-dev.svc.cluster.local"
+  objectstore:
+    host: "minio-dev.gentian-infra-dev.svc.cluster.local"
+  smtp:
+    # Postfix relay service — deploy apps/postfix before this takes effect
+    host: "postfix-dev.gentian-dev.svc.cluster.local"
+    # Dev Postfix uses port 25 without TLS (smtpdTLSSecurityLevel: "none")
+    # In prod, override to port: 587 / security: "tls" to match _base.yaml
+    port: 25
+    security: "none"
+
+resources:
+  limits:
+    cpu: "2"
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi

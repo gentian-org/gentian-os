@@ -1,0 +1,36 @@
+# =============================================================================
+# PostgreSQL dev — non-secret overrides
+# =============================================================================
+# All secret fields (postgres.password, job.users[*].password) are injected
+# via set_sensitive in tofu/tenant/infra-workspaces/postgresql.tf.
+# =============================================================================
+
+persistence:
+  size: 1Gi
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# User definitions without passwords — passwords injected via set_sensitive.
+# Indexes must match the set_sensitive calls in postgresql.tf.
+job:
+  users:
+    - username: keycloak_user
+      connectionLimit: 100
+    - username: keycloak_extensions_user
+      connectionLimit: 100
+    - username: selfservice_user
+      connectionLimit: 10
+    - username: authsession_user
+      connectionLimit: 10
+    - username: guardianmanagementapi_user
+      connectionLimit: 100
+    - username: notificationsapi_user
+      connectionLimit: 100
+    - username: nextcloud_user
+      connectionLimit: 100

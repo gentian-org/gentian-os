@@ -1,0 +1,61 @@
+# =============================================================================
+# OX App Suite — sensitive values template (rendered by Tofu templatefile())
+# =============================================================================
+# ALL values in this file are secrets from OpenBao.
+# Template variables are substituted by Tofu; do NOT commit rendered output.
+#
+# Mapping of template variables → OpenBao paths:
+#   ${admin_password}                  → gentian/$env/ox.admin_password
+#   ${hz_group_password}               → gentian/$env/ox.hz_group_password
+#   ${basic_auth_password}             → gentian/$env/ox.basic_auth_password
+#   ${jolokia_password}                → gentian/$env/ox.jolokia_password
+#   ${cookie_hash_salt}                → gentian/$env/ox.cookie_hash_salt
+#   ${share_crypt_key}                 → gentian/$env/ox.share_crypt_key
+#   ${sessiond_encryption_key}         → gentian/$env/ox.sessiond_encryption_key
+#   ${oidc_client_secret}              → gentian/$env/ox.oidc_client_secret
+#   ${mariadb_root_password}           → gentian/$env/mariadb.root_password
+#   ${minio_ox_password}               → gentian/$env/minio.openxchange_password
+#   ${ldap_ox_password}                → gentian/$env/nubus.ldapsearch_ox
+#   ${redis_auth_password}             → gentian/$env/redis.auth_password
+# =============================================================================
+
+# Secrets propagated globally so sub-charts (bootstrap, connector) can read them
+global:
+  appsuite:
+    cookieHashSalt: "${cookie_hash_salt}"
+    shareCryptKey: "${share_crypt_key}"
+    sessiondEncryptionKey: "${sessiond_encryption_key}"
+  # MariaDB root password — under global.mysql to match opendesk convention
+  mysql:
+    auth:
+      password: "${mariadb_root_password}"
+      rootPassword: "${mariadb_root_password}"
+      readPassword: "${mariadb_root_password}"
+
+# Values are passed to core-mw subchart via appsuite.core-mw (not appsuite.core)
+appsuite:
+  core-mw:
+    masterPassword: "${admin_password}"
+    hzGroupPassword: "${hz_group_password}"
+    basicAuthPassword: "${basic_auth_password}"
+    jolokiaPassword: "${jolokia_password}"
+
+    # OIDC client secret (stored as secretProperties so it goes into a K8s Secret)
+    secretProperties:
+      com.openexchange.oidc.clientSecret: "${oidc_client_secret}"
+      # Crypto salts/keys
+      com.openexchange.cookie.hash.salt: "${cookie_hash_salt}"
+      com.openexchange.sessiond.encryptionKey: "${sessiond_encryption_key}"
+      com.openexchange.share.cryptKey: "${share_crypt_key}"
+
+    # Per-file property overrides (secrets only — non-secrets are in _base.yaml)
+    propertiesFiles:
+      /opt/open-xchange/etc/filestore-s3.properties:
+        com.openexchange.filestore.s3.ox-filestore-s3.secretKey: "${minio_ox_password}"
+      /opt/open-xchange/etc/ldapauth.properties:
+        bindDNPassword: "${ldap_ox_password}"
+
+    # Redis session store password
+    redis:
+      auth:
+        password: "${redis_auth_password}"

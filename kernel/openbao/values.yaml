@@ -1,0 +1,78 @@
+# OpenBao Helm values
+# Chart: https://openbao.github.io/openbao-helm
+# Single-node Raft for dev; scale to ha.replicas=3 for production.
+
+server:
+  # Use Raft integrated storage (no external Consul needed)
+  ha:
+    enabled: false   # set to true + replicas: 3 for production HA
+
+  dataStorage:
+    enabled: true
+    storageClass: nfs-csi
+    size: 10Gi
+    accessMode: ReadWriteOnce
+
+  # Liveness / readiness — OpenBao reports not-ready when sealed, which is correct
+  readinessProbe:
+    enabled: true
+    path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+
+  # Expose the API + UI on a fixed NodePort so the host and any LAN machine
+  # can reach OpenBao without a port-forward session.
+  # API:  http://<node-ip>:30820   (bao CLI, tofu, seed script)
+  # UI:   http://<node-ip>:30820/ui
+  service:
+    type: NodePort
+    nodePort: 30820   # API / UI (8200)
+
+  ui:
+    enabled: true
+
+  # Override the default standalone config to add the transit auto-unseal stanza.
+  # The token is injected at runtime from the openbao-transit-token k8s Secret
+  # (created by scripts/init-openbao-transit.sh) using $AUTOUNSEAL_TOKEN env var.
+  # OpenBao calls os.ExpandEnv() on the raw config, so $VAR_NAME syntax works.
+  #
+  # ⚠ MIGRATION NOTE (existing clusters with Shamir seal):
+  #   1. Apply argocd/bootstrap/openbao-transit-application.yaml and wait for pod.
+  #   2. Run scripts/init-openbao-transit.sh  (creates k8s Secret openbao-transit-token).
+  #   3. Let ArgoCD reconcile this values.yaml (or force: `argocd app sync openbao`).
+  #   4. Delete the primary pod to trigger restart with new config:
+  #        kubectl delete pod -n openbao openbao-0
+  #   5. Unseal once with the Shamir key + migration flag (this is the LAST manual unseal):
+  #        kubectl exec -n openbao openbao-0 -- bao operator unseal -migrate <shamir-key>
+  #   6. Verify: bao status should show  Seal Type: transit  /  Sealed: false
+  standalone:
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable     = 1
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "file" {
+        path = "/openbao/data"
+      }
+
+      # Transit auto-unseal — primary is unsealed by openbao-transit.
+      # Token is read from the AUTOUNSEAL_TOKEN environment variable which is
+      # populated from the openbao-transit-token Kubernetes Secret.
+      seal "transit" {
+        address    = "http://openbao-transit.openbao.svc.cluster.local:8200"
+        key_name   = "autounseal"
+        mount_path = "transit/"
+      }
+
+  # Injects the transit autounseal token from the openbao-transit-token k8s
+  # Secret.  The Secret is created by scripts/init-openbao-transit.sh and is
+  # NOT committed to Git.
+  extraSecretEnvironmentVars:
+    - envName: VAULT_TRANSIT_SEAL_TOKEN
+      secretName: openbao-transit-token
+      secretKey: token
+
+# Injector is not needed — ESO handles secret syncing
+injector:
+  enabled: false

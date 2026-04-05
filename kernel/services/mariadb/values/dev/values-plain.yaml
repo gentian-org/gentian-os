@@ -1,0 +1,23 @@
+# =============================================================================
+# MariaDB dev — non-secret overrides
+# =============================================================================
+# All secret fields (job.users[*].password) are injected via set_sensitive
+# in tofu/tenant/infra-workspaces/mariadb.tf.
+# =============================================================================
+
+persistence:
+  size: 1Gi
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 2Gi
+  requests:
+    cpu: 100m
+    memory: 384Mi
+
+# User definitions without passwords — passwords injected via set_sensitive.
+job:
+  users:
+    - username: openxchange_user
+      connectionLimit: 100

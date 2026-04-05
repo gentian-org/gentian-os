@@ -1,0 +1,49 @@
+---
+# Deploys the OpenBao transit seal instance.
+#
+# This lightweight OpenBao runs NO application secrets — it provides only the
+# transit/keys/autounseal key that auto-unseals the primary openbao instance
+# after any pod restart (node reboot, OOM kill, rolling upgrade).
+#
+# Safety guards (identical to the primary openbao Application):
+#   prune: false    — ArgoCD never auto-deletes the StatefulSet or PVC
+#   finalizers: []  — removing this Application does NOT cascade-delete transit
+#
+# Dependency ordering: this Application must be healthy (transit unsealed and
+# k8s Secret openbao-transit-token present) before the primary openbao pod
+# restarts with the new transit seal configuration.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao-transit
+  namespace: argocd
+  finalizers: []   # intentionally empty — never cascade-delete seal engine
+spec:
+  project: gentian
+  sources:
+  # Source 1: OpenBao Helm chart (same chart/version as primary)
+  - repoURL: https://openbao.github.io/openbao-helm
+    chart: openbao
+    targetRevision: "0.25.5"
+    helm:
+      releaseName: openbao-transit
+      valueFiles:
+      - $values/openbao/transit-values.yaml
+  # Source 2: Values file from Git (referenced as $values by Source 1)
+  - repoURL: https://github.com/gentian-org/server
+    targetRevision: develop
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated:
+      prune: false      # never auto-delete — PVC holds the autounseal key
+      selfHeal: true    # drift in transit-values.yaml is reconciled automatically
+    syncOptions:
+    - CreateNamespace=true
+  ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jsonPointers:
+    - /spec/volumeClaimTemplates   # immutable after creation; Helm drift is expected and harmless

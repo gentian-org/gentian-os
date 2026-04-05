@@ -1,0 +1,25 @@
+# =============================================================================
+# Cluster-environment defaults for 'prod'
+# =============================================================================
+# Mirror of values/env/dev.yaml with production overrides.
+# Applied as the FIRST Helm values layer for all ApplicationSets targeting
+# this environment. Merge order (later wins):
+#
+#   1. values/env/{env}.yaml           ← this file
+#   2. apps/{app}/values/_base.yaml    ← app-level defaults (same across envs)
+#   3. apps/{app}/values/{env}/values.yaml  ← env-specific sizing + existingSecret refs
+#
+# Production differences from dev:
+#   - HA replication counts (replicaCount: 3 where supported)
+#   - Larger storage PVC sizes (in per-app values/prod/)
+#   - Longhorn or Ceph storage class instead of nfs-csi
+#   - Consider: separate registry-credentials secret per env
+# =============================================================================
+
+# Default replica count for prod (HA — override per-app as needed)
+replicaCount: 2
+
+global:
+  storageClass: longhorn  # TODO: adjust to actual prod storage class
+  imagePullSecrets:
+    - registry-credentials

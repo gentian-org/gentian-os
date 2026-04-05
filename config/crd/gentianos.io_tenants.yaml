@@ -1,0 +1,317 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: tenants.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: Tenant
+    listKind: TenantList
+    plural: tenants
+    shortNames:
+    - tenant
+    - tenants
+    singular: tenant
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.domain
+      name: Domain
+      type: string
+    - jsonPath: .spec.apps
+      name: Apps
+      type: integer
+    - jsonPath: .spec.deletionPolicy
+      name: Deletion Policy
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Tenant is the Schema for the tenants API.
+
+          Tenant is cluster-scoped and represents a customer organisation. Creating a
+          Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
+          creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
+          ArgoCD Application (or Tofu Workspace) CRs for each requested app.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TenantSpec defines the desired state of a Tenant.
+            properties:
+              adminEmail:
+                description: AdminEmail is the contact address for platform notifications.
+                pattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+                type: string
+              apps:
+                description: Apps lists the applications to install for this tenant.
+                items:
+                  description: TenantApp specifies a desired application installation
+                    for a tenant.
+                  properties:
+                    config:
+                      description: |-
+                        Config provides per-tenant overrides for this app installation.
+                        Values here are merged over the AppProfile's extraValues.
+                      properties:
+                        replicas:
+                          description: Replicas overrides the default replica count.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    profile:
+                      description: Profile is the name of the AppProfile CR to install.
+                      minLength: 1
+                      type: string
+                  required:
+                  - profile
+                  type: object
+                type: array
+              deletionPolicy:
+                default: Retain
+                description: |-
+                  DeletionPolicy controls behaviour when the Tenant CR is deleted.
+                  Defaults to Retain.
+                enum:
+                - Retain
+                - Delete
+                type: string
+              displayName:
+                description: DisplayName is a human-readable name for this tenant/organisation.
+                maxLength: 256
+                minLength: 1
+                type: string
+              domain:
+                description: |-
+                  Domain is the primary domain name for this tenant.
+                  Used for ingress routing and mail configuration.
+                pattern: ^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?$
+                type: string
+              isolation:
+                description: Isolation describes the workload isolation boundaries
+                  for this tenant.
+                properties:
+                  databasePrefix:
+                    description: |-
+                      DatabasePrefix is the prefix for all database names belonging to this tenant.
+                      Defaults to "{tenant-name}_".
+                    pattern: ^[a-z0-9_]*$
+                    type: string
+                  keycloakRealm:
+                    description: |-
+                      KeycloakRealm is the Keycloak realm name for this tenant.
+                      Defaults to the tenant name.
+                    type: string
+                  ldapOU:
+                    description: |-
+                      LDAPOu is the LDAP OU path for this tenant's users and groups.
+                      Defaults to "ou={tenant-name}" under the root DN.
+                    type: string
+                  mode:
+                    default: namespace
+                    description: Mode selects the isolation strategy. Defaults to
+                      namespace.
+                    enum:
+                    - namespace
+                    - vcluster
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace overrides the target namespace name.
+                      Defaults to "tenant-{tenant-name}" when not set.
+                    pattern: ^[a-z0-9][a-z0-9\-]*[a-z0-9]$
+                    type: string
+                  s3Prefix:
+                    description: |-
+                      S3Prefix is the prefix for all S3 bucket names belonging to this tenant.
+                      Defaults to "{tenant-name}-".
+                    pattern: ^[a-z0-9\-]*$
+                    type: string
+                type: object
+              mail:
+                description: Mail configures the mail mode and settings for this tenant.
+                properties:
+                  domain:
+                    description: Domain is the mail domain. Defaults to spec.domain.
+                    type: string
+                  mode:
+                    default: selfhosted
+                    description: Mode selects the mail delivery strategy. Defaults
+                      to selfhosted.
+                    enum:
+                    - selfhosted
+                    - external
+                    - transport-only
+                    - disabled
+                    type: string
+                  quotaPerUser:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: QuotaPerUser is the per-user mailbox storage quota.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  rateLimit:
+                    description: RateLimit is the outbound email rate limit (e.g.,
+                      "100/h").
+                    pattern: ^[0-9]+/(s|m|h|d)$
+                    type: string
+                type: object
+              quotas:
+                description: Quotas sets resource limits for this tenant.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the total CPU request limit across all tenant
+                      pods.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  maxApps:
+                    description: MaxApps is the maximum number of apps this tenant
+                      may install.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the total memory request limit across all
+                      tenant pods.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the total storage quota (PVCs + S3 buckets).
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+            required:
+            - adminEmail
+            - displayName
+            - domain
+            type: object
+          status:
+            description: TenantStatus holds the observed state of a Tenant.
+            properties:
+              conditions:
+                description: |-
+                  Conditions provides detailed status conditions using the standard
+                  metav1.Condition type.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              namespace:
+                description: Namespace is the resolved tenant namespace name.
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the last processed generation of
+                  the spec.
+                format: int64
+                type: integer
+              phase:
+                description: Phase summarises the overall lifecycle state.
+                enum:
+                - Provisioning
+                - Ready
+                - Degraded
+                - Deleting
+                type: string
+              provisionedApps:
+                description: ProvisionedApps lists apps that have been successfully
+                  provisioned.
+                items:
+                  type: string
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
