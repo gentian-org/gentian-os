@@ -1,0 +1,316 @@
+/*
+Copyright 2026 The Gentian Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller_test
+
+import (
+"context"
+"encoding/json"
+"testing"
+"time"
+
+metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+"k8s.io/apimachinery/pkg/types"
+
+gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+// newAppProfile builds an AppProfile with argocd DeploymentMethod and optional ValueMapping.
+func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.AppProfile {
+return &gentianov1alpha1.AppProfile{
+ObjectMeta: metav1.ObjectMeta{Name: name},
+Spec: gentianov1alpha1.AppProfileSpec{
+DisplayName:      name,
+DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+Chart: gentianov1alpha1.ChartRef{
+Repository: "oci://charts.example.com",
+Name:       name,
+Version:    "1.2.3",
+},
+ValueMapping: vm,
+},
+}
+}
+
+// TestApps_NoApps verifies that a Tenant with no apps skips provisioning and
+// sets AppsReady=True with reason NoAppsConfigured.
+func TestApps_NoApps(t *testing.T) {
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "noapps"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "No Apps Co",
+Domain:      "noapps.example.com",
+AdminEmail:  "admin@noapps.example.com",
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+updated := &gentianov1alpha1.Tenant{}
+waitFor(t, 10*time.Second, func() bool {
+_ = testClient.Get(context.Background(), types.NamespacedName{Name: "noapps"}, updated)
+return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
+})
+
+var cond *metav1.Condition
+for i := range updated.Status.Conditions {
+if updated.Status.Conditions[i].Type == "AppsReady" {
+cond = &updated.Status.Conditions[i]
+break
+}
+}
+if cond == nil {
+t.Fatal("expected AppsReady condition")
+}
+if cond.Status != metav1.ConditionTrue {
+t.Errorf("expected AppsReady=True, got %v", cond.Status)
+}
+if cond.Reason != "NoAppsConfigured" {
+t.Errorf("expected reason NoAppsConfigured, got %q", cond.Reason)
+}
+}
+
+// TestApps_CreatesApplicationCR verifies that a Tenant with a single app creates
+// one ArgoCD Application CR in the argocd namespace with the correct chart source,
+// destination namespace, and labels.
+func TestApps_CreatesApplicationCR(t *testing.T) {
+profile := newAppProfile("my-app", nil)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "single-app"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "Single App Co",
+Domain:      "single-app.example.com",
+AdminEmail:  "admin@single-app.example.com",
+Apps:        []gentianov1alpha1.TenantApp{{Profile: "my-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+var appCR *unstructured.Unstructured
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(argocdAppGVK)
+err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "app-single-app-my-app", Namespace: "argocd"}, obj)
+if err == nil {
+appCR = obj
+}
+return err == nil
+})
+
+if appCR.GetLabels()["gentianos.io/tenant"] != "single-app" {
+t.Errorf("expected tenant label 'single-app', got %q", appCR.GetLabels()["gentianos.io/tenant"])
+}
+if appCR.GetLabels()["gentianos.io/app"] != "my-app" {
+t.Errorf("expected app label 'my-app', got %q", appCR.GetLabels()["gentianos.io/app"])
+}
+
+repoURL, _, _ := unstructured.NestedString(appCR.Object, "spec", "source", "repoURL")
+if repoURL != "oci://charts.example.com" {
+t.Errorf("expected repoURL oci://charts.example.com, got %q", repoURL)
+}
+chart, _, _ := unstructured.NestedString(appCR.Object, "spec", "source", "chart")
+if chart != "my-app" {
+t.Errorf("expected chart my-app, got %q", chart)
+}
+version, _, _ := unstructured.NestedString(appCR.Object, "spec", "source", "targetRevision")
+if version != "1.2.3" {
+t.Errorf("expected version 1.2.3, got %q", version)
+}
+
+destNS, _, _ := unstructured.NestedString(appCR.Object, "spec", "destination", "namespace")
+if destNS != "tenant-single-app" {
+t.Errorf("expected destination namespace 'tenant-single-app', got %q", destNS)
+}
+}
+
+// TestApps_MultipleApps verifies that a Tenant with 3 apps creates 3 separate
+// ArgoCD Application CRs in the argocd namespace, one per app.
+func TestApps_MultipleApps(t *testing.T) {
+appNames := []string{"alpha", "beta", "gamma"}
+for _, name := range appNames {
+profile := newAppProfile(name, nil)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile %s: %v", name, err)
+}
+n := name
+t.Cleanup(func() {
+_ = testClient.Delete(context.Background(), &gentianov1alpha1.AppProfile{
+ObjectMeta: metav1.ObjectMeta{Name: n},
+})
+})
+}
+
+var tenantApps []gentianov1alpha1.TenantApp
+for _, name := range appNames {
+tenantApps = append(tenantApps, gentianov1alpha1.TenantApp{Profile: name})
+}
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "multi-app"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "Multi App Co",
+Domain:      "multi-app.example.com",
+AdminEmail:  "admin@multi-app.example.com",
+Apps:        tenantApps,
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+for _, name := range appNames {
+n := name
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(argocdAppGVK)
+return testClient.Get(context.Background(),
+types.NamespacedName{Name: "app-multi-app-" + n, Namespace: "argocd"}, obj) == nil
+})
+}
+}
+
+// TestApps_ValueMappingRendered verifies that OIDC and Database keys from the
+// AppProfile's ValueMapping appear as helm values in the Application CR.
+func TestApps_ValueMappingRendered(t *testing.T) {
+vm := &gentianov1alpha1.ValueMapping{
+OIDC: &gentianov1alpha1.OIDCValueMapping{
+IssuerKey:   "oidc.issuer",
+ClientIDKey: "oidc.clientId",
+},
+Database: &gentianov1alpha1.DatabaseValueMapping{
+NameKey: "db.name",
+HostKey: "db.host",
+},
+}
+profile := newAppProfile("mapped-app", vm)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "vm-tenant"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "VM Tenant",
+Domain:      "vm.example.com",
+AdminEmail:  "admin@vm.example.com",
+Apps:        []gentianov1alpha1.TenantApp{{Profile: "mapped-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+var helmValues string
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(argocdAppGVK)
+if err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "app-vm-tenant-mapped-app", Namespace: "argocd"}, obj); err != nil {
+return false
+}
+v, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "helm", "values")
+helmValues = v
+return v != ""
+})
+
+var parsed map[string]interface{}
+if err := json.Unmarshal([]byte(helmValues), &parsed); err != nil {
+t.Fatalf("helm values not valid JSON: %v - raw: %q", err, helmValues)
+}
+
+oidcMap, ok := parsed["oidc"].(map[string]interface{})
+if !ok {
+t.Fatalf("expected 'oidc' nested map, got %T", parsed["oidc"])
+}
+if oidcMap["issuer"] == nil {
+t.Error("expected oidc.issuer to be set")
+}
+if oidcMap["clientId"] == nil {
+t.Error("expected oidc.clientId to be set")
+}
+
+dbMap, ok := parsed["db"].(map[string]interface{})
+if !ok {
+t.Fatalf("expected 'db' nested map, got %T", parsed["db"])
+}
+if dbMap["name"] == nil {
+t.Error("expected db.name to be set")
+}
+if dbMap["host"] == nil {
+t.Error("expected db.host to be set")
+}
+}
+
+// TestApps_DeleteRemovesApplicationCRs verifies that deleting a Tenant removes
+// all Application CRs from the argocd namespace.
+func TestApps_DeleteRemovesApplicationCRs(t *testing.T) {
+profile := newAppProfile("del-app", nil)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "del-tenant"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName:    "Del Tenant",
+Domain:         "del.example.com",
+AdminEmail:     "admin@del.example.com",
+DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
+Apps:           []gentianov1alpha1.TenantApp{{Profile: "del-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+
+// Wait for Application CR to appear.
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(argocdAppGVK)
+return testClient.Get(context.Background(),
+types.NamespacedName{Name: "app-del-tenant-del-app", Namespace: "argocd"}, obj) == nil
+})
+
+// Delete the tenant.
+if err := testClient.Delete(context.Background(), tenant); err != nil {
+t.Fatalf("delete tenant: %v", err)
+}
+
+// Application CR should be removed.
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(argocdAppGVK)
+err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "app-del-tenant-del-app", Namespace: "argocd"}, obj)
+return err != nil // NotFound means it was deleted
+})
+}

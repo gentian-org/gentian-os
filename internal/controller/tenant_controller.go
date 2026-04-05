@@ -226,7 +226,15 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 11. Update status
+	// 11. App deployment (ArgoCD Application CRs per app)
+	appsResult, err := r.ensureAppDeployment(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 12. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
@@ -257,7 +265,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if storageResult.RequeueAfter > 0 {
 			return storageResult, nil
 		}
-		return cacheResult, nil
+		if cacheResult.RequeueAfter > 0 {
+			return cacheResult, nil
+		}
+		return appsResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -295,6 +306,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up cache resources before removing the namespace.
 	if err := r.deleteCache(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up app deployment resources (always, regardless of DeletionPolicy).
+	if err := r.deleteAppDeployment(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
