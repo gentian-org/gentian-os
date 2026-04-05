@@ -197,11 +197,19 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 9. Update status
+	// 9. Storage (MinIO S3 buckets + Nextcloud groups)
+	storageResult, err := r.ensureStorage(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 10. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
-		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0
+		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 || storageResult.RequeueAfter > 0
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -221,7 +229,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if databaseResult.RequeueAfter > 0 {
 			return databaseResult, nil
 		}
-		return mariadbResult, nil
+		if mariadbResult.RequeueAfter > 0 {
+			return mariadbResult, nil
+		}
+		return storageResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -249,6 +260,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up MariaDB resources before removing the namespace.
 	if err := r.deleteMariaDB(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up storage resources before removing the namespace.
+	if err := r.deleteStorage(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

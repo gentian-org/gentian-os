@@ -1,6 +1,6 @@
 # Gentian OS — Implementation Plan
 
-**Date:** 2026-04-04
+**Date:** 2026-04-05
 **Scope:** Build Gentian OS to match the architecture document — CRDs, thin orchestrator, kernel services, and deployment pipeline.
 **Principle:** Every increment produces a working, testable artifact. The thin orchestrator is the backbone — most other work flows from it.
 
@@ -55,9 +55,9 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 | 2 | Orchestrator skeleton + Tenant namespace reconciler | ✅ Done | `cmd/main.go` (controller-manager entry point), `internal/controller/tenant_controller.go` (namespace + ResourceQuota + LimitRange + NetworkPolicy + status conditions + finalizer + Retain/Delete deletion policy), 8 envtest integration tests. k8s.io/* upgraded to v0.35.0, controller-runtime v0.23.3. |
 | 3 | Identity reconciler (Keycloak realm + OIDC clients) | ✅ Done | `internal/controller/identity_reconciler.go`: `ensureIdentity` creates Keycloak realm + OIDC client Jobs in `platform-kernel` namespace via Keycloak Admin REST API (curl-based Jobs, idempotent check-before-create). Job watch in `SetupWithManager` triggers immediate reconcile on Job completion. `deleteIdentity` creates realm-deletion Job when `deletionPolicy: Delete`. 5 envtest tests. 31 tests total. |
 | 4 | LDAP reconciler (UDM REST API) | ✅ Done | `internal/controller/ldap_reconciler.go`: `ensureLDAP` collects LDAP-requiring apps from AppProfile, creates UDM OU+groups Job then per-app bind account Jobs (sequenced: OU must complete first). `deleteLDAP` creates OU-deletion Job on DeletionPolicy=Delete. Jobs use `curlimages/curl:8.7.1`, credentials from `udm-admin` Secret. `LDAPReady` condition. 6 envtest tests. 37 tests total. |
-| 5 | Database reconciler (CloudNativePG) | ⬜ Not started | |
-| 6 | MariaDB reconciler | ⬜ Not started | |
-| 7 | Storage reconciler (MinIO buckets + Nextcloud provisioning) | ⬜ Not started | |
+| 5 | Database reconciler (CloudNativePG) | ✅ Done | `internal/controller/database_reconciler.go`: `ensureDatabase` creates CloudNativePG `Database` CRs (unstructured client, no extra Go module) per app, gates on `Ready=True` condition, then creates psql role `Job`. `deleteDatabase` deletes CRs on DeletionPolicy=Delete. Watch on CloudNativePG Database CRs added to `SetupWithManager` for immediate reconcile. `config/crd/postgresql.cnpg.io_databases.yaml` minimal CRD for envtest. 5 envtest tests. 42 tests total. |
+| 6 | MariaDB reconciler | ✅ Done | `internal/controller/mariadb_reconciler.go`: idempotent `CREATE DATABASE / CREATE USER / GRANT` Jobs per app (`mariadb:11` image). Identifier values injected as env vars and validated `^[a-zA-Z0-9_]+$` before SQL use — no SQL injection risk. Delete Job on DeletionPolicy=Delete. 4 envtest tests. 46 tests total. |
+| 7 | Storage reconciler (MinIO S3 + Nextcloud WebDAV) | ✅ Done | `internal/controller/storage_reconciler.go`: MinIO S3 buckets via `minio/mc` Job (idempotent `mb --ignore-existing`), Nextcloud group provisioning via OCS API curl Job. Separate delete Jobs per pathway on DeletionPolicy=Delete. `StorageReady` condition. 4 envtest tests. 50 tests total. |
 | 8 | Cache reconciler (Redis ACLs + Memcached) | ⬜ Not started | |
 | 9 | App deployment reconciler (ArgoCD Application / Tofu Workspace CRs) | ⬜ Not started | |
 | 10 | Ingress + DNS reconciler | ⬜ Not started | |
