@@ -143,6 +143,49 @@ spec:
                   Must not contain secrets — use appSecrets for secret values.
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              ingress:
+                description: |-
+                  Ingress declares the HTTP routing configuration for this app.
+                  When set, the orchestrator creates a Kubernetes Ingress resource and a
+                  cert-manager Certificate CR for TLS.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations are merged into the Ingress object metadata.
+                      Use to set ingress class, NGINX configuration snippets, etc.
+                    type: object
+                  clusterIssuer:
+                    default: letsencrypt-prod
+                    description: |-
+                      ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
+                      Defaults to "letsencrypt-prod" when not set.
+                    type: string
+                  serviceName:
+                    description: |-
+                      ServiceName is the Kubernetes Service name that the Helm chart creates.
+                      Defaults to the AppProfile name (chart name) when not set.
+                    type: string
+                  servicePort:
+                    default: 80
+                    description: ServicePort is the port on the Service to route traffic
+                      to.
+                    format: int32
+                    type: integer
+                  subDomain:
+                    description: |-
+                      SubDomain is the subdomain prefix prepended to the tenant domain to form the
+                      Ingress host, e.g. "files" yields "files.{tenant-domain}".
+                      Defaults to the app profile name (chart name) when not set.
+                    type: string
+                  tlsEnabled:
+                    default: true
+                    description: |-
+                      TLSEnabled enables TLS via a cert-manager Certificate CR.
+                      Defaults to true.
+                    type: boolean
+                type: object
               kernelRequirements:
                 description: KernelRequirements declares which kernel services this
                   app requires.

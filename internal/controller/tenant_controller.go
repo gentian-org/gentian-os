@@ -234,7 +234,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 12. Update status
+	// 12. Ingress (per-app Ingress + per-tenant wildcard cert-manager Certificate)
+	if _, err := r.ensureIngress(ctx, tenant); err != nil {
+		r.setCondition(tenant, conditionIngressReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 13. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
@@ -311,6 +318,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up app deployment resources (always, regardless of DeletionPolicy).
 	if err := r.deleteAppDeployment(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up Ingress and Certificate resources (ephemeral routing; always deleted).
+	if err := r.deleteIngress(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

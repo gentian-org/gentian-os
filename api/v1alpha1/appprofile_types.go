@@ -60,6 +60,48 @@ type AppProfileSpec struct {
 	// +optional
 	// +kubebuilder:default=argocd
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
+
+	// Ingress declares the HTTP routing configuration for this app.
+	// When set, the orchestrator creates a Kubernetes Ingress resource and a
+	// cert-manager Certificate CR for TLS.
+	// +optional
+	Ingress *IngressSpec `json:"ingress,omitempty"`
+}
+
+// IngressSpec declares how the orchestrator should expose this app via HTTP(S).
+type IngressSpec struct {
+	// ServiceName is the Kubernetes Service name that the Helm chart creates.
+	// Defaults to the AppProfile name (chart name) when not set.
+	// +optional
+	ServiceName string `json:"serviceName,omitempty"`
+
+	// ServicePort is the port on the Service to route traffic to.
+	// +optional
+	// +kubebuilder:default=80
+	ServicePort int32 `json:"servicePort,omitempty"`
+
+	// SubDomain is the subdomain prefix prepended to the tenant domain to form the
+	// Ingress host, e.g. "files" yields "files.{tenant-domain}".
+	// Defaults to the app profile name (chart name) when not set.
+	// +optional
+	SubDomain string `json:"subDomain,omitempty"`
+
+	// TLSEnabled enables TLS via a cert-manager Certificate CR.
+	// Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	TLSEnabled bool `json:"tlsEnabled,omitempty"`
+
+	// ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
+	// Defaults to "letsencrypt-prod" when not set.
+	// +optional
+	// +kubebuilder:default=letsencrypt-prod
+	ClusterIssuer string `json:"clusterIssuer,omitempty"`
+
+	// Annotations are merged into the Ingress object metadata.
+	// Use to set ingress class, NGINX configuration snippets, etc.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // KernelRequirements specifies which kernel services the app requires.
