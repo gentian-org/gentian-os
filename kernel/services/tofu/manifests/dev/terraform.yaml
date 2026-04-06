@@ -12,7 +12,7 @@ spec:
   interval: 1m
   ref:
     branch: develop
-  url: https://github.com/gentian-org/server
+  url: https://github.com/gentian-org/gentian-os
 ---
 # Terraform CR: manages all Pattern-B Helm releases for the dev environment.
 # Reads secrets from OpenBao via the tofu-runner Kubernetes auth role.

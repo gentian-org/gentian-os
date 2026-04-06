@@ -12,9 +12,9 @@ metadata:
 spec:
   project: gentian
   source:
-    repoURL: https://github.com/gentian-org/server
+    repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop
-    path: appsets
+    path: kernel/appsets
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

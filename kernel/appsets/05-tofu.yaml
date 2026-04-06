@@ -26,9 +26,9 @@ spec:
     spec:
       project: gentian
       source:
-        repoURL: https://github.com/gentian-org/server
+        repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
-        path: "apps/tofu/manifests/{{.env}}"
+        path: "kernel/services/tofu/manifests/{{.env}}"
       destination:
         server: https://kubernetes.default.svc
         namespace: tofu-system

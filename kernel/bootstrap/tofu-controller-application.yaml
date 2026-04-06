@@ -29,9 +29,9 @@ spec:
     targetRevision: "0.16.1"
     helm:
       valueFiles:
-      - $values/values/tofu-controller.yaml
+      - $values/kernel/values/tofu-controller.yaml
   # Source 2: Values file from Git (referenced as $values by Source 1)
-  - repoURL: https://github.com/gentian-org/server
+  - repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop
     ref: values
   destination:

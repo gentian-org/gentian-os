@@ -65,7 +65,7 @@ spec:
     spec:
       project: gentian
       sources:
-      - repoURL: https://github.com/gentian-org/server
+      - repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
         ref: values
       - repoURL: '{{.repoURL}}'
@@ -73,9 +73,9 @@ spec:
         targetRevision: '{{.version}}'
         helm:
           valueFiles:
-          - $values/values/env/{{.env}}.yaml
-          - $values/apps/{{.app}}/values/_base.yaml
-          - $values/apps/{{.app}}/values/{{.env}}/values.yaml
+          - $values/kernel/values/env/{{.env}}.yaml
+          - $values/kernel/services/{{.app}}/values/_base.yaml
+          - $values/kernel/services/{{.app}}/values/{{.env}}/values.yaml
       destination:
         server: https://kubernetes.default.svc
         namespace: 'gentian-{{.env}}'

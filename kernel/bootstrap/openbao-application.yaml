@@ -26,9 +26,9 @@ spec:
     targetRevision: "0.25.5"
     helm:
       valueFiles:
-      - $values/openbao/values.yaml
+      - $values/kernel/openbao/values.yaml
   # Source 2: Values file from Git (referenced as $values by Source 1)
-  - repoURL: https://github.com/gentian-org/server
+  - repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop
     ref: values
   destination:

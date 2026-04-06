@@ -28,9 +28,9 @@ spec:
     helm:
       releaseName: openbao-transit
       valueFiles:
-      - $values/openbao/transit-values.yaml
+      - $values/kernel/openbao/transit-values.yaml
   # Source 2: Values file from Git (referenced as $values by Source 1)
-  - repoURL: https://github.com/gentian-org/server
+  - repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop
     ref: values
   destination:
