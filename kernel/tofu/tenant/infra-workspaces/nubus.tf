@@ -9,8 +9,8 @@
 locals {
   nubus_root        = "${path.module}/../../../"
   nubus_env_values  = "${local.nubus_root}values/env/${var.env}.yaml"
-  nubus_base_values = "${local.nubus_root}apps/nubus/values/_base.yaml"
-  nubus_plain       = "${local.nubus_root}apps/nubus/values/${var.env}/values-plain.yaml"
+  nubus_base_values = "${local.nubus_root}services/nubus/values/_base.yaml"
+  nubus_plain       = "${local.nubus_root}services/nubus/values/${var.env}/values-plain.yaml"
 }
 
 resource "helm_release" "nubus" {
@@ -163,7 +163,7 @@ resource "kubernetes_config_map_v1" "nubus_udm_listener_nats_patch" {
   }
 
   data = {
-    "mq_adapter_nats.py" = file("${path.module}/../../../apps/nubus/patches/mq_adapter_nats.py")
+    "mq_adapter_nats.py" = file("${path.module}/../../../services/nubus/patches/mq_adapter_nats.py")
   }
 }
 

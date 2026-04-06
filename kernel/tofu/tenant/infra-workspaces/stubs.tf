@@ -49,8 +49,8 @@ resource "helm_release" "postgresql" {
   timeout          = 300
 
   values = [
-    file("${path.module}/../../../apps/postgresql/values/_base.yaml"),
-    file("${path.module}/../../../apps/postgresql/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/postgresql/values/_base.yaml"),
+    file("${path.module}/../../../services/postgresql/values/${var.env}/values-plain.yaml"),
   ]
 
   set_sensitive {
@@ -107,8 +107,8 @@ resource "helm_release" "mariadb" {
   timeout          = 300
 
   values = [
-    file("${path.module}/../../../apps/mariadb/values/_base.yaml"),
-    file("${path.module}/../../../apps/mariadb/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/mariadb/values/_base.yaml"),
+    file("${path.module}/../../../services/mariadb/values/${var.env}/values-plain.yaml"),
   ]
 
   set_sensitive {
@@ -140,8 +140,8 @@ resource "helm_release" "keycloak_bootstrap" {
   timeout          = 300
 
   values = [
-    file("${path.module}/../../../apps/keycloak-bootstrap/values/_base.yaml"),
-    file("${path.module}/../../../apps/keycloak-bootstrap/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/keycloak-bootstrap/values/_base.yaml"),
+    file("${path.module}/../../../services/keycloak-bootstrap/values/${var.env}/values-plain.yaml"),
   ]
 
   set_sensitive {

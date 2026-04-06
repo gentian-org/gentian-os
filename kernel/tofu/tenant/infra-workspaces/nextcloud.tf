@@ -52,8 +52,8 @@ resource "helm_release" "nextcloud_management" {
   timeout          = 900
 
   values = [
-    file("${path.module}/../../../apps/nextcloud-management/values/_base.yaml"),
-    file("${path.module}/../../../apps/nextcloud-management/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/nextcloud-management/values/_base.yaml"),
+    file("${path.module}/../../../services/nextcloud-management/values/${var.env}/values-plain.yaml"),
   ]
 
   # Nextcloud admin account
@@ -156,8 +156,8 @@ resource "helm_release" "nextcloud" {
   timeout          = 900
 
   values = [
-    file("${path.module}/../../../apps/nextcloud/values/_base.yaml"),
-    file("${path.module}/../../../apps/nextcloud/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/nextcloud/values/_base.yaml"),
+    file("${path.module}/../../../services/nextcloud/values/${var.env}/values-plain.yaml"),
   ]
 
   # PostgreSQL nextcloud_user password
@@ -199,8 +199,8 @@ resource "helm_release" "nextcloud_notifypush" {
   timeout          = 300
 
   values = [
-    file("${path.module}/../../../apps/nextcloud-notifypush/values/_base.yaml"),
-    file("${path.module}/../../../apps/nextcloud-notifypush/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/nextcloud-notifypush/values/_base.yaml"),
+    file("${path.module}/../../../services/nextcloud-notifypush/values/${var.env}/values-plain.yaml"),
   ]
 
   # PostgreSQL nextcloud_user password

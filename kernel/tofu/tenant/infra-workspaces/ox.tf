@@ -54,10 +54,10 @@ resource "helm_release" "ox_appsuite" {
   timeout          = 1200
 
   values = [
-    file("${path.module}/../../../apps/ox-appsuite/values/_base.yaml"),
-    file("${path.module}/../../../apps/ox-appsuite/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/ox-appsuite/values/_base.yaml"),
+    file("${path.module}/../../../services/ox-appsuite/values/${var.env}/values-plain.yaml"),
     sensitive(templatefile(
-      "${path.module}/../../../apps/ox-appsuite/values/${var.env}/values-sensitive.yaml.tftpl",
+      "${path.module}/../../../services/ox-appsuite/values/${var.env}/values-sensitive.yaml.tftpl",
       {
         # OX-specific secrets
         admin_password          = data.vault_kv_secret_v2.ox.data["admin_password"]

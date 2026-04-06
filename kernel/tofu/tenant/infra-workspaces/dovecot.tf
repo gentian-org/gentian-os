@@ -32,10 +32,10 @@ resource "helm_release" "dovecot" {
   timeout          = 300
 
   values = [
-    file("${path.module}/../../../apps/dovecot/values/_base.yaml"),
-    file("${path.module}/../../../apps/dovecot/values/${var.env}/values-plain.yaml"),
+    file("${path.module}/../../../services/dovecot/values/_base.yaml"),
+    file("${path.module}/../../../services/dovecot/values/${var.env}/values-plain.yaml"),
     sensitive(templatefile(
-      "${path.module}/../../../apps/dovecot/values/${var.env}/values-sensitive.yaml.tftpl",
+      "${path.module}/../../../services/dovecot/values/${var.env}/values-sensitive.yaml.tftpl",
       {
         doveadm_password        = data.vault_kv_secret_v2.dovecot.data["doveadm_password"]
         oidc_client_secret      = data.vault_kv_secret_v2.dovecot.data["oidc_client_secret"]
