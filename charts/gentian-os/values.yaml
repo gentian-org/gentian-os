@@ -36,3 +36,37 @@ logLevel: info
 
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
+
+# OpenBao / Vault integration
+openbao:
+  address: "http://openbao.openbao.svc.cluster.local:8200"
+  authPath: "kubernetes"
+
+# ArgoCD integration
+argocd:
+  namespace: "argocd"
+  project: "default"
+
+# Operator defaults
+defaults:
+  isolation:
+    # Tenant isolation mode: namespace or vcluster
+    mode: "namespace"
+
+# Metrics and observability
+metrics:
+  serviceMonitor:
+    # Deploy a Prometheus ServiceMonitor for the operator metrics endpoint
+    enabled: true
+    interval: "30s"
+    scrapeTimeout: "10s"
+    # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
+    additionalLabels: {}
+
+# Grafana dashboard
+grafana:
+  dashboards:
+    # Deploy a ConfigMap containing the Gentian OS Grafana dashboard
+    enabled: false
+    # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
+    namespace: ""

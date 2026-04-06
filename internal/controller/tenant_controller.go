@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -130,12 +131,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // Reconcile is the main reconciliation loop for Tenant resources.
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	start := time.Now()
 
 	tenant := &gentianov1alpha1.Tenant{}
 	if err := r.Get(ctx, req.NamespacedName, tenant); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
+		reconcileErrors.WithLabelValues("tenant").Inc()
 		return ctrl.Result{}, err
 	}
 
@@ -251,6 +254,8 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// 14. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
+	tenant.Status.AppCount = len(tenant.Spec.Apps)
+	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
 		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
@@ -258,7 +263,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
+		provisioningDuration.WithLabelValues(tenant.Name).Observe(time.Since(start).Seconds())
 	}
+	// Update Prometheus gauges for this tenant.
+	tenantAppsTotal.WithLabelValues(tenant.Name).Set(float64(tenant.Status.AppCount))
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

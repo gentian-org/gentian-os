@@ -163,10 +163,16 @@ type TenantStatus struct {
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
 
-	// Namespace is the resolved tenant namespace name.
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
+        // AppCount is the total number of apps requested in spec.
+        // +optional
+        AppCount int `json:"appCount,omitempty"`
 
+        // ReadyApps is the number of apps that have been successfully provisioned.
+        // +optional
+        ReadyApps int `json:"readyApps,omitempty"`
+        // Namespace is the resolved tenant namespace name.
+        // +optional
+        Namespace string `json:"namespace,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -182,11 +188,11 @@ type TenantStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=tenant;tenants
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
-// +kubebuilder:printcolumn:name="Apps",type=integer,JSONPath=`.spec.apps`
-// +kubebuilder:printcolumn:name="Deletion Policy",type=string,JSONPath=`.spec.deletionPolicy`
-// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="STATUS",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="APPS",type=integer,JSONPath=`.status.appCount`
+// +kubebuilder:printcolumn:name="READY",type=integer,JSONPath=`.status.readyApps`
+// +kubebuilder:printcolumn:name="MAIL",type=string,JSONPath=`.spec.adminEmail`
+// +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 type Tenant struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
