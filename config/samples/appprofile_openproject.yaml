@@ -1,0 +1,97 @@
+# AppProfile — OpenProject (project management)
+#
+# Source chart: oci://registry.opencode.de/bmi/opendesk/components/supplier/openproject/charts-mirror
+#   openproject v10.1.0
+#   (plus opendesk-openproject-bootstrap v2.3.0 — init-time only, same OCI repo under platform-development)
+# Value paths verified against: opendesk/helmfile/apps/openproject/values.yaml.gotmpl
+# Chart versions from: opendesk/helmfile/environments/default/charts.yaml.gotmpl
+#
+# Secret inventory:
+#   Kernel-provided (5):
+#     oidc_client_secret  → openproject.oidc.secret
+#     pg_password         → postgresql.auth.password
+#     minio_secret_key    → s3.auth.secretAccessKey
+#     smtp_password       → environment.OPENPROJECT_SMTP__PASSWORD
+#     ldap_bind_password  → environment.OPENPROJECT_SEED_LDAP_OPENDESK_BINDPASSWORD
+#   App-internal (2) → appSecrets:
+#     admin_password      → openproject.admin_user.password
+#     api_admin_password  → environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD
+#
+# Design notes:
+#   OpenProject uses LDAP for user sync (syncs group/user attributes from UCS LDAP
+#   via the OPENDESK_SEED_LDAP_* environment variables). The LDAP bind password
+#   is the per-tenant ldapsearch_openproject bind account password created by
+#   the orchestrator's LDAP reconciler (Inc 4).
+#
+#   The OIDC client identifier in Keycloak is "opendesk-openproject"
+#   (openproject.oidc.identifier in the values).
+#
+#   The chart uses direct Helm value injection (.Values.secrets.*) → Pattern B.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: openproject
+spec:
+  displayName: "OpenProject"
+  description: "Open-source project management with Gantt charts, Kanban boards, and LDAP-synced users."
+
+  kernelRequirements:
+    identity:
+      oidc: true
+      ldap:
+        sync: true
+        interval: "1h"
+    database:
+      engine: postgresql
+      databasePerTenant: true
+    storage:
+      s3:
+        bucketPerTenant: true
+    mail:
+      smtp:
+        auth: cram_md5
+        port: 587
+
+  provides:
+    - name: project-management
+      protocol: http-json
+
+  optionalIntegrations:
+    - contract: central-navigation
+      provider: nubus
+      capabilities:
+        - navigation:register
+    - contract: file-store
+      provider: nextcloud
+      capabilities:
+        - webdav:read
+        - webdav:write
+
+  chart:
+    repository: "oci://registry.opencode.de/bmi/opendesk/components/supplier/openproject/charts-mirror"
+    name: openproject
+    version: "10.1.0"
+
+  valueMapping:
+    oidc:
+      clientSecretKey: "openproject.oidc.secret"
+    database:
+      passwordKey: "postgresql.auth.password"
+    s3:
+      secretKeyKey: "s3.auth.secretAccessKey"
+    smtp:
+      passwordKey: "environment.OPENPROJECT_SMTP__PASSWORD"
+    ldap:
+      # LDAP bind password for the per-tenant ldapsearch_openproject account.
+      bindPasswordKey: "environment.OPENPROJECT_SEED_LDAP_OPENDESK_BINDPASSWORD"
+
+  appSecrets:
+    # Initial admin user password — seeded once on first install.
+    - name: admin_password
+      valuePath: "openproject.admin_user.password"
+    # HTTP Basic Auth password for the OpenProject API admin user.
+    - name: api_admin_password
+      valuePath: "environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD"
+
+  # Pattern B — openproject chart injects all secrets as direct Helm values.
+  deploymentMethod: tofu-controller

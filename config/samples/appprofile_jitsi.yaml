@@ -1,0 +1,87 @@
+# AppProfile — Jitsi (video conferencing)
+#
+# Source chart: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-jitsi
+#   opendesk-jitsi v3.5.1
+# Value paths verified against: opendesk/helmfile/apps/jitsi/values-jitsi.yaml.gotmpl
+# Chart versions from: opendesk/helmfile/environments/default/charts.yaml.gotmpl
+#
+# Secret inventory:
+#   App-internal (4) → appSecrets:
+#     jwt_app_secret         → settings.jwtAppSecret.value
+#     jicofo_auth_password   → jitsi.jicofo.xmpp.password
+#     jicofo_component_secret → jitsi.jicofo.xmpp.componentSecret
+#     jvb_auth_password      → jitsi.jvb.xmpp.password
+#
+# Design notes:
+#   Jitsi does not use standard OIDC client_id/client_secret. It uses the
+#   hybrid-matrix-token authentication scheme, where the JWT app secret
+#   (.Values.secrets.jitsi.jwtAppSecret) acts as the shared credential between
+#   the Jitsi prosody XMPP component and the Matrix user-verification service.
+#   The valueMapping.oidc.clientSecretKey field is repurposed to carry this
+#   JWT app secret, since from the orchestrator's perspective it plays the same
+#   role as an OIDC client secret (generated per-tenant, stored in OpenBao at
+#   gentianos/tenants/{name}/apps/jitsi/).
+#
+#   The TURN shared secret (.Values.turn.credentials) is a cluster-level infra
+#   credential shared between Jitsi and Element (Synapse). It is NOT an appSecret
+#   — the orchestrator resolves it from the kernel OpenBao path at deploy time.
+#
+#   No database or S3 — Jitsi is stateless. No per-tenant DB provisioning needed.
+#
+#   The chart uses direct Helm value injection (.Values.secrets.*) → Pattern B.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: jitsi
+spec:
+  displayName: "Jitsi"
+  description: "Open-source video conferencing with end-to-end encryption, integrated with Matrix authentication."
+
+  kernelRequirements:
+    identity:
+      # Jitsi uses the hybrid-matrix-token scheme via Keycloak / Matrix UVS.
+      # The JWT app secret (settings.jwtAppSecret.value) serves as the token
+      # shared between prosody and the Matrix user-verification service.
+      oidc: true
+
+  provides:
+    - name: videoconference
+      protocol: webrtc
+
+  optionalIntegrations:
+    - contract: central-navigation
+      provider: nubus
+      capabilities:
+        - navigation:register
+    - contract: chat
+      provider: element
+      capabilities:
+        - matrix:widget
+
+  chart:
+    repository: "oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-jitsi"
+    name: opendesk-jitsi
+    version: "3.5.1"
+
+  valueMapping:
+    oidc:
+      # JWT app secret used for the hybrid-matrix-token Keycloak auth scheme.
+      # Maps to settings.jwtAppSecret.value in the opendesk-jitsi chart.
+      clientSecretKey: "settings.jwtAppSecret.value"
+
+  appSecrets:
+    # JWT app secret — shared with the Matrix user-verification service for auth.
+    - name: jwt_app_secret
+      valuePath: "settings.jwtAppSecret.value"
+    # Jicofo XMPP component authentication password.
+    - name: jicofo_auth_password
+      valuePath: "jitsi.jicofo.xmpp.password"
+    # Jicofo XMPP component secret for the Prosody connection.
+    - name: jicofo_component_secret
+      valuePath: "jitsi.jicofo.xmpp.componentSecret"
+    # JVB (Jitsi Video Bridge) XMPP authentication password.
+    - name: jvb_auth_password
+      valuePath: "jitsi.jvb.xmpp.password"
+
+  # Pattern B — opendesk-jitsi chart injects all secrets as direct Helm values.
+  deploymentMethod: tofu-controller

@@ -52,6 +52,30 @@ spec:
       imap:
         port: 993
 
+  provides:
+    - name: webmailer
+      protocol: http-json
+    - name: calendar
+      protocol: http-json
+    - name: contacts
+      protocol: http-json
+
+  optionalIntegrations:
+    - contract: file-store
+      provider: nextcloud
+      capabilities:
+        - webdav:read
+        - webdav:write
+        - ocs:shares
+    - contract: central-navigation
+      provider: nubus
+      capabilities:
+        - navigation:register
+    - contract: chat
+      provider: element
+      capabilities:
+        - matrix:actor
+
   chart:
     repository: "oci://registry.opencode.de/bmi/opendesk/components/supplier/open-xchange/charts-mirror"
     name: appsuite-public-sector

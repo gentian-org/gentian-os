@@ -1,0 +1,91 @@
+# AppProfile — Element (Matrix / Synapse)
+#
+# Source chart: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-element
+#   opendesk-element v6.1.9  (frontend)
+#   opendesk-synapse v6.1.9  (Matrix homeserver — same OCI repo, deployed alongside)
+#   opendesk-well-known v6.1.9
+# Value paths verified against: opendesk/helmfile/apps/element/values-synapse.yaml.gotmpl
+# Chart versions from: opendesk/helmfile/environments/default/charts.yaml.gotmpl
+#
+# Secret inventory:
+#   Kernel-provided (3):
+#     oidc_client_secret  → configuration.homeserver.oidc.clientSecret
+#     synapse_db_password → configuration.database.password.value
+#     smtp_password       → configuration.homeserver.smtp.password
+#   App-internal (3) → appSecrets:
+#     registration_shared_secret → configuration.homeserver.registrationSharedSecret
+#     intercom_as_token          → configuration.homeserver.appServiceConfigs[0].as_token
+#     ox_appsuite_as_token       → configuration.homeserver.appServiceConfigs[1].as_token
+#
+# Design notes:
+#   The TURN shared secret (configuration.homeserver.turn.sharedSecret / .Values.turn.credentials)
+#   is a cluster-level infrastructure credential shared between Element and Jitsi. It is
+#   provisioned at the kernel infrastructure level (not per-tenant), so it is NOT listed
+#   as an appSecret here. The orchestrator resolves it from the kernel OpenBao path
+#   gentianos/kernel/turn/credentials at deploy time.
+#
+#   The appServiceConfig tokens connect Synapse to the Intercom service (kernel) and to
+#   OX App Suite (when installed in the same tenant). These must be generated per-tenant
+#   and per-app, hence appSecrets.
+#
+#   The chart uses direct Helm value injection (.Values.secrets.*) → Pattern B.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: element
+spec:
+  displayName: "Element (Matrix)"
+  description: "Federated team chat and collaboration based on the Matrix protocol, with Synapse homeserver."
+
+  kernelRequirements:
+    identity:
+      oidc: true
+    database:
+      engine: postgresql
+      databasePerTenant: true
+    mail:
+      smtp:
+        auth: plain
+        port: 587
+
+  provides:
+    - name: chat
+      protocol: matrix
+
+  optionalIntegrations:
+    - contract: central-navigation
+      provider: nubus
+      capabilities:
+        - navigation:register
+    - contract: file-store
+      provider: nextcloud
+      capabilities:
+        - webdav:read
+        - webdav:write
+
+  chart:
+    repository: "oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-element"
+    name: opendesk-element
+    version: "6.1.9"
+
+  valueMapping:
+    oidc:
+      clientSecretKey: "configuration.homeserver.oidc.clientSecret"
+    database:
+      passwordKey: "configuration.database.password.value"
+    smtp:
+      passwordKey: "configuration.homeserver.smtp.password"
+
+  appSecrets:
+    # Synapse registration shared secret — controls who can register accounts.
+    - name: registration_shared_secret
+      valuePath: "configuration.homeserver.registrationSharedSecret"
+    # Application service token for the Intercom kernel notification gateway.
+    - name: intercom_as_token
+      valuePath: "configuration.homeserver.appServiceConfigs[0].as_token"
+    # Application service token for OX App Suite OIDC actor in Matrix.
+    - name: ox_appsuite_as_token
+      valuePath: "configuration.homeserver.appServiceConfigs[1].as_token"
+
+  # Pattern B — opendesk-element/synapse chart injects secrets as direct Helm values.
+  deploymentMethod: tofu-controller

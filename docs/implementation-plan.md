@@ -542,13 +542,76 @@ These three follow the same rule: kernel deployment is managed by the Applicatio
 
 **What gets AppProfiles (user-installable apps in `gentian-apps`):**
 
-AppProfiles belong to apps that the orchestrator deploys **per-tenant** as ArgoCD Application CRs (or Tofu Controller CRs). These live in the `gentian-apps` repo (architecture §7 Repo 2). The first two profiles to create for this increment:
+AppProfiles belong to apps that the orchestrator deploys **per-tenant** as ArgoCD Application CRs (or Tofu Controller CRs). These live in the `gentian-apps` repo (architecture §7 Repo 2). All six user-installable openDesk apps get AppProfiles in this increment. Value paths are sourced directly from `opendesk/helmfile/apps/{app}/values*.yaml.gotmpl` (source of truth). The `server/` repo is used as a cross-check only.
 
-- `ox-appsuite.yaml` — OX App Suite (groupware: mail client, calendar, contacts). Pattern B (Tofu Controller). KernelRequirements: OIDC, LDAP, MariaDB, Redis, S3. AppSecrets: master password, HZ group password, cookie hash salt, JWT secrets (7 total). Reverse-engineer value paths from `server/apps/appsuite/` and `server/tofu/tenant/keycloak-config/`.
+| App | Profile file | Pattern | KernelRequirements | AppSecrets | Chart |
+|---|---|---|---|---|---|
+| **OX App Suite** | `appprofile_ox-appsuite.yaml` | B — Tofu | OIDC, LDAP, MariaDB, Redis, S3, SMTP+IMAP | 7 | `appsuite-public-sector` v2.26.32 |
+| **Collabora** | `appprofile_collabora.yaml` | B — Tofu | None (WOPI server — accessed through Nextcloud kernel service) | 1 | `collabora-online` v1.1.45 |
+| **Element** (Matrix / Synapse) | `appprofile_element.yaml` | B — Tofu | OIDC, PostgreSQL, SMTP | 3 | `opendesk-element` v6.1.9 |
+| **Jitsi** | `appprofile_jitsi.yaml` | B — Tofu | OIDC (JWT app secret, Keycloak hybrid-matrix-token) | 4 | `opendesk-jitsi` v3.5.1 |
+| **OpenProject** | `appprofile_openproject.yaml` | B — Tofu | OIDC, PostgreSQL, S3, SMTP, LDAP | 2 | `openproject` v10.1.0 |
+| **XWiki** | `appprofile_xwiki.yaml` | B — Tofu | OIDC, PostgreSQL, SMTP, LDAP | 0 | `xwiki` v1.4.4 |
 
-- `openproject.yaml` — OpenProject (project management). Pattern A (ArgoCD). KernelRequirements: OIDC, PostgreSQL, S3 (file attachments), SMTP. AppSecrets: secret key base, OmniAuth secret. Reverse-engineer from `server/apps/openproject/`.
+All charts in the openDesk helmfile inject secrets as direct Helm values (`.Values.secrets.*`) — no chart has native `existingSecret` support. All are therefore **Pattern B** (Tofu Controller `set_sensitive`). The orchestrator injects all credentials via `set_sensitive` blocks.
 
-**Note on Postfix and Dovecot:** These are per-tenant mail extensions deployed as ArgoCD Application CRs when `spec.mail.mode: selfhosted` (architecture §2.2: "provisioned per-tenant"). They will get AppProfiles — but in **Increment 16** (mail extension reconciler), not here. The mail reconciler must exist before the AppProfiles can be tested against real deployments.
+**Note on Postfix and Dovecot:** Per-tenant mail extensions when `spec.mail.mode: selfhosted`. They get AppProfiles in **Increment 16** (mail extension reconciler).
+
+**Per-app value paths (from `opendesk/helmfile/apps/{app}/values*.yaml.gotmpl`):**
+
+**OX App Suite** (`appprofile_ox-appsuite.yaml` — created in Inc 1 spike, updated here with `provides`/`optionalIntegrations`):
+- `valueMapping.oidc.clientSecretKey` = `appsuite.core-mw.secretProperties["com.openexchange.oidc.clientSecret"]`
+- `valueMapping.database.passwordKey` = `global.mysql.auth.password`
+- `valueMapping.s3.secretKeyKey` = `appsuite.core-mw.propertiesFiles["/opt/open-xchange/etc/filestore-s3.properties"]["com.openexchange.filestore.s3.ox-filestore-s3.secretKey"]`
+- `valueMapping.cache.passwordKey` = `appsuite.core-mw.redis.auth.password`
+- `valueMapping.ldap.bindPasswordKey` = `appsuite.core-mw.propertiesFiles["/opt/open-xchange/etc/ldapauth.properties"].bindDNPassword`
+- 7 `appSecrets`: `admin_password`, `hz_group_password`, `basic_auth_password`, `jolokia_password`, `cookie_hash_salt`, `share_crypt_key`, `sessiond_encryption_key`
+
+**Collabora** (`appprofile_collabora.yaml`):
+- No `kernelRequirements` — Collabora is a WOPI document editor. Users authenticate through Nextcloud (kernel service), not directly. The chart has no OIDC client, no DB, no S3.
+- `appSecrets.admin_password` → `collabora.password`
+- `provides`: `office-editor` (wopi)
+- `optionalIntegrations`: none (always called by Nextcloud kernel service)
+- Source: `opendesk/helmfile/apps/collabora/values.yaml.gotmpl`
+
+**Element / Synapse** (`appprofile_element.yaml`):
+- `valueMapping.oidc.clientSecretKey` = `configuration.homeserver.oidc.clientSecret`
+- `valueMapping.database.passwordKey` = `configuration.database.password.value`
+- `valueMapping.smtp.passwordKey` = `configuration.homeserver.smtp.password`
+- `appSecrets.registration_shared_secret` → `configuration.homeserver.registrationSharedSecret`
+- `appSecrets.intercom_as_token` → `configuration.homeserver.appServiceConfigs[0].as_token`
+- `appSecrets.ox_appsuite_as_token` → `configuration.homeserver.appServiceConfigs[1].as_token`
+- Note: TURN shared secret (`configuration.homeserver.turn.sharedSecret`) is a cluster-level infrastructure credential provided via OpenBao, not an `appSecret`.
+- `provides`: `chat` (matrix)
+- Source: `opendesk/helmfile/apps/element/values-synapse.yaml.gotmpl`
+
+**Jitsi** (`appprofile_jitsi.yaml`):
+- `valueMapping.oidc.clientSecretKey` = `settings.jwtAppSecret.value` (Jitsi uses the hybrid-matrix-token scheme with Keycloak; the JWT app secret plays the role of the OIDC client secret)
+- `appSecrets.jwt_app_secret` → `settings.jwtAppSecret.value`
+- `appSecrets.jicofo_auth_password` → `jitsi.jicofo.xmpp.password`
+- `appSecrets.jicofo_component_secret` → `jitsi.jicofo.xmpp.componentSecret`
+- `appSecrets.jvb_auth_password` → `jitsi.jvb.xmpp.password`
+- `provides`: `videoconference` (webrtc)
+- Source: `opendesk/helmfile/apps/jitsi/values-jitsi.yaml.gotmpl`
+
+**OpenProject** (`appprofile_openproject.yaml`):
+- `valueMapping.oidc.clientSecretKey` = `openproject.oidc.secret`
+- `valueMapping.database.passwordKey` = `postgresql.auth.password`
+- `valueMapping.s3.secretKeyKey` = `s3.auth.secretAccessKey`
+- `valueMapping.smtp.passwordKey` = `environment.OPENPROJECT_SMTP__PASSWORD`
+- `valueMapping.ldap.bindPasswordKey` = `environment.OPENPROJECT_SEED_LDAP_OPENDESK_BINDPASSWORD`
+- `appSecrets.admin_password` → `openproject.admin_user.password`
+- `appSecrets.api_admin_password` → `environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD`
+- `provides`: `project-management` (http-json)
+- Source: `opendesk/helmfile/apps/openproject/values.yaml.gotmpl`
+
+**XWiki** (`appprofile_xwiki.yaml`):
+- `valueMapping.oidc.clientSecretKey` = `customConfigs.xwiki\.properties.oidc\.secret` (dot-escaped — this key is a nested YAML map with dotted names)
+- `valueMapping.database.passwordKey` = `externalDB.password` (chart supports both PostgreSQL and MariaDB; AppProfile defaults to PostgreSQL)
+- `valueMapping.smtp.passwordKey` = `properties["property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.password"]`
+- `valueMapping.ldap.bindPasswordKey` = `customConfigs.xwiki\.cfg.xwiki\.authentication\.ldap\.bind_pass`
+- `provides`: `wiki` (http-json)
+- Source: `opendesk/helmfile/apps/xwiki/values.yaml.gotmpl`
 
 **Each profile declares:**
 - `kernelRequirements` (which kernel functions it needs)
@@ -567,11 +630,10 @@ AppProfiles belong to apps that the orchestrator deploys **per-tenant** as ArgoC
 - Update AppProfile status with affected tenant count and rollout progress
 - This is the mechanism that makes "adding an app to the catalogue is a single-file operation" actually work at scale
 
-**Source:** Reverse-engineer from `server/apps/{app}/` Helm values + `server/tofu/tenant/keycloak-config/` to extract the actual value keys each chart expects.
+**Source:** Value paths sourced from `opendesk/helmfile/apps/{app}/values*.yaml.gotmpl` (primary source of truth — the local openDesk repo clone). Chart names and versions from `opendesk/helmfile/environments/default/charts.yaml.gotmpl`. The `server/` repo is used as a secondary cross-check only.
 
 **Test:**
-- Both profiles validate against the AppProfile CRD schema
-- `kubectl apply -f profiles/` succeeds
+- All six AppProfile samples validate against the AppProfile CRD schema (`kubectl apply --dry-run=server`)
 - Orchestrator can render correct Helm values from each profile's `valueMapping`
 - AppProfile update test: bump chart version in a profile → all tenants' ArgoCD Applications updated → ArgoCD rolls out new version
 - Rollout tracking: AppProfile status reflects how many tenants have been updated
