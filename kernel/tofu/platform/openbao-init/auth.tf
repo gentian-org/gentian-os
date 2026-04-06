@@ -19,15 +19,16 @@ resource "vault_kubernetes_auth_backend_config" "default" {
   # JWT issuer automatically from its own pod — no extra certs needed.
 }
 
-# One role per environment so that ESO can only read secrets for its own env.
+# One role for ESO — reads all kernel and tenant secrets.
+# Tenant isolation is enforced at the Kubernetes Secret level by RBAC;
+# per-tenant direct-access roles are provisioned by the openbao-tenant-policy
+# module (one per tenant).
 resource "vault_kubernetes_auth_backend_role" "eso" {
-  for_each = toset(var.environments)
-
   backend                          = vault_auth_backend.kubernetes.path
-  role_name                        = "eso-${each.key}"
+  role_name                        = "eso"
   bound_service_account_names      = [var.eso_service_account]
   bound_service_account_namespaces = [var.eso_namespace]
-  token_policies                   = ["eso-read-${each.key}"]
+  token_policies                   = ["eso-read"]
   token_ttl                        = var.token_ttl
 }
 

@@ -1,20 +1,20 @@
 # =============================================================================
-# openbao-paths — generates and writes all tenant secret paths
+# openbao-paths — generates and writes all kernel secret paths
 # =============================================================================
-# Usage: call this module once per environment to provision (or verify) the
-# full OpenBao KV tree at secret/gentian/<env>/<component>.
+# Usage: call this module once per cluster to provision (or verify) the
+# full OpenBao KV tree under secret/gentian-os/kernel/<category>/<component>.
 #
 # lifecycle { ignore_changes = [data_json] } is set on every vault_kv_secret_v2
 # resource.  This means:
-#   - First apply on a NEW env: creates secrets with generated random values.
-#   - Subsequent applies on an EXISTING env: never overwrites live secrets.
+#   - First apply on a NEW cluster: creates secrets with generated random values.
+#   - Subsequent applies on an EXISTING cluster: never overwrites live secrets.
 #
-# For an existing environment (e.g. dev) that was seeded via seed-openbao.sh,
+# For an existing cluster that was seeded via seed-openbao.sh,
 # import the live secrets into state before applying:
 #
 #   tofu import \
 #     module.openbao_paths.vault_kv_secret_v2.postgresql \
-#     "secret/gentian/dev/postgresql"
+#     "secret/gentian-os/kernel/database/postgresql"
 #
 # After import, Terraform knows the live values and lifecycle.ignore_changes
 # prevents any drift.
@@ -125,7 +125,7 @@ resource "random_password" "dovecot_oidc_client_secret" { length = local.pw_leng
 
 resource "vault_kv_secret_v2" "postgresql" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/postgresql"
+  name  = "gentian-os/kernel/database/postgresql"
   data_json = jsonencode({
     postgres_password                  = random_password.pg_postgres.result
     keycloak_user_password             = random_password.pg_keycloak.result
@@ -140,7 +140,7 @@ resource "vault_kv_secret_v2" "postgresql" {
 
 resource "vault_kv_secret_v2" "mariadb" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/mariadb"
+  name  = "gentian-os/kernel/database/mariadb"
   data_json = jsonencode({
     root_password        = random_password.mariadb_root.result
     openxchange_password = random_password.mariadb_openxchange.result
@@ -150,7 +150,7 @@ resource "vault_kv_secret_v2" "mariadb" {
 
 resource "vault_kv_secret_v2" "redis" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/redis"
+  name  = "gentian-os/kernel/cache/redis"
   data_json = jsonencode({
     redis_password = random_password.redis_password.result
   })
@@ -159,7 +159,7 @@ resource "vault_kv_secret_v2" "redis" {
 
 resource "vault_kv_secret_v2" "minio" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/minio"
+  name  = "gentian-os/kernel/storage/minio"
   data_json = jsonencode({
     root_password        = random_password.minio_root.result
     nextcloud_password   = random_password.minio_nextcloud.result
@@ -175,7 +175,7 @@ resource "vault_kv_secret_v2" "minio" {
 
 resource "vault_kv_secret_v2" "nubus" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/nubus"
+  name  = "gentian-os/kernel/identity/nubus"
   data_json = jsonencode({
     master_password                = random_password.nubus_master.result
     admin_password                 = random_password.nubus_admin.result
@@ -213,7 +213,7 @@ resource "vault_kv_secret_v2" "nubus" {
 
 resource "vault_kv_secret_v2" "keycloak_bootstrap" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/keycloak-bootstrap"
+  name  = "gentian-os/kernel/identity/keycloak-bootstrap"
   data_json = jsonencode({
     # Same password as nubus.keycloak_admin_password — Keycloak has one admin account
     admin_password         = random_password.keycloak_bootstrap_admin.result
@@ -224,7 +224,7 @@ resource "vault_kv_secret_v2" "keycloak_bootstrap" {
 
 resource "vault_kv_secret_v2" "intercom" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/intercom"
+  name  = "gentian-os/kernel/identity/intercom"
   data_json = jsonencode({
     oidc_client_secret   = random_password.intercom_oidc_secret.result
     matrix_as_token      = random_password.intercom_matrix_as.result
@@ -237,7 +237,7 @@ resource "vault_kv_secret_v2" "intercom" {
 
 resource "vault_kv_secret_v2" "nextcloud" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/nextcloud"
+  name  = "gentian-os/kernel/apps/nextcloud"
   data_json = jsonencode({
     admin_password  = random_password.nextcloud_admin.result
     metrics_token   = random_password.nextcloud_metrics.result
@@ -252,7 +252,7 @@ resource "vault_kv_secret_v2" "nextcloud" {
 
 resource "vault_kv_secret_v2" "dovecot" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/dovecot"
+  name  = "gentian-os/kernel/mail/dovecot"
   data_json = jsonencode({
     doveadm_password   = random_password.dovecot_doveadm.result
     oidc_client_secret = random_password.dovecot_oidc_client_secret.result
@@ -262,7 +262,7 @@ resource "vault_kv_secret_v2" "dovecot" {
 
 resource "vault_kv_secret_v2" "ox" {
   mount = var.openbao_mount
-  name  = "gentian/${var.env}/ox"
+  name  = "gentian-os/kernel/apps/ox"
   data_json = jsonencode({
     # OX master admin password (SOAP API + ox-connector auth)
     admin_password                  = random_password.ox_admin.result

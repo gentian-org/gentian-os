@@ -12,39 +12,35 @@ set -euo pipefail
 # Usage:
 #   export BAO_ADDR=http://localhost:8200     # port-forwarded OpenBao
 #   export BAO_TOKEN="<root-or-admin-token>"
-#   ./scripts/seed-openbao.sh <env> <master-password> [registry-user] [registry-password]
+#   ./scripts/seed-openbao.sh <master-password> [registry-user] [registry-password]
 #
 # Typical local run (port-forward first):
 #   kubectl port-forward svc/openbao 8200:8200 -n openbao &
 #   export BAO_ADDR=http://localhost:8200
 #   export BAO_TOKEN="$(cat /path/to/root-token)"
-#   ./scripts/seed-openbao.sh dev "your-master-password" "oci-user" "oci-pass"
+#   ./scripts/seed-openbao.sh "your-master-password" "oci-user" "oci-pass"
 #
-# Secret paths written:
-#   secret/gentian/<env>/postgresql
-#   secret/gentian/<env>/mariadb
-#   secret/gentian/<env>/redis
-#   secret/gentian/<env>/minio
-#   secret/gentian/<env>/nubus
-#   secret/gentian/<env>/nextcloud
-#   secret/gentian/<env>/intercom
-#   secret/gentian/<env>/keycloak-bootstrap
-#   secret/gentian/<env>/postfix             (requires args 5+6: smtp relay user/pass)
-#   secret/gentian/<env>/registry            (optional, requires args 3+4)
+# Secret paths written (under secret/gentian-os/kernel/):
+#   database/postgresql
+#   database/mariadb
+#   cache/redis
+#   storage/minio
+#   identity/nubus
+#   identity/keycloak-bootstrap
+#   identity/intercom
+#   apps/nextcloud
+#   apps/ox
+#   mail/postfix                  (requires args 4+5: smtp relay user/pass)
+#   mail/dovecot
+#   storage/registry              (optional, requires args 2+3)
+#   platform/tofu-state           (written by MinIO setup, not this script)
 # =============================================================================
 
-ENV="${1:-}"
-MASTER_PASSWORD="${2:-sovereign-workplace}"
-REGISTRY_USER="${3:-}"
-REGISTRY_PASSWORD="${4:-}"
-SMTP_RELAY_USER="${5:-}"
-SMTP_RELAY_PASS="${6:-}"
-
-if [ -z "$ENV" ]; then
-    echo "Usage: $0 <env> <master-password> [registry-user] [registry-password]"
-    echo "Example: $0 dev my-master-password registry-user registry-pass"
-    exit 1
-fi
+MASTER_PASSWORD="${1:-sovereign-workplace}"
+REGISTRY_USER="${2:-}"
+REGISTRY_PASSWORD="${3:-}"
+SMTP_RELAY_USER="${4:-}"
+SMTP_RELAY_PASS="${5:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -66,8 +62,7 @@ done
 echo "=========================================="
 echo "Seeding OpenBao Secrets"
 echo "  OpenBao:     ${BAO_ADDR}"
-echo "  Environment: ${ENV}"
-echo "  Path prefix: secret/gentian/${ENV}/"
+echo "  Path prefix: secret/gentian-os/kernel/"
 echo "=========================================="
 
 # =============================================================================
@@ -165,14 +160,14 @@ echo "  All passwords derived."
 
 # =============================================================================
 # Write to OpenBao via HTTP API (KV v2)
-# POST /v1/secret/data/gentian/<env>/<component>
+# POST /v1/secret/data/gentian-os/kernel/<category>/<component>
 # Body: {"data": {"key": "value", ...}}
 # =============================================================================
 
 kv_put() {
     local path="$1"
     local json_data="$2"
-    local full_path="secret/data/gentian/${ENV}/${path}"
+    local full_path="secret/data/gentian-os/kernel/${path}"
     echo "  Writing ${full_path}..."
     local result http_code body
     result=$(curl -s -w "\n%{http_code}" \
@@ -203,13 +198,13 @@ kv_put() {
 kv_put_once() {
     local path="$1"
     local json_data="$2"
-    local check_path="secret/data/gentian/${ENV}/${path}"
+    local check_path="secret/data/gentian-os/kernel/${path}"
     local existing
     existing=$(curl -sf \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         "${BAO_ADDR}/v1/${check_path}" 2>/dev/null || true)
     if echo "${existing}" | grep -q '"data":{'; then
-        echo "  Skipping secret/gentian/${ENV}/${path} (already exists — use 'bao kv patch' to update)"
+        echo "  Skipping gentian-os/kernel/${path} (already exists — use 'bao kv patch' to update)"
         return 0
     fi
     kv_put "${path}" "${json_data}"
@@ -219,7 +214,7 @@ echo ""
 echo "Writing secrets to OpenBao..."
 
 # --- PostgreSQL ---
-kv_put_once "postgresql" "$(cat <<EOF
+kv_put_once "database/postgresql" "$(cat <<EOF
 {
   "postgres_password":              "${PG_POSTGRES_PW}",
   "keycloak_user_password":         "${PG_KEYCLOAK_PW}",
@@ -234,7 +229,7 @@ EOF
 )"
 
 # --- MariaDB ---
-kv_put_once "mariadb" "$(cat <<EOF
+kv_put_once "database/mariadb" "$(cat <<EOF
 {
   "root_password":        "${MARIA_ROOT_PW}",
   "openxchange_password": "${MARIA_OX_PW}"
@@ -243,7 +238,7 @@ EOF
 )"
 
 # --- Redis ---
-kv_put_once "redis" "$(cat <<EOF
+kv_put_once "cache/redis" "$(cat <<EOF
 {
   "auth_password": "${REDIS_PW}"
 }
@@ -251,7 +246,7 @@ EOF
 )"
 
 # --- MinIO ---
-kv_put_once "minio" "$(cat <<EOF
+kv_put_once "storage/minio" "$(cat <<EOF
 {
   "root_user":             "minio",
   "root_password":         "${MINIO_ROOT_PW}",
@@ -267,7 +262,7 @@ EOF
 )"
 
 # --- Nubus ---
-kv_put_once "nubus" "$(cat <<EOF
+kv_put_once "identity/nubus" "$(cat <<EOF
 {
   "master_password":            "${MASTER_PASSWORD}",
   "admin_password":             "${ADMIN_PW}",
@@ -301,9 +296,9 @@ kv_put_once "nubus" "$(cat <<EOF
 }
 EOF
 )"
-# NOTE: If secret/gentian/${ENV}/nubus already exists (existing cluster), the above
+# NOTE: If gentian-os/kernel/identity/nubus already exists (existing cluster), the above
 # kv_put_once was skipped. Add the two new consumer password keys manually:
-#   bao kv patch secret/gentian/${ENV}/nubus \
+#   bao kv patch secret/gentian-os/kernel/identity/nubus \
 #     portal_consumer_api_password=<derive_password output> \
 #     selfservice_consumer_api_password=<derive_password output>
 # Then trigger a Tofu reconciliation.
@@ -314,7 +309,7 @@ NC_STATUS_PW=$(derive_password "nextcloud" "status_password")
 NC_OIDC_SECRET=$(derive_password "nextcloud" "oidc_client_secret")
 NC_INTEGRATION_PW=$(derive_password "nextcloud" "integration_password")
 NC_METRICS_TOKEN=$(derive_password "nextcloud" "metrics_token")
-kv_put_once "nextcloud" "$(cat <<EOF
+kv_put_once "apps/nextcloud" "$(cat <<EOF
 {
   "admin_password":       "${NC_ADMIN_PW}",
   "status_password":      "${NC_STATUS_PW}",
@@ -326,7 +321,7 @@ EOF
 )"
 
 # --- Intercom ---
-kv_put_once "intercom" "$(cat <<EOF
+kv_put_once "identity/intercom" "$(cat <<EOF
 {
   "session_secret":               "${ICS_SESSION_SECRET}",
   "oidc_client_secret":           "${KC_CLIENT_INTERCOM}",
@@ -338,7 +333,7 @@ EOF
 )"
 
 # --- Keycloak Bootstrap ---
-kv_put_once "keycloak-bootstrap" "$(cat <<EOF
+kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
   "admin_password":          "${KC_ADMIN_PW}",
   "intercom_client_secret":  "${KC_CLIENT_INTERCOM}"
@@ -349,13 +344,13 @@ EOF
 # --- Tofu State (MinIO S3 backend — random credentials, not HMAC-derived) ---
 # Uses kv_put_once like all other paths — the check above handles the skip.
 _TOFU_STATE_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
-  "${BAO_ADDR}/v1/secret/data/gentian/${ENV}/tofu-state" 2>/dev/null || true)
+  "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/platform/tofu-state" 2>/dev/null || true)
 if echo "${_TOFU_STATE_EXISTING}" | grep -q '"data":{'; then
-  echo "  Skipping secret/gentian/${ENV}/tofu-state (already exists — not regenerated)"
+  echo "  Skipping gentian-os/kernel/platform/tofu-state (already exists — not regenerated)"
 else
   TOFU_STATE_ACCESS_KEY=$(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')
   TOFU_STATE_SECRET_KEY=$(openssl rand -hex 20)
-  kv_put "tofu-state" "$(cat <<EOF
+  kv_put "platform/tofu-state" "$(cat <<EOF
 {
   "access_key_id":     "${TOFU_STATE_ACCESS_KEY}",
   "secret_access_key": "${TOFU_STATE_SECRET_KEY}"
@@ -374,15 +369,15 @@ OX_SHARE_KEY=$(derive_password "ox_appsuite" "share_crypt_key")
 OX_SESSIOND_KEY=$(derive_password "ox_appsuite" "sessiond_encryption_key")
 
 _OX_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
-  "${BAO_ADDR}/v1/secret/data/gentian/${ENV}/ox" 2>/dev/null || true)
+  "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/apps/ox" 2>/dev/null || true)
 if echo "${_OX_EXISTING}" | grep -q '"data":{'; then
-  echo "  Skipping secret/gentian/${ENV}/ox (already exists — use 'bao kv patch' to update)"
+  echo "  Skipping gentian-os/kernel/apps/ox (already exists — use 'bao kv patch' to update)"
 else
   # oidc_client_secret and connector_provisioning_api_password are random (not HMAC-derived)
   # so they can only be set on first creation; use 'bao kv patch' to rotate manually
   OX_OIDC_SECRET=$(openssl rand -hex 20)
   OX_CONNECTOR_PW=$(openssl rand -hex 20)
-  kv_put "ox" "$(cat <<EOF
+  kv_put "apps/ox" "$(cat <<EOF
 {
   "admin_password":                    "${OX_ADMIN_PW}",
   "hz_group_password":                 "${OX_HZ_GROUP_PW}",
@@ -403,17 +398,17 @@ fi
 # oidc_client_secret: written by keycloak-config Tofu workspace (module "dovecot" in clients.tf)
 #   If the keycloak-config workspace has already run, this kv_put_once is a no-op because
 #   the secret already exists with oidc_client_secret.  In that case, patch manually:
-#     bao kv patch secret/gentian/${ENV}/dovecot doveadm_password=<value>
+#     bao kv patch gentian-os/kernel/mail/dovecot doveadm_password=<value>
 _DOVECOT_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
-  "${BAO_ADDR}/v1/secret/data/gentian/${ENV}/dovecot" 2>/dev/null || true)
+  "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
-  echo "  Skipping secret/gentian/${ENV}/dovecot (doveadm_password already exists)"
+  echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"
 elif echo "${_DOVECOT_EXISTING}" | grep -q '"data":{'; then
   # Secret exists (created by keycloak-config) but missing doveadm_password — patch it
-  echo "  Patching secret/gentian/${ENV}/dovecot (adding doveadm_password)..."
+  echo "  Patching gentian-os/kernel/mail/dovecot (adding doveadm_password)..."
   EXISTING_OIDC=$(echo "${_DOVECOT_EXISTING}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['data']['data']['oidc_client_secret'])" 2>/dev/null || echo "")
   if [ -n "${EXISTING_OIDC}" ]; then
-    kv_put "dovecot" "$(cat <<EOF
+    kv_put "mail/dovecot" "$(cat <<EOF
 {
   "doveadm_password":   "${DOVECOT_DOVEADM_PW}",
   "oidc_client_secret": "${EXISTING_OIDC}"
@@ -426,7 +421,7 @@ EOF
 else
   # Secret does not exist at all — write both keys
   DOVECOT_OIDC_SECRET=$(openssl rand -hex 20)
-  kv_put "dovecot" "$(cat <<EOF
+  kv_put "mail/dovecot" "$(cat <<EOF
 {
   "doveadm_password":   "${DOVECOT_DOVEADM_PW}",
   "oidc_client_secret": "${DOVECOT_OIDC_SECRET}"
@@ -437,26 +432,26 @@ fi
 
 # --- Postfix (SMTP relay credentials) ---
 if [ -n "$SMTP_RELAY_USER" ] && [ -n "$SMTP_RELAY_PASS" ]; then
-    kv_put_once "postfix" "$(jq -n \
+    kv_put_once "mail/postfix" "$(jq -n \
         --arg relay_username "${SMTP_RELAY_USER}" \
         --arg relay_password "${SMTP_RELAY_PASS}" \
         '{"relay_username": $relay_username, "relay_password": $relay_password}')"
 else
     echo ""
     echo "  Skipping postfix credentials (not provided)."
-    echo "  To add them later: bao kv put secret/gentian/${ENV}/postfix relay_username=<u> relay_password=<p>"
+    echo "  To add them later: bao kv put gentian-os/kernel/mail/postfix relay_username=<u> relay_password=<p>"
 fi
 
 # --- Registry (OCI pull credentials) — only if provided ---
 if [ -n "$REGISTRY_USER" ] && [ -n "$REGISTRY_PASSWORD" ]; then
-    kv_put_once "registry" "$(jq -n \
+    kv_put_once "storage/registry" "$(jq -n \
         --arg username "${REGISTRY_USER}" \
         --arg password "${REGISTRY_PASSWORD}" \
         '{"username": $username, "password": $password}')"
 else
     echo ""
     echo "  Skipping registry credentials (not provided)."
-    echo "  To add them later: bao kv put secret/gentian/${ENV}/registry username=<u> password=<p>"
+    echo "  To add them later: bao kv put gentian-os/kernel/storage/registry username=<u> password=<p>"
 fi
 
 echo ""
@@ -464,6 +459,6 @@ echo "=========================================="
 echo "✅ All secrets seeded into OpenBao!"
 echo ""
 echo "Verify with:"
-echo "  bao kv list secret/gentian/${ENV}"
-echo "  bao kv get secret/gentian/${ENV}/postgresql"
+echo "  bao kv list gentian-os/kernel"
+echo "  bao kv get secret/gentian-os/kernel/database/postgresql"
 echo "=========================================="

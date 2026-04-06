@@ -1,9 +1,3 @@
-variable "environments" {
-  description = "List of environments to create policies and roles for."
-  type        = list(string)
-  default     = ["dev"]
-}
-
 variable "eso_service_account" {
   description = "Kubernetes ServiceAccount name used by External Secrets Operator."
   type        = string

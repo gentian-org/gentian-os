@@ -18,22 +18,22 @@
 
 data "vault_kv_secret_v2" "nextcloud" {
   mount = "secret"
-  name  = "gentian/${var.env}/nextcloud"
+  name  = "gentian-os/kernel/apps/nextcloud"
 }
 
 data "vault_kv_secret_v2" "redis_nc" {
   mount = "secret"
-  name  = "gentian/${var.env}/redis"
+  name  = "gentian-os/kernel/cache/redis"
 }
 
 data "vault_kv_secret_v2" "minio_nc" {
   mount = "secret"
-  name  = "gentian/${var.env}/minio"
+  name  = "gentian-os/kernel/storage/minio"
 }
 
 data "vault_kv_secret_v2" "nubus_nc" {
   mount = "secret"
-  name  = "gentian/${var.env}/nubus"
+  name  = "gentian-os/kernel/identity/nubus"
 }
 
 # ── 1. opendesk-nextcloud-management ─────────────────────────────────────────

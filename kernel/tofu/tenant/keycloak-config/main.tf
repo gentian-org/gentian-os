@@ -47,29 +47,29 @@ provider "vault" {
 # planning phase as long as the vault provider can authenticate.
 data "vault_kv_secret_v2" "keycloak_admin" {
   mount = "secret"
-  name  = "gentian/${var.env}/keycloak-bootstrap"
+  name  = "gentian-os/kernel/identity/keycloak-bootstrap"
 }
 
 # Per-app secrets — used to seed client_secret on initial client creation so
 # the Keycloak client secret always matches the seed-derived OpenBao value.
 data "vault_kv_secret_v2" "nextcloud" {
   mount = "secret"
-  name  = "gentian/${var.env}/nextcloud"
+  name  = "gentian-os/kernel/apps/nextcloud"
 }
 
 data "vault_kv_secret_v2" "intercom_secrets" {
   mount = "secret"
-  name  = "gentian/${var.env}/intercom"
+  name  = "gentian-os/kernel/identity/intercom"
 }
 
 data "vault_kv_secret_v2" "ox" {
   mount = "secret"
-  name  = "gentian/${var.env}/ox"
+  name  = "gentian-os/kernel/apps/ox"
 }
 
 data "vault_kv_secret_v2" "dovecot_secrets" {
   mount = "secret"
-  name  = "gentian/${var.env}/dovecot"
+  name  = "gentian-os/kernel/mail/dovecot"
 }
 
 locals {

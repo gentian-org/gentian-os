@@ -8,16 +8,16 @@
 # Version: 3.4.1
 #
 # Required Vault secrets (provisioned by tofu/modules/openbao-paths):
-#   secret/gentian/{env}/dovecot:
+#   secret/gentian-os/kernel/mail/dovecot:
 #     doveadm_password          — doveadm admin password
 #     oidc_client_secret        — Keycloak client secret for opendesk-dovecot
-#   secret/gentian/{env}/nubus:
+#   secret/gentian-os/kernel/identity/nubus:
 #     ldapsearch_dovecot        — LDAP search bind password
 # =============================================================================
 
 data "vault_kv_secret_v2" "dovecot" {
   mount = "secret"
-  name  = "gentian/${var.env}/dovecot"
+  name  = "gentian-os/kernel/mail/dovecot"
 }
 
 resource "helm_release" "dovecot" {

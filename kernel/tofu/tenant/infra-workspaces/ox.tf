@@ -21,17 +21,17 @@
 
 data "vault_kv_secret_v2" "ox" {
   mount = "secret"
-  name  = "gentian/${var.env}/ox"
+  name  = "gentian-os/kernel/apps/ox"
 }
 
 data "vault_kv_secret_v2" "minio" {
   mount = "secret"
-  name  = "gentian/${var.env}/minio"
+  name  = "gentian-os/kernel/storage/minio"
 }
 
 data "vault_kv_secret_v2" "redis_ox" {
   mount = "secret"
-  name  = "gentian/${var.env}/redis"
+  name  = "gentian-os/kernel/cache/redis"
 }
 
 # Note: data.vault_kv_secret_v2.mariadb  is defined in stubs.tf

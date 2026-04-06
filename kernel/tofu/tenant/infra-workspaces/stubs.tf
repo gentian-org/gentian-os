@@ -16,17 +16,17 @@
 
 data "vault_kv_secret_v2" "postgresql" {
   mount = "secret"
-  name  = "gentian/${var.env}/postgresql"
+  name  = "gentian-os/kernel/database/postgresql"
 }
 
 data "vault_kv_secret_v2" "mariadb" {
   mount = "secret"
-  name  = "gentian/${var.env}/mariadb"
+  name  = "gentian-os/kernel/database/mariadb"
 }
 
 data "vault_kv_secret_v2" "keycloak_bootstrap" {
   mount = "secret"
-  name  = "gentian/${var.env}/keycloak-bootstrap"
+  name  = "gentian-os/kernel/identity/keycloak-bootstrap"
 }
 
 # ── opendesk-postgresql ───────────────────────────────────────────────────────

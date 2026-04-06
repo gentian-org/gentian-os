@@ -9,10 +9,10 @@
 
 data "vault_kv_secret_v2" "nubus" {
   mount = "secret"
-  name  = "gentian/${var.env}/nubus"
+  name  = "gentian-os/kernel/identity/nubus"
 }
 
 data "vault_kv_secret_v2" "postfix" {
   mount = "secret"
-  name  = "gentian/${var.env}/postfix"
+  name  = "gentian-os/kernel/mail/postfix"
 }

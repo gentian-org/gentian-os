@@ -13,22 +13,22 @@
 
 import {
   to = module.intercom.vault_kv_secret_v2.client_secret
-  id = "secret/data/gentian/${var.env}/keycloak-bootstrap"
+  id = "secret/data/gentian-os/kernel/identity/keycloak-bootstrap"
 }
 
 import {
   to = module.nextcloud.vault_kv_secret_v2.client_secret
-  id = "secret/data/gentian/${var.env}/nextcloud"
+  id = "secret/data/gentian-os/kernel/apps/nextcloud"
 }
 
 import {
   to = module.ox_appsuite.vault_kv_secret_v2.client_secret
-  id = "secret/data/gentian/${var.env}/ox"
+  id = "secret/data/gentian-os/kernel/apps/ox"
 }
 
 import {
   to = module.dovecot.vault_kv_secret_v2.client_secret
-  id = "secret/data/gentian/${var.env}/dovecot"
+  id = "secret/data/gentian-os/kernel/mail/dovecot"
 }
 
 # ── opendesk-intercom ─────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ module "intercom" {
   client_secret = data.vault_kv_secret_v2.intercom_secrets.data["oidc_client_secret"]
 
   openbao_mount       = "secret"
-  openbao_secret_path = "gentian/${var.env}/keycloak-bootstrap"
+  openbao_secret_path = "gentian-os/kernel/identity/keycloak-bootstrap"
   openbao_secret_key  = "intercom_client_secret"
 }
 
@@ -122,7 +122,7 @@ module "nextcloud" {
   client_secret = data.vault_kv_secret_v2.nextcloud.data["oidc_client_secret"]
 
   openbao_mount       = "secret"
-  openbao_secret_path = "gentian/${var.env}/nextcloud"
+  openbao_secret_path = "gentian-os/kernel/apps/nextcloud"
   openbao_secret_key  = "oidc_client_secret"
 }
 
@@ -175,7 +175,7 @@ module "ox_appsuite" {
   client_secret = data.vault_kv_secret_v2.ox.data["oidc_client_secret"]
 
   openbao_mount       = "secret"
-  openbao_secret_path = "gentian/${var.env}/ox"
+  openbao_secret_path = "gentian-os/kernel/apps/ox"
   openbao_secret_key  = "oidc_client_secret"
 }
 
@@ -230,7 +230,7 @@ module "dovecot" {
   client_secret = data.vault_kv_secret_v2.dovecot_secrets.data["oidc_client_secret"]
 
   openbao_mount       = "secret"
-  openbao_secret_path = "gentian/${var.env}/dovecot"
+  openbao_secret_path = "gentian-os/kernel/mail/dovecot"
   openbao_secret_key  = "oidc_client_secret"
 }
 
@@ -248,6 +248,6 @@ module "dovecot" {
 #   web_origins   = ["+"]
 #
 #   openbao_mount       = "secret"
-#   openbao_secret_path = "gentian/${var.env}/collabora"
+#   openbao_secret_path = "gentian-os/kernel/apps/collabora"
 #   openbao_secret_key  = "oidc_client_secret"
 # }
