@@ -1,0 +1,125 @@
+---
+# User-installable apps group (Layer 200+).
+# Pattern A — charts with existingSecret support, deployed directly by ArgoCD.
+# Matrix generator: env list × app list  →  one Application per (env, app) pair.
+# To add an environment: add one entry to the env list.
+# To add an application:  add one entry to the app list.
+#
+# App classification (all per-tenant, deployable via AppProfile):
+#
+#   Pattern A (this ApplicationSet — ArgoCD manages Helm directly):
+#     collabora    — Layer 200, document editing (collabora-online v1.1.45)
+#     openproject  — Layer 220, project management (openproject v10.1.0; verify existingSecret)
+#
+#   Pattern B (Tofu-managed for now; no existingSecret support):
+#     ox-appsuite  — Layer 200, email + PIM  (appsuite-public-sector v2.26.32)
+#                    3 releases: appsuite-public-sector + opendesk-open-xchange-bootstrap + ox-connector
+#                    Managed: tofu/tenant/infra-workspaces/ox.tf
+#     element      — Layer 210, chat / Matrix (opendesk-element v6.1.9)
+#                    2 releases: opendesk-element + opendesk-well-known
+#                    Managed: tofu/tenant/infra-workspaces/element.tf  (TURN secret shared with Jitsi)
+#     jitsi        — Layer 210, video conf.  (opendesk-jitsi v3.5.1)
+#                    Managed: tofu/tenant/infra-workspaces/jitsi.tf    (TURN secret shared with Element)
+#     xwiki        — Layer 220, wiki         (xwiki v1.4.4)
+#                    Managed: tofu/tenant/infra-workspaces/xwiki.tf
+#     postfix      — Layer 100e, SMTP relay  (postfix v5.2.0)
+#                    Managed: tofu/tenant/infra-workspaces/postfix.tf  (Inc 16 — mail reconciler)
+#     dovecot      — Layer 100e, IMAP store  (dovecot v3.4.1)
+#                    Managed: tofu/tenant/infra-workspaces/dovecot.tf  (Inc 16 — mail reconciler)
+#
+# B → A migration: when an upstream chart gains existingSecret support, uncomment the
+# entry here, add an ExternalSecret manifest, delete the helm_release block from the
+# corresponding Tofu workspace .tf file. The OpenBao path never moves.
+#
+# Usage pattern:
+#   Layer 1:  $values/values/env/{env}.yaml           (storageClass, imagePullSecrets)
+#   Layer 2:  $values/apps/{app}/values/_base.yaml    (non-secret config, NO env-specific hostnames)
+#   Layer 3:  $values/apps/{app}/values/{env}/values.yaml  (existingSecret refs, sizing)
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-apps
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements: []  # add envs: - env: dev / - env: prod  (once at least one app is uncommented)
+      - list:
+          # ── Pattern A apps — uncomment when ready to deploy ──────────────────────
+          #
+          # Collabora (document editing) — verify existingSecret before enabling:
+          # - app: collabora
+          #   chart: collabora-online
+          #   repoURL: registry.opencode.de/bmi/opendesk/components/supplier/collabora/charts-mirror
+          #   version: "1.1.45"
+          #   wave: "40"
+          #
+          # OpenProject (project management) — confirm existingSecret support first:
+          # - app: openproject
+          #   chart: openproject
+          #   repoURL: registry.opencode.de/bmi/opendesk/components/supplier/openproject/charts-mirror
+          #   version: "10.1.0"
+          #   wave: "41"
+          #
+          # ── Pattern B apps — managed by Tofu; listed here for reference only ─────
+          # These will move to active entries above once existingSecret is available.
+          #
+          # OX App Suite (email + PIM) — Pattern B, Tofu: tofu/tenant/infra-workspaces/ox.tf
+          #   appsuite-public-sector v2.26.32 @ registry.opencode.de/bmi/opendesk/components/supplier/open-xchange/charts-mirror
+          #   opendesk-open-xchange-bootstrap v4.0.2 @ registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-open-xchange-bootstrap
+          #   ox-connector v0.34.0 @ registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
+          #
+          # Element (chat / Matrix) — Pattern B, Tofu: tofu/tenant/infra-workspaces/element.tf
+          #   opendesk-element v6.1.9 + opendesk-well-known v6.1.9
+          #   @ registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-element
+          #   NOTE: TURN secret shared with Jitsi — both tf blocks read the same vault_kv_secret_v2.turn
+          #
+          # Jitsi (video conferencing) — Pattern B, Tofu: tofu/tenant/infra-workspaces/jitsi.tf
+          #   opendesk-jitsi v3.5.1 @ registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-jitsi
+          #   NOTE: TURN secret shared with Element — both tf blocks read the same vault_kv_secret_v2.turn
+          #
+          # XWiki (wiki) — Pattern B, Tofu: tofu/tenant/infra-workspaces/xwiki.tf
+          #   xwiki v1.4.4 @ registry.opencode.de/bmi/opendesk/components/supplier/xwiki/charts-mirror
+          #
+          # Postfix (SMTP relay) — Pattern B, Tofu: tofu/tenant/infra-workspaces/postfix.tf
+          #   postfix v5.2.0 @ registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postfix
+          #   NOTE: belongs to Inc 16 (mail reconciler)
+          #
+          # Dovecot (IMAP store) — Pattern B, Tofu: tofu/tenant/infra-workspaces/dovecot.tf
+          #   dovecot v3.4.1 @ registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-dovecot
+          #   NOTE: belongs to Inc 16 (mail reconciler)
+          elements: []  # placeholder: remove [] and uncomment app entries when Pattern A
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{.wave}}'
+    spec:
+      project: gentian
+      sources:
+      - repoURL: https://github.com/gentian-org/server
+        targetRevision: develop
+        ref: values
+      - repoURL: '{{.repoURL}}'
+        chart: '{{.chart}}'
+        targetRevision: '{{.version}}'
+        helm:
+          valueFiles:
+          - $values/values/env/{{.env}}.yaml
+          - $values/apps/{{.app}}/values/_base.yaml
+          - $values/apps/{{.app}}/values/{{.env}}/values.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'gentian-{{.env}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true

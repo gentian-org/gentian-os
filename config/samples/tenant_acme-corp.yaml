@@ -30,7 +30,6 @@ spec:
   deletionPolicy: Retain
 
   apps:
-    - profile: nextcloud
     - profile: ox-appsuite
     - profile: openproject
       config:

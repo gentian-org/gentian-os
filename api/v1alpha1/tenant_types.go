@@ -163,16 +163,16 @@ type TenantStatus struct {
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
 
-        // AppCount is the total number of apps requested in spec.
-        // +optional
-        AppCount int `json:"appCount,omitempty"`
+	// AppCount is the total number of apps requested in spec.
+	// +optional
+	AppCount int `json:"appCount,omitempty"`
 
-        // ReadyApps is the number of apps that have been successfully provisioned.
-        // +optional
-        ReadyApps int `json:"readyApps,omitempty"`
-        // Namespace is the resolved tenant namespace name.
-        // +optional
-        Namespace string `json:"namespace,omitempty"`
+	// ReadyApps is the number of apps that have been successfully provisioned.
+	// +optional
+	ReadyApps int `json:"readyApps,omitempty"`
+	// Namespace is the resolved tenant namespace name.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

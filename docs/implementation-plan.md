@@ -51,7 +51,7 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 | Increment | Title | Status | Notes |
 |---|---|---|---|
 | 0 | Project scaffolding | ✅ Done | go.mod, Makefile (`generate`, `manifests`, `build`, `test`, `lint`, `docker-build`), `internal/controller/` stub, `charts/gentian-os/` (Chart.yaml + values.yaml), `kernel/` (tofu modules/platform/tenant, bootstrap, appsets, manifest, eso, openbao, services, values), `scripts/` (5 bootstrapping scripts), Dockerfile (multi-stage distroless), CI pipeline (go/generate/lint/docker jobs). Deployment smoke test is a manual gate requiring a live cluster. |
-| 1 | CRD definitions | ✅ Done | All three CRDs (AppProfile, Tenant, IntegrationBinding) generated. 18 tests pass. Spike: OX, Nubus, Nextcloud sample YAMLs validate. |
+| 1 | CRD definitions | ✅ Done | All three CRDs (AppProfile, Tenant, IntegrationBinding) generated. 18 tests pass. Spike: OX App Suite sample YAML validates. Nubus/Nextcloud spike files removed (kernel services, not user-installable apps). |
 | 2 | Orchestrator skeleton + Tenant namespace reconciler | ✅ Done | `cmd/main.go` (controller-manager entry point), `internal/controller/tenant_controller.go` (namespace + ResourceQuota + LimitRange + NetworkPolicy + status conditions + finalizer + Retain/Delete deletion policy), 8 envtest integration tests. k8s.io/* upgraded to v0.35.0, controller-runtime v0.23.3. |
 | 3 | Identity reconciler (Keycloak realm + OIDC clients) | ✅ Done | `internal/controller/identity_reconciler.go`: `ensureIdentity` creates Keycloak realm + OIDC client Jobs in `platform-kernel` namespace via Keycloak Admin REST API (curl-based Jobs, idempotent check-before-create). Job watch in `SetupWithManager` triggers immediate reconcile on Job completion. `deleteIdentity` creates realm-deletion Job when `deletionPolicy: Delete`. 5 envtest tests. 31 tests total. |
 | 4 | LDAP reconciler (UDM REST API) | ✅ Done | `internal/controller/ldap_reconciler.go`: `ensureLDAP` collects LDAP-requiring apps from AppProfile, creates UDM OU+groups Job then per-app bind account Jobs (sequenced: OU must complete first). `deleteLDAP` creates OU-deletion Job on DeletionPolicy=Delete. Jobs use `curlimages/curl:8.7.1`, credentials from `udm-admin` Secret. `LDAPReady` condition. 6 envtest tests. 37 tests total. |
@@ -183,7 +183,7 @@ For **Pattern B apps** (where `existingSecret` isn't supported), the `appSecrets
 - `kubectl apply --dry-run=server -f config/crd/` succeeds on a test cluster
 - Unit tests verify deepcopy, defaulting, and validation
 - Example CRs from architecture §12.1–12.3 validate against the generated schema
-- **Spike**: hand-write `ox-appsuite.yaml`, `nubus.yaml`, and `nextcloud.yaml` AppProfile CRs using real value paths from `server/` — all must validate against the generated CRD schema. If any value path can't be expressed, fix the CRD before proceeding.
+- **Spike**: hand-write `ox-appsuite.yaml` AppProfile CR using real value paths from `server/` — must validate against the generated CRD schema. If any value path can't be expressed, fix the CRD before proceeding. Note: Nubus and Nextcloud are kernel services (deployed cluster-wide once); they do NOT have AppProfiles.
 
 ---
 
@@ -524,26 +524,40 @@ Metrics are exported via the controller-runtime `/metrics` endpoint. Each reconc
 
 ---
 
-### Increment 14 — AppProfiles for kernel apps + AppProfile update reconciler
+### Increment 14 — AppProfiles for user-installable apps + AppProfile update reconciler
 
-**Goal:** Write AppProfile CRs for the always-on kernel apps and implement the AppProfile update reconciler (architecture §14.3) — so that bumping a chart version in an AppProfile propagates to all tenants using that profile.
+**Goal:** Write the first real AppProfile CRs for user-installable apps and implement the AppProfile update reconciler (architecture §14.3) — so that bumping a chart version in a profile propagates to all tenants using it.
 
-**Profiles to create (from server/ reference):**
-- `nubus.yaml` — Keycloak + UCS LDAP (identity kernel service)
-- `postfix.yaml` — Mail MTA (kernel extension)
-- `dovecot.yaml` — Mail MDA (kernel extension)
-- `intercom-service.yaml` — Cross-app notifications
+**Kernel service classification (no AppProfile needed):**
 
-**Note:** Nextcloud is a kernel service deployed once in `platform-kernel` (not per-tenant). It does **not** get an AppProfile — per-tenant Nextcloud provisioning (groups, folders, sharing) is API-based via OCS REST API Jobs in Increment 7. Nextcloud's kernel deployment is managed by the Layer 100 ApplicationSet, not the orchestrator.
+The following services are deployed exactly once, cluster-wide, by the Layer 100–150 ApplicationSets. The orchestrator does **not** create ArgoCD Applications for them — it calls their APIs via Jobs (Increments 3, 4, 7). They do not get AppProfiles.
 
-**Note:** OX App Suite is a user-installable app, not a kernel service. Its AppProfile belongs in `gentian-apps` (see Apps-B below), not here.
+| Service | Architecture layer | Per-tenant provisioning |
+|---|---|---|
+| **Nubus** (Keycloak + UCS LDAP) | Layer 110 — Identity | REST API Jobs (Inc 3 Keycloak, Inc 4 LDAP) |
+| **Nextcloud** | Layer 130 — Storage | OCS REST API Jobs (Inc 7) |
+| **Intercom Service** (Notification Gateway) | Layer 150 — Shell UI + Notification Gateway | No per-tenant provisioning needed |
+
+These three follow the same rule: kernel deployment is managed by the ApplicationSet, not the orchestrator; per-tenant wiring is done via API Jobs, not Helm. AppProfiles describe Helm-deployed apps, which these are not (from the orchestrator's perspective).
+
+**What gets AppProfiles (user-installable apps in `gentian-apps`):**
+
+AppProfiles belong to apps that the orchestrator deploys **per-tenant** as ArgoCD Application CRs (or Tofu Controller CRs). These live in the `gentian-apps` repo (architecture §7 Repo 2). The first two profiles to create for this increment:
+
+- `ox-appsuite.yaml` — OX App Suite (groupware: mail client, calendar, contacts). Pattern B (Tofu Controller). KernelRequirements: OIDC, LDAP, MariaDB, Redis, S3. AppSecrets: master password, HZ group password, cookie hash salt, JWT secrets (7 total). Reverse-engineer value paths from `server/apps/appsuite/` and `server/tofu/tenant/keycloak-config/`.
+
+- `openproject.yaml` — OpenProject (project management). Pattern A (ArgoCD). KernelRequirements: OIDC, PostgreSQL, S3 (file attachments), SMTP. AppSecrets: secret key base, OmniAuth secret. Reverse-engineer from `server/apps/openproject/`.
+
+**Note on Postfix and Dovecot:** These are per-tenant mail extensions deployed as ArgoCD Application CRs when `spec.mail.mode: selfhosted` (architecture §2.2: "provisioned per-tenant"). They will get AppProfiles — but in **Increment 16** (mail extension reconciler), not here. The mail reconciler must exist before the AppProfiles can be tested against real deployments.
 
 **Each profile declares:**
 - `kernelRequirements` (which kernel functions it needs)
 - `chart` reference (OCI URL + version)
 - `valueMapping` (typed schema for Helm values)
+- `appSecrets` (app-internal generated secrets, HMAC-SHA256 derived)
 - `provides` (what contracts it offers)
 - `optionalIntegrations` (what peer integrations it supports)
+- `deploymentMethod` (`argocd` for Pattern A, `tofu-controller` for Pattern B)
 
 **AppProfile update reconciler (`internal/controller/appprofile_controller.go`):**
 - Watch AppProfile CRs for changes (chart version bump, valueMapping update)
@@ -556,7 +570,7 @@ Metrics are exported via the controller-runtime `/metrics` endpoint. Each reconc
 **Source:** Reverse-engineer from `server/apps/{app}/` Helm values + `server/tofu/tenant/keycloak-config/` to extract the actual value keys each chart expects.
 
 **Test:**
-- All profiles validate against the AppProfile CRD schema
+- Both profiles validate against the AppProfile CRD schema
 - `kubectl apply -f profiles/` succeeds
 - Orchestrator can render correct Helm values from each profile's `valueMapping`
 - AppProfile update test: bump chart version in a profile → all tenants' ArgoCD Applications updated → ArgoCD rolls out new version
@@ -648,7 +662,7 @@ gentian-deployments/
 | 11 | IntegrationBinding reconciler | Medium | — | Auto-wired cross-app contracts |
 | 12 | OpenBao path restructuring | Medium | — | Architecture-compliant secret tree |
 | 13 | Orchestrator Helm chart + observability | Small | — | Installable via `helm install`, Prometheus metrics, printer columns |
-| 14 | AppProfiles + update reconciler | Medium | — | Kernel app profiles (Nubus, mail, intercom) + AppProfile update propagation |
+| 14 | AppProfiles + update reconciler | Medium | — | User-installable app AppProfiles (collabora, element, jitsi, openproject, xwiki, ox-appsuite) + AppProfile update propagation |
 | 15 | Deployment repo (gentian-deployments) | Medium | 13, 14 | End-to-end validation |
 | 16 | Mail kernel extension | Medium | 3 | Per-tenant mail modes |
 | 17 | Multi-tenant isolation hardening | Medium | 2–8 | Security validation |

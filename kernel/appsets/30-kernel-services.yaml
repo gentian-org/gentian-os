@@ -1,0 +1,87 @@
+---
+# Kernel services group: cluster-wide platform services (Layers 110–150).
+# Pattern A — charts with existingSecret support, deployed directly by ArgoCD.
+# Matrix generator: env list × app list  →  one Application per (env, app) pair.
+# To add an environment: add one entry to the env list.
+# To add an application:  add one entry to the app list.
+#
+# Kernel services classification:
+#   Layer 110  Nubus (Keycloak + UCS LDAP)        — Pattern B (Tofu); see 21-nubus.yaml
+#   Layer 130  Nextcloud (3 sub-charts)            — Pattern B now, moves here when
+#                                                    ZenDiS adds existingSecret support
+#              opendesk-nextcloud-management v4.7.2
+#              opendesk-nextcloud            v4.7.2
+#              opendesk-nextcloud-notifypush v4.7.2
+#              repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
+#   Layer 150  Intercom Service                    — Pattern A; managed in 20-iam.yaml
+#
+# User-installable apps (Layer 200+) belong in 40-apps.yaml, not here.
+#
+# Usage pattern:
+#   Layer 1:  $values/values/env/{env}.yaml           (storageClass, imagePullSecrets)
+#   Layer 2:  $values/apps/{app}/values/_base.yaml    (non-secret config, NO env-specific hostnames)
+#   Layer 3:  $values/apps/{app}/values/{env}/values.yaml  (existingSecret refs, sizing)
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-kernel-services
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements: []  # add envs: - env: dev / - env: prod  (once at least one app is uncommented)
+      - list:
+          # Nextcloud (3 sub-charts) — currently Pattern B (Tofu-managed via infra-workspaces).
+          # Uncomment each entry after ZenDiS adds existingSecret support and the
+          # helm_release blocks are removed from tofu/tenant/infra-workspaces/nextcloud.tf.
+          #
+          # - app: nextcloud-management
+          #   chart: opendesk-nextcloud-management
+          #   repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
+          #   version: "4.7.2"
+          #   wave: "31"
+          # - app: nextcloud
+          #   chart: opendesk-nextcloud
+          #   repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
+          #   version: "4.7.2"
+          #   wave: "32"
+          # - app: nextcloud-notifypush
+          #   chart: opendesk-nextcloud-notifypush
+          #   repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
+          #   version: "4.7.2"
+          #   wave: "33"
+          elements: []  # placeholder: remove [] and uncomment Nextcloud entries when Pattern A
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{.wave}}'
+    spec:
+      project: gentian
+      sources:
+      - repoURL: https://github.com/gentian-org/server
+        targetRevision: develop
+        ref: values
+      - repoURL: '{{.repoURL}}'
+        chart: '{{.chart}}'
+        targetRevision: '{{.version}}'
+        helm:
+          valueFiles:
+          - $values/values/env/{{.env}}.yaml
+          - $values/apps/{{.app}}/values/_base.yaml
+          - $values/apps/{{.app}}/values/{{.env}}/values.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'gentian-{{.env}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
