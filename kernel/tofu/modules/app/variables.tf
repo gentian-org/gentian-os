@@ -78,6 +78,7 @@ variable "optional_scopes" {
 }
 
 variable "post_logout_redirect_uris" {
+  # maps to valid_post_logout_redirect_uris in keycloak provider v4.4+
   description = "Allowed post-logout redirect URIs. Keycloak uses these to validate where the browser is sent after RP-initiated logout."
   type        = list(string)
   default     = []

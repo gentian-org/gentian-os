@@ -117,7 +117,7 @@ module "nextcloud" {
   backchannel_logout_url              = "https://files.desk.gentian.org/apps/user_oidc/backchannel-logout/opendesk"
   backchannel_logout_session_required = true
 
-  post_logout_redirect_uris = ["https://files.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+  post_logout_redirect_uris = ["https://files.desk.gentian.org/*", "https://portal.desk.gentian.org/*"] # maps to valid_post_logout_redirect_uris
 
   client_secret = data.vault_kv_secret_v2.nextcloud.data["oidc_client_secret"]
 
@@ -170,7 +170,7 @@ module "ox_appsuite" {
   backchannel_logout_url              = "https://oxapps.desk.gentian.org/appsuite/api/oidc/logout"
   backchannel_logout_session_required = true
 
-  post_logout_redirect_uris = ["https://oxapps.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+  post_logout_redirect_uris = ["https://oxapps.desk.gentian.org/*", "https://portal.desk.gentian.org/*"] # maps to valid_post_logout_redirect_uris
 
   client_secret = data.vault_kv_secret_v2.ox.data["oidc_client_secret"]
 

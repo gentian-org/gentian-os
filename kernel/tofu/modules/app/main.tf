@@ -32,7 +32,7 @@ resource "keycloak_openid_client" "this" {
   backchannel_logout_session_required       = var.backchannel_logout_session_required
   # backchannel_logout_revoke_offline_tokens — not supported in mrparkers/keycloak v4.x
 
-  post_logout_redirect_uris = length(var.post_logout_redirect_uris) > 0 ? var.post_logout_redirect_uris : null
+  valid_post_logout_redirect_uris = length(var.post_logout_redirect_uris) > 0 ? var.post_logout_redirect_uris : null
 
   extra_config = merge(
     var.token_exchange_enabled ? {
