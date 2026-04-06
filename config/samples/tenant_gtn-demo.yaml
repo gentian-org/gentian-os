@@ -2,22 +2,22 @@
 apiVersion: gentianos.io/v1alpha1
 kind: Tenant
 metadata:
-  name: acme-corp
+  name: gtn-demo
 spec:
-  displayName: "ACME Corporation"
-  domain: acme.gentianos.example.com
-  adminEmail: admin@acme.example.com
+  displayName: "GTN Demo"
+  domain: gtn-demo.gentianos.example.com
+  adminEmail: admin@gtn-demo.example.com
 
   isolation:
     mode: namespace
-    ldapOU: "ou=acme-corp"
-    keycloakRealm: acme-corp
-    databasePrefix: acme_
-    s3Prefix: acme-corp-
+    ldapOU: "ou=gtn-demo"
+    keycloakRealm: gtn-demo
+    databasePrefix: gtn_
+    s3Prefix: gtn-demo-
 
   mail:
     mode: selfhosted
-    domain: acme.example.com
+    domain: gtn-demo.example.com
     quotaPerUser: 5Gi
     rateLimit: 100/h
 

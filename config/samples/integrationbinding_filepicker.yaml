@@ -5,20 +5,20 @@
 apiVersion: gentianos.io/v1alpha1
 kind: IntegrationBinding
 metadata:
-  name: acme-corp-filepicker
-  namespace: tenant-acme-corp
+  name: gtn-demo-filepicker
+  namespace: tenant-gtn-demo
 spec:
   contract: filepicker
   provider:
     app: nextcloud
-    namespace: tenant-acme-corp
+    namespace: tenant-gtn-demo
   consumer:
     app: ox-appsuite
-    namespace: tenant-acme-corp
+    namespace: tenant-gtn-demo
   capabilities:
     - webdav:read
     - webdav:write
     - ocs:shares
   auth:
     method: oidc-token-exchange
-    vaultPath: gentianos/tenants/acme-corp/contracts/filepicker
+    vaultPath: gentianos/tenants/gtn-demo/contracts/filepicker

@@ -256,7 +256,7 @@ Pattern B keeps secrets out of Git and the ArgoCD UI — they remain in memory d
 
 ### 5.4 Credential Rotation and Pod Restart
 
-Credential rotation is passive: the orchestrator rotates credentials in OpenBao, and ESO automatically syncs the new values into Kubernetes Secrets. However, ArgoCD does not restart pods when only a Secret's *content* changes (it watches manifests, not data). **Stakater Reloader** bridges this gap — workloads annotated with `reloader.stakater.com/auto: "true"` are automatically rolled when a referenced Secret or ConfigMap changes. This is triggered via annotation (`kubectl annotate tenant acme-corp gentianos.io/rotate-credentials=all`).
+Credential rotation is passive: the orchestrator rotates credentials in OpenBao, and ESO automatically syncs the new values into Kubernetes Secrets. However, ArgoCD does not restart pods when only a Secret's *content* changes (it watches manifests, not data). **Stakater Reloader** bridges this gap — workloads annotated with `reloader.stakater.com/auto: "true"` are automatically rolled when a referenced Secret or ConfigMap changes. This is triggered via annotation (`kubectl annotate tenant gtn-demo gentianos.io/rotate-credentials=all`).
 
 **Secret path structure:**
 
@@ -443,7 +443,7 @@ gentian-deployments/
 │   │   └── tofu.tfvars            # OpenTofu variables (domain, root creds ref)
 │   ├── app-of-apps.yaml           # ArgoCD Application pointing at gentian-os + gentian-apps
 │   └── tenants/
-│       ├── acme-corp.yaml         # Tenant CR
+│       ├── gtn-demo.yaml         # Tenant CR
 │       ├── beta-inc.yaml
 │       └── new-customer.yaml
 ├── staging/
@@ -512,13 +512,13 @@ Backup in Gentian OS is **per-subsystem** — each kernel component uses the ind
 
 ### 9.2 Tenant-Scoped Restore
 
-The per-tenant isolation model (separate databases, buckets, realms, namespaces) enables **single-tenant restore** without affecting other tenants. Restoring tenant `acme-corp` means:
+The per-tenant isolation model (separate databases, buckets, realms, namespaces) enables **single-tenant restore** without affecting other tenants. Restoring tenant `gtn-demo` means:
 
-1. Restore the PostgreSQL databases matching `acme_*` from pgBackRest.
-2. Restore the MinIO buckets matching `acme-corp-*`.
-3. Restore the Dovecot mailboxes for the `acme.example.com` domain.
-4. Re-import the Keycloak realm `acme-corp` from the JSON export.
-5. Restore the namespace `tenant-acme-corp` via Velero.
+1. Restore the PostgreSQL databases matching `gtn_*` from pgBackRest.
+2. Restore the MinIO buckets matching `gtn-demo-*`.
+3. Restore the Dovecot mailboxes for the `gtn-demo.example.com` domain.
+4. Re-import the Keycloak realm `gtn-demo` from the JSON export.
+5. Restore the namespace `tenant-gtn-demo` via Velero.
 
 The orchestrator can automate this sequence by responding to a `RestoreTenant` CR (future work).
 
@@ -652,7 +652,7 @@ graph LR
         PS[platform-system\nArgoCD / Tofu Controller\nGentianOS Orchestrator\nESO / cert-manager]
     end
     subgraph Tenants
-        TA[tenant-acme-corp\nAcme Corp apps\n+ mail extension if selfhosted]
+        TA[tenant-gtn-demo\nAcme Corp apps\n+ mail extension if selfhosted]
         TB[tenant-beta-inc\nBeta Inc apps]
     end
 
@@ -778,23 +778,23 @@ spec:
 apiVersion: gentianos.io/v1alpha1
 kind: Tenant
 metadata:
-  name: acme-corp
+  name: gtn-demo
 spec:
-  displayName: "ACME Corporation"
-  domain: acme.gentianos.example.com
-  adminEmail: admin@acme.example.com
+  displayName: "GTN Demo"
+  domain: gtn-demo.gentianos.example.com
+  adminEmail: admin@gtn-demo.example.com
 
   isolation:
     mode: namespace              # namespace | vcluster
-    namespace: tenant-acme-corp
-    ldapOU: "ou=acme-corp"
-    keycloakRealm: acme-corp
-    databasePrefix: acme_
-    s3Prefix: acme-corp-
+    namespace: tenant-gtn-demo
+    ldapOU: "ou=gtn-demo"
+    keycloakRealm: gtn-demo
+    databasePrefix: gtn_
+    s3Prefix: gtn-demo-
 
   mail:
     mode: selfhosted             # selfhosted | external | transport-only | disabled
-    domain: acme.example.com
+    domain: gtn-demo.example.com
     quotaPerUser: 5Gi
     rateLimit: 100/h
 
@@ -823,19 +823,19 @@ spec:
 apiVersion: gentianos.io/v1alpha1
 kind: IntegrationBinding
 metadata:
-  name: acme-corp-filepicker
-  namespace: tenant-acme-corp
+  name: gtn-demo-filepicker
+  namespace: tenant-gtn-demo
   ownerReferences:
     - kind: Tenant
-      name: acme-corp
+      name: gtn-demo
 spec:
   contract: filepicker
-  provider: { app: nextcloud, namespace: tenant-acme-corp }
-  consumer: { app: ox-appsuite, namespace: tenant-acme-corp }
+  provider: { app: nextcloud, namespace: tenant-gtn-demo }
+  consumer: { app: ox-appsuite, namespace: tenant-gtn-demo }
   capabilities: [webdav:read, webdav:write, ocs:shares]
   auth:
     method: oidc-token-exchange
-    vaultPath: gentianos/tenants/acme-corp/contracts/filepicker
+    vaultPath: gentianos/tenants/gtn-demo/contracts/filepicker
 status:
   state: Ready
   conditions:
@@ -856,7 +856,7 @@ apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
   name: openproject-db
-  namespace: tenant-acme-corp
+  namespace: tenant-gtn-demo
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -868,11 +868,11 @@ spec:
   data:
     - secretKey: username
       remoteRef:
-        key: gentianos/tenants/acme-corp/apps/openproject/database
+        key: gentianos/tenants/gtn-demo/apps/openproject/database
         property: user
     - secretKey: password
       remoteRef:
-        key: gentianos/tenants/acme-corp/apps/openproject/database
+        key: gentianos/tenants/gtn-demo/apps/openproject/database
         property: password
 ```
 
@@ -882,14 +882,14 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: acme-corp-openproject
+  name: gtn-demo-openproject
   namespace: argocd
   labels:
-    gentianos.io/tenant: acme-corp
+    gentianos.io/tenant: gtn-demo
     gentianos.io/app: openproject
   ownerReferences:
     - kind: Tenant
-      name: acme-corp
+      name: gtn-demo
 spec:
   project: gentianos-tenants
   source:
@@ -899,23 +899,23 @@ spec:
     helm:
       valuesObject:
         oidc:
-          issuer: "https://keycloak.gentianos.example.com/realms/acme-corp"
+          issuer: "https://keycloak.gentianos.example.com/realms/gtn-demo"
           existingSecret: openproject-oidc-credentials
         database:
           host: "postgresql.platform-kernel.svc.cluster.local"
-          name: "acme_openproject"
+          name: "gtn_openproject"
           existingSecret: openproject-db-credentials
         s3:
           endpoint: "https://minio.platform-kernel.svc.cluster.local"
-          bucket: "acme-corp-openproject"
+          bucket: "gtn-demo-openproject"
           existingSecret: openproject-s3-credentials
         smtp:
-          host: "postfix.tenant-acme-corp.svc.cluster.local"
+          host: "postfix.tenant-gtn-demo.svc.cluster.local"
           port: 587
           existingSecret: openproject-smtp-credentials
   destination:
     server: https://kubernetes.default.svc
-    namespace: tenant-acme-corp
+    namespace: tenant-gtn-demo
   syncPolicy:
     automated:
       prune: true
@@ -1159,23 +1159,23 @@ type ResourceOrchestrator interface {
 # Tenant health at a glance
 kubectl get tenants
 NAME          STATUS         APPS   READY   MAIL         AGE
-acme-corp     Ready          6      6/6     selfhosted   30d
+gtn-demo     Ready          6      6/6     selfhosted   30d
 beta-inc      Ready          4      4/4     external     15d
 new-customer  Provisioning   5      3/5     selfhosted   2m
 
 # Integration contract health
 kubectl get integrationbindings -A
 NAMESPACE          NAME                  CONTRACT             STATUS   AGE
-tenant-acme-corp   acme-filepicker       filepicker           Ready    30d
-tenant-acme-corp   acme-file-store       file-store           Ready    30d
-tenant-acme-corp   acme-central-nav      central-navigation   Ready    30d
+tenant-gtn-demo   gtn-demo-filepicker       filepicker           Ready    30d
+tenant-gtn-demo   gtn-demo-file-store       file-store           Ready    30d
+tenant-gtn-demo   gtn-demo-central-nav      central-navigation   Ready    30d
 
 # ArgoCD sync status
-kubectl get applications -n argocd -l gentianos.io/tenant=acme-corp
+kubectl get applications -n argocd -l gentianos.io/tenant=gtn-demo
 NAME                       SYNC     HEALTH    STATUS
-acme-corp-nextcloud        Synced   Healthy   Running
-acme-corp-openproject      Synced   Healthy   Running
-acme-corp-ox-appsuite      Synced   Healthy   Running
+gtn-demo-nextcloud        Synced   Healthy   Running
+gtn-demo-openproject      Synced   Healthy   Running
+gtn-demo-ox-appsuite      Synced   Healthy   Running
 ```
 
 ### Prometheus Metrics (exported by orchestrator)

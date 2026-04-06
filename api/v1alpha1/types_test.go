@@ -139,22 +139,22 @@ func TestTenant_DeepCopy(t *testing.T) {
 	quotaPerUser := resource.MustParse("5Gi")
 
 	original := &v1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "acme-corp"},
+		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: v1alpha1.TenantSpec{
-			DisplayName:    "ACME Corporation",
-			Domain:         "acme.example.com",
-			AdminEmail:     "admin@acme.example.com",
+			DisplayName:    "GTN Demo",
+			Domain:         "gtn-demo.example.com",
+			AdminEmail:     "admin@gtn-demo.example.com",
 			DeletionPolicy: v1alpha1.DeletionPolicyRetain,
 			Isolation: &v1alpha1.TenantIsolation{
 				Mode:           v1alpha1.IsolationModeNamespace,
-				KeycloakRealm:  "acme-corp",
-				DatabasePrefix: "acme_",
-				S3Prefix:       "acme-corp-",
-				LDAPOu:         "ou=acme-corp",
+				KeycloakRealm:  "gtn-demo",
+				DatabasePrefix: "gtn_",
+				S3Prefix:       "gtn-demo-",
+				LDAPOu:         "ou=gtn-demo",
 			},
 			Mail: &v1alpha1.TenantMail{
 				Mode:         v1alpha1.MailModeSelfhosted,
-				Domain:       "acme.example.com",
+				Domain:       "gtn-demo.example.com",
 				QuotaPerUser: &quotaPerUser,
 				RateLimit:    "100/h",
 			},
@@ -174,8 +174,8 @@ func TestTenant_DeepCopy(t *testing.T) {
 
 	copy := original.DeepCopy()
 
-	if copy.Name != "acme-corp" {
-		t.Errorf("expected name acme-corp, got %q", copy.Name)
+	if copy.Name != "gtn-demo" {
+		t.Errorf("expected name gtn-demo, got %q", copy.Name)
 	}
 	if len(copy.Spec.Apps) != 3 {
 		t.Fatalf("expected 3 apps, got %d", len(copy.Spec.Apps))
@@ -263,17 +263,17 @@ func TestIntegrationBinding_DeepCopy(t *testing.T) {
 	now := metav1.Now()
 	original := &v1alpha1.IntegrationBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "acme-corp-filepicker",
-			Namespace: "tenant-acme-corp",
+			Name:      "gtn-demo-filepicker",
+			Namespace: "tenant-gtn-demo",
 		},
 		Spec: v1alpha1.IntegrationBindingSpec{
 			Contract:     "filepicker",
-			Provider:     v1alpha1.AppEndpoint{App: "nextcloud", Namespace: "tenant-acme-corp"},
-			Consumer:     v1alpha1.AppEndpoint{App: "ox-appsuite", Namespace: "tenant-acme-corp"},
+			Provider:     v1alpha1.AppEndpoint{App: "nextcloud", Namespace: "tenant-gtn-demo"},
+			Consumer:     v1alpha1.AppEndpoint{App: "ox-appsuite", Namespace: "tenant-gtn-demo"},
 			Capabilities: []string{"webdav:read", "webdav:write", "ocs:shares"},
 			Auth: &v1alpha1.BindingAuth{
 				Method:    "oidc-token-exchange",
-				VaultPath: "gentianos/tenants/acme-corp/contracts/filepicker",
+				VaultPath: "gentianos/tenants/gtn-demo/contracts/filepicker",
 			},
 		},
 		Status: v1alpha1.IntegrationBindingStatus{
@@ -354,7 +354,7 @@ func TestAppProfileList_DeepCopy(t *testing.T) {
 func TestTenantList_DeepCopy(t *testing.T) {
 	list := &v1alpha1.TenantList{
 		Items: []v1alpha1.Tenant{
-			{ObjectMeta: metav1.ObjectMeta{Name: "acme-corp"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"}},
 		},
 	}
 	copy := list.DeepCopy()

@@ -130,7 +130,7 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "ACME Corp",
+			DisplayName: "GTN Demo",
 			Domain:      "acme.example.com",
 			AdminEmail:  "admin@acme.example.com",
 		},
