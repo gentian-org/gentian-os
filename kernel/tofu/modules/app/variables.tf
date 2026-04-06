@@ -90,7 +90,8 @@ variable "openbao_mount" {
 }
 
 variable "openbao_secret_path" {
-  description = "KV v2 path (sans mount) where the client_secret is stored. E.g. 'gentian-os/kernel/identity/keycloak-bootstrap'."  type        = string
+  description = "KV v2 path (sans mount) where the client_secret is stored. E.g. 'gentian-os/kernel/identity/keycloak-bootstrap'."
+  type        = string
 }
 
 variable "openbao_secret_key" {
