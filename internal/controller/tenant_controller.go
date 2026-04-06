@@ -241,7 +241,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 13. Update status
+	// 13. Integration bindings (auto-wire provider+consumer pairs within the tenant)
+	if _, err := r.ensureIntegrationBindings(ctx, tenant); err != nil {
+		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 14. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
@@ -323,6 +330,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up Ingress and Certificate resources (ephemeral routing; always deleted).
 	if err := r.deleteIngress(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
+	if err := r.deleteIntegrationBindings(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
