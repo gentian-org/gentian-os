@@ -30,7 +30,7 @@ spec:
   interval: 10m
 
   # Path within the repo to the Terraform module
-  path: tofu/tenant/infra-workspaces
+  path: kernel/tofu/tenant/infra-workspaces
 
   # Source: the GitRepository CR above
   sourceRef:
@@ -80,7 +80,7 @@ metadata:
 spec:
   approvePlan: auto
   interval: 10m
-  path: tofu/tenant/keycloak-config
+  path: kernel/tofu/tenant/keycloak-config
   sourceRef:
     kind: GitRepository
     name: gentian-server
