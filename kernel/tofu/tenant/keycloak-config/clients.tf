@@ -96,13 +96,8 @@ resource "keycloak_openid_user_attribute_protocol_mapper" "intercom_useruuid" {
 }
 
 # ── opendesk-nextcloud ────────────────────────────────────────────────────────
-# Client was created manually during first deployment. Now managed by tofu.
-# UUID confirmed via: kcadm.sh get clients -r opendesk --fields id,clientId
-
-import {
-  to = module.nextcloud.keycloak_openid_client.this
-  id = "${var.realm}/0b162651-3da3-4190-ad27-00303b3f51c7"
-}
+# Client is created/managed by tofu.
+# (import block removed — Keycloak was re-initialized with fresh PVCs)
 
 module "nextcloud" {
   source = "../../modules/app"
