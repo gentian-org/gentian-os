@@ -102,6 +102,13 @@ type TenantMail struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[0-9]+/(s|m|h|d)$`
 	RateLimit string `json:"rateLimit,omitempty"`
+
+	// SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
+	// kernel namespace that contains SMTP relay credentials for external mail
+	// delivery. Required when mode=external.
+	// The Secret must provide keys: host, port, username, password.
+	// +optional
+	SmtpCredentialsSecret string `json:"smtpCredentialsSecret,omitempty"`
 }
 
 // TenantQuotas defines resource consumption limits for this tenant.
@@ -176,6 +183,29 @@ type TenantStatus struct {
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Mail holds the observed DNS record data produced by the mail reconciler.
+	// Operators must publish these values in the tenant's DNS zone.
+	// +optional
+	Mail *TenantMailStatus `json:"mail,omitempty"`
+}
+
+// TenantMailStatus holds DNS record data emitted by the mail reconciler for
+// the selfhosted mail mode. Operators must publish these in the tenant's DNS zone.
+type TenantMailStatus struct {
+	// DKIMPublicKey is the RSA public key for DKIM signing, base64-encoded (PKIX DER).
+	// Publish as a TXT record: v=DKIM1; k=rsa; p=<DKIMPublicKey>
+	// under mail._domainkey.<mail domain>.
+	// +optional
+	DKIMPublicKey string `json:"dkimPublicKey,omitempty"`
+
+	// SPFRecord is the suggested SPF TXT record value for the mail domain.
+	// +optional
+	SPFRecord string `json:"spfRecord,omitempty"`
+
+	// DMARCRecord is the suggested DMARC TXT record value for _dmarc.<mail domain>.
+	// +optional
+	DMARCRecord string `json:"dmarcRecord,omitempty"`
 }
 
 // Tenant is the Schema for the tenants API.

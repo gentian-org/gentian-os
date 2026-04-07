@@ -251,7 +251,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 14. Update status
+	// 14. Mail kernel extension (Postfix + Dovecot per-tenant, or external/relay/disabled)
+	mailResult, err := r.ensureMail(ctx, tenant)
+	if err != nil {
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	tenant.Status.AppCount = len(tenant.Spec.Apps)
@@ -259,6 +266,9 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
 		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
+	// Note: mailResult is intentionally excluded from the provisioning flag.
+	// Mail is an extension (like app deployment) and does not block Phase=Ready.
+	// Its own MailReady condition tracks mail-specific state independently.
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -290,7 +300,16 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if cacheResult.RequeueAfter > 0 {
 			return cacheResult, nil
 		}
+		if mailResult.RequeueAfter > 0 {
+			return mailResult, nil
+		}
 		return appsResult, nil
+	}
+	// Infrastructure is ready. Requeue for mail if it is still converging
+	// (e.g. waiting for an external SMTP source secret to appear).
+	if mailResult.RequeueAfter > 0 {
+		logger.Info("tenant ready; mail still converging", "tenant", tenant.Name)
+		return mailResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
@@ -343,6 +362,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
 	if err := r.deleteIntegrationBindings(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up mail resources (Application CRs always; Secrets under DeletionPolicy=Delete).
+	if err := r.deleteMail(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
