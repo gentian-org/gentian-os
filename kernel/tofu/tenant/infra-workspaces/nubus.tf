@@ -21,7 +21,7 @@ resource "helm_release" "nubus" {
   namespace  = "gentian-${var.env}"
 
   create_namespace = false
-  wait             = false  # nubus has long-running init jobs; don't wait for all pods
+  wait             = false # nubus has long-running init jobs; don't wait for all pods
   timeout          = 900
 
   values = [

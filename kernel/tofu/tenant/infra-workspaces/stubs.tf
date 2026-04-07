@@ -36,13 +36,13 @@ data "vault_kv_secret_v2" "keycloak_bootstrap" {
 # then delete the old StatefulSet.  The namespace is pre-set correctly below.
 
 resource "helm_release" "postgresql" {
-  count = 1  # migration active — replaces legacy postgresql-dev StatefulSet
+  count = 1 # migration active — replaces legacy postgresql-dev StatefulSet
 
   name       = "opendesk-postgresql-${var.env}"
   repository = "oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql"
   chart      = "postgresql"
   version    = "2.1.2"
-  namespace  = "gentian-infra-${var.env}"  # infra tier: gentian-infra-{env}
+  namespace  = "gentian-infra-${var.env}" # infra tier: gentian-infra-{env}
 
   create_namespace = false
   wait             = true
@@ -94,13 +94,13 @@ resource "helm_release" "postgresql" {
 # then delete the old StatefulSet.  The namespace is pre-set correctly below.
 
 resource "helm_release" "mariadb" {
-  count = 1  # migration active — replaces legacy mariadb-dev StatefulSet
+  count = 1 # migration active — replaces legacy mariadb-dev StatefulSet
 
   name       = "opendesk-mariadb-${var.env}"
   repository = "oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb"
   chart      = "mariadb"
   version    = "3.0.3"
-  namespace  = "gentian-infra-${var.env}"  # infra tier: gentian-infra-{env}
+  namespace  = "gentian-infra-${var.env}" # infra tier: gentian-infra-{env}
 
   create_namespace = false
   wait             = true

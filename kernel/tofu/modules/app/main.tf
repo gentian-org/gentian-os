@@ -28,15 +28,15 @@ resource "keycloak_openid_client" "this" {
   valid_redirect_uris = var.redirect_uris
   web_origins         = var.web_origins
 
-  backchannel_logout_url                    = var.backchannel_logout_url != "" ? var.backchannel_logout_url : null
-  backchannel_logout_session_required       = var.backchannel_logout_session_required
+  backchannel_logout_url              = var.backchannel_logout_url != "" ? var.backchannel_logout_url : null
+  backchannel_logout_session_required = var.backchannel_logout_session_required
   # backchannel_logout_revoke_offline_tokens — not supported in mrparkers/keycloak v4.x
 
   valid_post_logout_redirect_uris = length(var.post_logout_redirect_uris) > 0 ? var.post_logout_redirect_uris : null
 
   extra_config = merge(
     var.token_exchange_enabled ? {
-      "standard.token.exchange.enabled"                       = "true"
+      "standard.token.exchange.enabled"                         = "true"
       "standard.token.exchange.enableRefreshRequestedTokenType" = "SAME_SESSION"
     } : {},
   )

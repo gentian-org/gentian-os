@@ -25,7 +25,7 @@ terraform {
 
 # Read-only policy: a tenant can read all secrets under its own path tree.
 resource "vault_policy" "tenant_read" {
-  name = "tenant-read-${var.tenant_name}"
+  name   = "tenant-read-${var.tenant_name}"
   policy = <<-EOT
     # Read-only access to all app secrets for tenant ${var.tenant_name}.
     path "secret/data/gentian-os/tenants/${var.tenant_name}/apps/*/oidc" {

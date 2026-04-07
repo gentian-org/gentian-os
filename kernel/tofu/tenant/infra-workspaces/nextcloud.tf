@@ -120,7 +120,7 @@ resource "helm_release" "nextcloud_management" {
     value = "FS_ENV_LDAP"
   }
   set_sensitive {
-    name  = "extraEnvVars[1].value"
+    name = "extraEnvVars[1].value"
     value = base64encode(jsonencode({
       "ldapAgentPassword"          = data.vault_kv_secret_v2.nubus_nc.data["ldapsearch_nextcloud"]
       "ldapAgentName"              = "uid=ldapsearch_nextcloud,cn=users,dc=swp-ldap,dc=internal"

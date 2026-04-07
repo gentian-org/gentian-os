@@ -37,9 +37,9 @@ resource "helm_release" "dovecot" {
     sensitive(templatefile(
       "${path.module}/../../../services/dovecot/values/${var.env}/values-sensitive.yaml.tftpl",
       {
-        doveadm_password        = data.vault_kv_secret_v2.dovecot.data["doveadm_password"]
-        oidc_client_secret      = data.vault_kv_secret_v2.dovecot.data["oidc_client_secret"]
-        ldap_dovecot_password   = data.vault_kv_secret_v2.nubus.data["ldapsearch_dovecot"]
+        doveadm_password      = data.vault_kv_secret_v2.dovecot.data["doveadm_password"]
+        oidc_client_secret    = data.vault_kv_secret_v2.dovecot.data["oidc_client_secret"]
+        ldap_dovecot_password = data.vault_kv_secret_v2.nubus.data["ldapsearch_dovecot"]
       }
     )),
   ]

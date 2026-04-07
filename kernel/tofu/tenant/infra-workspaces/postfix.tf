@@ -14,9 +14,9 @@
 # =============================================================================
 
 locals {
-  postfix_root   = "${path.module}/../../../"
-  postfix_base   = "${local.postfix_root}services/postfix/values/_base.yaml"
-  postfix_plain  = "${local.postfix_root}services/postfix/values/${var.env}/values-plain.yaml"
+  postfix_root  = "${path.module}/../../../"
+  postfix_base  = "${local.postfix_root}services/postfix/values/_base.yaml"
+  postfix_plain = "${local.postfix_root}services/postfix/values/${var.env}/values-plain.yaml"
 }
 
 resource "helm_release" "postfix" {
