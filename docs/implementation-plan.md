@@ -706,6 +706,56 @@ gentian-deployments/
 
 ---
 
+### Increment 18 — Single-line domain configuration (production-readiness)
+
+**Goal:** Make it possible to deploy a complete new environment (e.g. `prod`) by changing exactly one line for the kernel base domain and one line for the tenant application domain, with zero other file edits.
+
+**Background:**  
+Currently `desk.gentian.org` appears ~52 times across 8 service `_base.yaml` files. It is hardcoded at every layer: ingress hosts, SAML SP URLs, portal tile link bases, SMTP sender domain, Keycloak redirect URIs, and internal service cross-references. Adding a `prod` environment today would require touching every file individually. The upstream opendesk project solves this via Helm `.gotmpl` templating (`{{ .Values.global.domain }}`); our plain-YAML pipeline cannot use that mechanism directly.
+
+**Two domains, two responsibilities:**
+
+| Domain variable | What it controls | Owner |
+|---|---|---|
+| `kernelDomain` | The base domain for all kernel services (`portal.{domain}`, `sso.{domain}`, etc.) | Kernel layer / `gentian-os` |
+| `tenantDomain` | The base domain for tenant app ingresses (can equal `kernelDomain` or differ) | Deployment / `gentian-deployments` |
+
+For the current setup both are `desk.gentian.org`. A future prod deployment might use `desk.example.com` for both, or `kernel.example.com` vs `apps.example.com` for isolation.
+
+**Actions:**
+
+1. **Introduce `values/env/{env}.yaml` domain keys** — add two canonical fields to the existing per-env values file that is already loaded first by all Tofu Helm releases:
+   ```yaml
+   # values/env/dev.yaml  (and prod.yaml)
+   gentian:
+     kernelDomain: desk.gentian.org   # ← one line to change for a new deployment
+     tenantDomain:  desk.gentian.org  # ← one line to change (can differ in prod)
+   ```
+
+2. **Replace hardcoded domains in all `_base.yaml` files with Tofu variable injection** — the 8 affected files (`nubus`, `keycloak-bootstrap`, `intercom-service`, `nextcloud`, `nextcloud-management`, `nextcloud-notifypush`, `ox-appsuite`, `postfix`) currently contain ~52 hardcoded `desk.gentian.org` occurrences. Replace each with a `set` / `set_sensitive` block in the corresponding `infra-workspaces/*.tf` file that reads `var.kernel_domain` / `var.tenant_domain` and passes them as Helm `--set` overrides, or alternatively uses Tofu `templatefile()` to render an env overlay before passing to Helm.
+
+3. **Tofu variable wiring** — in `tofu/tenant/infra-workspaces/variables.tf` add:
+   ```hcl
+   variable "kernel_domain" { type = string }
+   variable "tenant_domain"  { type = string }
+   ```
+   in `tofu/tenant/infra-workspaces/terraform.tfvars.tmpl` (or the existing vars injection) add the two values sourced from `values/env/{env}.yaml`.
+
+4. **Implement domain derivation for compound URLs** — URLs like `https://portal.{domain}/univention/saml/metadata` are sub-domain + path composites. Add a Tofu local or small helper that derives the 15+ compound URLs from the two root domain values so that individual service `.tf` files just reference `local.portal_url`, `local.sso_url`, etc. rather than building strings independently.
+
+5. **Remove `global.domain` / `global.hosts.*` from `_base.yaml`** — these are currently hardcoded in the nextcloud `_base.yaml` and a few others. Move them to the Tofu `set` injection so the chart receives them at deploy time.
+
+6. **Validate with a `prod`-like smoke test** — add a CI check that renders all Helm values for a synthetic `domain: example.org` domain and asserts zero occurrences of `desk.gentian.org` in the rendered manifests.
+
+7. **Update `server/` mirror** — apply the same refactoring to `server/apps/*/values/_base.yaml` and `server/apps/nubus/values/_base.yaml` so both repos stay in sync until `server/` is retired.
+
+**Test:**
+- Change `gentian.kernelDomain` in `values/env/dev.yaml` to `test.gentian.org`, run `tofu plan`, verify the plan shows the correct domain replacement across all 8 Helm releases and nothing else changes.
+- Restore to `desk.gentian.org`, plan shows zero diff.
+- CI manifest render check: zero occurrences of any hardcoded domain string in rendered `_base.yaml` outputs.
+
+---
+
 ## Increment Summary
 
 | # | Name | Effort | Blocks | Key deliverable |
@@ -728,6 +778,7 @@ gentian-deployments/
 | 15 | Deployment repo (gentian-deployments) | Medium | 13, 14 | End-to-end validation |
 | 16 | Mail kernel extension | Medium | 3 | Per-tenant mail modes |
 | 17 | Multi-tenant isolation hardening | Medium | 2–8 | Security validation |
+| 18 | Single-line domain configuration | Small | — | Zero hardcoded domains; new env = 2-line change |
 
 Increments 0–1 are prerequisites. Increments 2–11 build the orchestrator one reconciler at a time — each is independently testable. Increment 12 can run in parallel with 2–11. Increments 13–15 integrate everything into a deployable system. Increments 16–17 harden and extend.
 
