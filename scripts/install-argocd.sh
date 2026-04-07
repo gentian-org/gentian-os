@@ -11,26 +11,26 @@ echo "Installing ArgoCD ${ARGOCD_VERSION}..."
 
 # Create namespace
 echo "Creating namespace ${ARGOCD_NAMESPACE}..."
-kubectl create namespace ${ARGOCD_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace "${ARGOCD_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
 # Install ArgoCD
 echo "Installing ArgoCD components..."
-kubectl apply -n ${ARGOCD_NAMESPACE} -f https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml
+kubectl apply -n "${ARGOCD_NAMESPACE}" -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
 
 # Wait for ArgoCD to be ready
 echo "Waiting for ArgoCD server to be ready..."
 kubectl wait --for=condition=available --timeout=300s \
-  deployment/argocd-server -n ${ARGOCD_NAMESPACE}
+  deployment/argocd-server -n "${ARGOCD_NAMESPACE}"
 
 kubectl wait --for=condition=available --timeout=300s \
-  deployment/argocd-repo-server -n ${ARGOCD_NAMESPACE}
+  deployment/argocd-repo-server -n "${ARGOCD_NAMESPACE}"
 
 kubectl wait --for=condition=available --timeout=300s \
-  deployment/argocd-applicationset-controller -n ${ARGOCD_NAMESPACE}
+  deployment/argocd-applicationset-controller -n "${ARGOCD_NAMESPACE}"
 
 # Expose ArgoCD server via NodePort with static ports
 echo "Configuring ArgoCD server as NodePort (HTTP: 30880, HTTPS: 30443)..."
-kubectl patch svc argocd-server -n ${ARGOCD_NAMESPACE} -p '{
+kubectl patch svc argocd-server -n "${ARGOCD_NAMESPACE}" -p '{
   "spec": {
     "type": "NodePort",
     "ports": [
@@ -58,7 +58,7 @@ echo "   Username: admin"
 echo "   Password: <from step 1>"
 echo ""
 echo "4. (Optional) Install ArgoCD CLI:"
-echo "   curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-amd64"
+echo "   curl -sSL -o argocd-linux-amd64 "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-amd64""
 echo "   sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd"
 echo "   rm argocd-linux-amd64"
 echo ""
