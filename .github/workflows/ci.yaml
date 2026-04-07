@@ -83,7 +83,7 @@ jobs:
                 allowed-values: ["true", "false", "yes", "no", "on", "off"]
 
       - name: shellcheck
-        uses: ludeeus/action-shellcheck@v2
+        uses: ludeeus/action-shellcheck@2.0.0
 
       - name: Install OpenTofu
         uses: opentofu/setup-opentofu@v1
