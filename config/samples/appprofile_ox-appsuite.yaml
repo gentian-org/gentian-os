@@ -92,7 +92,7 @@ spec:
       passwordKey: "global.mysql.auth.password"
     s3:
       # S3 secret key uses deeply nested propertiesFiles path
-      secretKeyKey: 'appsuite.core-mw.propertiesFiles["/opt/open-xchange/etc/filestore-s3.properties"]["com.openexchange.filestore.s3.ox-filestore-s3.secretKey"]'
+      secretKeyKey: 'appsuite.core-mw.propertiesFiles["/opt/open-xchange/etc/filestore-s3.properties"]["com.openexchange.filestore.s3.ox-filestore-s3.secretKey"]'  # yamllint disable-line rule:line-length
     cache:
       # Redis auth password
       passwordKey: "appsuite.core-mw.redis.auth.password"

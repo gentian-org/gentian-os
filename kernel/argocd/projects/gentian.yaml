@@ -8,7 +8,7 @@ metadata:
   namespace: argocd
 spec:
   description: Gentian OpenDesk deployment across all environments
-  
+
   # Source repositories
   sourceRepos:
   - 'https://github.com/gentian-org/gentian-os'                                                         # OS/infrastructure Git repository
@@ -28,9 +28,9 @@ spec:
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
-  - 'ghcr.io/flux-iac/charts'                                                                          # flux-iac OCI charts registry (Tofu Controller Helm chart)
+  - 'ghcr.io/flux-iac/charts'  # flux-iac OCI charts registry (Tofu Controller Helm chart)
   - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
-  
+
   # Destination clusters and namespaces
   destinations:
   - namespace: 'gentian-*'                   # All gentian namespaces
@@ -47,7 +47,7 @@ spec:
     server: https://kubernetes.default.svc
   - namespace: 'gentian-system'              # Gentian OS orchestrator (CRD controllers)
     server: https://kubernetes.default.svc
-  
+
   # Cluster-scoped resources (allowed at cluster level)
   clusterResourceWhitelist:
   - group: ''
@@ -68,12 +68,12 @@ spec:
     kind: AppProfile
   - group: 'gentianos.io'
     kind: IntegrationBinding
-  
+
   # Namespace-scoped resources (allow all)
   namespaceResourceWhitelist:
   - group: '*'
     kind: '*'
-  
+
   # Orphaned resources handling
   # warn: false — the cluster uses a dual GitOps+Tofu approach; many resources are
   # intentionally managed by Tofu outside ArgoCD. Warnings would be permanently

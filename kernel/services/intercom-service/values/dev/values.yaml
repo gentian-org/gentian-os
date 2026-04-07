@@ -15,39 +15,39 @@ provisioning:
             password: adminPassword
 
 ics:
-    session:
-        existingSecret:
-            name: intercom-credentials
-            keyMapping:
-                secret: session-secret
-    oidc:
-        existingSecret:
-            name: intercom-credentials
-            keyMapping:
-                clientSecret: oidc-client-secret
-    matrix:
-        auth:
-            existingSecret:
-                name: intercom-credentials
-                keyMapping:
-                    password: matrix-as-token
-    portal:
-        auth:
-            existingSecret:
-                name: intercom-credentials
-                keyMapping:
-                    sharedSecret: portal-shared-secret
-    redis:
-        host: redis-dev-headless.gentian-infra-dev.svc.cluster.local
-        auth:
-            existingSecret:
-                name: intercom-credentials
-                keyMapping:
-                    password: redis-auth-password
+  session:
+    existingSecret:
+      name: intercom-credentials
+      keyMapping:
+        secret: session-secret
+  oidc:
+    existingSecret:
+      name: intercom-credentials
+      keyMapping:
+        clientSecret: oidc-client-secret
+  matrix:
+    auth:
+      existingSecret:
+        name: intercom-credentials
+        keyMapping:
+          password: matrix-as-token
+  portal:
+    auth:
+      existingSecret:
+        name: intercom-credentials
+        keyMapping:
+          sharedSecret: portal-shared-secret
+  redis:
+    host: redis-dev-headless.gentian-infra-dev.svc.cluster.local
+    auth:
+      existingSecret:
+        name: intercom-credentials
+        keyMapping:
+          password: redis-auth-password
 resources:
-    limits:
-        cpu: 500m
-        memory: 128Mi
-    requests:
-        cpu: 50m
-        memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
