@@ -68,6 +68,7 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 | 15 | gentian-deployments repo setup | ✅ Done | `gentian-deployments/dev/` — bootstrap/install.sh (13-step), app-of-apps.yaml (multi-source ArgoCD Application), dev-tenant.yaml (gtn-demo), values-dev.yaml, tofu.tfvars, README.md. All gentian-os/kernel/ server/ refs migrated to gentian-org/gentian-os; paths updated apps/→kernel/services/; ExternalSecrets created in kernel/services/{app}/secrets/dev/ with OpenBao paths gentian/dev/X→gentian-os/kernel/X; ArgoCD AppProject updated (gentian-os + gentian-deployments sources, gentian-system destination, Tenant/AppProfile/IntegrationBinding in clusterResourceWhitelist). |
 | 16 | Mail extension reconciler | ⬜ Not started | |
 | 17 | Hardening + end-to-end tenant lifecycle tests | ⬜ Not started | |
+| 18 | Single-line domain configuration | ⬜ Not started | ~52 hardcoded `desk.gentian.org` occurrences across 8 `_base.yaml` files; refactor to Tofu `kernel_domain`/`tenant_domain` variables so a new deployment = 2-line change |
 
 ---
 
