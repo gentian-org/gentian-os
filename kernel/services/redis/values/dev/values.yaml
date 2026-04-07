@@ -2,15 +2,15 @@
 # auth.password removed — redis reads from the redis-credentials Secret
 # provisioned by ExternalSecret (ESO → OpenBao → gentian/dev/redis.auth_password).
 auth:
-    existingSecret: redis-credentials
-    existingSecretPasswordKey: redis-password
+  existingSecret: redis-credentials
+  existingSecretPasswordKey: redis-password
 master:
-    persistence:
-        size: 1Gi
-    resources:
-        limits:
-            cpu: "4"
-            memory: 256Mi
-        requests:
-            cpu: 100m
-            memory: 32Mi
+  persistence:
+    size: 1Gi
+  resources:
+    limits:
+      cpu: "4"
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 32Mi

@@ -10,9 +10,8 @@ ignore: |
 rules:
   indentation:
     spaces: 2
-    # ArgoCD ApplicationSets and Kubernetes manifests in this repo use the style
-    # where sequence items (-) sit at the same indentation as their parent key.
-    indent-sequences: false
+    # Accept both indented (Helm/standard) and non-indented (ArgoCD/kubectl) sequences.
+    indent-sequences: whatever
     check-multi-line-strings: false
   line-length:
     max: 160
