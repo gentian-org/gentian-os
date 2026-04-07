@@ -102,9 +102,12 @@ aio:
   # session URI → PHP sessions silently drop → OIDC state mismatch on login.
   # Explicitly compose the URI here using k8s $(VAR) substitution so it
   # overrides the image default before PHP-FPM starts.
+  # NOTE: Do NOT include auth[user]= in URL — even when empty it causes
+  # phpredis to use ACL auth format (AUTH "" pass) which Redis rejects with
+  # WRONGPASS. Use only auth[pass]= for simple password authentication.
   extraEnvVars:
     - name: FS_ENV_PHP_REDIS_FULL_URI
-      value: "tcp://$(FS_ENV_REDIS_HOST):$(FS_ENV_REDIS_PORT)?database=$(FS_ENV_PHP_REDIS_DBINDEX)&auth[pass]=$(FS_ENV_REDIS_PASSWORD)&auth[user]=$(FS_ENV_REDIS_USER)"
+      value: "tcp://$(FS_ENV_REDIS_HOST):$(FS_ENV_REDIS_PORT)?database=$(FS_ENV_PHP_REDIS_DBINDEX)&auth[pass]=$(FS_ENV_REDIS_PASSWORD)"
 
 # Metrics exporter
 exporter:
