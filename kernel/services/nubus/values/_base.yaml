@@ -366,7 +366,7 @@ nubusStackDataUms:
     portalManagementProjectLinkBase: https://openproject.desk.gentian.org
     portalManagementKnowledgeLinkBase: https://xwiki.desk.gentian.org
     portalGroupwareLinkBase: https://webmail.desk.gentian.org
-    portalFileshareLinkBase: https://nextcloud.desk.gentian.org
+    portalFileshareLinkBase: https://files.desk.gentian.org
     portalNotesLinkBase: https://notes.desk.gentian.org
     portalTitleDE: Portal - openDesk
     portalTitleEN: Portal - openDesk
