@@ -76,25 +76,6 @@ Engine: gentianov1alpha1.CacheEngineMemcached,
 }
 }
 
-// patchApplicationHealthy sets status.health.status=Healthy on an ArgoCD Application CR.
-func patchApplicationHealthy(t *testing.T, name, namespace string) {
-t.Helper()
-app := &unstructured.Unstructured{}
-app.SetGroupVersionKind(argocdAppGVK)
-if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, app); err != nil {
-t.Fatalf("get Application CR %s: %v", name, err)
-}
-if err := unstructured.SetNestedField(app.Object, "Healthy", "status", "health", "status"); err != nil {
-t.Fatalf("set Application health status: %v", err)
-}
-if err := unstructured.SetNestedField(app.Object, "Synced", "status", "sync", "status"); err != nil {
-t.Fatalf("set Application sync status: %v", err)
-}
-if err := testClient.Status().Update(context.Background(), app); err != nil {
-t.Fatalf("patch Application %s status: %v", name, err)
-}
-}
-
 // TestCache_NoCacheApps verifies that a Tenant with no cache-requiring apps
 // skips provisioning and sets CacheReady=True with reason NoCacheRequired.
 func TestCache_NoCacheApps(t *testing.T) {

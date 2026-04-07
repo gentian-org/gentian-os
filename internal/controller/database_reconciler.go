@@ -45,11 +45,6 @@ postgresAdminSecret      = "postgres-admin"
 databaseRequeueAfter     = 30 * time.Second
 )
 
-var cnpgDatabaseGVR = schema.GroupVersionResource{
-Group:    cnpgGroup,
-Version:  cnpgVersion,
-Resource: "databases",
-}
 
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
