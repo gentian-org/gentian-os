@@ -49,7 +49,7 @@ spec:
         bucketPerTenant: true
     mail:
       smtp:
-        auth: cram_md5
+        auth: cram-md5
         port: 587
 
   provides:
