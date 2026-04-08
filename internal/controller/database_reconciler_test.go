@@ -241,7 +241,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		t.Fatal("expected at least one container in role Job")
 	}
 	container := roleJob.Spec.Template.Spec.Containers[0]
-	if container.Image != "bitnami/postgresql:16" {
+	if container.Image != "postgres:16-alpine" {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 }

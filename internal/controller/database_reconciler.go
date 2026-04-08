@@ -40,7 +40,7 @@ const (
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
 	cnpgClusterName        = "postgres" // shared CloudNativePG Cluster in platform-kernel
-	psqlProvisionerImage   = "bitnami/postgresql:16"
+	psqlProvisionerImage   = "postgres:16-alpine"
 	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 30 * time.Second
 )
@@ -249,7 +249,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string
 	}
 }
 
-// psqlContainer returns a Container that runs a psql script via the bitnami/postgresql image.
+// psqlContainer returns a Container that runs a psql script via the postgres:16-alpine image.
 // Credentials are injected from the postgres-admin Secret in the kernel namespace.
 func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 	return corev1.Container{
