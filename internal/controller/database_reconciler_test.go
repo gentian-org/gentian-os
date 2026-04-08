@@ -126,120 +126,124 @@ t.Errorf("expected reason NoDatabaseRequired, got %q", dbCond.Reason)
 }
 
 // TestDB_CreatesDatabaseCR verifies that a Tenant with an app requiring PostgreSQL
-// creates the CloudNativePG Database CR in the tenant namespace.
+// creates the CloudNativePG Database CR in platform-kernel (after the role Job completes).
 func TestDB_CreatesDatabaseCR(t *testing.T) {
-profile := newPostgresProfile("pg-app1")
-if err := testClient.Create(context.Background(), profile); err != nil {
-t.Fatalf("create AppProfile: %v", err)
-}
-t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	profile := newPostgresProfile("pg-app1")
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
-tenant := &gentianov1alpha1.Tenant{
-ObjectMeta: metav1.ObjectMeta{Name: "dbcreate"},
-Spec: gentianov1alpha1.TenantSpec{
-DisplayName: "DB Create Co",
-Domain:      "dbcreate.example.com",
-AdminEmail:  "admin@dbcreate.example.com",
-Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app1"}},
-},
-}
-if err := testClient.Create(context.Background(), tenant); err != nil {
-t.Fatalf("create tenant: %v", err)
-}
-t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "dbcreate"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "DB Create Co",
+			Domain:      "dbcreate.example.com",
+			AdminEmail:  "admin@dbcreate.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app1"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-dbGVK := schema.GroupVersionKind{
-Group:   "postgresql.cnpg.io",
-Version: "v1",
-Kind:    "Database",
-}
-db := &unstructured.Unstructured{}
-db.SetGroupVersionKind(dbGVK)
+	// Step 1: role Job must be created first.
+	waitFor(t, 10*time.Second, func() bool {
+		job := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
+	})
 
-waitFor(t, 10*time.Second, func() bool {
-return testClient.Get(context.Background(),
-types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "tenant-dbcreate"}, db) == nil
-})
+	// DB CR must NOT exist before role Job completes.
+	db := &unstructured.Unstructured{}
+	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "platform-kernel"}, db); err == nil {
+		t.Error("Database CR must not exist before role Job completes")
+	}
 
-clusterName, _, _ := unstructured.NestedString(db.Object, "spec", "cluster", "name")
-if clusterName != "postgres" {
-t.Errorf("expected cluster name 'postgres', got %q", clusterName)
-}
-dbSpecName, _, _ := unstructured.NestedString(db.Object, "spec", "name")
-if dbSpecName == "" {
-t.Error("expected spec.name to be set")
-}
-owner, _, _ := unstructured.NestedString(db.Object, "spec", "owner")
-if owner == "" {
-t.Error("expected spec.owner to be set")
-}
-}
+	// Step 2: mark role Job complete; DB CR should then be created in platform-kernel.
+	markJobComplete(t, "pg-role-dbcreate-pg-app1", "platform-kernel")
 
-// TestDB_CreatesRoleJobAfterDatabaseReady verifies that the psql role Job is only
-// created once the Database CR reports Ready=True.
-func TestDB_CreatesRoleJobAfterDatabaseReady(t *testing.T) {
-profile := newPostgresProfile("pg-app2")
-if err := testClient.Create(context.Background(), profile); err != nil {
-t.Fatalf("create AppProfile: %v", err)
-}
-t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "platform-kernel"}, db) == nil
+	})
 
-tenant := &gentianov1alpha1.Tenant{
-ObjectMeta: metav1.ObjectMeta{Name: "rolejob"},
-Spec: gentianov1alpha1.TenantSpec{
-DisplayName: "Role Job Co",
-Domain:      "rolejob.example.com",
-AdminEmail:  "admin@rolejob.example.com",
-Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app2"}},
-},
-}
-if err := testClient.Create(context.Background(), tenant); err != nil {
-t.Fatalf("create tenant: %v", err)
-}
-t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
-
-// Wait for Database CR to be created
-dbGVK := schema.GroupVersionKind{
-Group:   "postgresql.cnpg.io",
-Version: "v1",
-Kind:    "Database",
-}
-db := &unstructured.Unstructured{}
-db.SetGroupVersionKind(dbGVK)
-waitFor(t, 10*time.Second, func() bool {
-return testClient.Get(context.Background(),
-types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "tenant-rolejob"}, db) == nil
-})
-
-// Role Job must NOT exist before Database is ready
-roleJob := &batchv1.Job{}
-if err := testClient.Get(context.Background(),
-types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob); err == nil {
-t.Error("role Job must not exist before Database CR is ready")
+	clusterName, _, _ := unstructured.NestedString(db.Object, "spec", "cluster", "name")
+	if clusterName != "postgres" {
+		t.Errorf("expected cluster name 'postgres', got %q", clusterName)
+	}
+	dbSpecName, _, _ := unstructured.NestedString(db.Object, "spec", "name")
+	if dbSpecName == "" {
+		t.Error("expected spec.name to be set")
+	}
+	owner, _, _ := unstructured.NestedString(db.Object, "spec", "owner")
+	if owner == "" {
+		t.Error("expected spec.owner to be set")
+	}
 }
 
-// Mark Database CR as ready
-patchDatabaseCRReady(t, "db-rolejob-pg-app2", "tenant-rolejob")
+// TestDB_CreatesDatabaseCRAfterRoleJobCompletes verifies that the role Job is created
+// first and the Database CR is only created once the role Job has completed.
+func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
+	profile := newPostgresProfile("pg-app2")
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
-// Role Job should now appear
-waitFor(t, 15*time.Second, func() bool {
-return testClient.Get(context.Background(),
-types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
-})
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "rolejob"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Role Job Co",
+			Domain:      "rolejob.example.com",
+			AdminEmail:  "admin@rolejob.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app2"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-if roleJob.Labels["gentianos.io/tenant"] != "rolejob" {
-t.Errorf("expected tenant label 'rolejob', got %q", roleJob.Labels["gentianos.io/tenant"])
-}
-if roleJob.Labels["gentianos.io/app"] != "pg-app2" {
-t.Errorf("expected app label 'pg-app2', got %q", roleJob.Labels["gentianos.io/app"])
-}
-if len(roleJob.Spec.Template.Spec.Containers) == 0 {
-t.Fatal("expected at least one container in role Job")
-}
-container := roleJob.Spec.Template.Spec.Containers[0]
-if container.Image != "bitnami/postgresql:16" {
-t.Errorf("unexpected container image %q", container.Image)
-}
+	// Step 1: role Job must be created immediately (before Database CR).
+	roleJob := &batchv1.Job{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
+	})
+
+	// Database CR must NOT exist before role Job completes.
+	db := &unstructured.Unstructured{}
+	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "platform-kernel"}, db); err == nil {
+		t.Error("Database CR must not exist before role Job completes")
+	}
+
+	// Mark role Job as complete; Database CR should now be created in platform-kernel.
+	markJobComplete(t, "pg-role-rolejob-pg-app2", "platform-kernel")
+
+	waitFor(t, 15*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "platform-kernel"}, db) == nil
+	})
+
+	if roleJob.Labels["gentianos.io/tenant"] != "rolejob" {
+		t.Errorf("expected tenant label 'rolejob', got %q", roleJob.Labels["gentianos.io/tenant"])
+	}
+	if roleJob.Labels["gentianos.io/app"] != "pg-app2" {
+		t.Errorf("expected app label 'pg-app2', got %q", roleJob.Labels["gentianos.io/app"])
+	}
+	if len(roleJob.Spec.Template.Spec.Containers) == 0 {
+		t.Fatal("expected at least one container in role Job")
+	}
+	container := roleJob.Spec.Template.Spec.Containers[0]
+	if container.Image != "bitnami/postgresql:16" {
+		t.Errorf("unexpected container image %q", container.Image)
+	}
 }
 
 // TestDB_SetsReadyWhenAllDone verifies that DatabaseReady=True and Phase=Ready are
@@ -272,22 +276,22 @@ _ = testClient.Get(context.Background(), types.NamespacedName{Name: "dbready"}, 
 return updated.Status.Phase == gentianov1alpha1.TenantPhaseProvisioning
 })
 
-// Wait for Database CR then mark it ready
-waitFor(t, 10*time.Second, func() bool {
-db := &unstructured.Unstructured{}
-db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
-return testClient.Get(context.Background(),
-types.NamespacedName{Name: "db-dbready-pg-app3", Namespace: "tenant-dbready"}, db) == nil
-})
-patchDatabaseCRReady(t, "db-dbready-pg-app3", "tenant-dbready")
+// Step 1: wait for role Job then mark it complete.
+	waitFor(t, 10*time.Second, func() bool {
+		job := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "platform-kernel"}, job) == nil
+	})
+	markJobComplete(t, "pg-role-dbready-pg-app3", "platform-kernel")
 
-// Wait for role Job then mark it complete
-waitFor(t, 15*time.Second, func() bool {
-job := &batchv1.Job{}
-return testClient.Get(context.Background(),
-types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "platform-kernel"}, job) == nil
-})
-markJobComplete(t, "pg-role-dbready-pg-app3", "platform-kernel")
+	// Step 2: wait for Database CR in platform-kernel then mark it ready.
+	waitFor(t, 15*time.Second, func() bool {
+		db := &unstructured.Unstructured{}
+		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "db-dbready-pg-app3", Namespace: "platform-kernel"}, db) == nil
+	})
+	patchDatabaseCRReady(t, "db-dbready-pg-app3", "platform-kernel")
 
 // Now Phase=Ready and DatabaseReady=True
 waitFor(t, 15*time.Second, func() bool {
@@ -330,25 +334,33 @@ if err := testClient.Create(context.Background(), tenant); err != nil {
 t.Fatalf("create tenant: %v", err)
 }
 
-// Wait for Database CR to be created
+// Step 1: wait for role Job then mark it complete.
+waitFor(t, 10*time.Second, func() bool {
+job := &batchv1.Job{}
+return testClient.Get(context.Background(),
+types.NamespacedName{Name: "pg-role-dbdelete-pg-app4", Namespace: "platform-kernel"}, job) == nil
+})
+markJobComplete(t, "pg-role-dbdelete-pg-app4", "platform-kernel")
+
+// Step 2: wait for Database CR to be created in platform-kernel.
 waitFor(t, 10*time.Second, func() bool {
 db := &unstructured.Unstructured{}
 db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 return testClient.Get(context.Background(),
-types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "tenant-dbdelete"}, db) == nil
+types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "platform-kernel"}, db) == nil
 })
 
-// Delete the tenant
+// Delete the tenant.
 if err := testClient.Delete(context.Background(), tenant); err != nil {
 t.Fatalf("delete tenant: %v", err)
 }
 
-// Database CR should be deleted
+// Database CR should be deleted from platform-kernel.
 waitFor(t, 10*time.Second, func() bool {
 db := &unstructured.Unstructured{}
 db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 err := testClient.Get(context.Background(),
-types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "tenant-dbdelete"}, db)
+types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "platform-kernel"}, db)
 return err != nil // gone
 })
 }
