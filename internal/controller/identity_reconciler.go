@@ -278,8 +278,17 @@ Key:                  "password",
 },
 },
 },
-},
-}
+		{
+			Name: "KEYCLOAK_ADMIN_USERNAME",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: keycloakAdminSecret},
+					Key:                  "username",
+				},
+			},
+		},
+		},
+	}
 }
 
 // --- Shell scripts -----------------------------------------------------------
@@ -289,7 +298,7 @@ return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=admin&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -311,7 +320,7 @@ return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=admin&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 COUNT=$(curl -sf \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -334,7 +343,7 @@ return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=admin&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -X DELETE \
