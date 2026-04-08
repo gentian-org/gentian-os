@@ -322,20 +322,19 @@ TOKEN=$(curl -sf \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-COUNT=$(curl -sf \
+EXISTING=$(curl -sf \
   -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s" \
-  | tr -cd '[' | wc -c | tr -d ' ')
-if [ "${COUNT}" = "0" ]; then
+  "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s")
+if echo "${EXISTING}" | grep -q '"id"'; then
+  echo "client %s already exists in realm %s"
+else
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{"clientId":"%s","redirectUris":["%s"],"protocol":"openid-connect","standardFlowEnabled":true,"serviceAccountsEnabled":true,"publicClient":false}'
   echo "client %s created in realm %s"
-else
-  echo "client %s already exists in realm %s"
-fi`, realmName, clientID, realmName, clientID, redirectURI, clientID, realmName, clientID, realmName)
+fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI, clientID, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {

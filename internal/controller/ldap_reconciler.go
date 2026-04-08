@@ -201,7 +201,6 @@ func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 
 func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName string) *batchv1.Job {
 	ttl := int32(3600)
-	bindDN := fmt.Sprintf("cn=app-%s,%s", appName, ouDN)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindAccountJobName(tenant.Name, appName),
@@ -218,7 +217,7 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName string) *
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						udmContainer("provision-bind-account", buildBindAccountScript(ouDN, bindDN, appName)),
+						udmContainer("provision-bind-account", buildBindAccountScript(ouDN, appName)),
 					},
 				},
 			},
@@ -297,93 +296,101 @@ func udmContainer(name, script string) corev1.Container {
 func buildOUScript(ouDN, tenantName string) string {
 	return fmt.Sprintf(`set -eu
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
-BASE_URL="${UDM_URL}/univention/udm"
-
-# Encode the OU DN for URL path
-OU_ENCODED=$(printf '%%s' '%s' | sed 's/ /+/g; s/,/,/g')
+BASE_URL="${UDM_URL}/udm"
+# OU_POS is assigned here; shell expands ${UDM_LDAP_BASE} at runtime.
+OU_POS="%s"
+OU_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${OU_POS}")
 
 # Create tenant OU if absent
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
-  "${BASE_URL}/container/ou/dn/%s")
+  -H "Accept: application/json" \
+  "${BASE_URL}/container/ou/dn/${OU_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/container/ou/" \
-    -d '{"properties":{"name":"%s","description":"Tenant %s"},"position":"${UDM_LDAP_BASE}"}'
+    -d "{\"properties\":{\"name\":\"%s\",\"description\":\"Tenant %s\"},\"position\":\"${UDM_LDAP_BASE}\"}"
   echo "OU %s created"
 else
   echo "OU %s already exists (HTTP ${STATUS})"
 fi
 
 # Create users group if absent
+USERS_GRP_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "cn=users_%s,${OU_POS}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
-  "${BASE_URL}/groups/group/dn/cn=users,${OU_ENCODED}")
+  -H "Accept: application/json" \
+  "${BASE_URL}/groups/group/dn/${USERS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
-    -d '{"properties":{"name":"users_%s"},"position":"%s"}'
+    -d "{\"properties\":{\"name\":\"users_%s\"},\"position\":\"${OU_POS}\"}"
   echo "group users_%s created"
 else
   echo "group users_%s already exists"
 fi
 
 # Create admins group if absent
+ADMINS_GRP_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "cn=admins_%s,${OU_POS}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
-  "${BASE_URL}/groups/group/dn/cn=admins,${OU_ENCODED}")
+  -H "Accept: application/json" \
+  "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
-    -d '{"properties":{"name":"admins_%s"},"position":"%s"}'
+    -d "{\"properties\":{\"name\":\"admins_%s\"},\"position\":\"${OU_POS}\"}"
   echo "group admins_%s created"
 else
   echo "group admins_%s already exists"
 fi`,
-		ouDN, ouDN, tenantName, tenantName, tenantName, tenantName,
-		tenantName, ouDN, tenantName, tenantName,
-		tenantName, ouDN, tenantName, tenantName)
+		ouDN, tenantName, tenantName, tenantName, tenantName,
+		tenantName, tenantName, tenantName, tenantName,
+		tenantName, tenantName, tenantName, tenantName)
 }
 
 // buildBindAccountScript creates a service-account user that apps use as the LDAP bind DN.
-func buildBindAccountScript(ouDN, bindDN, appName string) string {
+// Uses users/ldap object type which only requires username and password.
+func buildBindAccountScript(ouDN, appName string) string {
 	return fmt.Sprintf(`set -eu
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
-BASE_URL="${UDM_URL}/univention/udm"
-BIND_DN_ENCODED=$(printf '%%s' '%s' | sed 's/ /+/g')
+BASE_URL="${UDM_URL}/udm"
+# OU_POS and BIND_DN: ${UDM_LDAP_BASE} expands at runtime via shell.
+OU_POS="%s"
+BIND_DN="uid=app-%s,${OU_POS}"
+BIND_DN_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${BIND_DN}")
 
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
-  "${BASE_URL}/users/user/dn/${BIND_DN_ENCODED}")
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/ldap/dn/${BIND_DN_ENC}")
 if [ "${STATUS}" = "404" ]; then
-  BIND_PW=$(curl -sf -X POST \
-    "${KEYCLOAK_URL:-http://localhost}/realms/master/protocol/openid-connect/token" \
-    2>/dev/null || echo "")
-  # Generate a deterministic placeholder password — real credentials are managed
-  # by seed-openbao.sh and consumed via ExternalSecret; this value is overwritten.
   BIND_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
   curl -sf -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
-    "${BASE_URL}/users/user/" \
-    -d '{"properties":{"username":"app-%s","lastname":"app-%s","password":"'"${BIND_PW}"'","description":"LDAP bind account for app %s"},"position":"%s"}'
-  echo "bind account app-%s created in %s"
+    "${BASE_URL}/users/ldap/" \
+    -d "{\"properties\":{\"username\":\"app-%s\",\"password\":\"${BIND_PW}\"},\"position\":\"${OU_POS}\"}"
+  echo "bind account app-%s created in ${OU_POS}"
 else
   echo "bind account app-%s already exists (HTTP ${STATUS})"
-fi`, bindDN, appName, appName, appName, ouDN, appName, ouDN, appName)
+fi`, ouDN, appName, appName, appName, appName)
 }
 
 // buildOUDeleteScript removes the tenant OU and all child entries.
 func buildOUDeleteScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
-BASE_URL="${UDM_URL}/univention/udm"
-OU_ENCODED=$(printf '%%s' '%s' | sed 's/ /+/g')
+BASE_URL="${UDM_URL}/udm"
+# OU_POS: ${UDM_LDAP_BASE} expands at runtime.
+OU_POS="%s"
+OU_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${OU_POS}")
 
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
-  "${BASE_URL}/container/ou/dn/${OU_ENCODED}?cleanup=1&recursive=1")
+  -H "Accept: application/json" \
+  "${BASE_URL}/container/ou/dn/${OU_ENC}?cleanup=1&recursive=1")
 echo "OU %s deletion requested (HTTP ${HTTP})"`, ouDN, ouDN)
 }
 
