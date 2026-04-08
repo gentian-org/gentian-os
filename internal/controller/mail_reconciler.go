@@ -353,6 +353,9 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 // into the tenant namespace. Used by both selfhosted and transport-only modes.
 func buildPostfixApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unstructured {
 	nsName := tenantNamespaceName(tenant)
+	domain := mailDomain(tenant)
+	// ALLOWED_SENDER_DOMAINS must be set or Postfix refuses to start.
+	helmValues := fmt.Sprintf("config:\n  general:\n    ALLOWED_SENDER_DOMAINS: %q\n", domain)
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(argocdApplicationGVK)
 	obj.SetName(postfixApplicationName(tenant.Name))
@@ -365,6 +368,7 @@ func buildPostfixApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unst
 	_ = unstructured.SetNestedField(obj.Object, postfixChartRepo, "spec", "source", "repoURL")
 	_ = unstructured.SetNestedField(obj.Object, postfixChartName, "spec", "source", "chart")
 	_ = unstructured.SetNestedField(obj.Object, postfixChartVersion, "spec", "source", "targetRevision")
+	_ = unstructured.SetNestedField(obj.Object, helmValues, "spec", "source", "helm", "values")
 	_ = unstructured.SetNestedField(obj.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
 	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "destination", "namespace")
 	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "prune")
