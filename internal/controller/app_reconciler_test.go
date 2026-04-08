@@ -24,10 +24,17 @@ import (
 
 metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+"k8s.io/apimachinery/pkg/runtime/schema"
 "k8s.io/apimachinery/pkg/types"
 
 gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
+
+var tofuTerraformGVK = schema.GroupVersionKind{
+Group:   "infra.contrib.fluxcd.io",
+Version: "v1alpha2",
+Kind:    "Terraform",
+}
 
 // newAppProfile builds an AppProfile with argocd DeploymentMethod and optional ValueMapping.
 func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.AppProfile {
@@ -311,6 +318,279 @@ obj := &unstructured.Unstructured{}
 obj.SetGroupVersionKind(argocdAppGVK)
 err := testClient.Get(context.Background(),
 types.NamespacedName{Name: "app-del-tenant-del-app", Namespace: "argocd"}, obj)
+return err != nil // NotFound means it was deleted
+})
+}
+
+// newTofuAppProfile builds an AppProfile with the tofu-controller DeploymentMethod
+// and an optional ValueMapping, matching the real-world openproject / ox-appsuite profiles.
+func newTofuAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.AppProfile {
+return &gentianov1alpha1.AppProfile{
+ObjectMeta: metav1.ObjectMeta{Name: name},
+Spec: gentianov1alpha1.AppProfileSpec{
+DisplayName:      name,
+DeploymentMethod: gentianov1alpha1.DeploymentMethodTofuController,
+Chart: gentianov1alpha1.ChartRef{
+Repository: "oci://charts.example.com",
+Name:       name,
+Version:    "2.0.0",
+},
+ValueMapping: vm,
+},
+}
+}
+
+// TestTofuApps_CreatesTerraformCR verifies that a tenant with a tofu-controller app
+// creates exactly one Terraform CR in tofu-system with the correct labels, vars (chart
+// reference and tenant/app identifiers), sourceRef, and approvePlan=auto.
+func TestTofuApps_CreatesTerraformCR(t *testing.T) {
+profile := newTofuAppProfile("tofu-app", nil)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "tofu-tenant"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "Tofu Tenant",
+Domain:      "tofu.example.com",
+AdminEmail:  "admin@tofu.example.com",
+Apps:        []gentianov1alpha1.TenantApp{{Profile: "tofu-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+var tfCR *unstructured.Unstructured
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(tofuTerraformGVK)
+err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "tf-tofu-tenant-tofu-app", Namespace: "tofu-system"}, obj)
+if err == nil {
+tfCR = obj
+}
+return err == nil
+})
+
+// Labels
+if tfCR.GetLabels()["gentianos.io/tenant"] != "tofu-tenant" {
+t.Errorf("expected tenant label 'tofu-tenant', got %q", tfCR.GetLabels()["gentianos.io/tenant"])
+}
+if tfCR.GetLabels()["gentianos.io/app"] != "tofu-app" {
+t.Errorf("expected app label 'tofu-app', got %q", tfCR.GetLabels()["gentianos.io/app"])
+}
+
+// spec fields
+approvePlan, _, _ := unstructured.NestedString(tfCR.Object, "spec", "approvePlan")
+if approvePlan != "auto" {
+t.Errorf("expected approvePlan=auto, got %q", approvePlan)
+}
+modPath, _, _ := unstructured.NestedString(tfCR.Object, "spec", "path")
+if modPath != "kernel/tofu/tenant/app-workspace" {
+t.Errorf("expected path kernel/tofu/tenant/app-workspace, got %q", modPath)
+}
+srcKind, _, _ := unstructured.NestedString(tfCR.Object, "spec", "sourceRef", "kind")
+if srcKind != "GitRepository" {
+t.Errorf("expected sourceRef.kind=GitRepository, got %q", srcKind)
+}
+srcName, _, _ := unstructured.NestedString(tfCR.Object, "spec", "sourceRef", "name")
+if srcName != "gentian-server" {
+t.Errorf("expected sourceRef.name=gentian-server, got %q", srcName)
+}
+
+// spec.vars should contain tenant_name, app_name, namespace, chart_*
+vars, _, _ := unstructured.NestedSlice(tfCR.Object, "spec", "vars")
+varMap := make(map[string]string)
+for _, v := range vars {
+vm, ok := v.(map[string]interface{})
+if !ok {
+continue
+}
+name, _ := vm["name"].(string)
+value, _ := vm["value"].(string)
+varMap[name] = value
+}
+checks := map[string]string{
+"tenant_name":      "tofu-tenant",
+"app_name":         "tofu-app",
+"namespace":        "tenant-tofu-tenant",
+"chart_repository": "oci://charts.example.com",
+"chart_name":       "tofu-app",
+"chart_version":    "2.0.0",
+}
+for k, want := range checks {
+if got := varMap[k]; got != want {
+t.Errorf("var %s: want %q, got %q", k, want, got)
+}
+}
+}
+
+// TestTofuApps_ValueMappingVars verifies that when an AppProfile has a ValueMapping,
+// the Terraform CR receives the corresponding vm_* variables for the module to wire.
+func TestTofuApps_ValueMappingVars(t *testing.T) {
+vm := &gentianov1alpha1.ValueMapping{
+OIDC: &gentianov1alpha1.OIDCValueMapping{
+IssuerKey:       "oidc.issuer",
+ClientIDKey:     "oidc.clientId",
+ClientSecretKey: "oidc.clientSecret",
+},
+Database: &gentianov1alpha1.DatabaseValueMapping{
+HostKey:     "db.host",
+PasswordKey: "db.password",
+},
+}
+profile := newTofuAppProfile("tofu-vm-app", vm)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "tofu-vm-tenant"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "Tofu VM Tenant",
+Domain:      "tofuvm.example.com",
+AdminEmail:  "admin@tofuvm.example.com",
+Apps:        []gentianov1alpha1.TenantApp{{Profile: "tofu-vm-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+var tfCR *unstructured.Unstructured
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(tofuTerraformGVK)
+err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "tf-tofu-vm-tenant-tofu-vm-app", Namespace: "tofu-system"}, obj)
+if err == nil {
+tfCR = obj
+}
+return err == nil
+})
+
+vars, _, _ := unstructured.NestedSlice(tfCR.Object, "spec", "vars")
+varMap := make(map[string]string)
+for _, v := range vars {
+vm, ok := v.(map[string]interface{})
+if !ok {
+continue
+}
+name, _ := vm["name"].(string)
+value, _ := vm["value"].(string)
+varMap[name] = value
+}
+
+vmChecks := map[string]string{
+"vm_oidc_issuer_key":    "oidc.issuer",
+"vm_oidc_client_id_key": "oidc.clientId",
+"vm_oidc_client_secret_key": "oidc.clientSecret",
+"vm_db_host_key":        "db.host",
+"vm_db_password_key":    "db.password",
+}
+for k, want := range vmChecks {
+if got := varMap[k]; got != want {
+t.Errorf("var %s: want %q, got %q", k, want, got)
+}
+}
+// Keys with empty valueMapping should NOT appear.
+for _, absent := range []string{"vm_db_port_key", "vm_db_name_key", "vm_s3_bucket_key"} {
+if _, found := varMap[absent]; found {
+t.Errorf("var %s should not be present", absent)
+}
+}
+}
+
+// TestTofuApps_NoArgocdCR verifies that a tofu-controller app does NOT create an
+// ArgoCD Application CR — only a Terraform CR in tofu-system.
+func TestTofuApps_NoArgocdCR(t *testing.T) {
+profile := newTofuAppProfile("tofu-only-app", nil)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "tofu-only-tenant"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName: "Tofu Only Co",
+Domain:      "tofuonly.example.com",
+AdminEmail:  "admin@tofuonly.example.com",
+Apps:        []gentianov1alpha1.TenantApp{{Profile: "tofu-only-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+// Wait for Terraform CR to appear.
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(tofuTerraformGVK)
+return testClient.Get(context.Background(),
+types.NamespacedName{Name: "tf-tofu-only-tenant-tofu-only-app", Namespace: "tofu-system"}, obj) == nil
+})
+
+// ArgoCD Application CR must NOT exist.
+appCR := &unstructured.Unstructured{}
+appCR.SetGroupVersionKind(argocdAppGVK)
+err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "app-tofu-only-tenant-tofu-only-app", Namespace: "argocd"}, appCR)
+if err == nil {
+t.Error("expected NO ArgoCD Application CR for a tofu-controller app, but one was found")
+}
+}
+
+// TestTofuApps_DeleteRemovesTerraformCR verifies that deleting a Tenant removes
+// the Terraform CR from tofu-system.
+func TestTofuApps_DeleteRemovesTerraformCR(t *testing.T) {
+_ = json.Marshal // keep json import used
+profile := newTofuAppProfile("tofu-del-app", nil)
+if err := testClient.Create(context.Background(), profile); err != nil {
+t.Fatalf("create AppProfile: %v", err)
+}
+t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+tenant := &gentianov1alpha1.Tenant{
+ObjectMeta: metav1.ObjectMeta{Name: "tofu-del-tenant"},
+Spec: gentianov1alpha1.TenantSpec{
+DisplayName:    "Tofu Del Tenant",
+Domain:         "tofudel.example.com",
+AdminEmail:     "admin@tofudel.example.com",
+DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
+Apps:           []gentianov1alpha1.TenantApp{{Profile: "tofu-del-app"}},
+},
+}
+if err := testClient.Create(context.Background(), tenant); err != nil {
+t.Fatalf("create tenant: %v", err)
+}
+
+// Wait for Terraform CR to appear.
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(tofuTerraformGVK)
+return testClient.Get(context.Background(),
+types.NamespacedName{Name: "tf-tofu-del-tenant-tofu-del-app", Namespace: "tofu-system"}, obj) == nil
+})
+
+// Delete the tenant.
+if err := testClient.Delete(context.Background(), tenant); err != nil {
+t.Fatalf("delete tenant: %v", err)
+}
+
+// Terraform CR should be removed.
+waitFor(t, 15*time.Second, func() bool {
+obj := &unstructured.Unstructured{}
+obj.SetGroupVersionKind(tofuTerraformGVK)
+err := testClient.Get(context.Background(),
+types.NamespacedName{Name: "tf-tofu-del-tenant-tofu-del-app", Namespace: "tofu-system"}, obj)
 return err != nil // NotFound means it was deleted
 })
 }

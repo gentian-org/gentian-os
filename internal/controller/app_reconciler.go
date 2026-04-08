@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,7 +35,18 @@ import (
 
 const (
 	conditionAppsReady = "AppsReady"
+
+	// tofu-controller constants.
+	tofuSystemNamespace   = "tofu-system"
+	tofuGitRepositoryName = "gentian-server"
+	tofuModulePath        = "kernel/tofu/tenant/app-workspace"
 )
+
+var terraformGVK = schema.GroupVersionKind{
+	Group:   "infra.contrib.fluxcd.io",
+	Version: "v1alpha2",
+	Kind:    "Terraform",
+}
 
 // ensureAppDeployment creates or reconciles one ArgoCD Application CR per app
 // declared in tenant.Spec.Apps. Only DeploymentMethod=argocd (the default) is
@@ -60,9 +72,15 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 
-		// Pattern B (tofu-controller) is not yet implemented.
+		// Pattern B (tofu-controller): create a Terraform CR in tofu-system.
 		if profile.Spec.DeploymentMethod == gentianov1alpha1.DeploymentMethodTofuController {
-			// TODO(inc10): implement tofu-controller Terraform CR creation
+			ready, err := r.ensureTerraformCR(ctx, tenant, app, profile)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("ensure Terraform CR for app %s: %w", app.Profile, err)
+			}
+			if !ready {
+				allHealthy = false
+			}
 			continue
 		}
 
@@ -110,11 +128,13 @@ func (r *TenantReconciler) ensureAppApplication(
 	return argocdApplicationIsHealthy(obj), nil
 }
 
-// deleteAppDeployment removes all ArgoCD Application CRs created for the tenant's apps.
-// Apps are ephemeral workload resources, so they are always deleted regardless of
-// the tenant's DeletionPolicy; ArgoCD cascades deletion of the deployed Helm releases.
+// deleteAppDeployment removes all ArgoCD Application CRs and Terraform CRs created
+// for the tenant's apps. Apps are ephemeral workload resources, so they are always
+// deleted regardless of the tenant's DeletionPolicy; ArgoCD cascades deletion of
+// deployed Helm releases; the tofu-controller destroys its managed Helm releases.
 func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	for _, app := range tenant.Spec.Apps {
+		// Delete the ArgoCD Application CR (Pattern A).
 		appCR := &unstructured.Unstructured{}
 		appCR.SetGroupVersionKind(argocdApplicationGVK)
 		appCR.SetName(appApplicationName(tenant.Name, app.Profile))
@@ -122,12 +142,263 @@ func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gent
 		if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Application CR for app %s: %w", app.Profile, err)
 		}
+
+		// Delete the Terraform CR (Pattern B).
+		tfCR := &unstructured.Unstructured{}
+		tfCR.SetGroupVersionKind(terraformGVK)
+		tfCR.SetName(terraformCRName(tenant.Name, app.Profile))
+		tfCR.SetNamespace(tofuSystemNamespace)
+		if err := r.Delete(ctx, tfCR); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete Terraform CR for app %s: %w", app.Profile, err)
+		}
 	}
 	return nil
 }
 
-// buildAppApplication constructs the ArgoCD Application CR for a specific app + tenant.
-// It renders Helm values from the AppProfile's ValueMapping (kernel-service references)
+// ensureTerraformCR creates (or checks readiness of) the tofu-controller Terraform CR
+// for a single Pattern B app within a tenant. The Terraform CR is placed in
+// tofuSystemNamespace so the tofu-controller can reconcile it. Returns true when the
+// Terraform CR reports Ready=True.
+func (r *TenantReconciler) ensureTerraformCR(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	app gentianov1alpha1.TenantApp,
+	profile *gentianov1alpha1.AppProfile,
+) (bool, error) {
+	crName := terraformCRName(tenant.Name, app.Profile)
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(terraformGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: tofuSystemNamespace}, obj)
+	if errors.IsNotFound(err) {
+		desired, buildErr := buildTerraformCR(tenant, app, profile)
+		if buildErr != nil {
+			return false, fmt.Errorf("build Terraform CR for %s: %w", app.Profile, buildErr)
+		}
+		return false, r.Create(ctx, desired)
+	}
+	if err != nil {
+		return false, err
+	}
+	return terraformCRIsReady(obj), nil
+}
+
+// buildTerraformCR constructs the tofu-controller Terraform CR for a tenant app.
+// The CR is placed in tofu-system and points to the generic app-workspace Terraform
+// module in the gentian-server GitRepository. Non-sensitive variables (chart ref,
+// tenant/app identifiers, extra values) are passed via spec.vars; the Terraform
+// module reads all sensitive credentials directly from OpenBao using the vault
+// provider with Kubernetes auth.
+func buildTerraformCR(
+	tenant *gentianov1alpha1.Tenant,
+	app gentianov1alpha1.TenantApp,
+	profile *gentianov1alpha1.AppProfile,
+) (*unstructured.Unstructured, error) {
+	nsName := tenantNamespaceName(tenant)
+	crName := terraformCRName(tenant.Name, app.Profile)
+
+	// Compute non-sensitive extra values: profile-level ExtraValues merged with
+	// per-tenant replica overrides. The Terraform module uses these alongside the
+	// sensitive values it reads from OpenBao.
+	extraValuesJSON := ""
+	if profile.Spec.ExtraValues != nil && len(profile.Spec.ExtraValues.Raw) > 0 {
+		extraValuesJSON = string(profile.Spec.ExtraValues.Raw)
+	}
+	if app.Config != nil && app.Config.Replicas != nil {
+		extra := map[string]interface{}{}
+		if extraValuesJSON != "" {
+			if err := json.Unmarshal([]byte(extraValuesJSON), &extra); err != nil {
+				return nil, fmt.Errorf("parse ExtraValues for %s: %w", app.Profile, err)
+			}
+		}
+		extra["replicaCount"] = *app.Config.Replicas
+		raw, err := json.Marshal(extra)
+		if err != nil {
+			return nil, fmt.Errorf("marshal extra values for %s: %w", app.Profile, err)
+		}
+		extraValuesJSON = string(raw)
+	}
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(terraformGVK)
+	obj.SetName(crName)
+	obj.SetNamespace(tofuSystemNamespace)
+	obj.SetLabels(map[string]string{
+		tenantLabel:    tenant.Name,
+		appLabel:       app.Profile,
+		managedByLabel: managedByValue,
+	})
+
+	_ = unstructured.SetNestedField(obj.Object, "auto", "spec", "approvePlan")
+	_ = unstructured.SetNestedField(obj.Object, "10m", "spec", "interval")
+	_ = unstructured.SetNestedField(obj.Object, tofuModulePath, "spec", "path")
+	_ = unstructured.SetNestedField(obj.Object, "GitRepository", "spec", "sourceRef", "kind")
+	_ = unstructured.SetNestedField(obj.Object, tofuGitRepositoryName, "spec", "sourceRef", "name")
+	_ = unstructured.SetNestedField(obj.Object, true, "spec", "backendConfig", "disable")
+
+	// Non-sensitive variables: chart reference, tenant/app identifiers, and
+	// value-mapping keys. The Terraform module uses tenant_name + app_name to
+	// derive OpenBao secret paths (gentian-os/tenants/{tenant}/apps/{app}/...),
+	// and the vm_* keys to know which Helm values to populate via set_sensitive.
+	vars := []interface{}{
+		map[string]interface{}{"name": "tenant_name", "value": tenant.Name},
+		map[string]interface{}{"name": "app_name", "value": app.Profile},
+		map[string]interface{}{"name": "namespace", "value": nsName},
+		map[string]interface{}{"name": "chart_repository", "value": profile.Spec.Chart.Repository},
+		map[string]interface{}{"name": "chart_name", "value": profile.Spec.Chart.Name},
+		map[string]interface{}{"name": "chart_version", "value": profile.Spec.Chart.Version},
+	}
+
+	// Append ValueMapping keys so the module knows which Helm values to wire.
+	// Empty keys signal "not required" and are omitted to reduce spec noise.
+	if vm := profile.Spec.ValueMapping; vm != nil {
+		if vm.OIDC != nil {
+			if vm.OIDC.IssuerKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_oidc_issuer_key", "value": vm.OIDC.IssuerKey})
+			}
+			if vm.OIDC.ClientIDKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_oidc_client_id_key", "value": vm.OIDC.ClientIDKey})
+			}
+			if vm.OIDC.ClientSecretKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_oidc_client_secret_key", "value": vm.OIDC.ClientSecretKey})
+			}
+		}
+		if vm.Database != nil {
+			if vm.Database.HostKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_db_host_key", "value": vm.Database.HostKey})
+			}
+			if vm.Database.PortKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_db_port_key", "value": vm.Database.PortKey})
+			}
+			if vm.Database.NameKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_db_name_key", "value": vm.Database.NameKey})
+			}
+			if vm.Database.UserKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_db_user_key", "value": vm.Database.UserKey})
+			}
+			if vm.Database.PasswordKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_db_password_key", "value": vm.Database.PasswordKey})
+			}
+		}
+		if vm.S3 != nil {
+			if vm.S3.EndpointKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_s3_endpoint_key", "value": vm.S3.EndpointKey})
+			}
+			if vm.S3.BucketKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_s3_bucket_key", "value": vm.S3.BucketKey})
+			}
+			if vm.S3.AccessKeyKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_s3_access_key_key", "value": vm.S3.AccessKeyKey})
+			}
+			if vm.S3.SecretKeyKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_s3_secret_key_key", "value": vm.S3.SecretKeyKey})
+			}
+			if vm.S3.RegionKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_s3_region_key", "value": vm.S3.RegionKey})
+			}
+		}
+		if vm.Cache != nil {
+			if vm.Cache.HostKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_cache_host_key", "value": vm.Cache.HostKey})
+			}
+			if vm.Cache.PortKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_cache_port_key", "value": vm.Cache.PortKey})
+			}
+			if vm.Cache.PasswordKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_cache_password_key", "value": vm.Cache.PasswordKey})
+			}
+		}
+		if vm.SMTP != nil {
+			if vm.SMTP.HostKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_smtp_host_key", "value": vm.SMTP.HostKey})
+			}
+			if vm.SMTP.PortKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_smtp_port_key", "value": vm.SMTP.PortKey})
+			}
+			if vm.SMTP.UserKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_smtp_user_key", "value": vm.SMTP.UserKey})
+			}
+			if vm.SMTP.PasswordKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_smtp_password_key", "value": vm.SMTP.PasswordKey})
+			}
+		}
+		if vm.IMAP != nil {
+			if vm.IMAP.HostKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_imap_host_key", "value": vm.IMAP.HostKey})
+			}
+			if vm.IMAP.PortKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_imap_port_key", "value": vm.IMAP.PortKey})
+			}
+		}
+		if vm.LDAP != nil {
+			if vm.LDAP.HostKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_ldap_host_key", "value": vm.LDAP.HostKey})
+			}
+			if vm.LDAP.PortKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_ldap_port_key", "value": vm.LDAP.PortKey})
+			}
+			if vm.LDAP.BaseDNKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_ldap_base_dn_key", "value": vm.LDAP.BaseDNKey})
+			}
+			if vm.LDAP.BindDNKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_ldap_bind_dn_key", "value": vm.LDAP.BindDNKey})
+			}
+			if vm.LDAP.BindPasswordKey != "" {
+				vars = append(vars, map[string]interface{}{"name": "vm_ldap_bind_password_key", "value": vm.LDAP.BindPasswordKey})
+			}
+		}
+	}
+
+	if extraValuesJSON != "" {
+		vars = append(vars, map[string]interface{}{"name": "extra_values_json", "value": extraValuesJSON})
+	}
+	_ = unstructured.SetNestedSlice(obj.Object, vars, "spec", "vars")
+
+	// Registry credentials are sensitive and come from a pre-existing cluster Secret.
+	varsFrom := []interface{}{
+		map[string]interface{}{"kind": "Secret", "name": "registry-credentials-tofu"},
+	}
+	_ = unstructured.SetNestedSlice(obj.Object, varsFrom, "spec", "varsFrom")
+
+	// MinIO S3 backend credentials injected as env vars (AWS_ACCESS_KEY_ID etc.).
+	envFrom := []interface{}{
+		map[string]interface{}{
+			"secretRef": map[string]interface{}{"name": "minio-tofu-state"},
+		},
+	}
+	_ = unstructured.SetNestedSlice(obj.Object, envFrom, "spec", "runnerPodTemplate", "spec", "envFrom")
+
+	// Write any Terraform outputs (e.g. app URLs) to a named Secret.
+	_ = unstructured.SetNestedField(obj.Object, crName+"-outputs", "spec", "writeOutputsToSecret", "name")
+
+	return obj, nil
+}
+
+// terraformCRIsReady returns true when the Terraform CR's Ready condition is True,
+// indicating the tofu-controller has successfully applied the workspace.
+func terraformCRIsReady(obj *unstructured.Unstructured) bool {
+	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil || !found {
+		return false
+	}
+	for _, c := range conditions {
+		cond, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if cond["type"] == "Ready" && cond["status"] == "True" {
+			return true
+		}
+	}
+	return false
+}
+
+// terraformCRName returns the Terraform CR name for a tenant + app.
+func terraformCRName(tenantName, appProfile string) string {
+	return fmt.Sprintf("tf-%s-%s", tenantName, appProfile)
+}
+
+// buildAppApplication constructs the ArgoCD Application CR for a specific app + tenant.// It renders Helm values from the AppProfile's ValueMapping (kernel-service references)
 // and merges extraValues from the profile and per-tenant config overrides.
 func buildAppApplication(
 	tenant *gentianov1alpha1.Tenant,
