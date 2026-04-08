@@ -117,14 +117,15 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 }
 
 // ensureDatabaseCR creates (or confirms the existence of) a CloudNativePG Database CR
-// in the tenant namespace. Returns true once the Database CR reports Ready=True.
+// in the kernel namespace (same namespace as the shared CNPG Cluster). Returns true once
+// the Database CR reports Ready=True.
 func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
 	desired := buildDatabaseCR(tenant, nsName, dbName, appName)
 	crName := databaseCRName(tenant.Name, appName)
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(desired.GroupVersionKind())
-	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: nsName}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: kernelNamespace}, existing)
 	if errors.IsNotFound(err) {
 		return false, r.Create(ctx, desired)
 	}
@@ -161,7 +162,6 @@ func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	nsName := tenantNamespaceName(tenant)
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
@@ -183,7 +183,7 @@ func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov
 			Kind:    cnpgDatabaseKind,
 		})
 		obj.SetName(crName)
-		obj.SetNamespace(nsName)
+		obj.SetNamespace(kernelNamespace) // Database CRs live in the kernel namespace with the CNPG Cluster
 		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Database CR %s: %w", crName, err)
 		}
@@ -202,7 +202,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 		Kind:    cnpgDatabaseKind,
 	})
 	obj.SetName(databaseCRName(tenant.Name, appName))
-	obj.SetNamespace(nsName)
+	obj.SetNamespace(kernelNamespace) // must be in the same namespace as the CNPG Cluster
 	obj.SetLabels(map[string]string{
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
