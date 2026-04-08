@@ -229,9 +229,14 @@ func buildTerraformCR(
 		managedByLabel: managedByValue,
 	})
 
+	modulePath := tofuModulePath
+	if profile.Spec.TofuModulePath != "" {
+		modulePath = profile.Spec.TofuModulePath
+	}
+
 	_ = unstructured.SetNestedField(obj.Object, "auto", "spec", "approvePlan")
 	_ = unstructured.SetNestedField(obj.Object, "10m", "spec", "interval")
-	_ = unstructured.SetNestedField(obj.Object, tofuModulePath, "spec", "path")
+	_ = unstructured.SetNestedField(obj.Object, modulePath, "spec", "path")
 	_ = unstructured.SetNestedField(obj.Object, "GitRepository", "spec", "sourceRef", "kind")
 	_ = unstructured.SetNestedField(obj.Object, tofuGitRepositoryName, "spec", "sourceRef", "name")
 	_ = unstructured.SetNestedField(obj.Object, true, "spec", "backendConfig", "disable")

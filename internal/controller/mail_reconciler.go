@@ -393,8 +393,9 @@ func buildPostfixApplication(tenant *gentianov1alpha1.Tenant, dkimPrivateKeyPEM 
     DKIM_SELECTOR: mail
 mountSecret:
   enabled: true
+  path: /etc/opendkim/keys
   data:
-    %s.dkim-private: |
+    %s.private: |
 %s`, domain, domain, dkimBlock)
 	} else {
 		helmValues = fmt.Sprintf("config:\n  general:\n    ALLOWED_SENDER_DOMAINS: %q\n", domain)

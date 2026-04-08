@@ -76,6 +76,13 @@ spec:
     oidc:
       clientSecretKey: "openproject.oidc.secret"
     database:
+      # All five database fields are injected via set_sensitive from OpenBao.
+      # The chart receives postgresql.bundled=false via extraValues, so these
+      # values configure the external PostgreSQL connection.
+      hostKey: "postgresql.connection.host"
+      portKey: "postgresql.connection.port"
+      nameKey: "postgresql.auth.database"
+      userKey: "postgresql.auth.username"
       passwordKey: "postgresql.auth.password"
     s3:
       secretKeyKey: "s3.auth.secretAccessKey"
@@ -92,6 +99,37 @@ spec:
     # HTTP Basic Auth password for the OpenProject API admin user.
     - name: api_admin_password
       valuePath: "environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD"
+
+  # extraValues: non-sensitive chart configuration aligned with opendesk.
+  #
+  # Key decisions matching opendesk/helmfile/apps/openproject/values.yaml.gotmpl:
+  #   - postgresql.bundled: false — use external PostgreSQL (postgres-rw.platform-kernel)
+  #     Connection details (host/port/name/user/password) injected via valueMapping above.
+  #   - memcached.bundled: false — use standalone memcached deployed in tenant namespace.
+  #     The memcached chart (registry.opencode.de bitnami-charts mirror v6.7.1) must be
+  #     deployed separately with the opendesk image mirror before this chart starts.
+  #   - image: mirrored from registry.opencode.de (opendesk images.yaml.gotmpl).
+  #   - dbInit.image: postgres 16.9 from registry-1.docker.io (opendesk images.yaml.gotmpl).
+  extraValues:
+    postgresql:
+      bundled: false
+      # auth.username, auth.database, connection.host, connection.port
+      # are injected via valueMapping (set_sensitive). Only bundled: false
+      # needs to be here since connection values come from OpenBao.
+    memcached:
+      bundled: false
+      connection:
+        host: "memcached"
+        port: 11211
+    image:
+      registry: "registry.opencode.de"
+      repository: "bmi/opendesk/components/supplier/openproject/images-mirror/open_desk"
+      tag: "16.6.5@sha256:877ea14085ec04311d8d138d37eea43ba80f81228fdf7ed042715b8cf316178f"
+    dbInit:
+      image:
+        registry: "registry-1.docker.io"
+        repository: "library/postgres"
+        tag: "16.9-alpine3.20@sha256:e5507c984377515b8c9922b0eb19f55aba2063fdc7bccf268cefd53133f97054"
 
   # Pattern B — openproject chart injects all secrets as direct Helm values.
   deploymentMethod: tofu-controller

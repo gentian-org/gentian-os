@@ -1,0 +1,62 @@
+# =============================================================================
+# OX App Suite — sensitive values template
+# =============================================================================
+# Rendered by the ox-workspace Terraform module via templatefile().
+# ALL values here come from OpenBao — never commit a rendered version.
+#
+# Template variables → OpenBao paths (via ox-workspace/main.tf):
+#   ${oidc_client_secret}        → tenants/{t}/apps/ox-appsuite/oidc.client-secret
+#   ${mariadb_root_password}     → tenants/{t}/apps/ox-appsuite/database.password
+#   ${minio_ox_password}         → tenants/{t}/apps/ox-appsuite/s3.secret-key
+#   ${redis_auth_password}       → tenants/{t}/apps/ox-appsuite/cache.password
+#   ${ldap_ox_password}          → tenants/{t}/apps/ox-appsuite/ldap.bind-password
+#   ${admin_password}            → tenants/{t}/apps/ox-appsuite/internal/admin_password.value
+#   ${hz_group_password}         → tenants/{t}/apps/ox-appsuite/internal/hz_group_password.value
+#   ${basic_auth_password}       → tenants/{t}/apps/ox-appsuite/internal/basic_auth_password.value
+#   ${jolokia_password}          → tenants/{t}/apps/ox-appsuite/internal/jolokia_password.value
+#   ${cookie_hash_salt}          → tenants/{t}/apps/ox-appsuite/internal/cookie_hash_salt.value
+#   ${share_crypt_key}           → tenants/{t}/apps/ox-appsuite/internal/share_crypt_key.value
+#   ${sessiond_encryption_key}   → tenants/{t}/apps/ox-appsuite/internal/sessiond_encryption_key.value
+# =============================================================================
+
+# Secrets propagated globally so sub-charts (bootstrap, connector) can read them
+global:
+  appsuite:
+    cookieHashSalt: "${cookie_hash_salt}"
+    shareCryptKey: "${share_crypt_key}"
+    sessiondEncryptionKey: "${sessiond_encryption_key}"
+  # MariaDB password — OX connects as root to manage its own schema.
+  # Three password keys needed: password (default user), rootPassword (init), readPassword (replica).
+  mysql:
+    auth:
+      password: "${mariadb_root_password}"
+      rootPassword: "${mariadb_root_password}"
+      readPassword: "${mariadb_root_password}"
+
+# Sensitive values for the core-mw subchart
+appsuite:
+  core-mw:
+    masterPassword: "${admin_password}"
+    hzGroupPassword: "${hz_group_password}"
+    basicAuthPassword: "${basic_auth_password}"
+    jolokiaPassword: "${jolokia_password}"
+
+    # OIDC client secret — stored as a K8s Secret via secretProperties
+    secretProperties:
+      com.openexchange.oidc.clientSecret: "${oidc_client_secret}"
+      com.openexchange.cookie.hash.salt: "${cookie_hash_salt}"
+      com.openexchange.sessiond.encryptionKey: "${sessiond_encryption_key}"
+      com.openexchange.share.cryptKey: "${share_crypt_key}"
+
+    # Per-file property overrides for secrets only.
+    # Non-sensitive entries are in _base.yaml.
+    propertiesFiles:
+      /opt/open-xchange/etc/filestore-s3.properties:
+        com.openexchange.filestore.s3.ox-filestore-s3.secretKey: "${minio_ox_password}"
+      /opt/open-xchange/etc/ldapauth.properties:
+        bindDNPassword: "${ldap_ox_password}"
+
+    # Redis session store password
+    redis:
+      auth:
+        password: "${redis_auth_password}"

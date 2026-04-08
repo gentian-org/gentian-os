@@ -61,6 +61,15 @@ type AppProfileSpec struct {
 	// +kubebuilder:default=argocd
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
 
+	// TofuModulePath overrides the default Terraform module path used when
+	// deploymentMethod is tofu-controller. When empty, the orchestrator uses
+	// the generic kernel/tofu/tenant/app-workspace module. Set this to a
+	// custom module path (e.g. kernel/tofu/tenant/ox-workspace) for apps that
+	// require a dedicated Terraform module (e.g. apps with complex propertiesFiles
+	// key paths that cannot be expressed as Helm --set values).
+	// +optional
+	TofuModulePath string `json:"tofuModulePath,omitempty"`
+
 	// Ingress declares the HTTP routing configuration for this app.
 	// When set, the orchestrator creates a Kubernetes Ingress resource and a
 	// cert-manager Certificate CR for TLS.
