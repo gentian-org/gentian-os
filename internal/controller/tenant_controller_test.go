@@ -111,6 +111,18 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// udm-admin Secret is required by the mail reconciler for Dovecot LDAP config.
+	if err := testClient.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
+			"ldapBase":          []byte("dc=swp-ldap,dc=internal"),
+			"ldapsearchDovecot": []byte("test-ldap-password"),
+		},
+	}); err != nil {
+		panic(err)
+	}
+
 	code := m.Run()
 
 	cancel()

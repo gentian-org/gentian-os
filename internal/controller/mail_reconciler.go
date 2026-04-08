@@ -151,14 +151,23 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 		tenant.Status.Mail.DMARCRecord = fmt.Sprintf("v=DMARC1; p=none; rua=mailto:dmarc@%s", domain)
 	}
 
-	// 2. Postfix Application CR.
+	// 2. Read udm-admin Secret for LDAP connection details used by Dovecot.
+	udmSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: udmAdminSecret, Namespace: kernelNamespace}, udmSecret); err != nil {
+		return false, fmt.Errorf("read udm-admin Secret: %w", err)
+	}
+	ldapHost := string(udmSecret.Data["ldapHost"])
+	ldapBase := string(udmSecret.Data["ldapBase"])
+	ldapsearchDovecot := string(udmSecret.Data["ldapsearchDovecot"])
+
+	// 3. Postfix Application CR.
 	postfixDone, err := r.ensureMailApplication(ctx, buildPostfixApplication(tenant))
 	if err != nil {
 		return false, fmt.Errorf("ensure Postfix Application CR: %w", err)
 	}
 
-	// 3. Dovecot Application CR.
-	dovecotDone, err := r.ensureMailApplication(ctx, buildDovecotApplication(tenant))
+	// 4. Dovecot Application CR.
+	dovecotDone, err := r.ensureMailApplication(ctx, buildDovecotApplication(tenant, ldapHost, ldapBase, ldapsearchDovecot))
 	if err != nil {
 		return false, fmt.Errorf("ensure Dovecot Application CR: %w", err)
 	}
@@ -378,8 +387,24 @@ func buildPostfixApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unst
 
 // buildDovecotApplication returns an ArgoCD Application CR that deploys a Dovecot MDA
 // (IMAP/POP3) into the tenant namespace. Used by selfhosted mode only.
-func buildDovecotApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unstructured {
+// It configures LDAP-backed account provisioning so Dovecot can authenticate mail users
+// against the platform Nubus/UCS directory.
+func buildDovecotApplication(tenant *gentianov1alpha1.Tenant, ldapHost, ldapBase, ldapBindPW string) *unstructured.Unstructured {
 	nsName := tenantNamespaceName(tenant)
+	domain := mailDomain(tenant)
+	bindDN := fmt.Sprintf("uid=ldapsearch_dovecot,cn=users,%s", ldapBase)
+	helmValues := fmt.Sprintf(`deployment:
+  env:
+    ACCOUNT_PROVISIONER: LDAP
+    OVERRIDE_HOSTNAME: "mail.%s"
+    LDAP_SERVER_HOST: "%s"
+    LDAP_SEARCH_BASE: "%s"
+    LDAP_BIND_DN: "%s"
+    LDAP_BIND_PW: "%s"
+    LDAP_QUERY_FILTER_USER: "(&(objectClass=univentionMail)(mailPrimaryAddress=%%s))"
+    LDAP_QUERY_FILTER_DOMAIN: "(&(objectClass=univentionMail)(|(mailPrimaryAddress=*@%%s)(mailAlternativeAddress=*@%%s)))"
+    LDAP_QUERY_FILTER_ALIAS: "(&(objectClass=univentionMail)(mailAlternativeAddress=%%s))"
+`, domain, ldapHost, ldapBase, bindDN, ldapBindPW)
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(argocdApplicationGVK)
 	obj.SetName(dovecotApplicationName(tenant.Name))
@@ -392,6 +417,7 @@ func buildDovecotApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unst
 	_ = unstructured.SetNestedField(obj.Object, dovecotChartRepo, "spec", "source", "repoURL")
 	_ = unstructured.SetNestedField(obj.Object, dovecotChartName, "spec", "source", "chart")
 	_ = unstructured.SetNestedField(obj.Object, dovecotChartVersion, "spec", "source", "targetRevision")
+	_ = unstructured.SetNestedField(obj.Object, helmValues, "spec", "source", "helm", "values")
 	_ = unstructured.SetNestedField(obj.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
 	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "destination", "namespace")
 	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "prune")
