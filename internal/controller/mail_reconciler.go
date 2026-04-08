@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -43,7 +44,7 @@ const (
 	dkimKeySize         = 2048
 	postfixChartRepo    = "https://bokysan.github.io/docker-postfix"
 	postfixChartName    = "mail"
-	postfixChartVersion = "4.0.0"
+	postfixChartVersion = "5.1.0"
 	dovecotChartRepo    = "https://docker-mailserver.github.io/docker-mailserver-helm"
 	dovecotChartName    = "docker-mailserver"
 	dovecotChartVersion = "v4.1.0"
@@ -160,13 +161,20 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	ldapBase := string(udmSecret.Data["ldapBase"])
 	ldapsearchDovecot := string(udmSecret.Data["ldapsearchDovecot"])
 
-	// 3. Postfix Application CR.
-	postfixDone, err := r.ensureMailApplication(ctx, buildPostfixApplication(tenant))
+	// 3. Read DKIM private key so Postfix/OpenDKIM can sign outgoing mail.
+	dkimSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dkimSecretName(tenant.Name), Namespace: nsName}, dkimSecret); err != nil {
+		return false, fmt.Errorf("read DKIM key Secret: %w", err)
+	}
+	dkimPrivateKey := string(dkimSecret.Data["tls.key"])
+
+	// 4. Postfix Application CR.
+	postfixDone, err := r.ensureMailApplication(ctx, buildPostfixApplication(tenant, dkimPrivateKey))
 	if err != nil {
 		return false, fmt.Errorf("ensure Postfix Application CR: %w", err)
 	}
 
-	// 4. Dovecot Application CR.
+	// 5. Dovecot Application CR.
 	dovecotDone, err := r.ensureMailApplication(ctx, buildDovecotApplication(tenant, ldapHost, ldapBase, ldapsearchDovecot))
 	if err != nil {
 		return false, fmt.Errorf("ensure Dovecot Application CR: %w", err)
@@ -227,7 +235,14 @@ func (r *TenantReconciler) ensureMailExternal(ctx context.Context, tenant *genti
 // ensureMailTransportOnly provisions a shared Postfix relay for outbound delivery only.
 // No Dovecot (no IMAP storage). Returns true when the Postfix Application CR is Healthy.
 func (r *TenantReconciler) ensureMailTransportOnly(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.ensureMailApplication(ctx, buildPostfixApplication(tenant))
+	nsName := tenantNamespaceName(tenant)
+	// Read DKIM key if it exists; transport-only mode may still benefit from signing.
+	dkimKey := ""
+	dkimSec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dkimSecretName(tenant.Name), Namespace: nsName}, dkimSec); err == nil {
+		dkimKey = string(dkimSec.Data["tls.key"])
+	}
+	return r.ensureMailApplication(ctx, buildPostfixApplication(tenant, dkimKey))
 }
 
 // ensureMailApplication creates or checks health of an ArgoCD Application CR.
@@ -360,11 +375,30 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 
 // buildPostfixApplication returns an ArgoCD Application CR that deploys a Postfix MTA
 // into the tenant namespace. Used by both selfhosted and transport-only modes.
-func buildPostfixApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unstructured {
+// dkimPrivateKeyPEM is the PEM-encoded RSA private key for DKIM mail signing; when
+// empty, DKIM signing is not configured (OpenDKIM runs in noop mode).
+func buildPostfixApplication(tenant *gentianov1alpha1.Tenant, dkimPrivateKeyPEM string) *unstructured.Unstructured {
 	nsName := tenantNamespaceName(tenant)
 	domain := mailDomain(tenant)
-	// ALLOWED_SENDER_DOMAINS must be set or Postfix refuses to start.
-	helmValues := fmt.Sprintf("config:\n  general:\n    ALLOWED_SENDER_DOMAINS: %q\n", domain)
+	var helmValues string
+	if dkimPrivateKeyPEM != "" {
+		// Build the DKIM private-key block: each PEM line indented under the YAML literal.
+		dkimBlock := ""
+		for _, line := range strings.Split(strings.TrimRight(dkimPrivateKeyPEM, "\n"), "\n") {
+			dkimBlock += "      " + line + "\n"
+		}
+		helmValues = fmt.Sprintf(`config:
+  general:
+    ALLOWED_SENDER_DOMAINS: %q
+    DKIM_SELECTOR: mail
+mountSecret:
+  enabled: true
+  data:
+    %s.dkim-private: |
+%s`, domain, domain, dkimBlock)
+	} else {
+		helmValues = fmt.Sprintf("config:\n  general:\n    ALLOWED_SENDER_DOMAINS: %q\n", domain)
+	}
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(argocdApplicationGVK)
 	obj.SetName(postfixApplicationName(tenant.Name))
