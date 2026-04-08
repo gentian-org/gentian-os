@@ -303,7 +303,7 @@ BASE_URL="${UDM_URL}/univention/udm"
 OU_ENCODED=$(printf '%%s' '%s' | sed 's/ /+/g; s/,/,/g')
 
 # Create tenant OU if absent
-STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   "${BASE_URL}/container/ou/dn/%s")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
@@ -317,7 +317,7 @@ else
 fi
 
 # Create users group if absent
-STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   "${BASE_URL}/groups/group/dn/cn=users,${OU_ENCODED}")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
@@ -331,7 +331,7 @@ else
 fi
 
 # Create admins group if absent
-STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   "${BASE_URL}/groups/group/dn/cn=admins,${OU_ENCODED}")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
@@ -355,7 +355,7 @@ CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/univention/udm"
 BIND_DN_ENCODED=$(printf '%%s' '%s' | sed 's/ /+/g')
 
-STATUS=$(curl -sf -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   "${BASE_URL}/users/user/dn/${BIND_DN_ENCODED}")
 if [ "${STATUS}" = "404" ]; then
   BIND_PW=$(curl -sf -X POST \

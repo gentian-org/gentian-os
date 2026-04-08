@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -320,9 +321,12 @@ var mariadbDeleteScript = "" +
 // --- Name helpers ------------------------------------------------------------
 
 // mariadbUserName returns the MariaDB username for a tenant + app.
-// The format mirrors roleUserName to keep naming consistent across engines.
+// Hyphens are replaced with underscores because MariaDB usernames must
+// match ^[a-zA-Z0-9_]+$ (enforced in the provisioner script validation).
 func mariadbUserName(tenantName, appName string) string {
-	return fmt.Sprintf("%s_%s", tenantName, appName)
+	safeTenant := strings.ReplaceAll(tenantName, "-", "_")
+	safeApp := strings.ReplaceAll(appName, "-", "_")
+	return fmt.Sprintf("%s_%s", safeTenant, safeApp)
 }
 
 func mariadbSetupJobName(tenantName, appName string) string {
