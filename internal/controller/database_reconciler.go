@@ -213,7 +213,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 	if err := unstructured.SetNestedField(obj.Object, cnpgClusterName, "spec", "cluster", "name"); err == nil {
 		_ = unstructured.SetNestedField(obj.Object, dbName, "spec", "name")
 		_ = unstructured.SetNestedField(obj.Object, roleName, "spec", "owner")
-		_ = unstructured.SetNestedField(obj.Object, true, "spec", "ensure")
+		_ = unstructured.SetNestedField(obj.Object, "present", "spec", "ensure")
 	}
 	return obj
 }
