@@ -295,11 +295,12 @@ func udmContainer(name, script string) corev1.Container {
 // All UDM calls are idempotent (GET before POST).
 func buildOUScript(ouDN, tenantName string) string {
 	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 # OU_POS is assigned here; shell expands ${UDM_LDAP_BASE} at runtime.
 OU_POS="%s"
-OU_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${OU_POS}")
+OU_ENC=$(urlencode "${OU_POS}")
 
 # Create tenant OU if absent
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
@@ -317,7 +318,7 @@ else
 fi
 
 # Create users group if absent
-USERS_GRP_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "cn=users_%s,${OU_POS}")
+USERS_GRP_ENC=$(urlencode "cn=users_%s,${OU_POS}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/groups/group/dn/${USERS_GRP_ENC}")
@@ -333,7 +334,7 @@ else
 fi
 
 # Create admins group if absent
-ADMINS_GRP_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "cn=admins_%s,${OU_POS}")
+ADMINS_GRP_ENC=$(urlencode "cn=admins_%s,${OU_POS}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
@@ -356,12 +357,13 @@ fi`,
 // Uses users/ldap object type which only requires username and password.
 func buildBindAccountScript(ouDN, appName string) string {
 	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 # OU_POS and BIND_DN: ${UDM_LDAP_BASE} expands at runtime via shell.
 OU_POS="%s"
 BIND_DN="uid=app-%s,${OU_POS}"
-BIND_DN_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${BIND_DN}")
+BIND_DN_ENC=$(urlencode "${BIND_DN}")
 
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
@@ -382,11 +384,12 @@ fi`, ouDN, appName, appName, appName, appName)
 // buildOUDeleteScript removes the tenant OU and all child entries.
 func buildOUDeleteScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 # OU_POS: ${UDM_LDAP_BASE} expands at runtime.
 OU_POS="%s"
-OU_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${OU_POS}")
+OU_ENC=$(urlencode "${OU_POS}")
 
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
   -H "Accept: application/json" \
