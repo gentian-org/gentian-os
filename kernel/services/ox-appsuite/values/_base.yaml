@@ -88,6 +88,26 @@ appsuite:
     jolokiaLogin: "jolokia"
     serverName: "server"
 
+    # Resource requests and limits — must be set explicitly to override the
+    # per-namespace LimitRange default (500m cpu limit) which would otherwise be
+    # applied to containers that don't specify their own limit, causing the pod to
+    # fail validation when requests.cpu (1000m) > default limit (500m).
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "1000m"
+        memory: "2Gi"
+    initContainer:
+      resources:
+        limits:
+          cpu: "4"
+          memory: "4Gi"
+        requests:
+          cpu: "500m"
+          memory: "2Gi"
+
     # Package-level feature flags (individual OSGi bundles).
     # Feature-group flags (documents, guard, etc.) default to disabled in chart.
     packages:
