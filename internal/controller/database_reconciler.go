@@ -65,22 +65,24 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
 
-		// Step 1 — CloudNativePG Database CR
-		dbReady, err := r.ensureDatabaseCR(ctx, tenant, nsName, dbName, appName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Database CR for app %s: %w", appName, err)
-		}
-		if !dbReady {
-			allDone = false
-			continue
-		}
-
-		// Step 2 — psql role Job (only after Database CR is ready)
+		// Step 1 — psql role Job: create the PostgreSQL role first.
+		// The CNPG Database CR references this role as spec.owner, so the role
+		// must exist before CNPG attempts to create the database.
 		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure role Job for app %s: %w", appName, err)
 		}
 		if !roleJobDone {
+			allDone = false
+			continue
+		}
+
+		// Step 2 — CloudNativePG Database CR (only after role exists)
+		dbReady, err := r.ensureDatabaseCR(ctx, tenant, nsName, dbName, appName)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Database CR for app %s: %w", appName, err)
+		}
+		if !dbReady {
 			allDone = false
 		}
 	}
