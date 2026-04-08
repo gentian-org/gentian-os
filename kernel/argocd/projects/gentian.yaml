@@ -75,6 +75,10 @@ spec:
     kind: IntegrationBinding
   - group: 'postgresql.cnpg.io'
     kind: '*'
+  - group: 'admissionregistration.k8s.io'
+    kind: ValidatingWebhookConfiguration
+  - group: 'admissionregistration.k8s.io'
+    kind: MutatingWebhookConfiguration
 
   # Namespace-scoped resources (allow all)
   namespaceResourceWhitelist:
