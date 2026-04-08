@@ -1,0 +1,22 @@
+---
+# ArgoCD Repository registration for ghcr.io/cloudnative-pg/charts OCI Helm charts.
+# This is a PUBLIC registry — no credentials required.
+# Required for: kernel/bootstrap/cnpg-application.yaml
+#
+# Note: ArgoCD can pull public OCI charts without a registered secret.
+# This file is kept for documentation consistency with other ghcr registrations.
+#
+# To apply manually (bootstrap step):
+#   kubectl apply -f kernel/argocd/repos/ghcr-cloudnative-pg.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ghcr-cloudnative-pg
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  enableOCI: "true"
+  type: helm
+  url: ghcr.io/cloudnative-pg/charts
+  name: ghcr-cloudnative-pg

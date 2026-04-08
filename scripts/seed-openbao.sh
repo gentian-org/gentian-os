@@ -214,6 +214,18 @@ echo ""
 echo "Writing secrets to OpenBao..."
 
 # --- PostgreSQL ---
+# --- CNPG superuser (shared CloudNativePG Cluster in platform-kernel) ------
+CNPG_SUPERUSER_PW=$(derive_password "cnpg" "superuser")
+
+kv_put_once "database/cnpg" "$(cat <<EOF
+{
+  "superuser_username": "postgres",
+  "superuser_password": "${CNPG_SUPERUSER_PW}"
+}
+EOF
+)"
+
+# --- Bitnami PostgreSQL (Nubus components) ----------------------------------
 kv_put_once "database/postgresql" "$(cat <<EOF
 {
   "postgres_password":              "${PG_POSTGRES_PW}",

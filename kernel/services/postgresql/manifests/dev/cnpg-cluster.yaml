@@ -1,0 +1,39 @@
+---
+# CloudNativePG Cluster — shared platform PostgreSQL instance.
+#
+# Used by the gentian-os operator to provision per-tenant databases via
+# Database.postgresql.cnpg.io/v1 CRs (database_reconciler.go, cnpgClusterName="postgres").
+#
+# Deployed to: platform-kernel namespace
+# Managed by:  kernel/bootstrap/cnpg-cluster-application.yaml
+#
+# Connections (read-write):  postgres-rw.platform-kernel.svc.cluster.local:5432
+# Admin credentials:         postgres-admin Secret (see postgres-admin-externalsecret.yaml)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  namespace: platform-kernel
+spec:
+  instances: 1
+
+  superuserSecret:
+    name: cnpg-superuser   # ExternalSecret — see cnpg-superuser-externalsecret.yaml
+
+  storage:
+    size: 10Gi
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+      work_mem: "4MB"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi

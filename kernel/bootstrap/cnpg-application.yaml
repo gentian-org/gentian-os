@@ -1,0 +1,44 @@
+---
+# Deploys CloudNativePG operator — manages PostgreSQL clusters + Database CRs.
+#
+# Chart: oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg v0.23.0
+#        (public OCI registry — no credentials required)
+#
+# Installs CRDs: Cluster, Database, Pooler, Backup, ScheduledBackup, etc.
+# The gentian-os operator watches Database.postgresql.cnpg.io/v1, so CNPG
+# must be deployed before gentian-os starts.
+#
+# Safety guards:
+#   prune: false          — ArgoCD never auto-deletes the operator deployment
+#   finalizers: []        — removing this Application from Git does NOT cascade-delete
+#   selfHeal: true        — drift in values.yaml is reconciled automatically
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg
+  namespace: argocd
+  finalizers: []   # intentionally empty — never cascade-delete the operator
+spec:
+  project: gentian
+  sources:
+  # Source 1: CloudNativePG Helm chart from ghcr.io OCI registry (public, no auth)
+  - repoURL: ghcr.io/cloudnative-pg/charts
+    chart: cloudnative-pg
+    targetRevision: "0.23.0"
+    helm:
+      valueFiles:
+      - $values/kernel/values/cnpg.yaml
+  # Source 2: Values file from Git (referenced as $values by Source 1)
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
