@@ -1,18 +1,12 @@
 # =============================================================================
-# OpenBao data sources — nubus only (infra-workspaces workspace)
+# OpenBao data sources — infra-workspaces workspace
 # =============================================================================
-# PostgreSQL and MariaDB are currently managed by ArgoCD (legacy StatefulSets
-# in gentian-infra-{env}) while the Tofu helm_release resources are at count=0
-# pending data migration.  Their vault data sources live in stubs.tf.
-# Only nubus uses a vault_kv_secret_v2 here.
+# nubus: used by nextcloud.tf (ldapsearch_nextcloud LDAP bind password).
+# postfix/dovecot/ox data sources removed — those apps are now managed by the
+# per-tenant operator (postfix-gtn-demo, dovecot-gtn-demo, tf-gtn-demo-ox-appsuite).
 # =============================================================================
 
 data "vault_kv_secret_v2" "nubus" {
   mount = "secret"
   name  = "gentian-os/kernel/identity/nubus"
-}
-
-data "vault_kv_secret_v2" "postfix" {
-  mount = "secret"
-  name  = "gentian-os/kernel/mail/postfix"
 }
