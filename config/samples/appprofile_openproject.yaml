@@ -110,6 +110,10 @@ spec:
   #     deployed separately with the opendesk image mirror before this chart starts.
   #   - image: mirrored from registry.opencode.de (opendesk images.yaml.gotmpl).
   #   - dbInit.image: postgres 16.9 from registry-1.docker.io (opendesk images.yaml.gotmpl).
+  #   - LDAP seeder: all OPENPROJECT_SEED_LDAP_OPENDESK_* env vars aligned with
+  #     opendesk/helmfile/apps/openproject/values.yaml.gotmpl. HOST/BINDUSER/BASEDN
+  #     are dev-cluster specific (nubus-dev LDAP, dc=swp-ldap,dc=internal base DN).
+  #     BINDPASSWORD is injected as set_sensitive via valueMapping.ldap (not here).
   extraValues:
     postgresql:
       bundled: false
@@ -130,6 +134,25 @@ spec:
         registry: "registry-1.docker.io"
         repository: "library/postgres"
         tag: "16.9-alpine3.20@sha256:e5507c984377515b8c9922b0eb19f55aba2063fdc7bccf268cefd53133f97054"
+    environment:
+      # LDAP seeder — static values (aligned with opendesk)
+      OPENPROJECT_SEED_LDAP_OPENDESK_PORT: "389"
+      OPENPROJECT_SEED_LDAP_OPENDESK_SECURITY: "plain_ldap"
+      OPENPROJECT_SEED_LDAP_OPENDESK_SYNC__USERS: "true"
+      OPENPROJECT_SEED_LDAP_OPENDESK_FILTER: "(&(objectClass=opendeskProjectmanagementUser)(opendeskProjectmanagementEnabled=TRUE))"
+      OPENPROJECT_SEED_LDAP_OPENDESK_LOGIN__MAPPING: "uid"
+      OPENPROJECT_SEED_LDAP_OPENDESK_FIRSTNAME__MAPPING: "givenName"
+      OPENPROJECT_SEED_LDAP_OPENDESK_LASTNAME__MAPPING: "sn"
+      OPENPROJECT_SEED_LDAP_OPENDESK_MAIL__MAPPING: "mailPrimaryAddress"
+      OPENPROJECT_SEED_LDAP_OPENDESK_ADMIN__MAPPING: "opendeskProjectmanagementAdmin"
+      OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_FILTER: "(&(objectClass=opendeskProjectmanagementGroup)(opendeskProjectmanagementEnabled=TRUE))"
+      OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_SYNC__USERS: "true"
+      OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_GROUP__ATTRIBUTE: "cn"
+      # LDAP seeder — dev-cluster specific
+      OPENPROJECT_SEED_LDAP_OPENDESK_HOST: "nubus-dev-ldap-server.gentian-dev.svc.cluster.local"
+      OPENPROJECT_SEED_LDAP_OPENDESK_BINDUSER: "uid=ldapsearch_openproject,cn=users,dc=swp-ldap,dc=internal"
+      OPENPROJECT_SEED_LDAP_OPENDESK_BASEDN: "dc=swp-ldap,dc=internal"
+      OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_BASE: "dc=swp-ldap,dc=internal"
 
   # Pattern B — openproject chart injects all secrets as direct Helm values.
   deploymentMethod: tofu-controller
