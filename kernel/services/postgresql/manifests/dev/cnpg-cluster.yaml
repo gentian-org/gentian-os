@@ -16,6 +16,7 @@ metadata:
   namespace: platform-kernel
 spec:
   instances: 1
+  enableSuperuserAccess: true  # Allow postgres superuser connections for admin role provisioning
 
   superuserSecret:
     name: cnpg-superuser   # ExternalSecret — see cnpg-superuser-externalsecret.yaml
