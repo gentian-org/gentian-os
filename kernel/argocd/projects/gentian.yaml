@@ -30,6 +30,7 @@ spec:
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
   - 'ghcr.io/flux-iac/charts'  # flux-iac OCI charts registry (Tofu Controller Helm chart)
   - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
+  - 'ghcr.io/cloudnative-pg/charts'                                                                     # CloudNativePG OCI charts registry
 
   # Destination clusters and namespaces
   destinations:
@@ -46,6 +47,10 @@ spec:
   - namespace: 'stakater-system'             # Stakater Reloader (cluster-wide controller)
     server: https://kubernetes.default.svc
   - namespace: 'gentian-system'              # Gentian OS orchestrator (CRD controllers)
+    server: https://kubernetes.default.svc
+  - namespace: 'cnpg-system'                 # CloudNativePG operator
+    server: https://kubernetes.default.svc
+  - namespace: 'platform-kernel'             # Shared CNPG Cluster + psql provisioner Jobs
     server: https://kubernetes.default.svc
 
   # Cluster-scoped resources (allowed at cluster level)
@@ -68,6 +73,8 @@ spec:
     kind: AppProfile
   - group: 'gentianos.io'
     kind: IntegrationBinding
+  - group: 'postgresql.cnpg.io'
+    kind: '*'
 
   # Namespace-scoped resources (allow all)
   namespaceResourceWhitelist:
