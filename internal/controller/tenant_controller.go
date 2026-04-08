@@ -51,6 +51,12 @@ const (
 	managedByLabel          = "app.kubernetes.io/managed-by"
 	managedByValue          = "gentian-os"
 	kernelNamespace         = "platform-kernel"
+	// infraNamespace is the shared infrastructure namespace hosting MariaDB, Redis,
+	// and MinIO. Tenant-egress NetworkPolicy rules must allow traffic here so apps
+	// can reach their datastores. This is environment-specific (gentian-infra-{env})
+	// and should be made configurable via an operator env var / Helm value.
+	// TODO: read from INFRA_NAMESPACE env var (defaulting to this constant).
+	infraNamespace          = "gentian-infra-dev"
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -580,6 +586,17 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
+							},
+						},
+					},
+				},
+				{
+					// Allow egress to the shared infra namespace (MariaDB, Redis, MinIO).
+					// See infraNamespace constant — TODO: make configurable per environment.
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
 							},
 						},
 					},
