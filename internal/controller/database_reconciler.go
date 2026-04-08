@@ -320,23 +320,15 @@ echo "privileges granted"`, roleName, roleName, roleName, roleName, dbName, dbNa
 
 // --- Status helpers ----------------------------------------------------------
 
-// cnpgDatabaseIsReady returns true when a CloudNativePG Database CR reports
-// a "Ready" condition with status "True". Used to gate the role Job creation.
+// cnpgDatabaseIsReady returns true when a CloudNativePG Database CR has been
+// applied successfully (status.applied == true). CNPG sets this field after
+// the database has been created in PostgreSQL.
 func cnpgDatabaseIsReady(obj *unstructured.Unstructured) bool {
-	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	applied, found, err := unstructured.NestedBool(obj.Object, "status", "applied")
 	if err != nil || !found {
 		return false
 	}
-	for _, c := range conditions {
-		cond, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if cond["type"] == "Ready" && cond["status"] == "True" {
-			return true
-		}
-	}
-	return false
+	return applied
 }
 
 // --- Name helpers ------------------------------------------------------------
