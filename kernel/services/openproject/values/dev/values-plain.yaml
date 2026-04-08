@@ -17,3 +17,12 @@ s3:
   auth:
     accessKeyId: "openproject_user"
     bucket: "openproject"
+
+# ── LDAP seeder — dev-specific connection details ─────────────────────────────
+# Static LDAP env vars (PORT, SECURITY, FILTER, attribute mappings) are in _base.yaml.
+# BINDPASSWORD is injected via set_sensitive from OpenBao (valueMapping.ldap.bindPasswordKey).
+environment:
+  OPENPROJECT_SEED_LDAP_OPENDESK_HOST: "nubus-dev-ldap-server.gentian-dev.svc.cluster.local"
+  OPENPROJECT_SEED_LDAP_OPENDESK_BINDUSER: "uid=ldapsearch_openproject,cn=users,dc=swp-ldap,dc=internal"
+  OPENPROJECT_SEED_LDAP_OPENDESK_BASEDN: "dc=swp-ldap,dc=internal"
+  OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_BASE: "dc=swp-ldap,dc=internal"

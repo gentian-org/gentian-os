@@ -52,6 +52,25 @@ dbInit:
 persistence:
   enabled: false
 
+# ── LDAP seeder — static configuration (host/binduser/basedn in env-specific) ─
+# Aligned with opendesk/helmfile/apps/openproject/values.yaml.gotmpl.
+# OPENPROJECT_SEED_LDAP_OPENDESK_BINDPASSWORD is injected as set_sensitive
+# via valueMapping.ldap.bindPasswordKey (app-workspace Terraform template).
+# HOST, BINDUSER, BASEDN, and GROUPFILTER_OPENDESK_BASE are env-specific.
+environment:
+  OPENPROJECT_SEED_LDAP_OPENDESK_PORT: "389"
+  OPENPROJECT_SEED_LDAP_OPENDESK_SECURITY: "plain_ldap"
+  OPENPROJECT_SEED_LDAP_OPENDESK_SYNC__USERS: "true"
+  OPENPROJECT_SEED_LDAP_OPENDESK_FILTER: "(&(objectClass=opendeskProjectmanagementUser)(opendeskProjectmanagementEnabled=TRUE))"
+  OPENPROJECT_SEED_LDAP_OPENDESK_LOGIN__MAPPING: "uid"
+  OPENPROJECT_SEED_LDAP_OPENDESK_FIRSTNAME__MAPPING: "givenName"
+  OPENPROJECT_SEED_LDAP_OPENDESK_LASTNAME__MAPPING: "sn"
+  OPENPROJECT_SEED_LDAP_OPENDESK_MAIL__MAPPING: "mailPrimaryAddress"
+  OPENPROJECT_SEED_LDAP_OPENDESK_ADMIN__MAPPING: "opendeskProjectmanagementAdmin"
+  OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_FILTER: "(&(objectClass=opendeskProjectmanagementGroup)(opendeskProjectmanagementEnabled=TRUE))"
+  OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_SYNC__USERS: "true"
+  OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_GROUP__ATTRIBUTE: "cn"
+
 # ── S3 object storage ─────────────────────────────────────────────────────────
 # s3.auth.secretAccessKey injected via vm_s3_secret_key_key.
 # Endpoint, bucket, access key are non-sensitive and set in env-specific values.
