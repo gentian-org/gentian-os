@@ -157,15 +157,15 @@ module "ox_appsuite" {
   client_id    = "opendesk-oxappsuite"
   display_name = "OX App Suite"
 
-  redirect_uris = ["https://oxapps.desk.gentian.org/appsuite/api/oidc/auth"]
+  redirect_uris = ["https://webmail.desk.gentian.org/appsuite/api/oidc/auth"]
   web_origins   = ["+"]
 
   standard_flow_enabled = true
 
-  backchannel_logout_url              = "https://oxapps.desk.gentian.org/appsuite/api/oidc/logout"
+  backchannel_logout_url              = "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
   backchannel_logout_session_required = true
 
-  post_logout_redirect_uris = ["https://oxapps.desk.gentian.org/*", "https://portal.desk.gentian.org/*"] # maps to valid_post_logout_redirect_uris
+  post_logout_redirect_uris = ["https://webmail.desk.gentian.org/*", "https://portal.desk.gentian.org/*"] # maps to valid_post_logout_redirect_uris
 
   client_secret = data.vault_kv_secret_v2.ox.data["oidc_client_secret"]
 

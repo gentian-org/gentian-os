@@ -16,7 +16,7 @@
 # OX connects as root and manages the 'configdb' schema itself.
 # Secrets are injected via templatefile() in ox.tf — placeholders here.
 global:
-  hostname: "oxapps.desk.gentian.org"
+  hostname: "webmail.desk.gentian.org"
   # Crypto keys injected via templatefile() in ox.tf — placeholders only
   appsuite:
     cookieHashSalt: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
@@ -71,7 +71,7 @@ appsuite:
       existingSecret: "opendesk-ox-tls"
     appsuite:
       hosts:
-        - "oxapps.desk.gentian.org"
+        - "webmail.desk.gentian.org"
     dav:
       enabled: false
 
@@ -126,8 +126,8 @@ appsuite:
 
     # OX system properties (stored in ConfigMap — non-secret)
     properties:
-      com.openexchange.hostname: "oxapps.desk.gentian.org"
-      com.openexchange.share.guestHostname: "oxapps.desk.gentian.org"
+      com.openexchange.hostname: "webmail.desk.gentian.org"
+      com.openexchange.share.guestHostname: "webmail.desk.gentian.org"
       com.openexchange.UIWebPath: "/appsuite/"
       com.openexchange.showAdmin: "false"
       # OIDC configuration — client secret injected via secretProperties in tftpl
@@ -142,9 +142,9 @@ appsuite:
       com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
       com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
       com.openexchange.oidc.opTokenEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/token"
-      com.openexchange.oidc.rpRedirectURIAuth: "https://oxapps.desk.gentian.org/appsuite/api/oidc/auth"
+      com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
       com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
-      com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://oxapps.desk.gentian.org/appsuite/api/oidc/logout"
+      com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
       com.openexchange.oidc.ssoLogout: "true"
       com.openexchange.oidc.startDefaultBackend: "true"
       com.openexchange.oidc.userLookupClaim: "opendesk_username"
