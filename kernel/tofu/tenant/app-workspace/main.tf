@@ -263,6 +263,7 @@ resource "helm_release" "app" {
   create_namespace = false
   wait             = true
   timeout          = 600
+  replace          = true
 
   # Non-sensitive extra values from the AppProfile (extraValues + replica overrides).
   values = var.extra_values_json != "" ? [var.extra_values_json] : []
