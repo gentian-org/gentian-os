@@ -108,6 +108,16 @@ appsuite:
           cpu: "500m"
           memory: "2Gi"
 
+    # Frontend config (as-config.yml) — drives UI-level behaviour.
+    # oidcLogin: true makes the OX frontend auto-redirect to the OIDC provider
+    # instead of showing its own login form. This is how opendesk achieves
+    # seamless SSO: user hits OX → immediate redirect to Keycloak → back to OX.
+    asConfig:
+      default:
+        host: "all"
+        oidcLogin: true
+        oidcPath: "/oidc/"
+
     # Startup probe — OX loads hundreds of OSGi bundles and needs >5 min to start.
     # Default failureThreshold=30 × periodSeconds=10 = 5.5 min is not enough.
     probes:
@@ -119,7 +129,11 @@ appsuite:
     packages:
       status:
         open-xchange-oidc: "enabled"
+        open-xchange-oauth-provider: "enabled"
         open-xchange-authentication-ldap: "disabled"
+        open-xchange-authentication-masterpassword: "disabled"
+        open-xchange-authentication-oauth: "disabled"
+        open-xchange-authentication-database: "disabled"
         open-xchange-filestore-s3: "enabled"
         open-xchange-admin-soap-usercopy: "disabled"
         open-xchange-admin-user-copy: "disabled"
@@ -155,6 +169,10 @@ appsuite:
       com.openexchange.oidc.userLookupNamePart: "full"
       com.openexchange.oidc.enablePasswordGrant: "true"
       com.openexchange.oidc.passwordGrantUserNamePart: "local-part"
+      # Keep the OIDC session alive across browser restarts.
+      # Creates a persistent (max-age) session cookie instead of a browser-session cookie,
+      # so the user only needs to authenticate via OIDC once per cookie-ttl period.
+      com.openexchange.oidc.staySignedIn: "true"
       # OAuth provider
       com.openexchange.oauth.provider.enabled: "true"
       com.openexchange.oauth.provider.allowedIssuer: "https://id.desk.gentian.org/realms/opendesk"
@@ -179,11 +197,6 @@ appsuite:
       # OX Connector requirements
       com.openexchange.user.enforceUniqueDisplayName: "false"
       com.openexchange.folderstorage.database.preferDisplayName: "false"
-      # Enable autologin action so the OIDC autologin handler can intercept it
-      # and redirect unauthenticated users to Keycloak. The image ships login.properties
-      # with this set to false (HTTP Basic Auth autologin disabled), but the OIDC
-      # module requires the action to be enabled to perform its own redirect.
-      com.openexchange.ajax.login.http-auth.autologin: "true"
 
     # Per-file property overrides (non-sensitive entries only).
     # Secret entries (secretKey, bindDNPassword) are injected by tftpl.
@@ -203,6 +216,11 @@ appsuite:
         MASTER_ACCOUNT_OVERRIDE: "true"
       /opt/open-xchange/etc/AdminUser.properties:
         USERNAME_CHANGEABLE: "true"
+      # The autologin action (action=autologin in the login servlet) is needed for
+      # OIDC autologin cookie re-auth. OX reads this from additional.properties (the
+      # global override) rather than from the bundle conf / etc/login.properties.
+      /opt/open-xchange/etc/additional.properties:
+        com.openexchange.ajax.login.http-auth.autologin: "true"
 
     # Redis session store — use the existing gentian-infra-dev Redis instance.
     # Password injected by values-sensitive.yaml.tftpl.
