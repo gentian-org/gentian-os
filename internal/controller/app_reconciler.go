@@ -155,10 +155,12 @@ func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gent
 	return nil
 }
 
-// ensureTerraformCR creates (or checks readiness of) the tofu-controller Terraform CR
-// for a single Pattern B app within a tenant. The Terraform CR is placed in
-// tofuSystemNamespace so the tofu-controller can reconcile it. Returns true when the
-// Terraform CR reports Ready=True.
+// ensureTerraformCR creates or updates the tofu-controller Terraform CR for a
+// single Pattern B app within a tenant. The CR is placed in tofuSystemNamespace so
+// the tofu-controller can reconcile it. On every reconcile the mutable spec fields
+// (backendConfig, vars, path) are patched to reflect the current desired state so
+// that AppProfile changes propagate and the backend key stays correct.
+// Returns true when the Terraform CR reports Ready=True.
 func (r *TenantReconciler) ensureTerraformCR(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
@@ -180,6 +182,30 @@ func (r *TenantReconciler) ensureTerraformCR(
 	if err != nil {
 		return false, err
 	}
+
+	// CR exists: patch mutable spec fields so AppProfile changes and backend
+	// config corrections are applied without deleting and recreating the CR.
+	desired, buildErr := buildTerraformCR(tenant, app, profile)
+	if buildErr != nil {
+		return false, fmt.Errorf("build Terraform CR for %s: %w", app.Profile, buildErr)
+	}
+	base := obj.DeepCopy()
+	// Propagate backendConfig, vars, and path from desired → existing.
+	if bc, found, _ := unstructured.NestedMap(desired.Object, "spec", "backendConfig"); found {
+		_ = unstructured.SetNestedMap(obj.Object, bc, "spec", "backendConfig")
+	}
+	// Remove legacy disable:true if present (replaced by customConfiguration).
+	unstructured.RemoveNestedField(obj.Object, "spec", "backendConfig", "disable")
+	if v, found, _ := unstructured.NestedSlice(desired.Object, "spec", "vars"); found {
+		_ = unstructured.SetNestedSlice(obj.Object, v, "spec", "vars")
+	}
+	if p, found, _ := unstructured.NestedString(desired.Object, "spec", "path"); found {
+		_ = unstructured.SetNestedField(obj.Object, p, "spec", "path")
+	}
+	if err := r.Patch(ctx, obj, client.MergeFrom(base)); err != nil {
+		return false, fmt.Errorf("patch Terraform CR for %s: %w", app.Profile, err)
+	}
+
 	return terraformCRIsReady(obj), nil
 }
 
