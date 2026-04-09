@@ -239,7 +239,11 @@ func buildTerraformCR(
 	_ = unstructured.SetNestedField(obj.Object, modulePath, "spec", "path")
 	_ = unstructured.SetNestedField(obj.Object, "GitRepository", "spec", "sourceRef", "kind")
 	_ = unstructured.SetNestedField(obj.Object, tofuGitRepositoryName, "spec", "sourceRef", "name")
-	_ = unstructured.SetNestedField(obj.Object, true, "spec", "backendConfig", "disable")
+	// Override only the state key; all other backend settings (bucket, endpoint, etc.)
+	// come from the backend "s3" block in the Terraform module itself.
+	// Each Terraform CR gets a unique key so workspaces don't share state.
+	backendKey := fmt.Sprintf("key = \"%s/terraform.tfstate\"\n", crName)
+	_ = unstructured.SetNestedField(obj.Object, backendKey, "spec", "backendConfig", "customConfiguration")
 
 	// Non-sensitive variables: chart reference, tenant/app identifiers, and
 	// value-mapping keys. The Terraform module uses tenant_name + app_name to
