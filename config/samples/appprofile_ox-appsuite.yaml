@@ -124,4 +124,3 @@ spec:
   # TLS secrets, or other values that differ between tenants.
   # Note: the majority of non-sensitive config lives in
   #   kernel/services/ox-appsuite/values/_base.yaml (loaded by ox-workspace directly).
-
