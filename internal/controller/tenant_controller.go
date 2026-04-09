@@ -23,6 +23,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -570,7 +571,7 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 	// packet reaches the Calico filter chain the destination is already the
 	// endpoint IP:port, not the ClusterIP:443. We need rules for both so the
 	// policy works regardless of where in the iptables pipeline Calico hooks.
-	kubeAPIEndpts := &corev1.Endpoints{}
+	kubeAPIEndpts := &discoveryv1.EndpointSlice{}
 	if err := r.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, kubeAPIEndpts); err != nil {
 		return fmt.Errorf("failed to look up kubernetes endpoints: %w", err)
 	}
@@ -641,16 +642,20 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 	// Post-DNAT rules: one rule per API server endpoint address×port.
 	// Calico in iptables mode evaluates egress policy after kube-proxy DNAT, so
 	// the destination seen by Calico is the real endpoint IP:port, not the ClusterIP.
-	for _, subset := range kubeAPIEndpts.Subsets {
-		for _, addr := range subset.Addresses {
-			for _, port := range subset.Ports {
-				if port.Protocol != corev1.ProtocolTCP {
+	// EndpointSlice ports are at the slice level (shared by all endpoints).
+	for _, ep := range kubeAPIEndpts.Endpoints {
+		for _, addr := range ep.Addresses {
+			for _, port := range kubeAPIEndpts.Ports {
+				if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP {
 					continue
 				}
-				endpointPort := intstr.FromInt32(int32(port.Port))
+				if port.Port == nil {
+					continue
+				}
+				endpointPort := intstr.FromInt32(*port.Port)
 				egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
 					To: []networkingv1.NetworkPolicyPeer{
-						{IPBlock: &networkingv1.IPBlock{CIDR: addr.IP + "/32"}},
+						{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
 					},
 					Ports: []networkingv1.NetworkPolicyPort{
 						{Protocol: &protocolTCP, Port: &endpointPort},

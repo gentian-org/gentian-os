@@ -179,6 +179,11 @@ appsuite:
       # OX Connector requirements
       com.openexchange.user.enforceUniqueDisplayName: "false"
       com.openexchange.folderstorage.database.preferDisplayName: "false"
+      # Enable autologin action so the OIDC autologin handler can intercept it
+      # and redirect unauthenticated users to Keycloak. The image ships login.properties
+      # with this set to false (HTTP Basic Auth autologin disabled), but the OIDC
+      # module requires the action to be enabled to perform its own redirect.
+      com.openexchange.ajax.login.http-auth.autologin: "true"
 
     # Per-file property overrides (non-sensitive entries only).
     # Secret entries (secretKey, bindDNPassword) are injected by tftpl.

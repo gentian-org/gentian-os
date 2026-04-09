@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -254,14 +255,23 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: ibName, Namespace: nsName}, ib) == nil
 	})
 
-	// Remove the provider app from the tenant.
-	updated := &gentianov1alpha1.Tenant{}
-	if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, updated); err != nil {
-		t.Fatalf("get tenant: %v", err)
-	}
-	updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "bind-gc-consumer"}}
-	if err := testClient.Update(context.Background(), updated); err != nil {
-		t.Fatalf("update tenant apps: %v", err)
+	// Remove the provider app from the tenant. Retry on conflict because the
+	// controller may reconcile the tenant (bumping resourceVersion) between our
+	// Get and Update calls.
+	for {
+		updated := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, updated); err != nil {
+			t.Fatalf("get tenant: %v", err)
+		}
+		updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "bind-gc-consumer"}}
+		err := testClient.Update(context.Background(), updated)
+		if err == nil {
+			break
+		}
+		if !apierrors.IsConflict(err) {
+			t.Fatalf("update tenant apps: %v", err)
+		}
+		// conflict — controller touched the object; re-fetch and retry
 	}
 
 	// IntegrationBinding should be garbage-collected.
