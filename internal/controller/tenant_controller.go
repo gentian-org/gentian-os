@@ -552,6 +552,17 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 	protocolTCP := corev1.ProtocolTCP
 	protocolUDP := corev1.ProtocolUDP
 	dnsPort := intstr.FromInt32(53)
+	apiServerPort := intstr.FromInt32(443)
+
+	// Resolve the Kubernetes API server ClusterIP from the well-known "kubernetes"
+	// service in the default namespace. We use an ipBlock rule (not a namespace
+	// selector) because the ClusterIP is a virtual IP — it is not backed by a pod
+	// and therefore cannot be matched by a namespaceSelector or podSelector.
+	kubeAPISvc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, kubeAPISvc); err != nil {
+		return fmt.Errorf("failed to look up kubernetes ClusterIP: %w", err)
+	}
+	kubeAPIServerCIDR := kubeAPISvc.Spec.ClusterIP + "/32"
 
 	desired := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -646,6 +657,23 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 					Ports: []networkingv1.NetworkPolicyPort{
 						{Protocol: &protocolUDP, Port: &dnsPort},
 						{Protocol: &protocolTCP, Port: &dnsPort},
+					},
+				},
+				{
+					// Allow egress to the Kubernetes API server so that tenant workloads
+					// using kubectl or client-go (e.g. the OX bootstrap job) can reach
+					// the API. The API server's ClusterIP is a virtual IP not backed by
+					// any pod, so a namespaceSelector cannot be used — ipBlock is required.
+					// Calico evaluates egress policy pre-DNAT, so we target the ClusterIP.
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: kubeAPIServerCIDR,
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &protocolTCP, Port: &apiServerPort},
 					},
 				},
 			},
