@@ -46,11 +46,11 @@ import (
 )
 
 const (
-	tenantFinalizer         = "gentianos.io/tenant-cleanup"
-	tenantLabel             = "gentianos.io/tenant"
-	managedByLabel          = "app.kubernetes.io/managed-by"
-	managedByValue          = "gentian-os"
-	kernelNamespace         = "platform-kernel"
+	tenantFinalizer = "gentianos.io/tenant-cleanup"
+	tenantLabel     = "gentianos.io/tenant"
+	managedByLabel  = "app.kubernetes.io/managed-by"
+	managedByValue  = "gentian-os"
+	kernelNamespace = "platform-kernel"
 	// infraNamespace is the shared infrastructure namespace hosting MariaDB, Redis,
 	// and MinIO. Tenant-egress NetworkPolicy rules must allow traffic here so apps
 	// can reach their datastores. This is environment-specific (gentian-infra-{env})
