@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -307,7 +308,7 @@ STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/container/ou/dn/${OU_ENC}")
 if [ "${STATUS}" = "404" ]; then
-  curl -sf -X POST ${CREDS} \
+  curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/container/ou/" \
@@ -323,7 +324,7 @@ STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/groups/group/dn/${USERS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
-  curl -sf -X POST ${CREDS} \
+  curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
@@ -339,7 +340,7 @@ STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
-  curl -sf -X POST ${CREDS} \
+  curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
@@ -370,7 +371,7 @@ STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   "${BASE_URL}/users/ldap/dn/${BIND_DN_ENC}")
 if [ "${STATUS}" = "404" ]; then
   BIND_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
-  curl -sf -X POST ${CREDS} \
+  curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/users/ldap/" \
@@ -399,12 +400,18 @@ echo "OU %s deletion requested (HTTP ${HTTP})"`, ouDN, ouDN)
 
 // --- Name helpers ------------------------------------------------------------
 
-// tenantOUDN returns the LDAP DN for a tenant's OU.
-// Uses spec.isolation.ldapOU if set, otherwise defaults to "ou={name},{ldapBase}".
-// The ldapBase is substituted at Job runtime from the udm-admin Secret.
+// tenantOUDN returns the LDAP DN for a tenant's OU as a shell-interpolatable string.
+// Uses spec.isolation.ldapOU if set; if that value is a bare RDN (no ',' separator)
+// it appends ',${UDM_LDAP_BASE}' so the job's shell can expand it at runtime.
+// Defaults to "ou={name},${UDM_LDAP_BASE}" when ldapOU is not set.
 func tenantOUDN(tenant *gentianov1alpha1.Tenant) string {
 	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" {
-		return tenant.Spec.Isolation.LDAPOu
+		ou := tenant.Spec.Isolation.LDAPOu
+		// Append LDAP base when value is a relative DN (no comma = no parent components).
+		if !strings.Contains(ou, ",") {
+			return ou + ",${UDM_LDAP_BASE}"
+		}
+		return ou
 	}
 	return fmt.Sprintf("ou=%s,${UDM_LDAP_BASE}", tenant.Name)
 }
