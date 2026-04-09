@@ -146,7 +146,8 @@ func TestMail_Selfhosted_CreatesApplicationsAndDKIM(t *testing.T) {
 }
 
 // TestMail_DovecotHasLDAPConfig verifies that the Dovecot ArgoCD Application CR carries
-// the LDAP account provisioner helm values read from the udm-admin Secret.
+// the opendesk-dovecot chart values with LDAP and OIDC configuration read from the
+// kernel secrets (udm-admin, dovecot-admin, keycloak-admin).
 func TestMail_DovecotHasLDAPConfig(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "maildoveldap"},
@@ -173,12 +174,24 @@ func TestMail_DovecotHasLDAPConfig(t *testing.T) {
 	if helmValues == "" {
 		t.Fatal("expected non-empty helm values on Dovecot Application CR")
 	}
+
+	// Verify chart source is the opendesk-dovecot OCI chart.
+	chartRepo, _, _ := unstructured.NestedString(dovecotApp.Object, "spec", "source", "repoURL")
+	if !strings.Contains(chartRepo, "opendesk-dovecot") {
+		t.Errorf("expected chart repo to reference opendesk-dovecot, got %q", chartRepo)
+	}
+
+	// Verify values contain LDAP, OIDC, and domain configuration.
 	for _, want := range []string{
-		"ACCOUNT_PROVISIONER: LDAP",
 		"nubus-dev-ldap-server.gentian-dev.svc.cluster.local",
 		"dc=swp-ldap,dc=internal",
-		"ldapsearch_dovecot",
-		"mail.maildoveldap.example.com",
+		"uid=ldapsearch_dovecot",
+		"maildoveldap.example.com",
+		"opendesk-dovecot",
+		"introspectionHost",
+		"nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080",
+		"test-oidc-secret",
+		"test-doveadm-password",
 	} {
 		if !strings.Contains(helmValues, want) {
 			t.Errorf("expected helm values to contain %q, got:\n%s", want, helmValues)

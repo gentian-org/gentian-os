@@ -123,6 +123,29 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// dovecot-admin Secret provides OIDC + doveadm credentials for the opendesk-dovecot chart.
+	if err := testClient.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"doveadm_password":  []byte("test-doveadm-password"),
+			"oidc_client_secret": []byte("test-oidc-secret"),
+		},
+	}); err != nil {
+		panic(err)
+	}
+
+	// keycloak-admin Secret provides the Keycloak URL for OIDC token introspection.
+	if err := testClient.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"url":      []byte("http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080"),
+			"username": []byte("kcadmin"),
+			"password": []byte("test-kc-password"),
+		},
+	}); err != nil {
+		panic(err)
+	}
+
 	code := m.Run()
 
 	cancel()

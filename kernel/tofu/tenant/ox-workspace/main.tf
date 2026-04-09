@@ -182,8 +182,8 @@ locals {
       cookie_hash_salt        = data.vault_kv_secret_v2.internal_cookie_hash_salt.data["value"]
       share_crypt_key         = data.vault_kv_secret_v2.internal_share_crypt_key.data["value"]
       sessiond_encryption_key = data.vault_kv_secret_v2.internal_sessiond_encryption_key.data["value"]
-      # Mail server hostnames — derived from tenant name + namespace (same pattern as bootstrap)
-      mail_server_host      = "dovecot-${var.tenant_name}-docker-mailserver"
+      # Mail server hostnames — derived from tenant name (opendesk-dovecot chart service name)
+      mail_server_host      = "dovecot-${var.tenant_name}"
       transport_server_host = "postfix-${var.tenant_name}-mail"
     }
   ))

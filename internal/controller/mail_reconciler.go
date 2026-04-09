@@ -45,9 +45,12 @@ const (
 	postfixChartRepo    = "https://bokysan.github.io/docker-postfix"
 	postfixChartName    = "mail"
 	postfixChartVersion = "5.1.0"
-	dovecotChartRepo    = "https://docker-mailserver.github.io/docker-mailserver-helm"
-	dovecotChartName    = "docker-mailserver"
-	dovecotChartVersion = "v4.1.0"
+	// opendesk-dovecot OCI chart — same chart used by the opendesk reference deployment.
+	dovecotChartRepo    = "registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-dovecot"
+	dovecotChartName    = "dovecot"
+	dovecotChartVersion = "3.4.1"
+	// Secrets read by the mail reconciler from the kernel namespace.
+	dovecotAdminSecret = "dovecot-admin"
 )
 
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
@@ -161,21 +164,43 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	ldapBase := string(udmSecret.Data["ldapBase"])
 	ldapsearchDovecot := string(udmSecret.Data["ldapsearchDovecot"])
 
-	// 3. Read DKIM private key so Postfix/OpenDKIM can sign outgoing mail.
+	// 3. Read dovecot-admin Secret for OIDC client secret and doveadm password.
+	dovecotSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dovecotAdminSecret, Namespace: kernelNamespace}, dovecotSecret); err != nil {
+		return false, fmt.Errorf("read dovecot-admin Secret: %w", err)
+	}
+	doveadmPassword := string(dovecotSecret.Data["doveadm_password"])
+	oidcClientSecret := string(dovecotSecret.Data["oidc_client_secret"])
+
+	// 4. Read keycloak-admin Secret for the Keycloak introspection endpoint.
+	keycloakSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: kernelNamespace}, keycloakSecret); err != nil {
+		return false, fmt.Errorf("read keycloak-admin Secret: %w", err)
+	}
+	keycloakURL := string(keycloakSecret.Data["url"])
+
+	// 5. Read DKIM private key so Postfix/OpenDKIM can sign outgoing mail.
 	dkimSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: dkimSecretName(tenant.Name), Namespace: nsName}, dkimSecret); err != nil {
 		return false, fmt.Errorf("read DKIM key Secret: %w", err)
 	}
 	dkimPrivateKey := string(dkimSecret.Data["tls.key"])
 
-	// 4. Postfix Application CR.
+	// 6. Postfix Application CR.
 	postfixDone, err := r.ensureMailApplication(ctx, buildPostfixApplication(tenant, dkimPrivateKey))
 	if err != nil {
 		return false, fmt.Errorf("ensure Postfix Application CR: %w", err)
 	}
 
-	// 5. Dovecot Application CR.
-	dovecotDone, err := r.ensureMailApplication(ctx, buildDovecotApplication(tenant, ldapHost, ldapBase, ldapsearchDovecot))
+	// 7. Dovecot Application CR (opendesk-dovecot chart with LDAP + OIDC).
+	dovecotDone, err := r.ensureMailApplication(ctx, buildDovecotApplication(tenant, dovecotParams{
+		ldapHost:         ldapHost,
+		ldapBase:         ldapBase,
+		ldapBindPW:       ldapsearchDovecot,
+		doveadmPassword:  doveadmPassword,
+		oidcClientSecret: oidcClientSecret,
+		keycloakURL:      keycloakURL,
+	}))
 	if err != nil {
 		return false, fmt.Errorf("ensure Dovecot Application CR: %w", err)
 	}
@@ -420,26 +445,111 @@ mountSecret:
 	return obj
 }
 
-// buildDovecotApplication returns an ArgoCD Application CR that deploys a Dovecot MDA
-// (IMAP/POP3) into the tenant namespace. Used by selfhosted mode only.
-// It configures LDAP-backed account provisioning so Dovecot can authenticate mail users
-// against the platform Nubus/UCS directory.
-func buildDovecotApplication(tenant *gentianov1alpha1.Tenant, ldapHost, ldapBase, ldapBindPW string) *unstructured.Unstructured {
+// dovecotParams bundles all configuration parameters needed to build a Dovecot
+// ArgoCD Application CR with the opendesk-dovecot chart.
+type dovecotParams struct {
+	ldapHost         string
+	ldapBase         string
+	ldapBindPW       string
+	doveadmPassword  string
+	oidcClientSecret string
+	keycloakURL      string // e.g. "http://nubus-dev-keycloak.ns.svc.cluster.local:8080"
+}
+
+// keycloakHostPort extracts "host:port" from a URL like "http://host:port".
+func keycloakHostPort(rawURL string) string {
+	rawURL = strings.TrimPrefix(rawURL, "http://")
+	rawURL = strings.TrimPrefix(rawURL, "https://")
+	rawURL = strings.TrimRight(rawURL, "/")
+	return rawURL
+}
+
+// buildDovecotApplication returns an ArgoCD Application CR that deploys the opendesk-
+// dovecot chart (IMAP/LMTP with LDAP + OIDC auth) into the tenant namespace.
+// This mirrors the opendesk reference deployment's values-dovecot.yaml.gotmpl.
+func buildDovecotApplication(tenant *gentianov1alpha1.Tenant, params dovecotParams) *unstructured.Unstructured {
 	nsName := tenantNamespaceName(tenant)
 	domain := mailDomain(tenant)
-	bindDN := fmt.Sprintf("uid=ldapsearch_dovecot,cn=users,%s", ldapBase)
-	helmValues := fmt.Sprintf(`deployment:
-  env:
-    ACCOUNT_PROVISIONER: LDAP
-    OVERRIDE_HOSTNAME: "mail.%s"
-    LDAP_SERVER_HOST: "%s"
-    LDAP_SEARCH_BASE: "%s"
-    LDAP_BIND_DN: "%s"
-    LDAP_BIND_PW: "%s"
-    LDAP_QUERY_FILTER_USER: "(&(objectClass=univentionMail)(mailPrimaryAddress=%%s))"
-    LDAP_QUERY_FILTER_DOMAIN: "(&(objectClass=univentionMail)(|(mailPrimaryAddress=*@%%s)(mailAlternativeAddress=*@%%s)))"
-    LDAP_QUERY_FILTER_ALIAS: "(&(objectClass=univentionMail)(mailAlternativeAddress=%%s))"
-`, domain, ldapHost, ldapBase, bindDN, ldapBindPW)
+	bindDN := fmt.Sprintf("uid=ldapsearch_dovecot,cn=users,%s", params.ldapBase)
+	postfixHost := fmt.Sprintf("postfix-%s-mail.%s.svc.cluster.local:25", tenant.Name, nsName)
+	introspectionHost := keycloakHostPort(params.keycloakURL)
+
+	helmValues := fmt.Sprintf(`image:
+  registry: "registry.opencode.de"
+  repository: "bmi/opendesk/components/supplier/open-xchange/images/dovecot-public-sector"
+  tag: "2.3.21@sha256:c76965a84d1ca527f523404eb027119f6736b199c094e4671037cb345ecad3dc"
+  pullPolicy: IfNotPresent
+imageInitDovecot:
+  registry: "registry-1.docker.io"
+  repository: "alpine/k8s"
+  tag: "1.34.0@sha256:b5f6edfeac5279f3e182d938d1ffecb62f7c980756ac4b6b66d7f0d566782f77"
+  pullPolicy: IfNotPresent
+service:
+  external:
+    enabled: false
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+    add: ["CHOWN","DAC_OVERRIDE","KILL","NET_BIND_SERVICE","SETGID","SETUID","SYS_CHROOT"]
+  enabled: true
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+podSecurityContext:
+  enabled: true
+  fsGroup: 1000
+replicaCount: 1
+persistence:
+  accessModes: ["ReadWriteOnce"]
+  enabled: true
+  size: "10Gi"
+dovecot:
+  mailDomains: [%q]
+  defaultMailDomain: %q
+  password:
+    value: %q
+  ldap:
+    enabled: true
+    host: %q
+    port: 389
+    base: %q
+    dn: %q
+    password:
+      value: %q
+  oidc:
+    enabled: true
+    introspectionScheme: "http"
+    introspectionHost: %q
+    introspectionPath: "/realms/opendesk/protocol/openid-connect/token/introspect"
+    usernameAttribute: "opendesk_username"
+    clientID:
+      value: "opendesk-dovecot"
+    clientSecret:
+      value: %q
+  loginTrustedNetworks: "10.0.0.0/8"
+  protocol:
+    imap:
+      limits:
+        maxUserIpConnections: 10
+  quotaRules:
+    - "*:storage=5000M"
+    - "Trash:storage=+500M"
+  quotaGrace: "500M"
+  sieve:
+    notify:
+      mailtoEnvelopeFrom: "orig_recipient"
+  submission:
+    enabled: true
+    ssl: "no"
+    host: %q
+  migration:
+    enabled: false
+`, domain, domain, params.doveadmPassword,
+		params.ldapHost, params.ldapBase, bindDN, params.ldapBindPW,
+		introspectionHost, params.oidcClientSecret,
+		postfixHost)
+
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(argocdApplicationGVK)
 	obj.SetName(dovecotApplicationName(tenant.Name))
