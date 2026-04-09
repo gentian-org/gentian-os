@@ -40,6 +40,12 @@ const (
 	tofuSystemNamespace   = "tofu-system"
 	tofuGitRepositoryName = "gentian-server"
 	tofuModulePath        = "kernel/tofu/tenant/app-workspace"
+
+	// MinIO state backend settings. customConfiguration in the Terraform CR fully
+	// overrides the backend block in the Terraform modules, so all required
+	// S3 attributes must be supplied here.
+	tofuStateBucket   = "tofu-state"
+	tofuStateEndpoint = "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000"
 )
 
 var terraformGVK = schema.GroupVersionKind{
@@ -265,12 +271,23 @@ func buildTerraformCR(
 	_ = unstructured.SetNestedField(obj.Object, modulePath, "spec", "path")
 	_ = unstructured.SetNestedField(obj.Object, "GitRepository", "spec", "sourceRef", "kind")
 	_ = unstructured.SetNestedField(obj.Object, tofuGitRepositoryName, "spec", "sourceRef", "name")
-	// Override only the state key; all other backend settings (bucket, endpoint, etc.)
-	// come from the backend "s3" block in the Terraform module itself.
-	// Each Terraform CR gets a unique key so workspaces don't share state.
-	// customConfiguration is placed inside a `terraform {}` block by the tofu-controller,
-	// so the key must be wrapped in a backend "s3" {} block.
-	backendKey := fmt.Sprintf("backend \"s3\" {\n  key = \"%s/terraform.tfstate\"\n}\n", crName)
+	// Build the full S3 backend config with a unique key per Terraform CR.
+	// customConfiguration is written to backend_override.tf inside a `terraform {}`
+	// block by the tofu-controller, and REPLACES (not merges) any backend block in
+	// the Terraform module. Therefore all required S3 attributes must be provided.
+	backendKey := fmt.Sprintf(
+		"backend \"s3\" {\n"+
+			"  bucket           = %q\n"+
+			"  key              = \"%s/terraform.tfstate\"\n"+
+			"  endpoint         = %q\n"+
+			"  region           = \"us-east-1\"\n"+
+			"  force_path_style = true\n"+
+			"  skip_credentials_validation = true\n"+
+			"  skip_metadata_api_check     = true\n"+
+			"  skip_region_validation      = true\n"+
+			"}\n",
+		tofuStateBucket, crName, tofuStateEndpoint,
+	)
 	_ = unstructured.SetNestedField(obj.Object, backendKey, "spec", "backendConfig", "customConfiguration")
 
 	// Non-sensitive variables: chart reference, tenant/app identifiers, and
