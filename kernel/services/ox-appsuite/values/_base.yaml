@@ -139,9 +139,12 @@ appsuite:
       com.openexchange.oidc.contextLookupNamePart: "full"
       com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/auth"
       com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/opendesk"
-      com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
+      # Server-side calls (token exchange, JWKS) use the internal Keycloak service URL so that
+      # OX middleware does not need to reach the external Cloudflare-proxied domain.
+      # opIssuer and opAuthorizationEndpoint remain external — the browser uses them directly.
+      com.openexchange.oidc.opJwkSetEndpoint: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/certs"
       com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
-      com.openexchange.oidc.opTokenEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/token"
+      com.openexchange.oidc.opTokenEndpoint: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/token"
       com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
       com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
       com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"

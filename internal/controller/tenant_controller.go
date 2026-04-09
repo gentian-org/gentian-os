@@ -57,10 +57,14 @@ const (
 	// and should be made configurable via an operator env var / Helm value.
 	// TODO: read from INFRA_NAMESPACE env var (defaulting to this constant).
 	infraNamespace = "gentian-infra-dev"
+	// servicesNamespace is the shared namespace hosting platform services consumed by
+	// tenants — notably the Nubus UDM provisioning API used by the ox-connector.
+	// This is environment-specific and should be made configurable.
+	servicesNamespace = "gentian-dev"
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	// Pods in this namespace must be allowed ingress to tenant pods so that the
 	// controller can proxy external requests to services inside the tenant namespace.
-	ingressNamespace = "ingress"
+	ingressNamespace        = "ingress"
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -612,6 +616,17 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
+							},
+						},
+					},
+				},
+				{
+					// Allow egress to the services namespace (Nubus/Keycloak OIDC, UDM
+					// provisioning API for ox-connector). See servicesNamespace constant.
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
 							},
 						},
 					},

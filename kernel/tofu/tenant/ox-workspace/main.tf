@@ -215,3 +215,111 @@ resource "helm_release" "ox_appsuite" {
     var.extra_values_json != "" ? var.extra_values_json : "",
   ])
 }
+
+# ── opendesk-open-xchange-bootstrap ──────────────────────────────────────────
+# One-shot Job that initialises the OX configdb schema: creates the context,
+# registers the S3 filestore, and sets the default context admin.
+# Must run after the main OX App Suite chart is fully ready.
+# Subsequent Terraform runs are no-ops if chart values are unchanged.
+
+resource "helm_release" "ox_bootstrap" {
+  depends_on = [helm_release.ox_appsuite]
+
+  name       = "opendesk-open-xchange-bootstrap"
+  repository = "oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-open-xchange-bootstrap"
+  chart      = "opendesk-open-xchange-bootstrap"
+  version    = "4.0.2"
+  namespace  = var.namespace
+
+  create_namespace = false
+  wait             = true
+  timeout          = 600
+
+  # Reduced filestore quota for dev (10 GB instead of the default 100 GB).
+  set {
+    name  = "filestore.size"
+    value = "10000"
+  }
+}
+
+# ── ox-connector ──────────────────────────────────────────────────────────────
+# Listens on the Nubus UDM provisioning API and syncs users/groups into OX.
+# Requires:
+#   - The provisioning API secret "ox-connector-provisioning-api" (created by
+#     ExternalSecret in the tenant namespace via the ESO ClusterSecretStore).
+#   - Egress from the tenant NetworkPolicy to the gentian-dev namespace (where
+#     the Nubus provisioning API lives).
+
+resource "helm_release" "ox_connector" {
+  depends_on = [helm_release.ox_bootstrap]
+
+  name       = "ox-connector"
+  repository = "oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror"
+  chart      = "ox-connector"
+  version    = "0.34.0"
+  namespace  = var.namespace
+
+  create_namespace = false
+  wait             = false # connector is a long-lived service, not a job
+  timeout          = 300
+
+  set {
+    name  = "openXchange.domainName"
+    value = "desk.gentian.org"
+  }
+
+  set {
+    name  = "openXchange.auth.username"
+    value = "admin"
+  }
+
+  set {
+    name  = "openXchange.oxDefaultContext"
+    value = "1"
+  }
+
+  set {
+    name  = "openXchange.oxSoapServer"
+    value = "http://open-xchange-core-mw-admin.${var.namespace}.svc.cluster.local"
+  }
+
+  set {
+    name  = "openXchange.oxLocalTimezone"
+    value = "Europe/Berlin"
+  }
+
+  set {
+    name  = "openXchange.oxLanguage"
+    value = "de_DE"
+  }
+
+  set {
+    name  = "openXchange.oxSmtpServer"
+    value = "smtp://postfix-${var.tenant_name}-mail.${var.namespace}.svc.cluster.local:587"
+  }
+
+  set {
+    name  = "openXchange.oxImapServer"
+    value = "imap://dovecot-${var.tenant_name}-docker-mailserver.${var.namespace}.svc.cluster.local:143"
+  }
+
+  set {
+    name  = "provisioningApi.connection.baseUrl"
+    value = "http://nubus-dev-provisioning-api.gentian-dev.svc.cluster.local"
+  }
+
+  set {
+    name  = "provisioningApi.auth.username"
+    value = "ox-connector"
+  }
+
+  set {
+    name  = "provisioningApi.auth.existingSecret.name"
+    value = "ox-connector-provisioning-api"
+  }
+
+  set_sensitive {
+    name  = "openXchange.auth.password"
+    value = data.vault_kv_secret_v2.internal_admin_password.data["value"]
+  }
+}
