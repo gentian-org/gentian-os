@@ -198,6 +198,7 @@ resource "helm_release" "ox_appsuite" {
   create_namespace = false
   wait             = true
   timeout          = 1200
+  replace          = true
 
   # Values are merged in order: base config → sensitive credentials → per-tenant overrides.
   # This mirrors the opendesk helmfile layer structure:
