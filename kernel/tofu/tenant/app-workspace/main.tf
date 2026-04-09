@@ -253,16 +253,6 @@ locals {
 
 # ── Helm release ───────────────────────────────────────────────────────────────
 
-# Import the helm release into state if it already exists. This prevents
-# "cannot re-use a name that is still in use" when Terraform has no prior state
-# but the release was previously deployed (e.g. after a backend migration).
-# If the release does not exist yet (fresh cluster), this block is a no-op
-# and Terraform will install it via the helm_release resource below.
-import {
-  to = helm_release.app
-  id = "${var.namespace}/${var.app_name}"
-}
-
 resource "helm_release" "app" {
   name       = var.app_name
   repository = var.chart_repository
