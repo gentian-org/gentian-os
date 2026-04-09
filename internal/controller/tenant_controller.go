@@ -564,6 +564,102 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 	}
 	kubeAPIServerCIDR := kubeAPISvc.Spec.ClusterIP + "/32"
 
+	// Also resolve the actual API server Endpoints (the real host IP + port that
+	// kube-proxy DNATs ClusterIP traffic to). Calico in iptables mode enforces
+	// egress NetworkPolicy AFTER kube-proxy performs DNAT, so by the time the
+	// packet reaches the Calico filter chain the destination is already the
+	// endpoint IP:port, not the ClusterIP:443. We need rules for both so the
+	// policy works regardless of where in the iptables pipeline Calico hooks.
+	kubeAPIEndpts := &corev1.Endpoints{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, kubeAPIEndpts); err != nil {
+		return fmt.Errorf("failed to look up kubernetes endpoints: %w", err)
+	}
+
+	// Start with the static egress rules.
+	egressRules := []networkingv1.NetworkPolicyEgressRule{
+		{
+			// Allow all egress to platform-kernel namespace
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
+					},
+				},
+			},
+		},
+		{
+			// Allow egress to the shared infra namespace (MariaDB, Redis, MinIO).
+			// See infraNamespace constant — TODO: make configurable per environment.
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
+					},
+				},
+			},
+		},
+		{
+			// Allow egress to the services namespace (Nubus/Keycloak OIDC, UDM
+			// provisioning API for ox-connector). See servicesNamespace constant.
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
+					},
+				},
+			},
+		},
+		{
+			// Allow egress within the same tenant namespace
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{tenantLabel: tenant.Name},
+					},
+				},
+			},
+		},
+		{
+			// Allow DNS egress (kube-dns / CoreDNS)
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protocolUDP, Port: &dnsPort},
+				{Protocol: &protocolTCP, Port: &dnsPort},
+			},
+		},
+		{
+			// Pre-DNAT rule: allow egress to the Kubernetes API ClusterIP:443.
+			// Covers CNIs that evaluate NetworkPolicy before kube-proxy DNAT.
+			To: []networkingv1.NetworkPolicyPeer{
+				{IPBlock: &networkingv1.IPBlock{CIDR: kubeAPIServerCIDR}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protocolTCP, Port: &apiServerPort},
+			},
+		},
+	}
+
+	// Post-DNAT rules: one rule per API server endpoint address×port.
+	// Calico in iptables mode evaluates egress policy after kube-proxy DNAT, so
+	// the destination seen by Calico is the real endpoint IP:port, not the ClusterIP.
+	for _, subset := range kubeAPIEndpts.Subsets {
+		for _, addr := range subset.Addresses {
+			for _, port := range subset.Ports {
+				if port.Protocol != corev1.ProtocolTCP {
+					continue
+				}
+				endpointPort := intstr.FromInt32(int32(port.Port))
+				egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+					To: []networkingv1.NetworkPolicyPeer{
+						{IPBlock: &networkingv1.IPBlock{CIDR: addr.IP + "/32"}},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &protocolTCP, Port: &endpointPort},
+					},
+				})
+			}
+		}
+	}
+
 	desired := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tenant-isolation",
@@ -609,74 +705,7 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 					},
 				},
 			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					// Allow all egress to platform-kernel namespace
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow egress to the shared infra namespace (MariaDB, Redis, MinIO).
-					// See infraNamespace constant — TODO: make configurable per environment.
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow egress to the services namespace (Nubus/Keycloak OIDC, UDM
-					// provisioning API for ox-connector). See servicesNamespace constant.
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow egress within the same tenant namespace
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{tenantLabel: tenant.Name},
-							},
-						},
-					},
-				},
-				{
-					// Allow DNS egress (kube-dns / CoreDNS)
-					Ports: []networkingv1.NetworkPolicyPort{
-						{Protocol: &protocolUDP, Port: &dnsPort},
-						{Protocol: &protocolTCP, Port: &dnsPort},
-					},
-				},
-				{
-					// Allow egress to the Kubernetes API server so that tenant workloads
-					// using kubectl or client-go (e.g. the OX bootstrap job) can reach
-					// the API. The API server's ClusterIP is a virtual IP not backed by
-					// any pod, so a namespaceSelector cannot be used — ipBlock is required.
-					// Calico evaluates egress policy pre-DNAT, so we target the ClusterIP.
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							IPBlock: &networkingv1.IPBlock{
-								CIDR: kubeAPIServerCIDR,
-							},
-						},
-					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{Protocol: &protocolTCP, Port: &apiServerPort},
-					},
-				},
-			},
+			Egress: egressRules,
 		},
 	}
 
