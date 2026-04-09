@@ -56,7 +56,11 @@ const (
 	// can reach their datastores. This is environment-specific (gentian-infra-{env})
 	// and should be made configurable via an operator env var / Helm value.
 	// TODO: read from INFRA_NAMESPACE env var (defaulting to this constant).
-	infraNamespace          = "gentian-infra-dev"
+	infraNamespace = "gentian-infra-dev"
+	// ingressNamespace is the namespace where the nginx ingress controller runs.
+	// Pods in this namespace must be allowed ingress to tenant pods so that the
+	// controller can proxy external requests to services inside the tenant namespace.
+	ingressNamespace = "ingress"
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -574,6 +578,17 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
+							},
+						},
+					},
+				},
+				{
+					// Allow ingress from the nginx ingress controller namespace so that
+					// the controller can proxy external HTTP/S traffic to tenant services.
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": ingressNamespace},
 							},
 						},
 					},
