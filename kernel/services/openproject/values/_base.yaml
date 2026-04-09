@@ -74,3 +74,30 @@ environment:
 # ── S3 object storage ─────────────────────────────────────────────────────────
 # s3.auth.secretAccessKey injected via vm_s3_secret_key_key.
 # Endpoint, bucket, access key are non-sensitive and set in env-specific values.
+
+# ── Resource requests/limits ──────────────────────────────────────────────────
+# openprojectAppInit is the wait-for-db init container which runs a full Rails
+# process to check DB connectivity—requires more memory than the LimitRange
+# default of 512Mi. Aligned with opendesk resources.yaml.gotmpl defaults.
+resources:
+  openprojectAppInit:
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+    requests:
+      cpu: "100m"
+      memory: "768Mi"
+  openprojectDbInit:
+    limits:
+      cpu: "1"
+      memory: "256Mi"
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+  openproject:
+    limits:
+      cpu: "4"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
