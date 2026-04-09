@@ -108,6 +108,12 @@ appsuite:
           cpu: "500m"
           memory: "2Gi"
 
+    # Startup probe — OX loads hundreds of OSGi bundles and needs >5 min to start.
+    # Default failureThreshold=30 × periodSeconds=10 = 5.5 min is not enough.
+    probes:
+      startup:
+        failureThreshold: 60
+
     # Package-level feature flags (individual OSGi bundles).
     # Feature-group flags (documents, guard, etc.) default to disabled in chart.
     packages:
