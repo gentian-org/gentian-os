@@ -31,6 +31,12 @@ variable "standard_flow_enabled" {
   default     = true
 }
 
+variable "direct_access_grants_enabled" {
+  description = "Enable the resource owner password (direct access grants) flow."
+  type        = bool
+  default     = false
+}
+
 variable "backchannel_logout_url" {
   description = "URL for OIDC back-channel logout notifications. Leave empty to skip."
   type        = string

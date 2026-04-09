@@ -20,7 +20,7 @@ resource "keycloak_openid_client" "this" {
 
   access_type                  = "CONFIDENTIAL"
   standard_flow_enabled        = var.standard_flow_enabled
-  direct_access_grants_enabled = false
+  direct_access_grants_enabled = var.direct_access_grants_enabled
   service_accounts_enabled     = false
 
   client_secret = var.client_secret != "" ? var.client_secret : null
