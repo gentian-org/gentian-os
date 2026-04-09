@@ -153,6 +153,25 @@ spec:
       OPENPROJECT_SEED_LDAP_OPENDESK_BINDUSER: "uid=ldapsearch_openproject,cn=users,dc=swp-ldap,dc=internal"
       OPENPROJECT_SEED_LDAP_OPENDESK_BASEDN: "dc=swp-ldap,dc=internal"
       OPENPROJECT_SEED_LDAP_OPENDESK_GROUPFILTER_OPENDESK_BASE: "dc=swp-ldap,dc=internal"
+    # Resource requests/limits — the wait-for-db init container runs a full Rails
+    # process to check DB connectivity and requires more memory than the namespace
+    # LimitRange default of 512Mi (causes OOMKill / exit code 137).
+    appInit:
+      resources:
+        limits:
+          cpu: "2"
+          memory: "2Gi"
+        requests:
+          cpu: "100m"
+          memory: "768Mi"
+    openproject:
+      resources:
+        limits:
+          cpu: "4"
+          memory: "4Gi"
+        requests:
+          cpu: "500m"
+          memory: "2Gi"
 
   # Pattern B — openproject chart injects all secrets as direct Helm values.
   deploymentMethod: tofu-controller
