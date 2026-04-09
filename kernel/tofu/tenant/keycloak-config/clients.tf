@@ -161,7 +161,7 @@ module "ox_appsuite" {
   web_origins   = ["+"]
 
   standard_flow_enabled        = true
-  direct_access_grants_enabled = true  # required for OIDC password grant (OX login form + mobile apps)
+  direct_access_grants_enabled = true # required for OIDC password grant (OX login form + mobile apps)
 
   backchannel_logout_url              = "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
   backchannel_logout_session_required = true

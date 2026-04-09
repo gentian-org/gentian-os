@@ -202,7 +202,7 @@ resource "helm_release" "ox_appsuite" {
   # the release already exists in a deployed state when Terraform has no prior
   # state (e.g. first run after backend migration). With persistent state,
   # Terraform uses helm upgrade on subsequent runs and this flag has no effect.
-  replace          = true
+  replace = true
 
   # Values are merged in order: base config → sensitive credentials → per-tenant overrides.
   # This mirrors the opendesk helmfile layer structure:
