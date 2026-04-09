@@ -132,6 +132,7 @@ appsuite:
       com.openexchange.showAdmin: "false"
       # OIDC configuration — client secret injected via secretProperties in tftpl
       com.openexchange.oidc.enabled: "true"
+      com.openexchange.oidc.autologin: "true"
       com.openexchange.oidc.autologinCookieMode: "ox_direct"
       com.openexchange.oidc.backchannelLogoutEnabled: "true"
       com.openexchange.oidc.clientId: "opendesk-oxappsuite"
