@@ -409,7 +409,7 @@ nubusStackDataUms:
       notes:
         enabled: false
       openproject:
-        enabled: false
+        enabled: true
       oxAppSuite:
         enabled: true
       xwiki:
