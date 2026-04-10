@@ -170,6 +170,11 @@ spec:
     # ── OIDC env overrides (issuer + post-logout redirect) ────────────────────
       OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ISSUER: "https://id.desk.gentian.org/realms/opendesk"
       OPENPROJECT_OPENID__CONNECT_KEYCLOAK_POST__LOGOUT__REDIRECT__URI: "https://openproject.desk.gentian.org/"
+    # ── Login / OmniAuth (aligned with opendesk) ──────────────────────────────
+      OPENPROJECT_LOGIN__REQUIRED: "true"
+      OPENPROJECT_OMNIAUTH__DIRECT__LOGIN__PROVIDER: "keycloak"
+      OPENPROJECT_OAUTH__ALLOW__REMAPPING__OF__EXISTING__USERS: "true"
+      OPENPROJECT_EMAIL__DELIVERY__METHOD: "smtp"
     # ── Resource requests/limits ──────────────────────────────────────────────
     # The wait-for-db init container runs a full Rails process to check DB
     # connectivity and requires more memory than the namespace LimitRange
