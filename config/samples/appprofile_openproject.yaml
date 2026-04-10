@@ -167,9 +167,11 @@ spec:
     # ── Navigation + home URL ─────────────────────────────────────────────────
       OPENPROJECT_HOME__URL: "https://portal.desk.gentian.org/"
       OPENPROJECT_SOUVAP__NAVIGATION__URL: "https://portal.desk.gentian.org/univention/portal/navigation.json?base=https%3A//portal.desk.gentian.org"
-    # ── OIDC env overrides (issuer + post-logout redirect) ────────────────────
+    # ── OIDC env overrides (issuer + post-logout redirect + JWKS) ─────────────
       OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ISSUER: "https://id.desk.gentian.org/realms/opendesk"
       OPENPROJECT_OPENID__CONNECT_KEYCLOAK_POST__LOGOUT__REDIRECT__URI: "https://openproject.desk.gentian.org/"
+      # JWKS URI — internal, same rationale as tokenEndpoint/userinfoEndpoint above.
+      OPENPROJECT_OPENID__CONNECT_KEYCLOAK_JWKS__URI: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/certs"
     # ── Login / OmniAuth (aligned with opendesk) ──────────────────────────────
       OPENPROJECT_LOGIN__REQUIRED: "true"
       OPENPROJECT_OMNIAUTH__DIRECT__LOGIN__PROVIDER: "keycloak"
@@ -206,14 +208,22 @@ spec:
         locked: false
       oidc:
         enabled: true
+        # Browser-facing endpoints: use external host (relative → resolved against host)
         authorizationEndpoint: "/realms/opendesk/protocol/openid-connect/auth"
         endSessionEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
         host: "id.desk.gentian.org"
         identifier: "opendesk-openproject"
         provider: "keycloak"
         scope: "[openid,opendesk-openproject-scope]"
-        tokenEndpoint: "/realms/opendesk/protocol/openid-connect/token"
-        userinfoEndpoint: "/realms/opendesk/protocol/openid-connect/userinfo"
+        # Backend endpoints: use absolute internal Keycloak service URL.
+        # Avoids hairpin NAT issues — pods cannot reach external domains that
+        # route back through Cloudflare/LB.  Keycloak's split-hostname mode
+        # (KC_HOSTNAME_BACKCHANNEL_DYNAMIC) is designed for exactly this:
+        # the discovery document already returns internal URLs for backend
+        # endpoints.  Absolute URLs bypass the host+scheme construction
+        # (see OpenProject ConfigurationMapper#extract_url).
+        tokenEndpoint: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/token"
+        userinfoEndpoint: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/userinfo"
         attribute_map:
           login: "opendesk_username"
           admin: "openproject_admin"
