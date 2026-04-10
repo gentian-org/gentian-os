@@ -66,7 +66,7 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 | 13 | Orchestrator Helm chart + observability | ✅ Done | `charts/gentian-os/` packaged with CRD manifests, Deployment, ClusterRole, ServiceAccount, Prometheus ServiceMonitor, Grafana dashboard ConfigMap. `metrics.go` registers `gentianos_tenants_total`, `gentianos_provisioning_duration_seconds`, and related metrics. Printer columns via `+kubebuilder:printcolumn`. 65 tests total. |
 | 14 | AppProfile update reconciler | ✅ Done | `config/samples/` — 6 AppProfile YAMLs for all user-installable openDesk apps (collabora, element, jitsi, openproject, xwiki, ox-appsuite) validated against CRD schema. Kernel AppProfile spikes (nextcloud, nubus) removed. **Note:** AppProfile update reconciler (watch chart version bumps → propagate to all tenant Applications) not yet implemented — deferred to post-Inc 15. 65 tests total. |
 | 15 | gentian-deployments repo setup | ✅ Done | `gentian-deployments/dev/` — bootstrap/install.sh (13-step), app-of-apps.yaml (multi-source ArgoCD Application), dev-tenant.yaml (gtn-demo), values-dev.yaml, tofu.tfvars, README.md. All gentian-os/kernel/ server/ refs migrated to gentian-org/gentian-os; paths updated apps/→kernel/services/; ExternalSecrets created in kernel/services/{app}/secrets/dev/ with OpenBao paths gentian/dev/X→gentian-os/kernel/X; ArgoCD AppProject updated (gentian-os + gentian-deployments sources, gentian-system destination, Tenant/AppProfile/IntegrationBinding in clusterResourceWhitelist). |
-| 16 | Mail extension reconciler | ⬜ Not started | |
+| 16 | Mail extension reconciler (shared infra) | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps, per-tenant SMTP credentials + DKIM Secrets. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 76 tests total. |
 | 17 | Hardening + end-to-end tenant lifecycle tests | ⬜ Not started | |
 | 18 | Single-line domain configuration | ⬜ Not started | ~52 hardcoded `desk.gentian.org` occurrences across 8 `_base.yaml` files; refactor to Tofu `kernel_domain`/`tenant_domain` variables so a new deployment = 2-line change |
 
@@ -669,21 +669,49 @@ gentian-deployments/
 
 ---
 
-### Increment 16 — Mail kernel extension (per-tenant)
+### Increment 16 — Mail kernel extension (shared infrastructure)
 
-**Goal:** Model Postfix + Dovecot as a kernel extension that can be provisioned per-tenant in the four modes described in architecture §2.2.
+**Goal:** Model Postfix + Dovecot as shared kernel infrastructure with tenant-scoped configuration entries — consistent with how all other kernel components (Keycloak, PostgreSQL, MinIO, Redis) are deployed.
 
-**Reconciler logic (Tenant → mail extension):**
-1. Read `spec.mail.mode` from Tenant CR
-2. `selfhosted`: deploy per-tenant Postfix + Dovecot via ArgoCD Application CRs, provision DKIM keys in OpenBao, generate SPF/DMARC records in Tenant status
-3. `external`: create ExternalSecret with tenant-provided SMTP/IMAP credentials
-4. `transport-only`: deploy shared Postfix relay, no Dovecot
-5. `disabled`: configure apps for outbound-only SMTP relay
+**Architecture decision:** The original plan called for per-tenant ArgoCD Application CRs deploying Postfix/Dovecot into each tenant namespace. During implementation, this was revised to follow the same shared-infrastructure pattern used by all other kernel services. Postfix and Dovecot run once in the kernel namespace; tenants are registered via ConfigMap entries. This is simpler (no per-tenant pod overhead), more consistent with the architecture, and matches how openDesk handles mail.
+
+**Reconciler logic (Tenant → shared mail infrastructure):**
+1. Read `spec.mail.mode` from Tenant CR (default: `selfhosted`)
+2. `selfhosted`:
+   - Generate DKIM RSA-2048 key Secret in kernel namespace (`dkim-{tenant}`) — created once, never auto-rotated
+   - Register tenant domain in shared Postfix virtual-domains ConfigMap (`mail-postfix-virtual-domains`)
+   - Create per-tenant SMTP credentials Secret in tenant namespace (`smtp-credentials-{tenant}`) with random password
+   - Register tenant domain in shared Dovecot domains ConfigMap (`mail-dovecot-domains`)
+   - Set `status.mail` with DKIM public key, SPF record, DMARC record
+3. `external`: copy SMTP relay credentials from kernel namespace Secret to tenant namespace
+4. `transport-only`: register Postfix virtual domain + SMTP credentials only (no Dovecot)
+5. `disabled`: set `MailReady=True` with no resources created
+
+**Files:**
+- `internal/controller/mail_reconciler.go` (502 lines) — `ensureMail`, `ensureMailSelfhosted`, `ensureMailExternal`, `ensureMailTransportOnly`, `ensurePostfixVirtualDomain`, `ensureDovecotDomainConfig`, `ensureSmtpCredentialsSecret`, `ensureDKIMSecret`, `deleteMail`, `removeFromMailConfigMap`
+- `internal/controller/mail_reconciler_test.go` (418 lines) — 7 envtest tests
+- `internal/controller/tenant_controller.go` — RBAC markers expanded for ConfigMap + Secret CRUD
+- `docs/architecture.md` — updated to reflect shared mail pattern
+
+**Resources created per mode:**
+
+| Mode | Kernel namespace | Tenant namespace |
+|---|---|---|
+| `selfhosted` | DKIM Secret, Postfix CM entry, Dovecot CM entry | SMTP credentials Secret |
+| `external` | — | SMTP credentials Secret (copied from kernel) |
+| `transport-only` | Postfix CM entry | SMTP credentials Secret |
+| `disabled` | — | — |
 
 **Test:**
-- Create tenant with `mail.mode: selfhosted` → Postfix + Dovecot deployed in tenant namespace
-- Create tenant with `mail.mode: disabled` → no mail stack, apps can still send notifications
-- Send/receive test mail in selfhosted mode
+- `TestMail_Disabled` — no resources created, MailReady=True
+- `TestMail_Selfhosted_ProvisionsTenantInSharedInfra` — all 4 resources created (DKIM, Postfix CM, Dovecot CM, SMTP Secret)
+- `TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs` — no ArgoCD Application CRs created (shared, not per-tenant)
+- `TestMail_DefaultMode_IsSelfhosted` — omitting `spec.mail.mode` defaults to selfhosted
+- `TestMail_TransportOnly_RegistersPostfixOnly` — Postfix CM entry created, no Dovecot CM entry
+- `TestMail_External_MissingConfig` — missing `smtpCredentialsSecret` sets MailReady=False
+- `TestMail_External_CopiesCredentialsSecret` — copies Secret from kernel to tenant namespace
+
+**Cluster validation:** Deployed to dev cluster (`gtn-demo` tenant, `mail.mode: selfhosted`). All resources created in `platform-kernel` and `tenant-gtn-demo`. `MailReady: True` condition confirmed. CRD required update to include `status.mail` field.
 
 ---
 
@@ -777,7 +805,7 @@ For the current setup both are `desk.gentian.org`. A future prod deployment migh
 | 13 | Orchestrator Helm chart + observability | Small | — | Installable via `helm install`, Prometheus metrics, printer columns |
 | 14 | AppProfiles + update reconciler | Medium | — | User-installable app AppProfiles (collabora, element, jitsi, openproject, xwiki, ox-appsuite) + AppProfile update propagation |
 | 15 | Deployment repo (gentian-deployments) | Medium | 13, 14 | End-to-end validation |
-| 16 | Mail kernel extension | Medium | 3 | Per-tenant mail modes |
+| 16 | Mail kernel extension | Medium | 3 | Shared mail infra with tenant-scoped config |
 | 17 | Multi-tenant isolation hardening | Medium | 2–8 | Security validation |
 | 18 | Single-line domain configuration | Small | — | Zero hardcoded domains; new env = 2-line change |
 
