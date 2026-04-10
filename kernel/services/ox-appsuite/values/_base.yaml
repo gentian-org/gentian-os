@@ -186,12 +186,15 @@ appsuite:
       com.openexchange.mail.authType: "xoauth2"
       com.openexchange.mail.loginSource: "name"
       com.openexchange.mail.mailServerSource: "global"
+      com.openexchange.mail.mailStartTls: "false"
       com.openexchange.mail.transport.authType: "xoauth2"
       com.openexchange.mail.transportServerSource: "global"
+      com.openexchange.mail.transportStartTls: "false"
       # Mail filter (sieve) — XOAUTH2, server hostname set per-env
       com.openexchange.mail.filter.loginType: "global"
       com.openexchange.mail.filter.credentialSource: "mail"
       com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
+      com.openexchange.mail.filter.connectionSecurity: "none"
       # IMAP attachment marker (dovecot extension)
       com.openexchange.imap.attachmentMarker.enabled: "true"
       # OX Connector requirements
