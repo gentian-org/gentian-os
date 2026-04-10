@@ -170,8 +170,9 @@ spec:
     # ── OIDC env overrides (issuer + post-logout redirect + JWKS) ─────────────
       OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ISSUER: "https://id.desk.gentian.org/realms/opendesk"
       OPENPROJECT_OPENID__CONNECT_KEYCLOAK_POST__LOGOUT__REDIRECT__URI: "https://openproject.desk.gentian.org/"
-      # JWKS URI — internal, same rationale as tokenEndpoint/userinfoEndpoint above.
-      OPENPROJECT_OPENID__CONNECT_KEYCLOAK_JWKS__URI: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/certs"
+      # JWKS URI — internal, same rationale as tokenEndpoint above.
+      OPENPROJECT_OPENID__CONNECT_KEYCLOAK_JWKS__URI: >-
+        http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/certs
     # ── Login / OmniAuth (aligned with opendesk) ──────────────────────────────
       OPENPROJECT_LOGIN__REQUIRED: "true"
       OPENPROJECT_OMNIAUTH__DIRECT__LOGIN__PROVIDER: "keycloak"
