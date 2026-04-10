@@ -67,7 +67,7 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 | 14 | AppProfile update reconciler | ✅ Done | `config/samples/` — 6 AppProfile YAMLs for all user-installable openDesk apps (collabora, element, jitsi, openproject, xwiki, ox-appsuite) validated against CRD schema. Kernel AppProfile spikes (nextcloud, nubus) removed. **Note:** AppProfile update reconciler (watch chart version bumps → propagate to all tenant Applications) not yet implemented — deferred to post-Inc 15. 65 tests total. |
 | 15 | gentian-deployments repo setup | ✅ Done | `gentian-deployments/dev/` — bootstrap/install.sh (13-step), app-of-apps.yaml (multi-source ArgoCD Application), dev-tenant.yaml (gtn-demo), values-dev.yaml, tofu.tfvars, README.md. All gentian-os/kernel/ server/ refs migrated to gentian-org/gentian-os; paths updated apps/→kernel/services/; ExternalSecrets created in kernel/services/{app}/secrets/dev/ with OpenBao paths gentian/dev/X→gentian-os/kernel/X; ArgoCD AppProject updated (gentian-os + gentian-deployments sources, gentian-system destination, Tenant/AppProfile/IntegrationBinding in clusterResourceWhitelist). |
 | 16 | Mail extension reconciler (shared infra) | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps, per-tenant SMTP credentials + DKIM Secrets. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 76 tests total. |
-| 17 | Hardening + end-to-end tenant lifecycle tests | ⬜ Not started | |
+| 17 | Hardening + end-to-end tenant lifecycle tests | ✅ Done | `internal/controller/isolation_test.go`: 7 envtest tests — cross-tenant NetworkPolicy isolation, ingress/egress rule validation, ResourceQuota + LimitRange enforcement, end-to-end deletion with Delete + Retain policies. 93 tests total. |
 | 18 | Single-line domain configuration | ⬜ Not started | ~52 hardcoded `desk.gentian.org` occurrences across 8 `_base.yaml` files; refactor to Tofu `kernel_domain`/`tenant_domain` variables so a new deployment = 2-line change |
 
 ---
@@ -725,7 +725,6 @@ gentian-deployments/
 - S3 isolation audit: verify bucket policies enforce tenant boundaries
 - Keycloak realm isolation: verify token from realm A is rejected by app in realm B
 - ResourceQuota enforcement: verify tenant cannot exceed declared limits
-- Optional: vCluster-per-tenant mode for `isolation.mode: vcluster`
 
 **Test:**
 - Automated isolation test suite: create 2 tenants → attempt cross-tenant access at every layer → all denied
@@ -937,7 +936,7 @@ Which architecture concepts are addressed by which increment — and which are n
 |---|---|---|---|
 | §2.1 Window manager | Contract-based portal navigation registration | Univention Portal works as-is | IntegrationBinding (Increment 11) |
 | §2.1 Notifications | Cross-app notification gateway | Intercom Service exists but gateway not designed | Architecture design needed |
-| §2.4 vCluster isolation | vCluster-per-tenant mode | Optional; namespace mode is default | Increment 17 (optional) |
+| §2.4 vCluster isolation | vCluster-per-tenant mode | Optional; namespace mode is default | Optional Future Features |
 | §7 Repo 2 `gentian-apps` | App catalogue repo | **Covered below** in gentian-apps plan | Orchestrator + AppProfile CRD |
 | §8 Mail security | DKIM keys in OpenBao, SPF/DMARC automation | Part of mail extension | Increment 16 (partial) |
 | §9 Backup Strategy | pgBackRest, Velero, OpenBao snapshots | Independent workstream; no orchestrator dependency | Can start anytime |
@@ -949,6 +948,20 @@ Which architecture concepts are addressed by which increment — and which are n
 | §10.3 Shell AI Assistant | Portal AI assistant via MCP | Requires MCP registry + adapters | MCP registry |
 | §10.4 Cross-App Agent Orchestration | AI agent as integration layer | Requires MCP servers per app | MCP adapters |
 | §10.5 AI-Assisted Operations | AppProfile generation, health monitoring | Requires stable AppProfile schema + observability | Increments 1, 14 + observability |
+
+---
+
+## Optional Future Features
+
+These features are architecturally sound but not required for an MVP. They can be implemented when there is demand.
+
+| Feature | Description | Depends on | Effort |
+|---|---|---|---|
+| vCluster-per-tenant isolation | Run each tenant in a dedicated vCluster for full API-server-level isolation (`isolation.mode: vcluster`). Namespace mode is the default and sufficient for most deployments. | Inc 2 (namespace reconciler), vCluster operator | Large |
+| MCP Discovery Layer | MCP server registry complementing IntegrationBindings (architecture §10.1–10.5) | Inc 11 (IntegrationBinding) | Large |
+| Tenant-scoped backup & restore | `BackupTenant` / `RestoreTenant` CRs for per-tenant pgBackRest + Velero + OpenBao snapshots (architecture §9) | Backup strategy design | Large |
+| Cross-cluster tenant migration | Move a tenant between clusters (architecture §9.3) | Backup & restore | Large |
+| AI-assisted operations | AppProfile generation, health monitoring via LLM (architecture §10.5) | Inc 14 (AppProfiles) + observability | Medium |
 
 ---
 

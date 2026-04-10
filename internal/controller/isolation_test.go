@@ -1,0 +1,663 @@
+/*
+Copyright 2026 The Gentian Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+// ---------------------------------------------------------------------------
+// Isolation tests
+// ---------------------------------------------------------------------------
+
+// TestIsolation_CrossTenantDenied creates two tenants and verifies that each
+// tenant's NetworkPolicy ingress rules only allow traffic from its own
+// namespace, the kernel namespace, and the ingress namespace - NOT from the
+// other tenant's namespace.
+func TestIsolation_CrossTenantDenied(t *testing.T) {
+	tenantA := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "iso-a"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Isolation A",
+			Domain:      "iso-a.example.com",
+			AdminEmail:  "admin@iso-a.example.com",
+		},
+	}
+	tenantB := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "iso-b"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Isolation B",
+			Domain:      "iso-b.example.com",
+			AdminEmail:  "admin@iso-b.example.com",
+		},
+	}
+
+	ctx := context.Background()
+	if err := testClient.Create(ctx, tenantA); err != nil {
+		t.Fatalf("create tenant A: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, tenantA) })
+
+	if err := testClient.Create(ctx, tenantB); err != nil {
+		t.Fatalf("create tenant B: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, tenantB) })
+
+	npA := &networkingv1.NetworkPolicy{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-a"}, npA) == nil
+	})
+	npB := &networkingv1.NetworkPolicy{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-b"}, npB) == nil
+	})
+
+	assertIngressDoesNotAllowNamespace(t, npA, "tenant-iso-b")
+	assertIngressDoesNotAllowNamespace(t, npB, "tenant-iso-a")
+}
+
+// TestIsolation_NetworkPolicyIngressRules verifies the three expected ingress
+// sources: same tenant namespace, platform-kernel, and ingress namespace.
+func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "iso-ingress"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Ingress Check",
+			Domain:      "iso-ingress.example.com",
+			AdminEmail:  "admin@iso-ingress.example.com",
+		},
+	}
+
+	ctx := context.Background()
+	if err := testClient.Create(ctx, tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
+
+	np := &networkingv1.NetworkPolicy{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-ingress"}, np) == nil
+	})
+
+	if len(np.Spec.Ingress) == 0 {
+		t.Fatal("expected ingress rules")
+	}
+
+	allowedNamespaces := collectIngressNamespaces(np)
+
+	// Must allow same-namespace traffic (via namespace selector with tenant label).
+	if !hasIngressNamespaceLabel(np, "gentianos.io/tenant", "iso-ingress") {
+		t.Error("expected ingress rule allowing from namespace with gentianos.io/tenant=iso-ingress label")
+	}
+
+	expectedNS := []string{"platform-kernel", "ingress"}
+	for _, ns := range expectedNS {
+		found := false
+		for _, allowed := range allowedNamespaces {
+			if allowed == ns {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected ingress to allow namespace %q, allowed: %v", ns, allowedNamespaces)
+		}
+	}
+}
+
+// TestIsolation_NetworkPolicyEgressRules verifies egress allows the kernel
+// infrastructure namespaces, DNS, and Kubernetes API, but not other tenant
+// namespaces.
+func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "iso-egress"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Egress Check",
+			Domain:      "iso-egress.example.com",
+			AdminEmail:  "admin@iso-egress.example.com",
+		},
+	}
+
+	ctx := context.Background()
+	if err := testClient.Create(ctx, tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
+
+	np := &networkingv1.NetworkPolicy{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-egress"}, np) == nil
+	})
+
+	if len(np.Spec.Egress) == 0 {
+		t.Fatal("expected egress rules")
+	}
+
+	egressNS := collectEgressNamespaces(np)
+
+	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev"} {
+		found := false
+		for _, ns := range egressNS {
+			if ns == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected egress to allow namespace %q, allowed: %v", expected, egressNS)
+		}
+	}
+
+	if !hasEgressPort(np, 53) {
+		t.Error("expected egress rule for DNS (port 53)")
+	}
+
+	if !hasEgressIPBlock(np) {
+		t.Error("expected egress rule with ipBlock for Kubernetes API server")
+	}
+}
+
+// TestIsolation_ResourceQuotaAllFields verifies all three quota fields
+// (storage, CPU, memory) are enforced.
+func TestIsolation_ResourceQuotaAllFields(t *testing.T) {
+	storage := resource.MustParse("100Gi")
+	cpu := resource.MustParse("8")
+	memory := resource.MustParse("16Gi")
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "iso-quota"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Quota Check",
+			Domain:      "iso-quota.example.com",
+			AdminEmail:  "admin@iso-quota.example.com",
+			Quotas: &gentianov1alpha1.TenantQuotas{
+				Storage: &storage,
+				CPU:     &cpu,
+				Memory:  &memory,
+			},
+		},
+	}
+
+	ctx := context.Background()
+	if err := testClient.Create(ctx, tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
+
+	rq := &corev1.ResourceQuota{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-iso-quota"}, rq) == nil
+	})
+
+	if got := rq.Spec.Hard[corev1.ResourceRequestsStorage]; got.Cmp(storage) != 0 {
+		t.Errorf("storage quota: want %v, got %v", storage, got)
+	}
+	if got := rq.Spec.Hard[corev1.ResourceLimitsCPU]; got.Cmp(cpu) != 0 {
+		t.Errorf("CPU quota: want %v, got %v", cpu, got)
+	}
+	if got := rq.Spec.Hard[corev1.ResourceLimitsMemory]; got.Cmp(memory) != 0 {
+		t.Errorf("memory quota: want %v, got %v", memory, got)
+	}
+}
+
+// TestIsolation_LimitRangeDefaults verifies the hardcoded LimitRange defaults:
+// default 500m/512Mi, defaultRequest 100m/128Mi, max 4/8Gi.
+func TestIsolation_LimitRangeDefaults(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "iso-limits"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Limits Check",
+			Domain:      "iso-limits.example.com",
+			AdminEmail:  "admin@iso-limits.example.com",
+		},
+	}
+
+	ctx := context.Background()
+	if err := testClient.Create(ctx, tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
+
+	lr := &corev1.LimitRange{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-iso-limits"}, lr) == nil
+	})
+
+	if len(lr.Spec.Limits) == 0 {
+		t.Fatal("expected LimitRange items")
+	}
+	item := lr.Spec.Limits[0]
+	if item.Type != corev1.LimitTypeContainer {
+		t.Fatalf("expected Container limit type, got %v", item.Type)
+	}
+
+	assertQuantity(t, "Default CPU", item.Default[corev1.ResourceCPU], "500m")
+	assertQuantity(t, "Default Memory", item.Default[corev1.ResourceMemory], "512Mi")
+	assertQuantity(t, "DefaultRequest CPU", item.DefaultRequest[corev1.ResourceCPU], "100m")
+	assertQuantity(t, "DefaultRequest Memory", item.DefaultRequest[corev1.ResourceMemory], "128Mi")
+	assertQuantity(t, "Max CPU", item.Max[corev1.ResourceCPU], "4")
+	assertQuantity(t, "Max Memory", item.Max[corev1.ResourceMemory], "8Gi")
+}
+
+// ---------------------------------------------------------------------------
+// Deletion lifecycle tests
+// ---------------------------------------------------------------------------
+
+// TestDeletion_EndToEnd_WithApps creates a Tenant with multiple apps (requiring
+// PostgreSQL, MariaDB, S3, Redis, Memcached), verifies all resources are
+// provisioned, then deletes the Tenant with DeletionPolicy=Delete and verifies
+// cleanup Jobs are created and resources are removed.
+func TestDeletion_EndToEnd_WithApps(t *testing.T) {
+	ctx := context.Background()
+
+	pgProfile := newFullAppProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
+	mariaProfile := newFullAppProfile("del-mariaapp", gentianov1alpha1.DatabaseEngineMariaDB, true, false, true)
+
+	if err := testClient.Create(ctx, pgProfile); err != nil {
+		t.Fatalf("create pg AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, pgProfile) })
+
+	if err := testClient.Create(ctx, mariaProfile); err != nil {
+		t.Fatalf("create maria AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, mariaProfile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "del-full"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "Deletion E2E",
+			Domain:         "del-full.example.com",
+			AdminEmail:     "admin@del-full.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
+			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "del-pgapp"},
+				{Profile: "del-mariaapp"},
+			},
+		},
+	}
+	if err := testClient.Create(ctx, tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	// Wait for namespace and initial resources.
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, &corev1.Namespace{}) == nil
+	})
+
+	np := &networkingv1.NetworkPolicy{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-del-full"}, np) == nil
+	})
+
+	// Verify mail resources: DKIM secret + Postfix CM entry + SMTP credentials.
+	waitFor(t, 10*time.Second, func() bool {
+		cm := &corev1.ConfigMap{}
+		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
+			return false
+		}
+		_, ok := cm.Data["del-full"]
+		return ok
+	})
+
+	dkimSecret := &corev1.Secret{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, dkimSecret) == nil
+	})
+
+	smtpSecret := &corev1.Secret{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "smtp-credentials-del-full", Namespace: "tenant-del-full"}, smtpSecret) == nil
+	})
+
+	// -- DELETE the tenant ------------------------------------------------
+	if err := testClient.Delete(ctx, tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+
+	// Wait for Tenant CR to be gone (finalizer ran).
+	waitFor(t, 15*time.Second, func() bool {
+		err := testClient.Get(ctx, types.NamespacedName{Name: "del-full"}, &gentianov1alpha1.Tenant{})
+		return err != nil
+	})
+
+	// Identity: Keycloak realm deletion Job.
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "keycloak-realm-delete-del-full", Namespace: "platform-kernel",
+		}, &batchv1.Job{}) == nil
+	})
+
+	// LDAP: OU deletion Job.
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "ldap-ou-delete-del-full", Namespace: "platform-kernel",
+		}, &batchv1.Job{}) == nil
+	})
+
+	// MariaDB: DROP DATABASE Job.
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "mariadb-delete-del-full-del-mariaapp", Namespace: "platform-kernel",
+		}, &batchv1.Job{}) == nil
+	})
+
+	// S3: bucket deletion Jobs (both profiles have S3).
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "s3-delete-del-full-del-pgapp", Namespace: "platform-kernel",
+		}, &batchv1.Job{}) == nil
+	})
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "s3-delete-del-full-del-mariaapp", Namespace: "platform-kernel",
+		}, &batchv1.Job{}) == nil
+	})
+
+	// Redis: ACL deletion Job (del-pgapp has Redis).
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "redis-acl-delete-del-full-del-pgapp", Namespace: "platform-kernel",
+		}, &batchv1.Job{}) == nil
+	})
+
+	// DKIM secret should be deleted.
+	err := testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, &corev1.Secret{})
+	if err == nil {
+		t.Error("DKIM secret should be deleted after DeletionPolicy=Delete")
+	}
+
+	// Postfix ConfigMap entry should be removed.
+	postfixCM := &corev1.ConfigMap{}
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
+		if _, ok := postfixCM.Data["del-full"]; ok {
+			t.Error("Postfix virtual-domain entry should be removed after deletion")
+		}
+	}
+
+	// Namespace should be terminating or gone.
+	ns := &corev1.Namespace{}
+	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, ns)
+	if err == nil && ns.DeletionTimestamp == nil {
+		t.Error("namespace should be deleted or terminating after Delete policy")
+	}
+}
+
+// TestDeletion_Retain_KeepsDataRevokesAccess creates a Tenant with apps, then
+// deletes with DeletionPolicy=Retain. Verifies the namespace and data
+// resources are preserved but ownership resources (quota, limits, netpol) are
+// cleaned up and mail ConfigMap entries are removed (cutting routing).
+func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
+	ctx := context.Background()
+
+	profile := newFullAppProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
+	if err := testClient.Create(ctx, profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "ret-full"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "Retain E2E",
+			Domain:         "ret-full.example.com",
+			AdminEmail:     "admin@ret-full.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
+			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+			Apps:           []gentianov1alpha1.TenantApp{{Profile: "ret-app"}},
+		},
+	}
+	if err := testClient.Create(ctx, tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	// Wait for namespace + NetworkPolicy + mail infrastructure.
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-ret-full"}, &corev1.Namespace{}) == nil
+	})
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(ctx, types.NamespacedName{
+			Name: "tenant-isolation", Namespace: "tenant-ret-full",
+		}, &networkingv1.NetworkPolicy{}) == nil
+	})
+
+	waitFor(t, 10*time.Second, func() bool {
+		cm := &corev1.ConfigMap{}
+		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
+			return false
+		}
+		_, ok := cm.Data["ret-full"]
+		return ok
+	})
+
+	// -- DELETE with Retain -----------------------------------------------
+	if err := testClient.Delete(ctx, tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+
+	// Wait for Tenant CR to be gone (finalizer completed).
+	waitFor(t, 15*time.Second, func() bool {
+		err := testClient.Get(ctx, types.NamespacedName{Name: "ret-full"}, &gentianov1alpha1.Tenant{})
+		return err != nil
+	})
+
+	// Namespace must still exist (Retain policy).
+	ns := &corev1.Namespace{}
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-ret-full"}, ns); err != nil {
+		t.Errorf("namespace should be retained, but got error: %v", err)
+	}
+
+	// Owned resources in namespace should be cleaned up.
+	rq := &corev1.ResourceQuota{}
+	err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-ret-full"}, rq)
+	if err == nil {
+		t.Error("ResourceQuota should be deleted in Retain mode")
+	}
+	lr := &corev1.LimitRange{}
+	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-ret-full"}, lr)
+	if err == nil {
+		t.Error("LimitRange should be deleted in Retain mode")
+	}
+	npCheck := &networkingv1.NetworkPolicy{}
+	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-ret-full"}, npCheck)
+	if err == nil {
+		t.Error("NetworkPolicy should be deleted in Retain mode")
+	}
+
+	// Mail ConfigMap entries should be removed (cutting routing).
+	postfixCM := &corev1.ConfigMap{}
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
+		if _, ok := postfixCM.Data["ret-full"]; ok {
+			t.Error("Postfix virtual-domain entry should be removed in Retain mode (route revocation)")
+		}
+	}
+
+	// No cleanup Jobs should be created for data resources with Retain policy.
+	identityDeleteJob := &batchv1.Job{}
+	if err := testClient.Get(ctx, types.NamespacedName{
+		Name: "keycloak-realm-delete-ret-full", Namespace: "platform-kernel",
+	}, identityDeleteJob); err == nil {
+		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
+	}
+	ldapDeleteJob := &batchv1.Job{}
+	if err := testClient.Get(ctx, types.NamespacedName{
+		Name: "ldap-ou-delete-ret-full", Namespace: "platform-kernel",
+	}, ldapDeleteJob); err == nil {
+		t.Error("LDAP OU deletion Job should NOT be created for Retain policy")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// newFullAppProfile builds an AppProfile with multiple kernel requirements.
+func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.AppProfile {
+	kr := &gentianov1alpha1.KernelRequirements{
+		Database: &gentianov1alpha1.DatabaseRequirement{
+			Engine:            dbEngine,
+			DatabasePerTenant: true,
+		},
+	}
+	if needsS3 {
+		kr.Storage = &gentianov1alpha1.StorageRequirement{
+			S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
+		}
+	}
+	if needsRedis {
+		kr.Cache = &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis}
+	}
+	if needsMemcached {
+		kr.Cache = &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineMemcached}
+	}
+
+	return &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: gentianov1alpha1.AppProfileSpec{
+			DisplayName:      name,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			Chart: gentianov1alpha1.ChartRef{
+				Repository: "oci://charts.example.com",
+				Name:       name,
+				Version:    "1.0.0",
+			},
+			KernelRequirements: kr,
+		},
+	}
+}
+
+// assertIngressDoesNotAllowNamespace checks that no ingress rule references
+// the given namespace via a namespace selector.
+func assertIngressDoesNotAllowNamespace(t *testing.T, np *networkingv1.NetworkPolicy, ns string) {
+	t.Helper()
+	for _, rule := range np.Spec.Ingress {
+		for _, from := range rule.From {
+			if from.NamespaceSelector != nil {
+				for _, expr := range from.NamespaceSelector.MatchExpressions {
+					if expr.Key == "kubernetes.io/metadata.name" {
+						for _, v := range expr.Values {
+							if v == ns {
+								t.Errorf("NetworkPolicy %s/%s ingress should NOT allow namespace %q",
+									np.Namespace, np.Name, ns)
+							}
+						}
+					}
+				}
+				for k, v := range from.NamespaceSelector.MatchLabels {
+					if k == "kubernetes.io/metadata.name" && v == ns {
+						t.Errorf("NetworkPolicy %s/%s ingress should NOT allow namespace %q",
+							np.Namespace, np.Name, ns)
+					}
+				}
+			}
+		}
+	}
+}
+
+// collectIngressNamespaces extracts namespace names from ingress rules.
+func collectIngressNamespaces(np *networkingv1.NetworkPolicy) []string {
+	var result []string
+	for _, rule := range np.Spec.Ingress {
+		for _, from := range rule.From {
+			if from.NamespaceSelector != nil {
+				for k, v := range from.NamespaceSelector.MatchLabels {
+					if k == "kubernetes.io/metadata.name" {
+						result = append(result, v)
+					}
+				}
+			}
+		}
+	}
+	return result
+}
+
+// hasIngressNamespaceLabel checks if any ingress rule has a namespace selector
+// matching the given label key/value.
+func hasIngressNamespaceLabel(np *networkingv1.NetworkPolicy, key, value string) bool {
+	for _, rule := range np.Spec.Ingress {
+		for _, from := range rule.From {
+			if from.NamespaceSelector != nil {
+				if v, ok := from.NamespaceSelector.MatchLabels[key]; ok && v == value {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// collectEgressNamespaces extracts namespace names from egress rules.
+func collectEgressNamespaces(np *networkingv1.NetworkPolicy) []string {
+	var result []string
+	for _, rule := range np.Spec.Egress {
+		for _, to := range rule.To {
+			if to.NamespaceSelector != nil {
+				for k, v := range to.NamespaceSelector.MatchLabels {
+					if k == "kubernetes.io/metadata.name" {
+						result = append(result, v)
+					}
+				}
+			}
+		}
+	}
+	return result
+}
+
+// hasEgressPort checks if any egress rule allows the given port number.
+func hasEgressPort(np *networkingv1.NetworkPolicy, port int32) bool {
+	for _, rule := range np.Spec.Egress {
+		for _, p := range rule.Ports {
+			if p.Port != nil && p.Port.IntValue() == int(port) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasEgressIPBlock checks if any egress rule uses an IPBlock selector.
+func hasEgressIPBlock(np *networkingv1.NetworkPolicy) bool {
+	for _, rule := range np.Spec.Egress {
+		for _, to := range rule.To {
+			if to.IPBlock != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// assertQuantity verifies a resource.Quantity matches the expected string.
+func assertQuantity(t *testing.T, label string, got resource.Quantity, expected string) {
+	t.Helper()
+	want := resource.MustParse(expected)
+	if got.Cmp(want) != 0 {
+		t.Errorf("%s: want %s, got %s", label, expected, got.String())
+	}
+}
