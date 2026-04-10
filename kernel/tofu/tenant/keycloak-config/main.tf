@@ -72,6 +72,11 @@ data "vault_kv_secret_v2" "dovecot_secrets" {
   name  = "gentian-os/kernel/mail/dovecot"
 }
 
+data "vault_kv_secret_v2" "openproject" {
+  mount = "secret"
+  name  = "gentian-os/tenants/gtn-demo/apps/openproject/oidc"
+}
+
 locals {
   # Fall back to the computed in-cluster URL when keycloak_url is left empty.
   keycloak_url = var.keycloak_url != "" ? var.keycloak_url : "http://nubus-${var.env}-keycloak.gentian-${var.env}.svc.cluster.local:8080"

@@ -285,6 +285,94 @@ resource "keycloak_openid_user_attribute_protocol_mapper" "dovecot_username" {
   add_to_userinfo     = true
 }
 
+# ── opendesk-openproject-scope ─────────────────────────────────────────────────
+# Client scope with protocol mappers needed by the OpenProject OIDC integration.
+# Maps LDAP attributes to JWT claims consumed by OpenProject's OIDC provider.
+
+resource "keycloak_openid_client_scope" "openproject" {
+  realm_id    = var.realm
+  name        = "opendesk-openproject-scope"
+  description = "Protocol mappers for OpenProject"
+}
+
+resource "keycloak_openid_user_attribute_protocol_mapper" "openproject_scope_useruuid" {
+  realm_id        = var.realm
+  client_scope_id = keycloak_openid_client_scope.openproject.id
+  name            = "opendesk_useruuid"
+
+  user_attribute   = "entryUUID"
+  claim_name       = "opendesk_useruuid"
+  claim_value_type = "String"
+
+  add_to_id_token     = true
+  add_to_access_token = true
+  add_to_userinfo     = true
+}
+
+resource "keycloak_openid_user_attribute_protocol_mapper" "openproject_scope_username" {
+  realm_id        = var.realm
+  client_scope_id = keycloak_openid_client_scope.openproject.id
+  name            = "opendesk_username"
+
+  user_attribute   = "uid"
+  claim_name       = "opendesk_username"
+  claim_value_type = "String"
+
+  add_to_id_token     = true
+  add_to_access_token = true
+  add_to_userinfo     = true
+}
+
+resource "keycloak_openid_user_attribute_protocol_mapper" "openproject_scope_admin" {
+  realm_id        = var.realm
+  client_scope_id = keycloak_openid_client_scope.openproject.id
+  name            = "opendeskProjectmanagementAdmin"
+
+  user_attribute   = "opendeskProjectmanagementAdmin"
+  claim_name       = "openproject_admin"
+  claim_value_type = "String"
+
+  add_to_id_token     = true
+  add_to_access_token = true
+  add_to_userinfo     = true
+}
+
+# ── opendesk-openproject ──────────────────────────────────────────────────────
+# Client is created/managed by tofu.
+# client_secret is pinned to the operator-provisioned OpenBao value at the
+# tenant path so the running OpenProject pod stays consistent.
+
+import {
+  to = module.openproject.vault_kv_secret_v2.client_secret
+  id = "secret/data/gentian-os/tenants/gtn-demo/apps/openproject/oidc"
+}
+
+module "openproject" {
+  source = "../../modules/app"
+
+  realm_id     = var.realm
+  client_id    = "opendesk-openproject"
+  display_name = "OpenProject"
+
+  redirect_uris = ["https://openproject.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+  web_origins   = ["+"]
+
+  backchannel_logout_url              = "https://openproject.desk.gentian.org/auth/keycloak/backchannel-logout"
+  backchannel_logout_session_required = true
+
+  post_logout_redirect_uris = ["https://openproject.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+
+  # Reference the scope resource to create an implicit dependency — ensures
+  # the scope exists in Keycloak before the default_scopes association is made.
+  extra_default_scopes = [keycloak_openid_client_scope.openproject.name]
+
+  client_secret = data.vault_kv_secret_v2.openproject.data["client-secret"]
+
+  openbao_mount       = "secret"
+  openbao_secret_path = "gentian-os/tenants/gtn-demo/apps/openproject/oidc"
+  openbao_secret_key  = "client-secret"
+}
+
 # ── Phase 4C stubs ────────────────────────────────────────────────────────────
 # Uncomment when collabora deploys.
 
