@@ -191,6 +191,25 @@ resource "keycloak_openid_user_attribute_protocol_mapper" "ox_username" {
   add_to_userinfo     = true
 }
 
+# ── OX protocol mapper — opendesk_useruuid ────────────────────────────────────
+# Maps entryUUID LDAP attribute to opendesk_useruuid claim.
+# Required by Dovecot's pass_attrs to resolve the IMAP user and home directory
+# when introspecting access tokens issued by this client.
+
+resource "keycloak_openid_user_attribute_protocol_mapper" "ox_useruuid" {
+  realm_id  = var.realm
+  client_id = module.ox_appsuite.client_uuid
+  name      = "opendesk_useruuid"
+
+  user_attribute   = "entryUUID"
+  claim_name       = "opendesk_useruuid"
+  claim_value_type = "String"
+
+  add_to_id_token     = true
+  add_to_access_token = true
+  add_to_userinfo     = true
+}
+
 # ── OX protocol mapper — context (hardcoded to "1") ───────────────────────────
 
 resource "keycloak_openid_hardcoded_claim_protocol_mapper" "ox_context" {
@@ -228,6 +247,42 @@ module "dovecot" {
   openbao_mount       = "secret"
   openbao_secret_path = "gentian-os/kernel/mail/dovecot"
   openbao_secret_key  = "oidc_client_secret"
+}
+
+# ── Dovecot protocol mapper — opendesk_useruuid ──────────────────────────────
+# Maps entryUUID LDAP attribute to opendesk_useruuid claim.
+# Dovecot's pass_attrs uses this to resolve user and home directory.
+
+resource "keycloak_openid_user_attribute_protocol_mapper" "dovecot_useruuid" {
+  realm_id  = var.realm
+  client_id = module.dovecot.client_uuid
+  name      = "opendesk_useruuid"
+
+  user_attribute   = "entryUUID"
+  claim_name       = "opendesk_useruuid"
+  claim_value_type = "String"
+
+  add_to_id_token     = true
+  add_to_access_token = true
+  add_to_userinfo     = true
+}
+
+# ── Dovecot protocol mapper — opendesk_username ──────────────────────────────
+# Maps uid LDAP attribute to opendesk_username claim.
+# Dovecot's username_attribute references this for XOAUTH2 username matching.
+
+resource "keycloak_openid_user_attribute_protocol_mapper" "dovecot_username" {
+  realm_id  = var.realm
+  client_id = module.dovecot.client_uuid
+  name      = "opendesk_username"
+
+  user_attribute   = "uid"
+  claim_name       = "opendesk_username"
+  claim_value_type = "String"
+
+  add_to_id_token     = true
+  add_to_access_token = true
+  add_to_userinfo     = true
 }
 
 # ── Phase 4C stubs ────────────────────────────────────────────────────────────
