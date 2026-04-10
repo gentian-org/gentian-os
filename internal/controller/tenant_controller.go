@@ -81,7 +81,8 @@ const (
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 type TenantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -266,7 +267,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 14. Mail kernel extension (Postfix + Dovecot per-tenant, or external/relay/disabled)
+	// 14. Mail kernel extension (shared Postfix + Dovecot registration, or external/relay/disabled)
 	mailResult, err := r.ensureMail(ctx, tenant)
 	if err != nil {
 		_ = r.Status().Update(ctx, tenant)

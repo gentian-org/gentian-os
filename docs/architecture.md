@@ -50,12 +50,24 @@ Some kernel functions are **optional** — not every deployment needs them. Thes
 
 | Mode | Transport | Storage | Client | Use case |
 |---|---|---|---|---|
-| `selfhosted` | Kernel extension | Kernel extension | App | Full self-hosted mail |
+| `selfhosted` | Shared kernel MTA | Shared kernel MDA (tenant-scoped path) | App | Full self-hosted mail, shared infrastructure |
 | `external` | Tenant's own | Tenant's own | App → external IMAP/SMTP | Tenant uses Gmail, existing mail server |
-| `transport-only` | Kernel extension | External | App → external storage | Kernel handles SMTP relay |
+| `transport-only` | Shared kernel MTA | External | App → external storage | Kernel handles SMTP relay only |
 | `disabled` | — | — | Apps send via SMTP relay only | Outbound-only (notifications) |
 
-When deployed as a kernel extension, the mail stack (MTA, MDA, spam filter) can be provisioned per-tenant rather than shared, avoiding the scaling limitations of a single Postfix/Dovecot instance serving hundreds of tenant domains. This gives true isolation, independent scaling, and simpler operations at the cost of higher resource usage.
+The mail extension uses **shared infrastructure with tenant-scoped configuration** — exactly the same model as the kernel's databases, object storage, and caching. A single Postfix instance handles all tenant domains via `virtual_mailbox_domains`; a single Dovecot instance stores mailboxes at isolated per-domain paths (`/var/mail/{domain}/{user}`); a single Rspamd instance handles spam filtering and DKIM signing with per-domain keys. Tenant isolation is enforced at the configuration level: separate SASL credentials per tenant for SMTP, separate LDAP OU for IMAP authentication, and per-domain DKIM keys fetched from OpenBao.
+
+This model is consistent with every other shared kernel component:
+
+| Component | Isolation mechanism | Pods |
+|---|---|---|
+| Keycloak | Realm per tenant | 2–3 (shared) |
+| PostgreSQL | Database + user per tenant | 2–3 (shared) |
+| MinIO | Bucket + IAM policy per tenant | 2–3 (shared) |
+| Redis | ACL user per tenant | 2–3 (shared) |
+| Mail | SASL credentials + mailbox path per tenant | 6–9 (shared) |
+
+The one genuine trade-off compared to a fully per-tenant stack is blast radius: a shared Postfix crash affects all tenants simultaneously. This is mitigated by standard HA practices (2+ replicas, PodDisruptionBudget) — the same approach used for every other shared kernel component. For tenants running in `vCluster` isolation mode with strict compliance requirements, a per-tenant mail stack remains available as an explicit opt-in (set in the Tenant CR's isolation mode). This should be treated as a deliberate cost trade-off for high-value tenants, not the default path.
 
 ### 2.3 Kernel vs Userspace
 
@@ -141,7 +153,7 @@ This reduces the custom code surface dramatically. Each operator is maintained b
 | NATS account + user | NATS Operator (or nsc CLI via Job) | NATS Operator | NATS account JWT |
 | Redis ACL user | Redis Operator or `redis-cli` Job | Redis Operator | Operator-specific CR or `Job` |
 | Secrets sync to K8s | External Secrets Operator | — (already target) | `ExternalSecret` |
-| Postfix + Dovecot (mail ext.) | Helm chart via ArgoCD | — | `Application` (per-tenant if selfhosted) |
+| Postfix + Dovecot (mail ext.) | ConfigMap patch + Secret | — | `ConfigMap` (virtual-domains, dovecot-domains), `Secret` (SMTP credentials, DKIM key) |
 | ArgoCD Application | — (direct CR creation) | — | `Application` |
 
 > **Future direction — saga pattern:** The current orchestrator uses Kubernetes' built-in retry (requeue on failure) and relies on operator idempotency. At scale, a formal saga pattern with compensating transactions would provide explicit rollback: if Keycloak client creation succeeds but database creation fails, the saga would delete the Keycloak client rather than leaving orphaned resources. This can be implemented using a workflow engine (e.g., Temporal) or explicit phase tracking in the Tenant CR status.
@@ -248,11 +260,11 @@ Not all upstream Helm charts support `existingSecret` references. The platform u
 | Pattern | Mechanism | When to use |
 |---|---|---|
 | **Pattern A** (preferred) | ESO syncs OpenBao → Kubernetes Secret; chart references via `existingSecret` | Charts with `existingSecret` support (Redis, MinIO, Intercom Service) |
-| **Pattern B** (fallback) | Tofu Controller reads from OpenBao and injects via Helm `set_sensitive` | Charts without `existingSecret` support (Nubus, OX App Suite, Postfix, Dovecot) |
+| **Pattern B** (fallback) | Tofu Controller reads from OpenBao and injects via Helm `set_sensitive` | Charts without `existingSecret` support (Nubus, OX App Suite) |
 
 Pattern B keeps secrets out of Git and the ArgoCD UI — they remain in memory during Helm apply. The trade-off is reduced ArgoCD visibility (Tofu-managed releases appear as opaque resources). New apps should prefer Pattern A; Pattern B is a pragmatic fallback for upstream charts that cannot be modified.
 
-**Upstream contribution strategy:** The long-term goal is to eliminate Pattern B entirely by contributing `existingSecret` support to the upstream Helm charts that currently require it (Nubus, OX App Suite, Postfix, Dovecot). Each successful upstream merge allows migrating that app from Pattern B to Pattern A — one configuration change in the AppProfile’s `deploymentMethod` field, zero orchestrator code changes. This reduces Tofu Controller dependencies and improves ArgoCD visibility. Track upstream PR status per app.
+**Upstream contribution strategy:** The long-term goal is to eliminate Pattern B entirely by contributing `existingSecret` support to the upstream Helm charts that currently require it (Nubus, OX App Suite). Each successful upstream merge allows migrating that app from Pattern B to Pattern A — one configuration change in the AppProfile’s `deploymentMethod` field, zero orchestrator code changes. This reduces Tofu Controller dependencies and improves ArgoCD visibility. Track upstream PR status per app.
 
 ### 5.4 Credential Rotation and Pod Restart
 
@@ -284,7 +296,7 @@ gentian-os/
         ├── contracts/
         │   └── {contract-name}/         #   endpoint, auth, shared credentials
         └── mail/
-            └── {domain}/               #   DKIM private key, domain config
+            └── smtp                     #   per-tenant SMTP credentials (user, password)
 ```
 
 Secrets never appear in Git, ArgoCD Application CRs, or ConfigMaps. OpenBao policies are generated per tenant+app, granting read access only to the paths that app needs.
@@ -337,11 +349,11 @@ Sublayers allow sequencing within the kernel:
 
 ### Layer 100e — Kernel Extensions
 
-Optional kernel extensions deployed per-tenant or per-cluster as needed.
+Optional kernel extensions deployed per-cluster as shared infrastructure.
 
 | Layer | Contents | Depends on |
 |-------|----------|------------|
-| 100e-mail | Mail stack (Postfix, Dovecot, Rspamd) | 110 (LDAP), 120 (optional DB for Rspamd) |
+| 100e-mail | Shared mail stack (Postfix, Dovecot, Rspamd) — serves all tenants | 110 (LDAP), 120 (optional DB for Rspamd) |
 
 ### ArgoCD Application Discovery — Root ApplicationSet
 
@@ -485,7 +497,7 @@ AppProfiles reference upstream charts directly by OCI URL (e.g., `oci://charts.o
 
 **OIDC trust chain:** The identity provider is the single trust anchor. Each tenant gets a dedicated Keycloak realm with independent user pools, branding, and password policies. Apps authenticate users via OIDC. App-to-app calls use token exchange (RFC 8693) — app A presents its token and receives a scoped token for app B. The IntegrationBinding configures which exchanges are permitted.
 
-**Mail security:** DKIM private keys are stored in OpenBao and injected into the mail extension at deployment time. SPF and DMARC records are generated and surfaced in the Tenant status for DNS configuration. SMTP submission requires SASL authentication — no open relay. Dovecot authenticates IMAP sessions against the tenant's LDAP directory.
+**Mail security:** DKIM private keys are generated per tenant domain, stored in OpenBao at `tenants/{name}/mail/dkim`, and fetched by the shared Rspamd instance at runtime. SPF and DMARC records are generated and surfaced in the Tenant status for DNS configuration. SMTP submission requires SASL authentication against per-tenant credentials — no open relay. Dovecot authenticates IMAP sessions against the tenant's LDAP OU using the same bind credentials provisioned by the orchestrator for other apps.
 
 **Database isolation:** Each app within each tenant gets its own database (`{prefix}_{app}`) with a dedicated user that has grants limited to that database only. No cross-tenant or cross-app database access is possible.
 
@@ -502,7 +514,7 @@ Backup in Gentian OS is **per-subsystem** — each kernel component uses the ind
 | PostgreSQL databases | **pgBackRest** or CloudNativePG built-in backup | Per-database (tenant-scoped restores) | WAL archiving + base backups to S3 (MinIO or external) |
 | MariaDB databases | **Mariabackup** or MariaDB Operator backup CRD | Per-database | Full + incremental to S3 |
 | S3 / MinIO buckets | **MinIO replication** or **Restic** | Per-bucket (tenant-scoped) | Cross-site replication or snapshot to external S3 |
-| Dovecot mailboxes | **dsync** (Dovecot's native replication) or **Restic** | Per-tenant mail domain | Filesystem-level backup or Dovecot-native sync |
+| Dovecot mailboxes | **dsync** (Dovecot's native replication) or **Restic** | Per-domain mail path (`/var/mail/{domain}/`) | Filesystem-level backup or Dovecot-native sync |
 | Keycloak realms | **Keycloak realm export** (JSON) | Per-realm (tenant-scoped) | Scheduled export to S3, versioned |
 | OpenBao secrets | **OpenBao snapshots** (`bao operator raft snapshot`) | Full vault | Raft snapshots to S3, encrypted |
 | Kubernetes resources | **Velero** | Per-namespace (tenant-scoped) | CRD state, ConfigMaps, Secrets (encrypted) |
@@ -630,7 +642,7 @@ openDesk is a sovereign workplace suite developed by ZenDiS (Centre for Digital 
 | Notifications | **Notification Gateway** | Cross-app notification aggregation | Kernel | **To build** |
 | Init system / lifecycle | **Thin orchestrator** | Install, upgrade, uninstall via operator CRs | Kernel | **To build** (orchestrator) |
 | Resource quotas | Kubernetes ResourceQuotas + LimitRanges | Per-tenant CPU, memory, storage limits | Kernel | Existing — orchestrator applies quotas |
-| Mail (kernel extension) | **Postfix + Dovecot + Rspamd** | SMTP transport, IMAP storage, spam filtering | Kernel ext. | Existing — deploy as per-tenant extension |
+| Mail (kernel extension) | **Postfix + Dovecot + Rspamd** | SMTP transport, IMAP storage, spam filtering | Kernel ext. | Existing — shared instance, tenant-scoped config |
 | IPC bus | — | Event-driven pub/sub (e.g., NATS) | — | **Out of scope** (v1) |
 | Clipboard / intents | — | Share-to / cross-app data transfer | — | **Out of scope** (v1) |
 | Config store | — | Per-tenant, per-app key-value settings | — | **Out of scope** (v1) |
@@ -646,13 +658,13 @@ openDesk is a sovereign workplace suite developed by ZenDiS (Centre for Digital 
 ```mermaid
 graph LR
     subgraph Kernel
-        PK[platform-kernel\nKeycloak / MinIO\nPostgreSQL / MariaDB\nRedis / Memcached / OpenBao\nNextcloud / Univention Portal]
+        PK[platform-kernel\nKeycloak / MinIO\nPostgreSQL / MariaDB\nRedis / Memcached / OpenBao\nNextcloud / Univention Portal\nPostfix / Dovecot / Rspamd]
     end
     subgraph System
         PS[platform-system\nArgoCD / Tofu Controller\nGentianOS Orchestrator\nESO / cert-manager]
     end
     subgraph Tenants
-        TA[tenant-gtn-demo\nAcme Corp apps\n+ mail extension if selfhosted]
+        TA[tenant-gtn-demo\nAcme Corp apps]
         TB[tenant-beta-inc\nBeta Inc apps]
     end
 
@@ -675,7 +687,7 @@ graph LR
 | Provisioning | **Thin orchestrator** (Go + controller-runtime) | Tenant lifecycle via operator CRs |
 | App deployment | **ArgoCD** | Helm chart deployment, drift detection, rollback |
 | Identity | **Nubus** (Keycloak + UCS LDAP) | OIDC, user/group directory, SSO |
-| Mail (extension) | **Postfix + Dovecot + Rspamd** | Per-tenant mail stack |
+| Mail (extension) | **Postfix + Dovecot + Rspamd** | Shared kernel mail stack, tenant-scoped config |
 | Groupware | **OX App Suite** | Mail client, calendar, contacts |
 
 ## 12. CRD Definitions for openDesk
@@ -995,8 +1007,10 @@ func (r *TenantReconciler) Reconcile(ctx, req) (Result, error) {
        ├── Create MinIO Tenant prefix via MinIO Operator CR
        ├── Apply ResourceQuotas + LimitRanges
        └── If mail.mode == selfhosted:
-           ├── Create ArgoCD Application for per-tenant mail stack
-           ├── Generate DKIM keypair, store in OpenBao
+           ├── Generate DKIM keypair, store in OpenBao (tenants/{name}/mail/dkim)
+           ├── Register virtual domain in shared Postfix ConfigMap (mail-postfix-virtual-domains)
+           ├── Create per-tenant SMTP credentials Secret (smtp-credentials-{name} in tenant namespace)
+           ├── Create Dovecot domain config in shared ConfigMap (mail-dovecot-domains)
            └── Surface DNS records (DKIM, SPF, DMARC) in tenant status
 
     for each app in tenant.spec.apps:
@@ -1009,7 +1023,7 @@ func (r *TenantReconciler) Reconcile(ctx, req) (Result, error) {
            ├── KeycloakClient CR → operator registers OIDC client
            ├── LDAP bind account via UDM Job
            ├── Redis ACL user via operator CR or Job
-           └── Dovecot mailbox accounts (if mail.mode == selfhosted)
+           └── Register Dovecot mailbox accounts (if mail.mode == selfhosted)
 
         4. Create ExternalSecret CRs:
            → ESO syncs gentianos/tenants/{tenant}/apps/{app}/*
@@ -1057,7 +1071,7 @@ func (r *TenantReconciler) Reconcile(ctx, req) (Result, error) {
    └── Delete: delete operator CRs → operators drop databases, buckets, etc.
 5. Delete Keycloak realm CR → operator removes realm
 6. Remove LDAP OU via UDM Job
-7. Remove per-tenant mail stack (if selfhosted) → ArgoCD deletes
+7. Remove tenant from shared mail infrastructure (if selfhosted) → remove ConfigMap entries and Secrets
 8. Delete tenant namespace (or vCluster)
 9. Remove Tenant finalizer
 ```
@@ -1096,7 +1110,7 @@ gentianos-orchestrator/
 │   │   ├── app_provisioner.go         # creates per-app operator CRs
 │   │   ├── externalsecret_builder.go  # generates ExternalSecret CRs
 │   │   ├── networkpolicy_builder.go   # generates NetworkPolicy CRs
-│   │   └── mail_extension.go          # manages per-tenant mail stack
+│   │   └── mail_extension.go          # provisions tenant-scoped config in shared mail infrastructure
 │   ├── rendering/
 │   │   └── valuemapping.go            # schema-based value rendering
 │   └── argocd/
