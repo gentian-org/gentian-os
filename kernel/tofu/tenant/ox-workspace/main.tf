@@ -38,6 +38,10 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
   }
 
   backend "s3" {
@@ -83,6 +87,12 @@ provider "helm" {
       password = var.registry_password
     }
   }
+}
+
+provider "kubernetes" {
+  host                   = "https://kubernetes.default.svc"
+  token                  = file("/var/run/secrets/kubernetes.io/serviceaccount/token")
+  cluster_ca_certificate = file("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 }
 
 # ── Locals ────────────────────────────────────────────────────────────────────
@@ -253,8 +263,50 @@ resource "helm_release" "ox_bootstrap" {
 #   - Egress from the tenant NetworkPolicy to the gentian-dev namespace (where
 #     the Nubus provisioning API lives).
 
+# ConfigMap holding a startup script that injects context 1 admin credentials
+# into the ox-connector's PVC-backed ox-contexts.json.  The bootstrap job
+# creates context 1 before the connector starts, so the connector never captures
+# the context admin password during its own context-create flow.  Without this,
+# all per-user modifications (module access, etc.) silently fail with
+# "Could not find admin password for context 1".
+resource "kubernetes_config_map_v1" "ox_connector_context_creds" {
+  metadata {
+    name      = "ox-connector-context-creds"
+    namespace = var.namespace
+  }
+
+  data = {
+    "76-inject-context-creds.sh" = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+    CREDS_FILE="$${OX_CREDENTIALS_FILE:-/etc/ox-secrets/ox-contexts.json}"
+    if [ ! -f "$CREDS_FILE" ]; then
+      echo "76-inject-context-creds: credentials file not yet created, skipping"
+      exit 0
+    fi
+    if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if '1' in d else 1)" "$CREDS_FILE" 2>/dev/null; then
+      echo "76-inject-context-creds: context 1 credentials already present"
+      exit 0
+    fi
+    echo "76-inject-context-creds: injecting context 1 admin credentials"
+    python3 -c "
+    import json, os, sys
+    creds_file = sys.argv[1]
+    with open(creds_file, 'r') as f:
+        d = json.load(f)
+    d['1'] = {
+        'adminuser': os.environ.get('OX_MASTER_USER', 'admin'),
+        'adminpass': os.environ.get('OX_MASTER_PASSWORD', '')
+    }
+    with open(creds_file, 'w') as f:
+        json.dump(d, f, indent=2)
+    " "$CREDS_FILE"
+    EOT
+  }
+}
+
 resource "helm_release" "ox_connector" {
-  depends_on = [helm_release.ox_bootstrap]
+  depends_on = [helm_release.ox_bootstrap, kubernetes_config_map_v1.ox_connector_context_creds]
 
   name       = "ox-connector"
   repository = "oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror"
@@ -324,5 +376,33 @@ resource "helm_release" "ox_connector" {
   set_sensitive {
     name  = "openXchange.auth.password"
     value = data.vault_kv_secret_v2.internal_admin_password.data["value"]
+  }
+
+  # Mount the context-creds injection script into /entrypoint.d/ so it runs
+  # after the chart's 75-entrypoint.sh (which creates the initial credentials
+  # file on the PVC).  This ensures context 1 admin creds are always present.
+  set {
+    name  = "extraVolumes[0].name"
+    value = "context-creds-script"
+  }
+  set {
+    name  = "extraVolumes[0].configMap.name"
+    value = kubernetes_config_map_v1.ox_connector_context_creds.metadata[0].name
+  }
+  set {
+    name  = "extraVolumes[0].configMap.defaultMode"
+    value = "493"
+  }
+  set {
+    name  = "extraVolumeMounts[0].name"
+    value = "context-creds-script"
+  }
+  set {
+    name  = "extraVolumeMounts[0].mountPath"
+    value = "/entrypoint.d/76-inject-context-creds.sh"
+  }
+  set {
+    name  = "extraVolumeMounts[0].subPath"
+    value = "76-inject-context-creds.sh"
   }
 }

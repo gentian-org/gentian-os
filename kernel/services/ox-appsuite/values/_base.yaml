@@ -126,6 +126,10 @@ appsuite:
 
     # Package-level feature flags (individual OSGi bundles).
     # Feature-group flags (documents, guard, etc.) default to disabled in chart.
+    features:
+      status:
+        documents: "disabled"
+
     packages:
       status:
         open-xchange-oidc: "enabled"
@@ -137,6 +141,12 @@ appsuite:
         open-xchange-filestore-s3: "enabled"
         open-xchange-admin-soap-usercopy: "disabled"
         open-xchange-admin-user-copy: "disabled"
+        # Needed to set com.openexchange.hostname per-context
+        open-xchange-hostname-config-cascade: "enabled"
+        # OX Documents is not used in this deployment
+        open-xchange-documents-backend: "disabled"
+        open-xchange-documents-monitoring: "disabled"
+        open-xchange-documents-templates: "disabled"
 
     # OX system properties (stored in ConfigMap — non-secret)
     properties:
@@ -203,6 +213,25 @@ appsuite:
       # OX Connector requirements
       com.openexchange.user.enforceUniqueDisplayName: "false"
       com.openexchange.folderstorage.database.preferDisplayName: "false"
+      # Must be true for ox-connector to set per-module access rights (calendar, etc.)
+      com.openexchange.admin.bypassAccessCombinationChecks: "true"
+      ENABLE_INTERNAL_USER_EDIT: "false"
+      # Contact collector
+      com.openexchange.contactcollector.enabled: "true"
+      com.openexchange.user.contactCollectOnMailTransport: "true"
+      com.openexchange.user.contactCollectOnMailAccess: "false"
+      # Capabilities — public-sector UI + portal navigation
+      com.openexchange.capability.public-sector: "true"
+      com.openexchange.capability.public-sector-navigation: "true"
+      com.openexchange.capability.dynamic-theme: "true"
+      com.openexchange.capability.client-onboarding: "true"
+      com.openexchange.capability.document_preview: "true"
+      com.openexchange.capability.mail_export_pdf: "true"
+      com.openexchange.capability.share_links: "true"
+      com.openexchange.capability.invite_guests: "true"
+      com.openexchange.share.guestCapabilityMode: "inherit"
+      # Misc mail
+      com.openexchange.mail.deleteDraftOnTransport: "true"
 
     # Per-file property overrides (non-sensitive entries only).
     # Secret entries (secretKey, bindDNPassword) are injected by tftpl.
@@ -227,6 +256,29 @@ appsuite:
       # global override) rather than from the bundle conf / etc/login.properties.
       /opt/open-xchange/etc/additional.properties:
         com.openexchange.ajax.login.http-auth.autologin: "true"
+      /opt/open-xchange/etc/server.properties:
+        MAX_UPLOAD_SIZE: "104857600"
+      /opt/open-xchange/etc/system.properties:
+        SERVER_NAME: "server"
+
+    # UI-level settings — drives OX frontend behaviour, theme, portal link, etc.
+    uiSettings:
+      # OX logo in top bar links to the portal
+      io.ox/core//logoAction: "https://portal.desk.gentian.org"
+      # Enterprise Picker — top-right launcher (app grid) instead of dropdown
+      io.ox/core//features/enterprisePicker/showLauncher: "false"
+      io.ox/core//features/enterprisePicker/showTopRightLauncher: "true"
+      # Resource calendars
+      io.ox/core//features/resourceCalendars: "true"
+      io.ox/core//features/managedResources: "true"
+      # Features
+      io.ox/core//features/signatureDesigner: "true"
+      io.ox/core//features/templates: "true"
+      # Central navigation — tab name for OX in the portal top bar
+      io.ox.public-sector//navigation/oxtabname: "tab_groupware"
+      # Disable quick-launch icons to avoid clutter
+      io.ox/core//apps/quickLaunchCount: "0"
+      io.ox/core//coloredIcons: "false"
 
     # Redis session store — use the existing gentian-infra-dev Redis instance.
     # Password injected by values-sensitive.yaml.tftpl.
@@ -234,6 +286,11 @@ appsuite:
       mode: standalone
       hosts:
         - "redis-dev-master.gentian-infra-dev.svc.cluster.local:6379"
+
+# ── public-sector-ui sub-chart ─────────────────────────────────────────────────
+# Provides the portal navigation bar (central top bar) above OX when the
+# public-sector and public-sector-navigation capabilities are enabled.
+public-sector-ui: {}
 
 # ── OX Bootstrap sub-chart configuration ─────────────────────────────────────
 # (set in opendesk-open-xchange-bootstrap helm_release, not here)
