@@ -197,6 +197,7 @@ appsuite:
       com.openexchange.mail.filter.connectionSecurity: "none"
       # IMAP — disable STARTTLS for cluster-internal plain connections (no TLS certs on Dovecot)
       com.openexchange.imap.enableTls: "false"
+      com.openexchange.imap.requireTls: "false"
       # IMAP attachment marker (dovecot extension)
       com.openexchange.imap.attachmentMarker.enabled: "true"
       # OX Connector requirements

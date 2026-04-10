@@ -545,6 +545,17 @@ dovecot:
     host: %q
   migration:
     enabled: false
+certificate:
+  secretName: ""
+lifecycleHooks:
+  postStart:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo 'ssl=no' >> /etc/dovecot/dovecot.conf
+          for i in 1 2 3 4 5; do doveadm reload 2>/dev/null && break; sleep 1; done
 `, domain, domain, params.doveadmPassword,
 		params.ldapHost, params.ldapBase, bindDN, params.ldapBindPW,
 		introspectionHost, params.oidcClientSecret,

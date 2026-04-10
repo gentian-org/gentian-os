@@ -127,7 +127,7 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"doveadm_password":  []byte("test-doveadm-password"),
+			"doveadm_password":   []byte("test-doveadm-password"),
 			"oidc_client_secret": []byte("test-oidc-secret"),
 		},
 	}); err != nil {
