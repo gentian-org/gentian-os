@@ -8,806 +8,39 @@
 
 ## Strategy
 
-The implementation follows from the architecture's **priority gaps** (current-state.md). The biggest gap — and the one that blocks almost everything else — is the thin orchestrator. Rather than migrating files from `server/`, we build the platform as described in the architecture, pulling proven patterns from `server/` where they exist.
-
-### Starting point
-
-The `server/` repo is a working single-tenant deployment. It is **reference material**, not the migration source. We cherry-pick what works (HMAC-SHA256 derivation, Pattern A/B, Reloader, ApplicationSet patterns, Tofu modules) and rewrite what doesn't fit (flat secret paths, manual YAML wiring, no CRDs, no orchestrator).
-
-### Build order
-
-The architecture has clear dependency chains:
+CRDs first, then orchestrator reconcilers one kernel function at a time, then tenant lifecycle, then apps. The `server/` repo is reference material — we cherry-pick proven patterns (HMAC-SHA256 derivation, Pattern A/B, Reloader, ApplicationSet patterns, Tofu modules) and rewrite what doesn't fit.
 
 ```
-CRD definitions
-    └── Thin orchestrator (watches CRDs)
-            ├── Operator CRs (Keycloak, CloudNativePG, MinIO, ...)
-            ├── ExternalSecret CRs
-            ├── ArgoCD Application CRs
-            └── IntegrationBinding CRs
-                    └── MCP registry (future)
+CRD definitions → Thin orchestrator → Operator CRs / ExternalSecrets / ArgoCD Apps / IntegrationBindings
 ```
 
-We build bottom-up: CRDs first, then the orchestrator reconcilers one kernel function at a time, then tenant lifecycle, then apps.
-
-### Why a custom orchestrator? — Alternatives considered
-
-The thin orchestrator is ~5000 LOC of new Go code. Before committing to that, three alternatives were evaluated:
-
-| Alternative | What it does | Why not |
-|---|---|---|
-| **Crossplane** | Kubernetes-native infrastructure orchestration. Compositions map provider APIs to custom XRDs. | Crossplane Compositions are declarative (no conditional logic). The orchestrator needs conditional behaviour: "if both Nextcloud and OX are in the tenant's app list, create an IntegrationBinding." Crossplane can't express this without a custom provider — which is as much Go code as the orchestrator itself. Also adds a heavyweight control plane (Crossplane runtime + provider pods). |
-| **Kratix** | Platform-as-a-Product framework. Promises define what a platform team offers; Pipelines reconcile them. | Kratix Pipelines are container-based (one container per reconciliation step). This adds image build/push overhead per reconciler change and makes debugging harder than a single Go binary with `envtest`. Kratix is also younger (fewer production references) and introduces its own CRDs/concepts on top of the ones we already need. |
-| **Kyverno generate rules + ArgoCD ApplicationSets** | Policy-driven resource generation. Kyverno watches CRs and generates downstream resources (ExternalSecrets, Applications). | Works for simple "CR A exists → create CR B" patterns. Breaks down for sequenced multi-step provisioning (create database → wait for ready → store credentials in OpenBao → create ExternalSecret → create Application). Kyverno has no concept of ordering, status aggregation, or rollback. |
-
-**Decision: custom orchestrator.** The provisioning logic requires conditional branching (Pattern A vs B, mail modes, optional integrations), ordered sequencing (identity before database before app deployment), and status aggregation across multiple operator CRs. These are the exact things `controller-runtime` is designed for. The alternatives either can't express the logic at all (Kyverno) or require as much custom code as the orchestrator itself (Crossplane provider, Kratix pipeline containers).
-
-The risk of "building too much" is mitigated by the architecture's delegate-don't-implement principle: the orchestrator creates CRs for operators and Jobs, not provisioning logic. Most reconcilers are ~200 LOC of CR creation + status watching.
+The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc.) and uses idempotent Jobs where no operator exists (Keycloak Admin REST API, UDM REST API). Most reconcilers are ~200 LOC of CR creation + status watching.
 
 ---
 
-## Progress
+## Completed Increments
 
-| Increment | Title | Status | Notes |
+| # | Title | Status | Key deliverable |
 |---|---|---|---|
-| 0 | Project scaffolding | ✅ Done | go.mod, Makefile (`generate`, `manifests`, `build`, `test`, `lint`, `docker-build`), `internal/controller/` stub, `charts/gentian-os/` (Chart.yaml + values.yaml), `kernel/` (tofu modules/platform/tenant, bootstrap, appsets, manifest, eso, openbao, services, values), `scripts/` (5 bootstrapping scripts), Dockerfile (multi-stage distroless), CI pipeline (go/generate/lint/docker jobs). Deployment smoke test is a manual gate requiring a live cluster. |
-| 1 | CRD definitions | ✅ Done | All three CRDs (AppProfile, Tenant, IntegrationBinding) generated. 13 tests pass (5 spike tests removed when Nubus/Nextcloud AppProfile samples were deleted). Spike: OX App Suite sample YAML validates. |
-| 2 | Orchestrator skeleton + Tenant namespace reconciler | ✅ Done | `cmd/main.go` (controller-manager entry point), `internal/controller/tenant_controller.go` (namespace + ResourceQuota + LimitRange + NetworkPolicy + status conditions + finalizer + Retain/Delete deletion policy), 8 envtest integration tests. k8s.io/* upgraded to v0.35.0, controller-runtime v0.23.3. |
-| 3 | Identity reconciler (Keycloak realm + OIDC clients) | ✅ Done | `internal/controller/identity_reconciler.go`: `ensureIdentity` creates Keycloak realm + OIDC client Jobs in `platform-kernel` namespace via Keycloak Admin REST API (curl-based Jobs, idempotent check-before-create). Job watch in `SetupWithManager` triggers immediate reconcile on Job completion. `deleteIdentity` creates realm-deletion Job when `deletionPolicy: Delete`. 5 envtest tests. 26 tests total. |
-| 4 | LDAP reconciler (UDM REST API) | ✅ Done | `internal/controller/ldap_reconciler.go`: `ensureLDAP` collects LDAP-requiring apps from AppProfile, creates UDM OU+groups Job then per-app bind account Jobs (sequenced: OU must complete first). `deleteLDAP` creates OU-deletion Job on DeletionPolicy=Delete. Jobs use `curlimages/curl:8.7.1`, credentials from `udm-admin` Secret. `LDAPReady` condition. 6 envtest tests. 32 tests total. |
-| 5 | Database reconciler (CloudNativePG) | ✅ Done | `internal/controller/database_reconciler.go`: `ensureDatabase` creates CloudNativePG `Database` CRs (unstructured client, no extra Go module) per app, gates on `Ready=True` condition, then creates psql role `Job`. `deleteDatabase` deletes CRs on DeletionPolicy=Delete. Watch on CloudNativePG Database CRs added to `SetupWithManager` for immediate reconcile. `config/crd/postgresql.cnpg.io_databases.yaml` minimal CRD for envtest. 5 envtest tests. 37 tests total. |
-| 6 | MariaDB reconciler | ✅ Done | `internal/controller/mariadb_reconciler.go`: idempotent `CREATE DATABASE / CREATE USER / GRANT` Jobs per app (`mariadb:11` image). Identifier values injected as env vars and validated `^[a-zA-Z0-9_]+$` before SQL use — no SQL injection risk. Delete Job on DeletionPolicy=Delete. 4 envtest tests. 41 tests total. |
-| 7 | Storage reconciler (MinIO S3 + Nextcloud WebDAV) | ✅ Done | `internal/controller/storage_reconciler.go`: MinIO S3 buckets via `minio/mc` Job (idempotent `mb --ignore-existing`), Nextcloud group provisioning via OCS API curl Job. Separate delete Jobs per pathway on DeletionPolicy=Delete. `StorageReady` condition. 5 envtest tests. 46 tests total. |
-| 8 | Cache reconciler (Redis ACLs + Memcached) | ✅ Done | `internal/controller/cache_reconciler.go`: Redis ACL users via `redis-cli ACL SETUSER` Job (idempotent, `redis:7-alpine`, one per-app); Memcached per-tenant ArgoCD `Application` CR (unstructured client, gates on `health.status=Healthy`). Delete Jobs for Redis on DeletionPolicy=Delete; Application CR deletion for Memcached. `CacheReady` condition. `config/crd/argoproj.io_applications.yaml` minimal CRD for envtest. 5 envtest tests. 51 tests total. |
-| 9 | App deployment reconciler (ArgoCD Application / Tofu Workspace CRs) | ✅ Done | `app_reconciler.go`: `ensureAppDeployment` creates ArgoCD Application CRs per app per tenant. Reads AppProfile `valueMapping` to render Helm values (OIDC, DB, S3, SMTP, cache, LDAP). Routes Pattern B apps to Tofu Controller `Terraform` CRs. `AppsReady` condition. 5 envtest tests. 56 tests total. (Note: cumulative from Inc 9 onward; prior totals adjusted for 5 spike tests removed in Inc 1.) |
-| 10 | Ingress + DNS reconciler | ✅ Done | `ingress_reconciler.go`: `ensureIngress` creates `networking.k8s.io/v1` Ingress CRs per app, cert-manager `Certificate` CR per tenant (wildcard TLS). Delete removes both. `IngressReady` condition. 5 envtest tests. 61 tests total. |
-| 11 | IntegrationBinding reconciler | ✅ Done | `integration_reconciler.go`: `ensureIntegrationBindings` compares AppProfile `optionalIntegrations` with tenant's app list; auto-creates IntegrationBinding CRs when both provider and consumer present; garbage-collects via owner refs on provider removal. `BindingsReady` condition. 4 envtest tests. 65 tests total. |
-| 12 | OpenBao restructuring (multi-tenant secret paths) | ✅ Done | `scripts/seed-openbao.sh` + `kernel/tofu/` modules updated to `gentian-os/kernel/` and `gentian-os/tenants/{name}/apps/{app}/` path hierarchy. All kernel ExternalSecret CRs reference new paths. 65 tests total. |
-| 13 | Orchestrator Helm chart + observability | ✅ Done | `charts/gentian-os/` packaged with CRD manifests, Deployment, ClusterRole, ServiceAccount, Prometheus ServiceMonitor, Grafana dashboard ConfigMap. `metrics.go` registers `gentianos_tenants_total`, `gentianos_provisioning_duration_seconds`, and related metrics. Printer columns via `+kubebuilder:printcolumn`. 65 tests total. |
-| 14 | AppProfile update reconciler | ✅ Done | `config/samples/` — 6 AppProfile YAMLs for all user-installable openDesk apps (collabora, element, jitsi, openproject, xwiki, ox-appsuite) validated against CRD schema. Kernel AppProfile spikes (nextcloud, nubus) removed. **Note:** AppProfile update reconciler (watch chart version bumps → propagate to all tenant Applications) not yet implemented — deferred to post-Inc 15. 65 tests total. |
-| 15 | gentian-deployments repo setup | ✅ Done | `gentian-deployments/dev/` — bootstrap/install.sh (13-step), app-of-apps.yaml (multi-source ArgoCD Application), dev-tenant.yaml (gtn-demo), values-dev.yaml, tofu.tfvars, README.md. All gentian-os/kernel/ server/ refs migrated to gentian-org/gentian-os; paths updated apps/→kernel/services/; ExternalSecrets created in kernel/services/{app}/secrets/dev/ with OpenBao paths gentian/dev/X→gentian-os/kernel/X; ArgoCD AppProject updated (gentian-os + gentian-deployments sources, gentian-system destination, Tenant/AppProfile/IntegrationBinding in clusterResourceWhitelist). |
-| 16 | Mail extension reconciler (shared infra) | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps, per-tenant SMTP credentials + DKIM Secrets. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 76 tests total. |
-| 17 | Hardening + end-to-end tenant lifecycle tests | ✅ Done | `internal/controller/isolation_test.go`: 7 envtest tests — cross-tenant NetworkPolicy isolation, ingress/egress rule validation, ResourceQuota + LimitRange enforcement, end-to-end deletion with Delete + Retain policies. 93 tests total. |
-| 18 | Single-line domain configuration | ✅ Done | `variable "domain"` added to infra-workspaces, keycloak-config, ox-workspace. 41 `_base.yaml` occurrences → `${domain}` template. 13 HCL occurrences → `var.domain`. `file()` → `templatefile()` in nubus.tf, nextcloud.tf, ox-workspace/main.tf. Remaining: intercom-service (8), postfix (1), keycloak-bootstrap (1) — not Tofu-managed. |
-
----
-
-## Increments
-
-### Increment 0 — Project scaffolding
-
-**Goal:** Go module, Makefile, CI, directory structure matching architecture §7 Repo 1.
-
-**Deliverables:**
-```
-gentian-os/
-├── api/v1alpha1/           # CRD Go types (empty stubs)
-├── internal/               # Orchestrator source (empty)
-├── config/crd/             # Generated CRD YAML (empty)
-├── charts/
-│   └── gentian-os/         # Helm chart for the orchestrator
-├── kernel/
-│   ├── tofu/               # OpenTofu modules (copied from server/)
-│   ├── bootstrap/          # ArgoCD bootstrap Applications
-│   ├── services/           # Kernel service Helm values + ExternalSecrets
-│   ├── appsets/             # ApplicationSet definitions
-│   └── manifest/           # Static Kubernetes manifests
-├── scripts/                # Bootstrap + operational scripts
-├── docs/
-├── Makefile
-├── Dockerfile
-└── go.mod
-```
-
-**Actions:**
-- `go mod init github.com/gentian-org/gentian-os`
-- Add `controller-runtime`, `controller-gen`, `kustomize` as dependencies
-- Makefile targets: `generate` (CRD YAML from Go types), `manifests`, `build`, `docker-build`, `test`, `lint`
-- CI pipeline: `go vet`, `go test`, `golangci-lint`, `yamllint`, `shellcheck`, `tofu fmt -check`
-- Copy kernel assets from `server/`: scripts, Tofu modules (openbao-paths, app, app-trust, infra-workspaces, keycloak-config), bootstrap Applications, kernel service configs (all apps from `server/apps/`), ApplicationSets, OpenBao/ESO configs, Helm values
-- Adapt paths in copied files to match new directory structure
-
-**Test:**
-- `make build` succeeds. `make generate` produces no errors. CI green.
-- **Deployment smoke test:** Deploy `gentian-os/kernel/` to the dev cluster using the bootstrap scripts. Verify all kernel services (ArgoCD, OpenBao, Keycloak/Nubus, PostgreSQL, MinIO, Redis, ESO, Reloader) reach a healthy state. This catches path errors, broken chart references, and ApplicationSet misconfigurations immediately — not months later in Increment 15.
-
----
-
-### Increment 1 — CRD definitions (AppProfile, Tenant, IntegrationBinding)
-
-**Goal:** Define the three core CRDs in Go with proper validation, defaulting, and generated YAML — matching architecture §4 and §12.
-
-**Files:**
-- `api/v1alpha1/types.go` — shared types (isolation mode, mail mode, deletion policy)
-- `api/v1alpha1/appprofile_types.go` — AppProfile spec (kernelRequirements, provides, optionalIntegrations, chart, valueMapping, appSecrets, extraValues)
-- `api/v1alpha1/tenant_types.go` — Tenant spec (domain, isolation, mail, quotas, deletionPolicy, apps list) + status (conditions, provisioned apps, phase)
-- `api/v1alpha1/integrationbinding_types.go` — IntegrationBinding spec (contract, provider, consumer, capabilities, auth) + status (state, conditions, secretRef)
-- `api/v1alpha1/groupversion_info.go` — scheme registration
-- `api/v1alpha1/zz_generated.deepcopy.go` — generated
-
-**Design decisions:**
-- AppProfile is **cluster-scoped** (one per app type, not per tenant)
-- Tenant is **cluster-scoped** (owns a namespace)
-- IntegrationBinding is **namespace-scoped** (lives in the tenant's namespace, owned by Tenant CR)
-- `valueMapping` uses typed sub-schemas per kernel requirement (oidc, database, s3, smtp, cache, ldap) — not freeform templates
-- `appSecrets` declares app-internal secrets (admin passwords, session keys, cluster tokens) the orchestrator generates via HMAC-SHA256 and injects — separate from kernel-provided `valueMapping` secrets
-- Validation via `kubebuilder:validation` markers (required fields, enum constraints, regex patterns)
-
-**Required validation — valueMapping spike (must pass before Increment 2):**
-
-Before writing reconcilers that depend on the `valueMapping` schema, validate it against the three hardest apps in `server/`. The spike takes the existing Tofu `set_sensitive` blocks and `values-sensitive.yaml.tftpl` files and attempts to express them as AppProfile `valueMapping` + `extraValues`.
-
-**Spike findings (from `server/` analysis):**
-
-OX App Suite has 12 secret values injected via `templatefile()`. Some map cleanly to `valueMapping` schemas (OIDC, MariaDB, Redis, MinIO/S3). But several are **app-internal secrets** that don't correspond to any kernel requirement:
-
-| Value path | Kernel requirement? | valueMapping fit? |
-|---|---|---|
-| `appsuite.core-mw.masterPassword` | No — OX admin password | `extraValues` only |
-| `appsuite.core-mw.hzGroupPassword` | No — Hazelcast cluster secret | `extraValues` only |
-| `appsuite.core-mw.basicAuthPassword` | No — OX internal API auth | `extraValues` only |
-| `appsuite.core-mw.jolokiaPassword` | No — JMX monitoring auth | `extraValues` only |
-| `global.appsuite.cookieHashSalt` | No — OX cookie signing salt | `extraValues` only |
-| `global.appsuite.shareCryptKey` | No — OX sharing encryption | `extraValues` only |
-| `global.appsuite.sessiondEncryptionKey` | No — OX session encryption | `extraValues` only |
-| `appsuite.core-mw.secretProperties["com.openexchange.oidc.clientSecret"]` | Yes — OIDC | valueMapping (but nested path) |
-| `global.mysql.auth.password` | Yes — MariaDB | valueMapping |
-| `appsuite.core-mw.redis.auth.password` | Yes — Cache | valueMapping |
-| `appsuite.core-mw.propertiesFiles[...].com.openexchange.filestore.s3...secretKey` | Yes — S3 | valueMapping (but deeply nested filesystem path key) |
-| `appsuite.core-mw.propertiesFiles[...].bindDNPassword` | Yes — LDAP | valueMapping (but deeply nested) |
-
-**Conclusions:**
-1. **5 of 12 secrets** are kernel requirements and fit `valueMapping` (OIDC, MariaDB, Redis, S3, LDAP) — but some require deeply nested key paths like `appsuite.core-mw.propertiesFiles./opt/open-xchange/etc/ldapauth.properties.bindDNPassword`
-2. **7 of 12 secrets** are app-internal and can only go through `extraValues` — but they're still secrets, so they need ExternalSecret references, not plain values
-3. **Nubus is worse:** 30 `set_sensitive` values, most are internal (NATS passwords, LDAP search user passwords, provisioning API passwords)
-4. The `valueMapping` schema works for the **kernel-provided** secrets but needs an **app-internal secrets** mechanism
-
-**Schema revision needed:** Add an `appSecrets` field to AppProfile that declares app-internal secrets the orchestrator must generate and inject. These are not kernel requirements — they're random passwords the app needs for internal operation. The orchestrator generates them (HMAC-SHA256), stores them in OpenBao, and syncs them via ExternalSecret:
-
-```yaml
-# In AppProfile spec
-appSecrets:
-  - name: admin_password
-    valuePath: "appsuite.core-mw.masterPassword"
-  - name: hz_group_password
-    valuePath: "appsuite.core-mw.hzGroupPassword"
-  - name: cookie_hash_salt
-    valuePath: "global.appsuite.cookieHashSalt"
-```
-
-This keeps `valueMapping` clean (typed schemas for kernel resources) while handling the reality that most complex charts have 5–10 internal secrets that don't map to any kernel function.
-
-For **Pattern B apps** (where `existingSecret` isn't supported), the `appSecrets` values are injected via Tofu Controller `set_sensitive` alongside the kernel-provided secrets — the `deploymentMethod: tofu-controller` path handles both.
-
-**Test:**
-- `make generate` produces CRD YAML under `config/crd/`
-- `kubectl apply --dry-run=server -f config/crd/` succeeds on a test cluster
-- Unit tests verify deepcopy, defaulting, and validation
-- Example CRs from architecture §12.1–12.3 validate against the generated schema
-- **Spike**: hand-write `ox-appsuite.yaml` AppProfile CR using real value paths from `server/` — must validate against the generated CRD schema. If any value path can't be expressed, fix the CRD before proceeding. Note: Nubus and Nextcloud are kernel services (deployed cluster-wide once); they do NOT have AppProfiles.
-
----
-
-### Increment 2 — Orchestrator skeleton + Tenant namespace reconciler
-
-**Goal:** A running controller-runtime binary that watches Tenant CRs and creates tenant namespaces with RBAC, ResourceQuotas, LimitRanges, and NetworkPolicies — the simplest useful reconciler.
-
-**Files:**
-- `internal/controller/tenant_controller.go` — main reconciler
-- `internal/controller/tenant_controller_test.go` — envtest-based tests
-- `cmd/main.go` — entry point, scheme registration, controller manager setup
-
-**Reconciler logic (Tenant → namespace):**
-1. Ensure namespace `tenant-{name}` exists with labels `gentianos.io/tenant: {name}`
-2. Apply ResourceQuota from `spec.quotas`
-3. Apply LimitRange (sensible defaults)
-4. Apply NetworkPolicy: allow egress to `platform-kernel` namespace, deny ingress from other tenant namespaces
-5. Set Tenant status condition `NamespaceReady: True`
-6. On Tenant deletion with `deletionPolicy: Retain` — keep namespace, remove orchestrator-owned resources. With `Delete` — delete namespace (cascades all resources)
-
-**Test:**
-- envtest: create Tenant → namespace exists with correct labels, quotas, network policies
-- envtest: delete Tenant with Retain → namespace preserved
-- envtest: delete Tenant with Delete → namespace deleted
-- `make docker-build` produces a container image
-- Deploy to dev cluster, create a test Tenant, verify namespace appears
-
----
-
-### Increment 3 — Identity reconciler (Keycloak realm + OIDC clients)
-
-**Goal:** Orchestrator provisions Keycloak realm and OIDC clients per tenant using Keycloak Operator CRs — matching architecture §3.1.
-
-**Prerequisites:** Keycloak Operator installed on cluster.
-
-**Nubus compatibility decision:** The current deployment uses **Nubus**, which bundles Keycloak + UCS LDAP + UDM + Portal into a single Helm chart. The Keycloak Operator cannot manage the Keycloak instance inside Nubus — it manages standalone Keycloak instances. Two paths are available:
-
-| Path | Approach | Trade-off |
-|---|---|---|
-| **A — Keep Nubus** | Provision realms/clients via Keycloak REST API (Jobs or lightweight controller). UDM REST API for LDAP. | Preserves existing UCS stack. Orchestrator needs REST API client code instead of pure CR creation. |
-| **B — Replace Nubus** | Deploy standalone Keycloak (Operator-managed) + standalone UCS LDAP. Migrate UDM functions to direct LDAP provisioning. | Clean operator-native path. Requires validating all Nubus-dependent features still work. |
-
-**Recommended: Path A for v1.** Nubus is deployed and working. The orchestrator uses Jobs that call the Keycloak Admin REST API for realm/client provisioning and the UDM REST API for LDAP provisioning. Keycloak Operator CRs become a future migration target once Nubus is decomposed. This avoids a risky Nubus replacement while still delivering tenant provisioning.
-
-**Reconciler logic (Tenant → identity):**
-1. Create a `Job` that calls the Keycloak Admin REST API to create tenant realm `{tenant-name}` with standard realm settings (token lifetimes, login theme, password policy)
-2. For each app in `spec.apps`, look up the AppProfile's `kernelRequirements.identity.oidc`
-3. If OIDC required: create a `Job` that provisions a Keycloak client in the tenant realm with redirect URIs derived from `{tenant-domain}/{app-path}`
-4. Store OIDC client credentials in OpenBao at `gentian-os/tenants/{tenant-name}/apps/{app-name}/oidc`
-5. Create `ExternalSecret` CR to sync OIDC credentials into the tenant namespace
-6. For apps with `optionalIntegrations` using `oidc-token-exchange`, configure token exchange policies between provider and consumer clients
-7. Set Tenant status condition `IdentityReady: True`
-
-**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — create a Job that deletes the Keycloak realm via REST API (cascades all clients). With `Retain` — revoke client secrets but keep the realm and user accounts intact.
-
-**Design note:** Using Jobs instead of Keycloak Operator CRs is a pragmatic choice for Nubus compatibility. The Jobs are idempotent (check-before-create) and the orchestrator tracks completion via Job status conditions. When Nubus is eventually decomposed into standalone components, the Jobs can be replaced with Keycloak Operator CRs without changing the reconciler's external interface.
-
-**Test:**
-- envtest + mock Keycloak API: verify Jobs are created with correct realm, client config
-- Integration test on dev cluster: create Tenant with one app → Keycloak realm exists, OIDC client works, ExternalSecret syncs
-- Verify OIDC login flow end-to-end with a test app
-
----
-
-### Increment 4 — LDAP provisioner (UDM REST API)
-
-**Goal:** Provision per-tenant LDAP organisational units, bind accounts, and groups via the UDM REST API — required by multiple apps (OX App Suite LDAP auth, OpenProject LDAP sync, Nextcloud LDAP backend).
-
-**Prerequisites:** Nubus deployed with UDM REST API accessible from kernel namespace.
-
-**Reconciler logic (Tenant → LDAP):**
-1. For each tenant, create a `Job` that calls the UDM REST API to:
-   - Create OU `ou={tenant-name},dc=...` under the tenant's LDAP subtree
-   - Create a bind account `cn=app-{app-name},ou={tenant-name},dc=...` for each app requiring LDAP (`kernelRequirements.identity.ldap`)
-   - Create default groups (e.g., `users`, `admins`) under the tenant OU
-2. Store LDAP bind credentials in OpenBao at `gentian-os/tenants/{tenant-name}/apps/{app-name}/ldap`
-3. Create `ExternalSecret` CR to sync LDAP bind credentials into tenant namespace
-4. Set status condition `LDAPReady: True`
-5. On tenant deletion with `deletionPolicy: Delete`: remove OU and all child entries via UDM REST API
-
-**Design note:** Architecture §3.1 specifies "LDAP bind account via UDM REST API (via Job)." The Jobs are idempotent — they check for existing entries before creating. The UDM REST API is preferred over direct LDAP writes because Nubus validates and indexes entries through UDM.
-
-**Test:**
-- envtest: Tenant with LDAP-requiring app → Job created with correct UDM API calls
-- Integration: create Tenant → LDAP OU exists, bind account can authenticate, base DN is correct
-- Verify apps can bind: Nextcloud LDAP backend connects with provisioned credentials
-
----
-
-### Increment 5 — Database reconciler (CloudNativePG)
-
-**Goal:** Orchestrator provisions per-app-per-tenant PostgreSQL databases via CloudNativePG operator CRs — replacing the current Tofu Controller Helm-based PostgreSQL deployment.
-
-**Prerequisites:** CloudNativePG operator installed on cluster.
-
-**Reconciler logic (Tenant + AppProfile → database):**
-1. For each app in `spec.apps` where AppProfile declares `kernelRequirements.database.engine: postgresql`:
-2. Create CloudNativePG `Database` CR: `{tenant-prefix}_{app-name}` on the shared PostgreSQL cluster
-3. Create CloudNativePG `Role` CR: dedicated user with grants limited to that database
-4. Store credentials in OpenBao at `gentian-os/tenants/{tenant-name}/apps/{app-name}/database`
-5. Create `ExternalSecret` CR to sync database credentials into tenant namespace
-6. Set per-app status condition `DatabaseReady: True`
-
-**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete CloudNativePG `Database` and `Role` CRs (operator drops the database). With `Retain` — revoke the Role's login privilege but keep the database and data.
-
-**Migration path from `server/`:** The current setup uses Tofu Controller to deploy PostgreSQL via Helm (Pattern B, chart v2.1.2). CloudNativePG replaces this with operator CRs for database lifecycle management. The shared PostgreSQL cluster itself is still deployed as a kernel service (Layer 120).
-
-**Data migration strategy:** For the existing dev cluster, two options:
-- **Greenfield (recommended for dev):** Deploy a new CloudNativePG cluster alongside the existing Helm-based PostgreSQL. The orchestrator provisions new databases on CloudNativePG. Old databases remain on the Helm-based instance until all apps are migrated, then decommission it.
-- **In-place (for production):** Use `pg_dump`/`pg_restore` to migrate databases from the Helm-based instance to CloudNativePG. Requires a maintenance window per tenant. Document the procedure in `docs/runbooks/`.
-
-**Test:**
-- envtest: Tenant with database-requiring app → Database + Role CRs created
-- Integration: create Tenant → connect to provisioned database with provisioned credentials
-- Verify isolation: tenant A cannot access tenant B's database
-
----
-
-### Increment 6 — MariaDB reconciler
-
-**Goal:** Orchestrator provisions per-app-per-tenant MariaDB databases — required by OX App Suite (a core openDesk app that uses MariaDB, not PostgreSQL).
-
-**Prerequisites:** MariaDB deployed as a kernel service (Layer 120). Optionally, MariaDB Operator installed for CR-based provisioning.
-
-**Reconciler logic (Tenant + AppProfile → MariaDB database):**
-1. For each app in `spec.apps` where AppProfile declares `kernelRequirements.database.engine: mariadb`:
-2. **If MariaDB Operator is available:** create `MariaDBDatabase` CR + user CR with grants limited to that database
-3. **If no operator:** create a `Job` that runs `CREATE DATABASE` + `CREATE USER` + `GRANT` SQL via the MariaDB client CLI (idempotent — checks existence first)
-4. Store credentials in OpenBao at `gentian-os/tenants/{tenant-name}/apps/{app-name}/database`
-5. Create `ExternalSecret` CR to sync database credentials into tenant namespace
-6. Set per-app status condition `DatabaseReady: True`
-
-**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete MariaDB database and user (via operator CR deletion or `DROP DATABASE`/`DROP USER` Job). With `Retain` — revoke user privileges but keep the database.
-
-**Design note:** Architecture §3.1 lists MariaDB Operator as the preferred path, with "direct SQL via Job" as the fallback. Since the MariaDB Operator ecosystem is less mature than CloudNativePG, the Job path is the pragmatic starting point. The reconciler abstracts the provisioning method — switching to operator CRs later requires no changes to the AppProfile or Tenant CR schemas.
-
-**Test:**
-- envtest: Tenant with MariaDB-requiring app (e.g., OX App Suite) → Job or CR created
-- Integration: create Tenant → connect to provisioned MariaDB database with provisioned credentials
-- Verify isolation: tenant A cannot access tenant B's MariaDB databases
-
----
-
-### Increment 7 — Storage reconciler (MinIO S3 + Nextcloud WebDAV)
-
-**Goal:** Orchestrator provisions per-tenant S3 buckets and Nextcloud users/groups.
-
-**Reconciler logic (Tenant + AppProfile → storage):**
-1. For apps requiring S3 (`kernelRequirements.storage.s3`): create MinIO bucket `{tenant-prefix}-{app-name}`, IAM user with scoped policy, store credentials in OpenBao
-2. For apps requiring WebDAV (`kernelRequirements.storage.files.protocol: webdav`): provision via Nextcloud OCS API (create group for tenant, configure share permissions)
-3. Create ExternalSecret CRs for all storage credentials
-4. Set status condition `StorageReady: True`
-
-**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete MinIO bucket and IAM user, remove Nextcloud group and shared folders via OCS API. With `Retain` — revoke IAM credentials but keep bucket contents and Nextcloud data.
-
-**Design note:** MinIO Operator CRs for bucket provisioning if available; otherwise use a lightweight Job that calls the MinIO admin API. This is one of the cases where the orchestrator may use a Job rather than an operator CR, since MinIO Operator's bucket management is limited.
-
-**Test:**
-- Integration: create Tenant with S3-requiring app → bucket exists, credentials work, isolation enforced
-
----
-
-### Increment 8 — Cache reconciler (Redis ACLs + Memcached)
-
-**Goal:** Orchestrator provisions per-app Redis ACL users and Memcached instances — required by OX App Suite (Redis), Element/Synapse (Redis), and OpenProject (Memcached).
-
-**Prerequisites:** Redis deployed as a kernel service (Layer 140). Memcached available as a kernel service or deployable per-tenant.
-
-**Reconciler logic (Tenant + AppProfile → cache):**
-1. For apps requiring Redis (`kernelRequirements.cache.engine: redis`):
-   - **If Redis Operator is available:** create operator CR for a dedicated ACL user with a scoped key prefix `{tenant-prefix}:{app-name}:*`
-   - **If no operator:** create a `Job` that runs `ACL SETUSER` via `redis-cli` (idempotent — checks existence first)
-   - Store Redis credentials in OpenBao at `gentian-os/tenants/{tenant-name}/apps/{app-name}/cache`
-   - Create `ExternalSecret` CR to sync cache credentials into tenant namespace
-2. For apps requiring Memcached (`kernelRequirements.cache.engine: memcached`):
-   - Deploy a per-tenant Memcached instance via ArgoCD Application CR (Memcached has no native multi-tenancy — isolation requires separate instances)
-   - Store connection details in OpenBao
-   - Create `ExternalSecret` CR
-3. Set per-app status condition `CacheReady: True`
-
-**Delete path:** On Tenant deletion with `deletionPolicy: Delete` — delete Redis ACL users (operator CR or `ACL DELUSER` Job), delete per-tenant Memcached deployments (via ArgoCD Application CR deletion). With `Retain` — disable Redis ACL user but keep Memcached instance running (for data recovery).
-
-**Delete path for Ingress (Increment 10):** On Tenant deletion — delete Ingress resources, cert-manager Certificate CRs, and DNS Tofu workspace CR (Tofu removes DNS records). These are always deleted regardless of `deletionPolicy` since they are ephemeral routing resources, not tenant data.
-
-**Design note:** Redis supports ACL users (Redis 6+) for per-app isolation on a shared instance. Memcached has no authentication or namespace isolation, so per-tenant instances are the only safe option. The cost is acceptable — Memcached is lightweight (~64MB per instance).
-
-**Test:**
-- Integration: create Tenant with Redis-requiring app → ACL user exists, app can read/write only its key prefix
-- Integration: create Tenant with Memcached-requiring app → Memcached deployed in tenant namespace
-- Isolation: tenant A's Redis ACL user cannot access tenant B's keys
-
----
-
-### Increment 9 — App deployment reconciler (ArgoCD Application CRs)
-
-**Goal:** The orchestrator creates ArgoCD Application CRs per app per tenant — the deployment handoff described in architecture §4.4.
-
-**Reconciler logic (Tenant + AppProfile → ArgoCD Application):**
-1. For each app in `spec.apps`, look up the AppProfile
-2. Render Helm values using `valueMapping` schema:
-   - OIDC: point at ExternalSecret-synced credentials
-   - Database: host, name, ExternalSecret ref
-   - S3: endpoint, bucket, ExternalSecret ref
-   - SMTP: host, port, ExternalSecret ref (if mail mode allows)
-   - Cache: host, port
-   - LDAP: host, baseDn, ExternalSecret ref
-3. Merge `extraValues` from AppProfile
-4. Merge per-tenant app `config` overrides (e.g., `replicas: 2`)
-5. Create `Application` CR in `argocd` namespace with:
-   - `spec.source`: chart ref from AppProfile
-   - `spec.destination.namespace`: `tenant-{name}`
-   - Owner reference to Tenant CR
-   - Labels: `gentianos.io/tenant`, `gentianos.io/app`
-6. ArgoCD takes over from here — deploys, monitors, self-heals
-7. Watch Application CR status → reflect sync/health in Tenant status
-
-**This is the core of the orchestrator.** It replaces the current ApplicationSet + manual values approach with a programmatic, per-tenant deployment pipeline.
-
-**Pattern B strategy:** Not all upstream Helm charts support `existingSecret` references (architecture §5.3). The orchestrator handles both patterns:
-
-| Pattern | Orchestrator action | Apps |
-|---|---|---|
-| **Pattern A** (preferred) | Create ArgoCD `Application` CR with `existingSecret` refs in Helm values | Redis, MinIO, Intercom Service, OpenProject, Collabora |
-| **Pattern B** (fallback) | Create Tofu Controller `Terraform` CR with `set_sensitive` injecting secrets from OpenBao | Nubus, OX App Suite, Postfix, Dovecot |
-
-For Pattern B apps, the orchestrator creates a `Terraform` CR instead of an ArgoCD `Application` CR. The Tofu Controller reads secrets from OpenBao and injects them via `set_sensitive` during Helm apply. This means Pattern B apps appear in the Tofu Controller dashboard rather than ArgoCD — the AppProfile declares which pattern to use via a `deploymentMethod` field (`argocd` or `tofu-controller`). The orchestrator routes accordingly.
-
-**Long-term goal — eliminate Pattern B by contributing upstream:** Pattern B is a pragmatic workaround, not the target state. The plan is to contribute `existingSecret` support to upstream Helm charts (Nubus, OX App Suite, Postfix, Dovecot) and migrate each app from Pattern B to Pattern A as patches are merged. Each successful upstream contribution removes one Tofu Controller dependency, simplifies the orchestrator (ArgoCD Application CR instead of `Terraform` CR), and improves visibility (app appears in ArgoCD UI instead of Tofu Controller). Track upstream PRs in the AppProfile's `deploymentMethod` field — when a chart gains `existingSecret` support, flip from `tofu-controller` to `argocd` and remove the Tofu module.
-
-**Test:**
-- envtest: Tenant with 3 apps → 3 Application CRs with correct values
-- Integration: create Tenant → ArgoCD deploys apps → apps are accessible
-- Verify value mapping: OIDC issuer points at correct realm, database name matches prefix convention
-
----
-
-### Increment 10 — Ingress reconciler (per-tenant routing + DNS)
-
-**Goal:** Orchestrator provisions per-tenant Ingress resources and (optionally) DNS records — required for tenant apps to be reachable at `{tenant-domain}`.
-
-**Reconciler logic (Tenant → ingress):**
-1. For each app deployed in the tenant namespace, create an `Ingress` resource:
-   - Host: `{app-slug}.{tenant-domain}` or `{tenant-domain}/{app-path}` (depending on routing strategy in Tenant CR)
-   - TLS: reference cert-manager `Certificate` CR or wildcard cert
-   - Backend: Service created by the app's Helm chart
-2. Create a cert-manager `Certificate` CR for `*.{tenant-domain}` (wildcard) or per-app certificates
-3. **DNS provisioning (if enabled):** Create an OpenTofu workspace (via Tofu Controller `Terraform` CR) that provisions DNS records for `{tenant-domain}` using the appropriate provider (Cloudflare, AWS Route53, etc.). The Tofu module is parameterised by the tenant domain and app list.
-4. Surface DNS records that need manual creation (for providers without Tofu support) in the Tenant CR status
-5. Set status condition `IngressReady: True`
-
-**Design note:** Architecture §3 assigns DNS to OpenTofu ("best fit — huge provider ecosystem"). The orchestrator creates a Tofu Controller CR per tenant for DNS, keeping the boundary clean: orchestrator handles Ingress resources (K8s-native), OpenTofu handles DNS records (cloud-provider-specific). For clusters without external DNS requirements (e.g., dev/staging with `*.nip.io`), the DNS step is skipped.
-
-**Test:**
-- Integration: create Tenant → Ingress resources exist, TLS certificate issued, app reachable at `{app}.{tenant-domain}`
-- Verify: second tenant gets independent ingress with no route conflicts
-- DNS test (if provider configured): `dig {app}.{tenant-domain}` resolves correctly
-
----
-
-### Increment 11 — IntegrationBinding reconciler
-
-**Goal:** Auto-generate IntegrationBinding CRs when both provider and consumer of a contract are in a tenant's app list — architecture §4.3.
-
-**Reconciler logic:**
-1. For each app in tenant's app list, check AppProfile's `optionalIntegrations`
-2. For each integration, check if the `provider` app is also in the tenant's app list
-3. If both exist: create IntegrationBinding CR with credential provisioning (OpenBao path, OIDC token exchange config)
-4. If provider is removed from tenant: garbage-collect the IntegrationBinding (via owner reference)
-5. Track health: periodically verify credentials are valid and provider is reachable
-6. Surface binding status in Tenant CR status
-
-**Test:**
-- envtest: Tenant with Nextcloud + OX App Suite → `filepicker` IntegrationBinding created
-- envtest: remove OX App Suite from tenant → IntegrationBinding deleted
-- Integration: verify token exchange works between bound apps
-
----
-
-### Increment 12 — OpenBao path restructuring
-
-**Goal:** Migrate OpenBao secret paths from flat `gentian/{env}/...` to hierarchical `gentian-os/kernel/...` and `gentian-os/tenants/{name}/apps/{app}/...` — architecture §5.
-
-**Actions:**
-- Update `tofu/modules/openbao-paths/` to create the architecture's secret tree structure
-- Update `seed-openbao.sh` to seed kernel credentials under `gentian-os/kernel/` paths
-- Update orchestrator to write tenant secrets under `gentian-os/tenants/{name}/apps/{app}/`
-- Update all `ExternalSecret` CRs (both orchestrator-generated and kernel static ones) to reference new paths
-- Generate per-tenant OpenBao policies: read-only access scoped to `gentian-os/tenants/{tenant}/apps/{app}/*`
-
-**Migration on dev cluster:**
-- Seed new paths → update ExternalSecrets → verify all secrets sync → remove old paths
-
-**Test:**
-- `bao kv list gentian-os/kernel/` shows expected tree
-- `bao kv list gentian-os/tenants/test-tenant/apps/` shows per-app paths
-- All ExternalSecrets report `SecretSynced`
-- Policy test: tenant-scoped token can read own paths, cannot read other tenant paths
-
----
-
-### Increment 13 — Kernel services as Helm chart + observability
-
-**Goal:** Package the orchestrator + CRDs as a Helm chart (`charts/gentian-os/`) with built-in observability — so a deployment repo can install it with `helm install` and immediately get metrics and status visibility.
-
-**Chart contents:**
-- CRD manifests (from `config/crd/`) — including printer columns for `kubectl get tenants` (STATUS, APPS, READY, MAIL, AGE) and `kubectl get integrationbindings` (CONTRACT, STATUS, AGE)
-- Orchestrator Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding
-- ConfigMap for orchestrator settings (OpenBao address, ArgoCD namespace, defaults)
-- Prometheus ServiceMonitor for `gentianos_*` metrics
-- Grafana dashboard ConfigMap (optional, enabled via `grafana.dashboards.enabled`)
-
-**Prometheus metrics (architecture §16):**
-- `gentianos_tenants_total` — total number of tenants
-- `gentianos_tenant_apps_total` — apps per tenant
-- `gentianos_provisioning_duration_seconds` — time to provision a tenant (histogram)
-- `gentianos_reconcile_errors_total` — failed reconciliations by type
-- `gentianos_credentials_age_seconds` — age of oldest credential per tenant
-- `gentianos_integration_bindings_status` — binding health by contract type
-- `gentianos_externalsecrets_sync_status` — ESO sync health per tenant
-- `gentianos_operator_cr_ready_total` — operator CRs in Ready state
-- `gentianos_operator_cr_failed_total` — operator CRs in Failed state
-
-Metrics are exported via the controller-runtime `/metrics` endpoint. Each reconciler (Increments 2–11) instruments its reconcile loop — this increment packages and exposes them.
-
-**Values:**
-- `image.repository`, `image.tag`
-- `openbao.address`, `openbao.authPath`
-- `argocd.namespace`, `argocd.project`
-- `defaults.isolation.mode` (namespace or vcluster)
-- `metrics.serviceMonitor.enabled` (default: true)
-
-**Test:**
-- `helm template` renders valid YAML (including ServiceMonitor)
-- `helm install --dry-run` succeeds on test cluster
-- End-to-end: install chart → create Tenant CR → full provisioning pipeline runs
-- `kubectl get tenants` shows STATUS, APPS, READY, MAIL columns
-- Prometheus scrapes orchestrator metrics endpoint → `gentianos_tenants_total` > 0
-
----
-
-### Increment 14 — AppProfiles for user-installable apps + AppProfile update reconciler
-
-**Goal:** Write the first real AppProfile CRs for user-installable apps and implement the AppProfile update reconciler (architecture §14.3) — so that bumping a chart version in a profile propagates to all tenants using it.
-
-**Kernel service classification (no AppProfile needed):**
-
-The following services are deployed exactly once, cluster-wide, by the Layer 100–150 ApplicationSets. The orchestrator does **not** create ArgoCD Applications for them — it calls their APIs via Jobs (Increments 3, 4, 7). They do not get AppProfiles.
-
-| Service | Architecture layer | Per-tenant provisioning |
-|---|---|---|
-| **Nubus** (Keycloak + UCS LDAP) | Layer 110 — Identity | REST API Jobs (Inc 3 Keycloak, Inc 4 LDAP) |
-| **Nextcloud** | Layer 130 — Storage | OCS REST API Jobs (Inc 7) |
-| **Intercom Service** (Notification Gateway) | Layer 150 — Shell UI + Notification Gateway | No per-tenant provisioning needed |
-
-These three follow the same rule: kernel deployment is managed by the ApplicationSet, not the orchestrator; per-tenant wiring is done via API Jobs, not Helm. AppProfiles describe Helm-deployed apps, which these are not (from the orchestrator's perspective).
-
-**What gets AppProfiles (user-installable apps in `gentian-apps`):**
-
-AppProfiles belong to apps that the orchestrator deploys **per-tenant** as ArgoCD Application CRs (or Tofu Controller CRs). These live in the `gentian-apps` repo (architecture §7 Repo 2). All six user-installable openDesk apps get AppProfiles in this increment. Value paths are sourced directly from `opendesk/helmfile/apps/{app}/values*.yaml.gotmpl` (source of truth). The `server/` repo is used as a cross-check only.
-
-| App | Profile file | Pattern | KernelRequirements | AppSecrets | Chart |
-|---|---|---|---|---|---|
-| **OX App Suite** | `appprofile_ox-appsuite.yaml` | B — Tofu | OIDC, LDAP, MariaDB, Redis, S3, SMTP+IMAP | 7 | `appsuite-public-sector` v2.26.32 |
-| **Collabora** | `appprofile_collabora.yaml` | B — Tofu | None (WOPI server — accessed through Nextcloud kernel service) | 1 | `collabora-online` v1.1.45 |
-| **Element** (Matrix / Synapse) | `appprofile_element.yaml` | B — Tofu | OIDC, PostgreSQL, SMTP | 3 | `opendesk-element` v6.1.9 |
-| **Jitsi** | `appprofile_jitsi.yaml` | B — Tofu | OIDC (JWT app secret, Keycloak hybrid-matrix-token) | 4 | `opendesk-jitsi` v3.5.1 |
-| **OpenProject** | `appprofile_openproject.yaml` | B — Tofu | OIDC, PostgreSQL, S3, SMTP, LDAP | 2 | `openproject` v10.1.0 |
-| **XWiki** | `appprofile_xwiki.yaml` | B — Tofu | OIDC, PostgreSQL, SMTP, LDAP | 0 | `xwiki` v1.4.4 |
-
-All charts in the openDesk helmfile inject secrets as direct Helm values (`.Values.secrets.*`) — no chart has native `existingSecret` support. All are therefore **Pattern B** (Tofu Controller `set_sensitive`). The orchestrator injects all credentials via `set_sensitive` blocks.
-
-**Note on Postfix and Dovecot:** Per-tenant mail extensions when `spec.mail.mode: selfhosted`. They get AppProfiles in **Increment 16** (mail extension reconciler).
-
-**Per-app value paths (from `opendesk/helmfile/apps/{app}/values*.yaml.gotmpl`):**
-
-**OX App Suite** (`appprofile_ox-appsuite.yaml` — created in Inc 1 spike, updated here with `provides`/`optionalIntegrations`):
-- `valueMapping.oidc.clientSecretKey` = `appsuite.core-mw.secretProperties["com.openexchange.oidc.clientSecret"]`
-- `valueMapping.database.passwordKey` = `global.mysql.auth.password`
-- `valueMapping.s3.secretKeyKey` = `appsuite.core-mw.propertiesFiles["/opt/open-xchange/etc/filestore-s3.properties"]["com.openexchange.filestore.s3.ox-filestore-s3.secretKey"]`
-- `valueMapping.cache.passwordKey` = `appsuite.core-mw.redis.auth.password`
-- `valueMapping.ldap.bindPasswordKey` = `appsuite.core-mw.propertiesFiles["/opt/open-xchange/etc/ldapauth.properties"].bindDNPassword`
-- 7 `appSecrets`: `admin_password`, `hz_group_password`, `basic_auth_password`, `jolokia_password`, `cookie_hash_salt`, `share_crypt_key`, `sessiond_encryption_key`
-
-**Collabora** (`appprofile_collabora.yaml`):
-- No `kernelRequirements` — Collabora is a WOPI document editor. Users authenticate through Nextcloud (kernel service), not directly. The chart has no OIDC client, no DB, no S3.
-- `appSecrets.admin_password` → `collabora.password`
-- `provides`: `office-editor` (wopi)
-- `optionalIntegrations`: none (always called by Nextcloud kernel service)
-- Source: `opendesk/helmfile/apps/collabora/values.yaml.gotmpl`
-
-**Element / Synapse** (`appprofile_element.yaml`):
-- `valueMapping.oidc.clientSecretKey` = `configuration.homeserver.oidc.clientSecret`
-- `valueMapping.database.passwordKey` = `configuration.database.password.value`
-- `valueMapping.smtp.passwordKey` = `configuration.homeserver.smtp.password`
-- `appSecrets.registration_shared_secret` → `configuration.homeserver.registrationSharedSecret`
-- `appSecrets.intercom_as_token` → `configuration.homeserver.appServiceConfigs[0].as_token`
-- `appSecrets.ox_appsuite_as_token` → `configuration.homeserver.appServiceConfigs[1].as_token`
-- Note: TURN shared secret (`configuration.homeserver.turn.sharedSecret`) is a cluster-level infrastructure credential provided via OpenBao, not an `appSecret`.
-- `provides`: `chat` (matrix)
-- Source: `opendesk/helmfile/apps/element/values-synapse.yaml.gotmpl`
-
-**Jitsi** (`appprofile_jitsi.yaml`):
-- `valueMapping.oidc.clientSecretKey` = `settings.jwtAppSecret.value` (Jitsi uses the hybrid-matrix-token scheme with Keycloak; the JWT app secret plays the role of the OIDC client secret)
-- `appSecrets.jwt_app_secret` → `settings.jwtAppSecret.value`
-- `appSecrets.jicofo_auth_password` → `jitsi.jicofo.xmpp.password`
-- `appSecrets.jicofo_component_secret` → `jitsi.jicofo.xmpp.componentSecret`
-- `appSecrets.jvb_auth_password` → `jitsi.jvb.xmpp.password`
-- `provides`: `videoconference` (webrtc)
-- Source: `opendesk/helmfile/apps/jitsi/values-jitsi.yaml.gotmpl`
-
-**OpenProject** (`appprofile_openproject.yaml`):
-- `valueMapping.oidc.clientSecretKey` = `openproject.oidc.secret`
-- `valueMapping.database.passwordKey` = `postgresql.auth.password`
-- `valueMapping.s3.secretKeyKey` = `s3.auth.secretAccessKey`
-- `valueMapping.smtp.passwordKey` = `environment.OPENPROJECT_SMTP__PASSWORD`
-- `valueMapping.ldap.bindPasswordKey` = `environment.OPENPROJECT_SEED_LDAP_OPENDESK_BINDPASSWORD`
-- `appSecrets.admin_password` → `openproject.admin_user.password`
-- `appSecrets.api_admin_password` → `environment.OPENPROJECT_AUTHENTICATION_GLOBAL__BASIC__AUTH_PASSWORD`
-- `provides`: `project-management` (http-json)
-- Source: `opendesk/helmfile/apps/openproject/values.yaml.gotmpl`
-
-**XWiki** (`appprofile_xwiki.yaml`):
-- `valueMapping.oidc.clientSecretKey` = `customConfigs.xwiki\.properties.oidc\.secret` (dot-escaped — this key is a nested YAML map with dotted names)
-- `valueMapping.database.passwordKey` = `externalDB.password` (chart supports both PostgreSQL and MariaDB; AppProfile defaults to PostgreSQL)
-- `valueMapping.smtp.passwordKey` = `properties["property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.password"]`
-- `valueMapping.ldap.bindPasswordKey` = `customConfigs.xwiki\.cfg.xwiki\.authentication\.ldap\.bind_pass`
-- `provides`: `wiki` (http-json)
-- Source: `opendesk/helmfile/apps/xwiki/values.yaml.gotmpl`
-
-**Each profile declares:**
-- `kernelRequirements` (which kernel functions it needs)
-- `chart` reference (OCI URL + version)
-- `valueMapping` (typed schema for Helm values)
-- `appSecrets` (app-internal generated secrets, HMAC-SHA256 derived)
-- `provides` (what contracts it offers)
-- `optionalIntegrations` (what peer integrations it supports)
-- `deploymentMethod` (`argocd` for Pattern A, `tofu-controller` for Pattern B)
-
-**AppProfile update reconciler (`internal/controller/appprofile_controller.go`):**
-- Watch AppProfile CRs for changes (chart version bump, valueMapping update)
-- On update: list all Tenants referencing this profile via a label index
-- For each affected tenant: re-render valueMapping and update the ArgoCD Application CR (or Tofu Controller `Terraform` CR for Pattern B apps) with the new chart version and values
-- ArgoCD handles the rolling upgrade per tenant
-- Update AppProfile status with affected tenant count and rollout progress
-- This is the mechanism that makes "adding an app to the catalogue is a single-file operation" actually work at scale
-
-**Source:** Value paths sourced from `opendesk/helmfile/apps/{app}/values*.yaml.gotmpl` (primary source of truth — the local openDesk repo clone). Chart names and versions from `opendesk/helmfile/environments/default/charts.yaml.gotmpl`. The `server/` repo is used as a secondary cross-check only.
-
-**Test:**
-- All six AppProfile samples validate against the AppProfile CRD schema (`kubectl apply --dry-run=server`)
-- Orchestrator can render correct Helm values from each profile's `valueMapping`
-- AppProfile update test: bump chart version in a profile → all tenants' ArgoCD Applications updated → ArgoCD rolls out new version
-- Rollout tracking: AppProfile status reflects how many tenants have been updated
-
----
-
-### Increment 15 — Deployment repo setup (gentian-deployments)
-
-**Goal:** Create the `gentian-deployments` repo structure — architecture §7 Repo 3. This replaces `server/` as the deployment source of truth.
-
-**Structure:**
-```
-gentian-deployments/
-├── dev/
-│   ├── bootstrap/
-│   │   └── install.sh
-│   ├── kernel/
-│   │   ├── values-dev.yaml          # Env-specific kernel overrides
-│   │   └── tofu.tfvars              # OpenTofu vars (domain, master password ref)
-│   ├── app-of-apps.yaml             # ArgoCD Application → gentian-os chart
-│   └── tenants/
-│       └── dev-tenant.yaml          # First Tenant CR
-└── README.md
-```
-
-**The `app-of-apps.yaml`** ties gentian-os + gentian-apps + gentian-deployments together as described in architecture §7. It points at the gentian-os Helm chart by OCI version.
-
-**Test:**
-- Bootstrap a fresh dev cluster using only `gentian-deployments/dev/bootstrap/install.sh`
-- Apply `app-of-apps.yaml` → ArgoCD installs orchestrator → create Tenant CR → full stack provisions
-- This is the **end-to-end validation** that the architecture works
-
----
-
-### Increment 16 — Mail kernel extension (shared infrastructure)
-
-**Goal:** Model Postfix + Dovecot as shared kernel infrastructure with tenant-scoped configuration entries — consistent with how all other kernel components (Keycloak, PostgreSQL, MinIO, Redis) are deployed.
-
-**Architecture decision:** The original plan called for per-tenant ArgoCD Application CRs deploying Postfix/Dovecot into each tenant namespace. During implementation, this was revised to follow the same shared-infrastructure pattern used by all other kernel services. Postfix and Dovecot run once in the kernel namespace; tenants are registered via ConfigMap entries. This is simpler (no per-tenant pod overhead), more consistent with the architecture, and matches how openDesk handles mail.
-
-**Reconciler logic (Tenant → shared mail infrastructure):**
-1. Read `spec.mail.mode` from Tenant CR (default: `selfhosted`)
-2. `selfhosted`:
-   - Generate DKIM RSA-2048 key Secret in kernel namespace (`dkim-{tenant}`) — created once, never auto-rotated
-   - Register tenant domain in shared Postfix virtual-domains ConfigMap (`mail-postfix-virtual-domains`)
-   - Create per-tenant SMTP credentials Secret in tenant namespace (`smtp-credentials-{tenant}`) with random password
-   - Register tenant domain in shared Dovecot domains ConfigMap (`mail-dovecot-domains`)
-   - Set `status.mail` with DKIM public key, SPF record, DMARC record
-3. `external`: copy SMTP relay credentials from kernel namespace Secret to tenant namespace
-4. `transport-only`: register Postfix virtual domain + SMTP credentials only (no Dovecot)
-5. `disabled`: set `MailReady=True` with no resources created
-
-**Files:**
-- `internal/controller/mail_reconciler.go` (502 lines) — `ensureMail`, `ensureMailSelfhosted`, `ensureMailExternal`, `ensureMailTransportOnly`, `ensurePostfixVirtualDomain`, `ensureDovecotDomainConfig`, `ensureSmtpCredentialsSecret`, `ensureDKIMSecret`, `deleteMail`, `removeFromMailConfigMap`
-- `internal/controller/mail_reconciler_test.go` (418 lines) — 7 envtest tests
-- `internal/controller/tenant_controller.go` — RBAC markers expanded for ConfigMap + Secret CRUD
-- `docs/architecture.md` — updated to reflect shared mail pattern
-
-**Resources created per mode:**
-
-| Mode | Kernel namespace | Tenant namespace |
-|---|---|---|
-| `selfhosted` | DKIM Secret, Postfix CM entry, Dovecot CM entry | SMTP credentials Secret |
-| `external` | — | SMTP credentials Secret (copied from kernel) |
-| `transport-only` | Postfix CM entry | SMTP credentials Secret |
-| `disabled` | — | — |
-
-**Test:**
-- `TestMail_Disabled` — no resources created, MailReady=True
-- `TestMail_Selfhosted_ProvisionsTenantInSharedInfra` — all 4 resources created (DKIM, Postfix CM, Dovecot CM, SMTP Secret)
-- `TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs` — no ArgoCD Application CRs created (shared, not per-tenant)
-- `TestMail_DefaultMode_IsSelfhosted` — omitting `spec.mail.mode` defaults to selfhosted
-- `TestMail_TransportOnly_RegistersPostfixOnly` — Postfix CM entry created, no Dovecot CM entry
-- `TestMail_External_MissingConfig` — missing `smtpCredentialsSecret` sets MailReady=False
-- `TestMail_External_CopiesCredentialsSecret` — copies Secret from kernel to tenant namespace
-
-**Cluster validation:** Deployed to dev cluster (`gtn-demo` tenant, `mail.mode: selfhosted`). All resources created in `platform-kernel` and `tenant-gtn-demo`. `MailReady: True` condition confirmed. CRD required update to include `status.mail` field.
-
----
-
-### Increment 17 — Multi-tenant isolation hardening
-
-**Goal:** Validate and harden the isolation model — architecture §2.4 and §8.
-
-**Actions:**
-- NetworkPolicy audit: tenant-to-tenant denied, tenant-to-kernel allowed, IntegrationBinding-scoped app-to-app rules
-- Database isolation audit: verify tenant A cannot access tenant B's databases
-- S3 isolation audit: verify bucket policies enforce tenant boundaries
-- Keycloak realm isolation: verify token from realm A is rejected by app in realm B
-- ResourceQuota enforcement: verify tenant cannot exceed declared limits
-
-**Test:**
-- Automated isolation test suite: create 2 tenants → attempt cross-tenant access at every layer → all denied
-- Penetration-style tests: try to escalate from tenant namespace to kernel namespace
-- **End-to-end deletion test:** create Tenant with 3+ apps → verify all resources provisioned → delete Tenant with `deletionPolicy: Delete` → verify: Keycloak realm deleted, LDAP OU removed, PostgreSQL/MariaDB databases dropped, MinIO buckets deleted, Redis ACL users removed, Memcached instances deleted, Ingress/DNS cleaned up, ExternalSecrets removed, ArgoCD Applications garbage-collected, namespace deleted
-- **Retain test:** create Tenant → delete with `deletionPolicy: Retain` → verify: databases, buckets, and mailboxes still exist but credentials revoked, namespace preserved
-
----
-
-### Increment 18 — Single-line domain configuration (production-readiness)
-
-**Goal:** Deploy a complete new environment by changing a single `domain` variable — zero edits to `_base.yaml` files or Tofu HCL.
-
-**Background:**  
-`desk.gentian.org` appears 51 times across 8 service `_base.yaml` files and 13 times in Tofu HCL (keycloak-config `clients.tf`, ox-workspace `main.tf`). Adding a `prod` environment today would require touching every file. The upstream opendesk project uses `{{ .Values.global.domain }}` Helm templating; our Tofu-driven pipeline uses `templatefile()` substitution instead.
-
-A single `domain` variable (not separate kernel/tenant domains) is sufficient because OIDC redirect URIs, SAML metadata, portal tile links, and SMTP sender addresses all share the same base domain. Splitting would add complexity with no proven benefit and would fight upstream openDesk's single-domain model.
-
-**Scope — Tofu-managed services (41 of 51 YAML occurrences, 13 TF occurrences):**
-
-| Service | `_base.yaml` occurrences | Loaded by |
-|---|---|---|
-| nubus | 21 | `infra-workspaces/nubus.tf` |
-| ox-appsuite | 13 | `ox-workspace/main.tf` |
-| nextcloud-management | 3 | `infra-workspaces/nextcloud.tf` |
-| nextcloud | 2 | `infra-workspaces/nextcloud.tf` |
-| nextcloud-notifypush | 2 | `infra-workspaces/nextcloud.tf` |
-| keycloak-config (HCL) | 12 | `keycloak-config/clients.tf` |
-| ox-workspace (HCL) | 1 | `ox-workspace/main.tf` |
-
-**Not yet migrated (ArgoCD-managed, no Tofu `helm_release`):**
-
-| Service | Occurrences | Note |
-|---|---|---|
-| intercom-service | 8 | Future: add `helm_release` to infra-workspaces |
-| postfix | 1 | Future: add `helm_release` to infra-workspaces |
-| keycloak-bootstrap | 1 | `count = 0` (deprecated); handle if re-enabled |
-
-**Actions:**
-
-1. **Add `variable "domain"` to all three Tofu workspaces** — `infra-workspaces/variables.tf`, `keycloak-config/variables.tf`, `ox-workspace/variables.tf`. Default: `desk.gentian.org`.
-
-2. **Replace `desk.gentian.org` → `${domain}` in 5 `_base.yaml` files** — the files become Tofu templates (no rename needed; `templatefile()` accepts `.yaml` extension). All 5 files are free of `${...}` conflicts.
-
-3. **Change `file()` → `templatefile()` in Tofu** — `nubus.tf`, `nextcloud.tf`, `ox-workspace/main.tf` pass `{ domain = var.domain }` to their `_base.yaml` loads.
-
-4. **Replace hardcoded domains in HCL** — `clients.tf` redirect/logout URLs use `"https://files.${var.domain}/*"` interpolation. `ox-workspace/main.tf` OX connector set block uses `var.domain`.
-
-5. **Validate** — `tofu validate` in all 3 workspaces; `grep -r 'desk\.gentian\.org'` across affected files shows zero hits (excluding intercom-service, postfix, keycloak-bootstrap).
-
-**Test:**
-- Set `domain = "test.example.org"` in `terraform.tfvars`, run `tofu plan` — verify domain substitution appears in plan diff for all Helm releases and Keycloak clients.
-- Restore to `desk.gentian.org` — plan shows zero diff.
-- `grep -r 'desk\.gentian\.org' kernel/services/{nubus,nextcloud*,ox-appsuite}/values/_base.yaml kernel/tofu/` returns zero matches.
-
----
-
-## Increment Summary
-
-| # | Name | Effort | Blocks | Key deliverable |
-|---|---|---|---|---|
-| 0 | Project scaffolding | Small | — | Go module, Makefile, CI, kernel assets from server/, **deployment smoke test** |
-| 1 | CRD definitions | Medium | 2–11 | AppProfile, Tenant, IntegrationBinding types |
-| 2 | Tenant namespace reconciler | Medium | 3–11 | First working reconciler |
-| 3 | Identity reconciler (Keycloak/Nubus) | Large | 9, 11 | Per-tenant realms + OIDC clients via Keycloak REST API |
-| 4 | LDAP provisioner (UDM REST API) | Medium | 9 | Per-tenant OUs, bind accounts, groups |
-| 5 | Database reconciler (CloudNativePG) | Medium | 9 | Per-app-per-tenant PostgreSQL databases |
-| 6 | MariaDB reconciler | Medium | 9 | Per-app-per-tenant MariaDB databases (OX App Suite) |
-| 7 | Storage reconciler (MinIO + Nextcloud) | Medium | 9 | Per-tenant buckets + WebDAV |
-| 8 | Cache reconciler (Redis + Memcached) | Medium | 9 | Per-app Redis ACLs + per-tenant Memcached |
-| 9 | App deployment reconciler | Large | — | ArgoCD Application / Tofu CRs from AppProfiles (Pattern A + B) |
-| 10 | Ingress reconciler | Medium | — | Per-tenant Ingress resources + DNS via Tofu |
-| 11 | IntegrationBinding reconciler | Medium | — | Auto-wired cross-app contracts |
-| 12 | OpenBao path restructuring | Medium | — | Architecture-compliant secret tree |
-| 13 | Orchestrator Helm chart + observability | Small | — | Installable via `helm install`, Prometheus metrics, printer columns |
-| 14 | AppProfiles + update reconciler | Medium | — | User-installable app AppProfiles (collabora, element, jitsi, openproject, xwiki, ox-appsuite) + AppProfile update propagation |
-| 15 | Deployment repo (gentian-deployments) | Medium | 13, 14 | End-to-end validation |
-| 16 | Mail kernel extension | Medium | 3 | Shared mail infra with tenant-scoped config |
-| 17 | Multi-tenant isolation hardening | Medium | 2–8 | Security validation |
-| 18 | Single-line domain configuration | Small | — | Zero hardcoded domains; new env = 2-line change |
-
-Increments 0–1 are prerequisites. Increments 2–11 build the orchestrator one reconciler at a time — each is independently testable. Increment 12 can run in parallel with 2–11. Increments 13–15 integrate everything into a deployable system. Increments 16–17 harden and extend.
-
+| 0 | Project scaffolding | ✅ Done | Go module, Makefile, CI, `kernel/` assets from `server/`, Dockerfile, deployment smoke test |
+| 1 | CRD definitions | ✅ Done | AppProfile, Tenant, IntegrationBinding Go types + generated YAML. 13 tests |
+| 2 | Tenant namespace reconciler | ✅ Done | Namespace + ResourceQuota + LimitRange + NetworkPolicy + Delete/Retain policy. 8 envtest tests |
+| 3 | Identity reconciler | ✅ Done | Keycloak realm + OIDC client Jobs via Admin REST API. 5 envtest tests. 26 total |
+| 4 | LDAP reconciler | ✅ Done | UDM OU + bind account Jobs via UDM REST API. 6 envtest tests. 32 total |
+| 5 | Database reconciler (PostgreSQL) | ✅ Done | CloudNativePG `Database` CRs + psql role Jobs. 5 envtest tests. 37 total |
+| 6 | MariaDB reconciler | ✅ Done | Idempotent `CREATE DATABASE / CREATE USER / GRANT` Jobs. 4 envtest tests. 41 total |
+| 7 | Storage reconciler | ✅ Done | MinIO S3 buckets via `minio/mc` Job + Nextcloud OCS API Job. 5 envtest tests. 46 total |
+| 8 | Cache reconciler | ✅ Done | Redis ACL users via `redis-cli` Job + per-tenant Memcached ArgoCD Application. 5 envtest tests. 51 total |
+| 9 | App deployment reconciler | ✅ Done | ArgoCD Application CRs per app per tenant. Pattern A + B routing. `valueMapping` rendering. 5 envtest tests. 56 total |
+| 10 | Ingress reconciler | ✅ Done | Per-app Ingress CRs + cert-manager wildcard Certificate CR. 5 envtest tests. 61 total |
+| 11 | IntegrationBinding reconciler | ✅ Done | Auto-generates bindings when provider + consumer both in tenant app list. 4 envtest tests. 65 total |
+| 12 | OpenBao restructuring | ✅ Done | `gentian-os/kernel/` and `gentian-os/tenants/{name}/apps/{app}/` path hierarchy. 65 total |
+| 13 | Helm chart + observability | ✅ Done | `charts/gentian-os/` with CRDs, Deployment, RBAC, ServiceMonitor, Grafana dashboard. Prometheus metrics. Printer columns. 65 total |
+| 14 | AppProfiles + update reconciler | ✅ Done | 6 AppProfile YAMLs (collabora, element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B (Tofu Controller). 65 total |
+| 15 | Deployment repo (gentian-deployments) | ✅ Done | `gentian-deployments/dev/` — bootstrap, app-of-apps, dev-tenant, values, tofu.tfvars. 65 total |
+| 16 | Mail kernel extension | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 76 total |
+| 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 93 total |
+| 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 93 total |
 ---
 
 ## Day-2 Operations
@@ -886,7 +119,7 @@ Which architecture concepts are addressed by which increment — and which are n
 | §2.1 Kernel Functions — Database services (MariaDB) | MariaDB per-app-per-tenant DBs | 6 | MariaDB Operator or SQL Jobs (OX App Suite) |
 | §2.1 Kernel Functions — Cache | Redis ACLs + Memcached per-tenant | 8 | Redis ACL provisioning + Memcached deployment |
 | §2.1 Kernel Functions — Mail | Per-tenant Postfix + Dovecot, 4 modes | 16 | Kernel extension reconciler |
-| §2.1 Kernel Functions — Package manager | AppProfile CRD + orchestrator pipeline | 1, 9, 14 | CRD + reconciler + profiles |
+| §2.1 Kernel Functions — Package manager | AppProfile CRD + orchestrator pipeline | 1, 9, 14 | CRD + reconciler + profiles. App Store: Inc 19 |
 | §2.1 Kernel Functions — App-to-app permissions | IntegrationBinding + OIDC token exchange | 1, 11 | CRD + reconciler |
 | §2.1 Kernel Functions — Init system / lifecycle | Thin orchestrator | 2–11 | Built incrementally |
 | §2.1 Kernel Functions — Resource quotas | Per-tenant ResourceQuotas + LimitRanges | 2 | Namespace reconciler |
@@ -935,7 +168,7 @@ Which architecture concepts are addressed by which increment — and which are n
 | §2.1 Window manager | Contract-based portal navigation registration | Univention Portal works as-is | IntegrationBinding (Increment 11) |
 | §2.1 Notifications | Cross-app notification gateway | Intercom Service exists but gateway not designed | Architecture design needed |
 | §2.4 vCluster isolation | vCluster-per-tenant mode | Optional; namespace mode is default | Optional Future Features |
-| §7 Repo 2 `gentian-apps` | App catalogue repo | **Covered below** in gentian-apps plan | Orchestrator + AppProfile CRD |
+| §7 Repo 2 `gentian-apps` | App catalogue repo | **Covered below** in App Store plan | Inc 19–25 |
 | §8 Mail security | DKIM keys in OpenBao, SPF/DMARC automation | Part of mail extension | Increment 16 (partial) |
 | §9 Backup Strategy | pgBackRest, Velero, OpenBao snapshots | Independent workstream; no orchestrator dependency | Can start anytime |
 | §9.2 Tenant-Scoped Restore | RestoreTenant CR | Future CR | Backup strategy + orchestrator |
@@ -963,233 +196,236 @@ These features are architecturally sound but not required for an MVP. They can b
 
 ---
 
-## What comes from `server/`
+## gentian-apps — App Store and App Catalogue
 
-The `server/` repo is reference material. These assets are copied into `gentian-os/kernel/` during Increment 0 and adapted:
+This section covers architecture §7 Repo 2 and the "Package manager" kernel function (§2.1): building `gentian-apps` as a runtime app catalogue with install/uninstall semantics — analogous to the Android Play Store or `apt`. The orchestrator already has the machinery (AppProfile CRDs, app deployment reconciler, AppProfile update propagation). What's missing is the **store layer** that makes apps discoverable, installable, and upgradeable at runtime without editing YAML files.
 
-| Source (`server/`) | Target (`gentian-os/`) | Adaptation needed |
+### Design — The Gentian App Store
+
+In Android, the Play Store is a registry of APKs. Each APK declares its permissions (camera, storage, contacts), and the OS provisions them on install. In Gentian OS:
+
+| Android | Gentian OS |
+|---|---|
+| APK with `AndroidManifest.xml` | AppProfile CR (`kernelRequirements`, `valueMapping`, `appSecrets`) |
+| Play Store catalogue | `gentian-apps` repo — cluster-scoped AppProfile CRs synced by ArgoCD |
+| Install button | Add app to `tenant.spec.apps[]` — orchestrator provisions everything |
+| Permissions prompt | `kernelRequirements` — orchestrator provisions OIDC client, database, S3 bucket, etc. |
+| Auto-update | AppProfile update reconciler (Inc 14) — bump chart version, all tenants upgrade |
+| Uninstall | Remove app from `tenant.spec.apps[]` — orchestrator tears down per `deletionPolicy` |
+
+The App Store has three components:
+
+1. **App Registry** — the `gentian-apps` repo contains AppProfile YAMLs. ArgoCD syncs them to the cluster as cluster-scoped CRs. Adding a new app = committing one YAML file. This is the catalogue.
+
+2. **App Store Controller** (`internal/controller/appstore_controller.go`) — a new reconciler that watches AppProfile CRs and maintains a `AppCatalogue` status resource listing all available apps, their versions, kernel requirements, and compatibility notes. This is what a UI or CLI queries to show "available apps."
+
+3. **App Store API / CLI** (future) — a lightweight REST API or `kubectl` plugin that lists available apps, shows their requirements, and lets admins install/uninstall apps for a tenant by patching `tenant.spec.apps[]`. The initial implementation is pure `kubectl`; a web UI integrated into the Univention Portal comes later.
+
+**Runtime install flow:**
+
+```
+Admin: "Install OpenProject for tenant gtn-demo"
+  ↓
+kubectl patch tenant gtn-demo --type=merge -p '{"spec":{"apps":[..., {"profile":"openproject"}]}}'
+  ↓
+Orchestrator reconciles:
+  1. Fetch AppProfile "openproject"
+  2. Check kernelRequirements (OIDC, PostgreSQL, S3, SMTP, LDAP, Memcached)
+  3. Create OIDC client (Identity reconciler)
+  4. Create database (Database reconciler)
+  5. Create S3 bucket (Storage reconciler)
+  6. Create LDAP bind account (LDAP reconciler)
+  7. Create Memcached instance (Cache reconciler)
+  8. Create ExternalSecrets (all credentials)
+  9. Create ArgoCD Application CR (or Tofu CR for Pattern B)
+  10. ArgoCD deploys the Helm chart
+  ↓
+App ready — SSO works, database provisioned, storage wired
+```
+
+**Runtime uninstall flow:**
+
+```
+Admin: "Remove OpenProject from tenant gtn-demo"
+  ↓
+kubectl patch tenant gtn-demo (remove openproject from spec.apps)
+  ↓
+Orchestrator reconciles:
+  1. Delete ArgoCD Application CR → ArgoCD uninstalls Helm release
+  2. Garbage-collect IntegrationBindings involving OpenProject
+  3. Per deletionPolicy:
+     - Delete: drop database, remove S3 bucket, delete OIDC client
+     - Retain: revoke credentials, keep data intact
+```
+
+### Kernel-level services (not in the App Store)
+
+These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The orchestrator consumes their APIs via Jobs — it does not deploy them per-tenant via AppProfiles. They are **not** installable via the App Store.
+
+| Service | Layer | Rationale |
 |---|---|---|
-| `scripts/*.sh` | `scripts/` | Update paths |
-| `openbao/`, `eso/` | `kernel/openbao/`, `kernel/eso/` | Update secret paths (Increment 12) |
-| `values/reloader.yaml`, `values/tofu-controller.yaml` | `kernel/values/` | Minimal |
-| `argocd/bootstrap/`, `argocd/install/`, `argocd/projects/`, `argocd/repos/` | `kernel/bootstrap/`, `kernel/argocd/` | Update repo URLs |
-| `apps/*` (all kernel services) | `kernel/services/` | Reference for AppProfile value mapping |
-| `appsets/*.yaml` | `kernel/appsets/` | Update paths + repo URLs |
-| `tofu/modules/openbao-paths/` | `kernel/tofu/modules/openbao-paths/` | Update path structure (Increment 12) |
-| `tofu/modules/app/`, `tofu/modules/app-trust/` | `kernel/tofu/modules/app/`, `kernel/tofu/modules/app-trust/` | May be replaced by orchestrator (Increments 3, 11) |
-| `tofu/tenant/infra-workspaces/`, `tofu/tenant/keycloak-config/` | `kernel/tofu/tenant/` | May be replaced by orchestrator |
-| `manifest/keycloak-service-alias.yaml` | `kernel/manifest/` | Minimal |
+| **Nubus** (Keycloak + UCS LDAP + Portal) | 110 — Identity | Identity provider, single trust anchor for all tenants |
+| **Nextcloud** | 130 — Storage | Kernel filesystem service (WebDAV), provisioned via OCS API Jobs |
+| **OX App Suite** | 130 — Groupware | Kernel groupware service — tightly coupled with mail kernel extension (SMTP/IMAP), Keycloak, and LDAP. Uses MariaDB, Redis, S3, LDAP bind accounts — all kernel-level shared resources. Deployed once, tenant-scoped via Keycloak realm + LDAP OU + dedicated database |
+| **Intercom Service** | 150 — Notifications | Kernel notification gateway |
+| **Postfix / Dovecot / Rspamd** | 100e — Mail | Kernel mail extension, shared infrastructure with tenant-scoped config |
 
-**Key insight:** Several Tofu modules (`app/`, `app-trust/`, `infra-workspaces/`, `keycloak-config/`) do things that the orchestrator will eventually replace (OIDC client provisioning, token exchange setup, Pattern B Helm releases). They are copied as **transitional scaffolding** — they keep the kernel running while the orchestrator reconcilers are built. Once Increments 3–11 are complete, these Tofu modules become dead code.
+**Why OX App Suite is kernel-level:** OX App Suite is the primary mail client, calendar, and contacts interface. It depends on every kernel function (identity, LDAP, MariaDB, Redis, S3, mail). Like Nextcloud, it is deployed once per cluster and serves all tenants through the kernel's isolation mechanisms (Keycloak realms, LDAP OUs, per-tenant databases, per-tenant S3 buckets). It follows the same deployment pattern as all other kernel services — Layer 100 ApplicationSet, Tofu Controller for secret injection (Pattern B), tenant-scoped wiring via API Jobs. Making it tenant-installable would add complexity without a real use case (every openDesk tenant needs groupware).
 
----
+### App Store increments
 
-## Transitional architecture
+#### Inc 19 — App Store controller + catalogue API
 
-During development, the system runs in a hybrid mode:
+**Goal:** Build the App Store controller that maintains a queryable catalogue of available apps, and implement runtime install/uninstall via `kubectl patch`.
 
-```
-Phase 1 (Increments 0–1):
-  Kernel runs from gentian-os/kernel/ via ArgoCD (same as server/ but relocated)
-  No orchestrator yet — Tofu modules handle provisioning
-  CRDs installed but nothing watches them
-  Deployment smoke test validates kernel health
-
-Phase 2 (Increments 2–11):
-  Orchestrator deployed, reconcilers added one at a time
-  Each new reconciler replaces a Tofu module's responsibility
-  Both can coexist — orchestrator creates CRs, Tofu modules are idempotent
-
-Phase 3 (Increments 12–17):
-  Orchestrator is the primary provisioning plane
-  Tofu modules reduced to kernel-only infra (OpenBao seeding, external resources)
-  Full tenant lifecycle via Tenant CRs
-  gentian-deployments repo is the single entry point
-```
-
-### Kernel vs. orchestrator lifecycle boundary
-
-**Kernel services (Layer 100) are permanently ApplicationSet-managed.** The orchestrator does not deploy or manage kernel services — it consumes them. Nubus, CloudNativePG clusters, MinIO, Redis, ESO, Reloader, and the orchestrator itself are deployed via ArgoCD ApplicationSets (copied from `server/` in Increment 0 and maintained in `gentian-os/kernel/`). This is not transitional — it is the permanent architecture.
-
-**The orchestrator manages only Layer 200 (tenant-scoped resources).** When a Tenant CR is created, the orchestrator provisions identity, databases, storage, cache, and app deployments within the tenant namespace. It creates per-tenant ArgoCD Application CRs and Tofu Controller CRs, but never touches kernel ApplicationSets.
-
-This matches architecture §6: Layer 100 is "OpenTofu + ArgoCD" managed, Layer 200 is "Orchestrator + ArgoCD" managed. The orchestrator sits at Layer 160 — deployed as part of the kernel, managing everything above it.
-
----
-
-## Risks and mitigations
-
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Nubus decomposition complexity | Keycloak Operator cannot manage Nubus-bundled Keycloak | Path A (v1): use Keycloak REST API via Jobs. Path B (future): decompose Nubus into standalone components |
-| CloudNativePG learning curve | Database provisioning regression | Keep Tofu-based PostgreSQL as fallback during transition |
-| MariaDB Operator maturity | Less mature than CloudNativePG | Start with SQL Jobs; migrate to operator CRs when stable |
-| Orchestrator bugs corrupt tenant state | Data loss | Orchestrator never deletes operator-managed resources directly; `deletionPolicy: Retain` is default |
-| Scope creep on CRD design | Delays | Start with minimal viable CRDs; extend via v1alpha2 later |
-| Tofu ↔ orchestrator conflict | Both try to manage same resources | Clear ownership boundary: orchestrator owns tenant-scoped resources; Tofu owns kernel-scoped resources |
-| OpenBao path migration breaks running services | Secret sync failures | Dual-write during migration: populate both old and new paths, switch ExternalSecrets, then remove old paths |
-
----
-
-## Prerequisites
-
-- [ ] Go 1.22+ development environment
-- [ ] `controller-runtime` v0.18+ / `controller-gen` available
-- [ ] Dev cluster with ArgoCD, Tofu Controller, OpenBao, ESO (current `server/` setup works)
-- [ ] Nubus deployed with Keycloak Admin REST API and UDM REST API accessible from kernel namespace
-- [ ] CloudNativePG operator installable
-- [ ] MariaDB deployed as kernel service (for OX App Suite)
-- [ ] OCI registry for publishing orchestrator container image + Helm chart
-- [ ] `gentian-deployments` repo created (can be empty until Increment 15)
-- [ ] Agreement on CRD API version strategy (`v1alpha1` → `v1beta1` → `v1`)
-
----
-
-## gentian-apps — App Catalogue Migration Plan
-
-This section covers architecture §7 Repo 2: building the `gentian-apps` repository as the declarative app catalogue. This work can start once AppProfile CRDs exist (Increment 1) and is fully useful once the orchestrator's app deployment reconciler works (Increment 9).
-
-### Current state
-
-The `gentian-apps` repo contains only `LICENSE` and `README.md`. User-installable app configs currently live in `server/apps/` (OX App Suite) with more planned (Collabora, Element, Jitsi, OpenProject, XWiki).
-
-### Target structure (architecture §7 Repo 2)
-
-```
-gentian-apps/
-├── profiles/
-│   ├── ox-appsuite.yaml         # Groupware (mail client, calendar, contacts)
-│   ├── collabora.yaml           # Document editing (via Nextcloud integration)
-│   ├── element.yaml             # Chat (Matrix)
-│   ├── jitsi.yaml               # Video conferencing
-│   ├── openproject.yaml         # Project management
-│   └── xwiki.yaml               # Wiki / knowledge management
-├── contracts/
-│   ├── file-store.yaml          # WebDAV read/write (provider: Nextcloud)
-│   ├── filepicker.yaml          # File selection UI (provider: Nextcloud)
-│   ├── central-navigation.yaml  # Portal link registration (provider: Univention Portal)
-│   ├── project-management.yaml  # Task/timeline API (provider: OpenProject)
-│   └── chat.yaml                # Messaging API (provider: Element)
-├── tests/
-│   └── validate-profiles.sh     # Schema validation against AppProfile CRD
-├── LICENSE
-└── README.md
-```
-
-### App migration increments
-
-#### Apps-A — Scaffold and contract definitions
-
-**Goal:** Set up repo structure, CI, and define the contract schemas that apps reference.
-
-**Actions:**
-- Create `profiles/`, `contracts/`, `tests/` directories
-- Write contract YAML files — each defines a capability name, protocol, and expected interface
-- CI pipeline: validate all YAML files against the AppProfile CRD schema (requires CRD from gentian-os Increment 1)
-- Add `validate-profiles.sh` that runs `kubectl apply --dry-run=server` against a test cluster or uses `kubeconform`
-
-**Test:** CI green, contract schemas valid.
-
----
-
-#### Apps-B — OX App Suite AppProfile (first real app)
-
-**Goal:** Convert the existing `server/apps/ox-appsuite/` into an AppProfile — the first user-installable app in the catalogue.
-
-**Actions:**
-- Reverse-engineer `server/apps/ox-appsuite/` Helm values and `server/tofu/tenant/keycloak-config/` to extract:
-  - Which kernel requirements OX App Suite needs (OIDC, database/MariaDB, S3, SMTP, IMAP, cache/Redis)
-  - Which Helm value keys receive kernel-provided values
-  - Which contracts it provides and consumes
-- Write `profiles/ox-appsuite.yaml` with:
-  - `kernelRequirements`: identity (oidc, ldap), database (mariadb), storage (s3), cache (redis), mail (smtp, imap)
-  - `chart`: OCI reference to upstream OX App Suite Helm chart
-  - `valueMapping`: typed schema mapping kernel values → Helm value keys
-  - `optionalIntegrations`: filepicker (Nextcloud), central-navigation (Portal)
-- Verify the orchestrator can render correct Helm values from this profile
-
-**Source material:** `server/apps/ox-appsuite/`, `server/tofu/tenant/infra-workspaces/` (Pattern B values for OX)
+**Deliverables:**
+- `internal/controller/appstore_controller.go` — watches all AppProfile CRs, maintains `AppCatalogue` status (available apps, versions, requirements summary, installed-by-tenant counts)
+- `api/v1alpha1/appcatalogue_types.go` — `AppCatalogue` singleton CR (cluster-scoped) with status listing all available apps
+- Validation webhook: when a tenant adds an app to `spec.apps[]`, validate that the referenced AppProfile exists and that the tenant's quota allows another app (`spec.quotas.maxApps`)
+- Pre-flight check: before provisioning, verify the cluster has the required kernel services (e.g., reject an app requiring MariaDB if no MariaDB kernel service exists)
+- `kubectl gentian apps list` — plugin (or script) that reads the `AppCatalogue` and formats available apps as a table
+- `kubectl gentian apps install <app> --tenant <tenant>` — plugin that patches `tenant.spec.apps[]`
 
 **Test:**
-- Profile validates against AppProfile CRD
-- Orchestrator dry-run: create Tenant with `apps: [{profile: ox-appsuite}]` → rendered ArgoCD Application has correct values
-- Deployed OX App Suite works identically to current server/ deployment
+- envtest: create 5 AppProfiles → AppCatalogue lists all 5 with correct metadata
+- envtest: add app to tenant exceeding `maxApps` → rejected by webhook
+- envtest: add app referencing non-existent AppProfile → rejected
+- envtest: install + uninstall cycle → full provisioning + cleanup
 
 ---
 
-#### Apps-C — Collabora AppProfile
+#### Inc 20 — Collabora AppProfile (document editing)
 
-**Goal:** Add Collabora Online as the second user-installable app.
+**Goal:** First app in the store — Collabora Online (WOPI document editor).
+
+**AppProfile:**
+- `kernelRequirements`: none (Collabora authenticates through Nextcloud, not directly)
+- `appSecrets`: `admin_password` → `collabora.password`
+- `provides`: `office-editor` (wopi)
+- `chart`: `collabora-online` v1.1.45
+- `deploymentMethod`: `tofu-controller` (Pattern B)
 
 **Actions:**
-- Write `profiles/collabora.yaml`:
-  - `kernelRequirements`: identity (oidc — via Nextcloud integration)
-  - `optionalIntegrations`: file-store (Nextcloud — Collabora is an editor, not standalone)
-  - `chart`: upstream Collabora chart
-  - `valueMapping`: Nextcloud integration URL, WOPI settings
-- This is a simpler profile than OX since Collabora integrates through Nextcloud, not directly with the kernel
+- Write `profiles/collabora.yaml` in `gentian-apps`
+- Configure Nextcloud kernel service to discover and use the Collabora WOPI endpoint (via IntegrationBinding or kernel config)
+- Validate that installing Collabora for a tenant enables document editing in Nextcloud
 
-**Test:** Profile valid, Collabora deploys and integrates with Nextcloud for document editing.
+**Test:** Install Collabora for tenant → open a document in Nextcloud → Collabora editor loads.
 
 ---
 
-#### Apps-D — Communication apps (Element + Jitsi)
+#### Inc 21 — Element AppProfile (chat / Matrix)
 
-**Goal:** Add chat and video conferencing to the catalogue.
+**Goal:** Add Element (Matrix/Synapse) to the app store.
+
+**AppProfile:**
+- `kernelRequirements`: OIDC, PostgreSQL, SMTP
+- `appSecrets`: `registration_shared_secret`, `intercom_as_token`, `ox_appsuite_as_token`
+- `provides`: `chat` (matrix)
+- `chart`: `opendesk-element` v6.1.9
+- `deploymentMethod`: `tofu-controller` (Pattern B)
 
 **Actions:**
-- Write `profiles/element.yaml`:
-  - `kernelRequirements`: identity (oidc), database (postgresql — for Synapse homeserver), cache (redis)
-  - `provides`: chat contract
-  - `optionalIntegrations`: central-navigation (Portal)
-  - `chart`: Element/Synapse chart
-- Write `profiles/jitsi.yaml`:
-  - `kernelRequirements`: identity (oidc)
-  - `optionalIntegrations`: central-navigation (Portal), chat (Element — for Jitsi links in chat)
-  - `chart`: Jitsi chart
+- Write `profiles/element.yaml` in `gentian-apps`
+- Wire OIDC client, PostgreSQL database, SMTP credentials via `valueMapping`
+- Configure Intercom Service app-service bridge (intercom ↔ Synapse)
 
-**Test:** Both profiles valid, apps deploy per-tenant, SSO works.
+**Test:** Install Element for tenant → SSO login works, messages sent/received, notifications via Intercom.
 
 ---
 
-#### Apps-E — Productivity apps (OpenProject + XWiki)
+#### Inc 22 — Jitsi AppProfile (video conferencing)
 
-**Goal:** Add project management and wiki to the catalogue.
+**Goal:** Add Jitsi Meet to the app store.
+
+**AppProfile:**
+- `kernelRequirements`: OIDC (JWT/hybrid-matrix-token scheme)
+- `appSecrets`: `jwt_app_secret`, `jicofo_auth_password`, `jicofo_component_secret`, `jvb_auth_password`
+- `provides`: `videoconference` (webrtc)
+- `chart`: `opendesk-jitsi` v3.5.1
+- `deploymentMethod`: `tofu-controller` (Pattern B)
 
 **Actions:**
-- Write `profiles/openproject.yaml` (reference: architecture §12.1):
-  - `kernelRequirements`: identity (oidc, ldap sync), database (postgresql), storage (s3, webdav), cache (memcached), mail (smtp)
-  - `provides`: project-management contract
-  - `optionalIntegrations`: file-store (Nextcloud), central-navigation (Portal)
-- Write `profiles/xwiki.yaml`:
-  - `kernelRequirements`: identity (oidc, ldap sync), database (postgresql), storage (s3)
-  - `optionalIntegrations`: central-navigation (Portal)
+- Write `profiles/jitsi.yaml` in `gentian-apps`
+- Wire JWT app secret via Keycloak hybrid-matrix-token scheme
+- Configure optional Element integration (Jitsi links in chat rooms)
 
-**Test:** Both profiles valid, apps deploy per-tenant with correct database and storage isolation.
+**Test:** Install Jitsi for tenant → create video conference room → SSO join works.
 
 ---
 
-### App migration summary
+#### Inc 23 — OpenProject AppProfile (project management)
 
-| Increment | App(s) | Depends on (gentian-os) | Effort |
+**Goal:** Add OpenProject to the app store.
+
+**AppProfile:**
+- `kernelRequirements`: OIDC, PostgreSQL, S3, SMTP, LDAP
+- `appSecrets`: `admin_password`, `api_admin_password`
+- `provides`: `project-management` (http-json)
+- `optionalIntegrations`: `file-store` (Nextcloud), `central-navigation` (Portal)
+- `chart`: `openproject` v10.1.0
+- `deploymentMethod`: `tofu-controller` (Pattern B)
+
+**Actions:**
+- Write `profiles/openproject.yaml` in `gentian-apps`
+- Wire all 6 kernel requirements via `valueMapping`
+- Configure Nextcloud file-store IntegrationBinding (WebDAV read/write)
+- Configure Portal central-navigation IntegrationBinding
+
+**Test:** Install OpenProject for tenant → SSO login, LDAP user sync, file attachments via Nextcloud, project visible in Portal.
+
+---
+
+#### Inc 24 — XWiki AppProfile (wiki / knowledge management)
+
+**Goal:** Add XWiki to the app store.
+
+**AppProfile:**
+- `kernelRequirements`: OIDC, PostgreSQL, SMTP, LDAP
+- `provides`: `wiki` (http-json)
+- `optionalIntegrations`: `central-navigation` (Portal)
+- `chart`: `xwiki` v1.4.4
+- `deploymentMethod`: `tofu-controller` (Pattern B)
+
+**Actions:**
+- Write `profiles/xwiki.yaml` in `gentian-apps`
+- Wire OIDC, PostgreSQL, SMTP, LDAP via `valueMapping`
+- Handle dot-escaped YAML key paths (`customConfigs.xwiki\.properties.oidc\.secret`)
+
+**Test:** Install XWiki for tenant → SSO login, LDAP user sync, wiki pages editable.
+
+---
+
+#### Inc 25 — Contract definitions + App Store CI
+
+**Goal:** Define the contract schemas that apps reference and set up CI for the `gentian-apps` repo.
+
+**Actions:**
+- Write contract YAML files in `gentian-apps/contracts/`:
+  - `file-store.yaml` — WebDAV read/write (provider: Nextcloud kernel service)
+  - `filepicker.yaml` — file selection UI (provider: Nextcloud kernel service)
+  - `central-navigation.yaml` — Portal link registration (provider: Univention Portal)
+  - `project-management.yaml` — task/timeline API (provider: OpenProject)
+  - `chat.yaml` — messaging API (provider: Element)
+  - `office-editor.yaml` — WOPI document editing (provider: Collabora)
+  - `videoconference.yaml` — WebRTC conferencing (provider: Jitsi)
+- CI pipeline: `kubeconform` against AppProfile CRD schema for all profiles
+- `validate-profiles.sh` — runs `kubectl apply --dry-run=server` against a test cluster
+
+**Test:** CI green, all profiles and contracts valid.
+
+---
+
+### App Store summary
+
+| Inc | Title | Key deliverable | Effort |
 |---|---|---|---|
-| Apps-A | Scaffold + contracts | Increment 1 (CRDs) | Small |
-| Apps-B | OX App Suite | Increment 9 (app reconciler) | Medium |
-| Apps-C | Collabora | Increment 9 | Small |
-| Apps-D | Element + Jitsi | Increment 9 | Medium |
-| Apps-E | OpenProject + XWiki | Increment 9 | Medium |
+| 19 | App Store controller + catalogue API | `AppCatalogue` CR, validation webhook, `kubectl gentian` plugin, runtime install/uninstall | Large |
+| 20 | Collabora AppProfile | Document editing via Nextcloud WOPI integration | Small |
+| 21 | Element AppProfile | Chat (Matrix/Synapse) with OIDC, PostgreSQL, SMTP | Medium |
+| 22 | Jitsi AppProfile | Video conferencing with JWT/OIDC auth | Small |
+| 23 | OpenProject AppProfile | Project management with 6 kernel requirements + Nextcloud file-store integration | Medium |
+| 24 | XWiki AppProfile | Wiki with OIDC, PostgreSQL, SMTP, LDAP | Medium |
+| 25 | Contract definitions + CI | `gentian-apps` repo CI, contract schemas, profile validation | Small |
 
-Apps-A can start as soon as the AppProfile CRD exists. Apps-B through Apps-E can be built in parallel once the orchestrator's app deployment reconciler (Increment 9) is functional. Each profile is an independent PR.
-
-### Where `server/` content ends up
-
-| Content | Current location | Target | When |
-|---|---|---|---|
-| OX App Suite Helm values | `server/apps/ox-appsuite/` | `gentian-apps/profiles/ox-appsuite.yaml` | Apps-B |
-| OX ExternalSecrets | `server/apps/ox-appsuite/secrets/` | Generated by orchestrator (not in gentian-apps) | Increment 9 |
-| OX Tofu config (Pattern B) | `server/tofu/tenant/infra-workspaces/` | Replaced by orchestrator + AppProfile | Increment 9 |
-| OX Keycloak config | `server/tofu/tenant/keycloak-config/` | Replaced by orchestrator identity reconciler | Increment 3 |
-| OX ApplicationSet entry | `server/appsets/30-opendesk.yaml` | Replaced by orchestrator ArgoCD Application generation | Increment 9 |
-| Environment-specific overrides | `server/values/env/` | `gentian-deployments/` | Increment 15 |
-
-Once all apps have AppProfiles and the orchestrator handles deployment, `server/` becomes empty and can be archived.
+Inc 19 (App Store controller) is the foundation — it must be built first. Incs 20–24 (individual app profiles) can be built in parallel after Inc 19. Inc 25 (contracts + CI) can start anytime after Inc 1 (CRDs exist). Each app profile is an independent PR in the `gentian-apps` repo.
