@@ -56,7 +56,7 @@ keycloak:
   # Without this, Keycloak's LDAP user import (triggered during startup) can fail
   # with "Connection refused" when LDAP wins the pod-startup race, causing
   # the UniventionUserAccountControlStorageMapper to mark cached users as disabled.
-  initContainers:
+  extraInitContainers:
     - name: wait-for-ldap
       image: artifacts.software-univention.de/nubus/images/keycloak:0.5.0
       imagePullPolicy: IfNotPresent
