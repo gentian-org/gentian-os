@@ -47,8 +47,16 @@ resource "helm_release" "nubus" {
   }
 
   # Keycloak admin password
+  # NOTE: The keycloak subchart's secret-keycloak.yaml uses
+  #   providedValues: ["keycloak.auth.password"] which resolves to
+  #   .Values.keycloak.auth.password in the *subchart* context, i.e.
+  #   keycloak.keycloak.auth.password at the *parent* (Nubus) chart level.
+  # Setting keycloak.auth.password (subchart's .Values.auth.password) is a
+  # no-op for the secret template and was previously ignored, causing the
+  # nubus-dev-keycloak-credentials secret to use a Helm-derived value instead
+  # of the canonical OpenBao password.
   set_sensitive {
-    name  = "keycloak.auth.password"
+    name  = "keycloak.keycloak.auth.password"
     value = data.vault_kv_secret_v2.nubus.data["keycloak_admin_password"]
   }
 

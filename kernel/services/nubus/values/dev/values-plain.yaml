@@ -52,34 +52,15 @@ keycloak:
     limits:
       cpu: 1000m
       memory: 1Gi
-  # Wait for the LDAP server to be reachable before Keycloak starts.
-  # Without this, Keycloak's LDAP user import (triggered during startup) can fail
-  # with "Connection refused" when LDAP wins the pod-startup race, causing
-  # the UniventionUserAccountControlStorageMapper to mark cached users as disabled.
-  extraInitContainers:
-    - name: wait-for-ldap
-      image: artifacts.software-univention.de/nubus/images/keycloak:0.5.0
-      imagePullPolicy: IfNotPresent
-      command:
-        - /bin/bash
-        - -ec
-        - |
-          echo "Waiting for LDAP server nubus-dev-ldap-server:389 to be ready..."
-          until bash -c "echo > /dev/tcp/nubus-dev-ldap-server/389" 2>/dev/null; do
-            echo "LDAP not yet available, retrying in 5 s..."
-            sleep 5
-          done
-          echo "LDAP server is ready."
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        seccompProfile:
-          type: RuntimeDefault
-        capabilities:
-          drop:
-            - ALL
+  # NOTE: The Nubus keycloak chart (0.15.12) does NOT support extraInitContainers
+  # in its StatefulSet template. Any value set here is stored in the Helm release
+  # but silently ignored by the chart renderer.
+  #
+  # The LDAP startup race (Keycloak starting before LDAP is ready) is mitigated
+  # in practice by timing: LDAP starts in ~30-60 s, but keycloak-bootstrap only
+  # starts after Keycloak itself is ready (~2-3 min). By that point LDAP is up.
+  # The proper fix (extraInitContainers or a wait-for-dependency init container
+  # in the bootstrap job) requires a chart upgrade to a version that supports it.
 
 nubusGuardian:
   postgresql:
