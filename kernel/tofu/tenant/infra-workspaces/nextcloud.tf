@@ -52,7 +52,7 @@ resource "helm_release" "nextcloud_management" {
   timeout          = 900
 
   values = [
-    file("${path.module}/../../../services/nextcloud-management/values/_base.yaml"),
+    templatefile("${path.module}/../../../services/nextcloud-management/values/_base.yaml", { domain = var.domain }),
     file("${path.module}/../../../services/nextcloud-management/values/${var.env}/values-plain.yaml"),
   ]
 
@@ -156,7 +156,7 @@ resource "helm_release" "nextcloud" {
   timeout          = 900
 
   values = [
-    file("${path.module}/../../../services/nextcloud/values/_base.yaml"),
+    templatefile("${path.module}/../../../services/nextcloud/values/_base.yaml", { domain = var.domain }),
     file("${path.module}/../../../services/nextcloud/values/${var.env}/values-plain.yaml"),
   ]
 
@@ -199,7 +199,7 @@ resource "helm_release" "nextcloud_notifypush" {
   timeout          = 300
 
   values = [
-    file("${path.module}/../../../services/nextcloud-notifypush/values/_base.yaml"),
+    templatefile("${path.module}/../../../services/nextcloud-notifypush/values/_base.yaml", { domain = var.domain }),
     file("${path.module}/../../../services/nextcloud-notifypush/values/${var.env}/values-plain.yaml"),
   ]
 

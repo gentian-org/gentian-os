@@ -26,7 +26,7 @@ resource "helm_release" "nubus" {
 
   values = [
     file(local.nubus_env_values),
-    file(local.nubus_base_values),
+    templatefile(local.nubus_base_values, { domain = var.domain }),
     file(local.nubus_plain),
   ]
 

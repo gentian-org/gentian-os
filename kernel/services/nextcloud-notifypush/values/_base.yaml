@@ -12,7 +12,7 @@ image:
   tag: "2.12.2"
 
 global:
-  domain: desk.gentian.org
+  domain: ${domain}
   hosts:
     nextcloud: files
 
@@ -50,7 +50,7 @@ configuration:
 ingress:
   enabled: true
   ingressClassName: "nginx"
-  host: "files.desk.gentian.org"
+  host: "files.${domain}"
   tls:
     secretName: "opendesk-nextcloud-tls"
 

@@ -8,6 +8,12 @@
 # Instead, a templatefile() renders a sensitive YAML values file.
 # =============================================================================
 
+variable "domain" {
+  description = "Base domain for all service FQDNs (e.g. desk.gentian.org). Used by templatefile() to render _base.yaml and in ox-connector set blocks."
+  type        = string
+  default     = "desk.gentian.org"
+}
+
 variable "tenant_name" {
   description = "Tenant name (Tenant CR .metadata.name). Used to derive OpenBao secret paths."
   type        = string

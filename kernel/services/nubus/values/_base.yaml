@@ -14,12 +14,12 @@
 # =============================================================================
 
 global:
-  domain: desk.gentian.org
+  domain: ${domain}
   nubusDeployment: true
   ingressClass: public
   ldap:
     baseDn: dc=swp-ldap,dc=internal
-    domainName: desk.gentian.org
+    domainName: ${domain}
     adminDn: cn=admin,dc=swp-ldap,dc=internal
   # imagePullSecrets from values/env/{env}.yaml via global.imagePullSecrets
   certManagerClusterIssuer: letsencrypt-prod
@@ -311,11 +311,11 @@ nubusStackDataUms:
     objectStorage:
       bucketName: ums
   stackDataContext:
-    externalMailDomain: desk.gentian.org
+    externalMailDomain: ${domain}
     umcHtmlTitle: Portal - openDesk
-    ldapSamlSpUrls: https://portal.desk.gentian.org/univention/saml/metadata
-    portalFqdn: portal.desk.gentian.org
-    smtpUser: opendesk-system@desk.gentian.org
+    ldapSamlSpUrls: https://portal.${domain}/univention/saml/metadata
+    portalFqdn: portal.${domain}
+    smtpUser: opendesk-system@${domain}
     smtpStartTls: false
     ldapBase: dc=swp-ldap,dc=internal
     # smtpHost and smtpPort in {env}/values.yaml
@@ -363,27 +363,27 @@ nubusStackDataUms:
       selfserviceProtectaccount: "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEiIGhlaWdodD0iMSIvPg=="
       support: "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgdmlld0JveD0iMCAwIDIwIDIwIiBmaWxsPSJub25lIiBjbGFzcz0icG9ydGFsLWhlbHBfX2ljb24iPjxtYXNrIGlkPSJtYXNrMF80MDZfMjk0NCIgbWFza1VuaXRzPSJ1c2VyU3BhY2VPblVzZSIgeD0iMCIgeT0iMCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiBzdHlsZT0ibWFzay10eXBlOiBhbHBoYTsiPjxyZWN0IHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgZmlsbD0iI0Q5RDlEOSI+PC9yZWN0PjwvbWFzaz48ZyBtYXNrPSJ1cmwoI21hc2swXzQwNl8yOTQ0KSI+PHBhdGggZD0iTTEwIDE4LjMzMjdMOS43OTE2NyAxNS44MzI3SDkuNTgzMzNDNy42MTExMSAxNS44MzI3IDUuOTM3NSAxNS4xNDUyIDQuNTYyNSAxMy43NzAyQzMuMTg3NSAxMi4zOTUyIDIuNSAxMC43MjE2IDIuNSA4Ljc0OTM1QzIuNSA2Ljc3NzEzIDMuMTg3NSA1LjEwMzUyIDQuNTYyNSAzLjcyODUyQzUuOTM3NSAyLjM1MzUyIDcuNjExMTEgMS42NjYwMiA5LjU4MzMzIDEuNjY2MDJDMTAuNTY5NCAxLjY2NjAyIDExLjQ4OTYgMS44NTAwNCAxMi4zNDM4IDIuMjE4MUMxMy4xOTc5IDIuNTg2MTUgMTMuOTQ3OSAzLjA5MzEgMTQuNTkzOCAzLjczODkzQzE1LjIzOTYgNC4zODQ3NyAxNS43NDY1IDUuMTM0NzcgMTYuMTE0NiA1Ljk4ODkzQzE2LjQ4MjYgNi44NDMxIDE2LjY2NjcgNy43NjMyNCAxNi42NjY3IDguNzQ5MzVDMTYuNjY2NyA5Ljc5MTAyIDE2LjQ5NjUgMTAuNzkxIDE2LjE1NjMgMTEuNzQ5M0MxNS44MTYgMTIuNzA3NyAxNS4zNTA3IDEzLjU5NjYgMTQuNzYwNCAxNC40MTZDMTQuMTcwMSAxNS4yMzU1IDEzLjQ2ODggMTUuOTc4NSAxMi42NTYzIDE2LjY0NTJDMTEuODQzOCAxNy4zMTE4IDEwLjk1ODMgMTcuODc0MyAxMCAxOC4zMzI3Wk0xMS42NjY3IDE1LjI5MUMxMi42NTI4IDE0LjQ1NzcgMTMuNDU0OSAxMy40ODIgMTQuMDcyOSAxMi4zNjM5QzE0LjY5MSAxMS4yNDU5IDE1IDEwLjA0MSAxNSA4Ljc0OTM1QzE1IDcuMjM1NDYgMTQuNDc1NyA1Ljk1NDIxIDEzLjQyNzEgNC45MDU2QzEyLjM3ODUgMy44NTY5OSAxMS4wOTcyIDMuMzMyNjggOS41ODMzMyAzLjMzMjY4QzguMDY5NDQgMy4zMzI2OCA2Ljc4ODE5IDMuODU2OTkgNS43Mzk1OCA0LjkwNTZDNC42OTA5NyA1Ljk1NDIxIDQuMTY2NjcgNy4yMzU0NiA0LjE2NjY3IDguNzQ5MzVDNC4xNjY2NyAxMC4yNjMyIDQuNjkwOTcgMTEuNTQ0NSA1LjczOTU4IDEyLjU5MzFDNi43ODgxOSAxMy42NDE3IDguMDY5NDQgMTQuMTY2IDkuNTgzMzMgMTQuMTY2SDExLjY2NjdWMTUuMjkxWk05LjU2MjUgMTMuMzExOEM5Ljc5ODYxIDEzLjMxMTggMTAgMTMuMjI4NSAxMC4xNjY3IDEzLjA2MThDMTAuMzMzMyAxMi44OTUyIDEwLjQxNjcgMTIuNjkzOCAxMC40MTY3IDEyLjQ1NzdDMTAuNDE2NyAxMi4yMjE2IDEwLjMzMzMgMTIuMDIwMiAxMC4xNjY3IDExLjg1MzVDMTAgMTEuNjg2OCA5Ljc5ODYxIDExLjYwMzUgOS41NjI1IDExLjYwMzVDOS4zMjYzOSAxMS42MDM1IDkuMTI1IDExLjY4NjggOC45NTgzMyAxMS44NTM1QzguNzkxNjcgMTIuMDIwMiA4LjcwODMzIDEyLjIyMTYgOC43MDgzMyAxMi40NTc3QzguNzA4MzMgMTIuNjkzOCA4Ljc5MTY3IDEyLjg5NTIgOC45NTgzMyAxMy4wNjE4QzkuMTI1IDEzLjIyODUgOS4zMjYzOSAxMy4zMTE4IDkuNTYyNSAxMy4zMTE4Wk04Ljk1ODMzIDEwLjY2NkgxMC4yMDgzQzEwLjIwODMgMTAuMjQ5MyAxMC4yNSA5Ljk1NzY4IDEwLjMzMzMgOS43OTEwMkMxMC40MTY3IDkuNjI0MzUgMTAuNjgwNiA5LjMxODc5IDExLjEyNSA4Ljg3NDM1QzExLjM3NSA4LjYyNDM1IDExLjU4MzMgOC4zNTM1MiAxMS43NSA4LjA2MTg1QzExLjkxNjcgNy43NzAxOCAxMiA3LjQ1NzY4IDEyIDcuMTI0MzVDMTIgNi40MTYwMiAxMS43NjA0IDUuODg0NzcgMTEuMjgxMyA1LjUzMDZDMTAuODAyMSA1LjE3NjQzIDEwLjIzNjEgNC45OTkzNSA5LjU4MzMzIDQuOTk5MzVDOC45NzIyMiA0Ljk5OTM1IDguNDU4MzMgNS4xNjk0OSA4LjA0MTY3IDUuNTA5NzdDNy42MjUgNS44NTAwNCA3LjMzMzMzIDYuMjYzMjQgNy4xNjY2NyA2Ljc0OTM1TDguMzMzMzMgNy4yMDc2OEM4LjQwMjc4IDYuOTcxNTcgOC41MzQ3MiA2LjczODkzIDguNzI5MTcgNi41MDk3N0M4LjkyMzYxIDYuMjgwNiA5LjIwODMzIDYuMTY2MDIgOS41ODMzMyA2LjE2NjAyQzkuOTU4MzMgNi4xNjYwMiAxMC4yMzk2IDYuMjcwMTggMTAuNDI3MSA2LjQ3ODUyQzEwLjYxNDYgNi42ODY4NSAxMC43MDgzIDYuOTE2MDIgMTAuNzA4MyA3LjE2NjAyQzEwLjcwODMgNy40MDIxMyAxMC42Mzg5IDcuNjEzOTMgMTAuNSA3LjgwMTQzQzEwLjM2MTEgNy45ODg5MyAxMC4xOTQ0IDguMTc5OSAxMCA4LjM3NDM1QzkuNTEzODkgOC43OTEwMiA5LjIxODc1IDkuMTIwODggOS4xMTQ1OCA5LjM2MzkzQzkuMDEwNDIgOS42MDY5OSA4Ljk1ODMzIDEwLjA0MSA4Ljk1ODMzIDEwLjY2NloiIGZpbGw9IndoaXRlIj48L3BhdGg+PC9nPjwvc3ZnPg=="
     # yamllint enable rule:line-length
-    portalRealtimeCollaborationLinkBase: https://element.desk.gentian.org
-    portalRealtimeVideoconferenceLinkBase: https://jitsi.desk.gentian.org
-    portalManagementProjectLinkBase: https://openproject.desk.gentian.org
-    portalManagementKnowledgeLinkBase: https://xwiki.desk.gentian.org
-    portalGroupwareLinkBase: https://webmail.desk.gentian.org
-    portalFileshareLinkBase: https://files.desk.gentian.org
-    portalNotesLinkBase: https://notes.desk.gentian.org
+    portalRealtimeCollaborationLinkBase: https://element.${domain}
+    portalRealtimeVideoconferenceLinkBase: https://jitsi.${domain}
+    portalManagementProjectLinkBase: https://openproject.${domain}
+    portalManagementKnowledgeLinkBase: https://xwiki.${domain}
+    portalGroupwareLinkBase: https://webmail.${domain}
+    portalFileshareLinkBase: https://files.${domain}
+    portalNotesLinkBase: https://notes.${domain}
     portalTitleDE: Portal - openDesk
     portalTitleEN: Portal - openDesk
     # functional.yaml: portal.link* — must be non-empty strings (empty = YAML null in template, rejected by UDM API)
     # Placeholder: portal URL so tiles are created as activated=true but accessible; update for production
-    portalLinkLegalNotice: "https://portal.desk.gentian.org"
-    portalLinkPrivacyStatement: "https://portal.desk.gentian.org"
-    portalLinkDocumentation: "https://portal.desk.gentian.org"
-    portalLinkSupport: "https://portal.desk.gentian.org"
-    portalLinkFeedback: "https://portal.desk.gentian.org"
+    portalLinkLegalNotice: "https://portal.${domain}"
+    portalLinkPrivacyStatement: "https://portal.${domain}"
+    portalLinkDocumentation: "https://portal.${domain}"
+    portalLinkSupport: "https://portal.${domain}"
+    portalLinkFeedback: "https://portal.${domain}"
     oxDefaultContext: "1"
     # functional.yaml: internationalization.defaultLanguage
     oxDefaultLanguage: de_DE
     oxContextHidden: true
-    portalOxLinkBase: https://webmail.desk.gentian.org
+    portalOxLinkBase: https://webmail.${domain}
     additionalMailDomains: []
     # initialPasswordAdministrator: in {env}/values.yaml (SOPS)
     # oxSystemUserPassword: in {env}/values.yaml (SOPS)
@@ -535,13 +535,13 @@ nubusUdmRestApi:
 nubusPortalFrontend:
   extraIngresses:
     - name: base-domain-redirect
-      host: "desk.gentian.org"
+      host: "${domain}"
       paths:
         - pathType: ImplementationSpecific
           path: /
       ingressClassName: "public"
       annotations:
-        nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.desk.gentian.org/univention/portal/"
+        nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.${domain}/univention/portal/"
         nginx.ingress.kubernetes.io/use-regex: "true"
       tls:
         enabled: true

@@ -13,7 +13,7 @@
 # =============================================================================
 
 global:
-  domain: desk.gentian.org
+  domain: ${domain}
   hosts:
     nextcloud: files
 
@@ -72,7 +72,7 @@ aio:
   ingress:
     enabled: true
     ingressClassName: "nginx"
-    host: "files.desk.gentian.org"
+    host: "files.${domain}"
     tls:
       secretName: "opendesk-nextcloud-tls"
 

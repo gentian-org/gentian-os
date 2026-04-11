@@ -43,12 +43,12 @@ module "intercom" {
   client_id    = "opendesk-intercom"
   display_name = "opendesk Intercom"
 
-  redirect_uris = ["https://ics.desk.gentian.org/callback"]
+  redirect_uris = ["https://ics.${var.domain}/callback"]
   web_origins   = ["+"]
 
   standard_flow_enabled = true
 
-  backchannel_logout_url                   = "https://ics.desk.gentian.org/backchannel-logout"
+  backchannel_logout_url                   = "https://ics.${var.domain}/backchannel-logout"
   backchannel_logout_session_required      = true
   backchannel_logout_revoke_offline_tokens = true
 
@@ -106,13 +106,13 @@ module "nextcloud" {
   client_id    = "opendesk-nextcloud"
   display_name = "Nextcloud"
 
-  redirect_uris = ["https://files.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+  redirect_uris = ["https://files.${var.domain}/*", "https://portal.${var.domain}/*"]
   web_origins   = ["+"]
 
-  backchannel_logout_url              = "https://files.desk.gentian.org/apps/user_oidc/backchannel-logout/opendesk"
+  backchannel_logout_url              = "https://files.${var.domain}/apps/user_oidc/backchannel-logout/opendesk"
   backchannel_logout_session_required = true
 
-  post_logout_redirect_uris = ["https://files.desk.gentian.org/*", "https://portal.desk.gentian.org/*"] # maps to valid_post_logout_redirect_uris
+  post_logout_redirect_uris = ["https://files.${var.domain}/*", "https://portal.${var.domain}/*"] # maps to valid_post_logout_redirect_uris
 
   client_secret = data.vault_kv_secret_v2.nextcloud.data["oidc_client_secret"]
 
@@ -157,16 +157,16 @@ module "ox_appsuite" {
   client_id    = "opendesk-oxappsuite"
   display_name = "OX App Suite"
 
-  redirect_uris = ["https://webmail.desk.gentian.org/appsuite/api/oidc/auth"]
+  redirect_uris = ["https://webmail.${var.domain}/appsuite/api/oidc/auth"]
   web_origins   = ["+"]
 
   standard_flow_enabled        = true
   direct_access_grants_enabled = true # required for OIDC password grant (OX login form + mobile apps)
 
-  backchannel_logout_url              = "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
+  backchannel_logout_url              = "https://webmail.${var.domain}/appsuite/api/oidc/logout"
   backchannel_logout_session_required = true
 
-  post_logout_redirect_uris = ["https://webmail.desk.gentian.org/*", "https://portal.desk.gentian.org/*"] # maps to valid_post_logout_redirect_uris
+  post_logout_redirect_uris = ["https://webmail.${var.domain}/*", "https://portal.${var.domain}/*"] # maps to valid_post_logout_redirect_uris
 
   client_secret = data.vault_kv_secret_v2.ox.data["oidc_client_secret"]
 
@@ -354,13 +354,13 @@ module "openproject" {
   client_id    = "opendesk-openproject"
   display_name = "OpenProject"
 
-  redirect_uris = ["https://openproject.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+  redirect_uris = ["https://openproject.${var.domain}/*", "https://portal.${var.domain}/*"]
   web_origins   = ["+"]
 
-  backchannel_logout_url              = "https://openproject.desk.gentian.org/auth/keycloak/backchannel-logout"
+  backchannel_logout_url              = "https://openproject.${var.domain}/auth/keycloak/backchannel-logout"
   backchannel_logout_session_required = true
 
-  post_logout_redirect_uris = ["https://openproject.desk.gentian.org/*", "https://portal.desk.gentian.org/*"]
+  post_logout_redirect_uris = ["https://openproject.${var.domain}/*", "https://portal.${var.domain}/*"]
 
   # Reference the scope resource to create an implicit dependency — ensures
   # the scope exists in Keycloak before the default_scopes association is made.
@@ -383,7 +383,7 @@ module "openproject" {
 #   client_id    = "collabora"
 #   display_name = "Collabora Online"
 #
-#   redirect_uris = ["https://office.desk.gentian.org/*"]
+#   redirect_uris = ["https://office.${var.domain}/*"]
 #   web_origins   = ["+"]
 #
 #   openbao_mount       = "secret"

@@ -16,7 +16,7 @@
 # OX connects as root and manages the 'configdb' schema itself.
 # Secrets are injected via templatefile() in ox.tf — placeholders here.
 global:
-  hostname: "webmail.desk.gentian.org"
+  hostname: "webmail.${domain}"
   # Crypto keys injected via templatefile() in ox.tf — placeholders only
   appsuite:
     cookieHashSalt: "PLACEHOLDER_OVERRIDDEN_BY_TOFU"
@@ -71,7 +71,7 @@ appsuite:
       existingSecret: "opendesk-ox-tls"
     appsuite:
       hosts:
-        - "webmail.desk.gentian.org"
+        - "webmail.${domain}"
     dav:
       enabled: false
 
@@ -150,8 +150,8 @@ appsuite:
 
     # OX system properties (stored in ConfigMap — non-secret)
     properties:
-      com.openexchange.hostname: "webmail.desk.gentian.org"
-      com.openexchange.share.guestHostname: "webmail.desk.gentian.org"
+      com.openexchange.hostname: "webmail.${domain}"
+      com.openexchange.share.guestHostname: "webmail.${domain}"
       com.openexchange.UIWebPath: "/appsuite/"
       com.openexchange.showAdmin: "false"
       # OIDC configuration — client secret injected via secretProperties in tftpl
@@ -162,17 +162,17 @@ appsuite:
       com.openexchange.oidc.clientId: "opendesk-oxappsuite"
       com.openexchange.oidc.contextLookupClaim: "context"
       com.openexchange.oidc.contextLookupNamePart: "full"
-      com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/auth"
-      com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/opendesk"
+      com.openexchange.oidc.opAuthorizationEndpoint: "https://id.${domain}/realms/opendesk/protocol/openid-connect/auth"
+      com.openexchange.oidc.opIssuer: "https://id.${domain}/realms/opendesk"
       # Server-side calls (token exchange, JWKS) use the internal Keycloak service URL so that
       # OX middleware does not need to reach the external Cloudflare-proxied domain.
       # opIssuer and opAuthorizationEndpoint remain external — the browser uses them directly.
       com.openexchange.oidc.opJwkSetEndpoint: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/certs"
-      com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
+      com.openexchange.oidc.opLogoutEndpoint: "https://id.${domain}/realms/opendesk/protocol/openid-connect/logout"
       com.openexchange.oidc.opTokenEndpoint: "http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080/realms/opendesk/protocol/openid-connect/token"
-      com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
-      com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
-      com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
+      com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.${domain}/appsuite/api/oidc/auth"
+      com.openexchange.oidc.rpRedirectURILogout: "https://portal.${domain}"
+      com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.${domain}/appsuite/api/oidc/logout"
       com.openexchange.oidc.ssoLogout: "true"
       com.openexchange.oidc.startDefaultBackend: "true"
       com.openexchange.oidc.userLookupClaim: "opendesk_username"
@@ -185,10 +185,10 @@ appsuite:
       com.openexchange.oidc.staySignedIn: "true"
       # OAuth provider
       com.openexchange.oauth.provider.enabled: "true"
-      com.openexchange.oauth.provider.allowedIssuer: "https://id.desk.gentian.org/realms/opendesk"
+      com.openexchange.oauth.provider.allowedIssuer: "https://id.${domain}/realms/opendesk"
       com.openexchange.oauth.provider.contextLookupClaim: "context"
       com.openexchange.oauth.provider.contextLookupNamePart: "full"
-      com.openexchange.oauth.provider.jwt.jwksUri: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
+      com.openexchange.oauth.provider.jwt.jwksUri: "https://id.${domain}/realms/opendesk/protocol/openid-connect/certs"
       com.openexchange.oauth.provider.mode: "expect_jwt"
       com.openexchange.oauth.provider.userLookupNamePart: "full"
       com.openexchange.oauth.provider.userLookupClaim: "opendesk_username"
@@ -264,7 +264,7 @@ appsuite:
     # UI-level settings — drives OX frontend behaviour, theme, portal link, etc.
     uiSettings:
       # OX logo in top bar links to the portal
-      io.ox/core//logoAction: "https://portal.desk.gentian.org"
+      io.ox/core//logoAction: "https://portal.${domain}"
       # Enterprise Picker — top-right launcher (app grid) instead of dropdown
       io.ox/core//features/enterprisePicker/showLauncher: "false"
       io.ox/core//features/enterprisePicker/showTopRightLauncher: "true"

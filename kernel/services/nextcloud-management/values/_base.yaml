@@ -17,7 +17,7 @@
 # =============================================================================
 
 global:
-  domain: desk.gentian.org
+  domain: ${domain}
   hosts:
     nextcloud: files
     nubus: portal
@@ -115,11 +115,11 @@ configuration:
     auth:
       enabled: true
       username:
-        value: "opendesk-system@desk.gentian.org"
+        value: "opendesk-system@${domain}"
     # host: env-specific — postfix.gentian-{env}.svc.cluster.local
     port: 587
     fromAddress: "noreply"
-    mailDomain: "desk.gentian.org"
+    mailDomain: "${domain}"
     security: "tls"
     skipVerifyPeer: true
 

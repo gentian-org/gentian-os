@@ -1,3 +1,9 @@
+variable "domain" {
+  description = "Base domain for all service FQDNs (e.g. desk.gentian.org). Used by templatefile() to render _base.yaml templates."
+  type        = string
+  default     = "desk.gentian.org"
+}
+
 variable "env" {
   description = "Environment name (dev, staging, prod)."
   type        = string

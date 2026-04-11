@@ -1,3 +1,9 @@
+variable "domain" {
+  description = "Base domain for all service FQDNs (e.g. desk.gentian.org). Used in OIDC redirect/logout URLs."
+  type        = string
+  default     = "desk.gentian.org"
+}
+
 variable "env" {
   description = "Environment name (dev, staging, prod). Affects OpenBao secret paths and service DNS names."
   type        = string

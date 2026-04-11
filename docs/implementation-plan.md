@@ -68,7 +68,7 @@ The risk of "building too much" is mitigated by the architecture's delegate-don'
 | 15 | gentian-deployments repo setup | ✅ Done | `gentian-deployments/dev/` — bootstrap/install.sh (13-step), app-of-apps.yaml (multi-source ArgoCD Application), dev-tenant.yaml (gtn-demo), values-dev.yaml, tofu.tfvars, README.md. All gentian-os/kernel/ server/ refs migrated to gentian-org/gentian-os; paths updated apps/→kernel/services/; ExternalSecrets created in kernel/services/{app}/secrets/dev/ with OpenBao paths gentian/dev/X→gentian-os/kernel/X; ArgoCD AppProject updated (gentian-os + gentian-deployments sources, gentian-system destination, Tenant/AppProfile/IntegrationBinding in clusterResourceWhitelist). |
 | 16 | Mail extension reconciler (shared infra) | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps, per-tenant SMTP credentials + DKIM Secrets. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 76 tests total. |
 | 17 | Hardening + end-to-end tenant lifecycle tests | ✅ Done | `internal/controller/isolation_test.go`: 7 envtest tests — cross-tenant NetworkPolicy isolation, ingress/egress rule validation, ResourceQuota + LimitRange enforcement, end-to-end deletion with Delete + Retain policies. 93 tests total. |
-| 18 | Single-line domain configuration | ⬜ Not started | ~52 hardcoded `desk.gentian.org` occurrences across 8 `_base.yaml` files; refactor to Tofu `kernel_domain`/`tenant_domain` variables so a new deployment = 2-line change |
+| 18 | Single-line domain configuration | ✅ Done | `variable "domain"` added to infra-workspaces, keycloak-config, ox-workspace. 41 `_base.yaml` occurrences → `${domain}` template. 13 HCL occurrences → `var.domain`. `file()` → `templatefile()` in nubus.tf, nextcloud.tf, ox-workspace/main.tf. Remaining: intercom-service (8), postfix (1), keycloak-bootstrap (1) — not Tofu-managed. |
 
 ---
 
@@ -736,51 +736,49 @@ gentian-deployments/
 
 ### Increment 18 — Single-line domain configuration (production-readiness)
 
-**Goal:** Make it possible to deploy a complete new environment (e.g. `prod`) by changing exactly one line for the kernel base domain and one line for the tenant application domain, with zero other file edits.
+**Goal:** Deploy a complete new environment by changing a single `domain` variable — zero edits to `_base.yaml` files or Tofu HCL.
 
 **Background:**  
-Currently `desk.gentian.org` appears ~52 times across 8 service `_base.yaml` files. It is hardcoded at every layer: ingress hosts, SAML SP URLs, portal tile link bases, SMTP sender domain, Keycloak redirect URIs, and internal service cross-references. Adding a `prod` environment today would require touching every file individually. The upstream opendesk project solves this via Helm `.gotmpl` templating (`{{ .Values.global.domain }}`); our plain-YAML pipeline cannot use that mechanism directly.
+`desk.gentian.org` appears 51 times across 8 service `_base.yaml` files and 13 times in Tofu HCL (keycloak-config `clients.tf`, ox-workspace `main.tf`). Adding a `prod` environment today would require touching every file. The upstream opendesk project uses `{{ .Values.global.domain }}` Helm templating; our Tofu-driven pipeline uses `templatefile()` substitution instead.
 
-**Two domains, two responsibilities:**
+A single `domain` variable (not separate kernel/tenant domains) is sufficient because OIDC redirect URIs, SAML metadata, portal tile links, and SMTP sender addresses all share the same base domain. Splitting would add complexity with no proven benefit and would fight upstream openDesk's single-domain model.
 
-| Domain variable | What it controls | Owner |
+**Scope — Tofu-managed services (41 of 51 YAML occurrences, 13 TF occurrences):**
+
+| Service | `_base.yaml` occurrences | Loaded by |
 |---|---|---|
-| `kernelDomain` | The base domain for all kernel services (`portal.{domain}`, `sso.{domain}`, etc.) | Kernel layer / `gentian-os` |
-| `tenantDomain` | The base domain for tenant app ingresses (can equal `kernelDomain` or differ) | Deployment / `gentian-deployments` |
+| nubus | 21 | `infra-workspaces/nubus.tf` |
+| ox-appsuite | 13 | `ox-workspace/main.tf` |
+| nextcloud-management | 3 | `infra-workspaces/nextcloud.tf` |
+| nextcloud | 2 | `infra-workspaces/nextcloud.tf` |
+| nextcloud-notifypush | 2 | `infra-workspaces/nextcloud.tf` |
+| keycloak-config (HCL) | 12 | `keycloak-config/clients.tf` |
+| ox-workspace (HCL) | 1 | `ox-workspace/main.tf` |
 
-For the current setup both are `desk.gentian.org`. A future prod deployment might use `desk.example.com` for both, or `kernel.example.com` vs `apps.example.com` for isolation.
+**Not yet migrated (ArgoCD-managed, no Tofu `helm_release`):**
+
+| Service | Occurrences | Note |
+|---|---|---|
+| intercom-service | 8 | Future: add `helm_release` to infra-workspaces |
+| postfix | 1 | Future: add `helm_release` to infra-workspaces |
+| keycloak-bootstrap | 1 | `count = 0` (deprecated); handle if re-enabled |
 
 **Actions:**
 
-1. **Introduce `values/env/{env}.yaml` domain keys** — add two canonical fields to the existing per-env values file that is already loaded first by all Tofu Helm releases:
-   ```yaml
-   # values/env/dev.yaml  (and prod.yaml)
-   gentian:
-     kernelDomain: desk.gentian.org   # ← one line to change for a new deployment
-     tenantDomain:  desk.gentian.org  # ← one line to change (can differ in prod)
-   ```
+1. **Add `variable "domain"` to all three Tofu workspaces** — `infra-workspaces/variables.tf`, `keycloak-config/variables.tf`, `ox-workspace/variables.tf`. Default: `desk.gentian.org`.
 
-2. **Replace hardcoded domains in all `_base.yaml` files with Tofu variable injection** — the 8 affected files (`nubus`, `keycloak-bootstrap`, `intercom-service`, `nextcloud`, `nextcloud-management`, `nextcloud-notifypush`, `ox-appsuite`, `postfix`) currently contain ~52 hardcoded `desk.gentian.org` occurrences. Replace each with a `set` / `set_sensitive` block in the corresponding `infra-workspaces/*.tf` file that reads `var.kernel_domain` / `var.tenant_domain` and passes them as Helm `--set` overrides, or alternatively uses Tofu `templatefile()` to render an env overlay before passing to Helm.
+2. **Replace `desk.gentian.org` → `${domain}` in 5 `_base.yaml` files** — the files become Tofu templates (no rename needed; `templatefile()` accepts `.yaml` extension). All 5 files are free of `${...}` conflicts.
 
-3. **Tofu variable wiring** — in `tofu/tenant/infra-workspaces/variables.tf` add:
-   ```hcl
-   variable "kernel_domain" { type = string }
-   variable "tenant_domain"  { type = string }
-   ```
-   in `tofu/tenant/infra-workspaces/terraform.tfvars.tmpl` (or the existing vars injection) add the two values sourced from `values/env/{env}.yaml`.
+3. **Change `file()` → `templatefile()` in Tofu** — `nubus.tf`, `nextcloud.tf`, `ox-workspace/main.tf` pass `{ domain = var.domain }` to their `_base.yaml` loads.
 
-4. **Implement domain derivation for compound URLs** — URLs like `https://portal.{domain}/univention/saml/metadata` are sub-domain + path composites. Add a Tofu local or small helper that derives the 15+ compound URLs from the two root domain values so that individual service `.tf` files just reference `local.portal_url`, `local.sso_url`, etc. rather than building strings independently.
+4. **Replace hardcoded domains in HCL** — `clients.tf` redirect/logout URLs use `"https://files.${var.domain}/*"` interpolation. `ox-workspace/main.tf` OX connector set block uses `var.domain`.
 
-5. **Remove `global.domain` / `global.hosts.*` from `_base.yaml`** — these are currently hardcoded in the nextcloud `_base.yaml` and a few others. Move them to the Tofu `set` injection so the chart receives them at deploy time.
-
-6. **Validate with a `prod`-like smoke test** — add a CI check that renders all Helm values for a synthetic `domain: example.org` domain and asserts zero occurrences of `desk.gentian.org` in the rendered manifests.
-
-7. **Update `server/` mirror** — apply the same refactoring to `server/apps/*/values/_base.yaml` and `server/apps/nubus/values/_base.yaml` so both repos stay in sync until `server/` is retired.
+5. **Validate** — `tofu validate` in all 3 workspaces; `grep -r 'desk\.gentian\.org'` across affected files shows zero hits (excluding intercom-service, postfix, keycloak-bootstrap).
 
 **Test:**
-- Change `gentian.kernelDomain` in `values/env/dev.yaml` to `test.gentian.org`, run `tofu plan`, verify the plan shows the correct domain replacement across all 8 Helm releases and nothing else changes.
-- Restore to `desk.gentian.org`, plan shows zero diff.
-- CI manifest render check: zero occurrences of any hardcoded domain string in rendered `_base.yaml` outputs.
+- Set `domain = "test.example.org"` in `terraform.tfvars`, run `tofu plan` — verify domain substitution appears in plan diff for all Helm releases and Keycloak clients.
+- Restore to `desk.gentian.org` — plan shows zero diff.
+- `grep -r 'desk\.gentian\.org' kernel/services/{nubus,nextcloud*,ox-appsuite}/values/_base.yaml kernel/tofu/` returns zero matches.
 
 ---
 

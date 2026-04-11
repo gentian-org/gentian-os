@@ -223,7 +223,7 @@ resource "helm_release" "ox_appsuite" {
   #   values/sensitive.yaml.tftpl (credentials from OpenBao)
   #   AppProfile.spec.extraValues (per-tenant overrides via extra_values_json)
   values = compact([
-    file("${path.module}/../../../services/ox-appsuite/values/_base.yaml"),
+    templatefile("${path.module}/../../../services/ox-appsuite/values/_base.yaml", { domain = var.domain }),
     local.sensitive_values_yaml,
     var.extra_values_json != "" ? var.extra_values_json : "",
   ])
@@ -338,7 +338,7 @@ resource "helm_release" "ox_connector" {
 
   set {
     name  = "openXchange.domainName"
-    value = "desk.gentian.org"
+    value = var.domain
   }
 
   set {
