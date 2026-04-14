@@ -219,14 +219,21 @@ The App Store has three components:
 
 2. **App Store Controller** (`internal/controller/appstore_controller.go`) — a new reconciler that watches AppProfile CRs and maintains a `AppCatalogue` status resource listing all available apps, their versions, kernel requirements, and compatibility notes. This is what a UI or CLI queries to show "available apps."
 
-3. **App Store API / CLI** (future) — a lightweight REST API or `kubectl` plugin that lists available apps, shows their requirements, and lets admins install/uninstall apps for a tenant by patching `tenant.spec.apps[]`. The initial implementation is pure `kubectl`; a web UI integrated into the Univention Portal comes later.
+3. **App Store API / CLI** (future) — a lightweight REST API or `kubectl` plugin that lists available apps, shows their requirements, and lets admins install/uninstall apps for a tenant. Installs and uninstalls mutate the Tenant CR YAML in `gentian-deployments` and commit+push the change. ArgoCD then reconciles the new state to the cluster — the Git commit is the single source of truth and the full audit trail. Only `gentian-deployments` receives these commits; `gentian-apps` only changes when AppProfiles are added or upgraded (catalogue changes), and `gentian-os` only changes when the orchestrator itself changes. A web UI integrated into the Univention Portal comes later.
 
 **Runtime install flow:**
 
 ```
 Admin: "Install OpenProject for tenant gtn-demo"
   ↓
-kubectl patch tenant gtn-demo --type=merge -p '{"spec":{"apps":[..., {"profile":"openproject"}]}}'
+kubectl gentian apps install openproject --tenant gtn-demo
+  ↓
+CLI clones gentian-deployments (or uses a local checkout),
+edits tenants/gtn-demo.yaml (appends {profile: openproject} to spec.apps),
+commits "feat(gtn-demo): install openproject",
+pushes to gentian-deployments main branch
+  ↓
+ArgoCD detects the change and applies the updated Tenant CR
   ↓
 Orchestrator reconciles:
   1. Fetch AppProfile "openproject"
@@ -248,7 +255,14 @@ App ready — SSO works, database provisioned, storage wired
 ```
 Admin: "Remove OpenProject from tenant gtn-demo"
   ↓
-kubectl patch tenant gtn-demo (remove openproject from spec.apps)
+kubectl gentian apps uninstall openproject --tenant gtn-demo
+  ↓
+CLI clones gentian-deployments (or uses a local checkout),
+edits tenants/gtn-demo.yaml (removes {profile: openproject} from spec.apps),
+commits "feat(gtn-demo): uninstall openproject",
+pushes to gentian-deployments main branch
+  ↓
+ArgoCD detects the change and applies the updated Tenant CR
   ↓
 Orchestrator reconciles:
   1. Delete ArgoCD Application CR → ArgoCD uninstalls Helm release
@@ -276,7 +290,7 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 
 #### Inc 19 — App Store controller + catalogue API
 
-**Goal:** Build the App Store controller that maintains a queryable catalogue of available apps, and implement runtime install/uninstall via `kubectl patch`.
+**Goal:** Build the App Store controller that maintains a queryable catalogue of available apps, and implement runtime install/uninstall via Git commits to `gentian-deployments`.
 
 **Deliverables:**
 - `internal/controller/appstore_controller.go` — watches all AppProfile CRs, maintains `AppCatalogue` status (available apps, versions, requirements summary, installed-by-tenant counts)
@@ -284,7 +298,9 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 - Validation webhook: when a tenant adds an app to `spec.apps[]`, validate that the referenced AppProfile exists and that the tenant's quota allows another app (`spec.quotas.maxApps`)
 - Pre-flight check: before provisioning, verify the cluster has the required kernel services (e.g., reject an app requiring MariaDB if no MariaDB kernel service exists)
 - `kubectl gentian apps list` — plugin (or script) that reads the `AppCatalogue` and formats available apps as a table
-- `kubectl gentian apps install <app> --tenant <tenant>` — plugin that patches `tenant.spec.apps[]`
+- `kubectl gentian apps install <app> --tenant <tenant>` — plugin that edits the Tenant CR YAML in a local `gentian-deployments` checkout (or clones it), commits `feat(<tenant>): install <app>`, and pushes; ArgoCD reconciles from there
+- `kubectl gentian apps uninstall <app> --tenant <tenant>` — same flow, removes the entry from `spec.apps` and commits `feat(<tenant>): uninstall <app>`
+- The plugin requires `GENTIAN_DEPLOYMENTS_REPO` (URL) and `GENTIAN_DEPLOYMENTS_PATH` (local path) env vars, or reads them from a `~/.gentian/config.yaml`; no other repos are touched
 
 **Test:**
 - envtest: create 5 AppProfiles → AppCatalogue lists all 5 with correct metadata
