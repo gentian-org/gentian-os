@@ -348,21 +348,62 @@ Each app increment (20–24) moves an app from `gentian-os/config/samples/` to `
 ```bash
 # Install Collabora for tenant gtn-demo
 kubectl gentian apps install collabora --tenant gtn-demo
-# Wait for ArgoCD sync + Tofu apply
+# Wait for pod to be Running (typically 30–60s after ArgoCD sync)
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora -w
-# Verify: pod Running, no HPA (autoscaling disabled), single replica
+# Verify: single replica, no HPA
 kubectl get hpa -n tenant-gtn-demo  # should show no collabora HPA
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
 # Expected: collabora: 1
 ```
 
-**E2E test — Use:**
+**E2E test — Verify (CLI):**
 ```bash
-# Verify Collabora health endpoint responds
-COLLABORA_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/name=collabora -o name | head -1)
-kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- curl -sf http://localhost:9980/hosting/discovery | head -5
-# Expected: WOPI discovery XML response
-# Functional test: open Nextcloud → create/open a .docx or .odt file → Collabora editor loads in browser
+# 1. Check WOPI discovery endpoint (must return XML)
+COLLABORA_POD=$(kubectl get pod -n tenant-gtn-demo \
+  -l app.kubernetes.io/name=collabora -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
+  curl -sf http://localhost:9980/hosting/discovery | head -5
+# Expected: <wopi-discovery> XML listing supported file types
+
+# 2. Check the ingress exists (created by the orchestrator / kernel ingress controller)
+kubectl get ingress -n tenant-gtn-demo | grep collabora
+# Expected: ingress to office.<domain> (e.g. office.desk.gentian.org)
+# If missing: the orchestrator (Inc 10) has not created it yet — see troubleshooting below.
+
+# 3. Check aliasgroups (Nextcloud as allowed WOPI host)
+kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
+  curl -sf http://localhost:9980/hosting/capabilities | python3 -m json.tool | grep -A5 "convert-to"
+# Expected: JSON capabilities response
+```
+
+**E2E test — Verify (Browser):**
+
+Collabora is accessed **indirectly through Nextcloud** (the `files.<domain>` app), not by
+navigating to Collabora directly. The WOPI flow is:
+Browser → Nextcloud → Collabora → Nextcloud (fetch file) → Browser (render editor).
+
+Prerequisites: Nextcloud must be deployed for the tenant, and the Nextcloud `richdocuments`
+app must be configured with the Collabora WOPI URL (`http://collabora-collabora-online:9980`
+or `https://office.<domain>`).
+
+1. Open **`https://files.<domain>`** (e.g. `https://files.desk.gentian.org`) in a browser
+2. Log in via SSO (Keycloak redirects)
+3. Click the **"+"** button → **New document** → choose "Document (.odt)" or "Spreadsheet (.ods)"
+4. **Expected:** Collabora Online editor loads inside Nextcloud in an iframe — you see a
+   full office UI (toolbar, formatting, page layout). The title bar shows "Collabora Online".
+5. Type some text, wait 2 seconds (autosave), then close the tab
+6. Re-open the file — your text is still there
+
+**Troubleshooting:**
+- "Failed to read document from storage" → Collabora cannot reach Nextcloud WOPI endpoint.
+  Check `aliasgroups` in Collabora config — it must list `https://files.<domain>`.
+- Document opens in plain-text / download prompt → `richdocuments` app not enabled in Nextcloud.
+  Run: `kubectl exec -n tenant-gtn-demo <nextcloud-pod> -- php occ app:enable richdocuments`
+- No "New document" option → `richdocuments` is not configured. Set the WOPI URL:
+  `kubectl exec -n tenant-gtn-demo <nextcloud-pod> -- php occ config:app:set richdocuments wopi_url --value="https://office.<domain>"`
+- Collabora iframe shows "Unauthorized WOPI host" → the Collabora aliasgroups don't include
+  the Nextcloud host. Check `extraValues.collabora.aliasgroups` in the AppProfile.
 ```
 
 **E2E test — Uninstall:**
@@ -401,17 +442,49 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 ```bash
 kubectl gentian apps install element --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=element -w
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
 # Expected: element: 1
 ```
 
-**E2E test — Use:**
+**E2E test — Verify (CLI):**
 ```bash
-# Verify Synapse health
-SYNAPSE_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/component=synapse -o name | head -1)
-kubectl exec -n tenant-gtn-demo "$SYNAPSE_POD" -- curl -sf http://localhost:8008/_matrix/client/versions
-# Expected: JSON with supported Matrix versions
-# Functional test: open Element web UI → SSO login via Keycloak → send a message → message appears
+# 1. Check Synapse federation API
+SYNAPSE_POD=$(kubectl get pod -n tenant-gtn-demo \
+  -l app.kubernetes.io/component=synapse -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$SYNAPSE_POD" -- \
+  curl -sf http://localhost:8008/_matrix/client/versions
+# Expected: {"versions":["r0.0.1",..."v1.11"],...}
+
+# 2. Check Element web UI is served
+kubectl exec -n tenant-gtn-demo "$SYNAPSE_POD" -- \
+  curl -sf -o /dev/null -w '%{http_code}' http://localhost:8008/
+# Expected: 200 or 302
+
+# 3. Check ingress
+kubectl get ingress -n tenant-gtn-demo | grep element
+# Expected: ingress to chat.<domain> (e.g. chat.desk.gentian.org)
+```
+
+**E2E test — Verify (Browser):**
+
+1. Open **`https://chat.<domain>`** (e.g. `https://chat.desk.gentian.org`)
+2. Click **"Sign in"** → redirects to Keycloak SSO
+3. Log in with a valid user (e.g. `mightymouse`)
+4. **Expected:** Element Web loads, showing the home screen with room list
+5. Click **"+"** → **"New room"** → name it "Test Room" → **Create**
+6. Type a message, press Enter
+7. **Expected:** Message appears in the room with your display name and timestamp
+8. Open a second browser / incognito window, log in as a different user
+9. Have the second user join "Test Room" and send a reply
+10. **Expected:** Both users see messages in real-time
+
+**Troubleshooting:**
+- "Unable to connect to homeserver" → Synapse not reachable. Check ingress
+  and `/.well-known/matrix/client` on the domain.
+- SSO redirect fails → OIDC client not created in Keycloak. Check
+  `kubectl get secret -n tenant-gtn-demo` for the Element OIDC client secret.
+- "Registration is disabled" → expected; users come from OIDC, not self-registration.
 ```
 
 **E2E test — Uninstall:**
@@ -447,17 +520,52 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 ```bash
 kubectl gentian apps install jitsi --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=jitsi -w
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
 # Expected: jitsi: 1
 ```
 
-**E2E test — Use:**
+**E2E test — Verify (CLI):**
 ```bash
-# Verify Jitsi web health
-JITSI_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/component=jitsi-web -o name | head -1)
-kubectl exec -n tenant-gtn-demo "$JITSI_POD" -- curl -sf http://localhost:80/ | head -5
-# Expected: HTML landing page
-# Functional test: open Jitsi URL → SSO login → create video conference room → audio/video works
+# 1. Check Jitsi web is serving
+JITSI_WEB=$(kubectl get pod -n tenant-gtn-demo \
+  -l app.kubernetes.io/component=jitsi-web -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$JITSI_WEB" -- \
+  curl -sf -o /dev/null -w '%{http_code}' http://localhost:80/
+# Expected: 200
+
+# 2. Check Orosody (XMPP) is connected
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/component=orosody
+# Expected: 1/1 Running
+
+# 3. Check JVB (video bridge) is running
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/component=jvb
+# Expected: 1/1 Running
+
+# 4. Check ingress
+kubectl get ingress -n tenant-gtn-demo | grep jitsi
+# Expected: ingress to meet.<domain> (e.g. meet.desk.gentian.org)
+```
+
+**E2E test — Verify (Browser):**
+
+1. Open **`https://meet.<domain>`** (e.g. `https://meet.desk.gentian.org`)
+2. **Expected:** Jitsi Meet landing page loads
+3. If SSO is configured: click **"Sign in"** → Keycloak SSO redirect
+4. Enter a room name (e.g. "test-room") and click **"Start meeting"** / **"Go"**
+5. **Expected:** You enter a video conference room. Browser asks for camera/mic permission.
+6. Grant permissions → your video feed appears
+7. Open a second browser/tab and join the same room name
+8. **Expected:** Both participants see each other's video/audio streams
+9. Test screen sharing: click the **share screen** button → select a screen
+10. **Expected:** The other participant sees your shared screen
+
+**Troubleshooting:**
+- "Meeting not started" / stuck on loading → JVB pod may not be running or OROP is down.
+  Check `kubectl logs -n tenant-gtn-demo <jvb-pod>` for OROP connection errors.
+- No audio/video → browser permissions denied, or OROP→JVB UDP port not reachable.
+  On single-node setups, usually works with `hostPort`. Check JVB `OROP_UDP_PORT` env var.
+- SSO not working → JWT secret mismatch. Check `appSecrets` mapping for `jwt_app_secret`.
 ```
 
 **E2E test — Uninstall:**
@@ -495,18 +603,59 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 ```bash
 kubectl gentian apps install openproject --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=openproject -w
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
 # Expected: openproject: 1
 ```
 
-**E2E test — Use:**
+**E2E test — Verify (CLI):**
 ```bash
-# Verify OpenProject health
-OP_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/name=openproject -o name | head -1)
-kubectl exec -n tenant-gtn-demo "$OP_POD" -- curl -sf http://localhost:8080/api/v3
-# Expected: JSON API root response
-# Functional test: open OpenProject URL → SSO login via Keycloak → LDAP users visible →
-#   create project → attach file (stored via S3) → project appears in Portal navigation
+# 1. Check OpenProject API responds
+OP_POD=$(kubectl get pod -n tenant-gtn-demo \
+  -l app.kubernetes.io/name=openproject -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$OP_POD" -- \
+  curl -sf http://localhost:8080/api/v3 | python3 -m json.tool | head -10
+# Expected: JSON with {"_type":"Root", ...}
+
+# 2. Check worker pod is running (background jobs)
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/component=worker
+# Expected: 1/1 Running
+
+# 3. Check ingress
+kubectl get ingress -n tenant-gtn-demo | grep openproject
+# Expected: ingress to projects.<domain> (e.g. projects.desk.gentian.org)
+
+# 4. Check OIDC provider is configured
+kubectl exec -n tenant-gtn-demo "$OP_POD" -- \
+  curl -sf http://localhost:8080/api/v3/configuration | python3 -c \
+  "import sys,json; c=json.load(sys.stdin); print('SSO:', 'oidc' in str(c).lower())"
+# Expected: SSO: True
+```
+
+**E2E test — Verify (Browser):**
+
+1. Open **`https://projects.<domain>`** (e.g. `https://projects.desk.gentian.org`)
+2. Click **"Sign in"** → redirects to Keycloak SSO
+3. Log in with a valid user (e.g. `mightymouse`)
+4. **Expected:** OpenProject dashboard loads, showing the home page
+5. Click **"+ Project"** → enter name "E2E Test Project" → **Save**
+6. **Expected:** Project is created, you see the project overview page
+7. Go to **Work packages** → **+ Create** → type "Test task" → **Save**
+8. **Expected:** Work package appears in the list with #ID, status "New"
+9. Go to **Files** → upload a small test file (e.g. a .txt or .pdf)
+10. **Expected:** File appears in the file list (stored via S3)
+11. Check the **Members** tab → **+ Member** → search for an LDAP user
+12. **Expected:** LDAP users appear in the autocomplete (proves LDAP integration)
+
+**Troubleshooting:**
+- "502 Bad Gateway" → OpenProject Puma worker still starting. Wait 60s,
+  check `kubectl logs -n tenant-gtn-demo <openproject-web-pod>`.
+- SSO redirect loop → OIDC client not configured or redirect URI mismatch.
+  Check Keycloak admin → Clients → `openproject` client → Valid Redirect URIs.
+- "File upload failed" → S3 bucket doesn't exist or credentials wrong.
+  Check `kubectl logs <openproject-web-pod>` for S3 errors.
+- No LDAP users found → LDAP connection not configured. Check OpenProject
+  admin → Authentication → LDAP connections.
 ```
 
 **E2E test — Uninstall:**
@@ -543,18 +692,55 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 ```bash
 kubectl gentian apps install xwiki --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki -w
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
 # Expected: xwiki: 1
 ```
 
-**E2E test — Use:**
+**E2E test — Verify (CLI):**
 ```bash
-# Verify XWiki health
-XWIKI_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki -o name | head -1)
-kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- curl -sf http://localhost:8080/rest
-# Expected: XWiki REST API response
-# Functional test: open XWiki URL → SSO login via Keycloak → LDAP users visible →
-#   create wiki page → edit and save → page renders correctly
+# 1. Check XWiki REST API
+XWIKI_POD=$(kubectl get pod -n tenant-gtn-demo \
+  -l app.kubernetes.io/name=xwiki -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- \
+  curl -sf http://localhost:8080/rest -H "Accept: application/json" | head -20
+# Expected: JSON with XWiki REST API resources
+
+# 2. Check ingress
+kubectl get ingress -n tenant-gtn-demo | grep xwiki
+# Expected: ingress to wiki.<domain> or xwiki.<domain>
+
+# 3. Check database connectivity
+kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- \
+  curl -sf http://localhost:8080/rest/wikis -H "Accept: application/json" \
+  | python3 -c "import sys,json; w=json.load(sys.stdin); print('Wikis:', len(w.get('wikis',{}).get('wikiSummaries',[])))"
+# Expected: Wikis: 1 (at least — the main wiki)
+```
+
+**E2E test — Verify (Browser):**
+
+1. Open **`https://wiki.<domain>`** (or the XWiki ingress host from the CLI check above)
+2. Click **"Log in"** → redirects to Keycloak SSO
+3. Log in with a valid user (e.g. `mightymouse`)
+4. **Expected:** XWiki home page loads with the wiki dashboard
+5. Click **"Add" → "Page"** (or the **"+"** button in the page tree)
+6. Enter title "E2E Test Page", add some content with formatting (bold, headings, a list)
+7. Click **"Save & View"**
+8. **Expected:** The rendered page appears with your formatting intact
+9. Click **"Edit"** again, make a change, save
+10. Click **"History"** tab on the page
+11. **Expected:** Two revisions are listed with diffs available
+12. Log in as a different user → navigate to the same page
+13. **Expected:** The page is visible (access control works, LDAP-synced users can read)
+
+**Troubleshooting:**
+- XWiki stuck on "Loading..." → Java startup can take 2-3 minutes. Check
+  `kubectl logs -n tenant-gtn-demo <xwiki-pod>` for "Server started" message.
+- SSO redirect fails → OIDC configuration in `xwiki.properties` is wrong.
+  Verify `oidc.endpoint.authorization`, `oidc.clientid`, and `oidc.secret` values.
+- "Database not available" → PostgreSQL credentials wrong or database not created.
+  Check `hibernate.cfg.xml` connection string in the XWiki pod.
+- User login works but no permissions → LDAP group sync not configured.
 ```
 
 **E2E test — Uninstall:**
