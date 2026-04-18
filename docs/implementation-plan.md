@@ -42,6 +42,7 @@ The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc
 | 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 93 total |
 | 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 93 total |
 | 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 99 total |
+| 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. ArgoCD Source 3 added to `app-of-apps.yaml`. 99 total |
 ---
 
 ## Day-2 Operations
