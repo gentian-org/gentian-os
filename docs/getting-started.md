@@ -103,6 +103,10 @@ bash scripts/seed-openbao.sh "$MASTER_PASSWORD" "$OD_PRIVATE_REGISTRY_USERNAME" 
 
 # Step 12: Apply root ApplicationSet
 bash scripts/bootstrap.sh
+
+# Step 13: Install AppCatalogue CRD + kubectl-gentian plugin
+kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
+install -m 755 scripts/kubectl-gentian /usr/local/bin/kubectl-gentian
 ```
 
 ### 4. Save OpenBao keys when prompted
@@ -136,6 +140,7 @@ restart — no manual intervention needed after a normal reboot.
 | 10 | Runs `tofu apply` in `kernel/tofu/platform/openbao-init/` to configure KV engine, Kubernetes auth backend, and ESO policy |
 | 11 | Runs `scripts/seed-openbao.sh` to write all kernel service secrets into OpenBao |
 | 12 | Applies the root ApplicationSet (`kernel/bootstrap/root-applicationset.yaml`) — ArgoCD syncs the full kernel stack |
+| 13 | Applies the `AppCatalogue` CRD and installs the `kubectl-gentian` plugin to `/usr/local/bin` |
 
 ---
 
@@ -157,6 +162,29 @@ The installer prints these values at the end of Step 12.
 ```bash
 kubectl get applications -n argocd
 kubectl get pods -A
+```
+
+### Verify the App Store
+
+Once the `gentian-os` orchestrator is running (step 13 complete), the App
+Store catalogue is available:
+
+```bash
+# Summary view
+kubectl get appcatalogue default
+
+# Full catalogue with per-app details, versions, and tenant install counts
+kubectl get appcatalogue default -o yaml
+
+# Via the kubectl plugin
+kubectl gentian apps list
+```
+
+If `kubectl get appcatalogue` reports `the server doesn't have a resource type
+"appcatalogue"`, apply the CRD manually:
+
+```bash
+kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
 ```
 
 ---

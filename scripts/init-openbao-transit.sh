@@ -56,6 +56,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
   if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
     TRANSIT_ROOT_TOKEN=$(jq -r '.root_token' "${TRANSIT_INIT_FILE}")
   else
+    echo "  (token is read silently — characters will not appear as you type)"
     read -rsp "  Enter openbao-transit root token: " TRANSIT_ROOT_TOKEN; echo ""
   fi
 
@@ -65,6 +66,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
     if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
       UNSEAL_KEY=$(jq -r '.keys_base64[0]' "${TRANSIT_INIT_FILE}")
     else
+      echo "  (key is read silently — characters will not appear as you type)"
       read -rsp "  Enter transit unseal key: " UNSEAL_KEY; echo ""
     fi
     curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/unseal" \
