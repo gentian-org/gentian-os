@@ -47,5 +47,13 @@ spec:
     - name: admin_password
       valuePath: "collabora.password"
 
+  # Disable the chart's default HPA — single-tenant dev clusters don't need
+  # autoscaling, and the default memory target (50%) causes runaway scaling
+  # because Collabora idles above that threshold.
+  extraValues:
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+
   # Pattern B — collabora-online chart injects the admin password as a direct Helm value.
   deploymentMethod: tofu-controller
