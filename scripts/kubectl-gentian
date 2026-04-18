@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# kubectl-gentian — kubectl plugin for Gentian OS management.
+#
+# Provides subcommands for the Gentian App Store. Install/uninstall operations
+# edit the Tenant CR YAML in the gentian-deployments repository and commit+push
+# the change. ArgoCD then reconciles the new state — the Git commit is the
+# single source of truth and the audit trail.
+#
+# Usage:
+#   kubectl gentian apps list [--namespace <ns>]
+#   kubectl gentian apps install <app> --tenant <tenant>
+#   kubectl gentian apps uninstall <app> --tenant <tenant>
+#
+# Required environment variables (or ~/.gentian/config):
+#   GENTIAN_DEPLOYMENTS_PATH   local path to a gentian-deployments checkout
+#   GENTIAN_DEPLOYMENTS_REPO   remote URL (used for initial clone if path absent)
+#
+# The plugin respects KUBECONFIG / kubectl context for the `list` subcommand.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Config resolution
+# ---------------------------------------------------------------------------
+CONFIG_FILE="${HOME}/.gentian/config"
+if [[ -f "${CONFIG_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${CONFIG_FILE}"
+fi
+
+DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH:-}"
+DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
+
+usage() {
+  cat <<EOF
+kubectl-gentian — Gentian OS management plugin
+
+Usage:
+  kubectl gentian apps list
+      List all available apps from the AppCatalogue.
+
+  kubectl gentian apps install <app> --tenant <tenant>
+      Install an app for a tenant by committing to gentian-deployments.
+
+  kubectl gentian apps uninstall <app> --tenant <tenant>
+      Uninstall an app from a tenant by committing to gentian-deployments.
+
+Environment / ~/.gentian/config:
+  GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
+  GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
+
+Examples:
+  kubectl gentian apps list
+  kubectl gentian apps install openproject --tenant gtn-demo
+  kubectl gentian apps uninstall openproject --tenant gtn-demo
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Helper: ensure we have a local deployment repo checkout
+# ---------------------------------------------------------------------------
+ensure_repo() {
+  if [[ -z "${DEPLOYMENTS_PATH}" ]]; then
+    echo "ERROR: GENTIAN_DEPLOYMENTS_PATH is not set." >&2
+    echo "Set it in the environment or in ${CONFIG_FILE}." >&2
+    exit 1
+  fi
+
+  if [[ ! -d "${DEPLOYMENTS_PATH}/.git" ]]; then
+    if [[ -z "${DEPLOYMENTS_REPO}" ]]; then
+      echo "ERROR: ${DEPLOYMENTS_PATH} is not a git repository and GENTIAN_DEPLOYMENTS_REPO is not set." >&2
+      exit 1
+    fi
+    echo "Cloning ${DEPLOYMENTS_REPO} → ${DEPLOYMENTS_PATH} ..."
+    git clone "${DEPLOYMENTS_REPO}" "${DEPLOYMENTS_PATH}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Helper: find the tenant YAML file
+# ---------------------------------------------------------------------------
+tenant_file() {
+  local tenant="${1}"
+  # Support both flat and environment-subdirectory layouts:
+  #   tenants/gtn-demo.yaml
+  #   dev/tenants/gtn-demo.yaml
+  local candidates
+  candidates=$(find "${DEPLOYMENTS_PATH}" -name "${tenant}.yaml" -path "*/tenants/*" 2>/dev/null || true)
+  if [[ -z "${candidates}" ]]; then
+    echo "ERROR: Tenant file for '${tenant}' not found under ${DEPLOYMENTS_PATH}." >&2
+    echo "Expected path pattern: */tenants/${tenant}.yaml" >&2
+    exit 1
+  fi
+  # If multiple candidates exist (e.g. dev/ and staging/), take the first one.
+  echo "${candidates}" | head -n1
+}
+
+# ---------------------------------------------------------------------------
+# apps list
+# ---------------------------------------------------------------------------
+cmd_list() {
+  echo "Available apps from AppCatalogue:"
+  echo ""
+  kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}{"\t"}{.chartVersion}{"\t"}{.installedCount}{" tenants\t"}{range .kernelRequirements[*]}{@}{","}{end}{"\n"}{end}' \
+    | column -t -s $'\t' \
+    | awk 'BEGIN{printf "%-30s %-12s %-12s %s\n","NAME","VERSION","INSTALLED","REQUIRES"; print "---"} {print}'
+}
+
+# ---------------------------------------------------------------------------
+# apps install
+# ---------------------------------------------------------------------------
+cmd_install() {
+  local app="${1:-}"
+  local tenant="${2:-}"
+
+  if [[ -z "${app}" || -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian apps install <app> --tenant <tenant>" >&2
+    exit 1
+  fi
+
+  ensure_repo
+
+  local file
+  file=$(tenant_file "${tenant}")
+
+  # Guard: check AppProfile exists in the cluster before touching Git.
+  if ! kubectl get appprofile "${app}" &>/dev/null; then
+    echo "ERROR: AppProfile '${app}' not found in the cluster. Is the app catalogue synced?" >&2
+    exit 1
+  fi
+
+  # Guard: check not already installed.
+  if grep -q "profile: ${app}" "${file}"; then
+    echo "App '${app}' is already listed in tenant '${tenant}'. Nothing to do."
+    exit 0
+  fi
+
+  # Inject the entry under spec.apps using Python's yaml module so we don't
+  # corrupt the YAML structure with naive sed.
+  python3 - "${file}" "${app}" <<'PYEOF'
+import sys, yaml
+
+path, app = sys.argv[1], sys.argv[2]
+
+with open(path) as f:
+    doc = yaml.safe_load(f)
+
+if "spec" not in doc:
+    doc["spec"] = {}
+if "apps" not in doc["spec"] or doc["spec"]["apps"] is None:
+    doc["spec"]["apps"] = []
+
+profiles = [entry["profile"] for entry in doc["spec"]["apps"] if "profile" in entry]
+if app in profiles:
+    print(f"App '{app}' already present — nothing to do.")
+    sys.exit(0)
+
+doc["spec"]["apps"].append({"profile": app})
+
+with open(path, "w") as f:
+    yaml.dump(doc, f, default_flow_style=False, allow_unicode=True)
+
+print(f"Added '{app}' to spec.apps.")
+PYEOF
+
+  # Commit and push.
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "${file}"
+    git commit -m "feat(${tenant}): install ${app}"
+    git push
+  )
+
+  echo "Done. ArgoCD will reconcile tenant '${tenant}' and provision '${app}'."
+}
+
+# ---------------------------------------------------------------------------
+# apps uninstall
+# ---------------------------------------------------------------------------
+cmd_uninstall() {
+  local app="${1:-}"
+  local tenant="${2:-}"
+
+  if [[ -z "${app}" || -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant>" >&2
+    exit 1
+  fi
+
+  ensure_repo
+
+  local file
+  file=$(tenant_file "${tenant}")
+
+  # Guard: check actually installed.
+  if ! grep -q "profile: ${app}" "${file}"; then
+    echo "App '${app}' is not listed in tenant '${tenant}'. Nothing to do."
+    exit 0
+  fi
+
+  python3 - "${file}" "${app}" <<'PYEOF'
+import sys, yaml
+
+path, app = sys.argv[1], sys.argv[2]
+
+with open(path) as f:
+    doc = yaml.safe_load(f)
+
+apps = doc.get("spec", {}).get("apps") or []
+updated = [entry for entry in apps if entry.get("profile") != app]
+
+if len(updated) == len(apps):
+    print(f"App '{app}' not found in spec.apps — nothing removed.")
+    sys.exit(0)
+
+doc["spec"]["apps"] = updated
+
+with open(path, "w") as f:
+    yaml.dump(doc, f, default_flow_style=False, allow_unicode=True)
+
+print(f"Removed '{app}' from spec.apps.")
+PYEOF
+
+  # Commit and push.
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "${file}"
+    git commit -m "feat(${tenant}): uninstall ${app}"
+    git push
+  )
+
+  echo "Done. ArgoCD will reconcile tenant '${tenant}' and deprovision '${app}'."
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+SUBCOMMAND="${1:-}"
+shift
+
+case "${SUBCOMMAND}" in
+  apps)
+    APPS_CMD="${1:-}"
+    shift || true
+    case "${APPS_CMD}" in
+      list)
+        cmd_list
+        ;;
+      install|uninstall)
+        APP_NAME="${1:-}"
+        shift || true
+        TENANT_NAME=""
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --tenant|-t)
+              TENANT_NAME="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        if [[ "${APPS_CMD}" == "install" ]]; then
+          cmd_install "${APP_NAME}" "${TENANT_NAME}"
+        else
+          cmd_uninstall "${APP_NAME}" "${TENANT_NAME}"
+        fi
+        ;;
+      *)
+        echo "ERROR: unknown apps subcommand: ${APPS_CMD}" >&2
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+  *)
+    echo "ERROR: unknown subcommand: ${SUBCOMMAND}" >&2
+    usage
+    exit 1
+    ;;
+esac

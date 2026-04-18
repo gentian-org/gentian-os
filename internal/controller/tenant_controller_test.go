@@ -85,6 +85,13 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	if err := (&controller.AppStoreReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		panic(err)
+	}
+
 	testClient = mgr.GetClient()
 
 	ctx, cancel := context.WithCancel(context.Background())
