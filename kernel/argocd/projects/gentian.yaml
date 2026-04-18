@@ -12,6 +12,7 @@ spec:
   # Source repositories
   sourceRepos:
   - 'https://github.com/gentian-org/gentian-os'                                                         # OS/infrastructure Git repository
+  - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'registry.opencode.de/*'                                                                            # ZenDiS OCI registry (without protocol)
   - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql'     # PostgreSQL chart
