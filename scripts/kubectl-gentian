@@ -81,14 +81,21 @@ ensure_repo() {
 # ---------------------------------------------------------------------------
 tenant_file() {
   local tenant="${1}"
-  # Support both flat and environment-subdirectory layouts:
-  #   tenants/gtn-demo.yaml
-  #   dev/tenants/gtn-demo.yaml
+  # First try matching by filename: tenants/gtn-demo.yaml or dev/tenants/gtn-demo.yaml
   local candidates
   candidates=$(find "${DEPLOYMENTS_PATH}" -name "${tenant}.yaml" -path "*/tenants/*" 2>/dev/null || true)
+
+  # Fall back to searching by metadata.name inside all tenant YAML files
+  if [[ -z "${candidates}" ]]; then
+    candidates=$(grep -rl "name: ${tenant}" "${DEPLOYMENTS_PATH}" --include="*.yaml" 2>/dev/null \
+      | while read -r f; do
+          [[ "${f}" == */tenants/* ]] && grep -q "kind: Tenant" "${f}" && echo "${f}"
+        done || true)
+  fi
+
   if [[ -z "${candidates}" ]]; then
     echo "ERROR: Tenant file for '${tenant}' not found under ${DEPLOYMENTS_PATH}." >&2
-    echo "Expected path pattern: */tenants/${tenant}.yaml" >&2
+    echo "Searched by filename (*/tenants/${tenant}.yaml) and by metadata.name." >&2
     exit 1
   fi
   # If multiple candidates exist (e.g. dev/ and staging/), take the first one.

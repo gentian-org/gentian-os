@@ -42,7 +42,7 @@ The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc
 | 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 93 total |
 | 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 93 total |
 | 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 99 total |
-| 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. ArgoCD Source 3 added to `app-of-apps.yaml`. 99 total |
+| 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. ArgoCD Source 3 + AppProject sourceRepos. `extraValues` aligned with opendesk defaults. 99 total |
 ---
 
 ## Day-2 Operations
@@ -312,9 +312,22 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 
 ---
 
+### Migration checklist (applies to every app increment)
+
+Each app increment (20–24) moves an app from `gentian-os/config/samples/` to `gentian-apps/profiles/`. Non-kernel apps must not leave any configuration in `gentian-os` after migration. The increment is complete when:
+
+1. **`gentian-apps/profiles/<app>.yaml`** exists with `extraValues` aligned to `opendesk/helmfile/apps/<app>/values.yaml.gotmpl` defaults
+2. **`gentian-os/config/samples/appprofile_<app>.yaml`** is deleted (`git rm`)
+3. **`gentian-os/kernel/argocd/projects/gentian.yaml`** sourceRepos includes `gentian-apps` (done once in Inc 20)
+4. **`gentian-deployments/dev/app-of-apps.yaml`** Source 3 syncs from `gentian-apps/profiles/` (done once in Inc 20)
+5. ArgoCD re-syncs, duplicate warning for the app disappears, AppCatalogue shows the app
+6. E2E tests (install → use → uninstall) pass
+
+---
+
 #### Inc 20 — Collabora AppProfile (document editing)
 
-**Goal:** First app in the store — Collabora Online (WOPI document editor).
+**Goal:** First app in the store — Collabora Online (WOPI document editor). Establish the `gentian-apps` repo structure and ArgoCD wiring.
 
 **AppProfile:**
 - `kernelRequirements`: none (Collabora authenticates through Nextcloud, not directly)
@@ -322,19 +335,53 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 - `provides`: `office-editor` (wopi)
 - `chart`: `collabora-online` v1.1.45
 - `deploymentMethod`: `tofu-controller` (Pattern B)
+- `extraValues`: `autoscaling.enabled: false`, `replicaCount: 1`, security context, `fullnameOverride: collabora` — aligned with opendesk defaults
 
 **Actions:**
-- Write `profiles/collabora.yaml` in `gentian-apps`
+- Write `profiles/collabora.yaml` in `gentian-apps` with `extraValues` matching opendesk `values.yaml.gotmpl`
+- Delete `config/samples/appprofile_collabora.yaml` from `gentian-os` (`git rm`)
+- Add `https://github.com/gentian-org/gentian-apps` to ArgoCD AppProject `sourceRepos`
+- Add Source 3 (`gentian-apps/profiles/`) to `app-of-apps.yaml`
 - Configure Nextcloud kernel service to discover and use the Collabora WOPI endpoint (via IntegrationBinding or kernel config)
-- Validate that installing Collabora for a tenant enables document editing in Nextcloud
 
-**Test:** Install Collabora for tenant → open a document in Nextcloud → Collabora editor loads.
+**E2E test — Install:**
+```bash
+# Install Collabora for tenant gtn-demo
+kubectl gentian apps install collabora --tenant gtn-demo
+# Wait for ArgoCD sync + Tofu apply
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora -w
+# Verify: pod Running, no HPA (autoscaling disabled), single replica
+kubectl get hpa -n tenant-gtn-demo  # should show no collabora HPA
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
+# Expected: collabora: 1
+```
+
+**E2E test — Use:**
+```bash
+# Verify Collabora health endpoint responds
+COLLABORA_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/name=collabora -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- curl -sf http://localhost:9980/hosting/discovery | head -5
+# Expected: WOPI discovery XML response
+# Functional test: open Nextcloud → create/open a .docx or .odt file → Collabora editor loads in browser
+```
+
+**E2E test — Uninstall:**
+```bash
+# Remove Collabora from tenant
+kubectl gentian apps uninstall collabora --tenant gtn-demo
+# Wait for ArgoCD sync
+sleep 30
+# Verify: no Collabora pods, catalogue shows 0 installs
+kubectl get pods -n tenant-gtn-demo | grep collabora  # Expected: no results
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
+# Expected: collabora: 0
+```
 
 ---
 
 #### Inc 21 — Element AppProfile (chat / Matrix)
 
-**Goal:** Add Element (Matrix/Synapse) to the app store.
+**Goal:** Add Element (Matrix/Synapse) to the app store. Remove from `gentian-os`.
 
 **AppProfile:**
 - `kernelRequirements`: OIDC, PostgreSQL, SMTP
@@ -342,19 +389,45 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 - `provides`: `chat` (matrix)
 - `chart`: `opendesk-element` v6.1.9
 - `deploymentMethod`: `tofu-controller` (Pattern B)
+- `extraValues`: aligned with `opendesk/helmfile/apps/element/values.yaml.gotmpl`
 
 **Actions:**
-- Write `profiles/element.yaml` in `gentian-apps`
+- Write `profiles/element.yaml` in `gentian-apps` with `extraValues` from opendesk
+- Delete `config/samples/appprofile_element.yaml` from `gentian-os` (`git rm`)
 - Wire OIDC client, PostgreSQL database, SMTP credentials via `valueMapping`
 - Configure Intercom Service app-service bridge (intercom ↔ Synapse)
 
-**Test:** Install Element for tenant → SSO login works, messages sent/received, notifications via Intercom.
+**E2E test — Install:**
+```bash
+kubectl gentian apps install element --tenant gtn-demo
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=element -w
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
+# Expected: element: 1
+```
+
+**E2E test — Use:**
+```bash
+# Verify Synapse health
+SYNAPSE_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/component=synapse -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$SYNAPSE_POD" -- curl -sf http://localhost:8008/_matrix/client/versions
+# Expected: JSON with supported Matrix versions
+# Functional test: open Element web UI → SSO login via Keycloak → send a message → message appears
+```
+
+**E2E test — Uninstall:**
+```bash
+kubectl gentian apps uninstall element --tenant gtn-demo
+sleep 30
+kubectl get pods -n tenant-gtn-demo | grep element  # Expected: no results
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
+# Expected: element: 0
+```
 
 ---
 
 #### Inc 22 — Jitsi AppProfile (video conferencing)
 
-**Goal:** Add Jitsi Meet to the app store.
+**Goal:** Add Jitsi Meet to the app store. Remove from `gentian-os`.
 
 **AppProfile:**
 - `kernelRequirements`: OIDC (JWT/hybrid-matrix-token scheme)
@@ -362,19 +435,45 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 - `provides`: `videoconference` (webrtc)
 - `chart`: `opendesk-jitsi` v3.5.1
 - `deploymentMethod`: `tofu-controller` (Pattern B)
+- `extraValues`: aligned with `opendesk/helmfile/apps/jitsi/values.yaml.gotmpl`
 
 **Actions:**
-- Write `profiles/jitsi.yaml` in `gentian-apps`
+- Write `profiles/jitsi.yaml` in `gentian-apps` with `extraValues` from opendesk
+- Delete `config/samples/appprofile_jitsi.yaml` from `gentian-os` (`git rm`)
 - Wire JWT app secret via Keycloak hybrid-matrix-token scheme
 - Configure optional Element integration (Jitsi links in chat rooms)
 
-**Test:** Install Jitsi for tenant → create video conference room → SSO join works.
+**E2E test — Install:**
+```bash
+kubectl gentian apps install jitsi --tenant gtn-demo
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=jitsi -w
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
+# Expected: jitsi: 1
+```
+
+**E2E test — Use:**
+```bash
+# Verify Jitsi web health
+JITSI_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/component=jitsi-web -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$JITSI_POD" -- curl -sf http://localhost:80/ | head -5
+# Expected: HTML landing page
+# Functional test: open Jitsi URL → SSO login → create video conference room → audio/video works
+```
+
+**E2E test — Uninstall:**
+```bash
+kubectl gentian apps uninstall jitsi --tenant gtn-demo
+sleep 30
+kubectl get pods -n tenant-gtn-demo | grep jitsi  # Expected: no results
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
+# Expected: jitsi: 0
+```
 
 ---
 
 #### Inc 23 — OpenProject AppProfile (project management)
 
-**Goal:** Add OpenProject to the app store.
+**Goal:** Add OpenProject to the app store. Remove from `gentian-os`.
 
 **AppProfile:**
 - `kernelRequirements`: OIDC, PostgreSQL, S3, SMTP, LDAP
@@ -383,20 +482,48 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 - `optionalIntegrations`: `file-store` (Nextcloud), `central-navigation` (Portal)
 - `chart`: `openproject` v10.1.0
 - `deploymentMethod`: `tofu-controller` (Pattern B)
+- `extraValues`: aligned with `opendesk/helmfile/apps/openproject/values.yaml.gotmpl`
 
 **Actions:**
-- Write `profiles/openproject.yaml` in `gentian-apps`
+- Write `profiles/openproject.yaml` in `gentian-apps` with `extraValues` from opendesk
+- Delete `config/samples/appprofile_openproject.yaml` from `gentian-os` (`git rm`)
 - Wire all 6 kernel requirements via `valueMapping`
 - Configure Nextcloud file-store IntegrationBinding (WebDAV read/write)
 - Configure Portal central-navigation IntegrationBinding
 
-**Test:** Install OpenProject for tenant → SSO login, LDAP user sync, file attachments via Nextcloud, project visible in Portal.
+**E2E test — Install:**
+```bash
+kubectl gentian apps install openproject --tenant gtn-demo
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=openproject -w
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
+# Expected: openproject: 1
+```
+
+**E2E test — Use:**
+```bash
+# Verify OpenProject health
+OP_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/name=openproject -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$OP_POD" -- curl -sf http://localhost:8080/api/v3
+# Expected: JSON API root response
+# Functional test: open OpenProject URL → SSO login via Keycloak → LDAP users visible →
+#   create project → attach file (stored via S3) → project appears in Portal navigation
+```
+
+**E2E test — Uninstall:**
+```bash
+kubectl gentian apps uninstall openproject --tenant gtn-demo
+sleep 30
+kubectl get pods -n tenant-gtn-demo | grep openproject  # Expected: no results
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
+# Expected: openproject: 0
+# Verify: database retained (deletionPolicy: Retain), OIDC client revoked
+```
 
 ---
 
 #### Inc 24 — XWiki AppProfile (wiki / knowledge management)
 
-**Goal:** Add XWiki to the app store.
+**Goal:** Add XWiki to the app store. Remove from `gentian-os`.
 
 **AppProfile:**
 - `kernelRequirements`: OIDC, PostgreSQL, SMTP, LDAP
@@ -404,13 +531,40 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 - `optionalIntegrations`: `central-navigation` (Portal)
 - `chart`: `xwiki` v1.4.4
 - `deploymentMethod`: `tofu-controller` (Pattern B)
+- `extraValues`: aligned with `opendesk/helmfile/apps/xwiki/values.yaml.gotmpl`
 
 **Actions:**
-- Write `profiles/xwiki.yaml` in `gentian-apps`
+- Write `profiles/xwiki.yaml` in `gentian-apps` with `extraValues` from opendesk
+- Delete `config/samples/appprofile_xwiki.yaml` from `gentian-os` (`git rm`)
 - Wire OIDC, PostgreSQL, SMTP, LDAP via `valueMapping`
 - Handle dot-escaped YAML key paths (`customConfigs.xwiki\.properties.oidc\.secret`)
 
-**Test:** Install XWiki for tenant → SSO login, LDAP user sync, wiki pages editable.
+**E2E test — Install:**
+```bash
+kubectl gentian apps install xwiki --tenant gtn-demo
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki -w
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
+# Expected: xwiki: 1
+```
+
+**E2E test — Use:**
+```bash
+# Verify XWiki health
+XWIKI_POD=$(kubectl get pod -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki -o name | head -1)
+kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- curl -sf http://localhost:8080/rest
+# Expected: XWiki REST API response
+# Functional test: open XWiki URL → SSO login via Keycloak → LDAP users visible →
+#   create wiki page → edit and save → page renders correctly
+```
+
+**E2E test — Uninstall:**
+```bash
+kubectl gentian apps uninstall xwiki --tenant gtn-demo
+sleep 30
+kubectl get pods -n tenant-gtn-demo | grep xwiki  # Expected: no results
+kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
+# Expected: xwiki: 0
+```
 
 ---
 
@@ -429,6 +583,7 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
   - `videoconference.yaml` — WebRTC conferencing (provider: Jitsi)
 - CI pipeline: `kubeconform` against AppProfile CRD schema for all profiles
 - `validate-profiles.sh` — runs `kubectl apply --dry-run=server` against a test cluster
+- After this increment, `gentian-os/config/samples/` should contain only non-app CRs (Tenant, IntegrationBinding examples)
 
 **Test:** CI green, all profiles and contracts valid.
 
@@ -439,11 +594,11 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 | Inc | Title | Key deliverable | Effort |
 |---|---|---|---|
 | 19 | App Store controller + catalogue API | `AppCatalogue` CR, validation webhook, `kubectl gentian` plugin, runtime install/uninstall | Large |
-| 20 | Collabora AppProfile | Document editing via Nextcloud WOPI integration | Small |
-| 21 | Element AppProfile | Chat (Matrix/Synapse) with OIDC, PostgreSQL, SMTP | Medium |
-| 22 | Jitsi AppProfile | Video conferencing with JWT/OIDC auth | Small |
-| 23 | OpenProject AppProfile | Project management with 6 kernel requirements + Nextcloud file-store integration | Medium |
-| 24 | XWiki AppProfile | Wiki with OIDC, PostgreSQL, SMTP, LDAP | Medium |
+| 20 | Collabora AppProfile | `gentian-apps/profiles/collabora.yaml`, ArgoCD Source 3, AppProject fix. Remove from `gentian-os`. | Small |
+| 21 | Element AppProfile | `gentian-apps/profiles/element.yaml`, OIDC+PG+SMTP wiring. Remove from `gentian-os`. | Medium |
+| 22 | Jitsi AppProfile | `gentian-apps/profiles/jitsi.yaml`, JWT/OIDC wiring. Remove from `gentian-os`. | Small |
+| 23 | OpenProject AppProfile | `gentian-apps/profiles/openproject.yaml`, 6 kernel reqs + Nextcloud integration. Remove from `gentian-os`. | Medium |
+| 24 | XWiki AppProfile | `gentian-apps/profiles/xwiki.yaml`, OIDC+PG+SMTP+LDAP wiring. Remove from `gentian-os`. | Medium |
 | 25 | Contract definitions + CI | `gentian-apps` repo CI, contract schemas, profile validation | Small |
 
-Inc 19 (App Store controller) is the foundation — it must be built first. Incs 20–24 (individual app profiles) can be built in parallel after Inc 19. Inc 25 (contracts + CI) can start anytime after Inc 1 (CRDs exist). Each app profile is an independent PR in the `gentian-apps` repo.
+Inc 19 (App Store controller) is the foundation — it must be built first. Incs 20–24 (individual app profiles) can be built in parallel after Inc 19. Inc 25 (contracts + CI) can start anytime after Inc 1 (CRDs exist). Each app profile is an independent PR in the `gentian-apps` repo. After Inc 24, `gentian-os/config/samples/` should contain only `integrationbinding_filepicker.yaml` and `tenant_gtn-demo.yaml` — no AppProfile YAMLs.
