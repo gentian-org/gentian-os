@@ -147,8 +147,11 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-busy-buffers-size: "128k"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/use-regex: "true"
+  certManager:
+    enabled: false
   tls:
     enabled: true
+    secretName: "wildcard-tls"
   minio:
     enabled: false
 
@@ -231,6 +234,11 @@ nubusNotificationsApi:
 # Two-Factor Authentication Helpdesk
 nubusTwofaHelpdesk:
   enabled: true
+  ingress:
+    certManager:
+      enabled: false
+    tls:
+      secretName: "wildcard-tls"
 
 # Bundled PostgreSQL and MinIO disabled — provided by infrastructure layer
 postgresql:
@@ -258,6 +266,10 @@ nubusKeycloakExtensions:
       # console publicly (test_keycloak_admin_unavailable must return 404).
       # /js is required for the Keycloak JS adapter used by the portal.
       # Main Keycloak ingress is disabled; proxy handles ALL external traffic.
+      certManager:
+        enabled: false
+      tls:
+        secretName: "wildcard-tls"
       paths:
         - pathType: "Prefix"
           path: "/realms"
@@ -545,7 +557,7 @@ nubusPortalFrontend:
         nginx.ingress.kubernetes.io/use-regex: "true"
       tls:
         enabled: true
-        secretName: "nubus-dev-portal-tls"
+        secretName: "wildcard-tls"
 
 # Extra secrets
 extraSecrets: []

@@ -74,7 +74,7 @@ aio:
     ingressClassName: "nginx"
     host: "files.${domain}"
     tls:
-      secretName: "opendesk-nextcloud-tls"
+      secretName: "wildcard-tls"
 
   debug:
     loglevel: "2"

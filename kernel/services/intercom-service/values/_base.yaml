@@ -96,6 +96,9 @@ ingress:
   enabled: true
   ingressClassName: public
   host: ics.desk.gentian.org
+  tls:
+    enabled: true
+    secretName: "wildcard-tls"
   annotations:
     traefik.ingress.kubernetes.io/router.tls: "true"
 

@@ -29,6 +29,8 @@ Kubernetes cluster and provision your first tenant.
 | `OD_PRIVATE_REGISTRY_PASSWORD` | `registry.opencode.de` Personal Access Token (`read_registry` scope) |
 | `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
 | `OD_SMTP_RELAY_PASSWORD` | SMTP relay password (e.g. Gmail App Password) |
+| `ACME_EMAIL` | Email for Let's Encrypt ACME registration |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token (Zone:DNS:Edit scope) |
 
 ### Kubernetes requirements
 
@@ -36,9 +38,7 @@ Kubernetes cluster and provision your first tenant.
 - Default StorageClass available (tested with `nfs-csi`)
 - Ingress controller installed (tested with `ingress-nginx`) in the `ingress`
   namespace
-- A ClusterIP Service named `ingress-controller` in the `ingress` namespace
-  that selects the ingress controller pods (created automatically by
-  `install.sh`; required for in-cluster hairpin DNS)
+- cert-manager installed (tested with `microk8s enable cert-manager`)
 - Wildcard DNS entry pointing to the cluster node IP:
   `*.desk.gentian.org → <node-ip>`
 
@@ -134,7 +134,7 @@ restart — no manual intervention needed after a normal reboot.
 |------|-------------|
 | 1 | Installs `tofu` and `bao` CLI tools |
 | 2 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
-| 2b | Ensures a ClusterIP Service `ingress-controller` exists in the `ingress` namespace (auto-detects the pod selector; needed for hairpin DNS) |
+| 2b | Creates ClusterIssuer `letsencrypt-prod` (Cloudflare DNS-01 solver) and a wildcard Certificate for `*.desk.gentian.org` |
 | 3 | Installs External Secrets Operator via Helm (`kernel/eso/values.yaml`) |
 | 4 | Installs ArgoCD (NodePort 30443/30880) and applies the `gentian` AppProject |
 | 5 | Creates ArgoCD repository secrets for the OCI Helm registries (`scripts/create-argocd-oci-secrets.sh`) |

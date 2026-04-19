@@ -52,7 +52,7 @@ ingress:
   ingressClassName: "nginx"
   host: "files.${domain}"
   tls:
-    secretName: "opendesk-nextcloud-tls"
+    secretName: "wildcard-tls"
 
 metrics:
   enabled: true
