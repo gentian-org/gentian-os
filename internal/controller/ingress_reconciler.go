@@ -20,13 +20,13 @@ import (
 )
 
 const (
-	conditionIngressReady  = "IngressReady"
-	certManagerGroup       = "cert-manager.io"
-	certManagerVersion     = "v1"
-	certManagerCertKind    = "Certificate"
-	defaultClusterIssuer   = "letsencrypt-prod"
-	defaultServicePort     = int32(80)
-	defaultIngressClass    = "nginx"
+	conditionIngressReady = "IngressReady"
+	certManagerGroup      = "cert-manager.io"
+	certManagerVersion    = "v1"
+	certManagerCertKind   = "Certificate"
+	defaultClusterIssuer  = "letsencrypt-prod"
+	defaultServicePort    = int32(80)
+	defaultIngressClass   = "nginx"
 )
 
 var certManagerCertGVK = schema.GroupVersionKind{

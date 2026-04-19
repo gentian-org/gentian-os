@@ -19,6 +19,7 @@
 global:
   domain: ${domain}
   hosts:
+    collabora: office
     nextcloud: files
     nubus: portal
 
@@ -170,3 +171,12 @@ configuration:
 
   # Forbidden filename characters
   forbiddenChars: "* \" | ? ;"
+
+  # Collabora Online integration (WOPI document editor)
+  # The chart uses global.hosts.collabora + global.domain to construct the
+  # Collabora URL (e.g. https://office.<domain>). The richdocuments Nextcloud
+  # app uses this for the WOPI discovery endpoint.
+  collabora:
+    # internalWopiUrl: ""
+    wopiAllowlist: "10.0.0.0/8"
+    defaultFormat: "ODF"

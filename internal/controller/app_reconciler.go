@@ -232,9 +232,17 @@ func buildTerraformCR(
 	// Compute non-sensitive extra values: profile-level ExtraValues merged with
 	// per-tenant replica overrides. The Terraform module uses these alongside the
 	// sensitive values it reads from OpenBao.
+	//
+	// Template variable substitution: AppProfiles may reference ${TENANT_DOMAIN}
+	// in extraValues for tenant-specific configuration (e.g. Collabora aliasgroups
+	// need the Nextcloud host "files.<tenant-domain>"). The operator replaces
+	// these placeholders before passing the JSON to the Tofu module.
 	extraValuesJSON := ""
 	if profile.Spec.ExtraValues != nil && len(profile.Spec.ExtraValues.Raw) > 0 {
 		extraValuesJSON = string(profile.Spec.ExtraValues.Raw)
+	}
+	if extraValuesJSON != "" && tenant.Spec.Domain != "" {
+		extraValuesJSON = strings.ReplaceAll(extraValuesJSON, "${TENANT_DOMAIN}", tenant.Spec.Domain)
 	}
 	if app.Config != nil && app.Config.Replicas != nil {
 		extra := map[string]interface{}{}
