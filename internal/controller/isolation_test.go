@@ -160,7 +160,7 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 
 	egressNS := collectEgressNamespaces(np)
 
-	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev"} {
+	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "ingress"} {
 		found := false
 		for _, ns := range egressNS {
 			if ns == expected {

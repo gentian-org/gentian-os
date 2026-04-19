@@ -260,6 +260,12 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	// 12b. Hairpin DNS (CoreDNS entries so pods can reach tenant services via
+	//      their public Ingress hostnames through the in-cluster ingress controller).
+	if err := r.ensureHairpinDNS(ctx); err != nil {
+		logger.Error(err, "failed to reconcile hairpin DNS — non-fatal, continuing")
+	}
+
 	// 13. Integration bindings (auto-wire provider+consumer pairs within the tenant)
 	if _, err := r.ensureIntegrationBindings(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -374,6 +380,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// Clean up Ingress and Certificate resources (ephemeral routing; always deleted).
 	if err := r.deleteIngress(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Update hairpin DNS entries (removes this tenant's hostnames from CoreDNS).
+	if err := r.ensureHairpinDNS(ctx); err != nil {
+		logger.Error(err, "failed to clean up hairpin DNS entries — non-fatal, continuing")
 	}
 
 	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
@@ -617,6 +628,18 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 				{
 					NamespaceSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{tenantLabel: tenant.Name},
+					},
+				},
+			},
+		},
+		{
+			// Allow egress to the ingress controller namespace so that tenant
+			// pods can reach cluster services via their public Ingress hostnames
+			// (hairpin traffic, e.g. Collabora WOPI callbacks to Nextcloud).
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": ingressNamespace},
 					},
 				},
 			},

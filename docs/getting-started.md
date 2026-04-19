@@ -34,7 +34,11 @@ Kubernetes cluster and provision your first tenant.
 
 - Kubernetes 1.26+
 - Default StorageClass available (tested with `nfs-csi`)
-- Ingress controller installed (tested with `ingress-nginx`)
+- Ingress controller installed (tested with `ingress-nginx`) in the `ingress`
+  namespace
+- A ClusterIP Service named `ingress-controller` in the `ingress` namespace
+  that selects the ingress controller pods (created automatically by
+  `install.sh`; required for in-cluster hairpin DNS)
 - Wildcard DNS entry pointing to the cluster node IP:
   `*.desk.gentian.org → <node-ip>`
 
@@ -130,6 +134,7 @@ restart — no manual intervention needed after a normal reboot.
 |------|-------------|
 | 1 | Installs `tofu` and `bao` CLI tools |
 | 2 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
+| 2b | Ensures a ClusterIP Service `ingress-controller` exists in the `ingress` namespace (auto-detects the pod selector; needed for hairpin DNS) |
 | 3 | Installs External Secrets Operator via Helm (`kernel/eso/values.yaml`) |
 | 4 | Installs ArgoCD (NodePort 30443/30880) and applies the `gentian` AppProject |
 | 5 | Creates ArgoCD repository secrets for the OCI Helm registries (`scripts/create-argocd-oci-secrets.sh`) |
