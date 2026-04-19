@@ -160,6 +160,11 @@ ingress:
 
 # PostgreSQL selfservice and authsession — connection.host in {env}/values.yaml
 nubusUmcServer:
+  ingress:
+    certManager:
+      enabled: false
+    tls:
+      secretName: "wildcard-tls"
   podAnnotations:
     reloader.stakater.com/auto: "true"
   postgresql:
@@ -451,6 +456,11 @@ nubusStackDataUms:
 
 # Portal Server — endpoint in {env}/values.yaml (env-specific MinIO DNS)
 nubusPortalServer:
+  ingress:
+    certManager:
+      enabled: false
+    tls:
+      secretName: "wildcard-tls"
   podAnnotations:
     reloader.stakater.com/auto: "true"
   objectStorage:
@@ -534,9 +544,21 @@ nubusLdapServer:
     enabled: true
     # size in {env}/values.yaml
 
+# UMC Gateway
+nubusUmcGateway:
+  ingress:
+    certManager:
+      enabled: false
+    tls:
+      secretName: "wildcard-tls"
+
 # UDM REST API
 nubusUdmRestApi:
   ingress:
+    certManager:
+      enabled: false
+    tls:
+      secretName: "wildcard-tls"
     # Expose externally for e2e test user import via UDM REST API.
     enabled: true
   ldapUpdateUniventionObjectIdentifier:
@@ -545,6 +567,11 @@ nubusUdmRestApi:
 
 # Redirect bare base domain → portal (required by test_base_domain_redirect)
 nubusPortalFrontend:
+  ingress:
+    certManager:
+      enabled: false
+    tls:
+      secretName: "wildcard-tls"
   extraIngresses:
     - name: base-domain-redirect
       host: "${domain}"
