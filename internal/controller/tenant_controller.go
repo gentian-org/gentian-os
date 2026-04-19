@@ -99,6 +99,28 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
 	}
 
+	// mapAppProfileToTenants maps an AppProfile change to reconcile requests for
+	// every Tenant that references the profile in its spec.apps list.
+	mapAppProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
+		profileName := obj.GetName()
+		tenantList := &gentianov1alpha1.TenantList{}
+		if err := mgr.GetClient().List(ctx, tenantList); err != nil {
+			return nil
+		}
+		var requests []reconcile.Request
+		for _, t := range tenantList.Items {
+			for _, app := range t.Spec.Apps {
+				if app.Profile == profileName {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: types.NamespacedName{Name: t.Name},
+					})
+					break
+				}
+			}
+		}
+		return requests
+	}
+
 	// cnpgDB is an unstructured object used to watch CloudNativePG Database CRs
 	// across all tenant namespaces. Status updates (Ready=True) trigger reconciliation
 	// to advance the database provisioning sequence.
@@ -140,6 +162,10 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
 				return hasLabel && obj.GetNamespace() == argocdNamespace
 			})),
+		).
+		Watches(
+			&gentianov1alpha1.AppProfile{},
+			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
 		).
 		Complete(r)
 }
