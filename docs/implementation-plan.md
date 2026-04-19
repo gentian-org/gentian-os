@@ -349,7 +349,7 @@ Each app increment (20–24) moves an app from `gentian-os/config/samples/` to `
 # Install Collabora for tenant gtn-demo
 kubectl gentian apps install collabora --tenant gtn-demo
 # Wait for pod to be Running (typically 30–60s after ArgoCD sync)
-kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora -w
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora-online -w
 # Verify: single replica, no HPA
 kubectl get hpa -n tenant-gtn-demo  # should show no collabora HPA
 kubectl get appcatalogue default \
@@ -361,7 +361,7 @@ kubectl get appcatalogue default \
 ```bash
 # 1. Check WOPI discovery endpoint (must return XML)
 COLLABORA_POD=$(kubectl get pod -n tenant-gtn-demo \
-  -l app.kubernetes.io/name=collabora -o name | head -1)
+  -l app.kubernetes.io/name=collabora-online -o name | head -1)
 kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
   curl -sf http://localhost:9980/hosting/discovery | head -5
 # Expected: <wopi-discovery> XML listing supported file types

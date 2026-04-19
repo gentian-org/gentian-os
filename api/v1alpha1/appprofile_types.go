@@ -95,6 +95,12 @@ type IngressSpec struct {
 	// +optional
 	SubDomain string `json:"subDomain,omitempty"`
 
+	// IngressClassName is the Kubernetes IngressClass to use.
+	// Defaults to "nginx" when not set.
+	// +optional
+	// +kubebuilder:default=nginx
+	IngressClassName string `json:"ingressClassName,omitempty"`
+
 	// TLSEnabled enables TLS via a cert-manager Certificate CR.
 	// Defaults to true.
 	// +optional

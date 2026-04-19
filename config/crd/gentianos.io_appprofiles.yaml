@@ -162,6 +162,12 @@ spec:
                       ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
                       Defaults to "letsencrypt-prod" when not set.
                     type: string
+                  ingressClassName:
+                    default: nginx
+                    description: |-
+                      IngressClassName is the Kubernetes IngressClass to use.
+                      Defaults to "nginx" when not set.
+                    type: string
                   serviceName:
                     description: |-
                       ServiceName is the Kubernetes Service name that the Helm chart creates.

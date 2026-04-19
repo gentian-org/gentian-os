@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	conditionIngressReady = "IngressReady"
-	certManagerGroup      = "cert-manager.io"
-	certManagerVersion    = "v1"
-	certManagerCertKind   = "Certificate"
-	defaultClusterIssuer  = "letsencrypt-prod"
-	defaultServicePort    = int32(80)
+	conditionIngressReady  = "IngressReady"
+	certManagerGroup       = "cert-manager.io"
+	certManagerVersion     = "v1"
+	certManagerCertKind    = "Certificate"
+	defaultClusterIssuer   = "letsencrypt-prod"
+	defaultServicePort     = int32(80)
+	defaultIngressClass    = "nginx"
 )
 
 var certManagerCertGVK = schema.GroupVersionKind{
@@ -203,6 +204,10 @@ func buildAppIngress(
 	for k, v := range ingress.Annotations {
 		annotations[k] = v
 	}
+	ingressClass := ingress.IngressClassName
+	if ingressClass == "" {
+		ingressClass = defaultIngressClass
+	}
 	pathType := networkingv1.PathTypePrefix
 	obj := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
@@ -216,6 +221,7 @@ func buildAppIngress(
 			Annotations: annotations,
 		},
 		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClass,
 			Rules: []networkingv1.IngressRule{
 				{
 					Host: host,
