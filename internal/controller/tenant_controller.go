@@ -648,6 +648,17 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 			},
 		},
 		{
+			// Allow egress to the nginx ingress controller namespace so that
+			// tenant pods can reach services via their ingress URLs internally.
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": ingressNamespace},
+					},
+				},
+			},
+		},
+		{
 			// Allow DNS egress (kube-dns / CoreDNS)
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protocolUDP, Port: &dnsPort},
@@ -721,6 +732,26 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
+							},
+						},
+					},
+				},
+				{
+					// Allow ingress from the shared infra namespace (MariaDB, Redis, MinIO)
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
+							},
+						},
+					},
+				},
+				{
+					// Allow ingress from the services namespace (Nextcloud, Nubus/Keycloak, etc.)
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
 							},
 						},
 					},

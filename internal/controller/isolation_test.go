@@ -81,8 +81,9 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 	assertIngressDoesNotAllowNamespace(t, npB, "tenant-iso-a")
 }
 
-// TestIsolation_NetworkPolicyIngressRules verifies the three expected ingress
-// sources: same tenant namespace, platform-kernel, and ingress namespace.
+// TestIsolation_NetworkPolicyIngressRules verifies the five expected ingress
+// sources: same tenant namespace, platform-kernel, gentian-infra-dev,
+// gentian-dev, and ingress namespace.
 func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-ingress"},
@@ -115,7 +116,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 		t.Error("expected ingress rule allowing from namespace with gentianos.io/tenant=iso-ingress label")
 	}
 
-	expectedNS := []string{"platform-kernel", "ingress"}
+	expectedNS := []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "ingress"}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {
@@ -160,7 +161,7 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 
 	egressNS := collectEgressNamespaces(np)
 
-	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev"} {
+	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "ingress"} {
 		found := false
 		for _, ns := range egressNS {
 			if ns == expected {
