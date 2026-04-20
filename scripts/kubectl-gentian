@@ -142,33 +142,16 @@ cmd_install() {
     exit 0
   fi
 
-  # Inject the entry under spec.apps using Python's yaml module so we don't
-  # corrupt the YAML structure with naive sed.
-  python3 - "${file}" "${app}" <<'PYEOF'
-import sys, yaml
-
-path, app = sys.argv[1], sys.argv[2]
-
-with open(path) as f:
-    doc = yaml.safe_load(f)
-
-if "spec" not in doc:
-    doc["spec"] = {}
-if "apps" not in doc["spec"] or doc["spec"]["apps"] is None:
-    doc["spec"]["apps"] = []
-
-profiles = [entry["profile"] for entry in doc["spec"]["apps"] if "profile" in entry]
-if app in profiles:
-    print(f"App '{app}' already present — nothing to do.")
-    sys.exit(0)
-
-doc["spec"]["apps"].append({"profile": app})
-
-with open(path, "w") as f:
-    yaml.dump(doc, f, default_flow_style=False, allow_unicode=True)
-
-print(f"Added '{app}' to spec.apps.")
-PYEOF
+  # Inject the entry under spec.apps.
+  # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
+  # Insert immediately after the "  apps:" line (order within the list is irrelevant).
+  if grep -q '^  apps:' "${file}"; then
+    sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+  else
+    # No apps key yet — append the block at the end of the file.
+    printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
+  fi
+  echo "Added '${app}' to spec.apps."
 
   # Commit and push.
   (
@@ -207,28 +190,9 @@ cmd_uninstall() {
     exit 0
   fi
 
-  python3 - "${file}" "${app}" <<'PYEOF'
-import sys, yaml
-
-path, app = sys.argv[1], sys.argv[2]
-
-with open(path) as f:
-    doc = yaml.safe_load(f)
-
-apps = doc.get("spec", {}).get("apps") or []
-updated = [entry for entry in apps if entry.get("profile") != app]
-
-if len(updated) == len(apps):
-    print(f"App '{app}' not found in spec.apps — nothing removed.")
-    sys.exit(0)
-
-doc["spec"]["apps"] = updated
-
-with open(path, "w") as f:
-    yaml.dump(doc, f, default_flow_style=False, allow_unicode=True)
-
-print(f"Removed '{app}' from spec.apps.")
-PYEOF
+  # Remove the '- profile: <app>' line from spec.apps using sed.
+  sed -i "/^  - profile: ${app}$/d" "${file}"
+  echo "Removed '${app}' from spec.apps."
 
   # Commit and push.
   (
