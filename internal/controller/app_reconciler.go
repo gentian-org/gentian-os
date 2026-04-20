@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -40,6 +41,7 @@ const (
 	tofuSystemNamespace   = "tofu-system"
 	tofuGitRepositoryName = "gentian-server"
 	tofuModulePath        = "kernel/tofu/tenant/app-workspace"
+	tofuFinalizer         = "finalizers.tf.contrib.fluxcd.io"
 
 	// MinIO state backend settings. customConfiguration in the Terraform CR fully
 	// overrides the backend block in the Terraform modules, so all required
@@ -52,6 +54,24 @@ var terraformGVK = schema.GroupVersionKind{
 	Group:   "infra.contrib.fluxcd.io",
 	Version: "v1alpha2",
 	Kind:    "Terraform",
+}
+
+// helmWorkloadGVKs lists the common namespace-scoped resource types that a Helm
+// chart may create. When the tofu-controller finalizer bug prevents terraform destroy
+// from running we delete these resources by the standard Helm instance label
+// (app.kubernetes.io/instance=<release>) to ensure no orphaned workloads remain in
+// the tenant namespace after an app is uninstalled.
+var helmWorkloadGVKs = []schema.GroupVersionKind{
+	{Group: "apps", Version: "v1", Kind: "Deployment"},
+	{Group: "apps", Version: "v1", Kind: "StatefulSet"},
+	{Group: "apps", Version: "v1", Kind: "DaemonSet"},
+	{Group: "", Version: "v1", Kind: "Service"},
+	{Group: "", Version: "v1", Kind: "ConfigMap"},
+	{Group: "", Version: "v1", Kind: "ServiceAccount"},
+	{Group: "", Version: "v1", Kind: "PersistentVolumeClaim"},
+	{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"},
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "Role"},
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "RoleBinding"},
 }
 
 // ensureAppDeployment creates or reconciles one ArgoCD Application CR (Pattern A)
@@ -160,7 +180,7 @@ func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *ge
 			continue // managed by another reconciler
 		}
 		if _, desired := desiredApps[appName]; !desired {
-			if err := r.Delete(ctx, &tfList.Items[i]); client.IgnoreNotFound(err) != nil {
+			if err := r.deleteTerraformCR(ctx, &tfList.Items[i]); err != nil {
 				return fmt.Errorf("delete orphaned Terraform CR %s: %w", tfList.Items[i].GetName(), err)
 			}
 		}
@@ -227,8 +247,8 @@ func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gent
 		return fmt.Errorf("list Terraform CRs for tenant %s: %w", tenant.Name, err)
 	}
 	for i := range tfList.Items {
-		if err := r.Delete(ctx, &tfList.Items[i]); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Terraform CR %s: %w", tfList.Items[i].GetName(), err)
+		if err := r.deleteTerraformCR(ctx, &tfList.Items[i]); err != nil {
+			return fmt.Errorf("delete Terraform CR %s for tenant %s: %w", tfList.Items[i].GetName(), tenant.Name, err)
 		}
 	}
 
@@ -281,6 +301,10 @@ func (r *TenantReconciler) ensureTerraformCR(
 	}
 	if p, found, _ := unstructured.NestedString(desired.Object, "spec", "path"); found {
 		_ = unstructured.SetNestedField(obj.Object, p, "spec", "path")
+	}
+	// Ensure serviceAccountName is always set (required by tofu-controller).
+	if sa, found, _ := unstructured.NestedString(desired.Object, "spec", "serviceAccountName"); found {
+		_ = unstructured.SetNestedField(obj.Object, sa, "spec", "serviceAccountName")
 	}
 	if err := r.Patch(ctx, obj, client.MergeFrom(base)); err != nil {
 		return false, fmt.Errorf("patch Terraform CR for %s: %w", app.Profile, err)
@@ -504,6 +528,12 @@ func buildTerraformCR(
 		},
 	}
 	_ = unstructured.SetNestedSlice(obj.Object, envFrom, "spec", "runnerPodTemplate", "spec", "envFrom")
+
+	// The runner pod uses the pre-existing tf-runner ServiceAccount in tofu-system
+	// which is bound to the OpenBao Kubernetes auth role (tofu-runner).
+	_ = unstructured.SetNestedField(obj.Object, "tf-runner", "spec", "serviceAccountName")
+	_ = unstructured.SetNestedField(obj.Object, true, "spec", "alwaysCleanupRunnerPod")
+	_ = unstructured.SetNestedField(obj.Object, int64(30), "spec", "runnerTerminationGracePeriodSeconds")
 
 	// Write any Terraform outputs (e.g. app URLs) to a named Secret.
 	_ = unstructured.SetNestedField(obj.Object, crName+"-outputs", "spec", "writeOutputsToSecret", "name")
@@ -768,4 +798,95 @@ func marshalValues(m map[string]interface{}) string {
 // appApplicationName returns the ArgoCD Application CR name for a tenant + app.
 func appApplicationName(tenantName, appProfile string) string {
 	return fmt.Sprintf("app-%s-%s", tenantName, appProfile)
+}
+
+// deleteTerraformCR removes a Terraform CR and its associated Helm release.
+// The tofu-controller's finalizer can panic on deletion (nil pointer in
+// reconcileRunnerPod), leaving the CR stuck indefinitely. To work around this,
+// we:
+//  1. Delete the Helm workload resources deployed by the Terraform module.
+//  2. Delete the Helm release tracking secrets.
+//  3. Strip the tofu-controller finalizer.
+//  4. Delete the Terraform CR (or let K8s GC it if already pending deletion).
+func (r *TenantReconciler) deleteTerraformCR(ctx context.Context, obj *unstructured.Unstructured) error {
+	log := ctrl.LoggerFrom(ctx)
+
+	// The Terraform module deploys a Helm release named after the app (label
+	// gentianos.io/app) in the tenant namespace (spec.vars[].value for
+	// "namespace", or derived from the tenant label).
+	releaseName := obj.GetLabels()[appLabel]
+	tenantName := obj.GetLabels()[tenantLabel]
+	if releaseName != "" && tenantName != "" {
+		// Derive the tenant namespace. The Terraform CR stores the target
+		// namespace in spec.vars; fall back to the standard convention.
+		nsName := fmt.Sprintf("tenant-%s", tenantName)
+		if vars, ok, _ := unstructured.NestedSlice(obj.Object, "spec", "vars"); ok {
+			for _, v := range vars {
+				if m, ok := v.(map[string]interface{}); ok {
+					if m["name"] == "namespace" {
+						if ns, ok := m["value"].(string); ok && ns != "" {
+							nsName = ns
+						}
+					}
+				}
+			}
+		}
+
+		// Delete actual Helm workload resources by the standard instance label.
+		// Errors from List are logged and skipped (GVK may not exist in the cluster).
+		for _, gvk := range helmWorkloadGVKs {
+			listGVK := gvk
+			listGVK.Kind += "List"
+			resList := &unstructured.UnstructuredList{}
+			resList.SetGroupVersionKind(listGVK)
+			if err := r.List(ctx, resList, client.InNamespace(nsName),
+				client.MatchingLabels{"app.kubernetes.io/instance": releaseName}); err != nil {
+				log.V(1).Info("skipping GVK during Helm workload cleanup", "kind", gvk.Kind, "err", err)
+				continue
+			}
+			for i := range resList.Items {
+				if err := r.Delete(ctx, &resList.Items[i]); client.IgnoreNotFound(err) != nil {
+					log.Error(err, "failed to delete Helm workload resource",
+						"name", resList.Items[i].GetName(), "kind", gvk.Kind)
+				}
+			}
+		}
+		log.Info("cleaned up Helm workload resources", "release", releaseName, "namespace", nsName)
+
+		// Delete all Helm release tracking secrets for this release (all statuses:
+		// deployed, superseded, failed) so Helm no longer considers it installed.
+		secretList := &corev1.SecretList{}
+		if err := r.List(ctx, secretList, client.InNamespace(nsName),
+			client.MatchingLabels{
+				"owner": "helm",
+				"name":  releaseName,
+			}); err == nil {
+			for i := range secretList.Items {
+				if err := r.Delete(ctx, &secretList.Items[i]); client.IgnoreNotFound(err) != nil {
+					log.Error(err, "failed to delete Helm release secret", "secret", secretList.Items[i].Name)
+				}
+			}
+		}
+	}
+
+	// Strip the tofu-controller finalizer to avoid the panic-on-delete bug.
+	finalizers := obj.GetFinalizers()
+	var updated []string
+	for _, f := range finalizers {
+		if f != tofuFinalizer {
+			updated = append(updated, f)
+		}
+	}
+	if len(updated) != len(finalizers) {
+		obj.SetFinalizers(updated)
+		if err := r.Update(ctx, obj); err != nil {
+			return fmt.Errorf("strip finalizer from Terraform CR %s: %w", obj.GetName(), err)
+		}
+		log.Info("stripped tofu-controller finalizer", "name", obj.GetName())
+	}
+
+	if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete Terraform CR %s: %w", obj.GetName(), err)
+	}
+	return nil
 }

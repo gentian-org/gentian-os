@@ -401,6 +401,10 @@ func TestTofuApps_CreatesTerraformCR(t *testing.T) {
 	if srcName != "gentian-server" {
 		t.Errorf("expected sourceRef.name=gentian-server, got %q", srcName)
 	}
+	saName, _, _ := unstructured.NestedString(tfCR.Object, "spec", "serviceAccountName")
+	if saName != "tf-runner" {
+		t.Errorf("expected serviceAccountName=tf-runner, got %q", saName)
+	}
 
 	// spec.vars should contain tenant_name, app_name, namespace, chart_*
 	vars, _, _ := unstructured.NestedSlice(tfCR.Object, "spec", "vars")
@@ -779,8 +783,8 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	foreignCR.SetName("memcached-skip-noapp")
 	foreignCR.SetNamespace("argocd")
 	foreignCR.SetLabels(map[string]string{
-		"gentianos.io/tenant":            "skip-noapp",
-		"app.kubernetes.io/managed-by":   "gentian-os",
+		"gentianos.io/tenant":          "skip-noapp",
+		"app.kubernetes.io/managed-by": "gentian-os",
 	})
 	_ = unstructured.SetNestedField(foreignCR.Object, "default", "spec", "project")
 	_ = unstructured.SetNestedField(foreignCR.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
@@ -813,5 +817,127 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	if err := testClient.Get(context.Background(),
 		types.NamespacedName{Name: "memcached-skip-noapp", Namespace: "argocd"}, check); err != nil {
 		t.Errorf("expected foreign CR without app label to survive orphan cleanup, got error: %v", err)
+	}
+}
+
+// TestTofuApps_UninstallCleansUpHelmWorkloads verifies the full uninstall path for a
+// Pattern B app: when a Tenant is deleted the reconciler must delete Helm workload
+// resources (by app.kubernetes.io/instance label) AND the Helm release tracking
+// secrets in the tenant namespace, in addition to the Terraform CR itself.
+//
+// This covers the tofu-controller finalizer-panic workaround: terraform destroy
+// cannot run, so the operator must clean up the deployed resources itself.
+func TestTofuApps_UninstallCleansUpHelmWorkloads(t *testing.T) {
+	const (
+		profileName = "collabora-cleanup"
+		tenantName  = "tofu-cleanup"
+		tenantNs    = "tenant-tofu-cleanup"
+		tfCRName    = "tf-tofu-cleanup-collabora-cleanup"
+		releaseName = profileName // appLabel on the Terraform CR = profile name
+	)
+
+	profile := newTofuAppProfile(profileName, nil)
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: tenantName},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "Tofu Cleanup Tenant",
+			Domain:         "tofucleanup.example.com",
+			AdminEmail:     "admin@tofucleanup.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
+			Apps:           []gentianov1alpha1.TenantApp{{Profile: profileName}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	// Wait for the Terraform CR to appear in tofu-system.
+	waitFor(t, 15*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(tofuTerraformGVK)
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: tfCRName, Namespace: "tofu-system"}, obj) == nil
+	})
+
+	// Wait for the tenant namespace to be created by the namespace reconciler.
+	waitFor(t, 15*time.Second, func() bool {
+		ns := &unstructured.Unstructured{}
+		ns.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Namespace"})
+		return testClient.Get(context.Background(), types.NamespacedName{Name: tenantNs}, ns) == nil
+	})
+
+	// Simulate a Helm-managed ConfigMap in the tenant namespace (represents any
+	// workload resource: Deployment, Service, etc.).
+	helmCM := &unstructured.Unstructured{}
+	helmCM.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
+	helmCM.SetName("collabora-cleanup-config")
+	helmCM.SetNamespace(tenantNs)
+	helmCM.SetLabels(map[string]string{
+		"app.kubernetes.io/instance":   releaseName,
+		"app.kubernetes.io/managed-by": "Helm",
+	})
+	if err := testClient.Create(context.Background(), helmCM); err != nil {
+		t.Fatalf("create Helm ConfigMap: %v", err)
+	}
+
+	// Simulate a Helm release tracking secret in the tenant namespace.
+	helmSecret := &unstructured.Unstructured{}
+	helmSecret.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"})
+	helmSecret.SetName("sh.helm.release.v1." + releaseName + ".v1")
+	helmSecret.SetNamespace(tenantNs)
+	helmSecret.SetLabels(map[string]string{
+		"owner":  "helm",
+		"name":   releaseName,
+		"status": "deployed",
+	})
+	if err := testClient.Create(context.Background(), helmSecret); err != nil {
+		t.Fatalf("create Helm release secret: %v", err)
+	}
+
+	// Set the tofu-controller finalizer on the Terraform CR to simulate the
+	// stuck-finalizer scenario that prevents terraform destroy from running.
+	tfCR := &unstructured.Unstructured{}
+	tfCR.SetGroupVersionKind(tofuTerraformGVK)
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: tfCRName, Namespace: "tofu-system"}, tfCR); err != nil {
+		t.Fatalf("get Terraform CR: %v", err)
+	}
+	tfCR.SetFinalizers([]string{"finalizers.tf.contrib.fluxcd.io"})
+	if err := testClient.Update(context.Background(), tfCR); err != nil {
+		t.Fatalf("set finalizer on Terraform CR: %v", err)
+	}
+
+	// Delete the tenant — triggers deleteTerraformCR via deleteAppDeployment.
+	if err := testClient.Delete(context.Background(), tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+
+	// Terraform CR must be gone (finalizer stripped + CR deleted).
+	waitFor(t, 20*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(tofuTerraformGVK)
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: tfCRName, Namespace: "tofu-system"}, obj) != nil
+	})
+
+	// Helm workload ConfigMap must be deleted.
+	checkCM := &unstructured.Unstructured{}
+	checkCM.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "collabora-cleanup-config", Namespace: tenantNs}, checkCM); err == nil {
+		t.Error("expected Helm workload ConfigMap to be deleted, but it still exists")
+	}
+
+	// Helm release tracking secret must be deleted.
+	checkSecret := &unstructured.Unstructured{}
+	checkSecret.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"})
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "sh.helm.release.v1." + releaseName + ".v1", Namespace: tenantNs}, checkSecret); err == nil {
+		t.Error("expected Helm release secret to be deleted, but it still exists")
 	}
 }

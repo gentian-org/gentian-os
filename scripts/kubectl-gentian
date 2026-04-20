@@ -178,7 +178,10 @@ PYEOF
     git push
   )
 
-  echo "Done. ArgoCD will reconcile tenant '${tenant}' and provision '${app}'."
+  # Apply the updated Tenant CR so the operator reconciles immediately.
+  kubectl apply -f "${file}"
+
+  echo "Done. Tenant '${tenant}' updated — operator will provision '${app}'."
 }
 
 # ---------------------------------------------------------------------------
@@ -235,7 +238,10 @@ PYEOF
     git push
   )
 
-  echo "Done. ArgoCD will reconcile tenant '${tenant}' and deprovision '${app}'."
+  # Apply the updated Tenant CR so the operator reconciles immediately.
+  kubectl apply -f "${file}"
+
+  echo "Done. Tenant '${tenant}' updated — operator will deprovision '${app}'."
 }
 
 # ---------------------------------------------------------------------------
