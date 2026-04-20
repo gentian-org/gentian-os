@@ -138,6 +138,9 @@ func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *ge
 	}
 	for i := range appList.Items {
 		appName := appList.Items[i].GetLabels()[appLabel]
+		if appName == "" {
+			continue // managed by another reconciler (e.g. cache)
+		}
 		if _, desired := desiredApps[appName]; !desired {
 			if err := r.Delete(ctx, &appList.Items[i]); client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("delete orphaned Application CR %s: %w", appList.Items[i].GetName(), err)
@@ -153,6 +156,9 @@ func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *ge
 	}
 	for i := range tfList.Items {
 		appName := tfList.Items[i].GetLabels()[appLabel]
+		if appName == "" {
+			continue // managed by another reconciler
+		}
 		if _, desired := desiredApps[appName]; !desired {
 			if err := r.Delete(ctx, &tfList.Items[i]); client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("delete orphaned Terraform CR %s: %w", tfList.Items[i].GetName(), err)

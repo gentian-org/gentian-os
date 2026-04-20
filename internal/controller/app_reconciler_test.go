@@ -737,3 +737,81 @@ func TestTofuApps_RemoveAppCleansUpTerraformCR(t *testing.T) {
 		t.Errorf("expected tofu-keep Terraform CR to still exist, got error: %v", err)
 	}
 }
+
+// TestApps_OrphanCleanupSkipsCRsWithoutAppLabel verifies that the orphan cleanup
+// does not delete Application CRs that share the tenant and managed-by labels
+// but lack the gentianos.io/app label (e.g. Memcached CRs from the cache reconciler).
+func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
+	profile := newAppProfile("only-app", nil)
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "skip-noapp"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Skip NoApp Tenant",
+			Domain:      "skipnoapp.example.com",
+			AdminEmail:  "admin@skipnoapp.example.com",
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "only-app"},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// Wait for the app's Application CR to appear.
+	waitFor(t, 15*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(argocdAppGVK)
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "app-skip-noapp-only-app", Namespace: "argocd"}, obj) == nil
+	})
+
+	// Simulate a CR created by another reconciler (e.g. cache): same tenant+managed-by
+	// labels but NO gentianos.io/app label.
+	foreignCR := &unstructured.Unstructured{}
+	foreignCR.SetGroupVersionKind(argocdAppGVK)
+	foreignCR.SetName("memcached-skip-noapp")
+	foreignCR.SetNamespace("argocd")
+	foreignCR.SetLabels(map[string]string{
+		"gentianos.io/tenant":            "skip-noapp",
+		"app.kubernetes.io/managed-by":   "gentian-os",
+	})
+	_ = unstructured.SetNestedField(foreignCR.Object, "default", "spec", "project")
+	_ = unstructured.SetNestedField(foreignCR.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
+	if err := testClient.Create(context.Background(), foreignCR); err != nil {
+		t.Fatalf("create foreign CR: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), foreignCR) })
+
+	// Trigger a reconcile by updating the tenant (no-op change).
+	updated := &gentianov1alpha1.Tenant{}
+	if err := testClient.Get(context.Background(), types.NamespacedName{Name: "skip-noapp"}, updated); err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	updated.Spec.DisplayName = "Skip NoApp Tenant Updated"
+	if err := testClient.Update(context.Background(), updated); err != nil {
+		t.Fatalf("update tenant: %v", err)
+	}
+
+	// Wait for reconcile to complete (the app CR remains).
+	waitFor(t, 15*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(argocdAppGVK)
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "app-skip-noapp-only-app", Namespace: "argocd"}, obj) == nil
+	})
+
+	// The foreign CR (without app label) must still exist.
+	check := &unstructured.Unstructured{}
+	check.SetGroupVersionKind(argocdAppGVK)
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "memcached-skip-noapp", Namespace: "argocd"}, check); err != nil {
+		t.Errorf("expected foreign CR without app label to survive orphan cleanup, got error: %v", err)
+	}
+}
