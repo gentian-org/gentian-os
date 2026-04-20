@@ -54,15 +54,20 @@ var terraformGVK = schema.GroupVersionKind{
 	Kind:    "Terraform",
 }
 
-// ensureAppDeployment creates or reconciles one ArgoCD Application CR per app
-// declared in tenant.Spec.Apps. Only DeploymentMethod=argocd (the default) is
-// supported; tofu-controller entries are skipped with a TODO.
+// ensureAppDeployment creates or reconciles one ArgoCD Application CR (Pattern A)
+// or Terraform CR (Pattern B) per app declared in tenant.Spec.Apps. It also
+// cleans up orphaned CRs for apps that have been removed from the spec.
 //
 // Returns a non-zero RequeueAfter when any Application is not yet Healthy.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	// Build the set of desired app profile names from the current spec.
+	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
+	for _, app := range tenant.Spec.Apps {
+		desiredApps[app.Profile] = struct{}{}
+	}
+
 	if len(tenant.Spec.Apps) == 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "NoAppsConfigured", "No applications are configured for this tenant")
-		return ctrl.Result{}, nil
 	}
 
 	allHealthy := true
@@ -99,13 +104,63 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		}
 	}
 
-	if !allHealthy {
+	// Clean up orphaned CRs for apps that have been removed from spec.apps.
+	if err := r.cleanupOrphanedAppCRs(ctx, tenant, desiredApps); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned app CRs: %w", err)
+	}
+
+	if len(tenant.Spec.Apps) > 0 && !allHealthy {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", "Waiting for Application CRs to become Healthy")
 		return ctrl.Result{}, nil
 	}
 
-	r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All Application CRs are Healthy")
+	if len(tenant.Spec.Apps) > 0 {
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All Application CRs are Healthy")
+	}
 	return ctrl.Result{}, nil
+}
+
+// cleanupOrphanedAppCRs lists all ArgoCD Application and Terraform CRs managed
+// by this operator for the given tenant, and deletes any whose app label is not
+// in the desiredApps set. This ensures that removing an app from tenant.spec.apps
+// triggers proper cleanup of the corresponding CR.
+func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *gentianov1alpha1.Tenant, desiredApps map[string]struct{}) error {
+	labelSelector := client.MatchingLabels{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	}
+
+	// Clean up orphaned ArgoCD Application CRs (Pattern A).
+	appList := &unstructured.UnstructuredList{}
+	appList.SetGroupVersionKind(argocdApplicationGVK)
+	if err := r.List(ctx, appList, client.InNamespace(argocdNamespace), labelSelector); err != nil {
+		return fmt.Errorf("list Application CRs: %w", err)
+	}
+	for i := range appList.Items {
+		appName := appList.Items[i].GetLabels()[appLabel]
+		if _, desired := desiredApps[appName]; !desired {
+			if err := r.Delete(ctx, &appList.Items[i]); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("delete orphaned Application CR %s: %w", appList.Items[i].GetName(), err)
+			}
+		}
+	}
+
+	// Clean up orphaned Terraform CRs (Pattern B).
+	tfList := &unstructured.UnstructuredList{}
+	tfList.SetGroupVersionKind(terraformGVK)
+	if err := r.List(ctx, tfList, client.InNamespace(tofuSystemNamespace), labelSelector); err != nil {
+		return fmt.Errorf("list Terraform CRs: %w", err)
+	}
+	for i := range tfList.Items {
+		appName := tfList.Items[i].GetLabels()[appLabel]
+		if _, desired := desiredApps[appName]; !desired {
+			if err := r.Delete(ctx, &tfList.Items[i]); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("delete orphaned Terraform CR %s: %w", tfList.Items[i].GetName(), err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // ensureAppApplication creates (or checks health of) the ArgoCD Application CR
@@ -135,29 +190,42 @@ func (r *TenantReconciler) ensureAppApplication(
 }
 
 // deleteAppDeployment removes all ArgoCD Application CRs and Terraform CRs created
-// for the tenant's apps. Apps are ephemeral workload resources, so they are always
-// deleted regardless of the tenant's DeletionPolicy; ArgoCD cascades deletion of
-// deployed Helm releases; the tofu-controller destroys its managed Helm releases.
+// for the tenant's apps. Uses label-based listing to find all managed CRs, so it
+// works even if apps have already been removed from tenant.spec.apps.
+// Apps are ephemeral workload resources, so they are always deleted regardless of
+// the tenant's DeletionPolicy; ArgoCD cascades deletion of deployed Helm releases;
+// the tofu-controller destroys its managed Helm releases when
+// destroyResourcesOnDeletion is true.
 func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	for _, app := range tenant.Spec.Apps {
-		// Delete the ArgoCD Application CR (Pattern A).
-		appCR := &unstructured.Unstructured{}
-		appCR.SetGroupVersionKind(argocdApplicationGVK)
-		appCR.SetName(appApplicationName(tenant.Name, app.Profile))
-		appCR.SetNamespace(argocdNamespace)
-		if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Application CR for app %s: %w", app.Profile, err)
-		}
+	labelSelector := client.MatchingLabels{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	}
 
-		// Delete the Terraform CR (Pattern B).
-		tfCR := &unstructured.Unstructured{}
-		tfCR.SetGroupVersionKind(terraformGVK)
-		tfCR.SetName(terraformCRName(tenant.Name, app.Profile))
-		tfCR.SetNamespace(tofuSystemNamespace)
-		if err := r.Delete(ctx, tfCR); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Terraform CR for app %s: %w", app.Profile, err)
+	// Delete all ArgoCD Application CRs (Pattern A).
+	appList := &unstructured.UnstructuredList{}
+	appList.SetGroupVersionKind(argocdApplicationGVK)
+	if err := r.List(ctx, appList, client.InNamespace(argocdNamespace), labelSelector); err != nil {
+		return fmt.Errorf("list Application CRs for tenant %s: %w", tenant.Name, err)
+	}
+	for i := range appList.Items {
+		if err := r.Delete(ctx, &appList.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete Application CR %s: %w", appList.Items[i].GetName(), err)
 		}
 	}
+
+	// Delete all Terraform CRs (Pattern B).
+	tfList := &unstructured.UnstructuredList{}
+	tfList.SetGroupVersionKind(terraformGVK)
+	if err := r.List(ctx, tfList, client.InNamespace(tofuSystemNamespace), labelSelector); err != nil {
+		return fmt.Errorf("list Terraform CRs for tenant %s: %w", tenant.Name, err)
+	}
+	for i := range tfList.Items {
+		if err := r.Delete(ctx, &tfList.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete Terraform CR %s: %w", tfList.Items[i].GetName(), err)
+		}
+	}
+
 	return nil
 }
 
@@ -274,6 +342,7 @@ func buildTerraformCR(
 		modulePath = profile.Spec.TofuModulePath
 	}
 
+	_ = unstructured.SetNestedField(obj.Object, true, "spec", "destroyResourcesOnDeletion")
 	_ = unstructured.SetNestedField(obj.Object, "auto", "spec", "approvePlan")
 	_ = unstructured.SetNestedField(obj.Object, "10m", "spec", "interval")
 	_ = unstructured.SetNestedField(obj.Object, modulePath, "spec", "path")

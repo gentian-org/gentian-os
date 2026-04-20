@@ -31,18 +31,18 @@ The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc
 | 6 | MariaDB reconciler | ✅ Done | Idempotent `CREATE DATABASE / CREATE USER / GRANT` Jobs. 4 envtest tests. 41 total |
 | 7 | Storage reconciler | ✅ Done | MinIO S3 buckets via `minio/mc` Job + Nextcloud OCS API Job. 5 envtest tests. 46 total |
 | 8 | Cache reconciler | ✅ Done | Redis ACL users via `redis-cli` Job + per-tenant Memcached ArgoCD Application. 5 envtest tests. 51 total |
-| 9 | App deployment reconciler | ✅ Done | ArgoCD Application CRs per app per tenant. Pattern A + B routing. `valueMapping` rendering. 5 envtest tests. 56 total |
-| 10 | Ingress reconciler | ✅ Done | Per-app Ingress CRs + cert-manager wildcard Certificate CR. 5 envtest tests. 61 total |
-| 11 | IntegrationBinding reconciler | ✅ Done | Auto-generates bindings when provider + consumer both in tenant app list. 4 envtest tests. 65 total |
-| 12 | OpenBao restructuring | ✅ Done | `gentian-os/kernel/` and `gentian-os/tenants/{name}/apps/{app}/` path hierarchy. 65 total |
-| 13 | Helm chart + observability | ✅ Done | `charts/gentian-os/` with CRDs, Deployment, RBAC, ServiceMonitor, Grafana dashboard. Prometheus metrics. Printer columns. 65 total |
-| 14 | AppProfiles + update reconciler | ✅ Done | 6 AppProfile YAMLs (collabora, element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B (Tofu Controller). 65 total |
-| 15 | Deployment repo (gentian-deployments) | ✅ Done | `gentian-deployments/dev/` — bootstrap, app-of-apps, dev-tenant, values, tofu.tfvars. 65 total |
-| 16 | Mail kernel extension | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 76 total |
-| 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 93 total |
-| 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 93 total |
-| 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 99 total |
-| 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. ArgoCD Source 3 + AppProject sourceRepos. `extraValues` aligned with opendesk defaults. 99 total |
+| 9 | App deployment reconciler | ✅ Done | ArgoCD Application CRs per app per tenant. Pattern A + B routing. `valueMapping` rendering. Orphan cleanup: removing an app from `spec.apps` deletes the corresponding CR. `destroyResourcesOnDeletion: true` on Terraform CRs. Label-based listing in `deleteAppDeployment()`. 7 envtest tests. 58 total |
+| 10 | Ingress reconciler | ✅ Done | Per-app Ingress CRs + cert-manager wildcard Certificate CR. 5 envtest tests. 63 total |
+| 11 | IntegrationBinding reconciler | ✅ Done | Auto-generates bindings when provider + consumer both in tenant app list. 4 envtest tests. 67 total |
+| 12 | OpenBao restructuring | ✅ Done | `gentian-os/kernel/` and `gentian-os/tenants/{name}/apps/{app}/` path hierarchy. 67 total |
+| 13 | Helm chart + observability | ✅ Done | `charts/gentian-os/` with CRDs, Deployment, RBAC, ServiceMonitor, Grafana dashboard. Prometheus metrics. Printer columns. 67 total |
+| 14 | AppProfiles + update reconciler | ✅ Done | 6 AppProfile YAMLs (collabora, element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B (Tofu Controller). 67 total |
+| 15 | Deployment repo (gentian-deployments) | ✅ Done | `gentian-deployments/dev/` — bootstrap, app-of-apps, dev-tenant, values, tofu.tfvars. 67 total |
+| 16 | Mail kernel extension | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 78 total |
+| 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 95 total |
+| 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 95 total |
+| 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 101 total |
+| 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. ArgoCD Source 3 + AppProject sourceRepos. `extraValues` aligned with opendesk defaults. 101 total |
 ---
 
 ## Day-2 Operations
@@ -344,9 +344,10 @@ Each app increment (20–24) moves an app from `gentian-os/config/samples/` to `
 - Add Source 3 (`gentian-apps/profiles/`) to `app-of-apps.yaml`
 - Configure Nextcloud kernel service to discover and use the Collabora WOPI endpoint (via IntegrationBinding or kernel config)
 
-**E2E test — Install:**
+##### Testing
+
+**Create (Install):**
 ```bash
-# Install Collabora for tenant gtn-demo
 kubectl gentian apps install collabora --tenant gtn-demo
 # Wait for pod to be Running (typically 30–60s after ArgoCD sync)
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora-online -w
@@ -355,9 +356,12 @@ kubectl get hpa -n tenant-gtn-demo  # should show no collabora HPA
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
 # Expected: collabora: 1
+# Verify: Terraform CR exists (Pattern B)
+kubectl get terraform -n tofu-system tf-gtn-demo-collabora
+# Expected: READY=True
 ```
 
-**E2E test — Verify (CLI):**
+**Read (Verify — CLI):**
 ```bash
 # 1. Check WOPI discovery endpoint (must return XML)
 COLLABORA_POD=$(kubectl get pod -n tenant-gtn-demo \
@@ -366,10 +370,9 @@ kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
   curl -sf http://localhost:9980/hosting/discovery | head -5
 # Expected: <wopi-discovery> XML listing supported file types
 
-# 2. Check the ingress exists (created by the orchestrator / kernel ingress controller)
+# 2. Check the ingress exists
 kubectl get ingress -n tenant-gtn-demo | grep collabora
 # Expected: ingress to office.<domain> (e.g. office.desk.gentian.org)
-# If missing: the orchestrator (Inc 10) has not created it yet — see troubleshooting below.
 
 # 3. Check aliasgroups (Nextcloud as allowed WOPI host)
 kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
@@ -377,7 +380,7 @@ kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
 # Expected: JSON capabilities response
 ```
 
-**E2E test — Verify (Browser):**
+**Read (Verify — Browser):**
 
 Collabora is accessed **indirectly through Nextcloud** (the `files.<domain>` app), not by
 navigating to Collabora directly. The WOPI flow is:
@@ -395,7 +398,40 @@ or `https://office.<domain>`).
 5. Type some text, wait 2 seconds (autosave), then close the tab
 6. Re-open the file — your text is still there
 
-**Troubleshooting:**
+**Update (Config Change):**
+```bash
+# Change replica count via Tenant CR config override
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"collabora","config":{"replicas":2}}]}}'
+# Wait for reconciliation
+sleep 30
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora-online
+# Expected: 2 pods running
+
+# Revert to 1 replica
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"collabora","config":{"replicas":1}}]}}'
+```
+
+**Delete (Uninstall):**
+```bash
+kubectl gentian apps uninstall collabora --tenant gtn-demo
+# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+sleep 30
+# Verify: Terraform CR removed
+kubectl get terraform -n tofu-system tf-gtn-demo-collabora
+# Expected: Error from server (NotFound)
+# Verify: no Collabora pods (tofu-controller destroys the Helm release)
+kubectl get pods -n tenant-gtn-demo | grep collabora
+# Expected: no results
+# Verify: catalogue shows 0 installs
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
+# Expected: collabora: 0
+```
+
+##### Troubleshooting
+
 - "Failed to read document from storage" → Collabora cannot reach Nextcloud WOPI endpoint.
   Check `aliasgroups` in Collabora config — it must list `https://files.<domain>`.
 - Document opens in plain-text / download prompt → `richdocuments` app not enabled in Nextcloud.
@@ -404,19 +440,8 @@ or `https://office.<domain>`).
   `kubectl exec -n tenant-gtn-demo <nextcloud-pod> -- php occ config:app:set richdocuments wopi_url --value="https://office.<domain>"`
 - Collabora iframe shows "Unauthorized WOPI host" → the Collabora aliasgroups don't include
   the Nextcloud host. Check `extraValues.collabora.aliasgroups` in the AppProfile.
-```
-
-**E2E test — Uninstall:**
-```bash
-# Remove Collabora from tenant
-kubectl gentian apps uninstall collabora --tenant gtn-demo
-# Wait for ArgoCD sync
-sleep 30
-# Verify: no Collabora pods, catalogue shows 0 installs
-kubectl get pods -n tenant-gtn-demo | grep collabora  # Expected: no results
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
-# Expected: collabora: 0
-```
+- Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
+  latest code with orphan cleanup. Rebuild and redeploy the operator image.
 
 ---
 
@@ -438,16 +463,21 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 - Wire OIDC client, PostgreSQL database, SMTP credentials via `valueMapping`
 - Configure Intercom Service app-service bridge (intercom ↔ Synapse)
 
-**E2E test — Install:**
+##### Testing
+
+**Create (Install):**
 ```bash
 kubectl gentian apps install element --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=element -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
 # Expected: element: 1
+# Verify: Terraform CR exists (Pattern B)
+kubectl get terraform -n tofu-system tf-gtn-demo-element
+# Expected: READY=True
 ```
 
-**E2E test — Verify (CLI):**
+**Read (Verify — CLI):**
 ```bash
 # 1. Check Synapse federation API
 SYNAPSE_POD=$(kubectl get pod -n tenant-gtn-demo \
@@ -466,7 +496,7 @@ kubectl get ingress -n tenant-gtn-demo | grep element
 # Expected: ingress to chat.<domain> (e.g. chat.desk.gentian.org)
 ```
 
-**E2E test — Verify (Browser):**
+**Read (Verify — Browser):**
 
 1. Open **`https://chat.<domain>`** (e.g. `https://chat.desk.gentian.org`)
 2. Click **"Sign in"** → redirects to Keycloak SSO
@@ -479,22 +509,46 @@ kubectl get ingress -n tenant-gtn-demo | grep element
 9. Have the second user join "Test Room" and send a reply
 10. **Expected:** Both users see messages in real-time
 
-**Troubleshooting:**
+**Update (Config Change):**
+```bash
+# Change replica count via Tenant CR config override
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"element","config":{"replicas":2}}]}}'
+# Wait for reconciliation
+sleep 30
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/component=synapse
+# Expected: 2 pods running
+
+# Revert to 1 replica
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"element","config":{"replicas":1}}]}}'
+```
+
+**Delete (Uninstall):**
+```bash
+kubectl gentian apps uninstall element --tenant gtn-demo
+# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+sleep 30
+# Verify: Terraform CR removed
+kubectl get terraform -n tofu-system tf-gtn-demo-element
+# Expected: Error from server (NotFound)
+# Verify: no Element pods
+kubectl get pods -n tenant-gtn-demo | grep element
+# Expected: no results
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
+# Expected: element: 0
+```
+
+##### Troubleshooting
+
 - "Unable to connect to homeserver" → Synapse not reachable. Check ingress
   and `/.well-known/matrix/client` on the domain.
 - SSO redirect fails → OIDC client not created in Keycloak. Check
   `kubectl get secret -n tenant-gtn-demo` for the Element OIDC client secret.
 - "Registration is disabled" → expected; users come from OIDC, not self-registration.
-```
-
-**E2E test — Uninstall:**
-```bash
-kubectl gentian apps uninstall element --tenant gtn-demo
-sleep 30
-kubectl get pods -n tenant-gtn-demo | grep element  # Expected: no results
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
-# Expected: element: 0
-```
+- Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
+  latest code with orphan cleanup. Rebuild and redeploy the operator image.
 
 ---
 
@@ -516,16 +570,21 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 - Wire JWT app secret via Keycloak hybrid-matrix-token scheme
 - Configure optional Element integration (Jitsi links in chat rooms)
 
-**E2E test — Install:**
+##### Testing
+
+**Create (Install):**
 ```bash
 kubectl gentian apps install jitsi --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=jitsi -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
 # Expected: jitsi: 1
+# Verify: Terraform CR exists (Pattern B)
+kubectl get terraform -n tofu-system tf-gtn-demo-jitsi
+# Expected: READY=True
 ```
 
-**E2E test — Verify (CLI):**
+**Read (Verify — CLI):**
 ```bash
 # 1. Check Jitsi web is serving
 JITSI_WEB=$(kubectl get pod -n tenant-gtn-demo \
@@ -547,7 +606,7 @@ kubectl get ingress -n tenant-gtn-demo | grep jitsi
 # Expected: ingress to meet.<domain> (e.g. meet.desk.gentian.org)
 ```
 
-**E2E test — Verify (Browser):**
+**Read (Verify — Browser):**
 
 1. Open **`https://meet.<domain>`** (e.g. `https://meet.desk.gentian.org`)
 2. **Expected:** Jitsi Meet landing page loads
@@ -560,22 +619,46 @@ kubectl get ingress -n tenant-gtn-demo | grep jitsi
 9. Test screen sharing: click the **share screen** button → select a screen
 10. **Expected:** The other participant sees your shared screen
 
-**Troubleshooting:**
+**Update (Config Change):**
+```bash
+# Change replica count via Tenant CR config override
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"jitsi","config":{"replicas":2}}]}}'
+# Wait for reconciliation
+sleep 30
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/component=jitsi-web
+# Expected: 2 pods running
+
+# Revert to 1 replica
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"jitsi","config":{"replicas":1}}]}}'
+```
+
+**Delete (Uninstall):**
+```bash
+kubectl gentian apps uninstall jitsi --tenant gtn-demo
+# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+sleep 30
+# Verify: Terraform CR removed
+kubectl get terraform -n tofu-system tf-gtn-demo-jitsi
+# Expected: Error from server (NotFound)
+# Verify: no Jitsi pods
+kubectl get pods -n tenant-gtn-demo | grep jitsi
+# Expected: no results
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
+# Expected: jitsi: 0
+```
+
+##### Troubleshooting
+
 - "Meeting not started" / stuck on loading → JVB pod may not be running or OROP is down.
   Check `kubectl logs -n tenant-gtn-demo <jvb-pod>` for OROP connection errors.
 - No audio/video → browser permissions denied, or OROP→JVB UDP port not reachable.
   On single-node setups, usually works with `hostPort`. Check JVB `OROP_UDP_PORT` env var.
 - SSO not working → JWT secret mismatch. Check `appSecrets` mapping for `jwt_app_secret`.
-```
-
-**E2E test — Uninstall:**
-```bash
-kubectl gentian apps uninstall jitsi --tenant gtn-demo
-sleep 30
-kubectl get pods -n tenant-gtn-demo | grep jitsi  # Expected: no results
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
-# Expected: jitsi: 0
-```
+- Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
+  latest code with orphan cleanup. Rebuild and redeploy the operator image.
 
 ---
 
@@ -599,16 +682,21 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 - Configure Nextcloud file-store IntegrationBinding (WebDAV read/write)
 - Configure Portal central-navigation IntegrationBinding
 
-**E2E test — Install:**
+##### Testing
+
+**Create (Install):**
 ```bash
 kubectl gentian apps install openproject --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=openproject -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
 # Expected: openproject: 1
+# Verify: Terraform CR exists (Pattern B)
+kubectl get terraform -n tofu-system tf-gtn-demo-openproject
+# Expected: READY=True
 ```
 
-**E2E test — Verify (CLI):**
+**Read (Verify — CLI):**
 ```bash
 # 1. Check OpenProject API responds
 OP_POD=$(kubectl get pod -n tenant-gtn-demo \
@@ -632,7 +720,7 @@ kubectl exec -n tenant-gtn-demo "$OP_POD" -- \
 # Expected: SSO: True
 ```
 
-**E2E test — Verify (Browser):**
+**Read (Verify — Browser):**
 
 1. Open **`https://projects.<domain>`** (e.g. `https://projects.desk.gentian.org`)
 2. Click **"Sign in"** → redirects to Keycloak SSO
@@ -647,7 +735,40 @@ kubectl exec -n tenant-gtn-demo "$OP_POD" -- \
 11. Check the **Members** tab → **+ Member** → search for an LDAP user
 12. **Expected:** LDAP users appear in the autocomplete (proves LDAP integration)
 
-**Troubleshooting:**
+**Update (Config Change):**
+```bash
+# Change replica count via Tenant CR config override
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"openproject","config":{"replicas":2}}]}}'
+# Wait for reconciliation
+sleep 30
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=openproject
+# Expected: 2 pods running
+
+# Revert to 1 replica
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"openproject","config":{"replicas":1}}]}}'
+```
+
+**Delete (Uninstall):**
+```bash
+kubectl gentian apps uninstall openproject --tenant gtn-demo
+# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+sleep 30
+# Verify: Terraform CR removed
+kubectl get terraform -n tofu-system tf-gtn-demo-openproject
+# Expected: Error from server (NotFound)
+# Verify: no OpenProject pods
+kubectl get pods -n tenant-gtn-demo | grep openproject
+# Expected: no results
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
+# Expected: openproject: 0
+# Verify: database retained (deletionPolicy: Retain), OIDC client revoked
+```
+
+##### Troubleshooting
+
 - "502 Bad Gateway" → OpenProject Puma worker still starting. Wait 60s,
   check `kubectl logs -n tenant-gtn-demo <openproject-web-pod>`.
 - SSO redirect loop → OIDC client not configured or redirect URI mismatch.
@@ -656,17 +777,8 @@ kubectl exec -n tenant-gtn-demo "$OP_POD" -- \
   Check `kubectl logs <openproject-web-pod>` for S3 errors.
 - No LDAP users found → LDAP connection not configured. Check OpenProject
   admin → Authentication → LDAP connections.
-```
-
-**E2E test — Uninstall:**
-```bash
-kubectl gentian apps uninstall openproject --tenant gtn-demo
-sleep 30
-kubectl get pods -n tenant-gtn-demo | grep openproject  # Expected: no results
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
-# Expected: openproject: 0
-# Verify: database retained (deletionPolicy: Retain), OIDC client revoked
-```
+- Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
+  latest code with orphan cleanup. Rebuild and redeploy the operator image.
 
 ---
 
@@ -688,16 +800,21 @@ kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.
 - Wire OIDC, PostgreSQL, SMTP, LDAP via `valueMapping`
 - Handle dot-escaped YAML key paths (`customConfigs.xwiki\.properties.oidc\.secret`)
 
-**E2E test — Install:**
+##### Testing
+
+**Create (Install):**
 ```bash
 kubectl gentian apps install xwiki --tenant gtn-demo
 kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
 # Expected: xwiki: 1
+# Verify: Terraform CR exists (Pattern B)
+kubectl get terraform -n tofu-system tf-gtn-demo-xwiki
+# Expected: READY=True
 ```
 
-**E2E test — Verify (CLI):**
+**Read (Verify — CLI):**
 ```bash
 # 1. Check XWiki REST API
 XWIKI_POD=$(kubectl get pod -n tenant-gtn-demo \
@@ -717,7 +834,7 @@ kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- \
 # Expected: Wikis: 1 (at least — the main wiki)
 ```
 
-**E2E test — Verify (Browser):**
+**Read (Verify — Browser):**
 
 1. Open **`https://wiki.<domain>`** (or the XWiki ingress host from the CLI check above)
 2. Click **"Log in"** → redirects to Keycloak SSO
@@ -733,7 +850,39 @@ kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- \
 12. Log in as a different user → navigate to the same page
 13. **Expected:** The page is visible (access control works, LDAP-synced users can read)
 
-**Troubleshooting:**
+**Update (Config Change):**
+```bash
+# Change replica count via Tenant CR config override
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"xwiki","config":{"replicas":2}}]}}'
+# Wait for reconciliation
+sleep 30
+kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki
+# Expected: 2 pods running
+
+# Revert to 1 replica
+kubectl patch tenant gtn-demo --type=merge \
+  -p '{"spec":{"apps":[{"profile":"xwiki","config":{"replicas":1}}]}}'
+```
+
+**Delete (Uninstall):**
+```bash
+kubectl gentian apps uninstall xwiki --tenant gtn-demo
+# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+sleep 30
+# Verify: Terraform CR removed
+kubectl get terraform -n tofu-system tf-gtn-demo-xwiki
+# Expected: Error from server (NotFound)
+# Verify: no XWiki pods
+kubectl get pods -n tenant-gtn-demo | grep xwiki
+# Expected: no results
+kubectl get appcatalogue default \
+  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
+# Expected: xwiki: 0
+```
+
+##### Troubleshooting
+
 - XWiki stuck on "Loading..." → Java startup can take 2-3 minutes. Check
   `kubectl logs -n tenant-gtn-demo <xwiki-pod>` for "Server started" message.
 - SSO redirect fails → OIDC configuration in `xwiki.properties` is wrong.
@@ -741,16 +890,8 @@ kubectl exec -n tenant-gtn-demo "$XWIKI_POD" -- \
 - "Database not available" → PostgreSQL credentials wrong or database not created.
   Check `hibernate.cfg.xml` connection string in the XWiki pod.
 - User login works but no permissions → LDAP group sync not configured.
-```
-
-**E2E test — Uninstall:**
-```bash
-kubectl gentian apps uninstall xwiki --tenant gtn-demo
-sleep 30
-kubectl get pods -n tenant-gtn-demo | grep xwiki  # Expected: no results
-kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
-# Expected: xwiki: 0
-```
+- Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
+  latest code with orphan cleanup. Rebuild and redeploy the operator image.
 
 ---
 

@@ -594,3 +594,146 @@ func TestTofuApps_DeleteRemovesTerraformCR(t *testing.T) {
 		return err != nil // NotFound means it was deleted
 	})
 }
+
+// TestApps_RemoveAppCleansUpApplicationCR verifies that removing an app from
+// tenant.spec.apps triggers deletion of the corresponding ArgoCD Application CR
+// while leaving other apps' CRs intact.
+func TestApps_RemoveAppCleansUpApplicationCR(t *testing.T) {
+	// Create two AppProfiles.
+	profileA := newAppProfile("keep-app", nil)
+	profileB := newAppProfile("remove-app", nil)
+	if err := testClient.Create(context.Background(), profileA); err != nil {
+		t.Fatalf("create AppProfile keep-app: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileA) })
+	if err := testClient.Create(context.Background(), profileB); err != nil {
+		t.Fatalf("create AppProfile remove-app: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileB) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "rm-app-tenant"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Remove App Tenant",
+			Domain:      "rmapp.example.com",
+			AdminEmail:  "admin@rmapp.example.com",
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "keep-app"},
+				{Profile: "remove-app"},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// Wait for both Application CRs to appear.
+	for _, name := range []string{"keep-app", "remove-app"} {
+		n := name
+		waitFor(t, 15*time.Second, func() bool {
+			obj := &unstructured.Unstructured{}
+			obj.SetGroupVersionKind(argocdAppGVK)
+			return testClient.Get(context.Background(),
+				types.NamespacedName{Name: "app-rm-app-tenant-" + n, Namespace: "argocd"}, obj) == nil
+		})
+	}
+
+	// Remove "remove-app" from the tenant's apps list.
+	updated := &gentianov1alpha1.Tenant{}
+	if err := testClient.Get(context.Background(), types.NamespacedName{Name: "rm-app-tenant"}, updated); err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "keep-app"}}
+	if err := testClient.Update(context.Background(), updated); err != nil {
+		t.Fatalf("update tenant: %v", err)
+	}
+
+	// The removed app's Application CR should be cleaned up.
+	waitFor(t, 15*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(argocdAppGVK)
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "app-rm-app-tenant-remove-app", Namespace: "argocd"}, obj)
+		return err != nil // NotFound means it was deleted
+	})
+
+	// The kept app's Application CR should still exist.
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(argocdAppGVK)
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "app-rm-app-tenant-keep-app", Namespace: "argocd"}, obj); err != nil {
+		t.Errorf("expected keep-app Application CR to still exist, got error: %v", err)
+	}
+}
+
+// TestTofuApps_RemoveAppCleansUpTerraformCR verifies that removing a tofu-controller
+// app from tenant.spec.apps triggers deletion of the corresponding Terraform CR.
+func TestTofuApps_RemoveAppCleansUpTerraformCR(t *testing.T) {
+	// Create two tofu AppProfiles.
+	profileA := newTofuAppProfile("tofu-keep", nil)
+	profileB := newTofuAppProfile("tofu-remove", nil)
+	if err := testClient.Create(context.Background(), profileA); err != nil {
+		t.Fatalf("create AppProfile tofu-keep: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileA) })
+	if err := testClient.Create(context.Background(), profileB); err != nil {
+		t.Fatalf("create AppProfile tofu-remove: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileB) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "tofu-rm-tenant"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Tofu Remove Tenant",
+			Domain:      "tofurm.example.com",
+			AdminEmail:  "admin@tofurm.example.com",
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "tofu-keep"},
+				{Profile: "tofu-remove"},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// Wait for both Terraform CRs to appear.
+	for _, name := range []string{"tofu-keep", "tofu-remove"} {
+		n := name
+		waitFor(t, 15*time.Second, func() bool {
+			obj := &unstructured.Unstructured{}
+			obj.SetGroupVersionKind(tofuTerraformGVK)
+			return testClient.Get(context.Background(),
+				types.NamespacedName{Name: "tf-tofu-rm-tenant-" + n, Namespace: "tofu-system"}, obj) == nil
+		})
+	}
+
+	// Remove "tofu-remove" from the tenant's apps list.
+	updated := &gentianov1alpha1.Tenant{}
+	if err := testClient.Get(context.Background(), types.NamespacedName{Name: "tofu-rm-tenant"}, updated); err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "tofu-keep"}}
+	if err := testClient.Update(context.Background(), updated); err != nil {
+		t.Fatalf("update tenant: %v", err)
+	}
+
+	// The removed app's Terraform CR should be cleaned up.
+	waitFor(t, 15*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(tofuTerraformGVK)
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "tf-tofu-rm-tenant-tofu-remove", Namespace: "tofu-system"}, obj)
+		return err != nil // NotFound means it was deleted
+	})
+
+	// The kept app's Terraform CR should still exist.
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(tofuTerraformGVK)
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "tf-tofu-rm-tenant-tofu-keep", Namespace: "tofu-system"}, obj); err != nil {
+		t.Errorf("expected tofu-keep Terraform CR to still exist, got error: %v", err)
+	}
+}
