@@ -103,6 +103,13 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 
+		// Inc 21a: seed any per-app internal secrets (AppProfile.spec.appSecrets)
+		// into OpenBao before the Terraform module/ArgoCD Application runs, so
+		// the Pattern B helm_release can read them via data "vault_kv_secret_v2".
+		if err := r.seedAppSecrets(ctx, tenant, app.Profile, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", app.Profile, err)
+		}
+
 		// Pattern B (tofu-controller): create a Terraform CR in tofu-system.
 		if profile.Spec.DeploymentMethod == gentianov1alpha1.DeploymentMethodTofuController {
 			ready, err := r.ensureTerraformCR(ctx, tenant, app, profile)
@@ -138,6 +145,25 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All Application CRs are Healthy")
 	}
 	return ctrl.Result{}, nil
+}
+
+// seedAppSecrets writes each AppProfile.spec.appSecrets entry into OpenBao at
+// …/internal/{name} with key "value". No-op when Seeder is nil or the profile
+// declares no app-secrets. Called once per app per reconcile; PutOnce
+// semantics make repeated calls idempotent.
+func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
+	if r.Seeder == nil || len(profile.Spec.AppSecrets) == 0 {
+		return nil
+	}
+	for _, s := range profile.Spec.AppSecrets {
+		if s.Name == "" {
+			continue
+		}
+		if _, err := r.Seeder.SeedAppSecret(ctx, tenant.Name, appName, s.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // cleanupOrphanedAppCRs lists all ArgoCD Application and Terraform CRs managed
@@ -512,6 +538,26 @@ func buildTerraformCR(
 
 	if extraValuesJSON != "" {
 		vars = append(vars, map[string]interface{}{"name": "extra_values_json", "value": extraValuesJSON})
+	}
+
+	// Inc 21a: pass the profile's AppSecrets as a name→valuePath map. The
+	// app-workspace module reads each name from …/internal/{name} and injects
+	// its "value" at the given Helm dot path via set_sensitive.
+	if len(profile.Spec.AppSecrets) > 0 {
+		appSecretsMap := make(map[string]string, len(profile.Spec.AppSecrets))
+		for _, s := range profile.Spec.AppSecrets {
+			if s.Name == "" || s.ValuePath == "" {
+				continue
+			}
+			appSecretsMap[s.Name] = s.ValuePath
+		}
+		if len(appSecretsMap) > 0 {
+			raw, err := json.Marshal(appSecretsMap)
+			if err != nil {
+				return nil, fmt.Errorf("marshal app_secrets for %s: %w", app.Profile, err)
+			}
+			vars = append(vars, map[string]interface{}{"name": "app_secrets", "value": string(raw)})
+		}
 	}
 	_ = unstructured.SetNestedSlice(obj.Object, vars, "spec", "vars")
 

@@ -24,7 +24,7 @@ Kubernetes cluster and provision your first tenant.
 
 | Variable | What it is |
 |----------|-----------|
-| `MASTER_PASSWORD` | Master password used to derive all HMAC-based secrets |
+| `MASTER_PASSWORD` | Master password used to derive all HKDF-based secrets |
 | `OD_PRIVATE_REGISTRY_USERNAME` | `registry.opencode.de` GitLab username |
 | `OD_PRIVATE_REGISTRY_PASSWORD` | `registry.opencode.de` Personal Access Token (`read_registry` scope) |
 | `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |

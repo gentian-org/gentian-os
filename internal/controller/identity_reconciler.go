@@ -77,7 +77,6 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			allDone = false
 		}
 	}
-
 	if !allDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningClients", "Waiting for OIDC client Jobs to complete")
@@ -137,7 +136,21 @@ func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentiano
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeClientJob(tenant, realmName, appName))
+		// Inc 21a: seed the per-app OIDC secret into OpenBao *before* creating
+		// the provisioning Job so the Job can apply the derived client secret
+		// to Keycloak (POST on create, PUT on update). When the Seeder is nil
+		// (envtest / staged rollout) we fall back to the legacy behaviour of
+		// letting Keycloak auto-generate the secret.
+		clientSecret := ""
+		if r.Seeder != nil {
+			issuer := fmt.Sprintf("https://id.%s/realms/%s", tenant.Spec.Domain, realmName)
+			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, oidcClientID(tenant.Name, appName))
+			if seedErr != nil {
+				return false, fmt.Errorf("seed oidc: %w", seedErr)
+			}
+			clientSecret = creds.ClientSecret
+		}
+		return false, r.Create(ctx, makeClientJob(tenant, realmName, appName, clientSecret))
 	}
 	if err != nil {
 		return false, err
@@ -198,10 +211,17 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 	}
 }
 
-func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName string) *batchv1.Job {
+func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientSecret string) *batchv1.Job {
 	ttl := int32(3600)
 	clientID := oidcClientID(tenant.Name, appName)
 	redirectURI := fmt.Sprintf("https://%s/%s/*", tenant.Spec.Domain, appName)
+	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
+	if clientSecret != "" {
+		container.Env = append(container.Env, corev1.EnvVar{
+			Name:  "OIDC_CLIENT_SECRET",
+			Value: clientSecret,
+		})
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clientJobName(tenant.Name, appName),
@@ -217,9 +237,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName string) *
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI)),
-					},
+					Containers:    []corev1.Container{container},
 				},
 			},
 		},
@@ -316,25 +334,43 @@ fi`, realmName, realmName, displayName, realmName, realmName)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
+	// When OIDC_CLIENT_SECRET is set (Inc 21a — Seeder enabled) the script
+	// creates the client with that exact secret, and updates an existing
+	// client to match (PUT /clients/{id}) so the live value always equals
+	// what OpenBao was seeded with. When unset, Keycloak auto-generates a
+	// random secret (legacy behaviour pre-seeder).
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+SECRET_FIELD=""
+if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
+  SECRET_FIELD=",\"secret\":\"${OIDC_CLIENT_SECRET}\""
+fi
 EXISTING=$(curl -sf \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s")
 if echo "${EXISTING}" | grep -q '"id"'; then
-  echo "client %s already exists in realm %s"
+  CID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  echo "client %s already exists (id=${CID}) in realm %s"
+  if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
+    curl -sf \
+      -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"%s\",\"secret\":\"${OIDC_CLIENT_SECRET}\"}"
+    echo "client secret updated to OpenBao-seeded value"
+  fi
 else
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"clientId":"%s","redirectUris":["%s"],"protocol":"openid-connect","standardFlowEnabled":true,"serviceAccountsEnabled":true,"publicClient":false}'
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
   echo "client %s created in realm %s"
-fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI, clientID, realmName)
+fi`, realmName, clientID, clientID, realmName, realmName, clientID, realmName, clientID, redirectURI, clientID, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {

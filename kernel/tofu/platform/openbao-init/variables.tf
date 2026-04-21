@@ -21,3 +21,15 @@ variable "token_ttl" {
   type        = number
   default     = 3600
 }
+
+variable "operator_service_account" {
+  description = "Kubernetes ServiceAccount name used by the gentian-os operator."
+  type        = string
+  default     = "gentian-os"
+}
+
+variable "operator_namespace" {
+  description = "Kubernetes namespace where the gentian-os operator is deployed."
+  type        = string
+  default     = "gentian-system"
+}

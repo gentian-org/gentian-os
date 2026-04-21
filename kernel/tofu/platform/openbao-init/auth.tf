@@ -42,3 +42,15 @@ resource "vault_kubernetes_auth_backend_role" "tofu_runner" {
   token_policies                   = ["tofu-write"]
   token_ttl                        = 3600
 }
+
+# Kubernetes auth role for the gentian-os operator (Inc 21a). Bound to the
+# operator's ServiceAccount; reuses the tofu-write policy because the
+# operator writes the same set of secrets that the tofu runner reads.
+resource "vault_kubernetes_auth_backend_role" "gentian_os_operator" {
+  backend                          = vault_auth_backend.kubernetes.path
+  role_name                        = "gentian-os-operator"
+  bound_service_account_names      = [var.operator_service_account]
+  bound_service_account_namespaces = [var.operator_namespace]
+  token_policies                   = ["tofu-write"]
+  token_ttl                        = 3600
+}

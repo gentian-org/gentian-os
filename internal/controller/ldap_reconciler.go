@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -140,7 +141,22 @@ func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gen
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeBindAccountJob(tenant, ouDN, appName))
+		// Inc 21a: derive the per-app LDAP bind password and persist it under
+		// the canonical OpenBao path before creating the UDM Job. The Job
+		// receives the same value via BIND_PW so live LDAP and OpenBao stay
+		// in lockstep. When Seeder is nil the Job falls back to a local random.
+		bindPassword := ""
+		if r.Seeder != nil {
+			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, appName, secrets.LDAPCreds{
+				BindDN: fmt.Sprintf("uid=app-%s,%s", appName, ouDN),
+				BaseDN: ouDN,
+			})
+			if seedErr != nil {
+				return false, fmt.Errorf("seed ldap: %w", seedErr)
+			}
+			bindPassword = creds.BindPassword
+		}
+		return false, r.Create(ctx, makeBindAccountJob(tenant, ouDN, appName, bindPassword))
 	}
 	if err != nil {
 		return false, err
@@ -200,8 +216,12 @@ func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 	}
 }
 
-func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName string) *batchv1.Job {
+func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPassword string) *batchv1.Job {
 	ttl := int32(3600)
+	c := udmContainer("provision-bind-account", buildBindAccountScript(ouDN, appName))
+	if bindPassword != "" {
+		c.Env = append(c.Env, corev1.EnvVar{Name: "BIND_PW", Value: bindPassword})
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bindAccountJobName(tenant.Name, appName),
@@ -217,9 +237,7 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName string) *
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						udmContainer("provision-bind-account", buildBindAccountScript(ouDN, appName)),
-					},
+					Containers: []corev1.Container{c},
 				},
 			},
 		},
@@ -370,7 +388,9 @@ STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/users/ldap/dn/${BIND_DN_ENC}")
 if [ "${STATUS}" = "404" ]; then
-  BIND_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
+  if [ -z "${BIND_PW:-}" ]; then
+    BIND_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
+  fi
   curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \

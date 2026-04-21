@@ -147,6 +147,15 @@ data "vault_kv_secret_v2" "ldap" {
   name  = "${local.secret_base}/ldap"
 }
 
+# App-internal secrets (Inc 21a) — one data source per AppProfile.appSecrets entry.
+# The operator fills var.app_secrets with {name = valuePath}; each name is stored
+# at {secret_base}/internal/{name} with a single "value" key.
+data "vault_kv_secret_v2" "app_secret" {
+  for_each = var.app_secrets
+  mount    = "secret"
+  name     = "${local.secret_base}/internal/${each.key}"
+}
+
 # ── Sensitive value map ────────────────────────────────────────────────────────
 # Keys = Helm value paths (not sensitive — from vm_* variables).
 # Values = credentials read from OpenBao (sensitive).
@@ -248,6 +257,12 @@ locals {
     var.vm_ldap_bind_password_key != "" && local.need_ldap ? {
       (var.vm_ldap_bind_password_key) = data.vault_kv_secret_v2.ldap[0].data["bind-password"]
     } : {},
+
+    # App-internal secrets (Inc 21a) — map{name → valuePath} × read{name → value}.
+    {
+      for name, path in var.app_secrets :
+      path => data.vault_kv_secret_v2.app_secret[name].data["value"]
+    },
   )
 }
 

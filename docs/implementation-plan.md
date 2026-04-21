@@ -43,6 +43,8 @@ The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc
 | 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 95 total |
 | 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 101 total |
 | 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. ArgoCD Source 3 + AppProject sourceRepos. `extraValues` aligned with opendesk defaults. 101 total |
+| 21 | Element AppProfile in gentian-apps | ✅ Done | `profiles/element.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. `extraValues` aligned with opendesk `values-element.yaml.gotmpl` + `values-synapse.yaml.gotmpl` (E2EE, OIDC, SMTP, ratelimits, security context). Ingress `chat.<domain>` → element:80. 101 total |
+| 21a | Kernel secret seeder (OpenBao write path) | 🚧 In progress | Shared `internal/kernel/secrets` package: HKDF-SHA256 deriver, KV v2 client, canonical path builder, seeder. Master password is fetched at operator startup from `secret/gentian-os/kernel/internal/master-password` via the `gentian-os-operator` Kubernetes auth role; when present, every kernel reconciler (identity, ldap, database, mariadb, storage, cache, mail, apps) derives and writes the credentials it provisions into `gentian-os/tenants/{t}/apps/{a}/{category}` and `…/internal/{name}`. Tenant is included in the derivation salt for tenant-scoped secrets but omitted for kernel-shared paths (`gentian-os/kernel/{category}/{name}`) so shared services keep a single value across tenants. Provisioning Jobs (Keycloak, psql, mariadb, mc, redis-cli, UDM) consume the derived password via env var and apply it idempotently (`ALTER ROLE`, `ALTER USER`, `ACL SETUSER`, etc.) so the live backend password always equals the OpenBao value. `app-workspace` Tofu module gains a dynamic `app_secrets` map so any AppProfile `appSecrets[].valuePath` is injected as a sensitive Helm value — no per-app module. Bootstrap (`scripts/seed-openbao.sh` + `install.sh`) writes the master and applies the Tofu OpenBao auth config so a fresh cluster works without manual steps. Unblocks Element install (secrets previously missing at `…/oidc`, `…/database`, `…/smtp`) and is a prerequisite for Inc 22–24 and every future app (Odoo, Lexoffice, …). Rotation is out of scope (write-once; tracked separately). |
 ---
 
 ## Day-2 Operations
@@ -181,20 +183,6 @@ Which architecture concepts are addressed by which increment — and which are n
 | §10.3 Shell AI Assistant | Portal AI assistant via MCP | Requires MCP registry + adapters | MCP registry |
 | §10.4 Cross-App Agent Orchestration | AI agent as integration layer | Requires MCP servers per app | MCP adapters |
 | §10.5 AI-Assisted Operations | AppProfile generation, health monitoring | Requires stable AppProfile schema + observability | Increments 1, 14 + observability |
-
----
-
-## Optional Future Features
-
-These features are architecturally sound but not required for an MVP. They can be implemented when there is demand.
-
-| Feature | Description | Depends on | Effort |
-|---|---|---|---|
-| vCluster-per-tenant isolation | Run each tenant in a dedicated vCluster for full API-server-level isolation (`isolation.mode: vcluster`). Namespace mode is the default and sufficient for most deployments. | Inc 2 (namespace reconciler), vCluster operator | Large |
-| MCP Discovery Layer | MCP server registry complementing IntegrationBindings (architecture §10.1–10.5) | Inc 11 (IntegrationBinding) | Large |
-| Tenant-scoped backup & restore | `BackupTenant` / `RestoreTenant` CRs for per-tenant pgBackRest + Velero + OpenBao snapshots (architecture §9) | Backup strategy design | Large |
-| Cross-cluster tenant migration | Move a tenant between clusters (architecture §9.3) | Backup & restore | Large |
-| AI-assisted operations | AppProfile generation, health monitoring via LLM (architecture §10.5) | Inc 14 (AppProfiles) + observability | Medium |
 
 ---
 
@@ -549,6 +537,184 @@ kubectl get appcatalogue default \
 - "Registration is disabled" → expected; users come from OIDC, not self-registration.
 - Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
   latest code with orphan cleanup. Rebuild and redeploy the operator image.
+
+---
+
+#### Inc 21a — Kernel secret seeder (OpenBao write path)
+
+**Why this increment exists.** Incs 3–8 provision *backends* (Keycloak clients,
+Postgres roles, MariaDB users, MinIO keys, Redis ACLs, LDAP bind accounts), but
+the provisioning Jobs **never persist the generated credentials**. Pattern B
+apps read their sensitive values from OpenBao at `gentian-os/tenants/{t}/apps/
+{a}/{category}` — so the Terraform plan for every such app fails with `no
+secret found at …`. This blocks Element install today and would block every
+future app (Jitsi, XWiki, Odoo, Lexoffice …) the same way. Inc 21a closes the
+gap once, for every reconciler, via a shared component.
+
+**Principle.** Every reconciler derives the credentials it is about to write
+to a backend, persists them in OpenBao **first**, then applies them
+idempotently to the backend. After the Job completes, the live backend
+password is equal to the OpenBao value by construction. No readback, no
+drift, no race.
+
+**Key design choices, aligned with opendesk / `server/`:**
+
+1. **Deterministic derivation** via HKDF-SHA256 (RFC 5869). The operator
+   reads the master password once at startup from
+   `secret/gentian-os/kernel/internal/master-password` (via the
+   `gentian-os-operator` Kubernetes auth role) and keeps it in memory.
+   Per-credential values are then derived as:
+   `Derive(salt, info) = hex(HKDF-SHA256(master, salt, info))[:40]`
+   where `salt = CategoryPath(tenant, app, category)` for tenant-scoped
+   secrets (e.g. `gentian-os/tenants/gtn-demo/apps/element/oidc`) and
+   `salt = KernelPath(category, name)` for shared kernel services (e.g.
+   `gentian-os/kernel/mail/postfix`), so shared services keep a single
+   value across tenants while tenant-scoped ones are isolated by
+   construction. `info` is the field tag (`password`, `client-secret`,
+   `access-key`, …). Re-reconciling a healthy tenant yields the **same**
+   value → `kv put` is a no-op → zero churn. When no master is configured
+   the seeder transparently falls back to `crypto/rand` so development
+   clusters still work.
+2. **Write-once semantics** (`cas=0` KV v2 check-and-set) so a later
+   `MASTER_PASSWORD` rotation cannot silently overwrite live credentials.
+   Explicit rotation is a separate increment.
+3. **Canonical paths** identical to what the existing `app-workspace` and
+   `ox-workspace` Tofu modules already read — no module rewrites needed for
+   the kernel-requirement categories.
+4. **One seeder, every kernel reconciler uses it** — DRY. Adding a new app
+   (Odoo, etc.) requires zero orchestrator changes: declare
+   `kernelRequirements` + `appSecrets` in the AppProfile and everything is
+   wired automatically.
+5. **Fully automated bootstrap.** `install.sh` / `scripts/seed-openbao.sh`
+   apply the `kernel/tofu/platform/openbao-init` module (creates the
+   `tofu-write` policy + `gentian-os-operator` K8s auth role), then write
+   the master password to `secret/gentian-os/kernel/internal/master-password`.
+   Nothing in the getting-started flow requires manual OpenBao calls.
+
+**Deliverables:**
+
+- `internal/kernel/secrets/` package:
+  - `deriver.go` — `NewDeriver(master)` + `Derive(salt, info, n) string`
+    (HKDF-SHA256, deterministic, up to 64-hex output; returns empty string
+    when no master is configured so the seeder can fall back to random)
+  - `openbao.go` — minimal KV v2 HTTP client: `PutOnce`, `Put`, `Exists`
+  - `paths.go` — `CategoryPath(tenant, app, cat)`,
+    `InternalPath(tenant, app, name)`, `KernelPath(cat, name)`, and the
+    constant `MasterPasswordPath` for the operator bootstrap read
+  - `seeder.go` — `Seeder` with one method per category:
+    `SeedOIDC`, `SeedDatabase`, `SeedMariaDB`, `SeedS3`, `SeedCache`,
+    `SeedSMTP`, `SeedIMAP`, `SeedLDAP`, `SeedAppSecrets`. Each returns the
+    derived credential struct so the reconciler can pass it to its Job.
+  - Unit tests for determinism and PutOnce idempotence.
+
+- Reconciler rewiring — each existing reconciler now calls the seeder
+  *before* creating its Job and passes the derived credential via env var
+  from an ephemeral per-Job Secret:
+  | Reconciler | Category | Shell-level idempotence |
+  |---|---|---|
+  | identity | `oidc` | Keycloak API `POST /clients {"secret": …}` + `PUT /clients/{id}/client-secret` |
+  | ldap | `ldap` | UDM `create-or-modify` users/ldap-auth with `--set password=…` |
+  | database (PG) | `database` | `CREATE ROLE IF NOT EXISTS` + `ALTER ROLE … PASSWORD '…'` |
+  | mariadb | `database` (MariaDB flavour) | `CREATE USER IF NOT EXISTS` + `ALTER USER … IDENTIFIED BY '…'` |
+  | storage (S3) | `s3` | `mc admin user add` (idempotent wrapper) |
+  | cache (Redis) | `cache` | `ACL SETUSER … ON >…` |
+  | mail | `smtp`, `imap` | copy kernel `gentian-os/kernel/mail/postfix` relay password into per-app path |
+  | apps | `internal/{name}` | purely KV derivation + write (no backend Job) |
+
+- `app-workspace` Tofu module gains a dynamic `app_secrets` input:
+  `map(object({ value_path = string }))` → iterates
+  `vault_kv_secret_v2` per entry under `…/internal/{name}` and merges into
+  `sensitive_values`. Operator fills this from `AppProfile.spec.appSecrets`.
+
+- Helm chart — orchestrator `Deployment` learns:
+  - `BAO_ADDR` + `BAO_ROLE` env vars (configured via `openbao.address` /
+    `openbao.role` in `values.yaml`)
+  - Kubernetes auth against `auth/kubernetes/login` using the pod's
+    projected ServiceAccount JWT — no static token anywhere
+  - Master password is read at startup from
+    `secret/gentian-os/kernel/internal/master-password` (populated by
+    `scripts/seed-openbao.sh` during the documented bootstrap flow)
+  - The `gentian-os-operator` Kubernetes auth role is created by the
+    existing `kernel/tofu/platform/openbao-init` workspace that the
+    getting-started guide already applies — no new manual steps
+
+**Test:**
+
+- Unit tests: derive determinism, KV client PutOnce idempotence (mock HTTP).
+- Envtest: existing reconciler tests adapted to verify that after
+  `ensureIdentity`/`ensureDatabase`/etc., the in-memory OpenBao mock has
+  the expected keys under the tenant path.
+- Cluster smoke test (manual, run once): run the documented bootstrap
+  (`tofu apply` in `kernel/tofu/platform/openbao-init` + `seed-openbao.sh`),
+  deploy the operator chart with `openbao.address` + `openbao.role` set,
+  force-reconcile `tenant/gtn-demo`, observe Terraform plan for element
+  succeed (no `no secret found` error), Synapse pod Ready, ingress
+  reachable.
+
+**Scalability.** Every future app (Odoo, Plane, Lexoffice, Metabase …)
+declares its infra needs in an AppProfile and the orchestrator does the
+right thing automatically. Zero code change per app.
+
+**Status (current iteration):**
+
+- ✅ `internal/kernel/secrets/` package implemented with `Deriver` (HKDF-SHA256,
+  `HasMaster()` guard + crypto/rand fallback), `KVClient` (KV v2, `PutOnce`
+  cas=0, Kubernetes-auth login against `auth/kubernetes/login`), canonical
+  `CategoryPath` / `InternalPath` / `KernelPath` + `MasterPasswordPath`
+  constant, and a `Seeder` covering every category listed above. Unit tests
+  cover deterministic derivation, cross-tenant diversification, kernel-path
+  tenant omission, and `PutOnce` idempotence.
+- ✅ `TenantReconciler.Seeder` field (nil-safe) and `cmd/main.go`
+  `buildSeeder()` that constructs the KV client from `BAO_ADDR` + `BAO_ROLE`
+  (Kubernetes auth only — no static token needed) and reads the master
+  password once at startup from `secret/gentian-os/kernel/internal/master-password`.
+  When `BAO_ADDR` is unset the seeder is disabled (nil); when the master is
+  missing the seeder runs with a crypto/rand fallback (non-deterministic).
+- ✅ Identity reconciler — seeds OIDC, passes `OIDC_CLIENT_SECRET` to the
+  Keycloak client Job; shell script creates with `"secret"` on POST and
+  issues `PUT /clients/{id}` with the derived secret when the client already
+  exists (idempotent upsert).
+- ✅ Database reconciler — seeds `database`, passes `ROLE_PW`; `CREATE ROLE …
+  PASSWORD` on new, `ALTER ROLE … WITH LOGIN PASSWORD` on existing.
+- ✅ MariaDB reconciler — seeds `database` (MariaDB flavour) and passes
+  `DB_PASS` to the setup Job; existing script already honours the env var.
+- ✅ Cache reconciler — seeds `cache` and passes `REDIS_USER_PASSWORD` to
+  the `redis-cli` Job; script uses `${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}`
+  so the ACL entry gets the derived password when seeded, admin password
+  otherwise.
+- ✅ LDAP reconciler — seeds `ldap` and passes `BIND_PW` to the UDM Job;
+  script wrapped with `if [ -z "${BIND_PW:-}" ]` so the injected password
+  wins over the local fallback.
+- ✅ Storage reconciler — seeds `s3` with derived access/secret key before
+  the bucket Job (bucket Job still runs with admin creds; provisioning a
+  matching MinIO user is explicitly out of scope for this increment).
+- ✅ Mail reconciler — `seedPerAppMailSecrets` copies the per-tenant SMTP
+  credentials into each app's `…/apps/{app}/smtp` path and sets `imap` to
+  the platform-kernel dovecot endpoint on the success path of all three
+  mail modes.
+- ✅ App reconciler — `seedAppSecrets` loop writes each
+  `AppProfile.spec.appSecrets[]` entry to `…/internal/{name}` (key `value`)
+  before `ensureTerraformCR`/`ensureAppApplication`. `buildTerraformCR`
+  passes the name→valuePath map to the Tofu module as `app_secrets`
+  (JSON-encoded).
+- ✅ `kernel/tofu/tenant/app-workspace` — new `app_secrets` variable plus
+  dynamic `data "vault_kv_secret_v2" "app_secret"` (for_each) merges into
+  `sensitive_values` via a map comprehension.
+- ✅ `kernel/tofu/platform/openbao-init` — new `gentian_os_operator`
+  Kubernetes auth role bound to SA `gentian-system/gentian-os` with the
+  `tofu-write` policy; applied automatically by the getting-started bootstrap
+  step (`tofu apply` in that workspace).
+- ✅ Helm chart — `values.yaml` gains `openbao.role` (default
+  `gentian-os-operator`); `deployment.yaml` injects `BAO_ADDR` + `BAO_ROLE`
+  env vars. No Secret, no static token — Kubernetes auth via the pod's
+  projected ServiceAccount JWT.
+- ✅ Bootstrap — `scripts/seed-openbao.sh` writes the platform master
+  password to `secret/gentian-os/kernel/internal/master-password` (the
+  canonical path read by the operator at startup), so a fresh cluster is
+  fully bootstrapped by running the documented install flow with no extra
+  manual OpenBao calls.
+- ⏭️ Cluster smoke test — pending operator image rebuild + redeploy with
+  the new chart values.
 
 ---
 
@@ -929,3 +1095,18 @@ kubectl get appcatalogue default \
 | 25 | Contract definitions + CI | `gentian-apps` repo CI, contract schemas, profile validation | Small |
 
 Inc 19 (App Store controller) is the foundation — it must be built first. Incs 20–24 (individual app profiles) can be built in parallel after Inc 19. Inc 25 (contracts + CI) can start anytime after Inc 1 (CRDs exist). Each app profile is an independent PR in the `gentian-apps` repo. After Inc 24, `gentian-os/config/samples/` should contain only `integrationbinding_filepicker.yaml` and `tenant_gtn-demo.yaml` — no AppProfile YAMLs.
+
+---
+
+## Optional Future Features
+
+These features are architecturally sound but not required for an MVP. They can be implemented when there is demand.
+
+| Feature | Description | Depends on | Effort |
+|---|---|---|---|
+| vCluster-per-tenant isolation | Run each tenant in a dedicated vCluster for full API-server-level isolation (`isolation.mode: vcluster`). Namespace mode is the default and sufficient for most deployments. | Inc 2 (namespace reconciler), vCluster operator | Large |
+| MCP Discovery Layer | MCP server registry complementing IntegrationBindings (architecture §10.1–10.5) | Inc 11 (IntegrationBinding) | Large |
+| Tenant-scoped backup & restore | `BackupTenant` / `RestoreTenant` CRs for per-tenant pgBackRest + Velero + OpenBao snapshots (architecture §9) | Backup strategy design | Large |
+| Cross-cluster tenant migration | Move a tenant between clusters (architecture §9.3) | Backup & restore | Large |
+| AI-assisted operations | AppProfile generation, health monitoring via LLM (architecture §10.5) | Inc 14 (AppProfiles) + observability | Medium |
+

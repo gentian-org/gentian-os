@@ -247,3 +247,18 @@ variable "vm_ldap_bind_password_key" {
   type        = string
   default     = ""
 }
+
+# ── Per-app internal secrets (Inc 21a) ─────────────────────────────────────────
+# Map from AppProfile.spec.appSecrets[].name → AppProfile.spec.appSecrets[].valuePath.
+# The operator populates this from the AppProfile on every reconcile. Each key
+# is read from secret/data/gentian-os/tenants/{tenant}/apps/{app}/internal/{name}
+# (single-field KV record with key "value") and merged into the Helm release as
+# a sensitive value at the given dot path. This is how app-specific secrets
+# (e.g. Synapse registration_shared_secret, bridge tokens) reach the chart
+# without any per-app Terraform module.
+
+variable "app_secrets" {
+  description = "Map of app-internal secret name → Helm value dot path. Secrets are read from {secret_base}/internal/{name} with key \"value\"."
+  type        = map(string)
+  default     = {}
+}

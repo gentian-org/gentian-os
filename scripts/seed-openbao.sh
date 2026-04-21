@@ -213,6 +213,13 @@ kv_put_once() {
 echo ""
 echo "Writing secrets to OpenBao..."
 
+# --- Master password (consumed by gentian-os operator at startup) -----------
+# The operator reads MASTER_PASSWORD from this canonical path and feeds it
+# into its HKDF-SHA256 deriver to produce per-tenant per-app credentials
+# deterministically. Path matches secrets.MasterPasswordPath in
+# internal/kernel/secrets/paths.go.
+kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" '{value: $v}')"
+
 # --- PostgreSQL ---
 # --- CNPG superuser (shared CloudNativePG Cluster in platform-kernel) ------
 CNPG_SUPERUSER_PW=$(derive_password "cnpg" "superuser")

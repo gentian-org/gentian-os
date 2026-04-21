@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -124,6 +125,18 @@ func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentia
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
+		// Inc 21a: derive the per-app S3 credentials and persist them under
+		// the canonical OpenBao path before creating the bucket Job. The
+		// bucket Job itself runs with admin credentials; provisioning a
+		// MinIO user that matches these derived keys is out of scope for
+		// this increment.
+		if r.Seeder != nil {
+			if _, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
+				Bucket: s3BucketName(tenant, appName),
+			}); seedErr != nil {
+				return false, fmt.Errorf("seed s3: %w", seedErr)
+			}
+		}
 		return false, r.Create(ctx, makeS3BucketJob(tenant, appName))
 	}
 	if err != nil {

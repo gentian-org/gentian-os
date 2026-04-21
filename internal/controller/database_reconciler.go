@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -144,7 +145,26 @@ func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeRoleJob(tenant, nsName, dbName, appName))
+		// Inc 21a: seed the per-app database credentials into OpenBao *before*
+		// creating the role Job so the Job can apply the derived password to
+		// PostgreSQL (CREATE ROLE + ALTER ROLE … PASSWORD). When the Seeder is
+		// nil (envtest / staged rollout) the Job falls back to generating a
+		// random password locally (legacy behaviour).
+		rolePassword := ""
+		if r.Seeder != nil {
+			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
+				Host:     fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+				Port:     "5432",
+				Name:     dbName,
+				User:     roleUserName(tenant.Name, appName),
+				Password: "", // derived inside Seeder
+			})
+			if seedErr != nil {
+				return false, fmt.Errorf("seed database: %w", seedErr)
+			}
+			rolePassword = creds.Password
+		}
+		return false, r.Create(ctx, makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
 	}
 	if err != nil {
 		return false, err
@@ -222,9 +242,21 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 
 // makeRoleJob creates a psql Job that creates the per-app PostgreSQL role
 // and grants full privileges on the provisioned database.
-func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) *batchv1.Job {
+//
+// When rolePassword is non-empty (Inc 21a — Seeder enabled) the Job applies
+// that exact password to the role via CREATE/ALTER ROLE, so the live
+// PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
+// generates a random password locally (legacy behaviour).
+func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string) *batchv1.Job {
 	ttl := int32(3600)
 	roleName := roleUserName(tenant.Name, appName)
+	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName), nsName)
+	if rolePassword != "" {
+		container.Env = append(container.Env, corev1.EnvVar{
+			Name:  "ROLE_PW",
+			Value: rolePassword,
+		})
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      roleJobName(tenant.Name, appName),
@@ -240,9 +272,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						psqlContainer("provision-role", buildRoleScript(dbName, roleName), nsName),
-					},
+					Containers:    []corev1.Container{container},
 				},
 			},
 		},
@@ -300,14 +330,23 @@ func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 // --- Shell scripts -----------------------------------------------------------
 
 func buildRoleScript(dbName, roleName string) string {
+	// When ROLE_PW is provided (Inc 21a — Seeder enabled) the script applies
+	// that exact password to the role via CREATE/ALTER ROLE WITH PASSWORD,
+	// keeping the live PostgreSQL password in lockstep with OpenBao. When
+	// unset, a random password is generated locally and discarded after Job
+	// completion (legacy behaviour — apps without seeded OpenBao cannot
+	// connect, but backends that only need the database to exist still work).
 	return fmt.Sprintf(`set -euo pipefail
+if [ -z "${ROLE_PW:-}" ]; then
+  ROLE_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
+fi
 ROLE_EXISTS=$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='%s'" postgres)
 if [ "${ROLE_EXISTS}" != "1" ]; then
-  ROLE_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
   psql -c "CREATE ROLE \"%s\" WITH LOGIN PASSWORD '${ROLE_PW}';" postgres
   echo "role %s created"
 else
-  echo "role %s already exists"
+  psql -c "ALTER ROLE \"%s\" WITH LOGIN PASSWORD '${ROLE_PW}';" postgres
+  echo "role %s password updated"
 fi
 DB_EXISTS=$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='%s'" postgres)
 if [ "${DB_EXISTS}" != "1" ]; then
@@ -315,7 +354,7 @@ if [ "${DB_EXISTS}" != "1" ]; then
   echo "database %s created"
 fi
 psql -c "GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";" postgres
-echo "privileges granted"`, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName)
+echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName)
 }
 
 // --- Status helpers ----------------------------------------------------------

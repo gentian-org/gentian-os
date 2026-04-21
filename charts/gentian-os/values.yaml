@@ -41,6 +41,13 @@ watchNamespaces: []
 openbao:
   address: "http://openbao.openbao.svc.cluster.local:8200"
   authPath: "kubernetes"
+  # Kubernetes auth role used by the operator to log in to OpenBao for the
+  # Inc 21a seeding subsystem. Must exist in OpenBao with a policy that
+  # grants write to secret/data/gentian-os/* (the openbao-init Tofu module
+  # provisions a "gentian-os-operator" role bound to this Deployment's SA
+  # with the tofu-write policy). When BAO_ADDR is unset at runtime the
+  # operator skips seeding entirely (useful for envtest / local dev).
+  role: "gentian-os-operator"
 
 # ArgoCD integration
 argocd:

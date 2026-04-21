@@ -32,6 +32,7 @@ ctrl "sigs.k8s.io/controller-runtime"
 "sigs.k8s.io/controller-runtime/pkg/client"
 
 gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -134,7 +135,23 @@ jobName := redisACLJobName(tenant.Name, appName)
 job := &batchv1.Job{}
 err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 if errors.IsNotFound(err) {
-return false, r.Create(ctx, makeRedisACLJob(tenant, appName))
+// Inc 21a: derive the per-app Redis ACL password and persist it under
+// the canonical OpenBao path before creating the redis-cli Job. The
+// Job receives the same value via REDIS_USER_PASSWORD so the live ACL
+// and OpenBao stay in lockstep. When Seeder is nil the Job falls back
+// to using the admin password (legacy behaviour).
+userPassword := ""
+if r.Seeder != nil {
+creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
+Host: fmt.Sprintf("%s.%s.svc.cluster.local", "redis-master", kernelNamespace),
+Port: "6379",
+})
+if seedErr != nil {
+return false, fmt.Errorf("seed cache: %w", seedErr)
+}
+userPassword = creds.Password
+}
+return false, r.Create(ctx, makeRedisACLJob(tenant, appName, userPassword))
 }
 if err != nil {
 return false, err
@@ -208,10 +225,14 @@ return nil
 
 // makeRedisACLJob creates a redis-cli Job that provisions a per-app Redis ACL user.
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
-func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword string) *batchv1.Job {
 ttl := int32(3600)
 username := redisACLUsername(tenant.Name, appName)
 keyPrefix := redisKeyPrefix(tenant.Name, appName)
+c := redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix))
+if userPassword != "" {
+c.Env = append(c.Env, corev1.EnvVar{Name: "REDIS_USER_PASSWORD", Value: userPassword})
+}
 return &batchv1.Job{
 ObjectMeta: metav1.ObjectMeta{
 Name:      redisACLJobName(tenant.Name, appName),
@@ -227,9 +248,7 @@ TTLSecondsAfterFinished: &ttl,
 Template: corev1.PodTemplateSpec{
 Spec: corev1.PodSpec{
 RestartPolicy: corev1.RestartPolicyOnFailure,
-Containers: []corev1.Container{
-redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix)),
-},
+Containers: []corev1.Container{c},
 },
 },
 },
@@ -342,8 +361,9 @@ Key:                  "password",
 func redisSetUserScript(username, keyPrefix string) string {
 return fmt.Sprintf(
 `set -euo pipefail
+USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$REDIS_PASSWORD" "~%s" "+@read" "+@write" "+@connection"
+  ACL SETUSER %s on ">$USER_PW" "~%s" "+@read" "+@write" "+@connection"
 echo "ACL user %s provisioned"`,
 username, keyPrefix, username,
 )

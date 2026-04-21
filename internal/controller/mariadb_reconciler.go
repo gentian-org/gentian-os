@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -105,7 +106,24 @@ func (r *TenantReconciler) ensureMariaDBSetupJob(ctx context.Context, tenant *ge
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeMariaDBSetupJob(tenant, appName))
+		// Inc 21a: derive the per-app database password and persist it under
+		// the canonical OpenBao path before creating the SQL Job. The Job
+		// receives the same value via DB_PASS so live MariaDB and OpenBao stay
+		// in lockstep. When Seeder is nil the Job falls back to a local random.
+		dbPassword := ""
+		if r.Seeder != nil {
+			creds, seedErr := r.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
+				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", kernelNamespace),
+				Port: "3306",
+				Name: databaseName(tenant, appName),
+				User: mariadbUserName(tenant.Name, appName),
+			})
+			if seedErr != nil {
+				return false, fmt.Errorf("seed mariadb: %w", seedErr)
+			}
+			dbPassword = creds.Password
+		}
+		return false, r.Create(ctx, makeMariaDBSetupJob(tenant, appName, dbPassword))
 	}
 	if err != nil {
 		return false, err
@@ -158,10 +176,14 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // Credentials are injected from the mariadb-admin Secret in the kernel namespace.
 // The database name and username are passed as explicit env vars to avoid shell
 // quoting issues.
-func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string) *batchv1.Job {
 	ttl := int32(3600)
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
+	c := mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser)
+	if dbPassword != "" {
+		c.Env = append(c.Env, corev1.EnvVar{Name: "DB_PASS", Value: dbPassword})
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mariadbSetupJobName(tenant.Name, appName),
@@ -177,9 +199,7 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName string) *batch
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser),
-					},
+					Containers: []corev1.Container{c},
 				},
 			},
 		},

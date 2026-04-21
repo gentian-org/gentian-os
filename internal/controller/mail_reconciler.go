@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -72,6 +73,10 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 			return ctrl.Result{}, err
 		}
+		if err := r.seedPerAppMailSecrets(ctx, tenant); err != nil {
+			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
+			return ctrl.Result{}, err
+		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"Selfhosted", "Tenant registered in shared Postfix and Dovecot infrastructure")
 		return ctrl.Result{}, nil
@@ -93,6 +98,10 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 				"Provisioning", "Waiting for SMTP credentials to be available")
 			return ctrl.Result{RequeueAfter: mailRequeueAfter}, nil
 		}
+		if err := r.seedPerAppMailSecrets(ctx, tenant); err != nil {
+			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
+			return ctrl.Result{}, err
+		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"External", "SMTP credentials have been propagated to the tenant namespace")
 		return ctrl.Result{}, nil
@@ -101,6 +110,10 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 		err := r.ensureMailTransportOnly(ctx, tenant)
 		if err != nil {
 			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+			return ctrl.Result{}, err
+		}
+		if err := r.seedPerAppMailSecrets(ctx, tenant); err != nil {
+			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
 			return ctrl.Result{}, err
 		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
@@ -338,6 +351,77 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 		},
 	}
 	return r.Create(ctx, secret)
+}
+
+// seedPerAppMailSecrets writes each app's SMTP/IMAP KV record into OpenBao so
+// the app-workspace Tofu module can inject the credentials as Helm values.
+// The SMTP password is *copied* from the per-tenant SMTP credentials Secret —
+// it is shared across all apps of a tenant since they authenticate to the
+// same Postfix submission endpoint with one user. IMAP gets only host/port
+// (per-user credentials come from LDAP at runtime).
+//
+// No-op when the Seeder is nil (envtest / staged rollout). In MailModeDisabled
+// the caller never invokes this function.
+func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.Seeder == nil {
+		return nil
+	}
+
+	// Collect the set of apps that need SMTP and/or IMAP.
+	type need struct{ smtp, imap bool }
+	needs := map[string]need{}
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Mail == nil {
+			continue
+		}
+		needs[app.Profile] = need{
+			smtp: profile.Spec.KernelRequirements.Mail.SMTP != nil,
+			imap: profile.Spec.KernelRequirements.Mail.IMAP != nil,
+		}
+	}
+	if len(needs) == 0 {
+		return nil
+	}
+
+	// Pull the per-tenant SMTP secret so we can copy the same credentials into
+	// each app's OpenBao path. Under MailModeExternal this Secret was just
+	// created from the admin-provided source; under Selfhosted/TransportOnly it
+	// was created by ensureSmtpCredentialsSecret.
+	nsName := tenantNamespaceName(tenant)
+	src := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: smtpCredentialsSecretName(tenant.Name), Namespace: nsName}, src); err != nil {
+		return fmt.Errorf("read tenant SMTP secret: %w", err)
+	}
+	smtp := secrets.SMTPCreds{
+		Host:     string(src.Data["host"]),
+		Port:     string(src.Data["port"]),
+		User:     string(src.Data["username"]),
+		Password: string(src.Data["password"]),
+	}
+
+	for appName, n := range needs {
+		if n.smtp {
+			if _, err := r.Seeder.SeedSMTP(ctx, tenant.Name, appName, smtp); err != nil {
+				return fmt.Errorf("seed smtp for %s: %w", appName, err)
+			}
+		}
+		if n.imap {
+			if err := r.Seeder.SeedIMAP(ctx, tenant.Name, appName, secrets.IMAPCreds{
+				Host: "dovecot.platform-kernel.svc.cluster.local",
+				Port: "143",
+			}); err != nil {
+				return fmt.Errorf("seed imap for %s: %w", appName, err)
+			}
+		}
+	}
+	return nil
 }
 
 // deleteMail removes the tenant's registration from the shared mail infrastructure.

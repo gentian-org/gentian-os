@@ -44,6 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -86,6 +87,11 @@ const (
 type TenantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
+	// May be nil — in which case all reconcilers skip the seeding step and behave
+	// exactly as they did before Inc 21a. This keeps existing envtest suites
+	// passing without requiring an OpenBao test double.
+	Seeder *secrets.Seeder
 }
 
 // SetupWithManager registers the controller with the controller-manager.

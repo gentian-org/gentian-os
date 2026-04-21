@@ -45,6 +45,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config
+          env:
+            - name: BAO_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            - name: BAO_ROLE
+              value: {{ .Values.openbao.role | quote }}
           ports:
             - name: metrics
               containerPort: 8080
