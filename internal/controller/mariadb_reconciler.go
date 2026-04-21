@@ -199,7 +199,7 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword st
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{c},
+					Containers:    []corev1.Container{c},
 				},
 			},
 		},
