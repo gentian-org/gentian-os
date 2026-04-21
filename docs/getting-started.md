@@ -47,11 +47,16 @@ Kubernetes cluster and provision your first tenant.
 ## Bootstrap
 
 The bootstrap installs the cluster infrastructure (ArgoCD, OpenBao, ESO, Tofu
-Controller) and seeds kernel service credentials. All individual scripts live
-in `scripts/`. For a single-command convenience wrapper, use the `install.sh`
-from the companion `server/` repository — it calls these same scripts in the
-correct order. A self-contained `install.sh` will live in
-`gentian-deployments/dev/bootstrap/` once Increment 15 is complete.
+Controller) and seeds kernel service credentials. A single self-contained
+wrapper script (`install.sh` at the repository root) runs the full flow; the
+individual scripts it calls live under `scripts/`.
+
+Gentian OS is fully self-contained — bootstrapping a cluster requires only the
+following three repositories (no other Gentian repo is referenced):
+
+- `gentian-os` (this repo) — kernel, operator, and bootstrap scripts
+- `gentian-apps` — app catalogue and profiles
+- `gentian-deployments` — per-environment overlays
 
 ### 1. Clone and enter the repository
 
@@ -74,14 +79,18 @@ Any variable not pre-exported will be prompted interactively.
 
 ### 3. Run the installer
 
-From the `server/` repository (which wraps the scripts from this repo):
+From the `gentian-os` repository root:
 
 ```bash
-cd ../server
 ./install.sh
 ```
 
-Or run the scripts individually (all paths relative to `gentian-os/`):
+This runs all 13 steps end-to-end (see the header of `install.sh` for the list).
+The script is idempotent — re-running it on a partially-bootstrapped cluster
+picks up where it left off.
+
+To run the individual steps manually instead (all paths relative to
+`gentian-os/`):
 
 ```bash
 # Steps 1–5: tools, namespaces, ESO, ArgoCD, OCI secrets
@@ -95,7 +104,7 @@ bash scripts/init-openbao-transit.sh
 kubectl apply -f kernel/bootstrap/openbao-application.yaml
 kubectl apply -f kernel/bootstrap/tofu-controller-application.yaml
 kubectl apply -f kernel/bootstrap/globals-application.yaml
-# Then initialise primary OpenBao (see server/install.sh step 9 for the full flow)
+# Then initialise primary OpenBao (see install.sh step 9 for the full flow)
 
 # Step 10: Configure OpenBao via Tofu
 cd kernel/tofu/platform/openbao-init
@@ -110,7 +119,7 @@ bash scripts/bootstrap.sh
 
 # Step 13: Install AppCatalogue CRD + kubectl-gentian plugin
 kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
-install -m 755 scripts/kubectl-gentian /usr/local/bin/kubectl-gentian
+sudo install -m 755 scripts/kubectl-gentian /usr/local/bin/kubectl-gentian
 ```
 
 ### 4. Save OpenBao keys when prompted

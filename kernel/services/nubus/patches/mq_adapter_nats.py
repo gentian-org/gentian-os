@@ -6,7 +6,7 @@
 # This version is adapted for compatibility with pydantic v1.
 # Any changes to the backend implementation should be reviewed and synchronized here as needed.
 #
-# PATCH (server repo): LDAP_SUBJECT corrected from "ldap-producer-subject" to "ldap-producer"
+# PATCH (gentian-os): LDAP_SUBJECT corrected from "ldap-producer-subject" to "ldap-producer"
 # to match the backends NatsMessageQueue.LdapQueue.message_subject used by the transformer.
 # The transformer calls ensure_stream with subjects=["ldap-producer"] on startup, overwriting
 # the stream config. Without this patch the listener publishes to "ldap-producer-subject" which

@@ -1,10 +1,13 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 echo "Bootstrapping ArgoCD root ApplicationSet..."
 
 # Apply the root ApplicationSet
-kubectl apply -f argocd/bootstrap/root-applicationset.yaml
+kubectl apply -f "${REPO_ROOT}/kernel/bootstrap/root-applicationset.yaml"
 
 echo ""
 echo "✅ Root ApplicationSet deployed!"
