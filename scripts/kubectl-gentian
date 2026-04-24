@@ -108,9 +108,18 @@ tenant_file() {
 cmd_list() {
   echo "Available apps from AppCatalogue:"
   echo ""
-  kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}{"\t"}{.chartVersion}{"\t"}{.installedCount}{" tenants\t"}{range .kernelRequirements[*]}{@}{","}{end}{"\n"}{end}' \
-    | column -t -s $'\t' \
-    | awk 'BEGIN{printf "%-30s %-12s %-12s %s\n","NAME","VERSION","INSTALLED","REQUIRES"; print "---"} {print}'
+  kubectl get appcatalogue default -o jsonpath='{range .status.apps[*]}{.name}{"\t"}{.chartVersion}{"\t"}{.installedCount}{"\t"}{range .kernelRequirements[*]}{@}{","}{end}{"\n"}{end}' \
+    | awk -F'\t' '
+      BEGIN {
+        fmt = "%-30s %-12s %-12s %s\n"
+        printf fmt, "NAME", "VERSION", "INSTALLED", "REQUIRES"
+        printf fmt, "----", "-------", "---------", "--------"
+      }
+      {
+        sub(/,$/, "", $4)
+        if ($4 == "") $4 = "-"
+        printf fmt, $1, $2, $3 " tenants", $4
+      }'
 }
 
 # ---------------------------------------------------------------------------
