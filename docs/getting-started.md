@@ -176,7 +176,10 @@ restart — no manual intervention needed after a normal reboot.
 | 10 | Runs `tofu apply` in `kernel/tofu/platform/openbao-init/` to configure KV engine, Kubernetes auth backend, and ESO policy |
 | 11 | Runs `scripts/seed-openbao.sh` to write all kernel service secrets into OpenBao |
 | 12 | Applies the root ApplicationSet (`kernel/bootstrap/root-applicationset.yaml`) — ArgoCD syncs the full kernel stack |
-| 13 | Applies the `AppCatalogue` CRD and installs the `kubectl-gentian` plugin to `/usr/local/bin` || 15 | Installs the gentian-os orchestrator Helm chart in `gentian-system` (Tenant/AppProfile/IntegrationBinding CRDs + operator). After this step the cluster can provision tenants. |
+| 13 | Applies the `AppCatalogue` CRD and installs the `kubectl-gentian` plugin to `/usr/local/bin` |
+| 14 | Persists the chosen `gentian-apps` / `gentian-deployments` repo URLs and branches to `~/.gentian/config` (sourced by the `kubectl-gentian` plugin) |
+| 14b | Renders `kernel/bootstrap/appprofiles-application.yaml.tmpl` with the chosen repo + branch and applies it as the `gentian-appprofiles` ArgoCD Application — every YAML under `<gentian-apps>/profiles/` becomes a cluster-scoped `AppProfile` CR, which the operator projects into the `AppCatalogue` |
+| 15 | Installs the `gentian-os` orchestrator Helm chart in `gentian-system` (`Tenant` / `AppProfile` / `IntegrationBinding` CRDs + operator). After this step the cluster can provision tenants. |
 | 16 | Waits for every ArgoCD Application to become Synced + Healthy and prints a summary |
 ---
 
@@ -223,13 +226,15 @@ If `kubectl get appcatalogue` reports `the server doesn't have a resource type
 kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
 ```
 
----
+### Verify the orchestrator (step 15)
 
-## Install the Gentian OS orchestrator
+```bash
+kubectl get pods -n gentian-system
+kubectl get crds | grep gentianos.io
+```
 
-`install.sh` step 15 installs the orchestrator automatically. To run it
-manually (or to upgrade it later), use the same Helm command the installer
-runs:
+To re-run or upgrade the orchestrator manually, use the same Helm command
+`install.sh` runs in step 15:
 
 ```bash
 helm upgrade --install gentian-os ./charts/gentian-os \
@@ -238,13 +243,6 @@ helm upgrade --install gentian-os ./charts/gentian-os \
   --set openbao.address=http://openbao.openbao.svc.cluster.local:8200 \
   --set argocd.namespace=argocd \
   --wait --timeout 5m
-```
-
-Verify the orchestrator is running:
-
-```bash
-kubectl get pods -n gentian-system
-kubectl get crds | grep gentianos.io
 ```
 
 ---
