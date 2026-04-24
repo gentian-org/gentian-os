@@ -185,6 +185,7 @@ kubectl delete appproject gentian -n "$APP_NS" --ignore-not-found >/dev/null 2>&
 
 info "Uninstalling Helm releases installed directly by install.sh..."
 helm uninstall external-secrets -n external-secrets >/dev/null 2>&1 || true
+helm uninstall gentian-os -n gentian-system >/dev/null 2>&1 || true
 if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
     helm uninstall cert-manager -n cert-manager >/dev/null 2>&1 || true
 fi
@@ -283,6 +284,63 @@ else
         applicationsets.argoproj.io \
         appprojects.argoproj.io \
         --ignore-not-found >/dev/null 2>&1 || true
+
+    # Cluster-scoped infra cleanup (only with --cluster-infra). These
+    # resources are not bound to any namespace, so they don't go away when
+    # the helm release / argocd application is uninstalled. cert-manager is
+    # NOT touched here because it predates gentian-os on most clusters.
+    if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
+        info "Removing cluster-scoped infra CRDs and RBAC..."
+        # CNPG (CloudNativePG)
+        kubectl delete crd \
+            backups.postgresql.cnpg.io \
+            clusterimagecatalogs.postgresql.cnpg.io \
+            clusters.postgresql.cnpg.io \
+            databases.postgresql.cnpg.io \
+            imagecatalogs.postgresql.cnpg.io \
+            poolers.postgresql.cnpg.io \
+            publications.postgresql.cnpg.io \
+            scheduledbackups.postgresql.cnpg.io \
+            subscriptions.postgresql.cnpg.io \
+            --ignore-not-found >/dev/null 2>&1 || true
+        # tofu-controller + flux source-controller (installed as dependency)
+        kubectl delete crd \
+            terraforms.infra.contrib.fluxcd.io \
+            buckets.source.toolkit.fluxcd.io \
+            externalartifacts.source.toolkit.fluxcd.io \
+            gitrepositories.source.toolkit.fluxcd.io \
+            helmcharts.source.toolkit.fluxcd.io \
+            helmrepositories.source.toolkit.fluxcd.io \
+            ocirepositories.source.toolkit.fluxcd.io \
+            --ignore-not-found >/dev/null 2>&1 || true
+        # ClusterRoles and ClusterRoleBindings left behind when their
+        # namespaces were force-deleted before the helm/argocd uninstall.
+        kubectl delete clusterrole \
+            gentian-os \
+            argocd-application-controller \
+            argocd-applicationset-controller \
+            argocd-server \
+            cnpg-cloudnative-pg \
+            cnpg-cloudnative-pg-edit \
+            cnpg-cloudnative-pg-view \
+            tofu-cluster-reconciler-role \
+            tofu-manager-role \
+            reloader-reloader-role \
+            --ignore-not-found >/dev/null 2>&1 || true
+        kubectl delete clusterrolebinding \
+            gentian-os \
+            argocd-application-controller \
+            argocd-applicationset-controller \
+            argocd-server \
+            cnpg-cloudnative-pg \
+            tofu-cluster-reconciler \
+            tofu-manager-rolebinding \
+            reloader-reloader-role-binding \
+            openbao-server-binding \
+            openbao-transit-server-binding \
+            --ignore-not-found >/dev/null 2>&1 || true
+        success "Removed cluster-scoped infra CRDs and RBAC."
+    fi
 
     # If any target namespace is still Terminating, strip its kubernetes
     # finalizer so it can disappear. (This only runs after we've cleared the
