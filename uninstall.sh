@@ -220,14 +220,16 @@ else
                 if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
                         mapfile -t pvs < <(kubectl get pv -o json | jq -r '.items[]
                             | select(.spec.claimRef != null)
+                            | .spec.claimRef.namespace as $ns
                             | select(["argocd","external-secrets","tofu-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev","cert-manager","stakater-system","cnpg-system"]
-                                | index(.spec.claimRef.namespace))
+                                | index($ns))
                             | .metadata.name')
                 else
                         mapfile -t pvs < <(kubectl get pv -o json | jq -r '.items[]
                             | select(.spec.claimRef != null)
+                            | .spec.claimRef.namespace as $ns
                             | select(["argocd","external-secrets","tofu-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev"]
-                                | index(.spec.claimRef.namespace))
+                                | index($ns))
                             | .metadata.name')
                 fi
         if [[ ${#pvs[@]} -gt 0 ]]; then
