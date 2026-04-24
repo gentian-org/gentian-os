@@ -39,3 +39,23 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+      # ESO v1 server-side defaults (refreshPolicy/refreshInterval/conversionStrategy/
+      # decodingStrategy/metadataPolicy) cause perma-drift on ExternalSecret resources.
+      # See cnpg-cluster-application.yaml for the same pattern.
+      ignoreDifferences:
+        - group: external-secrets.io
+          kind: ExternalSecret
+          jqPathExpressions:
+            - .spec.refreshPolicy
+            - .spec.refreshInterval
+            - .spec.target.template.engineVersion
+            - .spec.target.deletionPolicy
+            - .spec.target.creationPolicy
+            - .spec.dataFrom[]?.find?.conversionStrategy
+            - .spec.dataFrom[]?.find?.decodingStrategy
+            - .spec.dataFrom[]?.extract?.conversionStrategy
+            - .spec.dataFrom[]?.extract?.decodingStrategy
+            - .spec.dataFrom[]?.extract?.metadataPolicy
+            - .spec.data[]?.remoteRef?.conversionStrategy
+            - .spec.data[]?.remoteRef?.decodingStrategy
+            - .spec.data[]?.remoteRef?.metadataPolicy

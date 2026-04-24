@@ -541,6 +541,13 @@ bootstrap_argocd_apps() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-flux-iac.yaml"
     success "Applied public ArgoCD repository registrations."
 
+    # Tofu Controller needs Flux source CRDs (GitRepository, OCIRepository,
+    # Bucket) to register its informers — even though we never instantiate
+    # them. Without these CRDs the controller crash-loops on cache-sync
+    # timeout. See kernel/manifests/flux-crds/README.md.
+    kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-crds.yaml"
+    success "Applied Flux source CRDs (required by tofu-controller)."
+
     local apps=(openbao tofu-controller globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         apps+=(reloader cnpg cnpg-cluster)
