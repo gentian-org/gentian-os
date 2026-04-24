@@ -190,6 +190,26 @@ if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
     helm uninstall cert-manager -n cert-manager >/dev/null 2>&1 || true
 fi
 
+# Delete workload controllers in target namespaces BEFORE deleting the
+# namespaces themselves. Otherwise the namespace deletion can race ahead and
+# leave orphaned Deployments/ReplicaSets behind in api-server. Those orphans
+# then keep the replicaset-controller logging "namespace not found" errors,
+# which jams kubelet's event sync loop on the next install — pods get stuck
+# in ContainerCreating with calico IP assigned but PodReadyToStartContainers
+# never flips to True.
+info "Deleting workload controllers in target namespaces (prevents orphan zombies)..."
+_pre_delete_namespaces=("${TARGET_NAMESPACES_CORE[@]}")
+if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
+    _pre_delete_namespaces+=("${TARGET_NAMESPACES_INFRA[@]}")
+fi
+for ns in "${_pre_delete_namespaces[@]}"; do
+    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+        continue
+    fi
+    kubectl delete deploy,sts,ds,rs,job,cronjob -n "$ns" --all \
+        --ignore-not-found --wait=false >/dev/null 2>&1 || true
+done
+
 if [[ "$MODE" == "safe" ]]; then
     info "Safe mode: deleting only non-data namespaces. Namespaces with PVCs are preserved."
     local_namespaces=("${TARGET_NAMESPACES_CORE[@]}")

@@ -147,6 +147,12 @@ wait_for_running_pod() {
                      "deleting wedged pod ${pod_name} (no IP after ${stuck_for}s in ${phase})."
                 kubectl delete pod "$pod_name" -n "$ns" --grace-period=0 --force \
                     >/dev/null 2>&1 || true
+                # On the second attempt, also sweep stale CRI state — the
+                # most common root cause of this wedge is leaked sandboxes
+                # from prior install/uninstall cycles.
+                if (( recovery_attempts >= 2 )); then
+                    cri_cleanup
+                fi
                 stuck_for=0
                 last_status=""
             fi
@@ -165,6 +171,60 @@ wait_for_running_pod() {
     warn  "Common causes: containerd hang (try: sudo microk8s stop && sudo microk8s start),"
     warn  "PVC binding failure, or image pull problems. Re-run install.sh once resolved."
     return 1
+}
+
+# =============================================================================
+# cri_cleanup
+#
+# Sweep stale CRI state that accumulates from prior install/uninstall cycles
+# and can wedge kubelet's pod-sync loop (symptom: pods sit in
+# ContainerCreating with a calico-assigned IP but PodReadyToStartContainers
+# never flips True).
+#
+# Removes:
+#   - all CRI sandboxes in NotReady state
+#   - all exited (dead) CRI containers
+#
+# Auto-detects crictl binary and containerd socket. Works on any
+# containerd/CRI-O cluster where crictl is available; on microk8s it uses
+# microk8s.crictl. Best-effort: requires sudo, silent on missing tooling.
+# =============================================================================
+cri_cleanup() {
+    local crictl_bin sock=""
+    if command -v microk8s.crictl &>/dev/null; then
+        crictl_bin="microk8s.crictl"
+    elif command -v crictl &>/dev/null; then
+        crictl_bin="crictl"
+        for s in /var/snap/microk8s/common/run/containerd.sock \
+                 /run/containerd/containerd.sock \
+                 /var/run/crio/crio.sock; do
+            if [[ -S "$s" ]]; then sock="$s"; break; fi
+        done
+    else
+        return 0
+    fi
+
+    local crictl=("sudo" "-n" "$crictl_bin")
+    [[ -n "$sock" ]] && crictl+=("--runtime-endpoint" "unix://$sock")
+
+    if ! sudo -n true 2>/dev/null; then
+        return 0  # sudo not available without password; skip silently
+    fi
+
+    info "CRI cleanup: removing stale sandboxes and exited containers..."
+    local notready_pods exited_ctrs
+    notready_pods=$("${crictl[@]}" pods --state notready -q 2>/dev/null | wc -l | tr -d ' ')
+    exited_ctrs=$("${crictl[@]}" ps -a --state exited -q 2>/dev/null | wc -l | tr -d ' ')
+
+    if (( notready_pods > 0 )); then
+        "${crictl[@]}" pods --state notready -q 2>/dev/null \
+            | xargs -r "${crictl[@]}" rmp -f >/dev/null 2>&1 || true
+    fi
+    if (( exited_ctrs > 0 )); then
+        "${crictl[@]}" ps -a --state exited -q 2>/dev/null \
+            | xargs -r "${crictl[@]}" rm >/dev/null 2>&1 || true
+    fi
+    success "CRI cleanup: removed ${notready_pods} stale sandbox(es) and ${exited_ctrs} exited container(s)."
 }
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -591,6 +651,11 @@ setup_argocd_repos() {
 # =============================================================================
 bootstrap_transit_app() {
     banner "Step 7 — OpenBao transit seal instance"
+
+    # Pre-flight: clear stale CRI state from any prior install/uninstall
+    # cycle. Without this, kubelet's pod-sync loop can wedge and leave the
+    # transit pod stuck in ContainerCreating with no events.
+    cri_cleanup
 
     if ! kubectl get secret openbao-transit-unseal -n openbao &>/dev/null; then
         kubectl create secret generic openbao-transit-unseal \
