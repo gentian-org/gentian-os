@@ -342,6 +342,26 @@ else
         success "Removed cluster-scoped infra CRDs and RBAC."
     fi
 
+    # Force-delete any pods/PVCs still stuck in Terminating in target
+    # namespaces. This handles the microk8s/calico CNI sandbox bug where
+    # kubelet can't tear down a pod's network sandbox, which in turn keeps
+    # the kubernetes.io/pvc-protection finalizer on its PVCs and prevents
+    # the namespace from terminating.
+    for ns in "${local_namespaces[@]}"; do
+        if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+            continue
+        fi
+        # Force-delete any pods in the namespace.
+        for pod in $(kubectl get pods -n "$ns" -o name 2>/dev/null); do
+            kubectl delete -n "$ns" "$pod" --grace-period=0 --force --ignore-not-found >/dev/null 2>&1 || true
+        done
+        # Strip pvc-protection finalizers and force-delete PVCs.
+        for pvc in $(kubectl get pvc -n "$ns" -o name 2>/dev/null); do
+            kubectl patch -n "$ns" "$pvc" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+            kubectl delete -n "$ns" "$pvc" --grace-period=0 --force --ignore-not-found >/dev/null 2>&1 || true
+        done
+    done
+
     # If any target namespace is still Terminating, strip its kubernetes
     # finalizer so it can disappear. (This only runs after we've cleared the
     # CRs that were keeping it stuck.)
