@@ -66,6 +66,7 @@ APP_NS="argocd"
 
 BOOTSTRAP_APPS_CORE=(
     gentian-appsets
+    gentian-appprofiles
     openbao-transit
     openbao
     tofu-controller
@@ -240,8 +241,60 @@ else
         warn "jq not found; skipped targeted PV deletion."
     fi
 
-    # Remove Gentian app CRDs created by install/bootstrap.
-    kubectl delete crd gentianos.io_appcatalogues gentianos.io_appprofiles gentianos.io_integrationbindings gentianos.io_tenants --ignore-not-found >/dev/null 2>&1 || true
+    # Sweep any leftover ArgoCD Applications/ApplicationSets/AppProjects that
+    # weren't in the static lists above (e.g. children spawned by ApplicationSets,
+    # or Apps added later such as gentian-appprofiles). Strip finalizers so the
+    # delete actually goes through and the argocd namespace can terminate.
+    if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
+        for app in $(kubectl get application -n "$APP_NS" -o name 2>/dev/null); do
+            kubectl patch -n "$APP_NS" "$app" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            kubectl delete -n "$APP_NS" "$app" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done
+    fi
+    if kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
+        for as in $(kubectl get applicationset -n "$APP_NS" -o name 2>/dev/null); do
+            kubectl patch -n "$APP_NS" "$as" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            kubectl delete -n "$APP_NS" "$as" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done
+    fi
+
+    # Sweep any leftover Terraform CRs (tofu-controller) cluster-wide. These
+    # have finalizers that block tofu-system from terminating.
+    if kubectl get crd terraforms.infra.contrib.fluxcd.io >/dev/null 2>&1; then
+        while IFS=/ read -r ns name; do
+            [[ -z "$ns" || -z "$name" ]] && continue
+            kubectl patch terraform "$name" -n "$ns" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            kubectl delete terraform "$name" -n "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done < <(kubectl get terraform -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
+    fi
+
+    # Remove Gentian app CRDs created by install/bootstrap. Note: k8s CRD names
+    # are <plural>.<group>, NOT the filename style <group>_<plural>.
+    kubectl delete crd \
+        appcatalogues.gentianos.io \
+        appprofiles.gentianos.io \
+        integrationbindings.gentianos.io \
+        tenants.gentianos.io \
+        --ignore-not-found >/dev/null 2>&1 || true
+
+    # Remove ArgoCD CRDs (installed by the argocd helm chart in step 4).
+    kubectl delete crd \
+        applications.argoproj.io \
+        applicationsets.argoproj.io \
+        appprojects.argoproj.io \
+        --ignore-not-found >/dev/null 2>&1 || true
+
+    # If any target namespace is still Terminating, strip its kubernetes
+    # finalizer so it can disappear. (This only runs after we've cleared the
+    # CRs that were keeping it stuck.)
+    for ns in "${local_namespaces[@]}"; do
+        if kubectl get namespace "$ns" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Terminating; then
+            kubectl get namespace "$ns" -o json 2>/dev/null \
+                | jq '.spec.finalizers = []' \
+                | kubectl replace --raw "/api/v1/namespaces/$ns/finalize" -f - >/dev/null 2>&1 || true
+        fi
+    done
+
     success "Force uninstall completed."
 fi
 
