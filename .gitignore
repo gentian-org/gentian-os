@@ -5,3 +5,6 @@ terraform.tfstate
 terraform.tfstate.backup
 *.tfstate
 *.tfstate.*
+
+# Local installer credentials cache (install.sh)
+.install-secrets.env

@@ -9,17 +9,19 @@
 # It installs and configures every kernel component in the correct order:
 #    1. CLI tools (tofu, bao)
 #    2. Kubernetes namespaces
-#    3. External Secrets Operator (ESO) via Helm
-#    4. ArgoCD + gentian AppProject
-#    5. ArgoCD OCI registry secrets
-#    6. OpenBao transit seal instance
-#    7. Transit init + autounseal Secret
-#    8. Remaining ArgoCD bootstrap Applications (openbao, tofu-controller, globals)
-#    9. Primary OpenBao init (transit auto-unseal)
-#   10. OpenBao configuration via Tofu (KV engine, K8s auth, policies, operator role)
-#   11. Seed kernel secrets (scripts/seed-openbao.sh)
-#   12. Apply root ApplicationSet → ArgoCD syncs the full stack
-#   13. Install AppCatalogue CRD + kubectl-gentian plugin
+#    3. cert-manager via Helm
+#    4. External Secrets Operator (ESO) via Helm
+#    5. ArgoCD + gentian AppProject
+#    6. ArgoCD OCI registry secrets
+#    7. OpenBao transit seal instance
+#    8. Transit init + autounseal Secret
+#    9. Remaining ArgoCD bootstrap Applications
+#       (openbao, reloader, cnpg, cnpg-cluster, globals)
+#   10. Primary OpenBao init (transit auto-unseal)
+#   11. OpenBao configuration via Tofu (KV engine, K8s auth, policies, operator role)
+#   12. Seed kernel secrets (scripts/seed-openbao.sh)
+#   13. Apply root ApplicationSet → ArgoCD syncs the full stack
+#   14. Install AppCatalogue CRD + kubectl-gentian plugin
 #
 # Required environment variables (prompted interactively if not pre-exported):
 #   MASTER_PASSWORD                — master password for HKDF-derived secrets
@@ -35,6 +37,7 @@
 #
 # Usage:
 #   ./install.sh
+#   ./install.sh --no-cluster-infra
 # =============================================================================
 
 set -euo pipefail
@@ -47,15 +50,238 @@ warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 banner()  { echo -e "\n${CYAN}══════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $*${NC}"; echo -e "${CYAN}══════════════════════════════════════════════════${NC}\n"; }
 
+# =============================================================================
+# wait_for_running_pod NS LABEL_SELECTOR FRIENDLY_NAME [TIMEOUT_SECS]
+#
+# Polls every POLL_INTERVAL seconds until at least one pod matching
+# LABEL_SELECTOR in NS is in phase=Running. Every STATUS_INTERVAL seconds it
+# prints a status line with the current pod status. If a pod sits in a
+# non-Running, non-Pending phase (e.g. ContainerCreating, ImagePullBackOff)
+# for STUCK_THRESHOLD seconds it dumps the most recent kubelet events so the
+# operator has something actionable instead of an endless line of dots.
+#
+# Returns 0 on success, 1 on timeout.
+# =============================================================================
+wait_for_running_pod() {
+    local ns="$1" selector="$2" friendly="$3" timeout="${4:-300}"
+    local poll_interval=5 status_interval=30 stuck_threshold=60
+    local elapsed=0 stuck_for=0 last_status=""
+
+    info "Waiting for ${friendly} pod in namespace '${ns}' to become Running (up to ${timeout}s)..."
+    while (( elapsed < timeout )); do
+        local line phase
+        line=$(kubectl get pods -n "$ns" -l "$selector" \
+                --no-headers 2>/dev/null | head -1 || true)
+        if [[ -z "$line" ]]; then
+            phase="NotScheduledYet"
+        else
+            phase=$(awk '{print $3}' <<<"$line")
+        fi
+
+        if [[ "$phase" == "Running" ]]; then
+            # Confirm at least one container is Ready.
+            local ready
+            ready=$(kubectl get pods -n "$ns" -l "$selector" \
+                    -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+            if [[ "$ready" == "true" ]]; then
+                echo ""
+                success "${friendly} pod is Running and Ready."
+                return 0
+            fi
+        fi
+
+        # Periodic status line.
+        if (( elapsed % status_interval == 0 )); then
+            echo "  [${elapsed}s] status: ${phase:-<none>} ${line:+($line)}"
+        fi
+
+        # Track stuck-in-non-progressing state.
+        if [[ "$phase" != "Pending" && "$phase" != "Running" && "$phase" != "NotScheduledYet" ]] \
+           || [[ "$phase" == "Pending" && -n "$line" ]]; then
+            if [[ "$phase" == "$last_status" ]]; then
+                stuck_for=$(( stuck_for + poll_interval ))
+            else
+                stuck_for=0
+            fi
+        else
+            stuck_for=0
+        fi
+        last_status="$phase"
+
+        if (( stuck_for >= stuck_threshold )); then
+            warn "${friendly} pod has been in '${phase}' for ${stuck_for}s. Recent events:"
+            kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null \
+                | tail -10 | sed 's/^/    /'
+            stuck_for=0  # don't spam every poll; reset and re-trigger after another threshold
+        fi
+
+        sleep "$poll_interval"
+        elapsed=$(( elapsed + poll_interval ))
+    done
+
+    echo ""
+    error "${friendly} pod did not reach Running within ${timeout}s."
+    warn  "Diagnostics:"
+    kubectl get pods -n "$ns" -l "$selector" -o wide 2>&1 | sed 's/^/    /'
+    kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null \
+        | tail -15 | sed 's/^/    /'
+    warn  "Common causes: containerd hang (try: sudo microk8s stop && sudo microk8s start),"
+    warn  "PVC binding failure, or image pull problems. Re-run install.sh once resolved."
+    return 1
+}
+
 # ─── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Runtime defaults ─────────────────────────────────────────────────────────
 OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
+# Local on-disk cache of the credentials prompted on the first run, so that
+# re-running install.sh after a partial failure does not re-prompt. The file
+# is gitignored and chmod 600. Set INSTALL_SECRETS_CACHE=/dev/null to disable.
+INSTALL_SECRETS_CACHE="${INSTALL_SECRETS_CACHE:-${SCRIPT_DIR}/.install-secrets.env}"
 
 # ─── Versions ────────────────────────────────────────────────────────────────
 TOFU_VERSION="1.9.0"
 BAO_VERSION="2.5.1"
+
+usage() {
+    cat <<'EOF'
+Usage: ./install.sh [options]
+
+Options:
+  --no-cluster-infra   Skip cluster infra installation (cert-manager, reloader, CNPG)
+  --cluster-infra      Force cluster infra installation (default)
+  -h, --help           Show this help
+
+Environment overrides:
+  INSTALL_CLUSTER_INFRA=1|0
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-cluster-infra)
+                INSTALL_CLUSTER_INFRA="0"
+                ;;
+            --cluster-infra)
+                INSTALL_CLUSTER_INFRA="1"
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+# =============================================================================
+# Try to load any missing credentials from a previously seeded OpenBao before
+# prompting the operator. Useful on re-runs: the operator only has to provide
+# secrets the first time. Silently skipped if OpenBao is not yet reachable
+# (e.g. on the very first run).
+# =============================================================================
+try_load_creds_from_openbao() {
+    # Fast path: if everything is already exported, nothing to do.
+    if [[ -n "${MASTER_PASSWORD:-}" \
+        && -n "${OD_PRIVATE_REGISTRY_USERNAME:-}" \
+        && -n "${OD_PRIVATE_REGISTRY_PASSWORD:-}" \
+        && -n "${OD_SMTP_RELAY_USERNAME:-}" \
+        && -n "${OD_SMTP_RELAY_PASSWORD:-}" ]]; then
+        return
+    fi
+
+    # Need a root token to read secrets. Prefer env, fall back to init file.
+    local token=""
+    if [[ -n "${BAO_TOKEN:-}" ]]; then
+        token="$BAO_TOKEN"
+    elif [[ -f "${OPENBAO_INIT_FILE}" ]]; then
+        token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null || true)
+    fi
+    [[ -n "$token" ]] || return 0
+
+    # Need a reachable OpenBao service. Skip silently if not yet deployed.
+    local bao_ip
+    bao_ip=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+    [[ -n "$bao_ip" ]] || return 0
+    local bao_addr="http://${bao_ip}:8200"
+
+    # Don't bother if OpenBao is sealed/unreachable.
+    curl -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1 || return 0
+
+    _bao_get() {
+        # $1 = relative path under secret/data/gentian-os/kernel/
+        # $2 = jq filter to extract the field, e.g. '.data.data.value'
+        curl -sf --max-time 5 \
+            -H "X-Vault-Token: ${token}" \
+            "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
+            | jq -r "$2 // empty" 2>/dev/null
+    }
+
+    local loaded=0 v
+    if [[ -z "${MASTER_PASSWORD:-}" ]]; then
+        v=$(_bao_get "internal/master-password" '.data.data.value')
+        [[ -n "$v" ]] && { export MASTER_PASSWORD="$v"; loaded=1; }
+    fi
+    if [[ -z "${OD_PRIVATE_REGISTRY_USERNAME:-}" ]]; then
+        v=$(_bao_get "storage/registry" '.data.data.username')
+        [[ -n "$v" ]] && { export OD_PRIVATE_REGISTRY_USERNAME="$v"; loaded=1; }
+    fi
+    if [[ -z "${OD_PRIVATE_REGISTRY_PASSWORD:-}" ]]; then
+        v=$(_bao_get "storage/registry" '.data.data.password')
+        [[ -n "$v" ]] && { export OD_PRIVATE_REGISTRY_PASSWORD="$v"; loaded=1; }
+    fi
+    if [[ -z "${OD_SMTP_RELAY_USERNAME:-}" ]]; then
+        v=$(_bao_get "mail/postfix" '.data.data.relay_username')
+        [[ -n "$v" ]] && { export OD_SMTP_RELAY_USERNAME="$v"; loaded=1; }
+    fi
+    if [[ -z "${OD_SMTP_RELAY_PASSWORD:-}" ]]; then
+        v=$(_bao_get "mail/postfix" '.data.data.relay_password')
+        [[ -n "$v" ]] && { export OD_SMTP_RELAY_PASSWORD="$v"; loaded=1; }
+    fi
+
+    if [[ "$loaded" -eq 1 ]]; then
+        info "Loaded missing credentials from OpenBao."
+    fi
+}
+
+# =============================================================================
+# Local on-disk cache of installer credentials
+# =============================================================================
+load_creds_cache() {
+    if [[ -r "${INSTALL_SECRETS_CACHE}" ]]; then
+        # shellcheck disable=SC1090
+        source "${INSTALL_SECRETS_CACHE}" || return 0
+        info "Loaded cached credentials from ${INSTALL_SECRETS_CACHE}."
+    fi
+}
+
+save_creds_cache() {
+    [[ "${INSTALL_SECRETS_CACHE}" == "/dev/null" ]] && return 0
+    local tmp
+    tmp="$(mktemp)"
+    {
+        echo "# Auto-generated by install.sh — keep secret, do not commit."
+        echo "# Delete to be re-prompted on next run."
+        for var in MASTER_PASSWORD OD_PRIVATE_REGISTRY_USERNAME OD_PRIVATE_REGISTRY_PASSWORD \
+                   OD_SMTP_RELAY_USERNAME OD_SMTP_RELAY_PASSWORD; do
+            local val="${!var:-}"
+            [[ -n "$val" ]] || continue
+            # printf %q escapes safely for re-sourcing.
+            printf 'export %s=%q\n' "$var" "$val"
+        done
+    } >"$tmp"
+    install -m 0600 "$tmp" "${INSTALL_SECRETS_CACHE}"
+    rm -f "$tmp"
+    info "Cached credentials to ${INSTALL_SECRETS_CACHE} (chmod 600)."
+}
 
 # =============================================================================
 # Prompt for any required credentials that were not pre-exported
@@ -89,7 +315,10 @@ prompt_credentials() {
         prompted=1
     fi
 
-    [[ "$prompted" -eq 1 ]] && echo ""
+    if [[ "$prompted" -eq 1 ]]; then
+        echo ""
+        save_creds_cache
+    fi
 }
 
 # =============================================================================
@@ -174,7 +403,11 @@ install_tools() {
 create_namespaces() {
     banner "Step 2 — Creating namespaces"
 
-    local namespaces=(openbao external-secrets argocd tofu-system gentian-system platform-kernel)
+    local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
+    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
+        namespaces+=(stakater-system cnpg-system)
+    fi
+
     for ns in "${namespaces[@]}"; do
         if kubectl get namespace "$ns" &>/dev/null; then
             success "Namespace $ns already exists."
@@ -186,10 +419,45 @@ create_namespaces() {
 }
 
 # =============================================================================
-# 3. Install External Secrets Operator via Helm
+# 3. Install cert-manager via Helm
+# =============================================================================
+install_cert_manager() {
+    if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
+        warn "Cluster infra disabled: skipping cert-manager installation."
+        return
+    fi
+
+    banner "Step 3 — Installing cert-manager"
+
+    if helm status cert-manager -n cert-manager &>/dev/null; then
+        success "cert-manager already installed (Helm release present). Skipping."
+        return
+    fi
+
+    # Detect non-Helm installs (e.g. `microk8s enable cert-manager`) to avoid
+    # ownership-metadata conflicts during `helm install`.
+    if kubectl get deployment cert-manager -n cert-manager &>/dev/null \
+        || kubectl get crd certificates.cert-manager.io &>/dev/null; then
+        warn "cert-manager already present but not managed by Helm (e.g. microk8s addon)."
+        warn "Skipping Helm install. Use that installation as-is, or remove it first to let install.sh manage it."
+        return
+    fi
+
+    helm repo add jetstack https://charts.jetstack.io --force-update
+    helm repo update
+    helm install cert-manager jetstack/cert-manager \
+        -n cert-manager \
+        --create-namespace \
+        --set crds.enabled=true \
+        --wait --timeout 5m
+    success "cert-manager installed."
+}
+
+# =============================================================================
+# 4. Install External Secrets Operator via Helm
 # =============================================================================
 install_eso() {
-    banner "Step 3 — Installing External Secrets Operator"
+    banner "Step 4 — Installing External Secrets Operator"
 
     if helm status external-secrets -n external-secrets &>/dev/null; then
         success "ESO already installed. Skipping."
@@ -206,10 +474,10 @@ install_eso() {
 }
 
 # =============================================================================
-# 4. Install ArgoCD + AppProject
+# 5. Install ArgoCD + AppProject
 # =============================================================================
 install_argocd() {
-    banner "Step 4 — Installing ArgoCD"
+    banner "Step 5 — Installing ArgoCD"
 
     if kubectl get deployment argocd-server -n argocd &>/dev/null; then
         success "ArgoCD already installed."
@@ -223,10 +491,10 @@ install_argocd() {
 }
 
 # =============================================================================
-# 5. Create ArgoCD OCI registry secrets
+# 6. Create ArgoCD OCI registry secrets
 # =============================================================================
 setup_argocd_repos() {
-    banner "Step 5 — ArgoCD OCI registry secrets"
+    banner "Step 6 — ArgoCD OCI registry secrets"
     bash "${SCRIPT_DIR}/scripts/create-argocd-oci-secrets.sh" \
         "$OD_PRIVATE_REGISTRY_USERNAME" \
         "$OD_PRIVATE_REGISTRY_PASSWORD"
@@ -234,10 +502,10 @@ setup_argocd_repos() {
 }
 
 # =============================================================================
-# 6. Deploy OpenBao transit seal instance
+# 7. Deploy OpenBao transit seal instance
 # =============================================================================
 bootstrap_transit_app() {
-    banner "Step 6 — OpenBao transit seal instance"
+    banner "Step 7 — OpenBao transit seal instance"
 
     if ! kubectl get secret openbao-transit-unseal -n openbao &>/dev/null; then
         kubectl create secret generic openbao-transit-unseal \
@@ -248,50 +516,62 @@ bootstrap_transit_app() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/openbao-transit-application.yaml"
     success "Applied openbao-transit-application.yaml"
 
-    info "Waiting for openbao-transit pod to become Running (up to 5 min)..."
-    until kubectl get pods -n openbao -l app.kubernetes.io/instance=openbao-transit \
-            --field-selector=status.phase=Running 2>/dev/null | grep -q openbao-transit; do
-        echo -n "."
-        sleep 5
-    done
-    echo ""
-    success "openbao-transit pod is Running."
+    wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 300
 }
 
 # =============================================================================
-# 7. Init the transit instance
+# 8. Init the transit instance
 # =============================================================================
 init_openbao_transit() {
-    banner "Step 7 — Transit instance init + autounseal Secret"
+    banner "Step 8 — Transit instance init + autounseal Secret"
     bash "${SCRIPT_DIR}/scripts/init-openbao-transit.sh"
 }
 
 # =============================================================================
-# 8. Apply remaining ArgoCD bootstrap Applications
+# 9. Apply remaining ArgoCD bootstrap Applications
 # =============================================================================
 bootstrap_argocd_apps() {
-    banner "Step 8 — ArgoCD bootstrap Applications"
+    banner "Step 9 — ArgoCD bootstrap Applications"
 
-    for app in openbao tofu-controller globals; do
+    # Register public OCI chart repos used by bootstrap Applications.
+    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
+        kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-stakater.yaml"
+        kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-cloudnative-pg.yaml"
+    fi
+    success "Applied public ArgoCD repository registrations."
+
+    local apps=(openbao globals)
+    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
+        apps+=(reloader cnpg cnpg-cluster)
+    fi
+
+    for app in "${apps[@]}"; do
         kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/${app}-application.yaml"
         success "Applied ${app}-application.yaml"
     done
 
-    info "Waiting for OpenBao pod to become Running (up to 5 min)..."
-    until kubectl get pods -n openbao -l app.kubernetes.io/name=openbao \
-            --field-selector=status.phase=Running 2>/dev/null | grep -q openbao; do
-        echo -n "."
-        sleep 5
-    done
-    echo ""
-    success "OpenBao pod is Running."
+    wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300
+
+    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
+        info "Waiting for reloader deployment (up to 5 min)..."
+        kubectl wait --for=condition=available --timeout=300s \
+            deployment/reloader-reloader -n stakater-system
+        success "Reloader deployment is available."
+
+        info "Waiting for CNPG operator deployment (up to 5 min)..."
+        kubectl wait --for=condition=available --timeout=300s \
+            deployment/cnpg-cloudnative-pg -n cnpg-system
+        success "CNPG operator deployment is available."
+    else
+        warn "Cluster infra disabled: skipped reloader/CNPG bootstrap apps."
+    fi
 }
 
 # =============================================================================
-# 9. Initialize primary OpenBao (transit auto-unseal)
+# 10. Initialize primary OpenBao (transit auto-unseal)
 # =============================================================================
 init_openbao() {
-    banner "Step 9 — OpenBao init"
+    banner "Step 10 — OpenBao init"
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
@@ -337,8 +617,14 @@ init_openbao() {
         chmod 600 "${OPENBAO_INIT_FILE}"
 
         local recovery_key root_token
-        recovery_key=$(echo "$init_resp" | jq -r '.recovery_keys_b64[0]')
-        root_token=$(echo "$init_resp"   | jq -r '.root_token')
+        recovery_key=$(echo "$init_resp" | jq -r '(.recovery_keys_base64 // .recovery_keys_b64 // .recovery_keys // [])[0] // empty')
+        root_token=$(echo "$init_resp"   | jq -r '.root_token // empty')
+
+        if [[ -z "$recovery_key" || -z "$root_token" ]]; then
+            error "Failed to parse OpenBao init response. Full payload saved at ${OPENBAO_INIT_FILE}."
+            echo "$init_resp" | jq . >&2 || echo "$init_resp" >&2
+            exit 1
+        fi
 
         echo ""
         echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
@@ -389,10 +675,10 @@ init_openbao() {
 }
 
 # =============================================================================
-# 10. Configure OpenBao via Tofu
+# 11. Configure OpenBao via Tofu
 # =============================================================================
 run_tofu_openbao_init() {
-    banner "Step 10 — OpenBao configuration via Tofu"
+    banner "Step 11 — OpenBao configuration via Tofu"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
@@ -415,10 +701,10 @@ run_tofu_openbao_init() {
 }
 
 # =============================================================================
-# 11. Seed kernel secrets
+# 12. Seed kernel secrets
 # =============================================================================
 seed_secrets() {
-    banner "Step 11 — Seeding kernel secrets"
+    banner "Step 12 — Seeding kernel secrets"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
@@ -443,30 +729,102 @@ seed_secrets() {
 }
 
 # =============================================================================
-# 12. Apply root ApplicationSet
+# 13. Apply root ApplicationSet
 # =============================================================================
 bootstrap_root_appset() {
-    banner "Step 12 — Applying root ApplicationSet"
+    banner "Step 13 — Applying root ApplicationSet"
     bash "${SCRIPT_DIR}/scripts/bootstrap.sh"
     success "Root ApplicationSet applied."
 }
 
 # =============================================================================
-# 13. AppCatalogue CRD + kubectl-gentian plugin
+# 14. AppCatalogue CRD + kubectl-gentian plugin
 # =============================================================================
 install_app_catalogue() {
-    banner "Step 13 — AppCatalogue CRD + kubectl-gentian plugin"
+    banner "Step 14 — AppCatalogue CRD + kubectl-gentian plugin"
 
     kubectl apply -f "${SCRIPT_DIR}/config/crd/gentianos.io_appcatalogues.yaml"
     success "AppCatalogue CRD applied."
 
-    if [[ -w /usr/local/bin ]] || sudo -n true 2>/dev/null; then
-        sudo install -m 755 "${SCRIPT_DIR}/scripts/kubectl-gentian" /usr/local/bin/kubectl-gentian
-        success "kubectl-gentian installed to /usr/local/bin."
+    local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
+    local plugin_dst="/usr/local/bin/kubectl-gentian"
+
+    if [[ -w /usr/local/bin ]]; then
+        install -m 755 "$plugin_src" "$plugin_dst"
+        success "kubectl-gentian installed to ${plugin_dst}."
     else
-        warn "Cannot write to /usr/local/bin — skip. Install manually:"
-        warn "  sudo install -m 755 ${SCRIPT_DIR}/scripts/kubectl-gentian /usr/local/bin/kubectl-gentian"
+        info "Installing kubectl-gentian to ${plugin_dst} (sudo required)..."
+        if sudo install -m 755 "$plugin_src" "$plugin_dst"; then
+            success "kubectl-gentian installed to ${plugin_dst}."
+        else
+            warn "Failed to install kubectl-gentian — install manually:"
+            warn "  sudo install -m 755 ${plugin_src} ${plugin_dst}"
+        fi
     fi
+}
+
+# =============================================================================
+# Verify ArgoCD Applications
+# =============================================================================
+# Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
+# healthy when every Application is Synced+Healthy. Returns 0 on healthy,
+# 1 if some apps are still degraded/out-of-sync after the timeout.
+verify_argocd_apps() {
+    banner "Step 15 — Verifying ArgoCD Applications"
+
+    local timeout=${VERIFY_TIMEOUT:-600}
+    local interval=15
+    local elapsed=0
+    local total synced healthy bad_lines
+    info "Waiting up to ${timeout}s for all Applications to become Synced+Healthy..."
+
+    while true; do
+        # If no Applications exist yet, keep waiting (root ApplicationSet may
+        # still be generating children).
+        total=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+        if [[ "$total" -eq 0 ]]; then
+            if [[ $elapsed -ge $timeout ]]; then
+                warn "No ArgoCD Applications appeared within ${timeout}s."
+                VERIFY_STATUS="empty"
+                return 1
+            fi
+            printf "  …no Applications yet (%ds/%ds)\n" "$elapsed" "$timeout"
+            sleep "$interval"; elapsed=$((elapsed + interval))
+            continue
+        fi
+
+        synced=$(kubectl get applications -n argocd \
+            -o jsonpath='{range .items[?(@.status.sync.status=="Synced")]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null | wc -l)
+        healthy=$(kubectl get applications -n argocd \
+            -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null | wc -l)
+
+        printf "  apps=%d synced=%d healthy=%d (%ds/%ds)\n" \
+            "$total" "$synced" "$healthy" "$elapsed" "$timeout"
+
+        if [[ "$synced" -eq "$total" && "$healthy" -eq "$total" ]]; then
+            success "All ${total} ArgoCD Applications are Synced and Healthy."
+            VERIFY_STATUS="ok"
+            VERIFY_TOTAL="$total"
+            return 0
+        fi
+
+        if [[ $elapsed -ge $timeout ]]; then
+            bad_lines=$(kubectl get applications -n argocd \
+                -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' \
+                --no-headers 2>/dev/null | awk '$2!="Synced" || $3!="Healthy"')
+            warn "Timed out after ${timeout}s with ${total} Applications, ${synced} Synced, ${healthy} Healthy."
+            echo "  Degraded / out-of-sync Applications:"
+            echo "$bad_lines" | sed 's/^/    /'
+            VERIFY_STATUS="degraded"
+            VERIFY_TOTAL="$total"
+            VERIFY_BAD="$bad_lines"
+            return 1
+        fi
+
+        sleep "$interval"; elapsed=$((elapsed + interval))
+    done
 }
 
 # =============================================================================
@@ -478,15 +836,37 @@ print_summary() {
                     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
 
     echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║  Gentian OS bootstrap complete!                          ║${NC}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║  ArgoCD URL   : https://${NODE_IP}:30443${NC}"
-    echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "  Monitor sync:   kubectl get applications -n argocd"
-    echo "  Install apps:   kubectl gentian install <profile>"
+    if [[ "${VERIFY_STATUS:-unknown}" == "ok" ]]; then
+        echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
+        echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${GREEN}║  ArgoCD URL   : https://${NODE_IP}:30443${NC}"
+        echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
+        echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
+        echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo "  ✔ ArgoCD reachable"
+        echo "  ✔ All Applications Synced + Healthy"
+        echo "  ✔ AppCatalogue CRD installed"
+        echo ""
+        echo "  Monitor sync:   kubectl get applications -n argocd"
+        echo "  Install apps:   kubectl gentian install <profile>"
+    else
+        echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
+        echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${YELLOW}║  ArgoCD URL   : https://${NODE_IP}:30443${NC}"
+        echo -e "${YELLOW}║  ArgoCD login : admin / ${argocd_pw}${NC}"
+        echo -e "${YELLOW}║  Status       : ${VERIFY_STATUS:-unknown} (${VERIFY_TOTAL:-0} apps)${NC}"
+        echo -e "${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo "  Inspect failing Applications:"
+        echo "    kubectl get applications -n argocd"
+        echo "    kubectl describe application -n argocd <name>"
+        echo ""
+        echo "  Re-run verification only:"
+        echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"
+    fi
 }
 
 # =============================================================================
@@ -499,10 +879,14 @@ main() {
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
+    parse_args "$@"
+    load_creds_cache
+    try_load_creds_from_openbao
     prompt_credentials
     check_prereqs
     install_tools
     create_namespaces
+    install_cert_manager
     install_eso
     install_argocd
     setup_argocd_repos
@@ -514,6 +898,7 @@ main() {
     seed_secrets
     bootstrap_root_appset
     install_app_catalogue
+    verify_argocd_apps || true
     print_summary
 }
 

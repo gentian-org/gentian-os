@@ -1,4 +1,0 @@
-# Helm values for the Tofu Controller (flux-iac/tofu-controller v0.16.1)
-# Only non-default values are listed.
-awsPackage:
-  install: false   # Not using AWS Terraform modules

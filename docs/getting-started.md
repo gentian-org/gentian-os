@@ -12,10 +12,10 @@ Kubernetes cluster and provision your first tenant.
 | Tool | Notes |
 |------|-------|
 | `kubectl` | configured and pointing at your target cluster |
-| `helm` v3 | |
-| `jq` | |
-| `openssl` | |
-| `curl` | |
+| `helm` v3 | used to install ArgoCD, cert-manager, CNPG, Reloader |
+| `jq` | JSON parsing in bootstrap scripts (e.g. PV cleanup) |
+| `openssl` | HKDF-based secret derivation from `MASTER_PASSWORD` |
+| `curl` | health checks and OpenBao API calls |
 
 `tofu` (OpenTofu) and `bao` (OpenBao CLI) are installed automatically by
 `install.sh`. Pass `SKIP_TOOLS=1` to skip if they are already present.
@@ -38,9 +38,12 @@ Kubernetes cluster and provision your first tenant.
 - Default StorageClass available (tested with `nfs-csi`)
 - Ingress controller installed (tested with `ingress-nginx`) in the `ingress`
   namespace
-- cert-manager installed (tested with `microk8s enable cert-manager`)
 - Wildcard DNS entry pointing to the cluster node IP:
   `*.desk.gentian.org → <node-ip>`
+
+> `install.sh` provisions the remaining cluster infrastructure automatically:
+> cert-manager, CloudNativePG, and Stakater Reloader. Pass `--no-cluster-infra`
+> (or `INSTALL_CLUSTER_INFRA=0`) if your cluster already provides them.
 
 ---
 
