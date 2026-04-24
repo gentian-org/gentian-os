@@ -1,0 +1,98 @@
+---
+# GitRepository: source of truth for the Tofu workspace.
+# The repo is public — no secretRef needed.
+# The Tofu Controller checks out this repo, locates the Terraform module
+# at spec.path, and runs tofu plan/apply inside a runner pod.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: gentian-server
+  namespace: tofu-system
+spec:
+  interval: 1m
+  ref:
+    branch: develop
+  url: https://github.com/gentian-org/gentian-os
+---
+# Terraform CR: manages all Pattern-B Helm releases for the dev environment.
+# Reads secrets from OpenBao via the tofu-runner Kubernetes auth role.
+# Uses MinIO S3 backend for Terraform state.
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: infra-workspaces-dev
+  namespace: tofu-system
+spec:
+  # Auto-approve plans — no manual intervention needed in dev
+  approvePlan: auto
+
+  # Reconcile every 10 minutes
+  interval: 10m
+
+  # Path within the repo to the Terraform module
+  path: kernel/tofu/tenant/infra-workspaces
+
+  # Source: the GitRepository CR above
+  sourceRef:
+    kind: GitRepository
+    name: gentian-server
+
+  # Disable the Tofu Controller's built-in Kubernetes backend —
+  # our main.tf defines its own S3 (MinIO) backend.
+  backendConfig:
+    disable: true
+
+  # Pass variables to the workspace
+  vars:
+    - name: env
+      value: dev
+
+  # Registry credentials: loaded from an ESO-managed Secret whose keys match
+  # the Terraform variable names (registry_username, registry_password).
+  # The Tofu Controller blocks TF_VAR_* env vars, so varsFrom is required.
+  varsFrom:
+    - kind: Secret
+      name: registry-credentials-tofu
+
+  # Inject MinIO backend credentials as env vars (AWS_ACCESS_KEY_ID,
+  # AWS_SECRET_ACCESS_KEY) so the S3 backend can authenticate to MinIO.
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: minio-tofu-state
+
+  # Write sensitive outputs to a Secret (none expected, but required by spec)
+  writeOutputsToSecret:
+    name: infra-workspaces-dev-outputs
+---
+# Terraform CR: manages Keycloak OIDC clients for the dev environment.
+# Runs after nubus (wave 21) so Keycloak is ready to accept API calls.
+# Uses the same S3/MinIO backend pattern as infra-workspaces-dev.
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: keycloak-config-dev
+  namespace: tofu-system
+  annotations:
+    # wave 25: after nubus (wave 21) but well within the app wave (50+)
+    argocd.argoproj.io/sync-wave: "25"
+spec:
+  approvePlan: auto
+  interval: 10m
+  path: kernel/tofu/tenant/keycloak-config
+  sourceRef:
+    kind: GitRepository
+    name: gentian-server
+  backendConfig:
+    disable: true
+  vars:
+    - name: env
+      value: dev
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: minio-tofu-state
+  writeOutputsToSecret:
+    name: keycloak-config-dev-outputs

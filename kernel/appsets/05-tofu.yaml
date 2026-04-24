@@ -1,0 +1,41 @@
+---
+# Tofu workspaces: manages Terraform CRs, GitRepository, RBAC, and
+# ExternalSecrets for the Tofu Controller runner pods.
+# Deployed to tofu-system across environments.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-tofu
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+  template:
+    metadata:
+      name: "tofu-{{.env}}"
+      annotations:
+        argocd.argoproj.io/sync-wave: "5"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: "kernel/services/tofu/manifests/{{.env}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: tofu-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

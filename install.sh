@@ -16,7 +16,7 @@
 #    7. OpenBao transit seal instance
 #    8. Transit init + autounseal Secret
 #    9. Remaining ArgoCD bootstrap Applications
-#       (openbao, reloader, cnpg, cnpg-cluster, globals)
+#       (openbao, tofu-controller, reloader, cnpg, cnpg-cluster, globals)
 #   10. Primary OpenBao init (transit auto-unseal)
 #   11. OpenBao configuration via Tofu (KV engine, K8s auth, policies, operator role)
 #   12. Seed kernel secrets (scripts/seed-openbao.sh)
@@ -403,7 +403,7 @@ install_tools() {
 create_namespaces() {
     banner "Step 2 — Creating namespaces"
 
-    local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
+    local namespaces=(openbao external-secrets argocd gentian-system platform-kernel tofu-system)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         namespaces+=(stakater-system cnpg-system)
     fi
@@ -538,9 +538,10 @@ bootstrap_argocd_apps() {
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-stakater.yaml"
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-cloudnative-pg.yaml"
     fi
+    kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-flux-iac.yaml"
     success "Applied public ArgoCD repository registrations."
 
-    local apps=(openbao globals)
+    local apps=(openbao tofu-controller globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         apps+=(reloader cnpg cnpg-cluster)
     fi
