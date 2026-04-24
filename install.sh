@@ -185,46 +185,80 @@ wait_for_running_pod() {
 #   - all CRI sandboxes in NotReady state
 #   - all exited (dead) CRI containers
 #
-# Auto-detects crictl binary and containerd socket. Works on any
-# containerd/CRI-O cluster where crictl is available; on microk8s it uses
-# microk8s.crictl. Best-effort: requires sudo, silent on missing tooling.
+# Auto-detects crictl binary and containerd socket. On systems without
+# crictl (e.g. stock microk8s) falls back to `microk8s.ctr` to delete
+# STOPPED tasks in the k8s.io containerd namespace. Best-effort: requires
+# passwordless sudo; logs a warning and skips when neither tool is present.
 # =============================================================================
 cri_cleanup() {
-    local crictl_bin sock=""
-    if command -v microk8s.crictl &>/dev/null; then
-        crictl_bin="microk8s.crictl"
-    elif command -v crictl &>/dev/null; then
-        crictl_bin="crictl"
-        for s in /var/snap/microk8s/common/run/containerd.sock \
-                 /run/containerd/containerd.sock \
-                 /var/run/crio/crio.sock; do
-            if [[ -S "$s" ]]; then sock="$s"; break; fi
-        done
-    else
+    # Need passwordless sudo to talk to the CRI/containerd socket.
+    if ! sudo -n true 2>/dev/null; then
+        warn "CRI cleanup skipped: passwordless sudo not available."
         return 0
     fi
 
-    local crictl=("sudo" "-n" "$crictl_bin")
-    [[ -n "$sock" ]] && crictl+=("--runtime-endpoint" "unix://$sock")
-
-    if ! sudo -n true 2>/dev/null; then
-        return 0  # sudo not available without password; skip silently
+    # ── Path 1: crictl (preferred, CRI-spec compliant) ──────────────────────
+    # Resolve to an absolute path BEFORE invoking via sudo, since sudo strips
+    # PATH (sudoers secure_path) and would otherwise fail with "command not
+    # found" even when the binary is on the user's PATH.
+    local crictl_bin="" sock=""
+    if command -v crictl &>/dev/null; then
+        crictl_bin=$(command -v crictl)
+        for s in /var/snap/microk8s/common/run/containerd.sock \
+                 /run/containerd/containerd.sock \
+                 /var/run/crio/crio.sock; do
+            if sudo -n test -S "$s" 2>/dev/null; then sock="$s"; break; fi
+        done
     fi
 
-    info "CRI cleanup: removing stale sandboxes and exited containers..."
-    local notready_pods exited_ctrs
-    notready_pods=$("${crictl[@]}" pods --state notready -q 2>/dev/null | wc -l | tr -d ' ')
-    exited_ctrs=$("${crictl[@]}" ps -a --state exited -q 2>/dev/null | wc -l | tr -d ' ')
+    if [[ -n "$crictl_bin" ]]; then
+        local crictl=("sudo" "-n" "$crictl_bin")
+        [[ -n "$sock" ]] && crictl+=("--runtime-endpoint" "unix://$sock")
+        info "CRI cleanup: removing stale sandboxes and exited containers (via crictl)..."
+        local notready_pods exited_ctrs
+        notready_pods=$("${crictl[@]}" pods --state notready -q 2>/dev/null | wc -l | tr -d ' ')
+        exited_ctrs=$("${crictl[@]}" ps -a --state exited -q 2>/dev/null | wc -l | tr -d ' ')
+        if (( notready_pods > 0 )); then
+            "${crictl[@]}" pods --state notready -q 2>/dev/null \
+                | xargs -r "${crictl[@]}" rmp -f >/dev/null 2>&1 || true
+        fi
+        if (( exited_ctrs > 0 )); then
+            "${crictl[@]}" ps -a --state exited -q 2>/dev/null \
+                | xargs -r "${crictl[@]}" rm >/dev/null 2>&1 || true
+        fi
+        success "CRI cleanup: removed ${notready_pods} stale sandbox(es) and ${exited_ctrs} exited container(s)."
+        return 0
+    fi
 
-    if (( notready_pods > 0 )); then
-        "${crictl[@]}" pods --state notready -q 2>/dev/null \
-            | xargs -r "${crictl[@]}" rmp -f >/dev/null 2>&1 || true
+    # ── Path 2: microk8s.ctr fallback ───────────────────────────────────────
+    # microk8s ships containerd's native `ctr` tool but not `crictl`. We can
+    # still reap stale state by deleting STOPPED tasks in the k8s.io
+    # containerd namespace; kubelet will then resync cleanly.
+    local ctr_bin=""
+    if command -v microk8s.ctr &>/dev/null; then
+        ctr_bin=$(command -v microk8s.ctr)
+    elif [[ -x /snap/bin/microk8s.ctr ]]; then
+        ctr_bin=/snap/bin/microk8s.ctr
     fi
-    if (( exited_ctrs > 0 )); then
-        "${crictl[@]}" ps -a --state exited -q 2>/dev/null \
-            | xargs -r "${crictl[@]}" rm >/dev/null 2>&1 || true
+
+    if [[ -n "$ctr_bin" ]]; then
+        info "CRI cleanup: removing stopped containerd tasks (via ctr)..."
+        local stopped
+        stopped=$(sudo -n "$ctr_bin" -n k8s.io tasks ls 2>/dev/null \
+                  | awk '$3=="STOPPED"{print $1}')
+        local count=0
+        if [[ -n "$stopped" ]]; then
+            while IFS= read -r tid; do
+                [[ -z "$tid" ]] && continue
+                sudo -n "$ctr_bin" -n k8s.io tasks delete --force "$tid" >/dev/null 2>&1 || true
+                count=$((count+1))
+            done <<< "$stopped"
+        fi
+        success "CRI cleanup: removed ${count} stopped task(s)."
+        return 0
     fi
-    success "CRI cleanup: removed ${notready_pods} stale sandbox(es) and ${exited_ctrs} exited container(s)."
+
+    warn "CRI cleanup skipped: neither crictl nor microk8s.ctr found."
 }
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
