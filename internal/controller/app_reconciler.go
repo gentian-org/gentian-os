@@ -358,15 +358,19 @@ func buildTerraformCR(
 	// sensitive values it reads from OpenBao.
 	//
 	// Template variable substitution: AppProfiles may reference ${TENANT_DOMAIN}
-	// in extraValues for tenant-specific configuration (e.g. Collabora aliasgroups
-	// need the Nextcloud host "files.<tenant-domain>"). The operator replaces
-	// these placeholders before passing the JSON to the Tofu module.
+	// or ${TENANT_NAMESPACE} in extraValues for tenant-specific configuration
+	// (e.g. Collabora aliasgroups need the Nextcloud host "files.<tenant-domain>";
+	// per-tenant SMTP relays need "postfix.<tenant-namespace>"). The operator
+	// replaces these placeholders before passing the JSON to the Tofu module.
 	extraValuesJSON := ""
 	if profile.Spec.ExtraValues != nil && len(profile.Spec.ExtraValues.Raw) > 0 {
 		extraValuesJSON = string(profile.Spec.ExtraValues.Raw)
 	}
 	if extraValuesJSON != "" && tenant.Spec.Domain != "" {
 		extraValuesJSON = strings.ReplaceAll(extraValuesJSON, "${TENANT_DOMAIN}", tenant.Spec.Domain)
+	}
+	if extraValuesJSON != "" {
+		extraValuesJSON = strings.ReplaceAll(extraValuesJSON, "${TENANT_NAMESPACE}", nsName)
 	}
 	if app.Config != nil && app.Config.Replicas != nil {
 		extra := map[string]interface{}{}

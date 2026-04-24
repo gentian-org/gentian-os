@@ -157,7 +157,7 @@ spec:
     # OPENPROJECT_SMTP__PASSWORD is injected via set_sensitive (valueMapping.smtp).
       OPENPROJECT_SMTP__PORT: 587
       OPENPROJECT_SMTP__SSL: "false"
-      OPENPROJECT_SMTP__ADDRESS: "postfix.tenant-gtn-demo.svc.cluster.local"
+      OPENPROJECT_SMTP__ADDRESS: "postfix.${TENANT_NAMESPACE}.svc.cluster.local"
       OPENPROJECT_SMTP__AUTHENTICATION: "cram_md5"
       OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "true"
       OPENPROJECT_SMTP__OPENSSL__VERIFY__MODE: "none"

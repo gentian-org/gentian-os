@@ -88,9 +88,11 @@ From the `gentian-os` repository root:
 ./install.sh
 ```
 
-This runs all 13 steps end-to-end (see the header of `install.sh` for the list).
+This runs all 16 steps end-to-end (see the header of `install.sh` for the list).
 The script is idempotent — re-running it on a partially-bootstrapped cluster
-picks up where it left off.
+picks up where it left off. After completion, the cluster is ready to provision
+tenants — the `Tenant`, `AppProfile`, `IntegrationBinding` and `AppCatalogue`
+CRDs are installed and the orchestrator is reconciling.
 
 To run the individual steps manually instead (all paths relative to
 `gentian-os/`):
@@ -157,8 +159,8 @@ restart — no manual intervention needed after a normal reboot.
 | 10 | Runs `tofu apply` in `kernel/tofu/platform/openbao-init/` to configure KV engine, Kubernetes auth backend, and ESO policy |
 | 11 | Runs `scripts/seed-openbao.sh` to write all kernel service secrets into OpenBao |
 | 12 | Applies the root ApplicationSet (`kernel/bootstrap/root-applicationset.yaml`) — ArgoCD syncs the full kernel stack |
-| 13 | Applies the `AppCatalogue` CRD and installs the `kubectl-gentian` plugin to `/usr/local/bin` |
-
+| 13 | Applies the `AppCatalogue` CRD and installs the `kubectl-gentian` plugin to `/usr/local/bin` || 15 | Installs the gentian-os orchestrator Helm chart in `gentian-system` (Tenant/AppProfile/IntegrationBinding CRDs + operator). After this step the cluster can provision tenants. |
+| 16 | Waits for every ArgoCD Application to become Synced + Healthy and prints a summary |
 ---
 
 ## After bootstrap
@@ -208,14 +210,17 @@ kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
 
 ## Install the Gentian OS orchestrator
 
-Once the kernel infrastructure is healthy, install the orchestrator Helm chart:
+`install.sh` step 15 installs the orchestrator automatically. To run it
+manually (or to upgrade it later), use the same Helm command the installer
+runs:
 
 ```bash
-helm install gentian-os ./charts/gentian-os \
+helm upgrade --install gentian-os ./charts/gentian-os \
   --namespace gentian-system \
   --create-namespace \
   --set openbao.address=http://openbao.openbao.svc.cluster.local:8200 \
-  --set argocd.namespace=argocd
+  --set argocd.namespace=argocd \
+  --wait --timeout 5m
 ```
 
 Verify the orchestrator is running:

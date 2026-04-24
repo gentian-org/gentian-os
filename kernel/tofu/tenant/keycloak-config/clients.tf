@@ -338,40 +338,11 @@ resource "keycloak_openid_user_attribute_protocol_mapper" "openproject_scope_adm
 }
 
 # ── opendesk-openproject ──────────────────────────────────────────────────────
-# Client is created/managed by tofu.
-# client_secret is pinned to the operator-provisioned OpenBao value at the
-# tenant path so the running OpenProject pod stays consistent.
-
-import {
-  to = module.openproject.vault_kv_secret_v2.client_secret
-  id = "secret/data/gentian-os/tenants/gtn-demo/apps/openproject/oidc"
-}
-
-module "openproject" {
-  source = "../../modules/app"
-
-  realm_id     = var.realm
-  client_id    = "opendesk-openproject"
-  display_name = "OpenProject"
-
-  redirect_uris = ["https://openproject.${var.domain}/*", "https://portal.${var.domain}/*"]
-  web_origins   = ["+"]
-
-  backchannel_logout_url              = "https://openproject.${var.domain}/auth/keycloak/backchannel-logout"
-  backchannel_logout_session_required = true
-
-  post_logout_redirect_uris = ["https://openproject.${var.domain}/*", "https://portal.${var.domain}/*"]
-
-  # Reference the scope resource to create an implicit dependency — ensures
-  # the scope exists in Keycloak before the default_scopes association is made.
-  extra_default_scopes = [keycloak_openid_client_scope.openproject.name]
-
-  client_secret = data.vault_kv_secret_v2.openproject.data["client-secret"]
-
-  openbao_mount       = "secret"
-  openbao_secret_path = "gentian-os/tenants/gtn-demo/apps/openproject/oidc"
-  openbao_secret_key  = "client-secret"
-}
+# The openproject CLIENT itself is per-tenant and is provisioned by the
+# orchestrator's Identity reconciler when openproject appears in a Tenant's
+# spec.apps (see Inc 23 in docs/implementation-plan.md). Only the shared
+# protocol-mapper SCOPE (keycloak_openid_client_scope.openproject above)
+# remains at kernel level, since it is a realm-wide template.
 
 # ── Phase 4C stubs ────────────────────────────────────────────────────────────
 # Uncomment when collabora deploys.

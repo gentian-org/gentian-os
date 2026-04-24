@@ -22,6 +22,9 @@
 #   12. Seed kernel secrets (scripts/seed-openbao.sh)
 #   13. Apply root ApplicationSet → ArgoCD syncs the full stack
 #   14. Install AppCatalogue CRD + kubectl-gentian plugin
+#   15. Install gentian-os orchestrator (Helm chart → CRDs + operator)
+#         leaves the cluster in a state where Tenant CRs can be applied
+#   16. Verify all ArgoCD Applications are Synced + Healthy
 #
 # Required environment variables (prompted interactively if not pre-exported):
 #   MASTER_PASSWORD                — master password for HKDF-derived secrets
@@ -775,13 +778,47 @@ install_app_catalogue() {
 }
 
 # =============================================================================
+# 15. Install gentian-os orchestrator (Helm chart)
+# =============================================================================
+# The orchestrator chart at charts/gentian-os/ ships:
+#   - CRDs: tenants, appprofiles, integrationbindings, appcatalogues
+#   - Deployment + ServiceAccount + ClusterRole(Binding) for the operator
+#   - ServiceMonitor + Grafana dashboard
+# Once installed, applying a Tenant CR is enough to drive end-to-end provisioning.
+install_orchestrator() {
+    banner "Step 15 — gentian-os orchestrator (CRDs + operator)"
+
+    local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
+    local ns="gentian-system"
+
+    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+        kubectl create namespace "$ns"
+    fi
+
+    info "Installing/upgrading gentian-os Helm release in namespace '${ns}'..."
+    helm upgrade --install gentian-os "$chart_dir" \
+        --namespace "$ns" \
+        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
+        --set argocd.namespace="argocd" \
+        --wait --timeout 5m
+
+    info "Waiting for Tenant CRD to be Established..."
+    kubectl wait --for=condition=Established crd/tenants.gentianos.io --timeout=60s \
+        || warn "Tenant CRD not yet Established — check 'kubectl get crds | grep gentianos'"
+
+    success "Orchestrator installed; cluster is ready to provision tenants."
+    info "Apply a Tenant CR to provision your first tenant, e.g.:"
+    info "  kubectl apply -f ${SCRIPT_DIR}/config/samples/tenant_gtn-demo.yaml"
+}
+
+# =============================================================================
 # Verify ArgoCD Applications
 # =============================================================================
 # Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
 # healthy when every Application is Synced+Healthy. Returns 0 on healthy,
 # 1 if some apps are still degraded/out-of-sync after the timeout.
 verify_argocd_apps() {
-    banner "Step 15 — Verifying ArgoCD Applications"
+    banner "Step 16 — Verifying ArgoCD Applications"
 
     local timeout=${VERIFY_TIMEOUT:-600}
     local interval=15
@@ -859,9 +896,11 @@ print_summary() {
         echo "  ✔ ArgoCD reachable"
         echo "  ✔ All Applications Synced + Healthy"
         echo "  ✔ AppCatalogue CRD installed"
+        echo "  ✔ gentian-os orchestrator running (Tenant CRD Established)"
         echo ""
-        echo "  Monitor sync:   kubectl get applications -n argocd"
-        echo "  Install apps:   kubectl gentian install <profile>"
+        echo "  Monitor sync:    kubectl get applications -n argocd"
+        echo "  Provision tenant: kubectl apply -f config/samples/tenant_gtn-demo.yaml"
+        echo "  Install apps:    kubectl gentian install <profile>"
     else
         echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
         echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
@@ -909,6 +948,7 @@ main() {
     seed_secrets
     bootstrap_root_appset
     install_app_catalogue
+    install_orchestrator
     verify_argocd_apps || true
     print_summary
 }

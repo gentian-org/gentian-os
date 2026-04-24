@@ -848,6 +848,21 @@ kubectl get appcatalogue default \
 - Configure Nextcloud file-store IntegrationBinding (WebDAV read/write)
 - Configure Portal central-navigation IntegrationBinding
 
+**Cleanup (carried over from earlier prototyping):**
+
+The kernel-level Keycloak workspace (`kernel/tofu/tenant/keycloak-config/`) historically
+contained a hardcoded `module "openproject"` block that read its client secret from
+`gentian-os/tenants/gtn-demo/apps/openproject/oidc` — a per-tenant OpenBao path. That
+block was removed (commit removing the `data "vault_kv_secret_v2" "openproject"`,
+the matching `import {}` and the `module "openproject" {}`); the openproject Keycloak
+client is now provisioned per-tenant by the orchestrator's Identity reconciler when
+`openproject` appears in a Tenant's `spec.apps`. The shared protocol-mapper SCOPE
+(`keycloak_openid_client_scope.openproject` plus its three mappers) stays at kernel
+level since it is a realm-wide template, not per-tenant. As part of this increment,
+ensure the Identity reconciler creates the `opendesk-openproject` client with the
+same redirect URIs, backchannel-logout settings, and default scopes that the removed
+module used (see git history of `kernel/tofu/tenant/keycloak-config/clients.tf`).
+
 ##### Testing
 
 **Create (Install):**

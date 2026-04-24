@@ -19,7 +19,7 @@ variable "app_name" {
 }
 
 variable "namespace" {
-  description = "Target Kubernetes namespace for the helm_release (e.g. tenant-gtn-demo)."
+  description = "Target Kubernetes namespace for the helm_release (e.g. tenant-<name>)."
   type        = string
 }
 
