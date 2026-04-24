@@ -42,3 +42,16 @@ spec:
     syncOptions:
     - CreateNamespace=true
     - ServerSideApply=true
+  # CNPG operator rotates the webhook CA bundle at runtime; Argo would
+  # otherwise flag the dynamic caBundle as perpetual drift.
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: MutatingWebhookConfiguration
+    name: cnpg-mutating-webhook-configuration
+    jqPathExpressions:
+    - .webhooks[].clientConfig.caBundle
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    name: cnpg-validating-webhook-configuration
+    jqPathExpressions:
+    - .webhooks[].clientConfig.caBundle
