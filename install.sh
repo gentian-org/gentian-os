@@ -66,15 +66,21 @@ banner()  { echo -e "\n${CYAN}════════════════�
 # LABEL_SELECTOR in NS is in phase=Running. Every STATUS_INTERVAL seconds it
 # prints a status line with the current pod status. If a pod sits in a
 # non-Running, non-Pending phase (e.g. ContainerCreating, ImagePullBackOff)
-# for STUCK_THRESHOLD seconds it dumps the most recent kubelet events so the
-# operator has something actionable instead of an endless line of dots.
+# for STUCK_THRESHOLD seconds it dumps the most recent kubelet events.
+#
+# Auto-recovery: when a pod has been stuck in ContainerCreating with no IP
+# assigned for STUCK_RECOVERY_THRESHOLD seconds (a microk8s/containerd CNI
+# sandbox hang we've seen repeatedly), delete the pod so its StatefulSet /
+# Deployment / DaemonSet recreates it cleanly. Up to MAX_RECOVERY_ATTEMPTS
+# automatic kicks per call.
 #
 # Returns 0 on success, 1 on timeout.
 # =============================================================================
 wait_for_running_pod() {
     local ns="$1" selector="$2" friendly="$3" timeout="${4:-300}"
     local poll_interval=5 status_interval=30 stuck_threshold=60
-    local elapsed=0 stuck_for=0 last_status=""
+    local stuck_recovery_threshold=120 max_recovery_attempts=2
+    local elapsed=0 stuck_for=0 last_status="" recovery_attempts=0
 
     info "Waiting for ${friendly} pod in namespace '${ns}' to become Running (up to ${timeout}s)..."
     while (( elapsed < timeout )); do
@@ -117,11 +123,33 @@ wait_for_running_pod() {
         fi
         last_status="$phase"
 
-        if (( stuck_for >= stuck_threshold )); then
+        if (( stuck_for == stuck_threshold )); then
             warn "${friendly} pod has been in '${phase}' for ${stuck_for}s. Recent events:"
             kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null \
                 | tail -10 | sed 's/^/    /'
-            stuck_for=0  # don't spam every poll; reset and re-trigger after another threshold
+        fi
+
+        # Auto-recovery for the silent CNI / containerd sandbox hang we've
+        # seen on microk8s: pod sits in ContainerCreating with no assigned IP,
+        # and kubelet has stopped emitting events. Deleting the pod forces the
+        # owning controller to create a fresh one, which usually unsticks it.
+        if (( stuck_for >= stuck_recovery_threshold )) \
+           && (( recovery_attempts < max_recovery_attempts )) \
+           && [[ "$phase" == "ContainerCreating" || "$phase" == "Init:0/"* ]]; then
+            local pod_name pod_ip
+            pod_name=$(kubectl get pods -n "$ns" -l "$selector" \
+                    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            pod_ip=$(kubectl get pods -n "$ns" -l "$selector" \
+                    -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
+            if [[ -n "$pod_name" && -z "$pod_ip" ]]; then
+                recovery_attempts=$(( recovery_attempts + 1 ))
+                warn "Auto-recovery ${recovery_attempts}/${max_recovery_attempts}:" \
+                     "deleting wedged pod ${pod_name} (no IP after ${stuck_for}s in ${phase})."
+                kubectl delete pod "$pod_name" -n "$ns" --grace-period=0 --force \
+                    >/dev/null 2>&1 || true
+                stuck_for=0
+                last_status=""
+            fi
         fi
 
         sleep "$poll_interval"
