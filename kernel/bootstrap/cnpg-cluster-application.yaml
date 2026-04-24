@@ -36,3 +36,15 @@ spec:
     syncOptions:
     - CreateNamespace=true
     - ServerSideApply=true
+  # ESO v1 CRD adds default fields server-side that are not in the manifest;
+  # ignore them so Argo doesn't perpetually report OutOfSync.
+  ignoreDifferences:
+  - group: external-secrets.io
+    kind: ExternalSecret
+    jsonPointers:
+    - /spec/target/deletionPolicy
+    jqPathExpressions:
+    - .spec.data[].remoteRef.conversionStrategy
+    - .spec.data[].remoteRef.decodingStrategy
+    - .spec.data[].remoteRef.metadataPolicy
+    - .spec.data[].remoteRef.nullBytePolicy

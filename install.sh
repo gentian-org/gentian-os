@@ -749,7 +749,10 @@ install_app_catalogue() {
     local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
     local plugin_dst="/usr/local/bin/kubectl-gentian"
 
-    if [[ -w /usr/local/bin ]]; then
+    # Idempotency: skip if destination is identical to source (no sudo needed).
+    if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
+        success "kubectl-gentian already up-to-date at ${plugin_dst}."
+    elif [[ -w /usr/local/bin ]]; then
         install -m 755 "$plugin_src" "$plugin_dst"
         success "kubectl-gentian installed to ${plugin_dst}."
     else
