@@ -6,6 +6,7 @@ ignore: |
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/
+  kernel/manifests/flux-crds/
 
 rules:
   indentation:
