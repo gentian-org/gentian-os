@@ -1,0 +1,34 @@
+---
+# Syncs AppProfile CRs from the gentian-apps repository into the cluster.
+# This is what makes `kubectl gentian apps list` populated: ArgoCD applies the
+# YAMLs under profiles/ to the cluster as cluster-scoped AppProfile resources,
+# the gentian-os AppStore controller picks them up and projects them into the
+# AppCatalogue singleton, and the kubectl-gentian plugin reads from there.
+#
+# This file is a template rendered by install.sh — the repo URL and branch
+# placeholders below are filled in based on the user's choice (defaults:
+# https://github.com/gentian-org/gentian-apps @ main).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-appprofiles
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: %REPO_URL%
+    targetRevision: %BRANCH%
+    path: profiles
+    directory:
+      recurse: false   # AppProfiles are cluster-scoped YAML files at profiles/*.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gentian-system   # AppProfile is cluster-scoped; namespace is nominal
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=false

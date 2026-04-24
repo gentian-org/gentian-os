@@ -80,6 +80,22 @@ export OD_SMTP_RELAY_PASSWORD="<smtp-app-password>"
 
 Any variable not pre-exported will be prompted interactively.
 
+In addition to credentials, `install.sh` prompts for the source repositories
+that the cluster pulls app definitions and per-tenant overlays from. Defaults
+point at the upstream `gentian-org` org; press `<Enter>` to accept them or
+override per environment:
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `GENTIAN_APPS_REPO` | `https://github.com/gentian-org/gentian-apps` | ArgoCD `gentian-appprofiles` Application |
+| `GENTIAN_APPS_BRANCH` | `main` | same |
+| `GENTIAN_DEPLOYMENTS_REPO` | `https://github.com/gentian-org/gentian-deployments` | `kubectl gentian apps install/uninstall` |
+| `GENTIAN_DEPLOYMENTS_BRANCH` | `main` | same |
+| `GENTIAN_NONINTERACTIVE` | unset | set to `1` in CI to skip the prompt |
+
+The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
+`kubectl-gentian` plugin sources at runtime.
+
 ### 3. Run the installer
 
 From the `gentian-os` repository root:
@@ -88,11 +104,12 @@ From the `gentian-os` repository root:
 ./install.sh
 ```
 
-This runs all 16 steps end-to-end (see the header of `install.sh` for the list).
+This runs all 17 steps end-to-end (see the header of `install.sh` for the list).
 The script is idempotent — re-running it on a partially-bootstrapped cluster
 picks up where it left off. After completion, the cluster is ready to provision
 tenants — the `Tenant`, `AppProfile`, `IntegrationBinding` and `AppCatalogue`
-CRDs are installed and the orchestrator is reconciling.
+CRDs are installed, the AppCatalogue is populated from `gentian-apps/profiles/`
+via ArgoCD (step 14b), and the orchestrator is reconciling.
 
 To run the individual steps manually instead (all paths relative to
 `gentian-os/`):

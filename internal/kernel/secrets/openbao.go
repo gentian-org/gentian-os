@@ -90,7 +90,7 @@ func (c *KVClient) authToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("openbao kubernetes login: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("openbao kubernetes login: HTTP %d: %s", resp.StatusCode, string(raw))
@@ -143,7 +143,7 @@ func (c *KVClient) Exists(ctx context.Context, logicalPath string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK:
 		return true, nil
@@ -191,7 +191,7 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
@@ -221,7 +221,7 @@ func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]stri
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("openbao get %s: not found", logicalPath)
 	}
