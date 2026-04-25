@@ -198,8 +198,38 @@ wait_for_running_pod() {
     kubectl get pods -n "$ns" -l "$selector" -o wide 2>&1 | sed 's/^/    /'
     kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null \
         | tail -15 | sed 's/^/    /'
-    warn  "Common causes: containerd hang (try: sudo microk8s stop && sudo microk8s start),"
-    warn  "PVC binding failure, or image pull problems. Re-run install.sh once resolved."
+
+    # Diagnose actual failure mode rather than printing generic boilerplate.
+    local d_pod d_ip d_phase d_started d_pvc_bound d_pull_err d_ready_cond
+    d_pod=$(kubectl get pods -n "$ns" -l "$selector" \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    d_ip=$(kubectl get pod -n "$ns" "$d_pod" \
+            -o jsonpath='{.status.podIP}' 2>/dev/null || true)
+    d_phase=$(kubectl get pod -n "$ns" "$d_pod" \
+            -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    d_started=$(kubectl get pod -n "$ns" "$d_pod" \
+            -o jsonpath='{.status.containerStatuses[0].started}' 2>/dev/null || true)
+    d_ready_cond=$(kubectl get pod -n "$ns" "$d_pod" \
+            -o jsonpath='{range .status.conditions[?(@.type=="PodReadyToStartContainers")]}{.status}{end}' 2>/dev/null || true)
+    d_pvc_bound=$(kubectl get pvc -n "$ns" --no-headers 2>/dev/null \
+            | awk '$2!="Bound"' | wc -l | tr -d ' ')
+    d_pull_err=$(kubectl get events -n "$ns" --field-selector=reason=Failed \
+            -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null \
+            | grep -iE 'pull|image' | head -1 || true)
+
+    if (( d_pvc_bound > 0 )); then
+        warn "Likely cause: PVC binding failure ($d_pvc_bound PVC(s) not Bound)."
+    elif [[ -n "$d_pull_err" ]]; then
+        warn "Likely cause: image pull error: ${d_pull_err}"
+    elif [[ "$d_started" == "true" && "$d_ready_cond" != "True" ]]; then
+        warn "Likely cause: kubelet status-sync wedge (container started but"
+        warn "PodReadyToStartContainers stays False). Recovery: sudo microk8s stop && sudo microk8s start"
+    elif [[ -n "$d_ip" && "$d_phase" == "Pending" ]]; then
+        warn "Likely cause: kubelet wedge (IP assigned but phase still Pending)."
+        warn "Recovery: sudo systemctl restart snap.microk8s.daemon-kubelite"
+    else
+        warn "Cause unclear. Check 'kubectl describe pod -n $ns $d_pod' for details."
+    fi
     return 1
 }
 
