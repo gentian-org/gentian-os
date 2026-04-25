@@ -860,10 +860,11 @@ setup_argocd_repos() {
 bootstrap_transit_app() {
     banner "Step 7 — OpenBao transit seal instance"
 
-    # Pre-flight: clear stale CRI state from any prior install/uninstall
-    # cycle. Without this, kubelet's pod-sync loop can wedge and leave the
-    # transit pod stuck in ContainerCreating with no events.
-    cri_cleanup
+    # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
+    # invoked reactively by wait_for_running_pod's 2nd-tier escalation
+    # only if the transit pod is demonstrably wedged (stuck 120s+ in
+    # ContainerCreating with no IP), so a fresh / healthy cluster never
+    # pays the sudo-prompt + sweep cost.
 
     if ! kubectl get secret openbao-transit-unseal -n openbao &>/dev/null; then
         kubectl create secret generic openbao-transit-unseal \
