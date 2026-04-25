@@ -234,6 +234,52 @@ else
     if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
         local_namespaces+=("${TARGET_NAMESPACES_INFRA[@]}")
     fi
+
+    # ── PRE-DELETE FINALIZER STRIP ──────────────────────────────────────────
+    # The two recurring causes of stuck-Terminating namespaces are:
+    #   1. argocd: Application CRs carry resources-finalizer.argocd.argoproj.io.
+    #      Once the argocd controller deployment is gone (helm uninstall above),
+    #      nothing removes those finalizers, so the namespace can never
+    #      garbage-collect them.
+    #   2. openbao: StatefulSet PVCs carry kubernetes.io/pvc-protection. If the
+    #      pod can't terminate cleanly (CNI hang) the finalizer never clears
+    #      and the namespace blocks on its dependent PVCs.
+    # Strip both BEFORE issuing the namespace delete so the namespace
+    # controller has nothing left to wait on.
+    info "Pre-stripping finalizers on Apps / AppSets / Terraforms / PVCs..."
+    if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
+        for app in $(kubectl get application -n "$APP_NS" -o name 2>/dev/null); do
+            kubectl patch -n "$APP_NS" "$app" --type=merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            kubectl delete -n "$APP_NS" "$app" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done
+    fi
+    if kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
+        for as in $(kubectl get applicationset -n "$APP_NS" -o name 2>/dev/null); do
+            kubectl patch -n "$APP_NS" "$as" --type=merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            kubectl delete -n "$APP_NS" "$as" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done
+    fi
+    if kubectl get crd terraforms.infra.contrib.fluxcd.io >/dev/null 2>&1; then
+        while IFS=/ read -r ns name; do
+            [[ -z "$ns" || -z "$name" ]] && continue
+            kubectl patch terraform "$name" -n "$ns" --type=merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            kubectl delete terraform "$name" -n "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done < <(kubectl get terraform -A \
+                 -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
+    fi
+    # Strip pvc-protection finalizers in all target namespaces up-front.
+    for ns in "${local_namespaces[@]}"; do
+        if ! kubectl get namespace "$ns" >/dev/null 2>&1; then continue; fi
+        for pvc in $(kubectl get pvc -n "$ns" -o name 2>/dev/null); do
+            kubectl patch -n "$ns" "$pvc" --type=merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+        done
+    done
+
+    # ── ISSUE NAMESPACE DELETES (non-blocking) ──────────────────────────────
     for ns in "${local_namespaces[@]}"; do
         kubectl delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     done
@@ -255,38 +301,19 @@ else
                             | .metadata.name')
                 fi
         if [[ ${#pvs[@]} -gt 0 ]]; then
-            kubectl delete pv "${pvs[@]}" --ignore-not-found >/dev/null 2>&1 || true
+            # Strip pv-protection finalizers first so delete is non-blocking.
+            # Without this, `kubectl delete pv` blocks waiting for the volume
+            # to detach from the node, which can take minutes (or forever if
+            # the kubelet is wedged).
+            for pv in "${pvs[@]}"; do
+                kubectl patch pv "$pv" --type=merge \
+                    -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            done
+            kubectl delete pv "${pvs[@]}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
             success "Deleted bound PVs for Gentian namespaces."
         fi
     else
         warn "jq not found; skipped targeted PV deletion."
-    fi
-
-    # Sweep any leftover ArgoCD Applications/ApplicationSets/AppProjects that
-    # weren't in the static lists above (e.g. children spawned by ApplicationSets,
-    # or Apps added later such as gentian-appprofiles). Strip finalizers so the
-    # delete actually goes through and the argocd namespace can terminate.
-    if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
-        for app in $(kubectl get application -n "$APP_NS" -o name 2>/dev/null); do
-            kubectl patch -n "$APP_NS" "$app" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-            kubectl delete -n "$APP_NS" "$app" --wait=false --ignore-not-found >/dev/null 2>&1 || true
-        done
-    fi
-    if kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
-        for as in $(kubectl get applicationset -n "$APP_NS" -o name 2>/dev/null); do
-            kubectl patch -n "$APP_NS" "$as" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-            kubectl delete -n "$APP_NS" "$as" --wait=false --ignore-not-found >/dev/null 2>&1 || true
-        done
-    fi
-
-    # Sweep any leftover Terraform CRs (tofu-controller) cluster-wide. These
-    # have finalizers that block tofu-system from terminating.
-    if kubectl get crd terraforms.infra.contrib.fluxcd.io >/dev/null 2>&1; then
-        while IFS=/ read -r ns name; do
-            [[ -z "$ns" || -z "$name" ]] && continue
-            kubectl patch terraform "$name" -n "$ns" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-            kubectl delete terraform "$name" -n "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
-        done < <(kubectl get terraform -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
     fi
 
     # Remove Gentian app CRDs created by install/bootstrap. Note: k8s CRD names
