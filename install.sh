@@ -223,10 +223,17 @@ wait_for_running_pod() {
         warn "Likely cause: image pull error: ${d_pull_err}"
     elif [[ "$d_started" == "true" && "$d_ready_cond" != "True" ]]; then
         warn "Likely cause: kubelet status-sync wedge (container started but"
-        warn "PodReadyToStartContainers stays False). Recovery: sudo microk8s stop && sudo microk8s start"
+        warn "PodReadyToStartContainers stays False)."
+        warn "Recovery: fully restart your Kubernetes runtime, then re-run this script."
+        warn "  microk8s : sudo microk8s stop && sudo microk8s start"
+        warn "  k3s      : sudo systemctl restart k3s"
+        warn "  kubeadm  : sudo systemctl restart kubelet containerd"
     elif [[ -n "$d_ip" && "$d_phase" == "Pending" ]]; then
         warn "Likely cause: kubelet wedge (IP assigned but phase still Pending)."
-        warn "Recovery: sudo systemctl restart snap.microk8s.daemon-kubelite"
+        warn "Recovery: fully restart your Kubernetes runtime, then re-run this script."
+        warn "  microk8s : sudo microk8s stop && sudo microk8s start"
+        warn "  k3s      : sudo systemctl restart k3s"
+        warn "  kubeadm  : sudo systemctl restart kubelet containerd"
     else
         warn "Cause unclear. Check 'kubectl describe pod -n $ns $d_pod' for details."
     fi
@@ -244,6 +251,10 @@ wait_for_running_pod() {
 # Removes:
 #   - all CRI sandboxes in NotReady state
 #   - all exited (dead) CRI containers
+#   - orphan RUNNING sandboxes whose owning pod object no longer exists
+#     (or whose UID no longer matches the labelled UID) — these hold
+#     containerd name reservations and cause new pod attempts to fail
+#     with "name ... is reserved for ...".
 #
 # Auto-detects crictl binary and containerd socket. On systems without
 # crictl (e.g. stock microk8s) falls back to `microk8s.ctr` to delete
@@ -291,7 +302,27 @@ cri_cleanup() {
                 "${crictl[@]}" ps -a --state exited -q 2>/dev/null \
                     | xargs -r "${crictl[@]}" rm >/dev/null 2>&1 || true
             fi
-            success "CRI cleanup: removed ${notready_pods} stale sandbox(es) and ${exited_ctrs} exited container(s)."
+            # Orphan RUNNING sandboxes: list every Ready pod, look up the
+            # corresponding Kubernetes pod object; if it's gone or its UID
+            # differs, force-remove the sandbox so its containerd name
+            # reservation is released.
+            local orphans=0 sb_id sb_ns sb_name sb_uid live_uid
+            while read -r sb_id; do
+                [[ -z "$sb_id" ]] && continue
+                local meta
+                meta=$("${crictl[@]}" inspectp "$sb_id" 2>/dev/null) || continue
+                sb_ns=$(printf '%s' "$meta"   | sed -n 's/.*"namespace": *"\([^"]*\)".*/\1/p' | head -1)
+                sb_name=$(printf '%s' "$meta" | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p'      | head -1)
+                sb_uid=$(printf '%s' "$meta"  | sed -n 's/.*"uid": *"\([^"]*\)".*/\1/p'       | head -1)
+                [[ -z "$sb_ns" || -z "$sb_name" || -z "$sb_uid" ]] && continue
+                live_uid=$(kubectl get pod -n "$sb_ns" "$sb_name" \
+                            -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+                if [[ -z "$live_uid" || "$live_uid" != "$sb_uid" ]]; then
+                    "${crictl[@]}" rmp -f "$sb_id" >/dev/null 2>&1 || true
+                    orphans=$((orphans+1))
+                fi
+            done < <("${crictl[@]}" pods --state ready -q 2>/dev/null)
+            success "CRI cleanup: removed ${notready_pods} stale sandbox(es), ${exited_ctrs} exited container(s), ${orphans} orphan sandbox(es)."
             return 0
         fi
 
@@ -322,7 +353,33 @@ cri_cleanup() {
                     count=$((count+1))
                 done <<< "$stopped"
             fi
-            success "CRI cleanup: removed ${count} stopped task(s)."
+
+            # Orphan RUNNING sandbox reaper: walk every container in the
+            # k8s.io namespace, read the kubernetes labels (pod name, ns,
+            # uid) from `containers info`, and if the live pod is gone or
+            # has a different UID, force-delete task + container so its
+            # containerd name reservation is released. This handles the
+            # "name ... is reserved for ..." sandbox-collision wedge.
+            local orphans=0 cid info_json c_ns c_name c_uid live_uid containers
+            containers=$(sudo "$ctr_bin" --namespace k8s.io containers ls -q 2>/dev/null || true)
+            if [[ -n "$containers" ]]; then
+                while IFS= read -r cid; do
+                    [[ -z "$cid" ]] && continue
+                    info_json=$(sudo "$ctr_bin" --namespace k8s.io containers info "$cid" 2>/dev/null) || continue
+                    c_ns=$(printf   '%s' "$info_json" | sed -n 's/.*"io.kubernetes.pod.namespace": *"\([^"]*\)".*/\1/p' | head -1)
+                    c_name=$(printf '%s' "$info_json" | sed -n 's/.*"io.kubernetes.pod.name": *"\([^"]*\)".*/\1/p'      | head -1)
+                    c_uid=$(printf  '%s' "$info_json" | sed -n 's/.*"io.kubernetes.pod.uid": *"\([^"]*\)".*/\1/p'       | head -1)
+                    [[ -z "$c_ns" || -z "$c_name" || -z "$c_uid" ]] && continue
+                    live_uid=$(kubectl get pod -n "$c_ns" "$c_name" \
+                                -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+                    if [[ -z "$live_uid" || "$live_uid" != "$c_uid" ]]; then
+                        sudo "$ctr_bin" --namespace k8s.io tasks delete --force "$cid"   >/dev/null 2>&1 || true
+                        sudo "$ctr_bin" --namespace k8s.io containers delete       "$cid"   >/dev/null 2>&1 || true
+                        orphans=$((orphans+1))
+                    fi
+                done <<< "$containers"
+            fi
+            success "CRI cleanup: removed ${count} stopped task(s), ${orphans} orphan sandbox(es)."
             return 0
         fi
 
