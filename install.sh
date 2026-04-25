@@ -152,6 +152,12 @@ wait_for_running_pod() {
                 # from prior install/uninstall cycles.
                 if (( recovery_attempts >= 2 )); then
                     cri_cleanup
+                    # If pod-delete + cri_cleanup both failed, the kubelet
+                    # status manager itself is wedged (calico assigns an IP
+                    # but PodReadyToStartContainers never flips True). The
+                    # only known-reliable fix is a kubelite restart. Done
+                    # under sudo, gated on microk8s being detected.
+                    kubelite_restart
                 fi
                 stuck_for=0
                 last_status=""
@@ -271,6 +277,49 @@ cri_cleanup() {
     }
 
     _cri_cleanup_impl || warn "CRI cleanup encountered an error (ignored)."
+    eval "$_prev_opts"
+    return 0
+}
+
+# =============================================================================
+# kubelite_restart
+#
+# Last-resort recovery for the kubelet status-sync wedge: pod has a
+# CNI-assigned IP (annotation set) but PodReadyToStartContainers stays
+# False forever. CRI cleanup does not help because the wedge is in the
+# kubelet's status manager itself, not the containerd state.
+#
+# Restarting the microk8s kubelite snap service kicks the status loop
+# without taking the whole node down (`microk8s stop` would also tear
+# down the API server). Best-effort: requires passwordless sudo, only
+# acts when microk8s is detected.
+# =============================================================================
+kubelite_restart() {
+    local _prev_opts; _prev_opts=$(set +o); set +eo pipefail
+
+    if ! command -v snap &>/dev/null; then
+        eval "$_prev_opts"; return 0
+    fi
+    if ! snap list 2>/dev/null | grep -q '^microk8s '; then
+        eval "$_prev_opts"; return 0
+    fi
+    if ! sudo -n true 2>/dev/null; then
+        warn "Kubelite restart skipped: passwordless sudo not available."
+        eval "$_prev_opts"; return 0
+    fi
+
+    warn "Restarting microk8s kubelite (status-sync wedge recovery)..."
+    sudo -n systemctl restart snap.microk8s.daemon-kubelite >/dev/null 2>&1 || true
+    # Give kubelite ~20s to come back and re-sync pod statuses.
+    local i
+    for i in {1..20}; do
+        if /snap/bin/microk8s.kubectl get --raw=/healthz >/dev/null 2>&1; then
+            success "Kubelite restarted (apiserver healthy after ${i}s)."
+            eval "$_prev_opts"; return 0
+        fi
+        sleep 1
+    done
+    warn "Kubelite restart issued but apiserver did not respond healthy within 20s."
     eval "$_prev_opts"
     return 0
 }
@@ -714,7 +763,10 @@ bootstrap_transit_app() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/openbao-transit-application.yaml"
     success "Applied openbao-transit-application.yaml"
 
-    wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 300
+    if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 300; then
+        error "Step 7 failed: openbao-transit pod never became Ready. Aborting install."
+        exit 1
+    fi
 }
 
 # =============================================================================
