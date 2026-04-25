@@ -60,6 +60,30 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 banner()  { echo -e "\n${CYAN}══════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $*${NC}"; echo -e "${CYAN}══════════════════════════════════════════════════${NC}\n"; }
 
 # =============================================================================
+# ensure_sudo [REASON]
+#
+# Cache-aware sudo prompt. If passwordless sudo works (CI, NOPASSWD), returns
+# silently. Otherwise prints REASON and prompts for the password ONCE, after
+# which the credential is cached for ~15 min so subsequent sudo calls inside
+# helpers don't re-prompt. Returns 1 if the user cancels or sudo isn't
+# installed at all (so callers can fall back to a no-op + warn).
+# =============================================================================
+ensure_sudo() {
+    local reason="${1:-Operation needs sudo}"
+    if ! command -v sudo &>/dev/null; then
+        return 1
+    fi
+    if sudo -n true 2>/dev/null; then
+        return 0
+    fi
+    info "$reason — requesting sudo password..."
+    if sudo -v; then
+        return 0
+    fi
+    return 1
+}
+
+# =============================================================================
 # wait_for_running_pod NS LABEL_SELECTOR FRIENDLY_NAME [TIMEOUT_SECS]
 #
 # Polls every POLL_INTERVAL seconds until at least one pod matching
@@ -193,8 +217,8 @@ wait_for_running_pod() {
 #
 # Auto-detects crictl binary and containerd socket. On systems without
 # crictl (e.g. stock microk8s) falls back to `microk8s.ctr` to delete
-# STOPPED tasks in the k8s.io containerd namespace. Best-effort: requires
-# passwordless sudo; logs a warning and skips when neither tool is present.
+# STOPPED tasks in the k8s.io containerd namespace. Prompts for sudo
+# password if needed; skips with a warning if neither tool is present.
 # =============================================================================
 cri_cleanup() {
     # Disable strict mode locally — this helper is best-effort and must
@@ -202,9 +226,9 @@ cri_cleanup() {
     local _prev_opts; _prev_opts=$(set +o); set +eo pipefail
 
     _cri_cleanup_impl() {
-        # Need passwordless sudo to talk to the CRI/containerd socket.
-        if ! sudo -n true 2>/dev/null; then
-            warn "CRI cleanup skipped: passwordless sudo not available."
+        # Acquire sudo (interactive prompt if needed).
+        if ! ensure_sudo "CRI cleanup needs sudo to query containerd state"; then
+            warn "CRI cleanup skipped: sudo not available."
             return 0
         fi
 
@@ -218,12 +242,12 @@ cri_cleanup() {
             for s in /var/snap/microk8s/common/run/containerd.sock \
                      /run/containerd/containerd.sock \
                      /var/run/crio/crio.sock; do
-                if sudo -n test -S "$s" 2>/dev/null; then sock="$s"; break; fi
+                if sudo test -S "$s" 2>/dev/null; then sock="$s"; break; fi
             done
         fi
 
         if [[ -n "$crictl_bin" ]]; then
-            local crictl=("sudo" "-n" "$crictl_bin")
+            local crictl=("sudo" "$crictl_bin")
             [[ -n "$sock" ]] && crictl+=("--runtime-endpoint" "unix://$sock")
             info "CRI cleanup: removing stale sandboxes and exited containers (via crictl)..."
             local notready_pods exited_ctrs
@@ -258,13 +282,13 @@ cri_cleanup() {
             # Use long-form --namespace because some snap shims mis-parse
             # the short -n flag (it gets confused with sudo's -n or ctr's
             # own global options and prints help instead of the task list).
-            raw=$(sudo -n "$ctr_bin" --namespace k8s.io tasks ls 2>/dev/null || true)
+            raw=$(sudo "$ctr_bin" --namespace k8s.io tasks ls 2>/dev/null || true)
             stopped=$(printf '%s\n' "$raw" | awk 'NR>1 && $3=="STOPPED"{print $1}')
             local count=0
             if [[ -n "$stopped" ]]; then
                 while IFS= read -r tid; do
                     [[ -z "$tid" ]] && continue
-                    sudo -n "$ctr_bin" --namespace k8s.io tasks delete --force "$tid" >/dev/null 2>&1 || true
+                    sudo "$ctr_bin" --namespace k8s.io tasks delete --force "$tid" >/dev/null 2>&1 || true
                     count=$((count+1))
                 done <<< "$stopped"
             fi
@@ -303,13 +327,13 @@ kubelite_restart() {
     if ! snap list 2>/dev/null | grep -q '^microk8s '; then
         eval "$_prev_opts"; return 0
     fi
-    if ! sudo -n true 2>/dev/null; then
-        warn "Kubelite restart skipped: passwordless sudo not available."
+    if ! ensure_sudo "Kubelite restart needs sudo to call systemctl"; then
+        warn "Kubelite restart skipped: sudo not available."
         eval "$_prev_opts"; return 0
     fi
 
     warn "Restarting microk8s kubelite (status-sync wedge recovery)..."
-    sudo -n systemctl restart snap.microk8s.daemon-kubelite >/dev/null 2>&1 || true
+    sudo systemctl restart snap.microk8s.daemon-kubelite >/dev/null 2>&1 || true
     # Give kubelite ~20s to come back and re-sync pod statuses.
     local i
     for i in {1..20}; do
