@@ -841,6 +841,20 @@ install_argocd() {
 
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml"
     success "AppProject applied."
+
+    # Print ArgoCD admin credentials early so the user sees them even if
+    # the install is interrupted before print_summary runs (verify step
+    # can take up to 10 minutes).
+    local argocd_pw
+    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
+                    -o jsonpath='{.data.password}' 2>/dev/null \
+                    | base64 -d 2>/dev/null || echo "")
+    if [[ -n "$argocd_pw" ]]; then
+        info "ArgoCD URL   : https://${NODE_IP}:30443"
+        info "ArgoCD login : admin / ${argocd_pw}"
+    else
+        warn "ArgoCD initial-admin-secret not yet available; will be shown in final summary."
+    fi
 }
 
 # =============================================================================
