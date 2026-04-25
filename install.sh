@@ -244,13 +244,16 @@ cri_cleanup() {
     if [[ -n "$ctr_bin" ]]; then
         info "CRI cleanup: removing stopped containerd tasks (via ctr)..."
         local stopped
-        stopped=$(sudo -n "$ctr_bin" -n k8s.io tasks ls 2>/dev/null \
-                  | awk '$3=="STOPPED"{print $1}')
+        # Use long-form --namespace because some snap shims mis-parse the
+        # short -n flag (it gets confused with sudo's -n or ctr's own
+        # global options and prints help instead of the task list).
+        stopped=$(sudo -n "$ctr_bin" --namespace k8s.io tasks ls 2>/dev/null \
+                  | awk 'NR>1 && $3=="STOPPED"{print $1}')
         local count=0
         if [[ -n "$stopped" ]]; then
             while IFS= read -r tid; do
                 [[ -z "$tid" ]] && continue
-                sudo -n "$ctr_bin" -n k8s.io tasks delete --force "$tid" >/dev/null 2>&1 || true
+                sudo -n "$ctr_bin" --namespace k8s.io tasks delete --force "$tid" >/dev/null 2>&1 || true
                 count=$((count+1))
             done <<< "$stopped"
         fi
