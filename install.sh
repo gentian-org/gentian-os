@@ -1219,6 +1219,18 @@ install_orchestrator() {
 verify_argocd_apps() {
     banner "Step 16 — Verifying ArgoCD Applications"
 
+    # Restart the application-controller once to clear any stale resource
+    # health cached during the OpenBao seal-migration window (when ESO
+    # transiently couldn't read secrets). Without this, Applications
+    # whose underlying resources are now healthy can stay reported as
+    # Degraded indefinitely because ArgoCD doesn't re-evaluate cached
+    # resource health unless the resource generation changes.
+    info "Restarting argocd-application-controller to clear stale health cache..."
+    kubectl rollout restart statefulset -n argocd argocd-application-controller \
+        >/dev/null 2>&1 || true
+    kubectl rollout status  statefulset -n argocd argocd-application-controller \
+        --timeout=120s >/dev/null 2>&1 || warn "application-controller rollout did not become ready in 120s; continuing."
+
     local timeout=${VERIFY_TIMEOUT:-600}
     local interval=15
     local elapsed=0
