@@ -216,9 +216,17 @@ wait_for_running_pod() {
     d_pull_err=$(kubectl get events -n "$ns" --field-selector=reason=Failed \
             -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null \
             | grep -iE 'pull|image' | head -1 || true)
+    # Detect missing-secret / missing-configmap (CreateContainerConfigError).
+    local d_missing_ref
+    d_missing_ref=$(kubectl get events -n "$ns" --field-selector=reason=Failed \
+            -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null \
+            | grep -iE '(secret|configmap) "[^"]+" not found' | head -1 || true)
 
     if (( d_pvc_bound > 0 )); then
         warn "Likely cause: PVC binding failure ($d_pvc_bound PVC(s) not Bound)."
+    elif [[ -n "$d_missing_ref" ]]; then
+        warn "Likely cause: missing referenced resource: ${d_missing_ref}"
+        warn "Create the missing Secret/ConfigMap (often produced by a prior bootstrap step) and retry."
     elif [[ -n "$d_pull_err" ]]; then
         warn "Likely cause: image pull error: ${d_pull_err}"
     elif [[ "$d_started" == "true" && "$d_ready_cond" != "True" ]]; then
@@ -900,7 +908,24 @@ bootstrap_transit_app() {
 # =============================================================================
 init_openbao_transit() {
     banner "Step 8 — Transit instance init + autounseal Secret"
-    bash "${SCRIPT_DIR}/scripts/init-openbao-transit.sh"
+    if ! bash "${SCRIPT_DIR}/scripts/init-openbao-transit.sh"; then
+        error "Step 8 failed: init-openbao-transit.sh exited non-zero."
+        error "Without the openbao-transit-token Secret, the primary OpenBao"
+        error "will be stuck in CreateContainerConfigError. Aborting install."
+        exit 1
+    fi
+    # Sanity-check the side effects the script is supposed to produce. If
+    # the script exited 0 but didn't actually create both Secrets (e.g. it
+    # silently took an early-return path on a stale state), fail fast here
+    # so subsequent steps don't proceed against a half-initialised transit.
+    local missing=()
+    kubectl get secret -n openbao openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
+    kubectl get secret -n openbao openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
+    if (( ${#missing[@]} > 0 )); then
+        error "Step 8 reported success but required Secrets are missing: ${missing[*]}"
+        error "Re-run init-openbao-transit.sh manually and re-run install.sh."
+        exit 1
+    fi
 }
 
 # =============================================================================
@@ -934,7 +959,10 @@ bootstrap_argocd_apps() {
         success "Applied ${app}-application.yaml"
     done
 
-    wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300
+    wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300 || {
+        error "Step 9 failed: openbao pod never became Ready. Aborting install."
+        exit 1
+    }
 
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         info "Waiting for reloader deployment (up to 5 min)..."
@@ -1035,14 +1063,26 @@ init_openbao() {
         local init_resp
         init_resp=$(curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
-            -d '{"secret_shares": 1, "secret_threshold": 1}')
+            -d '{"secret_shares": 1, "secret_threshold": 1}') || {
+            error "OpenBao init request failed against ${BAO_HTTP}."
+            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n openbao')."
+            error "Common cause: the openbao-transit-token Secret is missing, leaving openbao-0 in CreateContainerConfigError."
+            exit 1
+        }
 
         echo "$init_resp" > "${OPENBAO_INIT_FILE}"
         chmod 600 "${OPENBAO_INIT_FILE}"
 
         local unseal_key root_token
-        unseal_key=$(echo "$init_resp" | jq -r '.keys_base64[0]')
-        root_token=$(echo "$init_resp"  | jq -r '.root_token')
+        unseal_key=$(echo "$init_resp" | jq -r '.keys_base64[0] // empty')
+        root_token=$(echo "$init_resp"  | jq -r '.root_token // empty')
+
+        if [[ -z "$unseal_key" || -z "$root_token" ]]; then
+            error "OpenBao init response missing keys_base64[0] or root_token."
+            error "Raw response saved at ${OPENBAO_INIT_FILE}."
+            echo "$init_resp" | jq . >&2 || echo "$init_resp" >&2
+            exit 1
+        fi
 
         echo ""
         echo -e "${RED}║  Unseal Key : ${unseal_key}${NC}"
