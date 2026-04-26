@@ -780,6 +780,77 @@ create_namespaces() {
 }
 
 # =============================================================================
+# 2b. Pre-warm cluster (distro-agnostic PLEG/CRI-race mitigation)
+# =============================================================================
+# On a freshly-bootstrapped cluster, the very first workload pod often races
+# against kubelet's Pod Lifecycle Event Generator (PLEG) and containerd's
+# event-subscription init. Symptom: pod stuck in ContainerCreating with no IP
+# even though containerd has the sandbox RUNNING and CNI assigned an address.
+# This is well-known across containerd-based distros (kind, k3d, microk8s,
+# kubeadm) and is what install.sh's auto-recovery was designed to clean up
+# after the fact.
+#
+# Pre-warming with a throwaway pod forces one full successful pod-create cycle
+# through kubelet+containerd+CNI BEFORE any real workload is deployed. By the
+# time cert-manager / ESO / ArgoCD pods land, the kubelet<->containerd event
+# pipe is fully wired and the race is gone.
+#
+# This is the same trick kind/k3d use internally and is purely kubectl-based,
+# so it works on any conformant cluster.
+prewarm_cluster() {
+    if [[ "${SKIP_PREWARM:-0}" == "1" ]]; then
+        warn "Pre-warm disabled via SKIP_PREWARM=1; skipping."
+        return
+    fi
+
+    banner "Step 2b — Pre-warming cluster (PLEG/CRI race mitigation)"
+
+    local pod="prewarm-$(date +%s)"
+    info "Applying throwaway pod kube-system/${pod}..."
+    kubectl apply -f - <<EOF >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod}
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/component: prewarm
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: prewarm
+      image: busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command: ["sh","-c","exit 0"]
+      resources:
+        requests: {cpu: "10m", memory: "8Mi"}
+        limits:   {cpu: "50m", memory: "32Mi"}
+EOF
+
+    info "Waiting for pre-warm pod to reach a terminal phase (up to 180s)..."
+    local deadline=$((SECONDS + 180))
+    local phase=""
+    while (( SECONDS < deadline )); do
+        phase=$(kubectl get pod -n kube-system "${pod}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+        case "${phase}" in
+            Succeeded) success "Pre-warm pod completed (kubelet<->containerd path warmed)."; break ;;
+            Failed)    warn "Pre-warm pod failed (phase=Failed); continuing anyway."; break ;;
+        esac
+        sleep 3
+    done
+
+    if [[ "${phase}" != "Succeeded" && "${phase}" != "Failed" ]]; then
+        warn "Pre-warm pod did not finish within 180s (last phase: ${phase:-unknown})."
+        warn "Continuing — auto-recovery will handle any residual wedge."
+        kubectl describe pod -n kube-system "${pod}" 2>/dev/null | tail -20 || true
+    fi
+
+    kubectl delete pod -n kube-system "${pod}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
+}
+
+# =============================================================================
 # 3. Install cert-manager via Helm
 # =============================================================================
 install_cert_manager() {
@@ -1388,6 +1459,7 @@ main() {
     check_prereqs
     install_tools
     create_namespaces
+    prewarm_cluster
     install_cert_manager
     install_eso
     install_argocd

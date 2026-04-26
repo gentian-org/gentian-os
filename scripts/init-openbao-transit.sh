@@ -47,6 +47,23 @@ kubectl wait pod -n "${TRANSIT_NS}" openbao-transit-0 \
   --for=condition=Ready --timeout=300s
 success "openbao-transit-0 is Ready."
 
+# ─── Wait for HTTP listener to bind ──────────────────────────────────────────
+# kubectl Ready means the pod's readiness probe succeeded, but OpenBao's HTTP
+# listener can take a few extra seconds to accept connections — especially
+# right after a kubelet/kubelite restart triggered by install.sh's
+# auto-recovery. Without this loop, the very next curl below races and exits
+# non-zero under set -e, aborting the whole script.
+info "Waiting for OpenBao HTTP listener to accept connections (up to 60s)..."
+i=0
+until curl -sf -o /dev/null --max-time 3 "${TRANSIT_ADDR}/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"; do
+  sleep 2; i=$((i + 2))
+  if [[ $i -ge 60 ]]; then
+    error "OpenBao HTTP listener at ${TRANSIT_ADDR} never accepted connections within 60s."
+    exit 1
+  fi
+done
+success "OpenBao HTTP listener responding."
+
 # ─── Init / unseal ───────────────────────────────────────────────────────────
 INIT_STATUS=$(curl -sf "${TRANSIT_ADDR}/v1/sys/init" | jq -r '.initialized')
 
