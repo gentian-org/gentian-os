@@ -214,6 +214,13 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	// 1b. Replicate kernel registry-credentials Secret into the tenant namespace
+	// so charts pulling from private registries (e.g. registry.opencode.de) work
+	// without per-tenant ExternalSecret boilerplate.
+	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// 2. ResourceQuota
 	if err := r.ensureResourceQuota(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
@@ -489,6 +496,66 @@ func (r *TenantReconciler) ensureNamespace(ctx context.Context, tenant *gentiano
 	// Ensure the tenant label is present (idempotent patch)
 	if existing.Labels[tenantLabel] != tenant.Name {
 		patch := client.MergeFrom(existing.DeepCopy())
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		existing.Labels[tenantLabel] = tenant.Name
+		existing.Labels[managedByLabel] = managedByValue
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+// ensureRegistryCredentials replicates the kernel-managed `registry-credentials`
+// dockerconfigjson Secret from the services namespace (where ESO materialises it
+// from OpenBao) into the tenant namespace, so that tenant pods using charts
+// pinned to private registries (e.g. registry.opencode.de for the
+// opendesk-element-web image) can pull their images.
+//
+// This is the persistent, DRY fix: every tenant namespace gets pull access
+// automatically, without each AppProfile or each tenant having to declare a
+// per-tenant ExternalSecret.
+//
+// The replicated Secret is owned by the operator (overwritten on drift) and
+// labelled with the tenant so it is cleaned up with the namespace.
+func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+	const secretName = "registry-credentials"
+
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: servicesNamespace}, source); err != nil {
+		if errors.IsNotFound(err) {
+			// Soft-fail: if the kernel secret does not exist yet, skip without
+			// error. The operator will retry on the next reconcile.
+			return nil
+		}
+		return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
+	}
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Type: source.Type,
+		Data: source.Data,
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Type = desired.Type
+		existing.Data = desired.Data
 		if existing.Labels == nil {
 			existing.Labels = map[string]string{}
 		}
