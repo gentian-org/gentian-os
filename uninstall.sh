@@ -93,6 +93,7 @@ TARGET_NAMESPACES_CORE=(
     argocd
     external-secrets
     tofu-system
+    flux-system
     gentian-system
     openbao
     platform-kernel
@@ -289,14 +290,14 @@ else
                         mapfile -t pvs < <(kubectl get pv -o json | jq -r '.items[]
                             | select(.spec.claimRef != null)
                             | .spec.claimRef.namespace as $ns
-                            | select(["argocd","external-secrets","tofu-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev","cert-manager","stakater-system","cnpg-system"]
+                            | select(["argocd","external-secrets","tofu-system","flux-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev","cert-manager","stakater-system","cnpg-system"]
                                 | index($ns))
                             | .metadata.name')
                 else
                         mapfile -t pvs < <(kubectl get pv -o json | jq -r '.items[]
                             | select(.spec.claimRef != null)
                             | .spec.claimRef.namespace as $ns
-                            | select(["argocd","external-secrets","tofu-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev"]
+                            | select(["argocd","external-secrets","tofu-system","flux-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev"]
                                 | index($ns))
                             | .metadata.name')
                 fi

@@ -1014,11 +1014,44 @@ bootstrap_argocd_apps() {
     success "Applied public ArgoCD repository registrations."
 
     # Tofu Controller needs Flux source CRDs (GitRepository, OCIRepository,
-    # Bucket) to register its informers — even though we never instantiate
-    # them. Without these CRDs the controller crash-loops on cache-sync
-    # timeout. See kernel/manifests/flux-crds/README.md.
+    # Bucket) to register its informers. We also need the Flux source-
+    # controller itself running because kernel/services/tofu/manifests/dev/
+    # terraform.yaml creates a GitRepository CR ('gentian-server') that all
+    # Terraform workspaces (infra-workspaces-dev, keycloak-config-dev, and
+    # every per-tenant tf-*) reference as their sourceRef. Without source-
+    # controller, that GitRepository never produces an artifact and every
+    # Terraform CR stays stuck on "Source is not ready, artifact not found"
+    # — Nubus never installs, tenants stall on IdentityReady forever.
+    # See kernel/manifests/flux-crds/README.md for CRD versioning details.
     kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-crds.yaml"
     success "Applied Flux source CRDs (required by tofu-controller)."
+
+    if helm status flux2 -n flux-system &>/dev/null; then
+        success "Flux source-controller already installed (Helm release present). Skipping."
+    elif kubectl get deployment source-controller -n flux-system &>/dev/null; then
+        warn "source-controller already present but not Helm-managed. Skipping install."
+    else
+        info "Installing Flux source-controller (chart 2.15.0, image v1.8.3)..."
+        # Chart 2.15.0 is the newest version whose flux-check pre-install hook
+        # accepts Kubernetes 1.31. We override the image tag to v1.8.3 to
+        # match the bundled CRDs (chart default is v1.5.0 which still expects
+        # the v1beta2 storage version that v1.8.x dropped).
+        helm upgrade --install flux2 oci://ghcr.io/fluxcd-community/charts/flux2 \
+            --namespace flux-system --create-namespace \
+            --version 2.15.0 \
+            --set installCRDs=false \
+            --set sourceController.create=true \
+            --set sourceController.tag=v1.8.3 \
+            --set helmController.create=false \
+            --set kustomizeController.create=false \
+            --set notificationController.create=false \
+            --set imageAutomationController.create=false \
+            --set imageReflectionController.create=false \
+            --set policies.create=false \
+            --set rbac.createAggregation=false \
+            --wait --timeout 5m
+        success "Flux source-controller installed."
+    fi
 
     local apps=(openbao tofu-controller globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
