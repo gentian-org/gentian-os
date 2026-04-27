@@ -511,6 +511,83 @@ func TestTofuApps_ValueMappingVars(t *testing.T) {
 	}
 }
 
+// TestTofuApps_AppSecretsVarIsStructuredMap verifies that AppProfile.spec.appSecrets
+// is rendered into the Terraform CR's spec.vars as a structured JSON object
+// (map[string]interface{}), NOT a JSON-encoded string. The app-workspace module
+// declares `variable "app_secrets" { type = map(string) }`; passing a string
+// would cause OpenTofu to reject the Plan with
+// "map of string required, but have string".
+func TestTofuApps_AppSecretsVarIsStructuredMap(t *testing.T) {
+	profile := newTofuAppProfile("tofu-appsecrets-app", nil)
+	profile.Spec.AppSecrets = []gentianov1alpha1.AppSecret{
+		{Name: "registration_shared_secret", ValuePath: "configuration.homeserver.registrationSharedSecret"},
+		{Name: "intercom_as_token", ValuePath: "configuration.homeserver.appServiceConfigs[0].as_token"},
+	}
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "tofu-appsecrets-tenant"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Tofu AppSecrets Tenant",
+			Domain:      "appsecrets.example.com",
+			AdminEmail:  "admin@appsecrets.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "tofu-appsecrets-app"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	var tfCR *unstructured.Unstructured
+	waitFor(t, 15*time.Second, func() bool {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(tofuTerraformGVK)
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "tf-tofu-appsecrets-tenant-tofu-appsecrets-app", Namespace: "tofu-system"}, obj)
+		if err == nil {
+			tfCR = obj
+		}
+		return err == nil
+	})
+	if tfCR == nil {
+		t.Fatal("Terraform CR not created")
+	}
+
+	vars, _, _ := unstructured.NestedSlice(tfCR.Object, "spec", "vars")
+	var found bool
+	for _, v := range vars {
+		vm, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name, _ := vm["name"].(string); name != "app_secrets" {
+			continue
+		}
+		found = true
+		// Must be a structured map, not a string.
+		if _, isString := vm["value"].(string); isString {
+			t.Fatalf("app_secrets value is a string; must be a structured map for Tofu type=map(string)")
+		}
+		m, ok := vm["value"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("app_secrets value: want map[string]interface{}, got %T", vm["value"])
+		}
+		if got, _ := m["registration_shared_secret"].(string); got != "configuration.homeserver.registrationSharedSecret" {
+			t.Errorf("registration_shared_secret: got %q", got)
+		}
+		if got, _ := m["intercom_as_token"].(string); got != "configuration.homeserver.appServiceConfigs[0].as_token" {
+			t.Errorf("intercom_as_token: got %q", got)
+		}
+	}
+	if !found {
+		t.Fatal("app_secrets var not present in Terraform CR")
+	}
+}
+
 // TestTofuApps_NoArgocdCR verifies that a tofu-controller app does NOT create an
 // ArgoCD Application CR — only a Terraform CR in tofu-system.
 func TestTofuApps_NoArgocdCR(t *testing.T) {

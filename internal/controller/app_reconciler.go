@@ -547,8 +547,15 @@ func buildTerraformCR(
 	// Inc 21a: pass the profile's AppSecrets as a name→valuePath map. The
 	// app-workspace module reads each name from …/internal/{name} and injects
 	// its "value" at the given Helm dot path via set_sensitive.
+	//
+	// Tofu-controller's spec.vars[].value is `x-kubernetes-preserve-unknown-fields`
+	// (arbitrary JSON). We must pass the map as a structured value so it
+	// serializes to a JSON object `{"name":"path",…}` matching the
+	// `type = map(string)` declaration in app-workspace/variables.tf.
+	// Passing a JSON-encoded *string* would be rejected by Tofu's type checker
+	// ("map of string required, but have string").
 	if len(profile.Spec.AppSecrets) > 0 {
-		appSecretsMap := make(map[string]string, len(profile.Spec.AppSecrets))
+		appSecretsMap := make(map[string]interface{}, len(profile.Spec.AppSecrets))
 		for _, s := range profile.Spec.AppSecrets {
 			if s.Name == "" || s.ValuePath == "" {
 				continue
@@ -556,11 +563,7 @@ func buildTerraformCR(
 			appSecretsMap[s.Name] = s.ValuePath
 		}
 		if len(appSecretsMap) > 0 {
-			raw, err := json.Marshal(appSecretsMap)
-			if err != nil {
-				return nil, fmt.Errorf("marshal app_secrets for %s: %w", app.Profile, err)
-			}
-			vars = append(vars, map[string]interface{}{"name": "app_secrets", "value": string(raw)})
+			vars = append(vars, map[string]interface{}{"name": "app_secrets", "value": appSecretsMap})
 		}
 	}
 	_ = unstructured.SetNestedSlice(obj.Object, vars, "spec", "vars")
