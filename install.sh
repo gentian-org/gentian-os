@@ -1288,18 +1288,30 @@ install_cert_manager() {
 
     # Stale CRDs can remain after a partial uninstall; do not treat that as a
     # valid installation. Proceed with Helm install if webhook/service is absent.
+    local has_existing_crds="0"
     if kubectl get crd certificates.cert-manager.io &>/dev/null; then
+        has_existing_crds="1"
         warn "cert-manager CRDs exist, but no cert-manager webhook/service was detected."
-        warn "Proceeding with Helm install to restore a working cert-manager control plane."
+        warn "Proceeding with Helm install while reusing existing CRDs."
     fi
 
     helm repo add jetstack https://charts.jetstack.io --force-update
     helm repo update
-    helm install cert-manager jetstack/cert-manager \
-        -n cert-manager \
-        --create-namespace \
-        --set crds.enabled=true \
-        --wait --timeout 5m
+    if [[ "${has_existing_crds}" == "1" ]]; then
+        # Existing CRDs may come from distro addons or prior non-Helm installs;
+        # do not ask Helm to import/manage them.
+        helm upgrade --install cert-manager jetstack/cert-manager \
+            -n cert-manager \
+            --create-namespace \
+            --set crds.enabled=false \
+            --wait --timeout 5m
+    else
+        helm upgrade --install cert-manager jetstack/cert-manager \
+            -n cert-manager \
+            --create-namespace \
+            --set crds.enabled=true \
+            --wait --timeout 5m
+    fi
     CERT_MANAGER_NAMESPACE="cert-manager"
     export CERT_MANAGER_NAMESPACE
     success "cert-manager installed."
