@@ -11,6 +11,25 @@ locals {
   nubus_env_values  = "${local.nubus_root}values/env/${var.env}.yaml"
   nubus_base_values = "${local.nubus_root}services/nubus/values/_base.yaml"
   nubus_plain       = "${local.nubus_root}services/nubus/values/${var.env}/values-plain.yaml"
+
+  smtp_mode_raw = try(lower(data.vault_kv_secret_v2.mail_smtp.data["mode"]), "external")
+  smtp_mode     = contains(["external", "kernel"], local.smtp_mode_raw) ? local.smtp_mode_raw : "external"
+
+  smtp_host = local.smtp_mode == "kernel" ? "postfix-${var.env}.gentian-${var.env}.svc.cluster.local" : try(data.vault_kv_secret_v2.mail_smtp.data["host"], "")
+  smtp_port = tonumber(try(data.vault_kv_secret_v2.mail_smtp.data["port"], "587"))
+
+  smtp_ssl_raw      = try(lower(data.vault_kv_secret_v2.mail_smtp.data["ssl"]), "false")
+  smtp_starttls_raw = try(lower(data.vault_kv_secret_v2.mail_smtp.data["starttls"]), "true")
+  smtp_ssl          = local.smtp_ssl_raw == "true"
+  smtp_starttls     = local.smtp_starttls_raw == "true"
+
+  smtp_username = coalesce(
+    try(data.vault_kv_secret_v2.mail_smtp.data["username"], null),
+    try(data.vault_kv_secret_v2.postfix.data["relay_username"], null),
+    "opendesk-system@${var.domain}"
+  )
+
+  nubus_smtp_password = local.smtp_mode == "external" ? try(data.vault_kv_secret_v2.postfix.data["relay_password"], data.vault_kv_secret_v2.nubus.data["smtp_password"]) : data.vault_kv_secret_v2.nubus.data["smtp_password"]
 }
 
 resource "helm_release" "nubus" {
@@ -27,7 +46,13 @@ resource "helm_release" "nubus" {
   values = [
     file(local.nubus_env_values),
     templatefile(local.nubus_base_values, { domain = var.domain }),
-    file(local.nubus_plain),
+    templatefile(local.nubus_plain, {
+      smtp_host     = local.smtp_host,
+      smtp_port     = local.smtp_port,
+      smtp_ssl      = local.smtp_ssl,
+      smtp_starttls = local.smtp_starttls,
+      smtp_username = local.smtp_username,
+    }),
   ]
 
   # Master password — used by nubus to derive other credentials internally
@@ -39,11 +64,11 @@ resource "helm_release" "nubus" {
   # SMTP auth passwords (UMC server and Keycloak extensions use the same password)
   set_sensitive {
     name  = "nubusUmcServer.smtp.auth.password"
-    value = data.vault_kv_secret_v2.nubus.data["smtp_password"]
+    value = local.nubus_smtp_password
   }
   set_sensitive {
     name  = "nubusKeycloakExtensions.smtp.auth.password"
-    value = data.vault_kv_secret_v2.nubus.data["smtp_password"]
+    value = local.nubus_smtp_password
   }
 
   # Keycloak admin password

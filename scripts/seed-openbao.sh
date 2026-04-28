@@ -44,6 +44,11 @@ SMTP_RELAY_PASS="${5:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
+MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}"
+EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
+EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
+EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -460,6 +465,34 @@ else
     echo "  Skipping postfix credentials (not provided)."
     echo "  To add them later: bao kv put gentian-os/kernel/mail/postfix relay_username=<u> relay_password=<p>"
 fi
+
+# --- Mail transport settings consumed by Tofu/Nubus rendering ---
+# This path is operational config (not a derived password), so we intentionally
+# overwrite it on each run to reflect install.env changes.
+if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then
+  echo "  Invalid MAIL_SERVICE_MODE='${MAIL_SERVICE_MODE}' (expected external|kernel); defaulting to external"
+  MAIL_SERVICE_MODE="external"
+fi
+
+if [ "${MAIL_SERVICE_MODE}" = "external" ] && [ -z "${EXTERNAL_SMTP_HOST}" ]; then
+  echo "  MAIL_SERVICE_MODE=external but EXTERNAL_SMTP_HOST is empty; SMTP delivery will be broken."
+fi
+
+kv_put "mail/smtp" "$(jq -n \
+  --arg mode "${MAIL_SERVICE_MODE}" \
+  --arg host "${EXTERNAL_SMTP_HOST}" \
+  --arg port "${EXTERNAL_SMTP_PORT}" \
+  --arg ssl "${EXTERNAL_SMTP_SSL}" \
+  --arg starttls "${EXTERNAL_SMTP_STARTTLS}" \
+  --arg username "${SMTP_RELAY_USER}" \
+  '{
+    "mode": $mode,
+    "host": $host,
+    "port": $port,
+    "ssl": $ssl,
+    "starttls": $starttls,
+    "username": $username
+  }')"
 
 # --- Registry (OCI pull credentials) — only if provided ---
 if [ -n "$REGISTRY_USER" ] && [ -n "$REGISTRY_PASSWORD" ]; then

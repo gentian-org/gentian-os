@@ -9,12 +9,13 @@
 nubusUmcServer:
   smtp:
     connection:
-      host: postfix-dev.gentian-dev.svc.cluster.local
-      port: 25
-      ssl: false
-      starttls: false
+      host: ${smtp_host}
+      port: ${smtp_port}
+      ssl: ${smtp_ssl}
+      starttls: ${smtp_starttls}
     auth:
       enabled: true
+      username: ${smtp_username}
   postgresql:
     selfservice:
       connection:
@@ -104,6 +105,7 @@ nubusKeycloakExtensions:
   smtp:
     auth:
       enabled: true
+      username: ${smtp_username}
 
 nubusStackDataUms:
   postgresql:
@@ -126,8 +128,8 @@ nubusStackDataUms:
     objectStorage:
       endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
   stackDataContext:
-    smtpHost: postfix-dev.gentian-dev.svc.cluster.local
-    smtpPort: 25
+    smtpHost: ${smtp_host}
+    smtpPort: ${smtp_port}
   templateContext:
     # Passwords for ldapSearchUsers and initialPasswordAdministrator / oxSystemUserPassword
     # are injected via set_sensitive. Usernames and lastnames go here.

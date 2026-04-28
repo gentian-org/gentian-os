@@ -31,8 +31,10 @@
 #   MASTER_PASSWORD                — master password for HKDF-derived secrets
 #   OD_PRIVATE_REGISTRY_USERNAME   — registry.opencode.de username
 #   OD_PRIVATE_REGISTRY_PASSWORD   — registry.opencode.de password or token
-#   OD_SMTP_RELAY_USERNAME         — SMTP relay username (e.g. Gmail address)
-#   OD_SMTP_RELAY_PASSWORD         — SMTP relay password (e.g. Gmail App Password)
+#   OD_SMTP_RELAY_USERNAME         — SMTP username (e.g. Gmail address)
+#   OD_SMTP_RELAY_PASSWORD         — SMTP password (e.g. Gmail App Password)
+#   MAIL_SERVICE_MODE              — external|kernel (default: external)
+#   EXTERNAL_SMTP_HOST             — required when MAIL_SERVICE_MODE=external
 #   KERNEL_DOMAIN                  — single platform-wide DNS suffix (e.g.
 #                                    platform.example.com). Persisted to
 #                                    .install-state.env after first prompt.
@@ -486,6 +488,11 @@ INPUT_HIERARCHY_VARS=(
     OD_PRIVATE_REGISTRY_PASSWORD
     OD_SMTP_RELAY_USERNAME
     OD_SMTP_RELAY_PASSWORD
+    MAIL_SERVICE_MODE
+    EXTERNAL_SMTP_HOST
+    EXTERNAL_SMTP_PORT
+    EXTERNAL_SMTP_SSL
+    EXTERNAL_SMTP_STARTTLS
     KERNEL_DOMAIN
     NODE_IP
     SKIP_TOOLS
@@ -633,8 +640,19 @@ validate_config() {
     _req MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets"
     _req OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username"
     _req OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token"
-    _req OD_SMTP_RELAY_USERNAME   "SMTP relay username (e.g. Gmail address)"
-    _req OD_SMTP_RELAY_PASSWORD   "SMTP relay password (e.g. Gmail App Password)"
+    _req OD_SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)"
+    _req OD_SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)"
+
+    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel'"
+        (( errors++ )) || true
+    else
+        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}"
+    fi
+    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+        _req EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)"
+    fi
 
     echo ""
     echo "━━━ Required config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -824,9 +842,33 @@ prompt_credentials() {
         prompted=1
     fi
 
+    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            error "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE} invalid in non-interactive mode. Use external|kernel."
+            exit 1
+        fi
+        read -rp "  MAIL_SERVICE_MODE [external|kernel] (default: external): " MAIL_SERVICE_MODE; echo ""
+        MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    fi
+    export MAIL_SERVICE_MODE
+
+    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+        if [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
+            read -rp "  EXTERNAL_SMTP_HOST (e.g. smtp.gmail.com): " EXTERNAL_SMTP_HOST; echo ""
+            export EXTERNAL_SMTP_HOST
+            prompted=1
+        fi
+        : "${EXTERNAL_SMTP_PORT:=587}"
+        : "${EXTERNAL_SMTP_SSL:=false}"
+        : "${EXTERNAL_SMTP_STARTTLS:=true}"
+        export EXTERNAL_SMTP_PORT EXTERNAL_SMTP_SSL EXTERNAL_SMTP_STARTTLS
+    fi
+
     if [[ "$prompted" -eq 1 ]]; then
         echo ""
         save_creds_cache
+        save_install_state
     fi
 }
 
@@ -927,6 +969,16 @@ save_install_state() {
         echo "# Delete to be re-prompted on next run."
         val="${KERNEL_DOMAIN:-}"
         [[ -n "$val" ]] && printf 'export KERNEL_DOMAIN=%q\n' "$val"
+        val="${MAIL_SERVICE_MODE:-}"
+        [[ -n "$val" ]] && printf 'export MAIL_SERVICE_MODE=%q\n' "$val"
+        val="${EXTERNAL_SMTP_HOST:-}"
+        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_HOST=%q\n' "$val"
+        val="${EXTERNAL_SMTP_PORT:-}"
+        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_PORT=%q\n' "$val"
+        val="${EXTERNAL_SMTP_SSL:-}"
+        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_SSL=%q\n' "$val"
+        val="${EXTERNAL_SMTP_STARTTLS:-}"
+        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_STARTTLS=%q\n' "$val"
         val="${GENTIAN_MANAGED_CERT_MANAGER:-}"
         [[ -n "$val" ]] && printf 'export GENTIAN_MANAGED_CERT_MANAGER=%q\n' "$val"
     } >"$tmp"
@@ -1114,6 +1166,13 @@ check_prereqs() {
             success "$var set"
         fi
     done
+
+    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    export MAIL_SERVICE_MODE
+    if [[ "${MAIL_SERVICE_MODE}" == "external" && -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
+        error "EXTERNAL_SMTP_HOST is required when MAIL_SERVICE_MODE=external"
+        missing=$((missing + 1))
+    fi
 
     if [[ "$missing" -gt 0 ]]; then
         error "$missing prerequisite(s) missing. Aborting."
@@ -1904,6 +1963,11 @@ seed_secrets() {
     # seed-openbao.sh contract stays backward-compatible. Seed-openbao
     # writes it to secret/gentian-os/kernel/dns/cloudflare when present.
     CF_API_TOKEN="${CF_API_TOKEN:-}" \
+    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}" \
+    EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}" \
+    EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}" \
+    EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}" \
+    EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}" \
     bash "${SCRIPT_DIR}/scripts/seed-openbao.sh" \
         "$MASTER_PASSWORD" \
         "$OD_PRIVATE_REGISTRY_USERNAME" \
