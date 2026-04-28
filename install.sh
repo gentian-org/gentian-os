@@ -1490,7 +1490,7 @@ resolve_argocd_url() {
         local detected
         if [[ -n "${NODE_IP:-}" ]]; then
             if _is_testnet_ip "${NODE_IP}"; then
-                warn "NODE_IP=${NODE_IP} looks like documentation/testnet IP; auto-detecting real node IP instead."
+                warn "NODE_IP=${NODE_IP} looks like documentation/testnet IP; auto-detecting real node IP instead." >&2
             else
                 echo "${NODE_IP}"
                 return 0
@@ -2128,6 +2128,8 @@ print_summary() {
     keycloak_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
                         -o jsonpath='{.data.keycloak-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
     argocd_url=$(resolve_argocd_url)
+    portal_url="https://portal.${KERNEL_DOMAIN}"
+    keycloak_url="https://id.${KERNEL_DOMAIN}"
 
     echo ""
     if [[ "${VERIFY_STATUS:-unknown}" == "ok" ]]; then
@@ -2135,6 +2137,8 @@ print_summary() {
         echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
         echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
+        echo -e "${GREEN}║  Portal URL   : ${portal_url}${NC}"
+        echo -e "${GREEN}║  Keycloak URL : ${keycloak_url}${NC}"
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
@@ -2154,11 +2158,15 @@ print_summary() {
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  Provision tenant: kubectl apply -f config/samples/tenant_gtn-demo.yaml"
         echo "  Install apps:    kubectl gentian install <profile>"
+        echo ""
+        echo -e "${GREEN}🎉  Gentian OS successfully installed. Welcome aboard!${NC}"
     else
         echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
         echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${YELLOW}║  ArgoCD URL   : ${argocd_url}${NC}"
+        echo -e "${YELLOW}║  Portal URL   : ${portal_url}${NC}"
+        echo -e "${YELLOW}║  Keycloak URL : ${keycloak_url}${NC}"
         echo -e "${YELLOW}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${YELLOW}║  Status       : ${VERIFY_STATUS:-unknown} (${VERIFY_TOTAL:-0} apps)${NC}"
         echo -e "${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
