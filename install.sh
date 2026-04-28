@@ -471,6 +471,7 @@ INSTALL_SECRETS_CACHE="${INSTALL_SECRETS_CACHE:-${SCRIPT_DIR}/.install-secrets.e
 # re-runs do not re-prompt. Gitignored. Set INSTALL_STATE_FILE=/dev/null to
 # disable persistence.
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
+CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 
 # Input precedence (highest -> lowest):
 #   1) CLI flags / existing shell environment
@@ -1263,13 +1264,33 @@ install_cert_manager() {
         return
     fi
 
-    # Detect non-Helm installs (e.g. `microk8s enable cert-manager`) to avoid
-    # ownership-metadata conflicts during `helm install`.
-    if kubectl get deployment cert-manager -n cert-manager &>/dev/null \
-        || kubectl get crd certificates.cert-manager.io &>/dev/null; then
-        warn "cert-manager already present but not managed by Helm (e.g. microk8s addon)."
-        warn "Skipping Helm install. Use that installation as-is, or remove it first to let install.sh manage it."
+    # Discover an existing non-Helm cert-manager install by finding the
+    # webhook deployment/service in any namespace.
+    local detected_ns=""
+    detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
+        | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+        | head -1 || true)
+
+    if [[ -z "${detected_ns}" ]]; then
+        detected_ns=$(kubectl get svc -A -o json 2>/dev/null \
+            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+            | head -1 || true)
+    fi
+
+    # Only skip Helm if a real cert-manager installation is present.
+    if [[ -n "${detected_ns}" ]]; then
+        CERT_MANAGER_NAMESPACE="${detected_ns}"
+        export CERT_MANAGER_NAMESPACE
+        warn "cert-manager already present but not managed by Helm (e.g. distro addon)."
+        info "Detected cert-manager webhook in namespace ${CERT_MANAGER_NAMESPACE}; using that installation as-is."
         return
+    fi
+
+    # Stale CRDs can remain after a partial uninstall; do not treat that as a
+    # valid installation. Proceed with Helm install if webhook/service is absent.
+    if kubectl get crd certificates.cert-manager.io &>/dev/null; then
+        warn "cert-manager CRDs exist, but no cert-manager webhook/service was detected."
+        warn "Proceeding with Helm install to restore a working cert-manager control plane."
     fi
 
     helm repo add jetstack https://charts.jetstack.io --force-update
@@ -1279,6 +1300,8 @@ install_cert_manager() {
         --create-namespace \
         --set crds.enabled=true \
         --wait --timeout 5m
+    CERT_MANAGER_NAMESPACE="cert-manager"
+    export CERT_MANAGER_NAMESPACE
     success "cert-manager installed."
 }
 
@@ -1309,10 +1332,30 @@ install_kernel_cert_resources() {
         exit 1
     fi
 
+    # Resolve cert-manager namespace dynamically (Helm default is cert-manager,
+    # but distro addons may place it elsewhere).
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" &>/dev/null; then
+        local detected_ns=""
+        detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
+            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+            | head -1 || true)
+        if [[ -n "${detected_ns}" ]]; then
+            CERT_MANAGER_NAMESPACE="${detected_ns}"
+            export CERT_MANAGER_NAMESPACE
+        fi
+    fi
+
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" &>/dev/null; then
+        error "cert-manager webhook deployment not found in namespace ${CERT_MANAGER_NAMESPACE}."
+        error "cert-manager is not operational; cannot apply ClusterIssuers safely."
+        error "Fix cert-manager first, then re-run install.sh."
+        exit 1
+    fi
+
     # Wait for cert-manager webhook to be ready (Certificate/ClusterIssuer
     # admission would otherwise be rejected by an uninitialized webhook).
-    info "Waiting for cert-manager webhook to be ready..."
-    kubectl rollout status -n cert-manager deploy/cert-manager-webhook --timeout=180s >/dev/null \
+    info "Waiting for cert-manager webhook to be ready in namespace ${CERT_MANAGER_NAMESPACE}..."
+    kubectl rollout status -n "${CERT_MANAGER_NAMESPACE}" deploy/cert-manager-webhook --timeout=180s >/dev/null \
         || warn "cert-manager-webhook not Ready within 180s (continuing)."
 
     # Apply the two ClusterIssuers (always safe — no Cloudflare secret
