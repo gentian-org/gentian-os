@@ -70,7 +70,18 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
-	// Step 2 — per-app bind accounts (only after OU is ready)
+	// Step 2 — tenant-scoped delegated admin policy (Option B)
+	adminPolicyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure LDAP admin policy Job: %w", err)
+	}
+	if !adminPolicyDone {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
+			"ProvisioningAdminPolicy", "Waiting for UDM admin policy Job to complete")
+		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
+	}
+
+	// Step 3 — per-app bind accounts (only after OU + admin policy are ready)
 	allDone := true
 	for _, appName := range ldapApps {
 		done, err := r.ensureBindAccountJob(ctx, tenant, ouDN, appName)
@@ -122,6 +133,26 @@ func (r *TenantReconciler) ensureOUJob(ctx context.Context, tenant *gentianov1al
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		return false, r.Create(ctx, makeOUJob(tenant, ouDN))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
+// ensureAdminPolicyJob creates the delegated-admin policy Job if absent.
+// Returns true when the Job has completed successfully.
+func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
+	jobName := adminPolicyJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makeAdminPolicyJob(tenant, ouDN))
 	}
 	if err != nil {
 		return false, err
@@ -238,6 +269,31 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPass
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{c},
+				},
+			},
+		},
+	}
+}
+
+func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      adminPolicyJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("provision-admin-policy", buildAdminPolicyScript(ouDN, tenant.Name)),
+					},
 				},
 			},
 		},
@@ -402,6 +458,67 @@ else
 fi`, ouDN, appName, appName, appName, appName)
 }
 
+// buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
+// tenant OU. It binds admins_<tenant> to UDM user/group management scoped to
+// the tenant subtree only.
+func buildAdminPolicyScript(ouDN, tenantName string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+
+OU_POS="%s"
+ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
+POLICY_DN="cn=tenant-admins-%s,cn=UMC,cn=policies,${UDM_LDAP_BASE}"
+MODULE_DN="cn=tenant-%s,cn=udm,cn=settings,${UDM_LDAP_BASE}"
+
+POLICY_ENC=$(urlencode "${POLICY_DN}")
+MODULE_ENC=$(urlencode "${MODULE_DN}")
+ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
+
+# Ensure tenant admins group exists.
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
+if [ "${STATUS}" = "404" ]; then
+	echo "admins group ${ADMINS_GRP_DN} is missing"
+	exit 1
+fi
+
+# Ensure UMC policy exists and is linked to admins_<tenant>.
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/policies/umc/dn/${POLICY_ENC}")
+if [ "${STATUS}" = "404" ]; then
+	curl -s -o /dev/null -X POST ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/policies/umc/" \
+		-d "{\"properties\":{\"name\":\"tenant-admins-%s\",\"requiredObjectClasses\":[\"top\"]},\"position\":\"cn=UMC,cn=policies,${UDM_LDAP_BASE}\",\"policies\":{\"groups/group\":[\"${ADMINS_GRP_DN}\"]}}"
+	echo "UMC policy tenant-admins-%s created"
+else
+	echo "UMC policy tenant-admins-%s already exists"
+fi
+
+# Ensure UDM module scope entry exists for tenant OU.
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/settings/udm_module/dn/${MODULE_ENC}")
+if [ "${STATUS}" = "404" ]; then
+	curl -s -o /dev/null -X POST ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/settings/udm_module/" \
+		-d "{\"properties\":{\"name\":\"tenant-%s\",\"module\":\"users/user\",\"subtree\":\"${OU_POS}\"},\"position\":\"cn=udm,cn=settings,${UDM_LDAP_BASE}\"}"
+	echo "UDM module scope tenant-%s created"
+else
+	echo "UDM module scope tenant-%s already exists"
+fi`,
+		ouDN, tenantName, tenantName, tenantName,
+		tenantName, tenantName, tenantName,
+		tenantName, tenantName, tenantName)
+}
+
 // buildOUDeleteScript removes the tenant OU and all child entries.
 func buildOUDeleteScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
@@ -442,6 +559,10 @@ func ouJobName(tenantName string) string {
 
 func bindAccountJobName(tenantName, appName string) string {
 	return fmt.Sprintf("ldap-bind-%s-%s", tenantName, appName)
+}
+
+func adminPolicyJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-admin-policy-%s", tenantName)
 }
 
 func ouDeleteJobName(tenantName string) string {
