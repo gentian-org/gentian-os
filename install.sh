@@ -2133,6 +2133,13 @@ print_summary() {
 
     echo ""
     if [[ "${VERIFY_STATUS:-unknown}" == "ok" ]]; then
+        echo "  ✔ ArgoCD reachable"
+        echo "  ✔ All Applications Synced + Healthy"
+        echo "  ✔ AppCatalogue CRD installed"
+        echo "  ✔ gentian-os orchestrator running (Tenant CRD Established)"
+        echo "  ✔ Cluster admin credentials materialized (nubus-credentials)"
+        echo ""
+
         echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
         echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
         echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
@@ -2144,12 +2151,6 @@ print_summary() {
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo "  ✔ ArgoCD reachable"
-        echo "  ✔ All Applications Synced + Healthy"
-        echo "  ✔ AppCatalogue CRD installed"
-        echo "  ✔ gentian-os orchestrator running (Tenant CRD Established)"
-        echo "  ✔ Cluster admin credentials materialized (nubus-credentials)"
         echo ""
         echo "  Retrieve credentials later:"
         echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.admin-password}' | base64 -d"
