@@ -498,6 +498,7 @@ INPUT_HIERARCHY_VARS=(
     GENTIAN_DEPLOYMENTS_PATH
     GENTIAN_NONINTERACTIVE
     INSTALL_CLUSTER_INFRA
+    GENTIAN_MANAGED_CERT_MANAGER
     CF_API_TOKEN
     CF_ZONE_NAME
 )
@@ -921,6 +922,8 @@ save_install_state() {
         echo "# Delete to be re-prompted on next run."
         val="${KERNEL_DOMAIN:-}"
         [[ -n "$val" ]] && printf 'export KERNEL_DOMAIN=%q\n' "$val"
+        val="${GENTIAN_MANAGED_CERT_MANAGER:-}"
+        [[ -n "$val" ]] && printf 'export GENTIAN_MANAGED_CERT_MANAGER=%q\n' "$val"
     } >"$tmp"
     install -m 0644 "$tmp" "${INSTALL_STATE_FILE}"
     rm -f "$tmp"
@@ -1260,6 +1263,9 @@ install_cert_manager() {
     banner "Step 3 — Installing cert-manager"
 
     if helm status cert-manager -n cert-manager &>/dev/null; then
+        # Existing Helm release may have been created by a previous install.sh run.
+        : "${GENTIAN_MANAGED_CERT_MANAGER:=1}"
+        save_install_state
         success "cert-manager already installed (Helm release present). Skipping."
         return
     fi
@@ -1281,6 +1287,8 @@ install_cert_manager() {
     if [[ -n "${detected_ns}" ]]; then
         CERT_MANAGER_NAMESPACE="${detected_ns}"
         export CERT_MANAGER_NAMESPACE
+        GENTIAN_MANAGED_CERT_MANAGER="0"
+        save_install_state
         warn "cert-manager already present but not managed by Helm (e.g. distro addon)."
         info "Detected cert-manager webhook in namespace ${CERT_MANAGER_NAMESPACE}; using that installation as-is."
         return
@@ -1314,6 +1322,8 @@ install_cert_manager() {
     fi
     CERT_MANAGER_NAMESPACE="cert-manager"
     export CERT_MANAGER_NAMESPACE
+    GENTIAN_MANAGED_CERT_MANAGER="1"
+    save_install_state
     success "cert-manager installed."
 }
 

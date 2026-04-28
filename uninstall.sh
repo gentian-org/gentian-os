@@ -27,6 +27,10 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 MODE="safe"
 UNINSTALL_CLUSTER_INFRA=0
+UNINSTALL_CERT_MANAGER=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
+GENTIAN_MANAGED_CERT_MANAGER="${GENTIAN_MANAGED_CERT_MANAGER:-0}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -61,6 +65,22 @@ for cmd in kubectl helm; do
         exit 1
     fi
 done
+
+# Load installer state (if present) so we only uninstall cert-manager when it
+# was actually managed by install.sh.
+if [[ -r "${INSTALL_STATE_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${INSTALL_STATE_FILE}" || true
+fi
+
+if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
+    if [[ "${GENTIAN_MANAGED_CERT_MANAGER:-0}" == "1" ]]; then
+        UNINSTALL_CERT_MANAGER=1
+    else
+        warn "Installer state indicates cert-manager is NOT managed by gentian-os;"
+        warn "keeping cert-manager in place while removing other Gentian infra."
+    fi
+fi
 
 APP_NS="argocd"
 
@@ -102,10 +122,12 @@ TARGET_NAMESPACES_CORE=(
 )
 
 TARGET_NAMESPACES_INFRA=(
-    cert-manager
     stakater-system
     cnpg-system
 )
+if [[ "${UNINSTALL_CERT_MANAGER}" == "1" ]]; then
+    TARGET_NAMESPACES_INFRA=(cert-manager "${TARGET_NAMESPACES_INFRA[@]}")
+fi
 
 delete_app_safely() {
     local name="$1"
@@ -328,7 +350,7 @@ fi
 info "Uninstalling Helm releases installed directly by install.sh..."
 helm uninstall external-secrets -n external-secrets >/dev/null 2>&1 || true
 helm uninstall gentian-os -n gentian-system >/dev/null 2>&1 || true
-if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
+if [[ "$UNINSTALL_CERT_MANAGER" == "1" ]]; then
     helm uninstall cert-manager -n cert-manager >/dev/null 2>&1 || true
 fi
 
