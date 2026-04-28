@@ -368,6 +368,15 @@ if [[ "$MODE" == "safe" ]]; then
 else
     info "Force mode: deleting all Gentian namespaces and bound PVs."
     KUBECTL_REQUEST_TIMEOUT="${KUBECTL_REQUEST_TIMEOUT:-10s}"
+    KUBECTL_HARD_TIMEOUT="${KUBECTL_HARD_TIMEOUT:-15s}"
+    _kctl() {
+        if command -v timeout >/dev/null 2>&1; then
+            timeout --foreground "$KUBECTL_HARD_TIMEOUT" \
+                kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" "$@"
+        else
+            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" "$@"
+        fi
+    }
     local_namespaces=("${TARGET_NAMESPACES_CORE[@]}")
     if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
         local_namespaces+=("${TARGET_NAMESPACES_INFRA[@]}")
@@ -385,40 +394,44 @@ else
     # Strip both BEFORE issuing the namespace delete so the namespace
     # controller has nothing left to wait on.
     info "Pre-stripping finalizers on Apps / AppSets / Terraforms / PVCs..."
-    if kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get crd applications.argoproj.io >/dev/null 2>&1; then
-        mapfile -t _apps < <(kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get application -n "$APP_NS" -o name 2>/dev/null || true)
+    info "  - ArgoCD Applications"
+    if _kctl get crd applications.argoproj.io >/dev/null 2>&1; then
+        mapfile -t _apps < <(_kctl get application -n "$APP_NS" -o name 2>/dev/null || true)
         for app in "${_apps[@]}"; do
             [[ -n "$app" ]] || continue
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" patch -n "$APP_NS" "$app" --type=merge \
+            _kctl patch -n "$APP_NS" "$app" --type=merge \
                 -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" delete -n "$APP_NS" "$app" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+            _kctl delete -n "$APP_NS" "$app" --wait=false --ignore-not-found >/dev/null 2>&1 || true
         done
     fi
-    if kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get crd applicationsets.argoproj.io >/dev/null 2>&1; then
-        mapfile -t _appsets < <(kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get applicationset -n "$APP_NS" -o name 2>/dev/null || true)
+    info "  - ArgoCD ApplicationSets"
+    if _kctl get crd applicationsets.argoproj.io >/dev/null 2>&1; then
+        mapfile -t _appsets < <(_kctl get applicationset -n "$APP_NS" -o name 2>/dev/null || true)
         for as in "${_appsets[@]}"; do
             [[ -n "$as" ]] || continue
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" patch -n "$APP_NS" "$as" --type=merge \
+            _kctl patch -n "$APP_NS" "$as" --type=merge \
                 -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" delete -n "$APP_NS" "$as" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+            _kctl delete -n "$APP_NS" "$as" --wait=false --ignore-not-found >/dev/null 2>&1 || true
         done
     fi
-    if kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get crd terraforms.infra.contrib.fluxcd.io >/dev/null 2>&1; then
+    info "  - Tofu Terraform CRs"
+    if _kctl get crd terraforms.infra.contrib.fluxcd.io >/dev/null 2>&1; then
         while IFS=/ read -r ns name; do
             [[ -z "$ns" || -z "$name" ]] && continue
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" patch terraform "$name" -n "$ns" --type=merge \
+            _kctl patch terraform "$name" -n "$ns" --type=merge \
                 -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" delete terraform "$name" -n "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
-        done < <(kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get terraform -A \
+            _kctl delete terraform "$name" -n "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done < <(_kctl get terraform -A \
                  -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
     fi
     # Strip pvc-protection finalizers in all target namespaces up-front.
+    info "  - PVC finalizers in target namespaces"
     for ns in "${local_namespaces[@]}"; do
-        if ! kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get namespace "$ns" >/dev/null 2>&1; then continue; fi
-        mapfile -t _pvcs < <(kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" get pvc -n "$ns" -o name 2>/dev/null || true)
+        if ! _kctl get namespace "$ns" >/dev/null 2>&1; then continue; fi
+        mapfile -t _pvcs < <(_kctl get pvc -n "$ns" -o name 2>/dev/null || true)
         for pvc in "${_pvcs[@]}"; do
             [[ -n "$pvc" ]] || continue
-            kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" patch -n "$ns" "$pvc" --type=merge \
+            _kctl patch -n "$ns" "$pvc" --type=merge \
                 -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
         done
     done
