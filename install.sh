@@ -1447,7 +1447,7 @@ install_kernel_wildcard() {
         warn "Continuing — wildcard Certificate will issue once the Secret appears."
     fi
 
-    # 3) Apply the wildcard Certificate.
+    # 3) Apply the wildcard Certificate (with domain name templating).
     envsubst "\${KERNEL_DOMAIN}" \
         < "${SCRIPT_DIR}/kernel/manifests/cert-manager/wildcard-kernel-cert.yaml" \
         | kubectl apply -f -
