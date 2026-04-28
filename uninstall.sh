@@ -437,37 +437,42 @@ else
     done
 
     # ── ISSUE NAMESPACE DELETES (non-blocking) ──────────────────────────────
+    info "Issuing namespace deletes (non-blocking)..."
     for ns in "${local_namespaces[@]}"; do
-        kubectl delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        _kctl delete namespace "$ns" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     done
 
     if command -v jq >/dev/null 2>&1; then
-                if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
-                        mapfile -t pvs < <(kubectl get pv -o json | jq -r '.items[]
+        info "Resolving bound PVs for deleted namespaces..."
+        if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
+            mapfile -t pvs < <(_kctl get pv -o json 2>/dev/null | jq -r '.items[]
                             | select(.spec.claimRef != null)
                             | .spec.claimRef.namespace as $ns
                             | select(["argocd","external-secrets","tofu-system","flux-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev","cert-manager","stakater-system","cnpg-system"]
                                 | index($ns))
                             | .metadata.name')
-                else
-                        mapfile -t pvs < <(kubectl get pv -o json | jq -r '.items[]
+        else
+            mapfile -t pvs < <(_kctl get pv -o json 2>/dev/null | jq -r '.items[]
                             | select(.spec.claimRef != null)
                             | .spec.claimRef.namespace as $ns
                             | select(["argocd","external-secrets","tofu-system","flux-system","gentian-system","openbao","platform-kernel","gentian-dev","gentian-infra-dev"]
                                 | index($ns))
                             | .metadata.name')
-                fi
+        fi
         if [[ ${#pvs[@]} -gt 0 ]]; then
+            info "Stripping PV finalizers and deleting ${#pvs[@]} PV(s)..."
             # Strip pv-protection finalizers first so delete is non-blocking.
             # Without this, `kubectl delete pv` blocks waiting for the volume
             # to detach from the node, which can take minutes (or forever if
             # the kubelet is wedged).
             for pv in "${pvs[@]}"; do
-                kubectl patch pv "$pv" --type=merge \
+                _kctl patch pv "$pv" --type=merge \
                     -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
             done
-            kubectl delete pv "${pvs[@]}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+            _kctl delete pv "${pvs[@]}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
             success "Deleted bound PVs for Gentian namespaces."
+        else
+            info "No bound PVs found for Gentian namespaces."
         fi
     else
         warn "jq not found; skipped targeted PV deletion."
