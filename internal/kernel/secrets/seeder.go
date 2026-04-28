@@ -284,6 +284,35 @@ func (s *Seeder) SeedLDAP(ctx context.Context, tenant, app string, base LDAPCred
 	}, nil
 }
 
+// --- Tenant admin (Keycloak realm-admin) ------------------------------------
+
+// TenantAdminCreds is the set of values written to …/admin.
+type TenantAdminCreds struct {
+	Username string
+	Password string
+}
+
+// SeedTenantAdmin derives the tenant admin password from the master and
+// persists it write-once under gentian-os/tenants/<tenant>/admin.
+// Username defaults to "admin" and is included in the record so operators
+// can override it by writing a different value to OpenBao before first
+// reconcile.
+func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdminCreds, error) {
+	salt := TenantAdminPath(tenant)
+	want := map[string]string{
+		"username": "admin",
+		"password": s.gen(salt, "password", 40),
+	}
+	got, err := s.seedAndRead(ctx, salt, want)
+	if err != nil {
+		return TenantAdminCreds{}, fmt.Errorf("seed tenant-admin(%s): %w", tenant, err)
+	}
+	return TenantAdminCreds{
+		Username: got["username"],
+		Password: got["password"],
+	}, nil
+}
+
 // --- Per-app internal secrets ------------------------------------------------
 
 // SeedAppSecret derives a single AppSecret by name and writes it as

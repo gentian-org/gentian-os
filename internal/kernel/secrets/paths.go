@@ -43,3 +43,9 @@ func KernelPath(category, name string) string {
 // writes the platform master password. The operator reads it once at
 // startup and feeds it to the Deriver.
 const MasterPasswordPath = "gentian-os/kernel/internal/master-password"
+
+// TenantAdminPath returns the canonical KV v2 logical path for the
+// tenant-scoped realm admin credentials created by the identity reconciler.
+func TenantAdminPath(tenant string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/admin", tenant)
+}

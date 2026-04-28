@@ -199,7 +199,15 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-realm-clienttest", "platform-kernel")
 
-	// Client Job should be created after realm is complete.
+	// Wait for admin Job, then mark it complete.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-admin-clienttest", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-admin-clienttest", "platform-kernel")
+
+	// Client Job should be created after admin is complete.
 	clientJob := &batchv1.Job{}
 	waitFor(t, 15*time.Second, func() bool {
 		return testClient.Get(context.Background(),
@@ -245,6 +253,14 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-realm-allready", "platform-kernel")
 
+	// Mark admin Job complete.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-admin-allready", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-admin-allready", "platform-kernel")
+
 	// Wait for client Job, then mark it complete.
 	waitFor(t, 15*time.Second, func() bool {
 		j := &batchv1.Job{}
@@ -281,6 +297,84 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	if identCond.Reason != "Provisioned" {
 		t.Errorf("expected reason Provisioned, got %q", identCond.Reason)
 	}
+}
+
+// TestIdentity_CreatesAdminJobAfterRealm verifies that the reconciler creates a
+// tenant admin provisioning Job after the realm Job completes, before moving on
+// to OIDC client Jobs. The admin Job must carry TENANT_ADMIN_USERNAME and
+// TENANT_ADMIN_PASSWORD env vars.
+func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
+	profile := newOIDCProfile("oidc-app-admin")
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "admintest"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Admin Test Co",
+			Domain:      "admintest.example.com",
+			AdminEmail:  "admin@admintest.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app-admin"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// Realm Job should be created first.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-realm-admintest", Namespace: "platform-kernel"}, j) == nil
+	})
+
+	// Admin Job must NOT exist yet (realm not complete).
+	adminJob := &batchv1.Job{}
+	if testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob) == nil {
+		t.Error("admin Job should not exist before realm Job completes")
+	}
+
+	markJobComplete(t, "keycloak-realm-admintest", "platform-kernel")
+
+	// Now the admin Job should appear.
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob) == nil
+	})
+
+	if adminJob.Labels["gentianos.io/tenant"] != "admintest" {
+		t.Errorf("expected tenant label admintest, got %q", adminJob.Labels["gentianos.io/tenant"])
+	}
+	container := adminJob.Spec.Template.Spec.Containers[0]
+	envNames := make(map[string]string)
+	for _, e := range container.Env {
+		envNames[e.Name] = e.Value
+	}
+	if _, ok := envNames["TENANT_ADMIN_USERNAME"]; !ok {
+		t.Error("expected TENANT_ADMIN_USERNAME env var in admin Job")
+	}
+	if _, ok := envNames["TENANT_ADMIN_PASSWORD"]; !ok {
+		t.Error("expected TENANT_ADMIN_PASSWORD env var in admin Job")
+	}
+
+	// Client Job must NOT exist yet (admin job pending).
+	clientJob := &batchv1.Job{}
+	if testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil {
+		t.Error("client Job should not exist before admin Job completes")
+	}
+
+	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
+
+	// Client Job should now be created.
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil
+	})
 }
 
 // TestIdentity_DeleteDeletePolicy_CreatesCleanupJob verifies that deleting a Tenant
