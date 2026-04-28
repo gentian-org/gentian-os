@@ -462,6 +462,7 @@ INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
 INSTALL_SECRETS_FILE="${INSTALL_SECRETS_FILE:-${SCRIPT_DIR}/install.secrets.env}"
 INSTALL_AUTO_LOAD_CONFIG="${INSTALL_AUTO_LOAD_CONFIG:-1}"
 INSTALL_VALIDATE_ONLY="${INSTALL_VALIDATE_ONLY:-0}"
+INSTALL_VERIFY_ONLY="${INSTALL_VERIFY_ONLY:-0}"
 # Local on-disk cache of the credentials prompted on the first run, so that
 # re-running install.sh after a partial failure does not re-prompt. The file
 # is gitignored and chmod 600. Set INSTALL_SECRETS_CACHE=/dev/null to disable.
@@ -517,6 +518,7 @@ Options:
   --config-file PATH   Source non-secret installer config from PATH
   --secrets-file PATH  Source secret installer values from PATH
   --no-config-files    Disable auto-loading of install.env / install.secrets.env
+    --verify-only        Skip install steps and only run ArgoCD health verification
   --validate, --check  Validate config and secrets; print a report and exit (no
                        cluster actions are taken)
   -h, --help           Show this help
@@ -550,6 +552,9 @@ parse_args() {
                 ;;
             --no-config-files)
                 INSTALL_AUTO_LOAD_CONFIG="0"
+                ;;
+            --verify-only)
+                INSTALL_VERIFY_ONLY="1"
                 ;;
             --validate|--check)
                 INSTALL_VALIDATE_ONLY="1"
@@ -1476,6 +1481,36 @@ install_eso() {
 resolve_argocd_url() {
     local ingress_host svc_type node_port lb_host lb_ip
 
+    _is_testnet_ip() {
+        local ip="$1"
+        [[ "$ip" =~ ^192\.0\.2\.[0-9]+$ || "$ip" =~ ^198\.51\.100\.[0-9]+$ || "$ip" =~ ^203\.0\.113\.[0-9]+$ ]]
+    }
+
+    _pick_node_ip() {
+        local detected
+        if [[ -n "${NODE_IP:-}" ]]; then
+            if _is_testnet_ip "${NODE_IP}"; then
+                warn "NODE_IP=${NODE_IP} looks like documentation/testnet IP; auto-detecting real node IP instead."
+            else
+                echo "${NODE_IP}"
+                return 0
+            fi
+        fi
+
+        detected=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+        if [[ -n "$detected" ]]; then
+            echo "$detected"
+            return 0
+        fi
+        detected=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null || true)
+        if [[ -n "$detected" ]]; then
+            echo "$detected"
+            return 0
+        fi
+        echo "<node-ip>"
+        return 0
+    }
+
     ingress_host=$(kubectl get ingress -n argocd \
         -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || true)
     if [[ -n "$ingress_host" ]]; then
@@ -1508,11 +1543,7 @@ resolve_argocd_url() {
     fi
 
     if [[ "$svc_type" == "NodePort" && -n "$node_port" ]]; then
-        if [[ -n "${NODE_IP:-}" ]]; then
-            echo "https://${NODE_IP}:${node_port}"
-        else
-            echo "https://<node-ip>:${node_port}"
-        fi
+        echo "https://$(_pick_node_ip):${node_port}"
         return 0
     fi
 
@@ -1949,11 +1980,25 @@ install_orchestrator() {
     banner "Step 15 — gentian-os orchestrator (CRDs + operator)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
+    local crd_dir="${chart_dir}/crds"
     local ns="gentian-system"
+    local required_crds=(
+        tenants.gentianos.io
+        appprofiles.gentianos.io
+        integrationbindings.gentianos.io
+        appcatalogues.gentianos.io
+    )
 
     if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
         kubectl create namespace "$ns"
     fi
+
+    info "Applying orchestrator CRDs (hard requirement)..."
+    if [[ ! -d "$crd_dir" ]]; then
+        error "CRD directory not found: ${crd_dir}"
+        exit 1
+    fi
+    kubectl apply -f "$crd_dir"
 
     info "Installing/upgrading gentian-os Helm release in namespace '${ns}'..."
     helm upgrade --install gentian-os "$chart_dir" \
@@ -1963,9 +2008,15 @@ install_orchestrator() {
         --set kernelDomain="${KERNEL_DOMAIN}" \
         --wait --timeout 5m
 
-    info "Waiting for Tenant CRD to be Established..."
-    kubectl wait --for=condition=Established crd/tenants.gentianos.io --timeout=60s \
-        || warn "Tenant CRD not yet Established — check 'kubectl get crds | grep gentianos'"
+    info "Waiting for orchestrator CRDs to be Established..."
+    for crd in "${required_crds[@]}"; do
+        kubectl wait --for=condition=Established "crd/${crd}" --timeout=60s >/dev/null || {
+            error "Required CRD ${crd} was not established."
+            error "Orchestrator install is incomplete; aborting."
+            exit 1
+        }
+    done
+    success "All orchestrator CRDs are Established."
 
     success "Orchestrator installed; cluster is ready to provision tenants."
     info "Apply a Tenant CR to provision your first tenant, e.g.:"
@@ -2135,6 +2186,11 @@ main() {
     echo ""
 
     parse_args "$@"
+    if [[ "${INSTALL_VERIFY_ONLY}" == "1" ]]; then
+        verify_argocd_apps || true
+        print_summary
+        return 0
+    fi
     load_operator_config
     load_creds_cache
     [[ "${INSTALL_VALIDATE_ONLY}" == "1" ]] && { load_install_state; try_load_creds_from_openbao; validate_config; }
