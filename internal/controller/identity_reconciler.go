@@ -172,6 +172,7 @@ func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov
 				"realm", realmName,
 				"username", creds.Username,
 				"password", creds.Password,
+				"retrieveCommand", fmt.Sprintf("bao kv get -mount=secret -field=password gentian-os/tenants/%s/admin", tenant.Name),
 			)
 		} else {
 			creds = secrets.TenantAdminCreds{Username: "admin", Password: "placeholder"}
@@ -322,6 +323,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 	ttl := int32(3600)
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
 	container.Env = append(container.Env,
+		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: creds.Username},
 		corev1.EnvVar{Name: "TENANT_ADMIN_PASSWORD", Value: creds.Password},
 	)
@@ -521,6 +523,7 @@ curl -sf -X PUT ${AUTH} \
 echo "password set (temporary=true)"
 if [ "${CREATED}" = "1" ]; then
 	echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
+	echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
 fi
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
