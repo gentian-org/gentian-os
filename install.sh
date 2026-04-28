@@ -34,7 +34,7 @@
 #   OD_SMTP_RELAY_USERNAME         — SMTP relay username (e.g. Gmail address)
 #   OD_SMTP_RELAY_PASSWORD         — SMTP relay password (e.g. Gmail App Password)
 #   KERNEL_DOMAIN                  — single platform-wide DNS suffix (e.g.
-#                                    desk.gentian.org). Persisted to
+#                                    platform.example.com). Persisted to
 #                                    .install-state.env after first prompt.
 #
 # Optional environment variables:
@@ -741,7 +741,7 @@ prompt_kernel_domain() {
     echo ""
     info "Kernel domain (single platform-wide DNS suffix used for all kernel UIs"
     info "and as the default base for tenant apps without a vanity domain):"
-    info "  examples: desk.gentian.org, gentian.example.com"
+    info "  examples: platform.example.com, desk.example.org"
 
     local v=""
     while [[ -z "$v" ]]; do
@@ -768,7 +768,7 @@ prompt_kernel_domain() {
 # =============================================================================
 
 # Derive the apex zone from a hostname (last two labels). Good enough for
-# normal TLDs like gentian.org; users with compound TLDs (e.g. co.uk) can
+# normal TLDs like example.org; users with compound TLDs (e.g. co.uk) can
 # override by exporting CF_ZONE_NAME before running install.sh.
 _derive_zone_from_domain() {
     local d="$1"
@@ -1092,7 +1092,7 @@ install_kernel_cert_resources() {
     banner "Step 3b — Installing kernel cert-manager ClusterIssuers"
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${INGRESS_CLASS_NAME:=public}"
+    : "${INGRESS_CLASS_NAME:=nginx}"
     export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN
 
     if ! command -v envsubst &>/dev/null; then
@@ -1137,7 +1137,7 @@ install_kernel_wildcard() {
     banner "Step 12b — Installing kernel wildcard Certificate"
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${INGRESS_CLASS_NAME:=public}"
+    : "${INGRESS_CLASS_NAME:=nginx}"
     export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN
 
     # 1) ExternalSecret in cert-manager → materializes cloudflare-api-token
@@ -1197,6 +1197,53 @@ install_eso() {
 # =============================================================================
 # 5. Install ArgoCD + AppProject
 # =============================================================================
+resolve_argocd_url() {
+    local ingress_host svc_type node_port lb_host lb_ip
+
+    ingress_host=$(kubectl get ingress -n argocd \
+        -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || true)
+    if [[ -n "$ingress_host" ]]; then
+        echo "https://${ingress_host}"
+        return 0
+    fi
+
+    svc_type=$(kubectl get svc argocd-server -n argocd \
+        -o jsonpath='{.spec.type}' 2>/dev/null || true)
+    node_port=$(kubectl get svc argocd-server -n argocd \
+        -o jsonpath='{range .spec.ports[?(@.name=="https")]}{.nodePort}{end}' 2>/dev/null || true)
+    if [[ -z "$node_port" ]]; then
+        node_port=$(kubectl get svc argocd-server -n argocd \
+            -o jsonpath='{range .spec.ports[0]}{.nodePort}{end}' 2>/dev/null || true)
+    fi
+
+    if [[ "$svc_type" == "LoadBalancer" ]]; then
+        lb_host=$(kubectl get svc argocd-server -n argocd \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+        lb_ip=$(kubectl get svc argocd-server -n argocd \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        if [[ -n "$lb_host" ]]; then
+            echo "https://${lb_host}"
+            return 0
+        fi
+        if [[ -n "$lb_ip" ]]; then
+            echo "https://${lb_ip}"
+            return 0
+        fi
+    fi
+
+    if [[ "$svc_type" == "NodePort" && -n "$node_port" ]]; then
+        if [[ -n "${NODE_IP:-}" ]]; then
+            echo "https://${NODE_IP}:${node_port}"
+        else
+            echo "https://<node-ip>:${node_port}"
+        fi
+        return 0
+    fi
+
+    # ClusterIP or unresolved external endpoint.
+    echo "kubectl port-forward -n argocd svc/argocd-server 8080:443"
+}
+
 install_argocd() {
     banner "Step 5 — Installing ArgoCD"
 
@@ -1213,12 +1260,13 @@ install_argocd() {
     # Print ArgoCD admin credentials early so the user sees them even if
     # the install is interrupted before print_summary runs (verify step
     # can take up to 10 minutes).
-    local argocd_pw
+    local argocd_pw argocd_url
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null \
                     | base64 -d 2>/dev/null || echo "")
+    argocd_url=$(resolve_argocd_url)
     if [[ -n "$argocd_pw" ]]; then
-        info "ArgoCD URL   : https://${NODE_IP}:30443"
+        info "ArgoCD URL   : ${argocd_url}"
         info "ArgoCD login : admin / ${argocd_pw}"
     else
         warn "ArgoCD initial-admin-secret not yet available; will be shown in final summary."
@@ -1731,6 +1779,7 @@ verify_argocd_apps() {
 # =============================================================================
 print_summary() {
     local argocd_pw
+    local argocd_url
     local cluster_admin_pw
     local keycloak_admin_pw
     local nubus_secret_ns
@@ -1742,13 +1791,14 @@ print_summary() {
                         -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
     keycloak_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
                         -o jsonpath='{.data.keycloak-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
+    argocd_url=$(resolve_argocd_url)
 
     echo ""
     if [[ "${VERIFY_STATUS:-unknown}" == "ok" ]]; then
         echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
         echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
         echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${GREEN}║  ArgoCD URL   : https://${NODE_IP}:30443${NC}"
+        echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
@@ -1772,7 +1822,7 @@ print_summary() {
         echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
         echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${YELLOW}║  ArgoCD URL   : https://${NODE_IP}:30443${NC}"
+        echo -e "${YELLOW}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${YELLOW}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${YELLOW}║  Status       : ${VERIFY_STATUS:-unknown} (${VERIFY_TOTAL:-0} apps)${NC}"
         echo -e "${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"

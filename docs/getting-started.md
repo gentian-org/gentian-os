@@ -29,17 +29,20 @@ Kubernetes cluster and provision your first tenant.
 | `OD_PRIVATE_REGISTRY_PASSWORD` | `registry.opencode.de` Personal Access Token (`read_registry` scope) |
 | `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
 | `OD_SMTP_RELAY_PASSWORD` | SMTP relay password (e.g. Gmail App Password) |
-| `ACME_EMAIL` | Email for Let's Encrypt ACME registration |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token (Zone:DNS:Edit scope) |
+| `KERNEL_DOMAIN` | Cluster-wide platform DNS suffix (for example `platform.example.com`) |
+
+Optional provider-specific input:
+
+| Variable | What it is |
+|----------|-----------|
+| `CF_API_TOKEN` | Cloudflare API token (Zone:Read + DNS:Edit) used only for optional DNS-01 wildcard issuance |
 
 ### Kubernetes requirements
 
 - Kubernetes 1.26+
 - Default StorageClass available (tested with `nfs-csi`)
-- Ingress controller installed (tested with `ingress-nginx`) in the `ingress`
-  namespace
-- Wildcard DNS entry pointing to the cluster node IP:
-  `*.desk.gentian.org → <node-ip>`
+- Ingress controller installed (tested with `ingress-nginx`)
+- DNS records for your chosen `KERNEL_DOMAIN` (and optional vanity domains)
 
 > `install.sh` provisions the remaining cluster infrastructure automatically:
 > cert-manager, CloudNativePG, and Stakater Reloader. Pass `--no-cluster-infra`
@@ -165,9 +168,9 @@ restart — no manual intervention needed after a normal reboot.
 |------|-------------|
 | 1 | Installs `tofu` and `bao` CLI tools |
 | 2 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
-| 2b | Creates kernel cert-manager resources: ClusterIssuers `letsencrypt-http01` (per-host) and `letsencrypt-dns01-cloudflare` (Cloudflare DNS-01), plus a wildcard Certificate for `*.${KERNEL_DOMAIN}`. See [architecture.md §2.5](architecture.md#25-domains-and-tls). |
+| 2b | Creates kernel cert-manager resources: HTTP-01 issuer for per-host certs and an optional DNS-01 Cloudflare issuer. If `CF_API_TOKEN` is provided, also applies a wildcard Certificate for `*.${KERNEL_DOMAIN}`. See [architecture.md §2.5](architecture.md#25-domains-and-tls). |
 | 3 | Installs External Secrets Operator via Helm (`kernel/eso/values.yaml`) |
-| 4 | Installs ArgoCD (NodePort 30443/30880) and applies the `gentian` AppProject |
+| 4 | Installs ArgoCD and applies the `gentian` AppProject |
 | 5 | Creates ArgoCD repository secrets for the OCI Helm registries (`scripts/create-argocd-oci-secrets.sh`) |
 | 6 | Deploys the `openbao-transit` ArgoCD Application (transit auto-unseal instance using `kernel/openbao/transit-values.yaml`) |
 | 7 | Runs `scripts/init-openbao-transit.sh` — initialises transit with Shamir 1-of-1, creates the `openbao-transit-unseal` k8s Secret |
@@ -188,7 +191,7 @@ restart — no manual intervention needed after a normal reboot.
 ### Access ArgoCD
 
 ```
-URL:      https://<node-ip>:30443
+URL:      printed by install.sh (Ingress, LoadBalancer, NodePort, or port-forward command)
 Username: admin
 Password: kubectl get secret argocd-initial-admin-secret -n argocd \
               -o jsonpath='{.data.password}' | base64 -d

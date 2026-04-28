@@ -309,14 +309,19 @@ cleanup_kernel_tls() {
 }
 cleanup_kernel_tls
 
-# Wipe install-time credential cache on force uninstall so a follow-up
-# install re-prompts (and re-verifies) cleanly. In safe mode we keep it so
-# the user can re-install without re-typing every secret.
+# Wipe install-time caches on force uninstall so a follow-up install prompts
+# cleanly (including KERNEL_DOMAIN). In safe mode we keep caches so the user
+# can re-install without re-typing every value.
 if [[ "$MODE" == "force" ]]; then
-    _cache="${BASH_SOURCE[0]%/*}/.install-secrets.env"
-    if [[ -e "$_cache" ]]; then
-        rm -f "$_cache"
-        success "Removed install-time credential cache ${_cache}."
+    _secrets_cache="${BASH_SOURCE[0]%/*}/.install-secrets.env"
+    _state_cache="${BASH_SOURCE[0]%/*}/.install-state.env"
+    if [[ -e "$_secrets_cache" ]]; then
+        rm -f "$_secrets_cache"
+        success "Removed install-time credential cache ${_secrets_cache}."
+    fi
+    if [[ -e "$_state_cache" ]]; then
+        rm -f "$_state_cache"
+        success "Removed install-time state cache ${_state_cache}."
     fi
 fi
 
@@ -552,7 +557,7 @@ else
     fi
 
     # Force-delete any pods/PVCs still stuck in Terminating in target
-    # namespaces. This handles the microk8s/calico CNI sandbox bug where
+    # namespaces. This handles container runtime / CNI sandbox teardown issues where
     # kubelet can't tear down a pod's network sandbox, which in turn keeps
     # the kubernetes.io/pvc-protection finalizer on its PVCs and prevents
     # the namespace from terminating.
