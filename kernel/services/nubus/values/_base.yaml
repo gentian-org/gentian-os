@@ -22,7 +22,7 @@ global:
     domainName: ${domain}
     adminDn: cn=admin,dc=swp-ldap,dc=internal
   # imagePullSecrets from values/env/{env}.yaml via global.imagePullSecrets
-  certManagerClusterIssuer: letsencrypt-prod
+  certManagerClusterIssuer: letsencrypt-dns01-cloudflare
   keycloak:
     realm: opendesk
   subDomains:

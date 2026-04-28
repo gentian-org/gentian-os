@@ -299,7 +299,7 @@ func (r *TenantReconciler) ensureTerraformCR(
 	obj.SetGroupVersionKind(terraformGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: tofuSystemNamespace}, obj)
 	if errors.IsNotFound(err) {
-		desired, buildErr := buildTerraformCR(tenant, app, profile)
+		desired, buildErr := buildTerraformCR(tenant, app, profile, r.KernelDomain)
 		if buildErr != nil {
 			return false, fmt.Errorf("build Terraform CR for %s: %w", app.Profile, buildErr)
 		}
@@ -311,7 +311,7 @@ func (r *TenantReconciler) ensureTerraformCR(
 
 	// CR exists: patch mutable spec fields so AppProfile changes and backend
 	// config corrections are applied without deleting and recreating the CR.
-	desired, buildErr := buildTerraformCR(tenant, app, profile)
+	desired, buildErr := buildTerraformCR(tenant, app, profile, r.KernelDomain)
 	if buildErr != nil {
 		return false, fmt.Errorf("build Terraform CR for %s: %w", app.Profile, buildErr)
 	}
@@ -349,6 +349,7 @@ func buildTerraformCR(
 	tenant *gentianov1alpha1.Tenant,
 	app gentianov1alpha1.TenantApp,
 	profile *gentianov1alpha1.AppProfile,
+	kernelDomain string,
 ) (*unstructured.Unstructured, error) {
 	nsName := tenantNamespaceName(tenant)
 	crName := terraformCRName(tenant.Name, app.Profile)
@@ -366,8 +367,12 @@ func buildTerraformCR(
 	if profile.Spec.ExtraValues != nil && len(profile.Spec.ExtraValues.Raw) > 0 {
 		extraValuesJSON = string(profile.Spec.ExtraValues.Raw)
 	}
-	if extraValuesJSON != "" && tenant.Spec.Domain != "" {
-		extraValuesJSON = strings.ReplaceAll(extraValuesJSON, "${TENANT_DOMAIN}", tenant.Spec.Domain)
+	if extraValuesJSON != "" {
+		// Use the tenant's effective domain (vanity if set, else
+		// <tenant>.<kernel_domain> fallback). See architecture §2.5.
+		if d := tenant.EffectiveDomain(kernelDomain); d != "" {
+			extraValuesJSON = strings.ReplaceAll(extraValuesJSON, "${TENANT_DOMAIN}", d)
+		}
 	}
 	if extraValuesJSON != "" {
 		extraValuesJSON = strings.ReplaceAll(extraValuesJSON, "${TENANT_NAMESPACE}", nsName)

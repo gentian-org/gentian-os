@@ -1,0 +1,49 @@
+# Kernel-level cert-manager ClusterIssuers.
+#
+# Applied unconditionally by install.sh (step 3b) right after cert-manager
+# is up. Both issuers use Let's Encrypt production; choose with the
+# `cert-manager.io/cluster-issuer` annotation on Certificates / Ingresses.
+#
+# Templated on:
+#   ${LETSENCRYPT_EMAIL}     — ACME account email (default admin@${KERNEL_DOMAIN})
+#   ${INGRESS_CLASS_NAME}    — IngressClass for HTTP-01 challenges (default public)
+#
+# See docs/architecture.md §2.5.
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-http01
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${LETSENCRYPT_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-http01-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: ${INGRESS_CLASS_NAME}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns01-cloudflare
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${LETSENCRYPT_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-dns01-cloudflare-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token

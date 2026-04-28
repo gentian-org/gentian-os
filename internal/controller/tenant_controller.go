@@ -92,6 +92,12 @@ type TenantReconciler struct {
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
+	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
+	// on which the kernel UIs (Keycloak, Argo CD, Nubus, Intercom) and the
+	// `<tenant>.<kernel_domain>` fallback for tenants without a vanity domain
+	// are served. Sourced from the KERNEL_DOMAIN env var at startup.
+	// See docs/architecture.md §2.5.
+	KernelDomain string
 }
 
 // SetupWithManager registers the controller with the controller-manager.
@@ -292,7 +298,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 12. Ingress (per-app Ingress + per-tenant wildcard cert-manager Certificate)
+	// 12. Ingress (per-app Ingress + TLS — kernel-wildcard fallback or per-host HTTP-01 for vanity domains; see ingress_reconciler.go)
 	if _, err := r.ensureIngress(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionIngressReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		_ = r.Status().Update(ctx, tenant)

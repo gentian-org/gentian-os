@@ -13,11 +13,14 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxLength=256
 	DisplayName string `json:"displayName"`
 
-	// Domain is the primary domain name for this tenant.
-	// Used for ingress routing and mail configuration.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?$`
-	Domain string `json:"domain"`
+	// Domain is the optional vanity domain for this tenant's apps (e.g.
+	// `acme.com`). When unset, the operator falls back to
+	// `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `gtn-demo.desk.gentian.org`),
+	// served under the kernel wildcard certificate. See
+	// docs/architecture.md §2.5.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
+	Domain string `json:"domain,omitempty"`
 
 	// AdminEmail is the contact address for platform notifications.
 	// +kubebuilder:validation:Required
@@ -237,6 +240,30 @@ type TenantList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Tenant `json:"items"`
+}
+
+// EffectiveDomain returns the domain to use for ingress and mail routing
+// for this tenant. It returns spec.domain if set, otherwise it falls back
+// to "<tenant-name>.<kernelDomain>". An empty kernelDomain combined with
+// an empty spec.domain returns the empty string — callers must treat that
+// as a configuration error and skip ingress provisioning.
+//
+// See docs/architecture.md §2.5 (Domains and TLS).
+func (t *Tenant) EffectiveDomain(kernelDomain string) string {
+	if t.Spec.Domain != "" {
+		return t.Spec.Domain
+	}
+	if kernelDomain == "" {
+		return ""
+	}
+	return t.Name + "." + kernelDomain
+}
+
+// HasVanityDomain reports whether the tenant has an explicit vanity domain
+// configured (i.e. spec.domain is set). When false, the tenant uses the
+// `<tenant>.<kernel_domain>` fallback covered by the kernel wildcard cert.
+func (t *Tenant) HasVanityDomain() bool {
+	return t.Spec.Domain != ""
 }
 
 func init() {

@@ -83,9 +83,10 @@ func main() {
 	}
 
 	if err := (&controller.TenantReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Seeder: buildSeeder(),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Seeder:       buildSeeder(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)

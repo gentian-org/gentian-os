@@ -184,6 +184,142 @@ info "Removing Gentian AppProject..."
 kubectl patch appproject gentian -n "$APP_NS" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
 kubectl delete appproject gentian -n "$APP_NS" --ignore-not-found >/dev/null 2>&1 || true
 
+# ─── KERNEL TLS / WILDCARD CLEANUP ──────────────────────────────────────────
+# Resources created by install_kernel_cert_resources / install_kernel_wildcard
+# live in the cert-manager namespace (which is only torn down with
+# --cluster-infra) and at cluster scope (ClusterIssuers). They must be cleaned
+# regardless of --cluster-infra, otherwise a re-install will:
+#   • inherit a stale wildcard-kernel Certificate referencing a deleted Issuer
+#   • leak _acme-challenge TXT records on Cloudflare (each retry adds another)
+#   • leave orphan Order/Challenge CRs that block fresh ACME orders with the
+#     "DELETE /zones//dns_records/<id>" empty-zone-id bug we hit twice during
+#     development.
+# This section is best-effort: every step swallows errors so the rest of the
+# uninstall can proceed even when cert-manager is half-torn-down.
+# ─────────────────────────────────────────────────────────────────────────────
+cleanup_kernel_tls() {
+    info "Cleaning up kernel TLS / ACME state..."
+
+    # Try to recover the Cloudflare token (in priority order) so we can also
+    # purge stale _acme-challenge TXT records from the Cloudflare zone.
+    local cf_token="" cf_zone="${CF_ZONE_NAME:-}"
+    if [[ -n "${CF_API_TOKEN:-}" ]]; then
+        cf_token="$CF_API_TOKEN"
+    elif kubectl get secret cloudflare-api-token -n cert-manager >/dev/null 2>&1; then
+        cf_token=$(kubectl get secret cloudflare-api-token -n cert-manager \
+            -o jsonpath='{.data.api-token}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    fi
+    if [[ -z "$cf_zone" ]]; then
+        # Derive from KERNEL_DOMAIN cached in .install-secrets.env if present.
+        local cache="${BASH_SOURCE[0]%/*}/.install-secrets.env"
+        if [[ -r "$cache" ]]; then
+            local dom
+            dom=$(awk -F'=' '/^KERNEL_DOMAIN=/{gsub(/"/,"",$2); print $2; exit}' "$cache")
+            [[ -n "$dom" ]] && cf_zone=$(echo "$dom" | awk -F. '{n=NF; print $(n-1)"."$n}')
+        fi
+    fi
+
+    # 1) Delete kernel wildcard Certificate + materialized Secret. Strip
+    #    finalizer first so the delete is non-blocking even if cert-manager
+    #    controller is already gone.
+    if kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+        kubectl patch certificate wildcard-kernel -n cert-manager \
+            --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+        kubectl delete certificate wildcard-kernel -n cert-manager \
+            --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    fi
+    kubectl delete secret wildcard-kernel-tls -n cert-manager \
+        --ignore-not-found >/dev/null 2>&1 || true
+
+    # 2) Delete Cloudflare ExternalSecret + materialized Secret. Strip ESO
+    #    finalizer first.
+    if kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1; then
+        kubectl patch externalsecret cloudflare-api-token -n cert-manager \
+            --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+        kubectl delete externalsecret cloudflare-api-token -n cert-manager \
+            --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    fi
+    kubectl delete secret cloudflare-api-token -n cert-manager \
+        --ignore-not-found >/dev/null 2>&1 || true
+
+    # 3) Delete ALL ACME state (Orders, Challenges, CertificateRequests) in
+    #    every namespace. These are the resources that get stuck in the
+    #    "DELETE /zones//dns_records/<id>" cleanup loop when cert-manager
+    #    loses zone_id from in-memory state across restarts. Strip
+    #    finalizers first to make delete non-blocking.
+    if kubectl get crd challenges.acme.cert-manager.io >/dev/null 2>&1; then
+        for kind in challenge order certificaterequest; do
+            while IFS=/ read -r ns name; do
+                [[ -z "$ns" || -z "$name" ]] && continue
+                kubectl patch "$kind" "$name" -n "$ns" --type=merge \
+                    -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+                kubectl delete "$kind" "$name" -n "$ns" \
+                    --ignore-not-found --wait=false >/dev/null 2>&1 || true
+            done < <(kubectl get "$kind" -A \
+                     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
+        done
+    fi
+
+    # 4) Delete the two ClusterIssuers created by install.sh step 3b.
+    if kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1; then
+        kubectl delete clusterissuer letsencrypt-http01 letsencrypt-dns01-cloudflare \
+            --ignore-not-found >/dev/null 2>&1 || true
+    fi
+
+    # 5) Best-effort: purge stale _acme-challenge.* TXT records on Cloudflare
+    #    so the next install starts with a clean zone. Skipped silently when
+    #    we couldn't recover a token or zone name.
+    if [[ -n "$cf_token" && -n "$cf_zone" ]]; then
+        if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            warn "Skipping Cloudflare TXT cleanup (jq/curl missing)."
+        else
+            info "Purging stale _acme-challenge.* TXT records in zone ${cf_zone}..."
+            local zid
+            zid=$(curl -sS --max-time 10 -H "Authorization: Bearer ${cf_token}" \
+                "https://api.cloudflare.com/client/v4/zones?name=${cf_zone}" \
+                | jq -r '.result[0].id // empty' 2>/dev/null)
+            if [[ -z "$zid" ]]; then
+                warn "Couldn't resolve zone id for ${cf_zone}; skipping TXT cleanup."
+            else
+                local deleted=0 rid
+                while read -r rid; do
+                    [[ -z "$rid" ]] && continue
+                    if curl -sS --max-time 10 -X DELETE \
+                        -H "Authorization: Bearer ${cf_token}" \
+                        "https://api.cloudflare.com/client/v4/zones/${zid}/dns_records/${rid}" \
+                        | jq -e '.success' >/dev/null 2>&1; then
+                        deleted=$((deleted + 1))
+                    fi
+                done < <(curl -sS --max-time 10 -H "Authorization: Bearer ${cf_token}" \
+                    "https://api.cloudflare.com/client/v4/zones/${zid}/dns_records?type=TXT&per_page=100" \
+                    | jq -r '.result[]? | select(.name | startswith("_acme-challenge")) | .id' 2>/dev/null)
+                if [[ $deleted -gt 0 ]]; then
+                    success "Deleted ${deleted} stale _acme-challenge TXT record(s) on Cloudflare."
+                else
+                    info "No stale _acme-challenge TXT records found in zone ${cf_zone}."
+                fi
+            fi
+        fi
+    else
+        warn "Cloudflare token or zone unknown; skipping remote TXT cleanup."
+        warn "  → after re-install, watch out for residual _acme-challenge.* records."
+    fi
+
+    success "Kernel TLS / ACME state cleanup complete."
+}
+cleanup_kernel_tls
+
+# Wipe install-time credential cache on force uninstall so a follow-up
+# install re-prompts (and re-verifies) cleanly. In safe mode we keep it so
+# the user can re-install without re-typing every secret.
+if [[ "$MODE" == "force" ]]; then
+    _cache="${BASH_SOURCE[0]%/*}/.install-secrets.env"
+    if [[ -e "$_cache" ]]; then
+        rm -f "$_cache"
+        success "Removed install-time credential cache ${_cache}."
+    fi
+fi
+
 info "Uninstalling Helm releases installed directly by install.sh..."
 helm uninstall external-secrets -n external-secrets >/dev/null 2>&1 || true
 helm uninstall gentian-os -n gentian-system >/dev/null 2>&1 || true

@@ -1,0 +1,29 @@
+# Kernel wildcard Certificate.
+#
+# Applied by install.sh (step 12b) ONLY when CF_API_TOKEN was provided AND
+# seed-openbao has populated `secret/gentian-os/kernel/dns/cloudflare`.
+# The Tenant operator replicates the resulting Secret
+# (cert-manager/wildcard-kernel-tls) into each tenant namespace as
+# kernel-wildcard-tls — see internal/controller/ingress_reconciler.go.
+#
+# Templated on:
+#   ${KERNEL_DOMAIN}  — single platform-wide DNS suffix (e.g. desk.gentian.org)
+#
+# See docs/architecture.md §2.5.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-kernel
+  namespace: cert-manager
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  secretName: wildcard-kernel-tls
+  issuerRef:
+    name: letsencrypt-dns01-cloudflare
+    kind: ClusterIssuer
+  commonName: ${KERNEL_DOMAIN}
+  dnsNames:
+    - ${KERNEL_DOMAIN}
+    - "*.${KERNEL_DOMAIN}"

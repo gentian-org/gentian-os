@@ -108,9 +108,11 @@ type IngressSpec struct {
 	TLSEnabled bool `json:"tlsEnabled,omitempty"`
 
 	// ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
-	// Defaults to "letsencrypt-prod" when not set.
+	// Defaults to "letsencrypt-http01" (HTTP-01 per-host) when not set.
+	// See docs/architecture.md §2.5 for the kernel-vs-vanity domain
+	// model and the wildcard fallback.
 	// +optional
-	// +kubebuilder:default=letsencrypt-prod
+	// +kubebuilder:default=letsencrypt-http01
 	ClusterIssuer string `json:"clusterIssuer,omitempty"`
 
 	// Annotations are merged into the Ingress object metadata.

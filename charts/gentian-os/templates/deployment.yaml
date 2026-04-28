@@ -50,6 +50,8 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
+            - name: KERNEL_DOMAIN
+              value: {{ .Values.kernelDomain | quote }}
           ports:
             - name: metrics
               containerPort: 8080

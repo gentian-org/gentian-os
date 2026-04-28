@@ -473,6 +473,20 @@ else
     echo "  To add them later: bao kv put gentian-os/kernel/storage/registry username=<u> password=<p>"
 fi
 
+# --- Cloudflare API token (DNS-01 ACME for kernel wildcard) ---
+# Optional: only required when KERNEL_DOMAIN is served via Cloudflare and the
+# kernel wildcard Certificate is enabled (see docs/architecture.md §2.5).
+# Sourced from CF_API_TOKEN env var to keep the positional-arg contract stable.
+if [ -n "${CF_API_TOKEN:-}" ]; then
+    kv_put_once "dns/cloudflare" "$(jq -n \
+        --arg api_token "${CF_API_TOKEN}" \
+        '{"api-token": $api_token}')"
+else
+    echo ""
+    echo "  Skipping Cloudflare API token (CF_API_TOKEN not set)."
+    echo "  To add it later: bao kv put gentian-os/kernel/dns/cloudflare api-token=<token>"
+fi
+
 echo ""
 echo "=========================================="
 echo "✅ All secrets seeded into OpenBao!"

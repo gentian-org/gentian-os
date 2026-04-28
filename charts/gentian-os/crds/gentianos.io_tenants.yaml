@@ -110,9 +110,12 @@ spec:
                 type: string
               domain:
                 description: |-
-                  Domain is the primary domain name for this tenant.
-                  Used for ingress routing and mail configuration.
-                pattern: ^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?$
+                  Domain is the optional vanity domain for this tenant's apps (e.g.
+                  `acme.com`). When unset, the operator falls back to
+                  `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `gtn-demo.desk.gentian.org`),
+                  served under the kernel wildcard certificate. See
+                  docs/architecture.md §2.5.
+                pattern: ^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$
                 type: string
               isolation:
                 description: Isolation describes the workload isolation boundaries
@@ -183,6 +186,13 @@ spec:
                       "100/h").
                     pattern: ^[0-9]+/(s|m|h|d)$
                     type: string
+                  smtpCredentialsSecret:
+                    description: |-
+                      SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
+                      kernel namespace that contains SMTP relay credentials for external mail
+                      delivery. Required when mode=external.
+                      The Secret must provide keys: host, port, username, password.
+                    type: string
                 type: object
               quotas:
                 description: Quotas sets resource limits for this tenant.
@@ -220,7 +230,6 @@ spec:
             required:
             - adminEmail
             - displayName
-            - domain
             type: object
           status:
             description: TenantStatus holds the observed state of a Tenant.
@@ -290,6 +299,26 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              mail:
+                description: |-
+                  Mail holds the observed DNS record data produced by the mail reconciler.
+                  Operators must publish these values in the tenant's DNS zone.
+                properties:
+                  dkimPublicKey:
+                    description: |-
+                      DKIMPublicKey is the RSA public key for DKIM signing, base64-encoded (PKIX DER).
+                      Publish as a TXT record: v=DKIM1; k=rsa; p=<DKIMPublicKey>
+                      under mail._domainkey.<mail domain>.
+                    type: string
+                  dmarcRecord:
+                    description: DMARCRecord is the suggested DMARC TXT record value
+                      for _dmarc.<mail domain>.
+                    type: string
+                  spfRecord:
+                    description: SPFRecord is the suggested SPF TXT record value for
+                      the mail domain.
+                    type: string
+                type: object
               namespace:
                 description: Namespace is the resolved tenant namespace name.
                 type: string

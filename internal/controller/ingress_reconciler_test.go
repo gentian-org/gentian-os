@@ -146,7 +146,7 @@ func TestIngress_CreatesIngressResource(t *testing.T) {
 	if len(ing.Spec.TLS) != 1 {
 		t.Fatalf("expected 1 TLS entry, got %d", len(ing.Spec.TLS))
 	}
-	wantSecret := fmt.Sprintf("wildcard-%s-tls", tenantName)
+	wantSecret := fmt.Sprintf("app-%s-%s-tls", tenantName, profileName)
 	if ing.Spec.TLS[0].SecretName != wantSecret {
 		t.Errorf("expected TLS secret %q, got %q", wantSecret, ing.Spec.TLS[0].SecretName)
 	}
@@ -157,6 +157,7 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 	profileName := "ingress-profile-cert"
 	profile := newIngressProfile(profileName, &gentianov1alpha1.IngressSpec{
 		ServicePort:   80,
+		SubDomain:     "app",
 		TLSEnabled:    true,
 		ClusterIssuer: "my-issuer",
 	})
@@ -182,7 +183,7 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	nsName := fmt.Sprintf("tenant-%s", tenantName)
-	certName := fmt.Sprintf("wildcard-%s", tenantName)
+	certName := fmt.Sprintf("app-%s-%s", tenantName, profileName)
 
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certManagerCertGVKTest)
@@ -192,22 +193,13 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 	})
 
 	dnsNames, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
-	if len(dnsNames) < 2 {
-		t.Fatalf("expected at least 2 dnsNames, got %v", dnsNames)
-	}
-	wantWildcard := "*." + domain
-	found := false
-	for _, n := range dnsNames {
-		if n == wantWildcard {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected dnsName %q in %v", wantWildcard, dnsNames)
+	wantHost := "app." + domain
+	if len(dnsNames) != 1 || dnsNames[0] != wantHost {
+		t.Errorf("expected dnsNames=[%q], got %v", wantHost, dnsNames)
 	}
 
 	secretName, _, _ := unstructured.NestedString(cert.Object, "spec", "secretName")
-	wantCertSecret := fmt.Sprintf("wildcard-%s-tls", tenantName)
+	wantCertSecret := fmt.Sprintf("app-%s-%s-tls", tenantName, profileName)
 	if secretName != wantCertSecret {
 		t.Errorf("expected secretName %q, got %q", wantCertSecret, secretName)
 	}
@@ -260,16 +252,13 @@ func TestIngress_MultipleApps(t *testing.T) {
 		waitFor(t, 15*time.Second, func() bool {
 			return testClient.Get(context.Background(), types.NamespacedName{Name: ingName, Namespace: nsName}, ing) == nil
 		})
-	}
 
-	certName := fmt.Sprintf("wildcard-%s", tenantName)
-	cert := &unstructured.Unstructured{}
-	cert.SetGroupVersionKind(certManagerCertGVKTest)
-	waitFor(t, 15*time.Second, func() bool {
-		return testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, cert) == nil
-	})
-	if cert.GetName() != certName {
-		t.Errorf("unexpected cert name: %q", cert.GetName())
+		certName := fmt.Sprintf("app-%s-%s", tenantName, appName)
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(certManagerCertGVKTest)
+		waitFor(t, 15*time.Second, func() bool {
+			return testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, cert) == nil
+		})
 	}
 }
 
@@ -299,7 +288,7 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 
 	nsName := fmt.Sprintf("tenant-%s", tenantName)
 	ingressName := fmt.Sprintf("ingress-%s-%s", tenantName, profileName)
-	certName := fmt.Sprintf("wildcard-%s", tenantName)
+	certName := fmt.Sprintf("app-%s-%s", tenantName, profileName)
 
 	ing := &networkingv1.Ingress{}
 	waitFor(t, 15*time.Second, func() bool {
@@ -322,5 +311,3 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 		return err != nil
 	})
 }
-
-

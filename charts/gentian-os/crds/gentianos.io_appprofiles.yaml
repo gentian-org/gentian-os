@@ -157,10 +157,18 @@ spec:
                       Use to set ingress class, NGINX configuration snippets, etc.
                     type: object
                   clusterIssuer:
-                    default: letsencrypt-prod
+                    default: letsencrypt-http01
                     description: |-
                       ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
-                      Defaults to "letsencrypt-prod" when not set.
+                      Defaults to "letsencrypt-http01" (HTTP-01 per-host) when not set.
+                      See docs/architecture.md §2.5 for the kernel-vs-vanity domain
+                      model and the wildcard fallback.
+                    type: string
+                  ingressClassName:
+                    default: nginx
+                    description: |-
+                      IngressClassName is the Kubernetes IngressClass to use.
+                      Defaults to "nginx" when not set.
                     type: string
                   serviceName:
                     description: |-

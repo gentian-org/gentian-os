@@ -165,7 +165,7 @@ restart — no manual intervention needed after a normal reboot.
 |------|-------------|
 | 1 | Installs `tofu` and `bao` CLI tools |
 | 2 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
-| 2b | Creates ClusterIssuer `letsencrypt-prod` (Cloudflare DNS-01 solver) and a wildcard Certificate for `*.desk.gentian.org` |
+| 2b | Creates kernel cert-manager resources: ClusterIssuers `letsencrypt-http01` (per-host) and `letsencrypt-dns01-cloudflare` (Cloudflare DNS-01), plus a wildcard Certificate for `*.${KERNEL_DOMAIN}`. See [architecture.md §2.5](architecture.md#25-domains-and-tls). |
 | 3 | Installs External Secrets Operator via Helm (`kernel/eso/values.yaml`) |
 | 4 | Installs ArgoCD (NodePort 30443/30880) and applies the `gentian` AppProject |
 | 5 | Creates ArgoCD repository secrets for the OCI Helm registries (`scripts/create-argocd-oci-secrets.sh`) |

@@ -3,6 +3,13 @@
 
 replicaCount: 1
 
+# kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
+# It is the domain on which all kernel UIs (Keycloak, Nubus, Argo CD, Intercom)
+# are served, and the base used for tenants without a vanity domain
+# (`<tenant>.<kernel_domain>`). Plumbed into the operator as the KERNEL_DOMAIN
+# env var. See docs/architecture.md §2.5.
+kernelDomain: ""
+
 image:
   repository: ghcr.io/gentian-org/gentian-os
   pullPolicy: Always

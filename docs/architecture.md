@@ -25,7 +25,7 @@ A traditional OS kernel sits between hardware and applications. It provides serv
 |---|---|---|---|
 | Identity & permissions | UID/GID, PAM, login | OIDC provider + LDAP directory (SSO, user/group management, token exchange) | v1 |
 | Filesystem | VFS, ext4, block devices | WebDAV (hierarchical files, locking, sharing) + S3 (object storage, bulk data) | v1 |
-| Networking | TCP/IP stack, drivers | Kubernetes CNI + Ingress + NetworkPolicies | v1 |
+| Networking | TCP/IP stack, drivers | Kubernetes CNI + Ingress + NetworkPolicies + per-cluster kernel domain with hybrid wildcard / HTTP-01 TLS (see §2.5) | v1 |
 | Process execution | Scheduler, init | Kubernetes workload scheduling + GitOps deployment | v1 |
 | Secrets & keyring | Keychain, GNOME Keyring | Centralised secret store with tenant-scoped policies | v1 |
 | Database services | — | Shared database clusters (SQL) with per-app-per-tenant isolation | v1 |
@@ -88,7 +88,29 @@ For deployments requiring stronger isolation — regulated industries, hostile m
 | Namespace-per-tenant (default) | K8s RBAC, ResourceQuotas, NetworkPolicies | Trusted internal tenants, cost efficiency |
 | vCluster-per-tenant (optional) | Dedicated K8s API server per tenant | External customers, regulated environments |
 
-### 2.5 Contracts and Integration Bindings
+### 2.5 Domains and TLS
+
+Gentian OS uses a **hybrid two-plane domain model** that keeps the platform stable while letting customers brand their tenants:
+
+| Plane | Domain | Hosts | TLS issuance | DNS responsibility |
+|---|---|---|---|---|
+| **Kernel plane** | `KERNEL_DOMAIN` (one per cluster, e.g. `desk.gentian.org`) | Keycloak, Nubus, Argo CD, Intercom, all kernel UIs | One DNS-01 wildcard cert `*.<kernel_domain>` issued at install time | Cluster operator (one cert, controlled DNS API access) |
+| **Tenant app plane (default)** | `<tenant>.<kernel_domain>` (e.g. `gtn-demo.desk.gentian.org`) | Tenant apps when `Tenant.spec.domain` is unset | Reuses the kernel wildcard (Secret replicated by the operator into each tenant namespace) | None — covered by the wildcard A/CNAME |
+| **Tenant app plane (vanity)** | `Tenant.spec.domain` (e.g. `acme.com`) | Tenant apps when a vanity domain is configured | HTTP-01 per-host certs issued automatically by cert-manager | Customer creates A/CNAME for each app host pointing at the cluster ingress IP |
+
+**Why this split:**
+
+- **One DNS API token.** The Cloudflare (or other DNS provider) credential needed for DNS-01 lives in the kernel namespace only; it is never replicated to tenant namespaces, never exposed to vanity-domain customers, and never required for tenant onboarding.
+- **Customers own DNS, not access.** Vanity domains require no platform-side DNS automation: customers add CNAME/A records to the cluster ingress IP and HTTP-01 takes care of certs. Public reachability of port 80 is the only requirement.
+- **Stable OIDC issuer.** The Keycloak issuer URL stays at `https://keycloak.<kernel_domain>/realms/<tenant>` regardless of where the tenant's apps live. Token validation is therefore independent of the customer's vanity domain choice and changing/removing the vanity domain does not invalidate any tokens.
+- **Better cookie isolation.** Apps on different registrable domains cannot share third-party cookies, which is a strict improvement over a single shared domain.
+- **Predictable fallback.** A tenant created without a `domain` field still gets a working URL (`<tenant>.<kernel_domain>`) under the kernel wildcard — useful for demos, internal tenants, and the period before a customer's vanity DNS is wired up.
+
+**Migration from default to vanity:** the customer (a) creates the DNS records, (b) sets `Tenant.spec.domain`. The operator switches that tenant's Ingresses from the replicated wildcard Secret to per-host HTTP-01 certs without touching Keycloak.
+
+The Cloudflare API token used for the kernel wildcard is stored in OpenBao (`gentian-os/kernel/dns/cloudflare`) and surfaced as a Secret in the `cert-manager` namespace by ESO. Clusters that do not need a kernel wildcard (e.g. single-tenant deployments using only a vanity domain) may opt out of DNS-01 entirely by leaving the Cloudflare token unset; in that case the kernel UIs themselves use HTTP-01.
+
+### 2.6 Contracts and Integration Bindings
 
 In a traditional OS, applications communicate through well-defined IPC mechanisms: D-Bus interfaces, Unix sockets, shared memory, clipboard protocols. Each has a contract — a specification of what data can be exchanged and how. The Gentian OS equivalent is the **contract system**, which governs how apps integrate with each other and with the kernel.
 
@@ -219,7 +241,7 @@ Updating an AppProfile's chart version propagates to all tenants: the orchestrat
 
 ### 4.2 Tenant — The Customer
 
-Represents an organisation. Specifies a domain, isolation boundaries (namespace, LDAP OU, database prefix, S3 prefix, Keycloak realm), mail configuration, resource quotas, a deletion policy, and a list of desired apps by profile name. Creating a Tenant CR triggers the full provisioning and deployment pipeline.
+Represents an organisation. Specifies an **optional vanity domain** (defaults to `<tenant>.<kernel_domain>` when unset — see §2.5), isolation boundaries (namespace, LDAP OU, database prefix, S3 prefix, Keycloak realm), mail configuration, resource quotas, a deletion policy, and a list of desired apps by profile name. Creating a Tenant CR triggers the full provisioning and deployment pipeline.
 
 The deletion policy is configurable per tenant: `Retain` (default) revokes access credentials but keeps databases, storage buckets, mailboxes, and LDAP entries intact — safe for compliance and data recovery. `Delete` drops everything, intended for development and test tenants.
 
@@ -339,7 +361,7 @@ Sublayers allow sequencing within the kernel:
 
 | Layer | Contents | Depends on |
 |-------|----------|------------|
-| 100 | Namespaces, OpenBao, cert-manager, ESO, Stakater Reloader | Layer 000 |
+| 100 | Namespaces, OpenBao, cert-manager (+ kernel wildcard `Certificate` for `*.<kernel_domain>` and `letsencrypt-http01` ClusterIssuer), Flux source-controller (required by tofu-controller), ESO, Stakater Reloader | Layer 000 |
 | 110 | Identity (Keycloak Operator, UCS LDAP) | 100 |
 | 120 | Databases (CloudNativePG, MariaDB Operator) | 100 |
 | 130 | Storage (MinIO Operator, Nextcloud) | 110, 120 |
@@ -452,7 +474,7 @@ gentian-deployments/
 │   │   └── install.sh             # Layer 000 — one-time ArgoCD + Tofu Controller
 │   ├── kernel/
 │   │   ├── values-production.yaml # Environment-specific kernel overrides
-│   │   └── tofu.tfvars            # OpenTofu variables (domain, root creds ref)
+│   │   └── tofu.tfvars            # OpenTofu variables (kernel_domain, root creds ref)
 │   ├── app-of-apps.yaml           # ArgoCD Application pointing at gentian-os + gentian-apps
 │   └── tenants/
 │       ├── gtn-demo.yaml         # Tenant CR
@@ -793,7 +815,10 @@ metadata:
   name: gtn-demo
 spec:
   displayName: "GTN Demo"
-  domain: gtn-demo.gentianos.example.com
+  # Optional vanity domain. When omitted, the operator falls back to
+  #   <tenant-name>.<KERNEL_DOMAIN>  (e.g. gtn-demo.desk.gentian.org)
+  # served under the kernel wildcard cert. See §2.5.
+  domain: acme.com
   adminEmail: admin@gtn-demo.example.com
 
   isolation:
@@ -947,7 +972,7 @@ resource "vault_kv_secret_v2" "kernel_identity" {
   mount = vault_mount.gentianos.path
   name  = "kernel/identity"
   data_json = jsonencode({
-    oidc_issuer  = "https://keycloak.${var.domain}/realms/gentianos"
+    oidc_issuer  = "https://keycloak.${var.kernel_domain}/realms/gentianos"
     admin_api    = "https://keycloak.platform-kernel.svc.cluster.local:8443"
     ldap_host    = "openldap.platform-kernel.svc.cluster.local"
     ldap_port    = 389
