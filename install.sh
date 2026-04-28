@@ -1018,7 +1018,9 @@ verify_cloudflare_token() {
 
     local ok count
     ok=$(echo "$resp" | jq -r '.success // false' 2>/dev/null)
-    count=$(echo "$resp" | jq -r '.result_count // 0' 2>/dev/null)
+    # Cloudflare may return result_count as null on some accounts/tokens.
+    # Fall back to the actual array length so we don't produce false negatives.
+    count=$(echo "$resp" | jq -r 'if (.result_count // null) == null then (.result | length) else .result_count end' 2>/dev/null)
 
     if [[ "$ok" != "true" ]]; then
         local err
