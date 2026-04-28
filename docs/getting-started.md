@@ -73,6 +73,29 @@ cd gentian-os
 
 ### 2. Export required credentials
 
+Preferred approach (externalized config): use the provided templates.
+
+```bash
+cp install.env.template install.env
+cp install.secrets.env.template install.secrets.env
+chmod 600 install.secrets.env
+# edit both files
+```
+
+`install.sh` auto-loads these files when present. You can override paths with:
+
+```bash
+./install.sh --config-file /path/to/install.env --secrets-file /path/to/install.secrets.env
+```
+
+Or disable file loading explicitly:
+
+```bash
+./install.sh --no-config-files
+```
+
+Alternative approach (direct environment exports):
+
 ```bash
 export MASTER_PASSWORD="<your-master-password>"
 export OD_PRIVATE_REGISTRY_USERNAME="<gitlab-username>"
@@ -81,7 +104,7 @@ export OD_SMTP_RELAY_USERNAME="<smtp-user@example.com>"
 export OD_SMTP_RELAY_PASSWORD="<smtp-app-password>"
 ```
 
-Any variable not pre-exported will be prompted interactively.
+Any variable not supplied via config files or environment exports will be prompted interactively.
 
 In addition to credentials, `install.sh` prompts for the source repositories
 that the cluster pulls app definitions and per-tenant overlays from. Defaults

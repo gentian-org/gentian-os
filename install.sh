@@ -46,6 +46,9 @@
 #   GENTIAN_DEPLOYMENTS_REPO      — default https://github.com/gentian-org/gentian-deployments
 #   GENTIAN_DEPLOYMENTS_BRANCH    — default main
 #   GENTIAN_NONINTERACTIVE        — set to "1" to skip the repo-prompt and use defaults
+#   INSTALL_CONFIG_FILE           — defaults to ./install.env when present
+#   INSTALL_SECRETS_FILE          — defaults to ./install.secrets.env when present
+#   INSTALL_AUTO_LOAD_CONFIG      — set to "0" to disable env-file loading
 #
 # Usage:
 #   ./install.sh
@@ -452,6 +455,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ─── Runtime defaults ─────────────────────────────────────────────────────────
 OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
 INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
+# Operator-managed env files (config + secrets). These are optional, but when
+# present they are sourced automatically before prompting so installs can be
+# fully declarative and non-interactive.
+INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
+INSTALL_SECRETS_FILE="${INSTALL_SECRETS_FILE:-${SCRIPT_DIR}/install.secrets.env}"
+INSTALL_AUTO_LOAD_CONFIG="${INSTALL_AUTO_LOAD_CONFIG:-1}"
 # Local on-disk cache of the credentials prompted on the first run, so that
 # re-running install.sh after a partial failure does not re-prompt. The file
 # is gitignored and chmod 600. Set INSTALL_SECRETS_CACHE=/dev/null to disable.
@@ -473,10 +482,15 @@ Usage: ./install.sh [options]
 Options:
   --no-cluster-infra   Skip cluster infra installation (cert-manager, reloader, CNPG)
   --cluster-infra      Force cluster infra installation (default)
+    --config-file PATH   Source non-secret installer config from PATH
+    --secrets-file PATH  Source secret installer values from PATH
+    --no-config-files    Disable auto-loading of install.env / install.secrets.env
   -h, --help           Show this help
 
 Environment overrides:
   INSTALL_CLUSTER_INFRA=1|0
+    INSTALL_CONFIG_FILE=/path/to/install.env
+    INSTALL_SECRETS_FILE=/path/to/install.secrets.env
 EOF
 }
 
@@ -488,6 +502,19 @@ parse_args() {
                 ;;
             --cluster-infra)
                 INSTALL_CLUSTER_INFRA="1"
+                ;;
+            --config-file)
+                shift
+                [[ $# -gt 0 ]] || { error "--config-file requires a value"; exit 1; }
+                INSTALL_CONFIG_FILE="$1"
+                ;;
+            --secrets-file)
+                shift
+                [[ $# -gt 0 ]] || { error "--secrets-file requires a value"; exit 1; }
+                INSTALL_SECRETS_FILE="$1"
+                ;;
+            --no-config-files)
+                INSTALL_AUTO_LOAD_CONFIG="0"
                 ;;
             -h|--help)
                 usage
@@ -501,6 +528,31 @@ parse_args() {
         esac
         shift
     done
+}
+
+load_env_file() {
+    local file="$1"
+    local label="$2"
+
+    [[ "${file}" == "/dev/null" ]] && return 0
+    [[ -r "${file}" ]] || return 0
+
+    set -a
+    # shellcheck disable=SC1090
+    source "${file}" || true
+    set +a
+    info "Loaded ${label} from ${file}."
+}
+
+# load_operator_config sources declarative operator-provided env files before
+# cache loading and interactive prompts. This enables non-interactive installs
+# driven by pre-filled templates.
+load_operator_config() {
+    if [[ "${INSTALL_AUTO_LOAD_CONFIG}" != "1" ]]; then
+        return 0
+    fi
+    load_env_file "${INSTALL_CONFIG_FILE}" "installer config"
+    load_env_file "${INSTALL_SECRETS_FILE}" "installer secrets"
 }
 
 # =============================================================================
@@ -1859,6 +1911,7 @@ main() {
     echo ""
 
     parse_args "$@"
+    load_operator_config
     load_creds_cache
     load_install_state
     try_load_creds_from_openbao
