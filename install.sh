@@ -472,6 +472,35 @@ INSTALL_SECRETS_CACHE="${INSTALL_SECRETS_CACHE:-${SCRIPT_DIR}/.install-secrets.e
 # disable persistence.
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
 
+# Input precedence (highest -> lowest):
+#   1) CLI flags / existing shell environment
+#   2) installer config files (install.env, install.secrets.env)
+#   3) local caches (.install-secrets.env, .install-state.env)
+#   4) OpenBao backfill for missing values
+#   5) interactive prompts for missing required values
+INPUT_HIERARCHY_VARS=(
+    MASTER_PASSWORD
+    OD_PRIVATE_REGISTRY_USERNAME
+    OD_PRIVATE_REGISTRY_PASSWORD
+    OD_SMTP_RELAY_USERNAME
+    OD_SMTP_RELAY_PASSWORD
+    KERNEL_DOMAIN
+    NODE_IP
+    SKIP_TOOLS
+    OPENBAO_INIT_FILE
+    LETSENCRYPT_EMAIL
+    INGRESS_CLASS_NAME
+    GENTIAN_APPS_REPO
+    GENTIAN_APPS_BRANCH
+    GENTIAN_DEPLOYMENTS_REPO
+    GENTIAN_DEPLOYMENTS_BRANCH
+    GENTIAN_DEPLOYMENTS_PATH
+    GENTIAN_NONINTERACTIVE
+    INSTALL_CLUSTER_INFRA
+    CF_API_TOKEN
+    CF_ZONE_NAME
+)
+
 # ─── Versions ────────────────────────────────────────────────────────────────
 TOFU_VERSION="1.9.0"
 BAO_VERSION="2.5.1"
@@ -540,14 +569,29 @@ parse_args() {
 load_env_file() {
     local file="$1"
     local label="$2"
+    local var
+    local -A before=()
 
     [[ "${file}" == "/dev/null" ]] && return 0
     [[ -r "${file}" ]] || return 0
+
+    # Do not let a lower-precedence source override values that are already
+    # set by higher-precedence sources.
+    for var in "${INPUT_HIERARCHY_VARS[@]}"; do
+        if [[ -n "${!var+x}" ]]; then
+            before["$var"]="${!var}"
+        fi
+    done
 
     set -a
     # shellcheck disable=SC1090
     source "${file}" || true
     set +a
+
+    for var in "${!before[@]}"; do
+        declare -gx "$var=${before[$var]}"
+    done
+
     info "Loaded ${label} from ${file}."
 }
 
@@ -717,9 +761,7 @@ try_load_creds_from_openbao() {
 # =============================================================================
 load_creds_cache() {
     if [[ -r "${INSTALL_SECRETS_CACHE}" ]]; then
-        # shellcheck disable=SC1090
-        source "${INSTALL_SECRETS_CACHE}" || return 0
-        info "Loaded cached credentials from ${INSTALL_SECRETS_CACHE}."
+        load_env_file "${INSTALL_SECRETS_CACHE}" "cached credentials"
     fi
 }
 
@@ -788,24 +830,54 @@ prompt_credentials() {
 # the deployments repo when running `kubectl gentian apps install/uninstall`.
 # =============================================================================
 prompt_app_repos() {
-    : "${GENTIAN_APPS_REPO:=https://github.com/gentian-org/gentian-apps}"
-    : "${GENTIAN_APPS_BRANCH:=main}"
-    : "${GENTIAN_DEPLOYMENTS_REPO:=https://github.com/gentian-org/gentian-deployments}"
-    : "${GENTIAN_DEPLOYMENTS_BRANCH:=main}"
+    local default_apps_repo="https://github.com/gentian-org/gentian-apps"
+    local default_apps_branch="main"
+    local default_deploy_repo="https://github.com/gentian-org/gentian-deployments"
+    local default_deploy_branch="main"
+    local v
 
-    if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
-        echo ""
-        info "App catalogue and deployment repositories (press <Enter> to accept defaults):"
-        local v
-        read -rp "  gentian-apps repo URL [${GENTIAN_APPS_REPO}]: " v
-        [[ -n "$v" ]] && GENTIAN_APPS_REPO="$v"
-        read -rp "  gentian-apps branch [${GENTIAN_APPS_BRANCH}]: " v
-        [[ -n "$v" ]] && GENTIAN_APPS_BRANCH="$v"
-        read -rp "  gentian-deployments repo URL [${GENTIAN_DEPLOYMENTS_REPO}]: " v
-        [[ -n "$v" ]] && GENTIAN_DEPLOYMENTS_REPO="$v"
-        read -rp "  gentian-deployments branch [${GENTIAN_DEPLOYMENTS_BRANCH}]: " v
-        [[ -n "$v" ]] && GENTIAN_DEPLOYMENTS_BRANCH="$v"
+    if [[ -z "${GENTIAN_APPS_REPO:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_APPS_REPO="${default_apps_repo}"
+        else
+            echo ""
+            info "App catalogue and deployment repositories (missing values only):"
+            read -rp "  gentian-apps repo URL [${default_apps_repo}]: " v
+            GENTIAN_APPS_REPO="${v:-${default_apps_repo}}"
+        fi
     fi
+
+    if [[ -z "${GENTIAN_APPS_BRANCH:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_APPS_BRANCH="${default_apps_branch}"
+        else
+            read -rp "  gentian-apps branch [${default_apps_branch}]: " v
+            GENTIAN_APPS_BRANCH="${v:-${default_apps_branch}}"
+        fi
+    fi
+
+    if [[ -z "${GENTIAN_DEPLOYMENTS_REPO:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_DEPLOYMENTS_REPO="${default_deploy_repo}"
+        else
+            read -rp "  gentian-deployments repo URL [${default_deploy_repo}]: " v
+            GENTIAN_DEPLOYMENTS_REPO="${v:-${default_deploy_repo}}"
+        fi
+    fi
+
+    if [[ -z "${GENTIAN_DEPLOYMENTS_BRANCH:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_DEPLOYMENTS_BRANCH="${default_deploy_branch}"
+        else
+            read -rp "  gentian-deployments branch [${default_deploy_branch}]: " v
+            GENTIAN_DEPLOYMENTS_BRANCH="${v:-${default_deploy_branch}}"
+        fi
+    fi
+
+    : "${GENTIAN_APPS_REPO:=${default_apps_repo}}"
+    : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
+    : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
+    : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
     export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH \
            GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH GENTIAN_DEPLOYMENTS_PATH
@@ -834,9 +906,7 @@ EOF
 # =============================================================================
 load_install_state() {
     if [[ -r "${INSTALL_STATE_FILE}" ]]; then
-        # shellcheck disable=SC1090
-        source "${INSTALL_STATE_FILE}" || return 0
-        info "Loaded installer state from ${INSTALL_STATE_FILE}."
+        load_env_file "${INSTALL_STATE_FILE}" "installer state"
     fi
 }
 

@@ -13,3 +13,5 @@ terraform.tfstate.backup
 # Local operator-provided install config (templates are committed as *.template)
 install.env
 install.secrets.env
+install.env.backup
+install.secrets.env.backup
