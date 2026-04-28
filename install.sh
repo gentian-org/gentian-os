@@ -1697,6 +1697,15 @@ bootstrap_argocd_apps() {
         success "Flux source-controller installed."
     fi
 
+    # Wait for source-controller to be Available before deploying tofu-controller.
+    # source-controller rewrites its own CRDs (including gitrepositories) after
+    # startup; if tofu-controller starts in that window it crash-loops because the
+    # CRD temporarily disappears. Waiting for Available ensures CRD churn is done.
+    info "Waiting for Flux source-controller deployment to be Available (up to 3 min)..."
+    kubectl wait --for=condition=available --timeout=180s \
+        deployment/source-controller -n flux-system
+    success "Flux source-controller is Available."
+
     local apps=(openbao tofu-controller globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         apps+=(reloader cnpg cnpg-cluster)
