@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -165,6 +166,13 @@ func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov
 			if err != nil {
 				return false, fmt.Errorf("seed tenant admin: %w", err)
 			}
+			log.FromContext(ctx).Info(
+				"Initial tenant admin credentials (printed once)",
+				"tenant", tenant.Name,
+				"realm", realmName,
+				"username", creds.Username,
+				"password", creds.Password,
+			)
 		} else {
 			creds = secrets.TenantAdminCreds{Username: "admin", Password: "placeholder"}
 		}
@@ -485,6 +493,7 @@ TOKEN=$(curl -sf \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH="-H \"Authorization: Bearer ${TOKEN}\""
+CREATED=0
 
 # --- 1. Create tenant admin user if absent ---
 EXISTING=$(curl -sf ${AUTH} \
@@ -500,6 +509,7 @@ else
   EXISTING=$(curl -sf ${AUTH} \
     "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+	CREATED=1
   echo "tenant admin ${TENANT_ADMIN_USERNAME} created (id=${UID}) in realm %s"
 fi
 
@@ -509,6 +519,9 @@ curl -sf -X PUT ${AUTH} \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
   -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":true}"
 echo "password set (temporary=true)"
+if [ "${CREATED}" = "1" ]; then
+	echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
+fi
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
 MGMT_CLIENT_ID=$(curl -sf ${AUTH} \
@@ -530,7 +543,7 @@ else
   echo "realm-admin role granted"
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {

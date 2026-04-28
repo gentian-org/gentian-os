@@ -1731,8 +1731,17 @@ verify_argocd_apps() {
 # =============================================================================
 print_summary() {
     local argocd_pw
+    local cluster_admin_pw
+    local keycloak_admin_pw
+    local nubus_secret_ns
+    nubus_secret_ns="gentian-dev"
+
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
+    cluster_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
+                        -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
+    keycloak_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
+                        -o jsonpath='{.data.keycloak-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
 
     echo ""
     if [[ "${VERIFY_STATUS:-unknown}" == "ok" ]]; then
@@ -1748,6 +1757,10 @@ print_summary() {
         echo "  ✔ All Applications Synced + Healthy"
         echo "  ✔ AppCatalogue CRD installed"
         echo "  ✔ gentian-os orchestrator running (Tenant CRD Established)"
+        echo "  ✔ Cluster admin credentials materialized (nubus-credentials)"
+        echo ""
+        echo "  Cluster admin password (Portal Administrator): ${cluster_admin_pw}"
+        echo "  Keycloak admin password (master realm):       ${keycloak_admin_pw}"
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  Provision tenant: kubectl apply -f config/samples/tenant_gtn-demo.yaml"
@@ -1770,6 +1783,9 @@ print_summary() {
             echo "    kubectl get applications -n argocd"
             echo "    kubectl describe application -n argocd <name>"
         fi
+        echo ""
+        echo "  Cluster admin password (Portal Administrator): ${cluster_admin_pw}"
+        echo "  Keycloak admin password (master realm):       ${keycloak_admin_pw}"
         echo ""
         echo "  Re-run verification only:"
         echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"
