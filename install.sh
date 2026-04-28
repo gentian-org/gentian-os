@@ -461,6 +461,7 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
 INSTALL_SECRETS_FILE="${INSTALL_SECRETS_FILE:-${SCRIPT_DIR}/install.secrets.env}"
 INSTALL_AUTO_LOAD_CONFIG="${INSTALL_AUTO_LOAD_CONFIG:-1}"
+INSTALL_VALIDATE_ONLY="${INSTALL_VALIDATE_ONLY:-0}"
 # Local on-disk cache of the credentials prompted on the first run, so that
 # re-running install.sh after a partial failure does not re-prompt. The file
 # is gitignored and chmod 600. Set INSTALL_SECRETS_CACHE=/dev/null to disable.
@@ -482,15 +483,18 @@ Usage: ./install.sh [options]
 Options:
   --no-cluster-infra   Skip cluster infra installation (cert-manager, reloader, CNPG)
   --cluster-infra      Force cluster infra installation (default)
-    --config-file PATH   Source non-secret installer config from PATH
-    --secrets-file PATH  Source secret installer values from PATH
-    --no-config-files    Disable auto-loading of install.env / install.secrets.env
+  --config-file PATH   Source non-secret installer config from PATH
+  --secrets-file PATH  Source secret installer values from PATH
+  --no-config-files    Disable auto-loading of install.env / install.secrets.env
+  --validate, --check  Validate config and secrets; print a report and exit (no
+                       cluster actions are taken)
   -h, --help           Show this help
 
 Environment overrides:
   INSTALL_CLUSTER_INFRA=1|0
-    INSTALL_CONFIG_FILE=/path/to/install.env
-    INSTALL_SECRETS_FILE=/path/to/install.secrets.env
+  INSTALL_CONFIG_FILE=/path/to/install.env
+  INSTALL_SECRETS_FILE=/path/to/install.secrets.env
+  INSTALL_VALIDATE_ONLY=1
 EOF
 }
 
@@ -515,6 +519,9 @@ parse_args() {
                 ;;
             --no-config-files)
                 INSTALL_AUTO_LOAD_CONFIG="0"
+                ;;
+            --validate|--check)
+                INSTALL_VALIDATE_ONLY="1"
                 ;;
             -h|--help)
                 usage
@@ -542,6 +549,86 @@ load_env_file() {
     source "${file}" || true
     set +a
     info "Loaded ${label} from ${file}."
+}
+
+# validate_config checks that all required environment variables are set and
+# that key values pass basic format validation. Exits 0 on success, 1 on
+# failure. No cluster actions are taken.
+validate_config() {
+    local errors=0 warnings=0
+
+    _req() {
+        local var="$1" hint="$2"
+        if [[ -z "${!var:-}" ]]; then
+            echo "  [MISSING]  ${var}  — ${hint}"
+            (( errors++ )) || true
+        else
+            echo "  [OK]       ${var}"
+        fi
+    }
+
+    _opt() {
+        local var="$1" hint="$2"
+        if [[ -z "${!var:-}" ]]; then
+            echo "  [WARN]     ${var}  — not set (${hint})"
+            (( warnings++ )) || true
+        else
+            echo "  [OK]       ${var}"
+        fi
+    }
+
+    echo ""
+    echo "━━━ Required secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    _req MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets"
+    _req OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username"
+    _req OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token"
+    _req OD_SMTP_RELAY_USERNAME   "SMTP relay username (e.g. Gmail address)"
+    _req OD_SMTP_RELAY_PASSWORD   "SMTP relay password (e.g. Gmail App Password)"
+
+    echo ""
+    echo "━━━ Required config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix (e.g. platform.example.com)"
+        (( errors++ )) || true
+    elif [[ ! "${KERNEL_DOMAIN}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$"
+        (( errors++ )) || true
+    else
+        echo "  [OK]       KERNEL_DOMAIN=${KERNEL_DOMAIN}"
+    fi
+
+    echo ""
+    echo "━━━ Optional / recommended config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    _opt LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address"
+    _opt INGRESS_CLASS_NAME "defaults to 'nginx' if not set"
+    _opt NODE_IP            "auto-detected at install time if not set"
+    _opt CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates"
+    _opt CF_ZONE_NAME       "Cloudflare zone — derived from KERNEL_DOMAIN if not set"
+    _opt GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps"
+    _opt GENTIAN_APPS_BRANCH     "defaults to 'main'"
+    _opt GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments"
+    _opt GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'"
+
+    echo ""
+    echo "━━━ Config sources ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    [[ -r "${INSTALL_CONFIG_FILE}" ]]  && echo "  [FILE]     ${INSTALL_CONFIG_FILE}" \
+                                       || echo "  [ABSENT]   ${INSTALL_CONFIG_FILE}  (optional)"
+    [[ -r "${INSTALL_SECRETS_FILE}" ]] && echo "  [FILE]     ${INSTALL_SECRETS_FILE}" \
+                                       || echo "  [ABSENT]   ${INSTALL_SECRETS_FILE}  (optional, chmod 600)"
+    [[ -r "${INSTALL_SECRETS_CACHE}" ]] && echo "  [CACHE]    ${INSTALL_SECRETS_CACHE}" \
+                                        || echo "  [NO CACHE] ${INSTALL_SECRETS_CACHE}"
+
+    echo ""
+    if (( errors > 0 )); then
+        echo -e "${RED}Result: ${errors} error(s), ${warnings} warning(s) — config is NOT ready.${NC}"
+        exit 1
+    elif (( warnings > 0 )); then
+        echo -e "${YELLOW}Result: 0 errors, ${warnings} warning(s) — config is ready (with caveats).${NC}"
+        exit 0
+    else
+        echo -e "${GREEN}Result: all checks passed — config is ready.${NC}"
+        exit 0
+    fi
 }
 
 # load_operator_config sources declarative operator-provided env files before
@@ -1913,6 +2000,7 @@ main() {
     parse_args "$@"
     load_operator_config
     load_creds_cache
+    [[ "${INSTALL_VALIDATE_ONLY}" == "1" ]] && { load_install_state; try_load_creds_from_openbao; validate_config; }
     load_install_state
     try_load_creds_from_openbao
     prompt_credentials
