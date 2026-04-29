@@ -19,10 +19,11 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,6 +46,13 @@ type TenantValidator struct {
 
 // Handle implements admission.Handler.
 func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
+	if v == nil {
+		return admission.Errored(http.StatusInternalServerError, errors.New("tenant validator is nil"))
+	}
+	if v.Client == nil {
+		return admission.Errored(http.StatusInternalServerError, errors.New("tenant validator client is not initialized"))
+	}
+
 	tenant := &gentianov1alpha1.Tenant{}
 	if v.Decoder != nil {
 		if err := v.Decoder.DecodeRaw(req.Object, tenant); err != nil {
@@ -85,7 +93,7 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 
 		profile := &gentianov1alpha1.AppProfile{}
 		err := v.Client.Get(ctx, types.NamespacedName{Name: app.Profile}, profile)
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			return fmt.Errorf(
 				"tenant %q: AppProfile %q not found; install the app catalogue first",
 				tenant.Name, app.Profile,

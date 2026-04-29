@@ -75,3 +75,48 @@ func TestTenantValidatorHandleNilDecoder_DeniesMissingAppProfile(t *testing.T) {
 		t.Fatalf("unexpected denial message: %q", resp.Result.Message)
 	}
 }
+
+func TestTenantValidatorHandle_NilReceiverReturnsInternalError(t *testing.T) {
+	var validator *TenantValidator
+
+	resp := validator.Handle(context.Background(), admission.Request{})
+
+	if resp.Allowed {
+		t.Fatalf("expected request to be rejected")
+	}
+	if resp.Result == nil || resp.Result.Code != 500 {
+		t.Fatalf("expected HTTP 500 response, got: %#v", resp.Result)
+	}
+	if !strings.Contains(resp.Result.Message, "tenant validator is nil") {
+		t.Fatalf("unexpected message: %q", resp.Result.Message)
+	}
+}
+
+func TestTenantValidatorHandle_NilClientReturnsInternalError(t *testing.T) {
+	tenant := gentianov1alpha1.Tenant{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "gentianos.io/v1alpha1",
+			Kind:       "Tenant",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
+	}
+	raw, err := json.Marshal(tenant)
+	if err != nil {
+		t.Fatalf("marshal tenant: %v", err)
+	}
+
+	validator := &TenantValidator{}
+	resp := validator.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{Object: runtime.RawExtension{Raw: raw}},
+	})
+
+	if resp.Allowed {
+		t.Fatalf("expected request to be rejected")
+	}
+	if resp.Result == nil || resp.Result.Code != 500 {
+		t.Fatalf("expected HTTP 500 response, got: %#v", resp.Result)
+	}
+	if !strings.Contains(resp.Result.Message, "client is not initialized") {
+		t.Fatalf("unexpected message: %q", resp.Result.Message)
+	}
+}
