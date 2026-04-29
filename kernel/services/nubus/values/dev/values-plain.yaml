@@ -108,6 +108,14 @@ nubusKeycloakExtensions:
       username: ${smtp_username}
 
 nubusStackDataUms:
+  global:
+    configUcr:
+      ssl:
+        update:
+          expired: "no"
+        validity:
+          host: 24221
+          root: 24221
   postgresql:
     connection:
       host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
