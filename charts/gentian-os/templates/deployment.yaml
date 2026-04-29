@@ -3,6 +3,8 @@ kind: Deployment
 {{- $webhook := .Values.webhook | default dict }}
 {{- $webhookEnabled := $webhook.enabled | default false }}
 {{- $webhookPort := $webhook.port | default 9443 }}
+{{- $imageDigest := .Values.image.digest | default "" }}
+{{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
 metadata:
   name: {{ include "gentian-os.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -33,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ $imageTag }}{{- end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - /manager

@@ -14,7 +14,11 @@ image:
   repository: ghcr.io/gentian-org/gentian-os
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
+  # Ignored when image.digest is set.
   tag: ""
+  # Immutable digest pin (format: sha256:...).
+  # When set, the chart renders image as <repository>@<digest>.
+  digest: ""
 
 imagePullSecrets: []
 nameOverride: ""
