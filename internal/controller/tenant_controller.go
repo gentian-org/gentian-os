@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -210,6 +211,23 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// Preflight gate: a tenant may only proceed when all requested AppProfiles
+	// exist.
+	missingProfiles, err := r.validateTenantPrerequisites(ctx, tenant)
+	if err != nil {
+		reconcileErrors.WithLabelValues("tenant").Inc()
+		return ctrl.Result{}, err
+	}
+	if len(missingProfiles) > 0 {
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
+			fmt.Sprintf("AppProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
+		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
+			"Identity provisioning blocked because one or more requested AppProfiles are missing")
+		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, nil
+	}
+
 	nsName := tenantNamespaceName(tenant)
 	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName)
 
@@ -374,6 +392,29 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
+}
+
+// validateTenantPrerequisites checks that all requested AppProfiles exist.
+func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	missingMap := map[string]struct{}{}
+
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				missingMap[app.Profile] = struct{}{}
+				continue
+			}
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+	}
+
+	missing := make([]string, 0, len(missingMap))
+	for name := range missingMap {
+		missing = append(missing, name)
+	}
+
+	return missing, nil
 }
 
 // reconcileDelete handles Tenant deletion based on deletionPolicy.

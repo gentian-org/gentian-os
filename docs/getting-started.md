@@ -306,6 +306,22 @@ kubectl get tenant gtn-demo -o jsonpath='{.status.phase}'
 # → Ready
 ```
 
+List all tenants:
+
+```bash
+kubectl get tenants
+```
+
+Decommission a single tenant:
+
+```bash
+kubectl delete tenant gtn-demo
+```
+
+Behavior depends on `spec.deletionPolicy` on the Tenant:
+1. `Retain`: keep namespace/data, revoke access and remove orchestration resources.
+2. `Delete`: run full cleanup (apps, identity, contracts, namespace resources).
+
 ---
 
 ## Re-seal / unseal OpenBao

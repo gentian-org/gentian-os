@@ -25,6 +25,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -338,6 +339,57 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 	}
 	if !containsPolicyType(np.Spec.PolicyTypes, networkingv1.PolicyTypeEgress) {
 		t.Error("expected Egress policy type")
+	}
+}
+
+func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-profile"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Missing Profile Co",
+			Domain:      "missing-profile.example.com",
+			AdminEmail:  "admin@missing-profile.example.com",
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "does-not-exist"},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, 10*time.Second, func() bool {
+		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "missing-profile"}, updated)
+		return updated.Status.Phase == gentianov1alpha1.TenantPhaseDegraded
+	})
+
+	if updated.Status.Phase != gentianov1alpha1.TenantPhaseDegraded {
+		t.Fatalf("expected Phase=Degraded, got %v", updated.Status.Phase)
+	}
+
+	var appsCond *metav1.Condition
+	for i := range updated.Status.Conditions {
+		if updated.Status.Conditions[i].Type == "AppsReady" {
+			appsCond = &updated.Status.Conditions[i]
+			break
+		}
+	}
+	if appsCond == nil {
+		t.Fatal("expected AppsReady condition")
+	}
+	if appsCond.Reason != "ProfileNotFound" {
+		t.Errorf("expected AppsReady reason ProfileNotFound, got %q", appsCond.Reason)
+	}
+
+	ns := &corev1.Namespace{}
+	err := testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-missing-profile"}, ns)
+	if err == nil {
+		t.Fatal("expected tenant namespace to not be created when profiles are missing")
+	}
+	if !k8serrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound for tenant namespace, got: %v", err)
 	}
 }
 

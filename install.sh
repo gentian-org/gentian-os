@@ -2039,6 +2039,8 @@ install_appprofiles_sync() {
     kubectl apply -f "$rendered"
     rm -f "$rendered"
     success "AppProfiles sync configured. ArgoCD will populate AppProfile CRs."
+    info "After sync, list available app profiles with:"
+    info "  kubectl gentian apps list"
 }
 
 # =============================================================================
@@ -2222,6 +2224,7 @@ print_summary() {
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  Provision tenant: kubectl apply -f config/samples/tenant_gtn-demo.yaml"
+        echo "  List apps:       kubectl gentian apps list"
         echo "  Install apps:    kubectl gentian install <profile>"
         echo ""
         echo -e "${GREEN}🎉  Gentian OS successfully installed. Welcome aboard!${NC}"
@@ -2254,6 +2257,8 @@ print_summary() {
         echo ""
         echo "  Re-run verification only:"
         echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"
+        echo "  List apps once synced:"
+        echo "    kubectl gentian apps list"
     fi
 }
 
