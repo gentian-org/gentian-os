@@ -1,5 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
+{{- $webhook := .Values.webhook | default dict }}
+{{- $webhookEnabled := $webhook.enabled | default false }}
+{{- $webhookPort := $webhook.port | default 9443 }}
 metadata:
   name: {{ include "gentian-os.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -38,6 +41,9 @@ spec:
             - --metrics-bind-address=:8080
             - --health-probe-bind-address=:8081
             - --leader-elect
+            {{- if $webhookEnabled }}
+            - --enable-webhook
+            {{- end }}
             {{- if .Values.leaderElectionNamespace }}
             - --leader-election-namespace={{ .Values.leaderElectionNamespace }}
             {{- end }}
@@ -59,6 +65,11 @@ spec:
             - name: health
               containerPort: 8081
               protocol: TCP
+            {{- if $webhookEnabled }}
+            - name: webhook
+              containerPort: {{ $webhookPort }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -80,6 +91,12 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if $webhookEnabled }}
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -91,5 +108,11 @@ spec:
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $webhookEnabled }}
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
       {{- end }}
       terminationGracePeriodSeconds: 10

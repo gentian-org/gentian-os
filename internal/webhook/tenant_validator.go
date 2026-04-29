@@ -18,6 +18,7 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -45,8 +46,14 @@ type TenantValidator struct {
 // Handle implements admission.Handler.
 func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
 	tenant := &gentianov1alpha1.Tenant{}
-	if err := v.Decoder.DecodeRaw(req.Object, tenant); err != nil {
-		return admission.Errored(http.StatusBadRequest, err)
+	if v.Decoder != nil {
+		if err := v.Decoder.DecodeRaw(req.Object, tenant); err != nil {
+			return admission.Errored(http.StatusBadRequest, err)
+		}
+	} else {
+		if err := json.Unmarshal(req.Object.Raw, tenant); err != nil {
+			return admission.Errored(http.StatusBadRequest, err)
+		}
 	}
 
 	if err := v.Validate(ctx, tenant); err != nil {

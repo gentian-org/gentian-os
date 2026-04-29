@@ -1,0 +1,29 @@
+{{- $webhook := .Values.webhook | default dict }}
+{{- if ($webhook.enabled | default false) }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-webhook-selfsigned
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-webhook-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
+  issuerRef:
+    kind: Issuer
+    name: {{ include "gentian-os.fullname" . }}-webhook-selfsigned
+  dnsNames:
+    - {{ include "gentian-os.fullname" . }}-webhook
+    - {{ include "gentian-os.fullname" . }}-webhook.{{ .Release.Namespace }}
+    - {{ include "gentian-os.fullname" . }}-webhook.{{ .Release.Namespace }}.svc
+{{- end }}

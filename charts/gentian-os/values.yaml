@@ -77,6 +77,12 @@ metrics:
     # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
     additionalLabels: {}
 
+# Admission webhook for Tenant create/update validation.
+webhook:
+  enabled: true
+  port: 9443
+  failurePolicy: Fail
+
 # Grafana dashboard
 grafana:
   dashboards:
