@@ -132,6 +132,10 @@ nubusStackDataUms:
     smtpPort: ${smtp_port}
     smtpUser: ${smtp_username}
     smtpStartTls: ${smtp_starttls}
+    # Keep UMC SSL warning state aligned with mounted cert validity.
+    sslUpdateExpired: "no"
+    sslValidityHost: 24221
+    sslValidityRoot: 24221
   templateContext:
     # Passwords for ldapSearchUsers and initialPasswordAdministrator / oxSystemUserPassword
     # are injected via set_sensitive. Usernames and lastnames go here.
