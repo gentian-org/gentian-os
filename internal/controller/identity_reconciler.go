@@ -494,21 +494,21 @@ TOKEN=$(curl -sf \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-AUTH="-H \"Authorization: Bearer ${TOKEN}\""
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 CREATED=0
 
 # --- 1. Create tenant admin user if absent ---
-EXISTING=$(curl -sf ${AUTH} \
+EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
 if echo "${EXISTING}" | grep -q '"id"'; then
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "tenant admin ${TENANT_ADMIN_USERNAME} already exists (id=${UID}) in realm %s"
 else
-  curl -sf -X POST ${AUTH} \
+	curl -sf -X POST -H "${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/%s/users" \
     -d "{\"username\":\"${TENANT_ADMIN_USERNAME}\",\"enabled\":true,\"requiredActions\":[\"UPDATE_PASSWORD\"]}"
-  EXISTING=$(curl -sf ${AUTH} \
+	EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/%s/users?username=${TENANT_ADMIN_USERNAME}&exact=true")
   UID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
 	CREATED=1
@@ -516,7 +516,7 @@ else
 fi
 
 # --- 2. Set temporary password ---
-curl -sf -X PUT ${AUTH} \
+curl -sf -X PUT -H "${AUTH_HEADER}" \
   -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
   -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":true}"
@@ -527,19 +527,19 @@ if [ "${CREATED}" = "1" ]; then
 fi
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
-MGMT_CLIENT_ID=$(curl -sf ${AUTH} \
+MGMT_CLIENT_ID=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=realm-management" \
   | sed 's/.*"id":"\([^"]*\)".*/\1/')
-ROLE_ID=$(curl -sf ${AUTH} \
+ROLE_ID=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients/${MGMT_CLIENT_ID}/roles/realm-admin" \
   | sed 's/.*"id":"\([^"]*\)".*/\1/')
 ROLE_NAME="realm-admin"
-EXISTING_ROLES=$(curl -sf ${AUTH} \
+EXISTING_ROLES=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}")
 if echo "${EXISTING_ROLES}" | grep -q '"realm-admin"'; then
   echo "realm-admin role already assigned"
 else
-  curl -sf -X POST ${AUTH} \
+	curl -sf -X POST -H "${AUTH_HEADER}" \
     -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}" \
     -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]"
