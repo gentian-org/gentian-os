@@ -130,6 +130,8 @@ nubusStackDataUms:
   stackDataContext:
     smtpHost: ${smtp_host}
     smtpPort: ${smtp_port}
+    smtpUser: ${smtp_username}
+    smtpStartTls: ${smtp_starttls}
   templateContext:
     # Passwords for ldapSearchUsers and initialPasswordAdministrator / oxSystemUserPassword
     # are injected via set_sensitive. Usernames and lastnames go here.
