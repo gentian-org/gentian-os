@@ -255,7 +255,7 @@ wait_for_tenant_ready() {
 
   while true; do
     local phase
-    phase="$(kubectl get tenant "${tenant_name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      phase="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
 
     if [[ -z "${phase}" ]]; then
       phase="<pending-status>"
@@ -296,7 +296,7 @@ fetch_tenant_admin_credentials() {
   local timeout_secs="${2:-300}"
   local start
   start="$(date +%s)"
-  local last_status=""
+  local next_progress_at=0
 
   TENANT_ADMIN_USERNAME=""
   TENANT_ADMIN_PASSWORD=""
@@ -305,7 +305,7 @@ fetch_tenant_admin_credentials() {
 
   while true; do
     local line
-    line="$(kubectl logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
+    line="$(kubectl --request-timeout=5s logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
 
     if [[ -n "${line}" ]]; then
       TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
@@ -329,16 +329,22 @@ fetch_tenant_admin_credentials() {
         echo "Retrieved tenant-admin credentials from OpenBao after $((now_bao - start))s."
         return 0
       fi
+    else
+      local job_succeeded
+      job_succeeded="$(kubectl --request-timeout=5s get job -n platform-kernel "keycloak-admin-${tenant_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+      if [[ -n "${job_succeeded}" && "${job_succeeded}" != "0" ]]; then
+        echo "Cannot retrieve tenant-admin password automatically: keycloak-admin job completed without INITIAL_TENANT_ADMIN log and 'bao' is not available." >&2
+        return 1
+      fi
     fi
 
     local now_status
     now_status="$(date +%s)"
     local elapsed
     elapsed=$((now_status - start))
-    local status="waiting-for-credentials"
-    if [[ "${status}" != "${last_status}" || $((elapsed % 30)) -eq 0 ]]; then
+    if (( elapsed >= next_progress_at )); then
       echo "  still waiting for tenant-admin credentials (elapsed: ${elapsed}s)"
-      last_status="${status}"
+      next_progress_at=$((next_progress_at + 30))
     fi
 
     local now
@@ -365,7 +371,7 @@ rollback_deploy() {
       git add "${kustom_file}"
     )
     git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}" || true
-    kubectl apply -k "$(tenant_env_root "${env_name}")" >/dev/null 2>&1 || true
+      apply_env_kustomization "${env_name}" >/dev/null 2>&1 || true
   fi
 
   return 1
@@ -401,6 +407,21 @@ ensure_env_layout() {
 append_instance_resource() {
   local kustom_file="${1}"
   local instance="${2}"
+
+  if grep -Eq "^[[:space:]]*resources:[[:space:]]*\[[[:space:]]*\][[:space:]]*$" "${kustom_file}"; then
+    awk -v item="instances/${instance}" '
+      {
+        if ($0 ~ /^[[:space:]]*resources:[[:space:]]*\[[[:space:]]*\][[:space:]]*$/) {
+          print "resources:"
+          print "- " item
+          next
+        }
+        print
+      }
+    ' "${kustom_file}" > "${kustom_file}.tmp"
+    mv "${kustom_file}.tmp" "${kustom_file}"
+    return 0
+  fi
 
   awk -v item="instances/${instance}" '
     BEGIN { in_res=0; inserted=0 }
@@ -442,6 +463,60 @@ remove_instance_resource() {
   local instance="${2}"
 
   sed -i "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
+
+  # Keep a valid empty list when no instances remain.
+  if grep -Eq "^[[:space:]]*resources:[[:space:]]*$" "${kustom_file}"; then
+    local resource_count
+    resource_count="$(awk '
+      BEGIN { in_res=0; count=0 }
+      /^resources:[[:space:]]*$/ { in_res=1; next }
+      in_res == 1 && /^[[:space:]]*-[[:space:]]+/ { count++; next }
+      in_res == 1 && /^[^[:space:]]/ { in_res=0 }
+      END { print count }
+    ' "${kustom_file}")"
+
+    if [[ "${resource_count}" == "0" ]]; then
+      sed -i 's/^resources:[[:space:]]*$/resources: []/' "${kustom_file}"
+    fi
+  fi
+}
+
+ensure_kustomization_seed() {
+  local kustom_file="${1}"
+
+  if [[ ! -s "${kustom_file}" ]]; then
+    cat > "${kustom_file}" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
+EOF
+    return 0
+  fi
+
+  if ! grep -Eq "^[[:space:]]*resources:" "${kustom_file}"; then
+    printf "\nresources: []\n" >> "${kustom_file}"
+  fi
+}
+
+apply_env_kustomization() {
+  local env_name="${1}"
+  local output
+
+  output="$(kubectl apply -k "$(tenant_env_root "${env_name}")" 2>&1)"
+  local rc=$?
+
+  if [[ ${rc} -eq 0 ]]; then
+    [[ -n "${output}" ]] && echo "${output}"
+    return 0
+  fi
+
+  if echo "${output}" | grep -q "no objects passed to apply"; then
+    echo "No tenant instances selected in '${env_name}' (nothing to apply)."
+    return 0
+  fi
+
+  echo "${output}" >&2
+  return ${rc}
 }
 
 cmd_tenant_list() {
@@ -515,6 +590,7 @@ cmd_tenant_deploy() {
   local domain
 
   kustom_file="$(tenant_env_kustomization "${env_name}")"
+  ensure_kustomization_seed "${kustom_file}"
   patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
   tenant_name="$(tenant_instance_name_from_patch "${patch}")"
   realm="$(tenant_realm_from_patch "${patch}")"
@@ -547,7 +623,7 @@ cmd_tenant_deploy() {
   git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
 
   echo "Applying tenant desired state for '${env_name}'..."
-  if ! kubectl apply -k "$(tenant_env_root "${env_name}")"; then
+  if ! apply_env_kustomization "${env_name}"; then
     rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
   fi
 
@@ -584,6 +660,7 @@ cmd_tenant_undeploy() {
   local tenant_name
 
   kustom_file="$(tenant_env_kustomization "${env_name}")"
+  ensure_kustomization_seed "${kustom_file}"
   patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
   tenant_name="$(tenant_instance_name_from_patch "${patch}")"
   if [[ -z "${tenant_name}" ]]; then
@@ -613,7 +690,7 @@ cmd_tenant_undeploy() {
       git add "${kustom_file}"
     )
     git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
-    kubectl apply -k "$(tenant_env_root "${env_name}")"
+      apply_env_kustomization "${env_name}"
   fi
 
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
