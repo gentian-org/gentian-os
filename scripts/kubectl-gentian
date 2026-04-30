@@ -10,7 +10,9 @@
 #   kubectl gentian apps list [--namespace <ns>]
 #   kubectl gentian apps install <app> --tenant <tenant>
 #   kubectl gentian apps uninstall <app> --tenant <tenant>
-#   kubectl gentian tenants delete <tenant> [--purge]
+#   kubectl gentian tenants list [--env <env>]
+#   kubectl gentian tenants deploy <instance> [--env <env>]
+#   kubectl gentian tenants undeploy <instance> [--env <env>] [--purge]
 #
 # Required environment variables (or ~/.gentian/config):
 #   GENTIAN_DEPLOYMENTS_PATH   local path to a gentian-deployments checkout
@@ -46,10 +48,17 @@ Usage:
   kubectl gentian apps uninstall <app> --tenant <tenant>
       Uninstall an app from a tenant by committing to gentian-deployments.
 
-  kubectl gentian tenants delete <tenant> [--purge]
-      Delete a tenant by removing its manifest from gentian-deployments.
-      With --purge, first commit deletionPolicy=Delete so the operator performs
-      full cleanup before the Tenant CR is pruned.
+    kubectl gentian tenants list [--env <env>]
+      List tenant instances available in git and whether they are deployed in the
+      selected environment (default: dev).
+
+    kubectl gentian tenants deploy <instance> [--env <env>]
+      Deploy a tenant instance by adding it to <env>/tenants/kustomization.yaml.
+
+    kubectl gentian tenants undeploy <instance> [--env <env>] [--purge]
+      Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
+      With --purge, set deletionPolicy=Delete before undeploying and delete the
+      live Tenant CR after the GitOps change.
 
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
@@ -59,8 +68,10 @@ Examples:
   kubectl gentian apps list
   kubectl gentian apps install openproject --tenant gtn-demo
   kubectl gentian apps uninstall openproject --tenant gtn-demo
-  kubectl gentian tenants delete gtn-demo
-  kubectl gentian tenants delete gtn-demo --purge
+  kubectl gentian tenants list
+  kubectl gentian tenants deploy gtn-demo
+  kubectl gentian tenants undeploy gtn-demo
+  kubectl gentian tenants undeploy gtn-demo --purge
 EOF
 }
 
@@ -134,6 +145,279 @@ set_tenant_deletion_policy() {
     sed -i "/^  apps:/i\\  deletionPolicy: ${policy}" "${file}"
   else
     printf '\n  deletionPolicy: %s\n' "${policy}" >> "${file}"
+  fi
+}
+
+tenant_env_root() {
+  local env_name="${1:-dev}"
+  echo "${DEPLOYMENTS_PATH}/${env_name}/tenants"
+}
+
+tenant_instances_root() {
+  local env_name="${1:-dev}"
+  echo "$(tenant_env_root "${env_name}")/instances"
+}
+
+tenant_env_kustomization() {
+  local env_name="${1:-dev}"
+  echo "$(tenant_env_root "${env_name}")/kustomization.yaml"
+}
+
+tenant_instance_dir() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local dir
+  dir="$(tenant_instances_root "${env_name}")/${instance}"
+  if [[ ! -d "${dir}" ]]; then
+    echo "ERROR: tenant instance '${instance}' not found at ${dir}." >&2
+    exit 1
+  fi
+  echo "${dir}"
+}
+
+tenant_instance_patch_file() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local dir
+  dir="$(tenant_instance_dir "${instance}" "${env_name}")"
+  if [[ -f "${dir}/patch.yaml" ]]; then
+    echo "${dir}/patch.yaml"
+    return 0
+  fi
+
+  local first_tenant
+  first_tenant=$(grep -rl "kind: Tenant" "${dir}" --include="*.yaml" 2>/dev/null | head -n1 || true)
+  if [[ -z "${first_tenant}" ]]; then
+    echo "ERROR: no Tenant YAML found for instance '${instance}' in ${dir}." >&2
+    exit 1
+  fi
+  echo "${first_tenant}"
+}
+
+tenant_instance_name_from_patch() {
+  local file="${1}"
+  awk '
+    /^metadata:/ { in_meta=1; next }
+    in_meta == 1 && /^[^[:space:]]/ { in_meta=0 }
+    in_meta == 1 && $1 == "name:" { print $2; exit }
+  ' "${file}"
+}
+
+is_instance_deployed() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local kustom_file
+  kustom_file="$(tenant_env_kustomization "${env_name}")"
+
+  [[ -f "${kustom_file}" ]] || return 1
+
+  grep -Eq "^[[:space:]]*-[[:space:]]*instances/${instance}[[:space:]]*$" "${kustom_file}"
+}
+
+ensure_env_layout() {
+  local env_name="${1:-dev}"
+  local root
+  root="$(tenant_env_root "${env_name}")"
+
+  if [[ ! -d "${root}" ]]; then
+    echo "ERROR: tenant environment path not found: ${root}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$(tenant_env_kustomization "${env_name}")" ]]; then
+    echo "ERROR: missing environment kustomization: $(tenant_env_kustomization "${env_name}")" >&2
+    exit 1
+  fi
+}
+
+append_instance_resource() {
+  local kustom_file="${1}"
+  local instance="${2}"
+
+  awk -v item="instances/${instance}" '
+    BEGIN { in_res=0; inserted=0 }
+    {
+      if ($0 ~ /^resources:[[:space:]]*$/) {
+        print
+        in_res=1
+        next
+      }
+      if (in_res == 1) {
+        if ($0 ~ /^[[:space:]]*-[[:space:]]+/) {
+          print
+          next
+        }
+        if (inserted == 0) {
+          print "- " item
+          inserted=1
+        }
+        in_res=0
+      }
+      print
+    }
+    END {
+      if (in_res == 1 && inserted == 0) {
+        print "- " item
+        inserted=1
+      }
+      if (inserted == 0) {
+        print "resources:"
+        print "- " item
+      }
+    }
+  ' "${kustom_file}" > "${kustom_file}.tmp"
+  mv "${kustom_file}.tmp" "${kustom_file}"
+}
+
+remove_instance_resource() {
+  local kustom_file="${1}"
+  local instance="${2}"
+
+  sed -i "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
+}
+
+cmd_tenant_list() {
+  local env_name="${1:-dev}"
+  local instances_dir
+  local kustom_file
+
+  ensure_repo
+  ensure_env_layout "${env_name}"
+
+  instances_dir="$(tenant_instances_root "${env_name}")"
+  kustom_file="$(tenant_env_kustomization "${env_name}")"
+
+  if [[ ! -d "${instances_dir}" ]]; then
+    echo "No instances directory found: ${instances_dir}"
+    return 0
+  fi
+
+  local found=0
+  printf "%-24s %-10s %-18s\n" "INSTANCE" "DEPLOYED" "TENANT_NAME"
+  printf "%-24s %-10s %-18s\n" "--------" "--------" "-----------"
+
+  local instance
+  for instance in "${instances_dir}"/*; do
+    [[ -d "${instance}" ]] || continue
+    found=1
+
+    local instance_name
+    local deployed
+    local patch
+    local tenant_name
+
+    instance_name="$(basename "${instance}")"
+    if grep -Eq "^[[:space:]]*-[[:space:]]*instances/${instance_name}[[:space:]]*$" "${kustom_file}"; then
+      deployed="yes"
+    else
+      deployed="no"
+    fi
+
+    patch="$(tenant_instance_patch_file "${instance_name}" "${env_name}")"
+    tenant_name="$(tenant_instance_name_from_patch "${patch}")"
+    if [[ -z "${tenant_name}" ]]; then
+      tenant_name="-"
+    fi
+
+    printf "%-24s %-10s %-18s\n" "${instance_name}" "${deployed}" "${tenant_name}"
+  done
+
+  if [[ "${found}" -eq 0 ]]; then
+    echo "No tenant instances found under ${instances_dir}."
+  fi
+}
+
+cmd_tenant_deploy() {
+  local instance="${1:-}"
+  local env_name="${2:-dev}"
+
+  if [[ -z "${instance}" ]]; then
+    echo "ERROR: usage: kubectl gentian tenants deploy <instance> [--env <env>]" >&2
+    exit 1
+  fi
+
+  ensure_repo
+  ensure_env_layout "${env_name}"
+  tenant_instance_dir "${instance}" "${env_name}" >/dev/null
+
+  local kustom_file
+  kustom_file="$(tenant_env_kustomization "${env_name}")"
+
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    echo "Tenant instance '${instance}' is already deployed in '${env_name}'."
+    exit 0
+  fi
+
+  append_instance_resource "${kustom_file}" "${instance}"
+
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "${kustom_file}"
+  )
+  git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
+
+  kubectl apply -k "$(tenant_env_root "${env_name}")"
+
+  echo "Done. Tenant instance '${instance}' deployed in '${env_name}'."
+}
+
+cmd_tenant_undeploy() {
+  local instance="${1:-}"
+  local env_name="${2:-dev}"
+  local purge="${3:-false}"
+
+  if [[ -z "${instance}" ]]; then
+    echo "ERROR: usage: kubectl gentian tenants undeploy <instance> [--env <env>] [--purge]" >&2
+    exit 1
+  fi
+
+  ensure_repo
+  ensure_env_layout "${env_name}"
+  tenant_instance_dir "${instance}" "${env_name}" >/dev/null
+
+  local kustom_file
+  local patch
+  local tenant_name
+
+  kustom_file="$(tenant_env_kustomization "${env_name}")"
+  patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
+  tenant_name="$(tenant_instance_name_from_patch "${patch}")"
+  if [[ -z "${tenant_name}" ]]; then
+    tenant_name="${instance}"
+  fi
+
+  if [[ "${purge}" == "true" ]]; then
+    if grep -q '^  deletionPolicy: Delete$' "${patch}"; then
+      echo "Tenant instance '${instance}' already configured with deletionPolicy: Delete."
+    else
+      set_tenant_deletion_policy "${patch}" "Delete"
+      (
+        cd "${DEPLOYMENTS_PATH}"
+        git add "${patch}"
+      )
+      git_commit_push "feat(${instance}): enable destructive tenant deletion"
+      kubectl apply -f "${patch}"
+    fi
+  fi
+
+  if ! is_instance_deployed "${instance}" "${env_name}"; then
+    echo "Tenant instance '${instance}' is not deployed in '${env_name}'."
+  else
+    remove_instance_resource "${kustom_file}" "${instance}"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${kustom_file}"
+    )
+    git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
+    kubectl apply -k "$(tenant_env_root "${env_name}")"
+  fi
+
+  kubectl delete tenant "${tenant_name}" --ignore-not-found=true
+
+  if [[ "${purge}" == "true" ]]; then
+    echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
+  else
+    echo "Done. Tenant instance '${instance}' undeployed in '${env_name}'."
   fi
 }
 
@@ -251,53 +535,6 @@ cmd_uninstall() {
 }
 
 # ---------------------------------------------------------------------------
-# tenants delete
-# ---------------------------------------------------------------------------
-cmd_tenant_delete() {
-  local tenant="${1:-}"
-  local purge="${2:-false}"
-
-  if [[ -z "${tenant}" ]]; then
-    echo "ERROR: usage: kubectl gentian tenants delete <tenant> [--purge]" >&2
-    exit 1
-  fi
-
-  ensure_repo
-
-  local file
-  file=$(tenant_file "${tenant}")
-
-  if [[ "${purge}" == "true" ]]; then
-    if grep -q '^  deletionPolicy: Delete$' "${file}"; then
-      echo "Tenant '${tenant}' already has deletionPolicy: Delete."
-    else
-      set_tenant_deletion_policy "${file}" "Delete"
-      echo "Set deletionPolicy: Delete for tenant '${tenant}'."
-      (
-        cd "${DEPLOYMENTS_PATH}"
-        git add "${file}"
-      )
-      git_commit_push "feat(${tenant}): enable destructive tenant deletion"
-      kubectl apply -f "${file}"
-    fi
-  fi
-
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    git rm -f -- "${file}"
-  )
-  git_commit_push "feat(${tenant}): delete tenant"
-
-  kubectl delete tenant "${tenant}" --ignore-not-found=true
-
-  if [[ "${purge}" == "true" ]]; then
-    echo "Done. Tenant '${tenant}' removed from GitOps and scheduled for full cleanup."
-  else
-    echo "Done. Tenant '${tenant}' removed from GitOps. Cleanup follows the current deletionPolicy."
-  fi
-}
-
-# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
@@ -348,13 +585,50 @@ case "${SUBCOMMAND}" in
   tenant|tenants)
     TENANT_CMD="${1:-}"
     shift || true
+    TENANT_ENV="dev"
     case "${TENANT_CMD}" in
-      delete)
-        TENANT_NAME="${1:-}"
+      list)
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --env|-e)
+              TENANT_ENV="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_tenant_list "${TENANT_ENV}"
+        ;;
+      deploy)
+        TENANT_INSTANCE="${1:-}"
+        shift || true
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --env|-e)
+              TENANT_ENV="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_tenant_deploy "${TENANT_INSTANCE}" "${TENANT_ENV}"
+        ;;
+      undeploy)
+        TENANT_INSTANCE="${1:-}"
         shift || true
         PURGE=false
         while [[ $# -gt 0 ]]; do
           case "${1}" in
+            --env|-e)
+              TENANT_ENV="${2:-}"
+              shift 2
+              ;;
             --purge)
               PURGE=true
               shift
@@ -365,7 +639,7 @@ case "${SUBCOMMAND}" in
               ;;
           esac
         done
-        cmd_tenant_delete "${TENANT_NAME}" "${PURGE}"
+        cmd_tenant_undeploy "${TENANT_INSTANCE}" "${TENANT_ENV}" "${PURGE}"
         ;;
       *)
         echo "ERROR: unknown tenants subcommand: ${TENANT_CMD}" >&2

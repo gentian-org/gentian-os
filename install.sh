@@ -2117,7 +2117,8 @@ install_orchestrator() {
 
     success "Orchestrator installed; cluster is ready to provision tenants."
     info "Provision tenants from gentian-deployments (definition/instance model), e.g.:"
-    info "  kubectl apply -k <gentian-deployments>/dev/tenants"
+    info "  kubectl gentian tenants list"
+    info "  kubectl gentian tenants deploy gtn-demo"
 }
 
 # =============================================================================
@@ -2245,7 +2246,9 @@ print_summary() {
         echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.keycloak-admin-password}' | base64 -d"
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
-        echo "  Provision tenant: kubectl apply -k <gentian-deployments>/dev/tenants"
+        echo "  Provision tenant: kubectl gentian tenants list"
+        echo "                    kubectl gentian tenants deploy gtn-demo"
+        echo "  Undeploy tenant: kubectl gentian tenants undeploy gtn-demo"
         echo "  List apps:       kubectl gentian apps list"
         echo "  Install apps:    kubectl gentian apps install <profile> --tenant <tenant>"
         echo ""

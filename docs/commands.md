@@ -32,15 +32,36 @@ Tenants are modeled in the deployments repository as:
 - `dev/tenants/instances/<instance>/...` (how that definition is instantiated)
 - `dev/tenants/kustomization.yaml` (which instances are deployed in dev)
 
-Render and apply the active tenant set for dev:
+List available tenant instances and whether they are currently deployed:
+
+```bash
+kubectl gentian tenants list
+```
+
+Deploy a specific tenant instance:
+
+```bash
+kubectl gentian tenants deploy gtn-demo
+```
+
+Render and apply the active tenant set for dev manually (optional):
 
 ```bash
 kubectl apply -k gentian-deployments/dev/tenants
 ```
 
-To deploy a tenant instance, add it to `resources:` in
-`gentian-deployments/dev/tenants/kustomization.yaml`, then commit/push and
-sync/apply:
+To target another environment, use `--env`:
+
+```bash
+kubectl gentian tenants list --env staging
+kubectl gentian tenants deploy gtn-demo --env staging
+```
+
+The deploy command updates `resources:` in
+`gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, then
+applies that Kustomization.
+
+Equivalent Git edit:
 
 ```yaml
 resources:
@@ -56,15 +77,29 @@ kubectl describe tenant gtn-demo
 
 ## 4. Uninstall a Tenant
 
-Undeploy a tenant instance by removing it from
-`gentian-deployments/dev/tenants/kustomization.yaml`, then commit/push and
-sync/apply:
+Undeploy a tenant instance:
+
+```bash
+kubectl gentian tenants undeploy gtn-demo
+```
+
+For destructive cleanup, use:
+
+```bash
+kubectl gentian tenants undeploy gtn-demo --purge
+```
+
+The undeploy command removes the instance from
+`gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, applies
+the Kustomization, and deletes the live Tenant CR.
+
+Equivalent Git edit:
 
 ```yaml
 resources: []
 ```
 
-Apply the desired state:
+Apply the desired state manually (optional):
 
 ```bash
 kubectl apply -k gentian-deployments/dev/tenants
