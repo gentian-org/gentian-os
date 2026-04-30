@@ -13,19 +13,20 @@
 #    4. External Secrets Operator (ESO) via Helm
 #    5. ArgoCD + gentian AppProject
 #    6. ArgoCD OCI registry secrets
-#    7. OpenBao transit seal instance
-#    8. Transit init + autounseal Secret
-#    9. Remaining ArgoCD bootstrap Applications
+#    7. ArgoCD Image Updater controller
+#    8. OpenBao transit seal instance
+#    9. Transit init + autounseal Secret
+#   10. Remaining ArgoCD bootstrap Applications
 #       (openbao, tofu-controller, reloader, cnpg, cnpg-cluster, globals)
-#   10. Primary OpenBao init (transit auto-unseal)
-#   11. OpenBao configuration via Tofu (KV engine, K8s auth, policies, operator role)
-#   12. Seed kernel secrets (scripts/seed-openbao.sh)
-#   13. Apply root ApplicationSet → ArgoCD syncs the full stack
-#   14. Install AppCatalogue CRD + kubectl-gentian plugin
-#   14b. Install ArgoCD Application that syncs AppProfiles from gentian-apps
-#   15. Install gentian-os orchestrator (Helm chart → CRDs + operator)
+#   11. Primary OpenBao init (transit auto-unseal)
+#   12. OpenBao configuration via Tofu (KV engine, K8s auth, policies, operator role)
+#   13. Seed kernel secrets (scripts/seed-openbao.sh)
+#   14. Apply root ApplicationSet → ArgoCD syncs the full stack
+#   15. Install AppCatalogue CRD + kubectl-gentian plugin
+#   15b. Install ArgoCD Application that syncs AppProfiles from gentian-apps
+#   16. Install gentian-os orchestrator (Helm chart → CRDs + operator)
 #         leaves the cluster in a state where Tenant CRs can be applied
-#   16. Verify all ArgoCD Applications are Synced + Healthy
+#   17. Verify all ArgoCD Applications are Synced + Healthy
 #
 # Required environment variables (prompted interactively if not pre-exported):
 #   MASTER_PASSWORD                — master password for HKDF-derived secrets
@@ -1651,10 +1652,31 @@ setup_argocd_repos() {
 }
 
 # =============================================================================
-# 7. Deploy OpenBao transit seal instance
+# 7. Install ArgoCD Image Updater controller
+# =============================================================================
+install_argocd_image_updater() {
+    banner "Step 7 — ArgoCD Image Updater"
+
+    info "Adding Argo Helm repo..."
+    helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
+    helm repo update >/dev/null
+
+    info "Installing/upgrading argocd-image-updater chart..."
+    helm upgrade --install argocd-image-updater argo/argocd-image-updater \
+        --namespace argocd-image-updater \
+        --create-namespace \
+        --wait \
+        --timeout 5m
+
+    success "ArgoCD Image Updater controller is installed persistently in the cluster."
+    info "Environment-specific ImageUpdater CRs should be managed in gentian-deployments (GitOps), not in this OS installer."
+}
+
+# =============================================================================
+# 8. Deploy OpenBao transit seal instance
 # =============================================================================
 bootstrap_transit_app() {
-    banner "Step 7 — OpenBao transit seal instance"
+    banner "Step 8 — OpenBao transit seal instance"
 
     # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
     # invoked reactively by wait_for_running_pod's 2nd-tier escalation
@@ -1678,10 +1700,10 @@ bootstrap_transit_app() {
 }
 
 # =============================================================================
-# 8. Init the transit instance
+# 9. Init the transit instance
 # =============================================================================
 init_openbao_transit() {
-    banner "Step 8 — Transit instance init + autounseal Secret"
+    banner "Step 9 — Transit instance init + autounseal Secret"
     if ! bash "${SCRIPT_DIR}/scripts/init-openbao-transit.sh"; then
         error "Step 8 failed: init-openbao-transit.sh exited non-zero."
         error "Without the openbao-transit-token Secret, the primary OpenBao"
@@ -1703,10 +1725,10 @@ init_openbao_transit() {
 }
 
 # =============================================================================
-# 9. Apply remaining ArgoCD bootstrap Applications
+# 10. Apply remaining ArgoCD bootstrap Applications
 # =============================================================================
 bootstrap_argocd_apps() {
-    banner "Step 9 — ArgoCD bootstrap Applications"
+    banner "Step 10 — ArgoCD bootstrap Applications"
 
     # Register public OCI chart repos used by bootstrap Applications.
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
@@ -2296,6 +2318,7 @@ main() {
     install_eso
     install_argocd
     setup_argocd_repos
+    install_argocd_image_updater
     bootstrap_transit_app
     init_openbao_transit
     bootstrap_argocd_apps
