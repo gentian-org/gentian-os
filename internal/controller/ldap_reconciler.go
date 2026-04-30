@@ -70,6 +70,26 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
+	// Step 2.5 — tenant admin UDM user (so the admin can log into the Nubus portal)
+	var adminCreds secrets.TenantAdminCreds
+	if r.Seeder != nil {
+		adminCreds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("seed tenant admin for UDM: %w", err)
+		}
+	} else {
+		adminCreds = secrets.TenantAdminCreds{Username: "admin-" + tenant.Name, Password: "placeholder"}
+	}
+	adminUserDone, err := r.ensureAdminUserJob(ctx, tenant, ouDN, adminCreds)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure LDAP admin user Job: %w", err)
+	}
+	if !adminUserDone {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
+			"ProvisioningAdminUser", "Waiting for UDM admin user Job to complete")
+		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
+	}
+
 	// Step 3 — per-app bind accounts (only for apps that require LDAP)
 	ldapApps, err := r.collectLDAPApps(ctx, tenant)
 	if err != nil {
@@ -147,6 +167,27 @@ func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gen
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		return false, r.Create(ctx, makeAdminPolicyJob(tenant, ouDN))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
+// ensureAdminUserJob creates the UDM users/user Job for the tenant admin if absent.
+// The admin is added to admins_<tenant> so the UMC delegated admin policy takes effect.
+// Returns true when the Job has completed successfully.
+func (r *TenantReconciler) ensureAdminUserJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, creds secrets.TenantAdminCreds) (bool, error) {
+	jobName := adminUserJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makeAdminUserJob(tenant, ouDN, creds))
 	}
 	if err != nil {
 		return false, err
@@ -255,6 +296,34 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPass
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
 				appLabel:       appName,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers:    []corev1.Container{c},
+				},
+			},
+		},
+	}
+}
+
+func makeAdminUserJob(tenant *gentianov1alpha1.Tenant, ouDN string, creds secrets.TenantAdminCreds) *batchv1.Job {
+	ttl := int32(3600)
+	c := udmContainer("provision-admin-user", buildAdminUserScript(ouDN, tenant.Name, tenant.Spec.AdminEmail))
+	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "ADMIN_USERNAME", Value: creds.Username},
+		corev1.EnvVar{Name: "ADMIN_PASSWORD", Value: creds.Password},
+	)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      adminUserJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -452,6 +521,54 @@ else
 fi`, ouDN, appName, appName, appName, appName)
 }
 
+// buildAdminUserScript creates the tenant admin as a users/user in the tenant
+// OU and adds them to admins_<tenant>. ADMIN_USERNAME and ADMIN_PASSWORD are
+// injected as environment variables by the Job constructor. The admin email is
+// embedded in the script. The call is idempotent: it checks whether the user
+// already exists before creating them, and ensures group membership regardless.
+func buildAdminUserScript(ouDN, tenantName, adminEmail string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+OU_POS="%s"
+ADMIN_DN="uid=${ADMIN_USERNAME},${OU_POS}"
+ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
+ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
+ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
+
+# Create the tenant admin user if absent.
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/user/dn/${ADMIN_DN_ENC}")
+if [ "${STATUS}" = "404" ]; then
+  curl -sf -X POST ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/users/user/" \
+    -d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"%s\",\"pwdChangeNextLogin\":\"1\"},\"position\":\"${OU_POS}\"}"
+  echo "UDM user ${ADMIN_USERNAME} created in ${OU_POS}"
+else
+  echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
+fi
+
+# Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
+ADMINS_BODY=$(curl -s ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
+if echo "${ADMINS_BODY}" | grep -q "\"${ADMIN_DN}\""; then
+  echo "user ${ADMIN_USERNAME} already in admins group"
+else
+  curl -sf -X PATCH ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}" \
+    -d "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}"
+  echo "user ${ADMIN_USERNAME} added to admins group"
+fi`,
+		ouDN, tenantName, adminEmail)
+}
+
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
 // tenant OU. It binds admins_<tenant> to UDM user/group management scoped to
 // the tenant subtree only.
@@ -557,6 +674,10 @@ func bindAccountJobName(tenantName, appName string) string {
 
 func adminPolicyJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-admin-policy-%s", tenantName)
+}
+
+func adminUserJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-admin-user-%s", tenantName)
 }
 
 func ouDeleteJobName(tenantName string) string {
