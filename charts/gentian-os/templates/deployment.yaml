@@ -89,10 +89,12 @@ spec:
             capabilities:
               drop:
                 - ALL
-          {{- with .Values.resources }}
           resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- if .Values.resources }}
+            {{- toYaml .Values.resources | nindent 12 }}
+            {{- else }}
+            {}
+            {{- end }}
           {{- if $webhookEnabled }}
           volumeMounts:
             - name: webhook-certs
