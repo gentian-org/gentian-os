@@ -26,10 +26,25 @@ kubectl get tenants
 
 ## 3. Provision a Tenant
 
-Apply a tenant manifest from deployments repository:
+Tenants are modeled in the deployments repository as:
+
+- `dev/tenants/definitions/<definition>/...` (what a tenant is)
+- `dev/tenants/instances/<instance>/...` (how that definition is instantiated)
+- `dev/tenants/kustomization.yaml` (which instances are deployed in dev)
+
+Render and apply the active tenant set for dev:
 
 ```bash
-kubectl apply -f gentian-deployments/dev/tenants/dev-tenant.yaml
+kubectl apply -k gentian-deployments/dev/tenants
+```
+
+To deploy a tenant instance, add it to `resources:` in
+`gentian-deployments/dev/tenants/kustomization.yaml`, then commit/push and
+sync/apply:
+
+```yaml
+resources:
+- instances/gtn-demo
 ```
 
 Check tenant reconciliation:
@@ -41,14 +56,29 @@ kubectl describe tenant gtn-demo
 
 ## 4. Uninstall a Tenant
 
-Use the GitOps-aware tenant delete command:
+Undeploy a tenant instance by removing it from
+`gentian-deployments/dev/tenants/kustomization.yaml`, then commit/push and
+sync/apply:
 
-```bash
-kubectl gentian tenants delete gtn-demo
+```yaml
+resources: []
 ```
 
-This removes the tenant manifest from `gentian-deployments`, commits and pushes
-the change, then deletes the live Tenant CR so ArgoCD does not recreate it.
+Apply the desired state:
+
+```bash
+kubectl apply -k gentian-deployments/dev/tenants
+```
+
+If you want immediate local convergence before ArgoCD sync, delete the live
+Tenant CR after removing the instance from Git:
+
+```bash
+kubectl delete tenant gtn-demo --ignore-not-found
+```
+
+This undeploys runtime resources but keeps the tenant definition and instance
+spec in Git so you can re-deploy later by re-adding the instance entry.
 
 Confirm ArgoCD prunes the Tenant CR:
 
@@ -57,15 +87,6 @@ kubectl describe application -n argocd gentian-os
 kubectl get tenant gtn-demo
 ```
 
-For full deprovisioning in dev/test, use:
-
-```bash
-kubectl gentian tenants delete gtn-demo --purge
-```
-
-`--purge` first commits `deletionPolicy: Delete`, applies it, then removes the
-tenant from GitOps so the operator performs destructive cleanup.
-
 ## 5. List Available App Profiles
 
 ```bash
@@ -73,6 +94,12 @@ kubectl gentian apps list
 ```
 
 The `kubectl gentian` commands are the tenant-facing Gentian OS command interface.
+
+Show all available `kubectl gentian` subcommands:
+
+```bash
+kubectl gentian --help
+```
 
 ## 6. Retrieve Admin Credentials
 

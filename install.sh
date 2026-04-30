@@ -2116,8 +2116,8 @@ install_orchestrator() {
     success "All orchestrator CRDs are Established."
 
     success "Orchestrator installed; cluster is ready to provision tenants."
-    info "Apply a Tenant CR to provision your first tenant, e.g.:"
-    info "  kubectl apply -f ${SCRIPT_DIR}/config/samples/tenant_gtn-demo.yaml"
+    info "Provision tenants from gentian-deployments (definition/instance model), e.g.:"
+    info "  kubectl apply -k <gentian-deployments>/dev/tenants"
 }
 
 # =============================================================================
@@ -2245,9 +2245,9 @@ print_summary() {
         echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.keycloak-admin-password}' | base64 -d"
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
-        echo "  Provision tenant: kubectl apply -f config/samples/tenant_gtn-demo.yaml"
+        echo "  Provision tenant: kubectl apply -k <gentian-deployments>/dev/tenants"
         echo "  List apps:       kubectl gentian apps list"
-        echo "  Install apps:    kubectl gentian install <profile>"
+        echo "  Install apps:    kubectl gentian apps install <profile> --tenant <tenant>"
         echo ""
         echo -e "${GREEN}🎉  Gentian OS successfully installed. Welcome aboard!${NC}"
     else
