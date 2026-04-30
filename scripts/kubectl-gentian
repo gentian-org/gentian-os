@@ -364,16 +364,33 @@ rollback_deploy() {
 
   echo "failed to provision tenant, rolling back" >&2
 
-  if is_instance_deployed "${instance}" "${env_name}"; then
-    remove_instance_resource "${kustom_file}" "${instance}"
-    (
-      cd "${DEPLOYMENTS_PATH}"
-      git add "${kustom_file}"
-    )
-    git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}" || true
-      apply_env_kustomization "${env_name}" >/dev/null 2>&1 || true
+  if ! is_instance_deployed "${instance}" "${env_name}"; then
+    echo "Rollback skipped: tenant instance '${instance}' is already undeployed in '${env_name}'." >&2
+    return 1
   fi
 
+  remove_instance_resource "${kustom_file}" "${instance}"
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "${kustom_file}"
+  )
+
+  if ! git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}"; then
+    echo "rollback failed: could not commit/push rollback change" >&2
+    return 1
+  fi
+
+  if ! apply_env_kustomization "${env_name}"; then
+    echo "rollback failed: could not apply rollback state to cluster" >&2
+    return 1
+  fi
+
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    echo "rollback failed: tenant instance '${instance}' is still marked deployed in '${env_name}'" >&2
+    return 1
+  fi
+
+  echo "Rollback completed: tenant instance '${instance}' undeployed in '${env_name}'." >&2
   return 1
 }
 
