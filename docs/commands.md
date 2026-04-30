@@ -44,7 +44,14 @@ Deploy a specific tenant instance:
 kubectl gentian tenants deploy gtn-demo
 ```
 
-After deploy, the CLI prints tenant-admin login guidance, including:
+Deploy is transactional:
+
+- waits until the Tenant reaches `status.phase=Ready`
+- retrieves the initial tenant-admin credentials
+- only then prints login credentials
+- if provisioning or credential retrieval fails, it rolls back the GitOps deploy and prints `failed to provision tenant, rolling back`
+
+After successful deploy, the CLI prints tenant-admin login guidance, including:
 
 - readiness check command
 - command to read initial credentials from `keycloak-admin-<tenant>` Job logs

@@ -224,46 +224,115 @@ tenant_realm_from_patch() {
 }
 
 print_tenant_admin_login_instructions() {
-  local instance="${1}"
-  local env_name="${2:-dev}"
-
-  local patch
-  local tenant_name
-  local realm
-  local domain
-
-  patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
-  tenant_name="$(tenant_instance_name_from_patch "${patch}")"
-  realm="$(tenant_realm_from_patch "${patch}")"
-  domain="$(tenant_domain_from_patch "${patch}")"
-
-  if [[ -z "${tenant_name}" ]]; then
-    tenant_name="${instance}"
-  fi
-  if [[ -z "${realm}" ]]; then
-    realm="${tenant_name}"
-  fi
+  local tenant_name="${1}"
+  local realm="${2}"
+  local domain="${3}"
+  local username="${4}"
+  local password="${5}"
 
   echo ""
   echo "Tenant admin login (for user provisioning):"
-  echo "  1) Wait for tenant readiness:"
-  echo "     kubectl get tenant ${tenant_name} -w"
-  echo ""
-  echo "  2) Retrieve initial tenant-admin credentials (printed by Keycloak admin Job):"
-  echo "     kubectl logs -n platform-kernel job/keycloak-admin-${tenant_name} | grep INITIAL_TENANT_ADMIN"
-  echo ""
-  echo "     If the initial line is no longer in logs, fetch password from OpenBao:"
-  echo "     bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin"
-  echo ""
   if [[ -n "${domain}" ]]; then
-    echo "  3) Login to realm admin console:"
-    echo "     https://id.${domain}/admin/${realm}/console/"
+    echo "  URL:      https://id.${domain}/admin/${realm}/console/"
   else
-    echo "  3) Login to realm admin console:"
-    echo "     https://id.<KERNEL_DOMAIN>/admin/${realm}/console/"
+    echo "  URL:      https://id.<KERNEL_DOMAIN>/admin/${realm}/console/"
   fi
+  echo "  Realm:    ${realm}"
+  echo "  Username: ${username}"
+  echo "  Password: ${password}"
   echo ""
-  echo "  On first login, Keycloak will require a password change."
+  echo "On first login, Keycloak will require a password change."
+}
+
+wait_for_tenant_ready() {
+  local tenant_name="${1}"
+  local timeout_secs="${2:-600}"
+  local start
+  start="$(date +%s)"
+
+  while true; do
+    local phase
+    phase="$(kubectl get tenant "${tenant_name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+
+    if [[ "${phase}" == "Ready" ]]; then
+      return 0
+    fi
+
+    if [[ "${phase}" =~ ^(Failed|Error|Degraded)$ ]]; then
+      echo "Tenant '${tenant_name}' entered non-ready phase: ${phase}" >&2
+      return 1
+    fi
+
+    local now
+    now="$(date +%s)"
+    if (( now - start >= timeout_secs )); then
+      echo "Timed out waiting for tenant '${tenant_name}' to become Ready." >&2
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
+fetch_tenant_admin_credentials() {
+  local tenant_name="${1}"
+  local timeout_secs="${2:-300}"
+  local start
+  start="$(date +%s)"
+
+  TENANT_ADMIN_USERNAME=""
+  TENANT_ADMIN_PASSWORD=""
+
+  while true; do
+    local line
+    line="$(kubectl logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
+
+    if [[ -n "${line}" ]]; then
+      TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
+      TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
+      if [[ -n "${TENANT_ADMIN_USERNAME}" && -n "${TENANT_ADMIN_PASSWORD}" ]]; then
+        return 0
+      fi
+    fi
+
+    if command -v bao >/dev/null 2>&1; then
+      local bao_pw
+      bao_pw="$(bao kv get -mount=secret -field=password "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+      if [[ -n "${bao_pw}" ]]; then
+        TENANT_ADMIN_USERNAME="admin"
+        TENANT_ADMIN_PASSWORD="${bao_pw}"
+        return 0
+      fi
+    fi
+
+    local now
+    now="$(date +%s)"
+    if (( now - start >= timeout_secs )); then
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
+rollback_deploy() {
+  local instance="${1}"
+  local env_name="${2}"
+  local kustom_file="${3}"
+
+  echo "failed to provision tenant, rolling back" >&2
+
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    remove_instance_resource "${kustom_file}" "${instance}"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${kustom_file}"
+    )
+    git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}" || true
+    kubectl apply -k "$(tenant_env_root "${env_name}")" >/dev/null 2>&1 || true
+  fi
+
+  return 1
 }
 
 is_instance_deployed() {
@@ -404,11 +473,32 @@ cmd_tenant_deploy() {
   tenant_instance_dir "${instance}" "${env_name}" >/dev/null
 
   local kustom_file
+  local patch
+  local tenant_name
+  local realm
+  local domain
+
   kustom_file="$(tenant_env_kustomization "${env_name}")"
+  patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
+  tenant_name="$(tenant_instance_name_from_patch "${patch}")"
+  realm="$(tenant_realm_from_patch "${patch}")"
+  domain="$(tenant_domain_from_patch "${patch}")"
+
+  if [[ -z "${tenant_name}" ]]; then
+    tenant_name="${instance}"
+  fi
+  if [[ -z "${realm}" ]]; then
+    realm="${tenant_name}"
+  fi
 
   if is_instance_deployed "${instance}" "${env_name}"; then
     echo "Tenant instance '${instance}' is already deployed in '${env_name}'."
-    print_tenant_admin_login_instructions "${instance}" "${env_name}"
+    if fetch_tenant_admin_credentials "${tenant_name}" 1; then
+      print_tenant_admin_login_instructions "${tenant_name}" "${realm}" "${domain}" "${TENANT_ADMIN_USERNAME}" "${TENANT_ADMIN_PASSWORD}"
+    else
+      echo "Tenant '${tenant_name}' is deployed but credentials could not be retrieved automatically." >&2
+      echo "Try: kubectl logs -n platform-kernel job/keycloak-admin-${tenant_name} | grep INITIAL_TENANT_ADMIN" >&2
+    fi
     exit 0
   fi
 
@@ -420,10 +510,20 @@ cmd_tenant_deploy() {
   )
   git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
 
-  kubectl apply -k "$(tenant_env_root "${env_name}")"
+  if ! kubectl apply -k "$(tenant_env_root "${env_name}")"; then
+    rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
+  fi
+
+  if ! wait_for_tenant_ready "${tenant_name}" 600; then
+    rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
+  fi
+
+  if ! fetch_tenant_admin_credentials "${tenant_name}" 300; then
+    rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
+  fi
 
   echo "Done. Tenant instance '${instance}' deployed in '${env_name}'."
-  print_tenant_admin_login_instructions "${instance}" "${env_name}"
+  print_tenant_admin_login_instructions "${tenant_name}" "${realm}" "${domain}" "${TENANT_ADMIN_USERNAME}" "${TENANT_ADMIN_PASSWORD}"
 }
 
 cmd_tenant_undeploy() {
