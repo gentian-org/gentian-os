@@ -233,10 +233,17 @@ print_tenant_admin_login_instructions() {
   echo ""
   echo "Tenant admin login (for user provisioning):"
   if [[ -n "${domain}" ]]; then
-    echo "  URL:      https://id.${domain}/admin/${realm}/console/"
+    echo "  Public realm account URL:"
+    echo "  https://id.${domain}/realms/${realm}/account/"
   else
-    echo "  URL:      https://id.<KERNEL_DOMAIN>/admin/${realm}/console/"
+    echo "  Public realm account URL:"
+    echo "  https://id.<KERNEL_DOMAIN>/realms/${realm}/account/"
   fi
+  echo ""
+  echo "  Admin console (for user/group provisioning):"
+  echo "  1) kubectl -n gentian-dev port-forward svc/nubus-dev-keycloak 18080:8080"
+  echo "  2) Open http://127.0.0.1:18080/admin/master/console/"
+  echo "  3) Switch to realm '${realm}' after login"
   echo "  Realm:    ${realm}"
   echo "  Username: ${username}"
   echo "  Password: ${password}"
