@@ -249,12 +249,29 @@ wait_for_tenant_ready() {
   local timeout_secs="${2:-600}"
   local start
   start="$(date +%s)"
+  local last_phase=""
+
+  echo "Waiting for tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
 
   while true; do
     local phase
     phase="$(kubectl get tenant "${tenant_name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
 
+    if [[ -z "${phase}" ]]; then
+      phase="<pending-status>"
+    fi
+
+    if [[ "${phase}" != "${last_phase}" ]]; then
+      local now_phase
+      now_phase="$(date +%s)"
+      echo "  tenant '${tenant_name}' phase: ${phase} (elapsed: $((now_phase - start))s)"
+      last_phase="${phase}"
+    fi
+
     if [[ "${phase}" == "Ready" ]]; then
+      local now_ready
+      now_ready="$(date +%s)"
+      echo "Tenant '${tenant_name}' is Ready after $((now_ready - start))s."
       return 0
     fi
 
@@ -279,9 +296,12 @@ fetch_tenant_admin_credentials() {
   local timeout_secs="${2:-300}"
   local start
   start="$(date +%s)"
+  local last_status=""
 
   TENANT_ADMIN_USERNAME=""
   TENANT_ADMIN_PASSWORD=""
+
+  echo "Retrieving tenant-admin credentials for '${tenant_name}' (timeout: ${timeout_secs}s)..."
 
   while true; do
     local line
@@ -291,6 +311,9 @@ fetch_tenant_admin_credentials() {
       TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
       TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
       if [[ -n "${TENANT_ADMIN_USERNAME}" && -n "${TENANT_ADMIN_PASSWORD}" ]]; then
+        local now_ok
+        now_ok="$(date +%s)"
+        echo "Retrieved tenant-admin credentials from Keycloak admin Job logs after $((now_ok - start))s."
         return 0
       fi
     fi
@@ -301,8 +324,21 @@ fetch_tenant_admin_credentials() {
       if [[ -n "${bao_pw}" ]]; then
         TENANT_ADMIN_USERNAME="admin"
         TENANT_ADMIN_PASSWORD="${bao_pw}"
+        local now_bao
+        now_bao="$(date +%s)"
+        echo "Retrieved tenant-admin credentials from OpenBao after $((now_bao - start))s."
         return 0
       fi
+    fi
+
+    local now_status
+    now_status="$(date +%s)"
+    local elapsed
+    elapsed=$((now_status - start))
+    local status="waiting-for-credentials"
+    if [[ "${status}" != "${last_status}" || $((elapsed % 30)) -eq 0 ]]; then
+      echo "  still waiting for tenant-admin credentials (elapsed: ${elapsed}s)"
+      last_status="${status}"
     fi
 
     local now
@@ -510,14 +546,17 @@ cmd_tenant_deploy() {
   )
   git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
 
+  echo "Applying tenant desired state for '${env_name}'..."
   if ! kubectl apply -k "$(tenant_env_root "${env_name}")"; then
     rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
   fi
 
+  echo "Waiting for tenant reconciliation to complete..."
   if ! wait_for_tenant_ready "${tenant_name}" 600; then
     rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
   fi
 
+  echo "Waiting for tenant-admin credentials to become available..."
   if ! fetch_tenant_admin_credentials "${tenant_name}" 300; then
     rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
   fi
