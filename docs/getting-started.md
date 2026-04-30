@@ -315,7 +315,13 @@ kubectl get tenants
 Decommission a single tenant:
 
 ```bash
-kubectl delete tenant gtn-demo
+kubectl gentian tenants delete gtn-demo
+```
+
+For full destructive cleanup in dev/test:
+
+```bash
+kubectl gentian tenants delete gtn-demo --purge
 ```
 
 Behavior depends on `spec.deletionPolicy` on the Tenant:

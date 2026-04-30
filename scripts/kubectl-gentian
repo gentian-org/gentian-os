@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # kubectl-gentian — kubectl plugin for Gentian OS management.
 #
-# Provides subcommands for the Gentian App Store. Install/uninstall operations
-# edit the Tenant CR YAML in the gentian-deployments repository and commit+push
-# the change. ArgoCD then reconciles the new state — the Git commit is the
-# single source of truth and the audit trail.
+# Provides subcommands for the Gentian App Store and tenant lifecycle. GitOps
+# operations edit the Tenant CR YAML in the gentian-deployments repository and
+# commit+push the change. ArgoCD then reconciles the new state — the Git commit
+# is the single source of truth and the audit trail.
 #
 # Usage:
 #   kubectl gentian apps list [--namespace <ns>]
 #   kubectl gentian apps install <app> --tenant <tenant>
 #   kubectl gentian apps uninstall <app> --tenant <tenant>
+#   kubectl gentian tenants delete <tenant> [--purge]
 #
 # Required environment variables (or ~/.gentian/config):
 #   GENTIAN_DEPLOYMENTS_PATH   local path to a gentian-deployments checkout
@@ -45,6 +46,11 @@ Usage:
   kubectl gentian apps uninstall <app> --tenant <tenant>
       Uninstall an app from a tenant by committing to gentian-deployments.
 
+  kubectl gentian tenants delete <tenant> [--purge]
+      Delete a tenant by removing its manifest from gentian-deployments.
+      With --purge, first commit deletionPolicy=Delete so the operator performs
+      full cleanup before the Tenant CR is pruned.
+
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
@@ -53,6 +59,8 @@ Examples:
   kubectl gentian apps list
   kubectl gentian apps install openproject --tenant gtn-demo
   kubectl gentian apps uninstall openproject --tenant gtn-demo
+  kubectl gentian tenants delete gtn-demo
+  kubectl gentian tenants delete gtn-demo --purge
 EOF
 }
 
@@ -100,6 +108,33 @@ tenant_file() {
   fi
   # If multiple candidates exist (e.g. dev/ and staging/), take the first one.
   echo "${candidates}" | head -n1
+}
+
+git_commit_push() {
+  local message="${1}"
+
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    if git diff --cached --quiet; then
+      echo "No Git changes detected."
+      exit 0
+    fi
+    git commit -m "${message}"
+    git push
+  )
+}
+
+set_tenant_deletion_policy() {
+  local file="${1}"
+  local policy="${2}"
+
+  if grep -q '^  deletionPolicy:' "${file}"; then
+    sed -i "s/^  deletionPolicy:.*/  deletionPolicy: ${policy}/" "${file}"
+  elif grep -q '^  apps:' "${file}"; then
+    sed -i "/^  apps:/i\\  deletionPolicy: ${policy}" "${file}"
+  else
+    printf '\n  deletionPolicy: %s\n' "${policy}" >> "${file}"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -166,9 +201,8 @@ cmd_install() {
   (
     cd "${DEPLOYMENTS_PATH}"
     git add "${file}"
-    git commit -m "feat(${tenant}): install ${app}"
-    git push
   )
+  git_commit_push "feat(${tenant}): install ${app}"
 
   # Apply the updated Tenant CR so the operator reconciles immediately.
   kubectl apply -f "${file}"
@@ -207,14 +241,60 @@ cmd_uninstall() {
   (
     cd "${DEPLOYMENTS_PATH}"
     git add "${file}"
-    git commit -m "feat(${tenant}): uninstall ${app}"
-    git push
   )
+  git_commit_push "feat(${tenant}): uninstall ${app}"
 
   # Apply the updated Tenant CR so the operator reconciles immediately.
   kubectl apply -f "${file}"
 
   echo "Done. Tenant '${tenant}' updated — operator will deprovision '${app}'."
+}
+
+# ---------------------------------------------------------------------------
+# tenants delete
+# ---------------------------------------------------------------------------
+cmd_tenant_delete() {
+  local tenant="${1:-}"
+  local purge="${2:-false}"
+
+  if [[ -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian tenants delete <tenant> [--purge]" >&2
+    exit 1
+  fi
+
+  ensure_repo
+
+  local file
+  file=$(tenant_file "${tenant}")
+
+  if [[ "${purge}" == "true" ]]; then
+    if grep -q '^  deletionPolicy: Delete$' "${file}"; then
+      echo "Tenant '${tenant}' already has deletionPolicy: Delete."
+    else
+      set_tenant_deletion_policy "${file}" "Delete"
+      echo "Set deletionPolicy: Delete for tenant '${tenant}'."
+      (
+        cd "${DEPLOYMENTS_PATH}"
+        git add "${file}"
+      )
+      git_commit_push "feat(${tenant}): enable destructive tenant deletion"
+      kubectl apply -f "${file}"
+    fi
+  fi
+
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git rm -f -- "${file}"
+  )
+  git_commit_push "feat(${tenant}): delete tenant"
+
+  kubectl delete tenant "${tenant}" --ignore-not-found=true
+
+  if [[ "${purge}" == "true" ]]; then
+    echo "Done. Tenant '${tenant}' removed from GitOps and scheduled for full cleanup."
+  else
+    echo "Done. Tenant '${tenant}' removed from GitOps. Cleanup follows the current deletionPolicy."
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -260,6 +340,35 @@ case "${SUBCOMMAND}" in
         ;;
       *)
         echo "ERROR: unknown apps subcommand: ${APPS_CMD}" >&2
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  tenant|tenants)
+    TENANT_CMD="${1:-}"
+    shift || true
+    case "${TENANT_CMD}" in
+      delete)
+        TENANT_NAME="${1:-}"
+        shift || true
+        PURGE=false
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --purge)
+              PURGE=true
+              shift
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_tenant_delete "${TENANT_NAME}" "${PURGE}"
+        ;;
+      *)
+        echo "ERROR: unknown tenants subcommand: ${TENANT_CMD}" >&2
         usage
         exit 1
         ;;

@@ -39,7 +39,34 @@ kubectl get tenant gtn-demo -o yaml
 kubectl describe tenant gtn-demo
 ```
 
-## 4. List Available App Profiles
+## 4. Uninstall a Tenant
+
+Use the GitOps-aware tenant delete command:
+
+```bash
+kubectl gentian tenants delete gtn-demo
+```
+
+This removes the tenant manifest from `gentian-deployments`, commits and pushes
+the change, then deletes the live Tenant CR so ArgoCD does not recreate it.
+
+Confirm ArgoCD prunes the Tenant CR:
+
+```bash
+kubectl describe application -n argocd gentian-os
+kubectl get tenant gtn-demo
+```
+
+For full deprovisioning in dev/test, use:
+
+```bash
+kubectl gentian tenants delete gtn-demo --purge
+```
+
+`--purge` first commits `deletionPolicy: Delete`, applies it, then removes the
+tenant from GitOps so the operator performs destructive cleanup.
+
+## 5. List Available App Profiles
 
 ```bash
 kubectl gentian apps list
@@ -47,7 +74,7 @@ kubectl gentian apps list
 
 The `kubectl gentian` commands are the tenant-facing Gentian OS command interface.
 
-## 5. Retrieve Admin Credentials
+## 6. Retrieve Admin Credentials
 
 Portal and identity credentials can be read from Kubernetes Secrets.
 
@@ -69,7 +96,7 @@ ArgoCD admin:
 kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
-## 6. Key URLs
+## 7. Key URLs
 
 Given KERNEL_DOMAIN, the main URLs are:
 
@@ -78,7 +105,7 @@ Given KERNEL_DOMAIN, the main URLs are:
 
 ArgoCD URL depends on service exposure (NodePort/LoadBalancer/Ingress) in your cluster.
 
-## 7. Useful Troubleshooting Commands
+## 8. Useful Troubleshooting Commands
 
 ```bash
 kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
