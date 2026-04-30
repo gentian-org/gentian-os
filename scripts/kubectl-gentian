@@ -329,13 +329,30 @@ fetch_tenant_admin_credentials() {
         echo "Retrieved tenant-admin credentials from OpenBao after $((now_bao - start))s."
         return 0
       fi
-    else
+    fi
+
+    # Fallback: use Kubernetes auth from inside the OpenBao pod. This works
+    # even when local BAO_ADDR/BAO_TOKEN are not configured.
+    local k8s_pw
+    k8s_pw="$(fetch_tenant_admin_password_via_k8s_auth "${tenant_name}")"
+    if [[ -n "${k8s_pw}" ]]; then
+      TENANT_ADMIN_USERNAME="admin"
+      TENANT_ADMIN_PASSWORD="${k8s_pw}"
+      local now_k8s
+      now_k8s="$(date +%s)"
+      echo "Retrieved tenant-admin credentials from OpenBao Kubernetes auth after $((now_k8s - start))s."
+      return 0
+    fi
+
+    if ! command -v bao >/dev/null 2>&1; then
       local job_succeeded
       job_succeeded="$(kubectl --request-timeout=5s get job -n platform-kernel "keycloak-admin-${tenant_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
       if [[ -n "${job_succeeded}" && "${job_succeeded}" != "0" ]]; then
-        echo "Cannot retrieve tenant-admin password automatically: keycloak-admin job completed without INITIAL_TENANT_ADMIN log and 'bao' is not available." >&2
+        echo "Cannot retrieve tenant-admin password automatically: keycloak-admin job completed and neither log marker nor OpenBao Kubernetes-auth retrieval succeeded." >&2
         return 1
       fi
+    else
+      :
     fi
 
     local now_status
@@ -355,6 +372,30 @@ fetch_tenant_admin_credentials() {
 
     sleep 5
   done
+}
+
+fetch_tenant_admin_password_via_k8s_auth() {
+  local tenant_name="${1}"
+
+  local jwt
+  jwt="$(kubectl --request-timeout=5s create token -n gentian-system gentian-os --duration=10m 2>/dev/null || true)"
+  if [[ -z "${jwt}" ]]; then
+    return 0
+  fi
+
+  local bao_pod
+  bao_pod="$(kubectl --request-timeout=5s get pod -n openbao -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${bao_pod}" ]]; then
+    return 0
+  fi
+
+  local login_token
+  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" 2>/dev/null || true)"
+  if [[ -z "${login_token}" ]]; then
+    return 0
+  fi
+
+  kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true
 }
 
 rollback_deploy() {
