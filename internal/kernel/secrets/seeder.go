@@ -294,13 +294,13 @@ type TenantAdminCreds struct {
 
 // SeedTenantAdmin derives the tenant admin password from the master and
 // persists it write-once under gentian-os/tenants/<tenant>/admin.
-// Username defaults to "admin" and is included in the record so operators
-// can override it by writing a different value to OpenBao before first
-// reconcile.
+// Username defaults to "admin-<tenant>" to avoid collisions in the shared
+// Nubus LDAP directory. Operators can override it by writing a different
+// value to OpenBao before first reconcile.
 func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdminCreds, error) {
 	salt := TenantAdminPath(tenant)
 	want := map[string]string{
-		"username": "admin",
+		"username": "admin-" + tenant,
 		"password": s.gen(salt, "password", 40),
 	}
 	got, err := s.seedAndRead(ctx, salt, want)
