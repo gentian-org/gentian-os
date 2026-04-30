@@ -507,7 +507,29 @@ graph TD
     AC -- syncs Tenant CRs --> DEP
 ```
 
-Upgrading the OS means bumping a version string in the deployment repo. Adding a new app means committing an AppProfile to the catalogue repo. Creating a tenant means adding a Tenant YAML to the deployment repo. Each change flows through ArgoCD independently.
+Upgrading the OS means either (a) manually bumping a version string in the deployment repo, or (b) letting ArgoCD Image Updater detect and apply new images automatically (see §15.5–§15.7). Adding a new app means committing an AppProfile to the catalogue repo. Creating a tenant means adding a Tenant YAML to the deployment repo. Each change flows through ArgoCD independently.
+
+### Kernel Image Updates and ImageUpdater CRs
+
+Each environment includes an `image-updater.yaml` file that configures automatic kernel image updates:
+
+```
+gentian-deployments/
+├── dev/kernel/
+│   ├── app-of-apps.yaml
+│   ├── values-dev.yaml
+│   └── image-updater.yaml        ← Aggressively update to latest develop
+├── staging/kernel/
+│   ├── app-of-apps.yaml
+│   ├── values-staging.yaml
+│   └── image-updater.yaml        ← Update to latest released version
+└── prod/kernel/
+    ├── app-of-apps.yaml
+    ├── values-prod.yaml
+    └── image-updater.yaml        ← Conservative: only stable releases
+```
+
+Each ImageUpdater CR watches the environment's kernel Application and automatically updates the operator image when new container images are published, subject to the environment's update policy (see §15.7).
 
 ### Upstream Helm Charts
 
@@ -522,6 +544,18 @@ AppProfiles reference upstream charts directly by OCI URL (e.g., `oci://charts.o
 **Mail security:** DKIM private keys are generated per tenant domain, stored in OpenBao at `tenants/{name}/mail/dkim`, and fetched by the shared Rspamd instance at runtime. SPF and DMARC records are generated and surfaced in the Tenant status for DNS configuration. SMTP submission requires SASL authentication against per-tenant credentials — no open relay. Dovecot authenticates IMAP sessions against the tenant's LDAP OU using the same bind credentials provisioned by the orchestrator for other apps.
 
 **Database isolation:** Each app within each tenant gets its own database (`{prefix}_{app}`) with a dedicated user that has grants limited to that database only. No cross-tenant or cross-app database access is possible.
+
+### 8.1 Operational Roles
+
+The platform separates responsibilities across three roles:
+
+| Role | Primary scope | Can do | Cannot do |
+|---|---|---|---|
+| **Cluster admin** | Cluster-wide kernel and platform operations | Run the shared OS installer, configure ArgoCD/OpenBao/cert-manager, manage kernel upgrade policy, create and approve tenant onboarding manifests | Perform tenant business operations as end users, bypass GitOps guardrails for tenant changes in production |
+| **Tenant admin** | One tenant's application portfolio | Install/uninstall apps for their tenant, update tenant-level app configuration, view tenant app health and reconciliation state | Change kernel components, modify other tenants, alter cluster-wide policy (DNS/TLS/OpenBao/Argo projects) |
+| **Tenant user** | Day-to-day usage of installed apps | Use tenant apps (SSO, files, projects, chat), consume integrations provisioned by the kernel | Install/uninstall apps, modify tenant manifest, access cluster administration surfaces |
+
+Current operating model: tenant admins can edit their tenant manifests in the deployments repository (process-controlled). Future model: tenant admins use CLI/WebUI only, and automation bots write Git commits on their behalf (see implementation plan optional feature).
 
 > **Future direction — database scaling:** At very high tenant counts (500+), database-per-tenant-per-app produces thousands of databases. Two scaling strategies are available: (1) **schema-per-app** within a tenant database, reducing count by the number of apps per tenant — requires apps to support configurable schema names; (2) **multiple PostgreSQL clusters** with tenant sharding, distributing load across independent database instances.
 
@@ -1189,6 +1223,189 @@ type ResourceOrchestrator interface {
     CheckReadiness(ctx context.Context, tenant *v1alpha1.Tenant) (bool, error)
 }
 ```
+
+## 15. Kernel Image Updates via ArgoCD Image Updater
+
+### 15.1 Philosophy: One Kernel, All Tenants
+
+The **gentian-os operator** is the kernel — a singular, shared service that manages orchestration for all tenants on a cluster. All tenants depend on this kernel; all tenants should run the same kernel version to maintain consistency, predictability, and simplify debugging.
+
+When a new kernel image is published, it affects all tenants uniformly:
+- Identity reconciliation works the same way
+- Database provisioning logic works the same way
+- App lifecycle management works the same way
+- Credential rotation works the same way
+
+This is intentional. Unlike app upgrades (which can be rolled out per-tenant at different cadences), kernel upgrades are platform-wide and atomic.
+
+### 15.2 Image Update Strategy
+
+Instead of manually looking up new image digests after each CI build, **ArgoCD Image Updater** monitors the container registry (`ghcr.io/gentian-org/gentian-os`) for new images and automatically updates the operator deployment whenever a new image is published.
+
+**Three-layer flow:**
+
+1. **CI publishes new image** → `ghcr.io/gentian-org/gentian-os:develop` (mutable tag)
+   - Image Updater's webhook is notified within seconds
+
+2. **Image Updater detects new digest** → Resolves `develop` to concrete digest e.g. `sha256:fd90...`
+   - Queries the ArgoCD Application resource for gentian-os
+
+3. **Image Updater patches Argo Application** → Updates the image parameter in the Application CR
+   - No Git commit needed; this is an ephemeral parameter mutation
+
+4. **ArgoCD detects Application change** → Syncs the new image
+   - Existing workloads are rolled when the Deployment spec changes
+   - Admission webhooks use the new binary
+
+The entire flow takes **30–60 seconds** from image push to running new pods.
+
+### 15.3 Configuration: ImageUpdater CRD
+
+A cluster-scoped `ImageUpdater` CR defines which Argo Applications to monitor and how to update them:
+
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gentian-os-kernel
+  namespace: argocd
+spec:
+  # Match Applications by pattern (per-environment or per-cluster)
+  applicationRefs:
+    - namePattern: ".*-kernel-os"  # Matches dev-kernel-os, staging-kernel-os, prod-kernel-os
+      images:
+        - alias: operator
+          imageName: ghcr.io/gentian-org/gentian-os
+          # Policy: which versions to consider for update
+          policy: semver:v1              # Pin to v1.x.x releases
+          tagsMatchRegex: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          ignoreTagsRegex: '^.*-(rc|alpha|beta)\..*$'
+
+  # How to update when a new image is found
+  updateMethod:
+    method: argocd  # Patch Application parameters (no Git commit)
+
+  # Webhook for immediate update on registry push
+  webhook:
+    enabled: true
+```
+
+**Naming convention:**
+- Application names follow `{environment}-kernel-os`: `dev-kernel-os`, `staging-kernel-os`, `prod-kernel-os`
+- The ImageUpdater pattern `.*-kernel-os` matches all of them in one cluster, or can be more specific per environment
+
+### 15.4 Scaling: Environments and Tenants
+
+This approach scales elegantly to multiple environments and tenants:
+
+| Scenario | Configuration | Effort |
+|----------|---|---|
+| **Single env, single kernel** (current) | 1 ImageUpdater CR in argocd namespace | Done (one config file) |
+| **3 environments (dev/staging/prod)** | Same 1 ImageUpdater; pattern matches all 3 Applications | No change — same config auto-discovers all envs |
+| **10 environments, 100 tenants total** | Same 1 ImageUpdater; pattern still matches all env Applications | No change — scales linearly |
+| **Images with different policies per env** (e.g., dev:latest, prod:semver:v1) | 3 separate ImageUpdater CRs (one per env) | 3 configs, each defining policy for that env |
+
+**Why this scales:**
+- The ImageUpdater pattern (`.*-kernel-os`) is environment-agnostic
+- Tenants are not involved in kernel image updates — they are implicit dependents
+- When the kernel image updates, all tenants automatically get the new kernel version without per-tenant configuration
+
+### 15.5 Application Structure
+
+The gentian-os kernel Application is deployed per environment with a consistent structure:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dev-kernel-os  # Environment-scoped; matches ImageUpdater pattern
+  namespace: argocd
+spec:
+  project: platform-kernel
+
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    path: charts/gentian-os
+    targetRevision: develop       # Branch where kernel chart lives
+    helm:
+      releaseName: gentian-os
+      values: |
+        image:
+          repository: ghcr.io/gentian-org/gentian-os
+          tag: develop            # Tag to monitor
+          pullPolicy: IfNotPresent
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gentian-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+When Image Updater detects a new image, it patches the `.spec.source.helm.values` to include `image.digest: sha256:...`, overriding the tag with a concrete digest for immutability.
+
+### 15.6 Tenant Impact
+
+Tenants are not affected by the ImageUpdater configuration. They continue to reference ArgoCD Applications for their apps (e.g., `gtn-demo-openproject`), which reference app-specific Helm charts. The kernel Application is a separate resource:
+
+```
+gentian-deployments/
+├── dev/
+│   ├── kernel/
+│   │   ├── app-of-apps.yaml          ← References kernel chart + tenant apps
+│   │   ├── values-dev.yaml           ← Kernel overrides
+│   │   └── image-updater.yaml        ← ImageUpdater CR watches kernel Application
+│   └── tenants/
+│       ├── gtn-demo.yaml             ← Tenant spec (apps list)
+│       ├── beta-inc.yaml
+│       └── new-customer.yaml
+```
+
+When a new kernel is deployed:
+1. ImageUpdater updates the Application CR (gentian-os)
+2. ArgoCD syncs the new operator Deployment
+3. Existing operator pods are rolled, new binary is deployed
+4. **All tenants automatically use the new kernel** (no per-tenant action needed)
+
+This is the intended behavior: the kernel is a platform resource, not a per-tenant resource. Tenant admins do not manage kernel versions; cluster admins do (via the Image Updater policy or manual Application updates).
+
+### 15.7 Future: Per-Environment Policies
+
+If different environments have different update policies, use separate ImageUpdater CRs:
+
+```bash
+# dev: Always update to latest build
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gentian-os-kernel-dev
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: "dev-kernel-os"
+      images:
+        - imageName: ghcr.io/gentian-org/gentian-os
+          policy: newest-build       # Latest tag
+
+---
+# prod: Only update to released semver versions
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gentian-os-kernel-prod
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: "prod-kernel-os"
+      images:
+        - imageName: ghcr.io/gentian-org/gentian-os
+          policy: semver:v1.2.*     # Only v1.2.x releases
+```
+
+This ensures dev follows the latest develop branch while prod only updates to release versions.
 
 ## 16. Observability
 

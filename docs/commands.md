@@ -1,0 +1,88 @@
+# Gentian OS Commands
+
+This document lists key cluster-admin commands for Gentian OS operations.
+
+For tenant-admin app lifecycle commands, see:
+
+- ../../gentian-deployments/README.md
+
+## 1. Install the OS (Cluster Admin)
+
+Run the shared installer from the OS repository:
+
+```bash
+bash gentian-os/install.sh
+```
+
+This installs kernel services, ArgoCD, OpenBao, the orchestrator, and supporting controllers.
+
+## 2. Verify Core Health
+
+```bash
+kubectl get applications -n argocd
+kubectl get pods -n gentian-system
+kubectl get tenants
+```
+
+## 3. Provision a Tenant
+
+Apply a tenant manifest from deployments repository:
+
+```bash
+kubectl apply -f gentian-deployments/dev/tenants/dev-tenant.yaml
+```
+
+Check tenant reconciliation:
+
+```bash
+kubectl get tenant gtn-demo -o yaml
+kubectl describe tenant gtn-demo
+```
+
+## 4. List Available App Profiles
+
+```bash
+kubectl gentian apps list
+```
+
+The `kubectl gentian` commands are the tenant-facing Gentian OS command interface.
+
+## 5. Retrieve Admin Credentials
+
+Portal and identity credentials can be read from Kubernetes Secrets.
+
+Cluster admin (Nubus/Portal):
+
+```bash
+kubectl get secret nubus-credentials -n gentian-dev -o jsonpath='{.data.admin-password}' | base64 -d && echo
+```
+
+Keycloak admin (master realm):
+
+```bash
+kubectl get secret nubus-credentials -n gentian-dev -o jsonpath='{.data.keycloak-admin-password}' | base64 -d && echo
+```
+
+ArgoCD admin:
+
+```bash
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d && echo
+```
+
+## 6. Key URLs
+
+Given KERNEL_DOMAIN, the main URLs are:
+
+- Portal: https://portal.<KERNEL_DOMAIN>
+- Identity admin: https://id.<KERNEL_DOMAIN>
+
+ArgoCD URL depends on service exposure (NodePort/LoadBalancer/Ingress) in your cluster.
+
+## 7. Useful Troubleshooting Commands
+
+```bash
+kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
+kubectl logs -n gentian-system deploy/gentian-os -f
+kubectl get integrationbindings -A
+kubectl describe application -n argocd gentian-os
+```
