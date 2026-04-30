@@ -44,6 +44,13 @@ Deploy a specific tenant instance:
 kubectl gentian tenants deploy gtn-demo
 ```
 
+After deploy, the CLI prints tenant-admin login guidance, including:
+
+- readiness check command
+- command to read initial credentials from `keycloak-admin-<tenant>` Job logs
+- OpenBao fallback command for the tenant-admin password
+- realm admin console URL
+
 Render and apply the active tenant set for dev manually (optional):
 
 ```bash

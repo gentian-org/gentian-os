@@ -203,6 +203,69 @@ tenant_instance_name_from_patch() {
   ' "${file}"
 }
 
+tenant_domain_from_patch() {
+  local file="${1}"
+  awk '
+    /^spec:/ { in_spec=1; next }
+    in_spec == 1 && /^[^[:space:]]/ { in_spec=0 }
+    in_spec == 1 && $1 == "domain:" { print $2; exit }
+  ' "${file}"
+}
+
+tenant_realm_from_patch() {
+  local file="${1}"
+  awk '
+    /^spec:/ { in_spec=1; next }
+    in_spec == 1 && /^[^[:space:]]/ { in_spec=0 }
+    in_spec == 1 && /^  isolation:/ { in_iso=1; next }
+    in_iso == 1 && /^  [^[:space:]]/ { in_iso=0 }
+    in_iso == 1 && $1 == "keycloakRealm:" { print $2; exit }
+  ' "${file}"
+}
+
+print_tenant_admin_login_instructions() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+
+  local patch
+  local tenant_name
+  local realm
+  local domain
+
+  patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
+  tenant_name="$(tenant_instance_name_from_patch "${patch}")"
+  realm="$(tenant_realm_from_patch "${patch}")"
+  domain="$(tenant_domain_from_patch "${patch}")"
+
+  if [[ -z "${tenant_name}" ]]; then
+    tenant_name="${instance}"
+  fi
+  if [[ -z "${realm}" ]]; then
+    realm="${tenant_name}"
+  fi
+
+  echo ""
+  echo "Tenant admin login (for user provisioning):"
+  echo "  1) Wait for tenant readiness:"
+  echo "     kubectl get tenant ${tenant_name} -w"
+  echo ""
+  echo "  2) Retrieve initial tenant-admin credentials (printed by Keycloak admin Job):"
+  echo "     kubectl logs -n platform-kernel job/keycloak-admin-${tenant_name} | grep INITIAL_TENANT_ADMIN"
+  echo ""
+  echo "     If the initial line is no longer in logs, fetch password from OpenBao:"
+  echo "     bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin"
+  echo ""
+  if [[ -n "${domain}" ]]; then
+    echo "  3) Login to realm admin console:"
+    echo "     https://id.${domain}/admin/${realm}/console/"
+  else
+    echo "  3) Login to realm admin console:"
+    echo "     https://id.<KERNEL_DOMAIN>/admin/${realm}/console/"
+  fi
+  echo ""
+  echo "  On first login, Keycloak will require a password change."
+}
+
 is_instance_deployed() {
   local instance="${1}"
   local env_name="${2:-dev}"
@@ -345,6 +408,7 @@ cmd_tenant_deploy() {
 
   if is_instance_deployed "${instance}" "${env_name}"; then
     echo "Tenant instance '${instance}' is already deployed in '${env_name}'."
+    print_tenant_admin_login_instructions "${instance}" "${env_name}"
     exit 0
   fi
 
@@ -359,6 +423,7 @@ cmd_tenant_deploy() {
   kubectl apply -k "$(tenant_env_root "${env_name}")"
 
   echo "Done. Tenant instance '${instance}' deployed in '${env_name}'."
+  print_tenant_admin_login_instructions "${instance}" "${env_name}"
 }
 
 cmd_tenant_undeploy() {
