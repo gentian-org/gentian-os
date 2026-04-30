@@ -46,20 +46,9 @@ const (
 // namespace and are idempotent (check-before-create). Returns a non-zero
 // RequeueAfter while Jobs are still running.
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	ldapApps, err := r.collectLDAPApps(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if len(ldapApps) == 0 {
-		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
-			"NoLDAPRequired", "No apps require LDAP provisioning")
-		return ctrl.Result{}, nil
-	}
-
 	ouDN := tenantOUDN(tenant)
 
-	// Step 1 — tenant OU + default groups
+	// Step 1 — tenant OU + default groups (always required for Nubus user management)
 	ouDone, err := r.ensureOUJob(ctx, tenant, ouDN)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure LDAP OU Job: %w", err)
@@ -70,7 +59,7 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
-	// Step 2 — tenant-scoped delegated admin policy (Option B)
+	// Step 2 — tenant-scoped delegated admin policy (always required for Nubus user management)
 	adminPolicyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure LDAP admin policy Job: %w", err)
@@ -81,7 +70,12 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
-	// Step 3 — per-app bind accounts (only after OU + admin policy are ready)
+	// Step 3 — per-app bind accounts (only for apps that require LDAP)
+	ldapApps, err := r.collectLDAPApps(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	allDone := true
 	for _, appName := range ldapApps {
 		done, err := r.ensureBindAccountJob(ctx, tenant, ouDN, appName)
@@ -100,7 +94,7 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	}
 
 	r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
-		"Provisioned", "LDAP OU, groups, and bind accounts are ready")
+		"Provisioned", "LDAP OU, groups, bind accounts, and admin policy are ready")
 	return ctrl.Result{}, nil
 }
 
