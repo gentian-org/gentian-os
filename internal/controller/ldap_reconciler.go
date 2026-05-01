@@ -439,6 +439,8 @@ BASE_URL="${UDM_URL}/udm"
 # OU_POS is assigned here; shell expands ${UDM_LDAP_BASE} at runtime.
 OU_POS="%s"
 OU_ENC=$(urlencode "${OU_POS}")
+# UCS/Nubus enforces groups live under cn=groups,<base>, not inside tenant OUs.
+GROUPS_CONTAINER="cn=groups,${UDM_LDAP_BASE}"
 
 # Create tenant OU if absent
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
@@ -455,8 +457,8 @@ else
   echo "OU %s already exists (HTTP ${STATUS})"
 fi
 
-# Create users group if absent
-USERS_GRP_ENC=$(urlencode "cn=users_%s,${OU_POS}")
+# Create users group if absent (placed in canonical cn=groups container)
+USERS_GRP_ENC=$(urlencode "cn=users_%s,${GROUPS_CONTAINER}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/groups/group/dn/${USERS_GRP_ENC}")
@@ -465,14 +467,14 @@ if [ "${STATUS}" = "404" ]; then
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
-    -d "{\"properties\":{\"name\":\"users_%s\"},\"position\":\"${OU_POS}\"}"
+    -d "{\"properties\":{\"name\":\"users_%s\"},\"position\":\"${GROUPS_CONTAINER}\"}"
   echo "group users_%s created"
 else
   echo "group users_%s already exists"
 fi
 
-# Create admins group if absent
-ADMINS_GRP_ENC=$(urlencode "cn=admins_%s,${OU_POS}")
+# Create admins group if absent (placed in canonical cn=groups container)
+ADMINS_GRP_ENC=$(urlencode "cn=admins_%s,${GROUPS_CONTAINER}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
@@ -481,7 +483,7 @@ if [ "${STATUS}" = "404" ]; then
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
-    -d "{\"properties\":{\"name\":\"admins_%s\"},\"position\":\"${OU_POS}\"}"
+    -d "{\"properties\":{\"name\":\"admins_%s\"},\"position\":\"${GROUPS_CONTAINER}\"}"
   echo "group admins_%s created"
 else
   echo "group admins_%s already exists"
@@ -532,9 +534,11 @@ urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
+# Groups live in the canonical UCS groups container, not inside the tenant OU.
+GROUPS_CONTAINER="cn=groups,${UDM_LDAP_BASE}"
 ADMIN_DN="uid=${ADMIN_USERNAME},${OU_POS}"
 ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
-ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
+ADMINS_GRP_DN="cn=admins_%s,${GROUPS_CONTAINER}"
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
 
 # Create the tenant admin user if absent.
@@ -579,7 +583,9 @@ CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 
 OU_POS="%s"
-ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
+# Groups live in the canonical UCS groups container, not inside the tenant OU.
+GROUPS_CONTAINER="cn=groups,${UDM_LDAP_BASE}"
+ADMINS_GRP_DN="cn=admins_%s,${GROUPS_CONTAINER}"
 POLICY_DN="cn=tenant-admins-%s,cn=UMC,cn=policies,${UDM_LDAP_BASE}"
 MODULE_DN="cn=tenant-%s,cn=udm,cn=settings,${UDM_LDAP_BASE}"
 
