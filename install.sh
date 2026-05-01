@@ -1118,26 +1118,39 @@ EOF
     _wait_prewarm_pod "${pod_no_vol}" 180 "volumeless"
 
     # ── (b) PVC-backed pre-warm ─────────────────────────────────────────────
-    # Only meaningful when there is a default StorageClass (otherwise the
-    # PVC stays Pending and we'd just time out for nothing). Detect first
-    # and skip silently when absent — bare-metal clusters without a default
-    # SC don't suffer the hostpath race.
-    local default_sc
-    default_sc=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null)
-    if [[ -z "${default_sc}" ]]; then
-        info "No default StorageClass detected; skipping PVC pre-warm."
+    # The volume_manager race we're mitigating is specific to node-local
+    # provisioners (microk8s.io/hostpath, rancher.io/local-path, etc.):
+    # the FIRST pod to bind one of these PVCs on a freshly-started kubelet
+    # wedges in ContainerCreating because kubelet's volume_manager lags
+    # the CRI sandbox. Network provisioners like nfs.csi.k8s.io do NOT
+    # exhibit this — they use a separate attach/mount path. So we do NOT
+    # prewarm the *default* SC; we prewarm every hostpath/local-path SC
+    # we can find (typically just one, microk8s-hostpath). On clusters
+    # that have no such SC (pure NFS / cloud CSI), we skip silently.
+    local racy_scs sc
+    racy_scs=$(kubectl get sc -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.provisioner}{"\n"}{end}' 2>/dev/null \
+        | awk -F= 'tolower($2) ~ /hostpath|local-path/ {print $1}')
+    if [[ -z "${racy_scs}" ]]; then
+        info "No hostpath/local-path StorageClass detected; skipping PVC pre-warm."
     else
-        info "Applying throwaway PVC + pod kube-system/${pod_pvc} (sc=${default_sc})..."
-        kubectl apply -f - <<EOF >/dev/null
+        local idx=0
+        while IFS= read -r sc; do
+            [[ -z "${sc}" ]] && continue
+            idx=$((idx + 1))
+            local pod_n="${pod_pvc}-${idx}"
+            local pvc_n="${pvc_name}-${idx}"
+            info "Applying throwaway PVC + pod kube-system/${pod_n} (sc=${sc})..."
+            kubectl apply -f - <<EOF >/dev/null
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: ${pvc_name}
+  name: ${pvc_n}
   namespace: kube-system
   labels:
     app.kubernetes.io/managed-by: gentian-install
     app.kubernetes.io/component: prewarm
 spec:
+  storageClassName: ${sc}
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
@@ -1146,7 +1159,7 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${pod_pvc}
+  name: ${pod_n}
   namespace: kube-system
   labels:
     app.kubernetes.io/managed-by: gentian-install
@@ -1168,10 +1181,11 @@ spec:
   volumes:
     - name: data
       persistentVolumeClaim:
-        claimName: ${pvc_name}
+        claimName: ${pvc_n}
 EOF
-        _wait_prewarm_pod "${pod_pvc}" 240 "PVC-backed"
-        kubectl delete pvc -n kube-system "${pvc_name}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
+            _wait_prewarm_pod "${pod_n}" 240 "PVC-backed (${sc})"
+            kubectl delete pvc -n kube-system "${pvc_n}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
+        done <<<"${racy_scs}"
     fi
 }
 
