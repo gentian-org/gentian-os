@@ -481,8 +481,8 @@ func buildAdminScript(realmName string) string {
 	// The script:
 	//   1. Authenticates to the master realm (cluster-admin creds from keycloakAdminSecret).
 	//   2. Creates the tenant admin user in the tenant realm if absent.
-	//   3. Sets the password and marks it temporary (UPDATE_PASSWORD required action)
-	//      so the tenant admin must rotate it on first login.
+	//   3. Sets the password and marks it temporary only when the tenant admin user
+	//      is newly created (UPDATE_PASSWORD required action on first login).
 	//   4. Grants the realm-management/realm-admin composite role so the user can
 	//      manage users/groups/clients/sessions within this realm only.
 	//
@@ -515,15 +515,17 @@ else
   echo "tenant admin ${TENANT_ADMIN_USERNAME} created (id=${UID}) in realm %s"
 fi
 
-# --- 2. Set temporary password ---
-curl -sf -X PUT -H "${AUTH_HEADER}" \
-  -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
-  -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":true}"
-echo "password set (temporary=true)"
+# --- 2. Set temporary password only for a newly created admin user ---
 if [ "${CREATED}" = "1" ]; then
+	curl -sf -X PUT -H "${AUTH_HEADER}" \
+		-H "Content-Type: application/json" \
+		"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
+		-d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":true}"
+	echo "password set (temporary=true)"
 	echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
 	echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
+else
+	echo "password reset skipped for existing tenant admin user"
 fi
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
