@@ -257,6 +257,7 @@ wait_for_tenant_ready() {
   local start
   start="$(date +%s)"
   local last_phase=""
+  local next_progress_at=0
 
   echo "Waiting for tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
 
@@ -273,6 +274,16 @@ wait_for_tenant_ready() {
       now_phase="$(date +%s)"
       echo "  tenant '${tenant_name}' phase: ${phase} (elapsed: $((now_phase - start))s)"
       last_phase="${phase}"
+      next_progress_at=$((now_phase - start + 30))
+    fi
+
+    local now_progress
+    now_progress="$(date +%s)"
+    local elapsed
+    elapsed=$((now_progress - start))
+    if (( elapsed >= next_progress_at )); then
+      echo "  tenant '${tenant_name}' still in phase: ${phase} (elapsed: ${elapsed}s)"
+      next_progress_at=$((elapsed + 30))
     fi
 
     if [[ "${phase}" == "Ready" ]]; then
