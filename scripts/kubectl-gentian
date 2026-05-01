@@ -432,8 +432,9 @@ fetch_tenant_admin_password_via_k8s_auth() {
 
 rollback_deploy() {
   local instance="${1}"
-  local env_name="${2}"
-  local kustom_file="${3}"
+  local tenant_name="${2}"
+  local env_name="${3}"
+  local kustom_file="${4}"
 
   echo "failed to provision tenant, rolling back" >&2
 
@@ -458,8 +459,15 @@ rollback_deploy() {
     return 1
   fi
 
+  kubectl delete tenant "${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
+
   if is_instance_deployed "${instance}" "${env_name}"; then
     echo "rollback failed: tenant instance '${instance}' is still marked deployed in '${env_name}'" >&2
+    return 1
+  fi
+
+  if kubectl get tenant "${tenant_name}" >/dev/null 2>&1; then
+    echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
     return 1
   fi
 
@@ -714,17 +722,17 @@ cmd_tenant_deploy() {
 
   echo "Applying tenant desired state for '${env_name}'..."
   if ! apply_env_kustomization "${env_name}"; then
-    rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
+    rollback_deploy "${instance}" "${tenant_name}" "${env_name}" "${kustom_file}"
   fi
 
   echo "Waiting for tenant reconciliation to complete..."
   if ! wait_for_tenant_ready "${tenant_name}" 600; then
-    rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
+    rollback_deploy "${instance}" "${tenant_name}" "${env_name}" "${kustom_file}"
   fi
 
   echo "Waiting for tenant-admin credentials to become available..."
   if ! fetch_tenant_admin_credentials "${tenant_name}" 300; then
-    rollback_deploy "${instance}" "${env_name}" "${kustom_file}"
+    rollback_deploy "${instance}" "${tenant_name}" "${env_name}" "${kustom_file}"
   fi
 
   echo "Done. Tenant instance '${instance}' deployed in '${env_name}'."

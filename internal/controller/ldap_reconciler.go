@@ -522,19 +522,37 @@ fi`, ouDN, appName, appName, appName, appName)
 
 // buildAdminUserScript creates the tenant admin as a users/user in the tenant
 // OU and adds them to admins_<tenant>. ADMIN_USERNAME and ADMIN_PASSWORD are
-// injected as environment variables by the Job constructor. The admin email is
-// embedded in the script. The call is idempotent: it checks whether the user
-// already exists before creating them, and ensures group membership regardless.
+// injected as environment variables by the Job constructor. The call is
+// idempotent: it ensures the mail domain exists, creates the user if missing,
+// and then ensures group membership.
 func buildAdminUserScript(ouDN, tenantName, adminEmail string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
+ADMIN_EMAIL="%s"
+MAIL_DOMAIN="${ADMIN_EMAIL##*@}"
+MAIL_DOMAIN_CONTAINER="cn=domain,cn=mail,${UDM_LDAP_BASE}"
 ADMIN_DN="uid=${ADMIN_USERNAME},${OU_POS}"
 ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
 ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
+
+# Ensure the mail domain object exists for the admin's email address.
+MAIL_DOMAIN_SEARCH=$(curl -s ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/mail/domain/?filter=name%%3D${MAIL_DOMAIN}")
+if ! echo "${MAIL_DOMAIN_SEARCH}" | grep -q '"dn"'; then
+	curl -sf -X POST ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/mail/domain/" \
+		-d "{\"properties\":{\"name\":\"${MAIL_DOMAIN}\"},\"position\":\"${MAIL_DOMAIN_CONTAINER}\"}"
+	echo "mail domain ${MAIL_DOMAIN} created"
+else
+	echo "mail domain ${MAIL_DOMAIN} already exists"
+fi
 
 # Create the tenant admin user if absent.
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
@@ -545,7 +563,7 @@ if [ "${STATUS}" = "404" ]; then
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/users/user/" \
-    -d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"%s\",\"pwdChangeNextLogin\":\"1\"},\"position\":\"${OU_POS}\"}"
+		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":true},\"position\":\"${OU_POS}\"}"
   echo "UDM user ${ADMIN_USERNAME} created in ${OU_POS}"
 else
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
@@ -565,7 +583,7 @@ else
     -d "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}"
   echo "user ${ADMIN_USERNAME} added to admins group"
 fi`,
-		ouDN, tenantName, adminEmail)
+		ouDN, adminEmail, tenantName)
 }
 
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
