@@ -345,6 +345,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(err, "ensure Nextcloud group (non-blocking, will retry)")
 	}
 
+	// 14c. LDAP base infrastructure — provision OU, delegated-admin policy, and
+	// admin user for tenants with no LDAP-requiring apps. For tenants WITH LDAP
+	// apps this is a no-op (ensureLDAP already handles all steps). Non-blocking:
+	// errors are logged and retried without blocking Phase=Ready.
+	if err := r.ensureLDAPBase(ctx, tenant); err != nil {
+		logger.Error(err, "ensure LDAP base (non-blocking, will retry)")
+	}
+
 	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName

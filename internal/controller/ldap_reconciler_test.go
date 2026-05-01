@@ -48,8 +48,11 @@ func newLDAPProfile(name string) *gentianov1alpha1.AppProfile {
 	}
 }
 
-// TestLDAP_NoLDAPApps verifies that a Tenant with no apps does not create any
-// UDM Jobs and gets LDAPReady=True with reason NoLDAPRequired.
+// TestLDAP_NoLDAPApps verifies that a Tenant with no LDAP-requiring apps:
+//   - still has LDAPReady=True with reason NoLDAPRequired (no blocking)
+//   - Phase=Ready is reached without waiting for any LDAP Jobs
+//   - the OU Job IS created via ensureLDAPBase (non-blocking base provisioning)
+//   - no bind-account Jobs are created
 func TestLDAP_NoLDAPApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -65,6 +68,8 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
+	// Phase=Ready must be reached without marking any LDAP Jobs complete
+	// (ensureLDAPBase is non-blocking, ensureLDAP early-exits).
 	updated := &gentianov1alpha1.Tenant{}
 	waitFor(t, 10*time.Second, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "noldap"}, updated)
@@ -88,12 +93,12 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 		t.Errorf("expected reason NoLDAPRequired, got %q", ldapCond.Reason)
 	}
 
-	// No OU Job should have been created.
+	// ensureLDAPBase must have fired the OU Job even though no LDAP apps are installed.
 	job := &batchv1.Job{}
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-ou-noldap", Namespace: "platform-kernel"}, job); err == nil {
-		t.Error("expected no OU Job for Tenant with no LDAP apps")
-	}
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-ou-noldap", Namespace: "platform-kernel"}, job) == nil
+	})
 }
 
 // TestLDAP_CreatesOUJob verifies that a Tenant with an LDAP-requiring app triggers

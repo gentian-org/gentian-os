@@ -46,13 +46,15 @@ const (
 // Jobs run in the kernel namespace and are idempotent (check-before-create).
 // Returns a non-zero RequeueAfter while Jobs are still running.
 //
-// Admin user and policy provisioning runs whenever LDAP apps are present (the
-// OU is their prerequisite). For tenants with no LDAP apps the entire LDAP
-// flow is skipped via the early-exit below.
+// Steps 1-2.5 (OU, admin policy, admin user) are handled non-blocking by
+// ensureLDAPBase for tenants with no LDAP-requiring apps. When LDAP apps are
+// present, this function handles all steps (1-3) and blocks Phase=Ready until
+// complete. Step 3 (per-app bind accounts) is always app-gated.
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	ouDN := tenantOUDN(tenant)
 
-	// Short-circuit when no app requires LDAP — consistent with ensureIdentity and ensureCache.
+	// Short-circuit when no app requires LDAP. ensureLDAPBase (non-blocking)
+	// handles OU+admin provisioning for these tenants independently.
 	ldapApps, err := r.collectLDAPApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -263,6 +265,47 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		return err
 	}
 	return r.Create(ctx, makeOUDeleteJob(tenant, ouDN))
+}
+
+// ensureLDAPBase provisions the LDAP OU, delegated-admin policy, and admin
+// user for tenants that have no LDAP-requiring apps. This is a non-blocking
+// best-effort step identical in purpose to ensureNextcloudGroup: it does not
+// affect Phase=Ready. For tenants WITH LDAP apps, ensureLDAP already handles
+// all steps (1-3) so this function is a no-op to avoid duplicate Job creation.
+// Sequence: OU → admin-policy → admin-user (each step waits for the previous).
+func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	ldapApps, err := r.collectLDAPApps(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	// ensureLDAP already handles these steps when LDAP apps are present.
+	if len(ldapApps) > 0 {
+		return nil
+	}
+
+	ouDN := tenantOUDN(tenant)
+
+	ouDone, err := r.ensureOUJob(ctx, tenant, ouDN)
+	if err != nil || !ouDone {
+		return err
+	}
+
+	policyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
+	if err != nil || !policyDone {
+		return err
+	}
+
+	var adminCreds secrets.TenantAdminCreds
+	if r.Seeder != nil {
+		adminCreds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
+		if err != nil {
+			return fmt.Errorf("seed tenant admin for LDAP base: %w", err)
+		}
+	} else {
+		adminCreds = secrets.TenantAdminCreds{Username: "admin-" + tenant.Name, Password: "placeholder"}
+	}
+	_, err = r.ensureAdminUserJob(ctx, tenant, ouDN, adminCreds)
+	return err
 }
 
 // --- Job constructors --------------------------------------------------------
