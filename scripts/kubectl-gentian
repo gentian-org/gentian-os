@@ -262,6 +262,20 @@ wait_for_tenant_ready() {
   echo "Waiting for tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
 
   while true; do
+    local failed_jobs
+    failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" -o jsonpath='{range .items[?(@.status.failed>0)]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+    if [[ -n "${failed_jobs}" ]]; then
+      local first_failed_job
+      first_failed_job="$(printf '%s\n' "${failed_jobs}" | sed -n '1p')"
+      echo "Tenant '${tenant_name}' has failed provisioning Job(s):" >&2
+      printf '%s\n' "${failed_jobs}" | sed 's/^/  - /' >&2
+      if [[ -n "${first_failed_job}" ]]; then
+        echo "Recent logs from failed Job '${first_failed_job}':" >&2
+        kubectl --request-timeout=5s logs -n platform-kernel "job/${first_failed_job}" --tail=20 2>/dev/null | sed 's/^/    /' >&2 || true
+      fi
+      return 1
+    fi
+
     local phase
       phase="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
 
