@@ -1065,14 +1065,40 @@ prewarm_cluster() {
 
     banner "Step 2b — Pre-warming cluster (PLEG/CRI race mitigation)"
 
-    local pod
-    pod="prewarm-$(date +%s)"
-    info "Applying throwaway pod kube-system/${pod}..."
+    # We pre-warm TWO things, in order, because they are independent races:
+    #
+    #   (a) volumeless pod  → exercises kubelet ↔ containerd ↔ CNI event pipe
+    #                         (fixes the classic PLEG/CRI race that kind/k3d
+    #                         work around the same way).
+    #   (b) pod + hostpath PVC → exercises kubelet's volume_manager + the
+    #                         microk8s.io/hostpath provisioner. On microk8s
+    #                         specifically, the FIRST pod to bind a hostpath
+    #                         PVC after a fresh cluster / kubelite restart
+    #                         frequently wedges in ContainerCreating with
+    #                         the container `Started` but PodReadyToStart-
+    #                         Containers stuck False (kubelet status-sync
+    #                         hang on first volume attach). Burning that
+    #                         race on a throwaway pod here means
+    #                         openbao-transit-0 (the first real PVC
+    #                         consumer) lands cleanly.
+    #
+    # Both pre-warm pods get auto-recovery if they wedge, so worst case we
+    # spend ~60s on cleanup at install time instead of 240s of
+    # ContainerCreating later.
+
+    local stamp pod_no_vol pod_pvc pvc_name
+    stamp="$(date +%s)"
+    pod_no_vol="prewarm-${stamp}"
+    pod_pvc="prewarm-pvc-${stamp}"
+    pvc_name="prewarm-pvc-${stamp}"
+
+    # ── (a) volumeless pre-warm ─────────────────────────────────────────────
+    info "Applying throwaway pod kube-system/${pod_no_vol}..."
     kubectl apply -f - <<EOF >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${pod}
+  name: ${pod_no_vol}
   namespace: kube-system
   labels:
     app.kubernetes.io/managed-by: gentian-install
@@ -1089,25 +1115,114 @@ spec:
         requests: {cpu: "10m", memory: "8Mi"}
         limits:   {cpu: "50m", memory: "32Mi"}
 EOF
+    _wait_prewarm_pod "${pod_no_vol}" 180 "volumeless"
 
-    info "Waiting for pre-warm pod to reach a terminal phase (up to 180s)..."
-    local deadline=$((SECONDS + 180))
-    local phase=""
+    # ── (b) PVC-backed pre-warm ─────────────────────────────────────────────
+    # Only meaningful when there is a default StorageClass (otherwise the
+    # PVC stays Pending and we'd just time out for nothing). Detect first
+    # and skip silently when absent — bare-metal clusters without a default
+    # SC don't suffer the hostpath race.
+    local default_sc
+    default_sc=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null)
+    if [[ -z "${default_sc}" ]]; then
+        info "No default StorageClass detected; skipping PVC pre-warm."
+    else
+        info "Applying throwaway PVC + pod kube-system/${pod_pvc} (sc=${default_sc})..."
+        kubectl apply -f - <<EOF >/dev/null
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${pvc_name}
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/component: prewarm
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 16Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod_pvc}
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/component: prewarm
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: prewarm
+      image: busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command: ["sh","-c","echo ok > /data/ok && exit 0"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests: {cpu: "10m", memory: "8Mi"}
+        limits:   {cpu: "50m", memory: "32Mi"}
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: ${pvc_name}
+EOF
+        _wait_prewarm_pod "${pod_pvc}" 240 "PVC-backed"
+        kubectl delete pvc -n kube-system "${pvc_name}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
+    fi
+}
+
+# Helper for prewarm_cluster: wait for ${1} pod in kube-system to reach a
+# terminal phase (Succeeded/Failed). Auto-recovers via cri_cleanup +
+# kubelite_restart if it wedges in ContainerCreating with no IP. Always
+# best-effort: caller continues regardless.
+_wait_prewarm_pod() {
+    local pod="$1" timeout="${2:-180}" label="${3:-prewarm}"
+    info "Waiting for ${label} pre-warm pod to reach a terminal phase (up to ${timeout}s)..."
+    local deadline=$((SECONDS + timeout))
+    local phase="" stuck_for=0 last_phase="" recovery_done=0
     while (( SECONDS < deadline )); do
         phase=$(kubectl get pod -n kube-system "${pod}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
         case "${phase}" in
-            Succeeded) success "Pre-warm pod completed (kubelet<->containerd path warmed)."; break ;;
-            Failed)    warn "Pre-warm pod failed (phase=Failed); continuing anyway."; break ;;
+            Succeeded) success "${label} pre-warm pod completed."; break ;;
+            Failed)    warn "${label} pre-warm pod failed (phase=Failed); continuing anyway."; break ;;
         esac
+        # Track ContainerCreating wedge identical to wait_for_running_pod.
+        local pod_ip
+        pod_ip=$(kubectl get pod -n kube-system "${pod}" -o jsonpath='{.status.podIP}' 2>/dev/null || true)
+        if [[ "${phase}" == "Pending" && -z "${pod_ip}" ]]; then
+            if [[ "${phase}" == "${last_phase}" ]]; then
+                stuck_for=$(( stuck_for + 3 ))
+            else
+                stuck_for=0
+            fi
+        else
+            stuck_for=0
+        fi
+        last_phase="${phase}"
+        if (( stuck_for >= 90 && recovery_done == 0 )); then
+            warn "${label} pre-warm pod wedged in ContainerCreating with no IP after ${stuck_for}s — running recovery."
+            kubectl delete pod -n kube-system "${pod}" --grace-period=0 --force >/dev/null 2>&1 || true
+            cri_cleanup
+            kubelite_restart
+            recovery_done=1
+            stuck_for=0
+            # Re-apply the same pod so the wait loop has something to poll.
+            # The owning controller (none — bare Pod) won't recreate it.
+            # We bail out instead and rely on the next prewarm step / real
+            # workload, which now lands on a freshly-restarted kubelite.
+            warn "${label} pre-warm pod recovery issued; not re-creating bare pod. Continuing."
+            return 0
+        fi
         sleep 3
     done
-
     if [[ "${phase}" != "Succeeded" && "${phase}" != "Failed" ]]; then
-        warn "Pre-warm pod did not finish within 180s (last phase: ${phase:-unknown})."
-        warn "Continuing — auto-recovery will handle any residual wedge."
+        warn "${label} pre-warm pod did not finish within ${timeout}s (last phase: ${phase:-unknown})."
         kubectl describe pod -n kube-system "${pod}" 2>/dev/null | tail -20 || true
     fi
-
     kubectl delete pod -n kube-system "${pod}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
 }
 
