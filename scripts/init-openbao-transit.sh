@@ -53,12 +53,12 @@ success "openbao-transit-0 is Ready."
 # right after a kubelet/kubelite restart triggered by install.sh's
 # auto-recovery. Without this loop, the very next curl below races and exits
 # non-zero under set -e, aborting the whole script.
-info "Waiting for OpenBao HTTP listener to accept connections (up to 60s)..."
+info "Waiting for OpenBao HTTP listener to accept connections (up to 180s)..."
 i=0
 until curl -sf -o /dev/null --max-time 3 "${TRANSIT_ADDR}/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"; do
   sleep 2; i=$((i + 2))
-  if [[ $i -ge 60 ]]; then
-    error "OpenBao HTTP listener at ${TRANSIT_ADDR} never accepted connections within 60s."
+  if [[ $i -ge 180 ]]; then
+    error "OpenBao HTTP listener at ${TRANSIT_ADDR} never accepted connections within 180s."
     exit 1
   fi
 done

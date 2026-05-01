@@ -451,6 +451,18 @@ else
         done < <(_kctl get terraform -A \
                  -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
     fi
+    # Strip finalizers from CNPG Cluster CRs so that deleting the CNPG CRD
+    # later does not block waiting for instances to finalize. CNPG adds its
+    # own finalizer (cnpg.io/cluster) that the CRD controller must clear.
+    if _kctl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+        while IFS=/ read -r ns name; do
+            [[ -z "$ns" || -z "$name" ]] && continue
+            _kctl patch cluster.postgresql.cnpg.io "$name" -n "$ns" --type=merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            _kctl delete cluster.postgresql.cnpg.io "$name" -n "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
+        done < <(_kctl get cluster.postgresql.cnpg.io -A \
+                 -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null)
+    fi
     # Strip pvc-protection finalizers in all target namespaces up-front.
     info "  - PVC finalizers in target namespaces"
     for ns in "${local_namespaces[@]}"; do
@@ -512,14 +524,14 @@ else
         appprofiles.gentianos.io \
         integrationbindings.gentianos.io \
         tenants.gentianos.io \
-        --ignore-not-found >/dev/null 2>&1 || true
+        --ignore-not-found --wait=false >/dev/null 2>&1 || true
 
     # Remove ArgoCD CRDs (installed by the argocd helm chart in step 4).
     kubectl delete crd \
         applications.argoproj.io \
         applicationsets.argoproj.io \
         appprojects.argoproj.io \
-        --ignore-not-found >/dev/null 2>&1 || true
+        --ignore-not-found --wait=false >/dev/null 2>&1 || true
 
     # Cluster-scoped infra cleanup (only with --cluster-infra). These
     # resources are not bound to any namespace, so they don't go away when
@@ -527,7 +539,7 @@ else
     # NOT touched here because it predates gentian-os on most clusters.
     if [[ "$UNINSTALL_CLUSTER_INFRA" == "1" ]]; then
         info "Removing cluster-scoped infra CRDs and RBAC..."
-        # CNPG (CloudNativePG)
+        # CNPG (CloudNativePG) — finalizers stripped above in pre-strip phase
         kubectl delete crd \
             backups.postgresql.cnpg.io \
             clusterimagecatalogs.postgresql.cnpg.io \
@@ -538,8 +550,8 @@ else
             publications.postgresql.cnpg.io \
             scheduledbackups.postgresql.cnpg.io \
             subscriptions.postgresql.cnpg.io \
-            --ignore-not-found >/dev/null 2>&1 || true
-        # tofu-controller + flux source-controller (installed as dependency)
+            --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        # tofu-controller + flux source-controller — Terraform CRs stripped above
         kubectl delete crd \
             terraforms.infra.contrib.fluxcd.io \
             buckets.source.toolkit.fluxcd.io \
@@ -548,7 +560,7 @@ else
             helmcharts.source.toolkit.fluxcd.io \
             helmrepositories.source.toolkit.fluxcd.io \
             ocirepositories.source.toolkit.fluxcd.io \
-            --ignore-not-found >/dev/null 2>&1 || true
+            --ignore-not-found --wait=false >/dev/null 2>&1 || true
         # ClusterRoles and ClusterRoleBindings left behind when their
         # namespaces were force-deleted before the helm/argocd uninstall.
         kubectl delete clusterrole \
