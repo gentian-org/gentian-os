@@ -18,6 +18,7 @@ package controller_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,6 +35,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -46,6 +48,8 @@ var testClient client.Client
 // TestMain sets up a single envtest environment and controller manager shared
 // across all tests. Each test creates its own Tenant with a unique name.
 func TestMain(m *testing.M) {
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(io.Discard)))
+
 	binDir := "/tmp/envtest-bins/k8s/1.32.0-linux-amd64"
 	if v := os.Getenv("KUBEBUILDER_ASSETS"); v != "" {
 		binDir = v
@@ -164,9 +168,16 @@ func TestMain(m *testing.M) {
 // waitFor polls until cond returns true or the timeout elapses.
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
+	if raceEnabled {
+		timeout = timeout * 4
+	}
+	pollInterval := 200 * time.Millisecond
+	if raceEnabled {
+		pollInterval = 400 * time.Millisecond
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	_ = wait.PollUntilContextTimeout(ctx, 200*time.Millisecond, timeout, true, func(_ context.Context) (bool, error) {
+	_ = wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(_ context.Context) (bool, error) {
 		return cond(), nil
 	})
 	if !cond() {
