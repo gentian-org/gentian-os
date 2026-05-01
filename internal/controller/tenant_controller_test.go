@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -165,21 +164,26 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// waitFor polls until cond returns true or the timeout elapses.
+// waitFor polls cond every 200ms until it returns true or timeout elapses.
+// It logs progress every 5s so CI output shows the test is alive.
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
-	if raceEnabled {
-		timeout = timeout * 4
+	deadline := time.Now().Add(timeout)
+	logEvery := 5 * time.Second
+	nextLog := time.Now().Add(logEvery)
+	for {
+		if cond() {
+			return
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		if time.Now().After(nextLog) {
+			t.Logf("still waiting... (%s remaining)", time.Until(deadline).Round(time.Second))
+			nextLog = time.Now().Add(logEvery)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	pollInterval := 200 * time.Millisecond
-	if raceEnabled {
-		pollInterval = 400 * time.Millisecond
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	_ = wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(_ context.Context) (bool, error) {
-		return cond(), nil
-	})
 	if !cond() {
 		t.Fatal("timed out waiting for condition")
 	}

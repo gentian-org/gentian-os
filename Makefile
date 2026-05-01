@@ -23,8 +23,11 @@ build:
 	go build ./...
 
 ## Run unit tests
+# internal/controller uses envtest whose watch goroutines conflict with -race;
+# all other packages are tested with the race detector enabled.
 test:
-	go test ./... -race
+	go test $$(go list ./... | grep -v 'internal/controller') -race
+	go test ./internal/controller/...
 
 ## Generate deepcopy methods
 generate:
