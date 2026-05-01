@@ -261,9 +261,20 @@ wait_for_tenant_ready() {
 
   echo "Waiting for tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
 
+  # Capture the tenant CR creation time so we ignore stale jobs from previous deploy attempts.
+  local tenant_created_at
+  tenant_created_at="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)"
+
   while true; do
     local failed_jobs
-    failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" -o jsonpath='{range .items[?(@.status.failed>0)]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+    # Only consider jobs whose creation timestamp is >= the tenant CR creation time.
+    if [[ -n "${tenant_created_at}" ]]; then
+      failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" \
+        -o jsonpath='{range .items[?(@.status.failed>0)]}{.metadata.creationTimestamp}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | awk -v cutoff="${tenant_created_at}" '$1 >= cutoff {print $2}' || true)"
+    else
+      failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" -o jsonpath='{range .items[?(@.status.failed>0)]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+    fi
     if [[ -n "${failed_jobs}" ]]; then
       local first_failed_job
       first_failed_job="$(printf '%s\n' "${failed_jobs}" | sed -n '1p')"
@@ -478,6 +489,7 @@ rollback_deploy() {
   fi
 
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
 
   if is_instance_deployed "${instance}" "${env_name}"; then
     echo "rollback failed: tenant instance '${instance}' is still marked deployed in '${env_name}'" >&2
