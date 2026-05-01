@@ -439,13 +439,10 @@ BASE_URL="${UDM_URL}/udm"
 # OU_POS is assigned here; shell expands ${UDM_LDAP_BASE} at runtime.
 OU_POS="%s"
 OU_ENC=$(urlencode "${OU_POS}")
-# UCS/Nubus enforces groups live under cn=groups,<base>, not inside tenant OUs.
-GROUPS_CONTAINER="cn=groups,${UDM_LDAP_BASE}"
-
 # Create tenant OU if absent
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/container/ou/dn/${OU_ENC}")
+	"${BASE_URL}/container/ou/${OU_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
@@ -457,33 +454,33 @@ else
   echo "OU %s already exists (HTTP ${STATUS})"
 fi
 
-# Create users group if absent (placed in canonical cn=groups container)
-USERS_GRP_ENC=$(urlencode "cn=users_%s,${GROUPS_CONTAINER}")
+# Create users group if absent
+USERS_GRP_ENC=$(urlencode "cn=users_%s,${OU_POS}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/groups/group/dn/${USERS_GRP_ENC}")
+	"${BASE_URL}/groups/group/${USERS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
-    -d "{\"properties\":{\"name\":\"users_%s\"},\"position\":\"${GROUPS_CONTAINER}\"}"
+		-d "{\"properties\":{\"name\":\"users_%s\"},\"position\":\"${OU_POS}\"}"
   echo "group users_%s created"
 else
   echo "group users_%s already exists"
 fi
 
-# Create admins group if absent (placed in canonical cn=groups container)
-ADMINS_GRP_ENC=$(urlencode "cn=admins_%s,${GROUPS_CONTAINER}")
+# Create admins group if absent
+ADMINS_GRP_ENC=$(urlencode "cn=admins_%s,${OU_POS}")
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
+	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -s -o /dev/null -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/" \
-    -d "{\"properties\":{\"name\":\"admins_%s\"},\"position\":\"${GROUPS_CONTAINER}\"}"
+		-d "{\"properties\":{\"name\":\"admins_%s\"},\"position\":\"${OU_POS}\"}"
   echo "group admins_%s created"
 else
   echo "group admins_%s already exists"
@@ -507,7 +504,7 @@ BIND_DN_ENC=$(urlencode "${BIND_DN}")
 
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/users/ldap/dn/${BIND_DN_ENC}")
+	"${BASE_URL}/users/ldap/${BIND_DN_ENC}")
 if [ "${STATUS}" = "404" ]; then
   if [ -z "${BIND_PW:-}" ]; then
     BIND_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
@@ -534,17 +531,15 @@ urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
-# Groups live in the canonical UCS groups container, not inside the tenant OU.
-GROUPS_CONTAINER="cn=groups,${UDM_LDAP_BASE}"
 ADMIN_DN="uid=${ADMIN_USERNAME},${OU_POS}"
 ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
-ADMINS_GRP_DN="cn=admins_%s,${GROUPS_CONTAINER}"
+ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
 
 # Create the tenant admin user if absent.
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/users/user/dn/${ADMIN_DN_ENC}")
+	"${BASE_URL}/users/user/${ADMIN_DN_ENC}")
 if [ "${STATUS}" = "404" ]; then
   curl -sf -X POST ${CREDS} \
     -H "Content-Type: application/json" \
@@ -559,14 +554,14 @@ fi
 # Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
 ADMINS_BODY=$(curl -s ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
+	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if echo "${ADMINS_BODY}" | grep -q "\"${ADMIN_DN}\""; then
   echo "user ${ADMIN_USERNAME} already in admins group"
 else
   curl -sf -X PATCH ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
-    "${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}" \
+	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
     -d "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}"
   echo "user ${ADMIN_USERNAME} added to admins group"
 fi`,
@@ -583,9 +578,7 @@ CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 
 OU_POS="%s"
-# Groups live in the canonical UCS groups container, not inside the tenant OU.
-GROUPS_CONTAINER="cn=groups,${UDM_LDAP_BASE}"
-ADMINS_GRP_DN="cn=admins_%s,${GROUPS_CONTAINER}"
+ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 POLICY_DN="cn=tenant-admins-%s,cn=UMC,cn=policies,${UDM_LDAP_BASE}"
 MODULE_DN="cn=tenant-%s,cn=udm,cn=settings,${UDM_LDAP_BASE}"
 
@@ -596,7 +589,7 @@ ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
 # Ensure tenant admins group exists.
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
-	"${BASE_URL}/groups/group/dn/${ADMINS_GRP_ENC}")
+	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
 	echo "admins group ${ADMINS_GRP_DN} is missing"
 	exit 1
@@ -605,7 +598,7 @@ fi
 # Ensure UMC policy exists and is linked to admins_<tenant>.
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
-	"${BASE_URL}/policies/umc/dn/${POLICY_ENC}")
+	"${BASE_URL}/policies/umc/${POLICY_ENC}")
 if [ "${STATUS}" = "404" ]; then
 	curl -s -o /dev/null -X POST ${CREDS} \
 		-H "Content-Type: application/json" \
@@ -620,7 +613,7 @@ fi
 # Ensure UDM module scope entry exists for tenant OU.
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
-	"${BASE_URL}/settings/udm_module/dn/${MODULE_ENC}")
+	"${BASE_URL}/settings/udm_module/${MODULE_ENC}")
 if [ "${STATUS}" = "404" ]; then
 	curl -s -o /dev/null -X POST ${CREDS} \
 		-H "Content-Type: application/json" \
@@ -648,7 +641,7 @@ OU_ENC=$(urlencode "${OU_POS}")
 
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
   -H "Accept: application/json" \
-  "${BASE_URL}/container/ou/dn/${OU_ENC}?cleanup=1&recursive=1")
+	"${BASE_URL}/container/ou/${OU_ENC}?cleanup=1&recursive=1")
 echo "OU %s deletion requested (HTTP ${HTTP})"`, ouDN, ouDN)
 }
 
