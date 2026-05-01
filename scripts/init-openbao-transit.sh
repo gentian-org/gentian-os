@@ -179,10 +179,39 @@ curl -sf -X PUT \
   "${TRANSIT_ADDR}/v1/sys/policies/acl/transit-autounseal" >/dev/null
 success "Policy transit-autounseal written."
 
-# ─── Create autounseal token + k8s Secret (idempotent) ───────────────────────
+# ─── Create autounseal token + k8s Secret (idempotent + validating) ──────────
+# Important: a Secret left over from a prior install can hold a token from a
+# now-gone transit instance (transit raft state was wiped, namespace was
+# recreated, etc.). Reusing such a stale token is the #1 cause of the primary
+# openbao-0 crash-looping with "Error parsing Seal configuration: ... Code:
+# 403 ... permission denied" on transit/encrypt/autounseal — even though the
+# transit pod is healthy and the policy is correct.
+#
+# So: if the Secret exists, validate the token against the *current* transit
+# instance. Only skip creation when lookup-self succeeds. Otherwise delete
+# the stale Secret and mint a fresh token.
+NEED_NEW_TOKEN=1
 if kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" >/dev/null 2>&1; then
-  success "k8s Secret openbao-transit-token already exists. Skipping."
-else
+  EXISTING_TOKEN=$(kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" \
+    -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
+  if [[ -n "$EXISTING_TOKEN" ]]; then
+    LOOKUP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+      -H "X-Vault-Token: ${EXISTING_TOKEN}" \
+      "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
+    if [[ "$LOOKUP_CODE" == "200" ]]; then
+      success "k8s Secret openbao-transit-token already exists and token validates. Skipping."
+      NEED_NEW_TOKEN=0
+    else
+      info "Existing openbao-transit-token Secret holds a stale token (lookup-self → ${LOOKUP_CODE}); recreating."
+      kubectl delete secret openbao-transit-token -n "${TRANSIT_NS}" >/dev/null 2>&1 || true
+    fi
+  else
+    info "Existing openbao-transit-token Secret is empty; recreating."
+    kubectl delete secret openbao-transit-token -n "${TRANSIT_NS}" >/dev/null 2>&1 || true
+  fi
+fi
+
+if [[ "$NEED_NEW_TOKEN" == "1" ]]; then
   info "Creating periodic orphan autounseal token (period=8760h)..."
   TOKEN_RESP=$(curl -sf -X POST \
     -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
