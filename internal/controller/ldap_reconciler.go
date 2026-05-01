@@ -563,7 +563,7 @@ if [ "${STATUS}" = "404" ]; then
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/users/user/" \
-		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":false},\"position\":\"${OU_POS}\"}"
+		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":false,\"opendeskFileshareAdmin\":true,\"opendeskProjectmanagementAdmin\":true,\"opendeskKnowledgemanagementAdmin\":true,\"opendeskLivecollaborationAdmin\":true},\"position\":\"${OU_POS}\"}"
   echo "UDM user ${ADMIN_USERNAME} created in ${OU_POS}"
 else
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
@@ -574,7 +574,7 @@ curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
-	-d "{\"properties\":{\"pwdChangeNextLogin\":false}}"
+	-d "{\"properties\":{\"pwdChangeNextLogin\":false,\"opendeskFileshareAdmin\":true,\"opendeskProjectmanagementAdmin\":true,\"opendeskKnowledgemanagementAdmin\":true,\"opendeskLivecollaborationAdmin\":true}}"
 echo "pwdChangeNextLogin cleared for ${ADMIN_USERNAME}"
 
 # Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
