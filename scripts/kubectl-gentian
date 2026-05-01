@@ -231,24 +231,24 @@ print_tenant_admin_login_instructions() {
   local password="${5}"
 
   echo ""
-  echo "Tenant admin login (for user provisioning):"
+  echo "Tenant admin login (Nubus user provisioning):"
   if [[ -n "${domain}" ]]; then
-    echo "  Public realm account URL:"
-    echo "  https://id.${domain}/realms/${realm}/account/"
+    echo "  Nubus management URL:"
+    echo "  https://portal.${domain}/univention/management/"
   else
-    echo "  Public realm account URL:"
-    echo "  https://id.<KERNEL_DOMAIN>/realms/${realm}/account/"
+    echo "  Nubus management URL:"
+    echo "  https://portal.<KERNEL_DOMAIN>/univention/management/"
   fi
-  echo ""
-  echo "  Admin console (for user/group provisioning):"
-  echo "  1) kubectl -n gentian-dev port-forward svc/nubus-dev-keycloak 18080:8080"
-  echo "  2) Open http://127.0.0.1:18080/admin/master/console/"
-  echo "  3) Switch to realm '${realm}' after login"
-  echo "  Realm:    ${realm}"
+  echo "  Realm: ${realm}"
   echo "  Username: ${username}"
   echo "  Password: ${password}"
   echo ""
-  echo "On first login, Keycloak will require a password change."
+  echo "If browser SSO/session setup requires Keycloak account access, use:"
+  if [[ -n "${domain}" ]]; then
+    echo "  https://id.${domain}/realms/${realm}/account/"
+  else
+    echo "  https://id.<KERNEL_DOMAIN>/realms/${realm}/account/"
+  fi
 }
 
 wait_for_tenant_ready() {
@@ -351,10 +351,15 @@ fetch_tenant_admin_credentials() {
     fi
 
     if command -v bao >/dev/null 2>&1; then
+      local bao_user
       local bao_pw
+      bao_user="$(bao kv get -mount=secret -field=username "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
       bao_pw="$(bao kv get -mount=secret -field=password "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
       if [[ -n "${bao_pw}" ]]; then
-        TENANT_ADMIN_USERNAME="admin"
+        TENANT_ADMIN_USERNAME="${bao_user}"
+        if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
+          TENANT_ADMIN_USERNAME="admin-${tenant_name}"
+        fi
         TENANT_ADMIN_PASSWORD="${bao_pw}"
         local now_bao
         now_bao="$(date +%s)"
@@ -365,11 +370,13 @@ fetch_tenant_admin_credentials() {
 
     # Fallback: use Kubernetes auth from inside the OpenBao pod. This works
     # even when local BAO_ADDR/BAO_TOKEN are not configured.
-    local k8s_pw
-    k8s_pw="$(fetch_tenant_admin_password_via_k8s_auth "${tenant_name}")"
-    if [[ -n "${k8s_pw}" ]]; then
-      TENANT_ADMIN_USERNAME="admin"
-      TENANT_ADMIN_PASSWORD="${k8s_pw}"
+    local k8s_creds
+    k8s_creds="$(fetch_tenant_admin_credentials_via_k8s_auth "${tenant_name}")"
+    if [[ -n "${k8s_creds}" ]]; then
+      IFS=$'\t' read -r TENANT_ADMIN_USERNAME TENANT_ADMIN_PASSWORD <<<"${k8s_creds}"
+      if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
+        TENANT_ADMIN_USERNAME="admin-${tenant_name}"
+      fi
       local now_k8s
       now_k8s="$(date +%s)"
       echo "Retrieved tenant-admin credentials from OpenBao Kubernetes auth after $((now_k8s - start))s."
@@ -406,7 +413,7 @@ fetch_tenant_admin_credentials() {
   done
 }
 
-fetch_tenant_admin_password_via_k8s_auth() {
+fetch_tenant_admin_credentials_via_k8s_auth() {
   local tenant_name="${1}"
 
   local jwt
@@ -427,7 +434,18 @@ fetch_tenant_admin_password_via_k8s_auth() {
     return 0
   fi
 
-  kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true
+  local username
+  local password
+
+  username="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=username gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+  password="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+
+  if [[ -n "${password}" ]]; then
+    if [[ -z "${username}" ]]; then
+      username="admin-${tenant_name}"
+    fi
+    printf '%s\t%s\n' "${username}" "${password}"
+  fi
 }
 
 rollback_deploy() {
