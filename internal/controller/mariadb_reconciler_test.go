@@ -52,6 +52,7 @@ DatabasePerTenant: true,
 // TestMariaDB_NoMariaDBApps verifies that a Tenant with no apps skips MariaDB
 // provisioning and sets MariaDBReady=True with reason NoMariaDBRequired.
 func TestMariaDB_NoMariaDBApps(t *testing.T) {
+	t.Parallel()
 tenant := &gentianov1alpha1.Tenant{
 ObjectMeta: metav1.ObjectMeta{Name: "nomaria"},
 Spec: gentianov1alpha1.TenantSpec{
@@ -99,6 +100,7 @@ t.Error("expected no setup Job for Tenant with no MariaDB apps")
 // TestMariaDB_CreatesSetupJob verifies that a Tenant with a MariaDB-requiring app
 // creates the setup Job in the kernel namespace with correct labels and container spec.
 func TestMariaDB_CreatesSetupJob(t *testing.T) {
+	t.Parallel()
 profile := newMariaDBProfile("maria-app1")
 if err := testClient.Create(context.Background(), profile); err != nil {
 t.Fatalf("create AppProfile: %v", err)
@@ -170,6 +172,7 @@ t.Errorf("expected %s sourced from mariadb-admin Secret, got %q", required, secr
 // TestMariaDB_SetsReadyWhenJobsDone verifies that MariaDBReady=True and Phase=Ready
 // are set only after all setup Jobs have completed.
 func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
+	t.Parallel()
 profile := newMariaDBProfile("maria-app2")
 if err := testClient.Create(context.Background(), profile); err != nil {
 t.Fatalf("create AppProfile: %v", err)
@@ -226,6 +229,7 @@ t.Errorf("expected MariaDBReady=True, got %v", cond)
 // TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob verifies that the delete Job is
 // created when DeletionPolicy=Delete and the Tenant is deleted.
 func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
+	t.Parallel()
 profile := newMariaDBProfile("maria-app3")
 if err := testClient.Create(context.Background(), profile); err != nil {
 t.Fatalf("create AppProfile: %v", err)

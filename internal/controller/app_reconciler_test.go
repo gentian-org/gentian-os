@@ -56,6 +56,7 @@ func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1al
 // TestApps_NoApps verifies that a Tenant with no apps skips provisioning and
 // sets AppsReady=True with reason NoAppsConfigured.
 func TestApps_NoApps(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "noapps"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -97,6 +98,7 @@ func TestApps_NoApps(t *testing.T) {
 // one ArgoCD Application CR in the argocd namespace with the correct chart source,
 // destination namespace, and labels.
 func TestApps_CreatesApplicationCR(t *testing.T) {
+	t.Parallel()
 	profile := newAppProfile("my-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -158,6 +160,7 @@ func TestApps_CreatesApplicationCR(t *testing.T) {
 // TestApps_MultipleApps verifies that a Tenant with 3 apps creates 3 separate
 // ArgoCD Application CRs in the argocd namespace, one per app.
 func TestApps_MultipleApps(t *testing.T) {
+	t.Parallel()
 	appNames := []string{"alpha", "beta", "gamma"}
 	for _, name := range appNames {
 		profile := newAppProfile(name, nil)
@@ -205,6 +208,7 @@ func TestApps_MultipleApps(t *testing.T) {
 // TestApps_ValueMappingRendered verifies that OIDC and Database keys from the
 // AppProfile's ValueMapping appear as helm values in the Application CR.
 func TestApps_ValueMappingRendered(t *testing.T) {
+	t.Parallel()
 	vm := &gentianov1alpha1.ValueMapping{
 		OIDC: &gentianov1alpha1.OIDCValueMapping{
 			IssuerKey:   "oidc.issuer",
@@ -279,6 +283,7 @@ func TestApps_ValueMappingRendered(t *testing.T) {
 // TestApps_DeleteRemovesApplicationCRs verifies that deleting a Tenant removes
 // all Application CRs from the argocd namespace.
 func TestApps_DeleteRemovesApplicationCRs(t *testing.T) {
+	t.Parallel()
 	profile := newAppProfile("del-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -344,6 +349,7 @@ func newTofuAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentiano
 // creates exactly one Terraform CR in tofu-system with the correct labels, vars (chart
 // reference and tenant/app identifiers), sourceRef, and approvePlan=auto.
 func TestTofuApps_CreatesTerraformCR(t *testing.T) {
+	t.Parallel()
 	profile := newTofuAppProfile("tofu-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -436,6 +442,7 @@ func TestTofuApps_CreatesTerraformCR(t *testing.T) {
 // TestTofuApps_ValueMappingVars verifies that when an AppProfile has a ValueMapping,
 // the Terraform CR receives the corresponding vm_* variables for the module to wire.
 func TestTofuApps_ValueMappingVars(t *testing.T) {
+	t.Parallel()
 	vm := &gentianov1alpha1.ValueMapping{
 		OIDC: &gentianov1alpha1.OIDCValueMapping{
 			IssuerKey:       "oidc.issuer",
@@ -518,6 +525,7 @@ func TestTofuApps_ValueMappingVars(t *testing.T) {
 // would cause OpenTofu to reject the Plan with
 // "map of string required, but have string".
 func TestTofuApps_AppSecretsVarIsStructuredMap(t *testing.T) {
+	t.Parallel()
 	profile := newTofuAppProfile("tofu-appsecrets-app", nil)
 	profile.Spec.AppSecrets = []gentianov1alpha1.AppSecret{
 		{Name: "registration_shared_secret", ValuePath: "configuration.homeserver.registrationSharedSecret"},
@@ -591,6 +599,7 @@ func TestTofuApps_AppSecretsVarIsStructuredMap(t *testing.T) {
 // TestTofuApps_NoArgocdCR verifies that a tofu-controller app does NOT create an
 // ArgoCD Application CR — only a Terraform CR in tofu-system.
 func TestTofuApps_NoArgocdCR(t *testing.T) {
+	t.Parallel()
 	profile := newTofuAppProfile("tofu-only-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -632,6 +641,7 @@ func TestTofuApps_NoArgocdCR(t *testing.T) {
 // TestTofuApps_DeleteRemovesTerraformCR verifies that deleting a Tenant removes
 // the Terraform CR from tofu-system.
 func TestTofuApps_DeleteRemovesTerraformCR(t *testing.T) {
+	t.Parallel()
 	_ = json.Marshal // keep json import used
 	profile := newTofuAppProfile("tofu-del-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
@@ -680,6 +690,7 @@ func TestTofuApps_DeleteRemovesTerraformCR(t *testing.T) {
 // tenant.spec.apps triggers deletion of the corresponding ArgoCD Application CR
 // while leaving other apps' CRs intact.
 func TestApps_RemoveAppCleansUpApplicationCR(t *testing.T) {
+	t.Parallel()
 	// Create two AppProfiles.
 	profileA := newAppProfile("keep-app", nil)
 	profileB := newAppProfile("remove-app", nil)
@@ -751,6 +762,7 @@ func TestApps_RemoveAppCleansUpApplicationCR(t *testing.T) {
 // TestTofuApps_RemoveAppCleansUpTerraformCR verifies that removing a tofu-controller
 // app from tenant.spec.apps triggers deletion of the corresponding Terraform CR.
 func TestTofuApps_RemoveAppCleansUpTerraformCR(t *testing.T) {
+	t.Parallel()
 	// Create two tofu AppProfiles.
 	profileA := newTofuAppProfile("tofu-keep", nil)
 	profileB := newTofuAppProfile("tofu-remove", nil)
@@ -823,6 +835,7 @@ func TestTofuApps_RemoveAppCleansUpTerraformCR(t *testing.T) {
 // does not delete Application CRs that share the tenant and managed-by labels
 // but lack the gentianos.io/app label (e.g. Memcached CRs from the cache reconciler).
 func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
+	t.Parallel()
 	profile := newAppProfile("only-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -905,6 +918,7 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 // This covers the tofu-controller finalizer-panic workaround: terraform destroy
 // cannot run, so the operator must clean up the deployed resources itself.
 func TestTofuApps_UninstallCleansUpHelmWorkloads(t *testing.T) {
+	t.Parallel()
 	const (
 		profileName = "collabora-cleanup"
 		tenantName  = "tofu-cleanup"

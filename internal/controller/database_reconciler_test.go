@@ -78,6 +78,7 @@ func patchDatabaseCRReady(t *testing.T, name, namespace string) {
 // TestDB_NoPostgresApps verifies that a Tenant with no apps does not create any
 // Database CRs or role Jobs, and gets DatabaseReady=True with NoDatabaseRequired.
 func TestDB_NoPostgresApps(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "nodb"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -118,6 +119,7 @@ func TestDB_NoPostgresApps(t *testing.T) {
 // TestDB_CreatesDatabaseCR verifies that a Tenant with an app requiring PostgreSQL
 // creates the CloudNativePG Database CR in platform-kernel (after the role Job completes).
 func TestDB_CreatesDatabaseCR(t *testing.T) {
+	t.Parallel()
 	profile := newPostgresProfile("pg-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -178,6 +180,7 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 // TestDB_CreatesDatabaseCRAfterRoleJobCompletes verifies that the role Job is created
 // first and the Database CR is only created once the role Job has completed.
 func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
+	t.Parallel()
 	profile := newPostgresProfile("pg-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -239,6 +242,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 // TestDB_SetsReadyWhenAllDone verifies that DatabaseReady=True and Phase=Ready are
 // set only after the Database CR is ready and the role Job has completed.
 func TestDB_SetsReadyWhenAllDone(t *testing.T) {
+	t.Parallel()
 	profile := newPostgresProfile("pg-app3")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -304,6 +308,7 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 // TestDB_DeleteDeletePolicy_DeletesDatabaseCR verifies that the Database CR is
 // deleted when DeletionPolicy=Delete.
 func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
+	t.Parallel()
 	profile := newPostgresProfile("pg-app4")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)

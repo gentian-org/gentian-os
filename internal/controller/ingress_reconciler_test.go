@@ -42,6 +42,7 @@ func newIngressProfile(name string, ingress *gentianov1alpha1.IngressSpec) *gent
 
 // TestIngress_NoIngressApps: no app has an IngressSpec; IngressReady=True with reason NoIngressConfigured.
 func TestIngress_NoIngressApps(t *testing.T) {
+	t.Parallel()
 	profile := newIngressProfile("ingress-profile-none", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -88,6 +89,7 @@ func TestIngress_NoIngressApps(t *testing.T) {
 
 // TestIngress_CreatesIngressResource: AppProfile with IngressSpec causes Ingress creation.
 func TestIngress_CreatesIngressResource(t *testing.T) {
+	t.Parallel()
 	profileName := "ingress-profile-basic"
 	profile := newIngressProfile(profileName, &gentianov1alpha1.IngressSpec{
 		ServiceName:   "my-svc",
@@ -154,6 +156,7 @@ func TestIngress_CreatesIngressResource(t *testing.T) {
 
 // TestIngress_CreatesCertificateForTenant: wildcard cert-manager Certificate CR is created.
 func TestIngress_CreatesCertificateForTenant(t *testing.T) {
+	t.Parallel()
 	profileName := "ingress-profile-cert"
 	profile := newIngressProfile(profileName, &gentianov1alpha1.IngressSpec{
 		ServicePort:   80,
@@ -216,6 +219,7 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 
 // TestIngress_MultipleApps: 2 apps => 2 Ingress resources but only 1 Certificate.
 func TestIngress_MultipleApps(t *testing.T) {
+	t.Parallel()
 	profiles := []string{"ingress-profile-multi-a", "ingress-profile-multi-b"}
 	for _, name := range profiles {
 		p := newIngressProfile(name, &gentianov1alpha1.IngressSpec{ServicePort: 80, TLSEnabled: true})
@@ -264,6 +268,7 @@ func TestIngress_MultipleApps(t *testing.T) {
 
 // TestIngress_DeleteRemovesIngressAndCert: deleting a Tenant removes Ingress and Certificate.
 func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
+	t.Parallel()
 	profileName := "ingress-profile-delete"
 	profile := newIngressProfile(profileName, &gentianov1alpha1.IngressSpec{ServicePort: 80, TLSEnabled: true})
 	if err := testClient.Create(context.Background(), profile); err != nil {

@@ -79,6 +79,7 @@ func newMemcachedProfile(name string) *gentianov1alpha1.AppProfile {
 // TestCache_NoCacheApps verifies that a Tenant with no cache-requiring apps
 // skips provisioning and sets CacheReady=True with reason NoCacheRequired.
 func TestCache_NoCacheApps(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "nocache"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -119,6 +120,7 @@ func TestCache_NoCacheApps(t *testing.T) {
 // TestCache_CreatesRedisACLJob verifies that a Tenant with a Redis-requiring app
 // creates the redis-cli ACL SETUSER Job in the kernel namespace with correct labels.
 func TestCache_CreatesRedisACLJob(t *testing.T) {
+	t.Parallel()
 	profile := newRedisProfile("redis-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -176,6 +178,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 // TestCache_CreatesMemcachedApplication verifies that a Tenant with a Memcached-requiring
 // app creates the ArgoCD Application CR in the argocd namespace.
 func TestCache_CreatesMemcachedApplication(t *testing.T) {
+	t.Parallel()
 	profile := newMemcachedProfile("mc-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -223,6 +226,7 @@ func TestCache_CreatesMemcachedApplication(t *testing.T) {
 // TestCache_SetsReadyWhenRedisJobsDone verifies that CacheReady=True and Phase=Ready
 // follow once all Redis ACL Jobs have completed.
 func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
+	t.Parallel()
 	profile := newRedisProfile("redis-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -280,6 +284,7 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 // that on DeletionPolicy=Delete the Redis delete Job is created and the Memcached
 // Application CR is removed.
 func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *testing.T) {
+	t.Parallel()
 	redisProf := newRedisProfile("redis-app3")
 	if err := testClient.Create(context.Background(), redisProf); err != nil {
 		t.Fatalf("create Redis AppProfile: %v", err)

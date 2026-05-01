@@ -73,6 +73,7 @@ Protocol: "webdav",
 // TestStorage_NoStorageApps verifies that a Tenant with no storage-requiring apps
 // skips provisioning and sets StorageReady=True with reason NoStorageRequired.
 func TestStorage_NoStorageApps(t *testing.T) {
+	t.Parallel()
 tenant := &gentianov1alpha1.Tenant{
 ObjectMeta: metav1.ObjectMeta{Name: "nostorage"},
 Spec: gentianov1alpha1.TenantSpec{
@@ -114,6 +115,7 @@ t.Errorf("expected reason NoStorageRequired, got %q", cond.Reason)
 // creates the MinIO mc bucket Job in the kernel namespace with the correct labels
 // and credentials.
 func TestStorage_CreatesS3BucketJob(t *testing.T) {
+	t.Parallel()
 profile := newS3Profile("s3-app1")
 if err := testClient.Create(context.Background(), profile); err != nil {
 t.Fatalf("create AppProfile: %v", err)
@@ -182,6 +184,7 @@ t.Error("expected BUCKET_NAME env var to be set")
 // TestStorage_CreatesNextcloudGroupJob verifies that a Tenant with a WebDAV-requiring
 // app creates the Nextcloud group Job in the kernel namespace.
 func TestStorage_CreatesNextcloudGroupJob(t *testing.T) {
+	t.Parallel()
 profile := newWebDAVProfile("webdav-app1")
 if err := testClient.Create(context.Background(), profile); err != nil {
 t.Fatalf("create AppProfile: %v", err)
@@ -236,6 +239,7 @@ t.Errorf("expected %s sourced from nextcloud-admin Secret, got %q", required, se
 // TestStorage_SetsReadyWhenAllJobsDone verifies that StorageReady=True and
 // Phase=Ready are set only after all storage Jobs have completed.
 func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
+	t.Parallel()
 profile := newS3Profile("s3-app2")
 if err := testClient.Create(context.Background(), profile); err != nil {
 t.Fatalf("create AppProfile: %v", err)
@@ -292,6 +296,7 @@ t.Errorf("expected StorageReady=True, got %v", cond)
 // TestStorage_DeleteDeletePolicy_CreatesDeleteJobs verifies that both the S3 delete
 // Job and Nextcloud delete Job are created on DeletionPolicy=Delete.
 func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
+	t.Parallel()
 s3Prof := newS3Profile("s3-app3")
 if err := testClient.Create(context.Background(), s3Prof); err != nil {
 t.Fatalf("create S3 AppProfile: %v", err)

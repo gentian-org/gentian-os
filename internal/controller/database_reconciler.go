@@ -43,7 +43,7 @@ const (
 	cnpgClusterName        = "postgres" // shared CloudNativePG Cluster in platform-kernel
 	psqlProvisionerImage   = "postgres:16-alpine"
 	postgresAdminSecret    = "postgres-admin"
-	databaseRequeueAfter   = 30 * time.Second
+	databaseRequeueAfter   = 2 * time.Second
 )
 
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via

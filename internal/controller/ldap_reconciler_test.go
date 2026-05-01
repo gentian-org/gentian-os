@@ -51,6 +51,7 @@ func newLDAPProfile(name string) *gentianov1alpha1.AppProfile {
 // TestLDAP_NoLDAPApps verifies that a Tenant with no apps does not create any
 // UDM Jobs and gets LDAPReady=True with reason NoLDAPRequired.
 func TestLDAP_NoLDAPApps(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "noldap"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -98,6 +99,7 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 // TestLDAP_CreatesOUJob verifies that a Tenant with an LDAP-requiring app triggers
 // creation of the UDM OU Job in the kernel namespace.
 func TestLDAP_CreatesOUJob(t *testing.T) {
+	t.Parallel()
 	profile := newLDAPProfile("ldap-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -142,6 +144,7 @@ func TestLDAP_CreatesOUJob(t *testing.T) {
 // TestLDAP_CreatesBindAccountJobAfterOUComplete verifies that the bind account
 // Job is only created after the OU and admin-policy Jobs have completed.
 func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
+	t.Parallel()
 	profile := newLDAPProfile("ldap-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -178,6 +181,14 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-admin-policy-bindtest", "platform-kernel")
 
+	// Wait for admin-user Job, then mark it complete.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-bindtest", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "ldap-admin-user-bindtest", "platform-kernel")
+
 	// Bind account Job should appear after OU and admin-policy are complete.
 	bindJob := &batchv1.Job{}
 	waitFor(t, 15*time.Second, func() bool {
@@ -196,6 +207,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 // TestLDAP_CreatesAdminPolicyJobAfterOU verifies that delegated-admin policy
 // provisioning is ordered between OU creation and bind-account provisioning.
 func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
+	t.Parallel()
 	profile := newLDAPProfile("ldap-app2b")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -249,6 +261,7 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 // TestLDAP_SetsReadyWhenAllJobsDone verifies that LDAPReady=True and Phase=Ready
 // are set only after OU and all bind account Jobs have completed.
 func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
+	t.Parallel()
 	profile := newLDAPProfile("ldap-app3")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -284,6 +297,14 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 			types.NamespacedName{Name: "ldap-admin-policy-ldapready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "ldap-admin-policy-ldapready", "platform-kernel")
+
+	// Wait for admin-user Job, then mark it complete.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-ldapready", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "ldap-admin-user-ldapready", "platform-kernel")
 
 	// Wait for bind account Job, then mark it complete.
 	waitFor(t, 15*time.Second, func() bool {
@@ -326,6 +347,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 // TestLDAP_OUNameFromIsolation verifies that spec.isolation.ldapOU overrides
 // the default ou={name},${UDM_LDAP_BASE} OU name in the Job command.
 func TestLDAP_OUNameFromIsolation(t *testing.T) {
+	t.Parallel()
 	profile := newLDAPProfile("ldap-app4")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -379,6 +401,7 @@ func TestLDAP_OUNameFromIsolation(t *testing.T) {
 // TestLDAP_DeleteDeletePolicy_CreatesCleanupJob verifies that deleting a Tenant
 // with DeletionPolicy=Delete creates an OU-deletion Job in the kernel namespace.
 func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
+	t.Parallel()
 	profile := newLDAPProfile("ldap-app5")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)

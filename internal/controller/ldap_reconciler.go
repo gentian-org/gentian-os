@@ -38,7 +38,7 @@ const (
 	conditionLDAPReady  = "LDAPReady"
 	udmProvisionerImage = "curlimages/curl:8.7.1"
 	udmAdminSecret      = "udm-admin"
-	ldapRequeueAfter    = 30 * time.Second
+	ldapRequeueAfter    = 2 * time.Second
 )
 
 // ensureLDAP provisions per-tenant LDAP organisational units, default groups,
@@ -48,7 +48,18 @@ const (
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	ouDN := tenantOUDN(tenant)
 
-	// Step 1 — tenant OU + default groups (always required for Nubus user management)
+	// Short-circuit when no app requires LDAP — consistent with ensureIdentity and ensureCache.
+	ldapApps, err := r.collectLDAPApps(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(ldapApps) == 0 {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
+			"NoLDAPRequired", "No apps require LDAP provisioning")
+		return ctrl.Result{}, nil
+	}
+
+	// Step 1 — tenant OU + default groups
 	ouDone, err := r.ensureOUJob(ctx, tenant, ouDN)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure LDAP OU Job: %w", err)
@@ -90,12 +101,7 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
-	// Step 3 — per-app bind accounts (only for apps that require LDAP)
-	ldapApps, err := r.collectLDAPApps(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
+	// Step 3 — per-app bind accounts (ldapApps already collected at top of function)
 	allDone := true
 	for _, appName := range ldapApps {
 		done, err := r.ensureBindAccountJob(ctx, tenant, ouDN, appName)

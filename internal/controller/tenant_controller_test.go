@@ -192,6 +192,7 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 // ----- Tests -----------------------------------------------------------------
 
 func TestTenantReconciler_CreatesNamespace(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -219,6 +220,7 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 }
 
 func TestTenantReconciler_SetsStatusReady(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "beta"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -258,6 +260,7 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 }
 
 func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
+	t.Parallel()
 	storage := resource.MustParse("50Gi")
 	cpu := resource.MustParse("4")
 	memory := resource.MustParse("8Gi")
@@ -294,6 +297,7 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 }
 
 func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "delta"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -325,6 +329,7 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 }
 
 func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "epsilon"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -358,6 +363,7 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 }
 
 func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "missing-profile"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -409,6 +415,7 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 }
 
 func TestTenantReconciler_CustomNamespace(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "zeta"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -434,6 +441,7 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 }
 
 func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "retainer"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -471,6 +479,7 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 }
 
 func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "destroyer"},
 		Spec: gentianov1alpha1.TenantSpec{

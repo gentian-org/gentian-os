@@ -76,6 +76,7 @@ func waitForCatalogueApps(t *testing.T, minCount int) *gentianov1alpha1.AppCatal
 
 // TestAppCatalogue_ListsAllProfiles: create 5 AppProfiles → catalogue lists all 5.
 func TestAppCatalogue_ListsAllProfiles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	names := []string{"cat-alpha", "cat-beta", "cat-gamma", "cat-delta", "cat-epsilon"}
@@ -106,6 +107,7 @@ func TestAppCatalogue_ListsAllProfiles(t *testing.T) {
 
 // TestAppCatalogue_KernelRequirementLabels: verify labels are derived correctly.
 func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	p := makeProfileWithKernel("cat-with-kernel", &gentianov1alpha1.KernelRequirements{
@@ -159,6 +161,7 @@ func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
 
 // TestAppCatalogue_InstalledCountUpdatesOnTenantChange: install + uninstall cycle.
 func TestAppCatalogue_InstalledCountUpdatesOnTenantChange(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	profile := makeProfile("cat-installable")
@@ -229,6 +232,7 @@ func TestAppCatalogue_InstalledCountUpdatesOnTenantChange(t *testing.T) {
 
 // TestTenantValidator_MaxAppsExceeded: adding beyond maxApps is rejected by the validator logic.
 func TestTenantValidator_MaxAppsExceeded(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Create 3 AppProfiles.
@@ -269,6 +273,7 @@ func TestTenantValidator_MaxAppsExceeded(t *testing.T) {
 
 // TestTenantValidator_MissingAppProfile: adding a tenant with a non-existent AppProfile.
 func TestTenantValidator_MissingAppProfile(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Confirm the AppProfile does not exist.
@@ -298,6 +303,7 @@ func TestTenantValidator_MissingAppProfile(t *testing.T) {
 
 // TestAppCatalogue_MultipleTenantsInstalledCount: two tenants, same app → count == 2.
 func TestAppCatalogue_MultipleTenantsInstalledCount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	profile := makeProfile("cat-shared-app")

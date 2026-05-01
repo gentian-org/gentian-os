@@ -6,6 +6,7 @@ import (
 )
 
 func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
+	t.Parallel()
 	script := buildAdminScript("gtn-demo")
 
 	if strings.Contains(script, "AUTH=\"-H") {

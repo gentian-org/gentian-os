@@ -40,6 +40,7 @@ import (
 // namespace, the kernel namespace, and the ingress namespace - NOT from the
 // other tenant's namespace.
 func TestIsolation_CrossTenantDenied(t *testing.T) {
+	t.Parallel()
 	tenantA := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-a"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -85,6 +86,7 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 // sources: same tenant namespace, platform-kernel, gentian-infra-dev,
 // gentian-dev, and ingress namespace.
 func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-ingress"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -135,6 +137,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 // infrastructure namespaces, DNS, and Kubernetes API, but not other tenant
 // namespaces.
 func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-egress"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -186,6 +189,7 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 // TestIsolation_ResourceQuotaAllFields verifies all three quota fields
 // (storage, CPU, memory) are enforced.
 func TestIsolation_ResourceQuotaAllFields(t *testing.T) {
+	t.Parallel()
 	storage := resource.MustParse("100Gi")
 	cpu := resource.MustParse("8")
 	memory := resource.MustParse("16Gi")
@@ -229,6 +233,7 @@ func TestIsolation_ResourceQuotaAllFields(t *testing.T) {
 // TestIsolation_LimitRangeDefaults verifies the hardcoded LimitRange defaults:
 // default 500m/512Mi, defaultRequest 100m/128Mi, max 4/8Gi.
 func TestIsolation_LimitRangeDefaults(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "iso-limits"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -274,6 +279,7 @@ func TestIsolation_LimitRangeDefaults(t *testing.T) {
 // provisioned, then deletes the Tenant with DeletionPolicy=Delete and verifies
 // cleanup Jobs are created and resources are removed.
 func TestDeletion_EndToEnd_WithApps(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	pgProfile := newFullAppProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
@@ -415,6 +421,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 // resources are preserved but ownership resources (quota, limits, netpol) are
 // cleaned up and mail ConfigMap entries are removed (cutting routing).
 func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	profile := newFullAppProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)

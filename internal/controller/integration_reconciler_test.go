@@ -55,6 +55,7 @@ func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.AppPr
 
 // TestBindings_NoIntegrations: no app has OptionalIntegrations → BindingsReady=True, NoBindingsRequired.
 func TestBindings_NoIntegrations(t *testing.T) {
+	t.Parallel()
 	profile := &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "bind-profile-none"},
 		Spec: gentianov1alpha1.AppProfileSpec{
@@ -112,6 +113,7 @@ func TestBindings_NoIntegrations(t *testing.T) {
 
 // TestBindings_ProviderPresent: consumer + provider both in tenant → IntegrationBinding created.
 func TestBindings_ProviderPresent(t *testing.T) {
+	t.Parallel()
 	providerProfile := newProviderProfile("bind-provider-app", "file-store")
 	if err := testClient.Create(context.Background(), providerProfile); err != nil {
 		t.Fatalf("create provider AppProfile: %v", err)
@@ -167,6 +169,7 @@ func TestBindings_ProviderPresent(t *testing.T) {
 
 // TestBindings_ProviderAbsent: consumer in tenant but provider not present → no IntegrationBinding.
 func TestBindings_ProviderAbsent(t *testing.T) {
+	t.Parallel()
 	consumerProfile := newConsumerProfile("bind-consumer-only", "file-store", "bind-provider-missing")
 	if err := testClient.Create(context.Background(), consumerProfile); err != nil {
 		t.Fatalf("create consumer AppProfile: %v", err)
@@ -216,6 +219,7 @@ func TestBindings_ProviderAbsent(t *testing.T) {
 
 // TestBindings_GarbageCollectOnProviderRemoval: delete provider → stale IntegrationBinding removed.
 func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
+	t.Parallel()
 	providerProfile := newProviderProfile("bind-gc-provider", "file-store")
 	if err := testClient.Create(context.Background(), providerProfile); err != nil {
 		t.Fatalf("create provider AppProfile: %v", err)

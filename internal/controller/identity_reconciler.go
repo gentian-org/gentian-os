@@ -39,7 +39,7 @@ const (
 	keycloakProvisionerImage = "curlimages/curl:8.7.1"
 	keycloakAdminSecret      = "keycloak-admin"
 	appLabel                 = "gentianos.io/app"
-	identityRequeueAfter     = 30 * time.Second
+	identityRequeueAfter     = 2 * time.Second
 )
 
 // ensureIdentity provisions a Keycloak realm and OIDC clients for the tenant.

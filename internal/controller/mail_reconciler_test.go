@@ -31,6 +31,7 @@ import (
 // TestMail_Disabled verifies that a Tenant with mail.mode=disabled immediately
 // sets MailReady=True with reason MailDisabled and requires no shared infrastructure changes.
 func TestMail_Disabled(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "maildisabled"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -77,6 +78,7 @@ func TestMail_Disabled(t *testing.T) {
 //   - SMTP credentials Secret in the tenant namespace
 //   - DNS records in TenantStatus
 func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "mailself"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -176,6 +178,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 // infrastructure model does not create per-tenant ArgoCD Application CRs for Postfix or
 // Dovecot. Only the shared ConfigMap entries and SMTP credentials Secret are created.
 func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "mailnoapps"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -214,6 +217,7 @@ func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
 // TestMail_DefaultMode_IsSelfhosted verifies that a Tenant with no mail spec defaults to
 // selfhosted mode, registering the tenant in the shared mail infrastructure.
 func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "maildefault"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -265,6 +269,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 // registers the tenant in the shared Postfix ConfigMap for outbound relay but does NOT
 // register it in the Dovecot domains ConfigMap (no IMAP storage).
 func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "mailrelay"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -314,6 +319,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 // TestMail_External_MissingConfig verifies that mail.mode=external with no
 // smtpCredentialsSecret sets MailReady=False with reason MissingConfig.
 func TestMail_External_MissingConfig(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "mailextnotconf"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -347,6 +353,7 @@ func TestMail_External_MissingConfig(t *testing.T) {
 // TestMail_External_CopiesCredentialsSecret verifies that mail.mode=external copies the
 // referenced SMTP credentials Secret from the kernel namespace into the tenant namespace.
 func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
+	t.Parallel()
 	src := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tenant-smtp-creds",

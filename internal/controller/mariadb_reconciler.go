@@ -38,7 +38,7 @@ const (
 	conditionMariaDBReady = "MariaDBReady"
 	mysqlProvisionerImage = "mariadb:11"
 	mariadbAdminSecret    = "mariadb-admin"
-	mariadbRequeueAfter   = 30 * time.Second
+	mariadbRequeueAfter   = 2 * time.Second
 )
 
 // ensureMariaDB provisions per-app-per-tenant MariaDB databases using idempotent

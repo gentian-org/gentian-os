@@ -80,6 +80,7 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 // TestIdentity_NoOIDCApps verifies that a Tenant with no apps does not create
 // any identity Jobs and gets IdentityReady=True with reason NoIdentityRequired.
 func TestIdentity_NoOIDCApps(t *testing.T) {
+	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "noidc"},
 		Spec: gentianov1alpha1.TenantSpec{
@@ -127,6 +128,7 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 // TestIdentity_CreatesRealmJob verifies that a Tenant with an OIDC-requiring app
 // triggers creation of the Keycloak realm Job in the kernel namespace.
 func TestIdentity_CreatesRealmJob(t *testing.T) {
+	t.Parallel()
 	profile := newOIDCProfile("oidc-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -171,6 +173,7 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 // TestIdentity_CreatesClientJobAfterRealmComplete verifies that the reconciler
 // waits for the realm Job to complete before creating the OIDC client Job.
 func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
+	t.Parallel()
 	profile := newOIDCProfile("oidc-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -225,6 +228,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 // TestIdentity_SetsReadyWhenAllJobsDone verifies that IdentityReady=True and
 // Phase=Ready are set only after both the realm and all client Jobs have completed.
 func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
+	t.Parallel()
 	profile := newOIDCProfile("oidc-app3")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -304,6 +308,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 // to OIDC client Jobs. The admin Job must carry TENANT_ADMIN_USERNAME and
 // TENANT_ADMIN_PASSWORD env vars.
 func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
+	t.Parallel()
 	profile := newOIDCProfile("oidc-app-admin")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -380,6 +385,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 // TestIdentity_DeleteDeletePolicy_CreatesCleanupJob verifies that deleting a Tenant
 // with DeletionPolicy=Delete creates a realm-deletion Job in the kernel namespace.
 func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
+	t.Parallel()
 	profile := newOIDCProfile("oidc-app4")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)

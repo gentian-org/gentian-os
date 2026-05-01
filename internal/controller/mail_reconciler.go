@@ -39,7 +39,7 @@ import (
 
 const (
 	conditionMailReady = "MailReady"
-	mailRequeueAfter   = 30 * time.Second
+	mailRequeueAfter   = 2 * time.Second
 	dkimKeySize        = 2048
 
 	// ConfigMaps in the kernel namespace that hold the shared mail infrastructure

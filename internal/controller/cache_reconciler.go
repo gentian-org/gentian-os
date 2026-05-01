@@ -39,7 +39,7 @@ const (
 	conditionCacheReady   = "CacheReady"
 	redisProvisionerImage = "redis:7-alpine"
 	redisAdminSecret      = "redis-admin"
-	cacheRequeueAfter     = 30 * time.Second
+	cacheRequeueAfter     = 2 * time.Second
 	argocdGroup           = "argoproj.io"
 	argocdVersion         = "v1alpha1"
 	argocdApplicationKind = "Application"
