@@ -54,9 +54,9 @@ func makeProfileWithKernel(name string, kr *gentianov1alpha1.KernelRequirements)
 	return p
 }
 
-// waitForCatalogueApps polls the AppCatalogue "default" until it lists at
-// least minCount apps or the deadline is reached.
-func waitForCatalogueApps(t *testing.T, minCount int) *gentianov1alpha1.AppCatalogue {
+// waitForCatalogueNames polls the AppCatalogue "default" until all the given
+// names appear in Status.Apps or the deadline is reached.
+func waitForCatalogueNames(t *testing.T, names []string) *gentianov1alpha1.AppCatalogue {
 	t.Helper()
 	ctx := context.Background()
 	var cat gentianov1alpha1.AppCatalogue
@@ -64,10 +64,19 @@ func waitForCatalogueApps(t *testing.T, minCount int) *gentianov1alpha1.AppCatal
 		if err := testClient.Get(ctx, types.NamespacedName{Name: "default"}, &cat); err != nil {
 			return false, nil
 		}
-		return cat.Status.TotalApps >= minCount, nil
+		inCat := make(map[string]bool, len(cat.Status.Apps))
+		for _, e := range cat.Status.Apps {
+			inCat[e.Name] = true
+		}
+		for _, n := range names {
+			if !inCat[n] {
+				return false, nil
+			}
+		}
+		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("AppCatalogue did not reach %d apps within timeout: %v", minCount, err)
+		t.Fatalf("AppCatalogue did not list all expected profiles within timeout: %v", err)
 	}
 	return &cat
 }
@@ -88,21 +97,9 @@ func TestAppCatalogue_ListsAllProfiles(t *testing.T) {
 		t.Cleanup(func() { _ = testClient.Delete(ctx, p) })
 	}
 
-	cat := waitForCatalogueApps(t, 5)
-	if cat.Status.TotalApps < 5 {
-		t.Fatalf("expected TotalApps >= 5, got %d", cat.Status.TotalApps)
-	}
-
-	// Verify all names appear in the catalogue.
-	inCat := make(map[string]bool)
-	for _, e := range cat.Status.Apps {
-		inCat[e.Name] = true
-	}
-	for _, n := range names {
-		if !inCat[n] {
-			t.Errorf("AppProfile %q not in catalogue", n)
-		}
-	}
+	// Wait until all 5 specific names appear — using a count-only check is
+	// racy because other parallel tests also create AppProfiles.
+	waitForCatalogueNames(t, names)
 }
 
 // TestAppCatalogue_KernelRequirementLabels: verify labels are derived correctly.
