@@ -641,31 +641,41 @@ else
 fi
 
 # =============================================================================
-# Final runtime cleanup — leave the cluster ready for a fresh install.sh
+# Final runtime cleanup — sanity check, NOT a hammer
 # =============================================================================
-# Even with graceful pod deletes above, containerd can still hold:
-#   - orphan sandboxes whose pod object is gone (name reservations that block
-#     re-creating a pod with the same StatefulSet name on the next install,
-#     symptom: pod stuck in ContainerCreating with container Started but
-#     PodReadyToStartContainers stays False — the kubelet status-sync wedge);
-#   - exited containers and STOPPED tasks left over from torn-down workloads.
+# The graceful-then-force pod sweep above already lets kubelet tear down
+# CRI sandboxes properly, so in the happy path there's nothing to clean up
+# here. We still run cri_cleanup as a defensive sanity check for the case
+# where uninstall is run against an already-wedged cluster (kubelet was
+# hanging *before* the operator typed ./uninstall.sh) — that's the only
+# scenario where leaked sandboxes can survive the graceful sweep.
 #
-# Industry best practice: a teardown script should reset runtime state so
-# subsequent bootstraps don't inherit it. This is the appropriate place to
-# ask for sudo (uninstall is operator-driven and destructive), so install.sh
-# never has to.
+# Two deliberate constraints:
+#   1) We do NOT call kubelite_restart here. Restarting kubelite at uninstall
+#      makes the very next install hit a freshly-restarted kubelet, which
+#      is exactly when the microk8s volume_manager race fires on the first
+#      hostpath PVC pod (i.e. openbao-transit-0). Leaving kubelite alone
+#      keeps the runtime warm; install.sh's PVC pre-warm absorbs any
+#      residual race. If you genuinely need a kubelite restart, set
+#      GENTIAN_FORCE_KUBELITE_RESTART=1.
+#   2) cri_cleanup is best-effort and does NOT prompt for a sudo password.
+#      If sudo isn't already cached (NOPASSWD or recent `sudo -v`), it
+#      skips silently — sudo password prompts at uninstall time were the
+#      original irritation that started this whole exercise.
 #
-# Skip with GENTIAN_SKIP_RUNTIME_CLEANUP=1 (e.g. in CI on ephemeral nodes
-# where the whole VM is about to be discarded anyway).
+# Skip the entire phase with GENTIAN_SKIP_RUNTIME_CLEANUP=1.
 if [[ "${GENTIAN_SKIP_RUNTIME_CLEANUP:-0}" != "1" ]]; then
     echo ""
-    info "Final runtime cleanup (orphan sandboxes + kubelet status sync)..."
-    cri_cleanup
-    # Only restart kubelite when CRI cleanup actually had something to do or
-    # the operator explicitly asked for it; otherwise the restart is wasted
-    # downtime. We always restart in force mode because we just deleted
-    # entire namespaces and want kubelet to resync from a clean slate.
-    if [[ "$MODE" == "force" || "${GENTIAN_FORCE_KUBELITE_RESTART:-0}" == "1" ]]; then
+    if sudo -n true 2>/dev/null; then
+        info "Final runtime sanity check (orphan sandbox sweep)..."
+        cri_cleanup
+    else
+        info "Skipping CRI sandbox sweep (no cached sudo). Set"
+        info "  GENTIAN_FORCE_KUBELITE_RESTART=1 or run \`sudo -v\` first if you"
+        info "  need it (rarely necessary — graceful pod deletes above already"
+        info "  released CRI state)."
+    fi
+    if [[ "${GENTIAN_FORCE_KUBELITE_RESTART:-0}" == "1" ]]; then
         kubelite_restart
     fi
 fi
