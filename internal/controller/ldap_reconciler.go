@@ -540,11 +540,11 @@ ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
 
 # Ensure the mail domain object exists for the admin's email address.
-MAIL_DOMAIN_SEARCH=$(curl -s ${CREDS} \
+MAIL_DOMAIN_SEARCH=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/mail/domain/?filter=name%%3D${MAIL_DOMAIN}")
 if ! echo "${MAIL_DOMAIN_SEARCH}" | grep -q '"dn"'; then
-	curl -sf -X POST ${CREDS} \
+	curl -sf --max-time 30 -X POST ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/mail/domain/" \
@@ -555,11 +555,11 @@ else
 fi
 
 # Create the tenant admin user if absent.
-STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
   -H "Accept: application/json" \
 	"${BASE_URL}/users/user/${ADMIN_DN_ENC}")
 if [ "${STATUS}" = "404" ]; then
-  curl -sf -X POST ${CREDS} \
+  curl -sf --max-time 30 -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/users/user/" \
@@ -570,20 +570,19 @@ else
 fi
 
 # Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
-ADMINS_BODY=$(curl -s ${CREDS} \
+ADMINS_BODY=$(curl -s --max-time 30 ${CREDS} \
   -H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if echo "${ADMINS_BODY}" | grep -q "\"${ADMIN_DN}\""; then
   echo "user ${ADMIN_USERNAME} already in admins group"
 else
-  curl -sf -X PATCH ${CREDS} \
+  curl -sf --max-time 30 -X PATCH ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
     -d "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}"
   echo "user ${ADMIN_USERNAME} added to admins group"
-fi`,
-		ouDN, adminEmail, tenantName)
+fi`, ouDN, adminEmail, tenantName)
 }
 
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
