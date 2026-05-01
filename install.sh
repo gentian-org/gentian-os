@@ -1683,8 +1683,12 @@ bootstrap_argocd_apps() {
         # accepts Kubernetes 1.31. We override the image tag to v1.8.3 to
         # match the bundled CRDs (chart default is v1.5.0 which still expects
         # the v1beta2 storage version that v1.8.x dropped).
+        # Pre-create the namespace: the flux2 chart has a pre-install hook that
+        # runs inside flux-system before Helm's --create-namespace can act,
+        # causing "namespace not found" failures on a fresh cluster.
+        kubectl create namespace flux-system 2>/dev/null || true
         helm upgrade --install flux2 oci://ghcr.io/fluxcd-community/charts/flux2 \
-            --namespace flux-system --create-namespace \
+            --namespace flux-system \
             --version 2.15.0 \
             --set installCRDs=false \
             --set sourceController.create=true \
