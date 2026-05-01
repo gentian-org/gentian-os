@@ -602,6 +602,12 @@ fi`, ouDN, adminEmail, tenantName)
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
 // tenant OU. It binds admins_<tenant> to UDM user/group management scoped to
 // the tenant subtree only.
+//
+// Two key UDM REST API invariants:
+//   - settings/umc_operationset "operation" is a list of strings ("*", "udm/*", …),
+//     not objects. Sending objects results in an empty opset and no UMC modules visible.
+//   - A policy is assigned to an object by PATCHing the TARGET object's
+//     "policies.policies/umc" field — not by anything on the policy itself.
 func buildAdminPolicyScript(ouDN, tenantName string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
@@ -626,22 +632,8 @@ if [ "${STATUS}" = "404" ]; then
 	exit 1
 fi
 
-# Ensure UMC policy exists and is linked to admins_<tenant>.
-STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
-	-H "Accept: application/json" \
-	"${BASE_URL}/policies/umc/${POLICY_ENC}")
-if [ "${STATUS}" = "404" ]; then
-	curl -sf --max-time 30 -X POST ${CREDS} \
-		-H "Content-Type: application/json" \
-		-H "Accept: application/json" \
-		"${BASE_URL}/policies/umc/" \
-		-d "{\"properties\":{\"name\":\"tenant-admins-%s\",\"requiredObjectClasses\":[\"top\"]},\"position\":\"cn=UMC,cn=policies,${UDM_LDAP_BASE}\",\"policies\":{\"groups/group\":[\"${ADMINS_GRP_DN}\"]}}"
-	echo "UMC policy tenant-admins-%s created"
-else
-	echo "UMC policy tenant-admins-%s already exists"
-fi
-
-# Ensure tenant operation set exists (UMC commands allowed by this policy).
+# Ensure UMC operation set exists with correct string-list "operation" format.
+# NOTE: operation must be a JSON array of strings (e.g. ["*"]), not objects.
 STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/umc_operationset/${OPSET_ENC}")
@@ -650,31 +642,56 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/settings/umc_operationset/" \
-		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]},\"position\":\"${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[\"*\"],\"hosts\":[\"*\"]},\"position\":\"${UDM_LDAP_BASE}\"}"
 	echo "UMC operation set tenant-%s-admin created"
 else
 	echo "UMC operation set tenant-%s-admin already exists"
 fi
 
-# Ensure operation set permissions are reconciled even for pre-existing objects.
+# Reconcile operation set (idempotent — fixes any pre-existing objects with wrong format).
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/umc_operationset/${OPSET_ENC}" \
-	-d "{\"properties\":{\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]}}"
+	-d "{\"properties\":{\"operation\":[\"*\"],\"hosts\":[\"*\"]}}"
 echo "UMC operation set tenant-%s-admin reconciled"
 
-# Ensure policy allows this operation set.
+# Ensure UMC policy exists.
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/policies/umc/${POLICY_ENC}")
+if [ "${STATUS}" = "404" ]; then
+	curl -sf --max-time 30 -X POST ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/policies/umc/" \
+		-d "{\"properties\":{\"name\":\"tenant-admins-%s\"},\"position\":\"cn=UMC,cn=policies,${UDM_LDAP_BASE}\"}"
+	echo "UMC policy tenant-admins-%s created"
+else
+	echo "UMC policy tenant-admins-%s already exists"
+fi
+
+# Ensure policy allows the operation set (idempotent PATCH).
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/policies/umc/${POLICY_ENC}" \
 	-d "{\"properties\":{\"allow\":[\"${OPSET_DN}\"]}}"
-echo "UMC policy tenant-admins-%s now allows ${OPSET_DN}"`,
+echo "UMC policy tenant-admins-%s now allows ${OPSET_DN}"
+
+# Assign the UMC policy to the admins group.
+# NOTE: in UDM, policies are attached by PATCHing the TARGET object, not the policy.
+curl -sf --max-time 30 -X PATCH ${CREDS} \
+	-H "Content-Type: application/json" \
+	-H "Accept: application/json" \
+	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
+	-d "{\"policies\":{\"policies/umc\":[\"${POLICY_DN}\"]}}"
+echo "UMC policy tenant-admins-%s assigned to ${ADMINS_GRP_DN}"`,
 		ouDN, tenantName, tenantName, tenantName,
-		tenantName, tenantName, tenantName,
-		tenantName, tenantName, tenantName,
-		tenantName, tenantName)
+		tenantName, tenantName,
+		tenantName, tenantName,
+		tenantName, tenantName,
+		tenantName, tenantName, tenantName)
 }
 
 // buildOUDeleteScript removes the tenant OU and all child entries.
