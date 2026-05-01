@@ -42,9 +42,13 @@ const (
 )
 
 // ensureLDAP provisions per-tenant LDAP organisational units, default groups,
-// and per-app bind accounts via the UDM REST API. Jobs run in the kernel
-// namespace and are idempotent (check-before-create). Returns a non-zero
-// RequeueAfter while Jobs are still running.
+// delegated admin user/policy, and per-app bind accounts via the UDM REST API.
+// Jobs run in the kernel namespace and are idempotent (check-before-create).
+// Returns a non-zero RequeueAfter while Jobs are still running.
+//
+// Admin user and policy provisioning runs whenever LDAP apps are present (the
+// OU is their prerequisite). For tenants with no LDAP apps the entire LDAP
+// flow is skipped via the early-exit below.
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	ouDN := tenantOUDN(tenant)
 
@@ -70,7 +74,7 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
-	// Step 2 — tenant-scoped delegated admin policy (always required for Nubus user management)
+	// Step 2 — tenant-scoped delegated admin policy
 	adminPolicyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure LDAP admin policy Job: %w", err)
@@ -120,7 +124,7 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	}
 
 	r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
-		"Provisioned", "LDAP OU, groups, bind accounts, and admin policy are ready")
+		"Provisioned", "LDAP OU, admin user/policy, and bind accounts are ready")
 	return ctrl.Result{}, nil
 }
 
@@ -600,14 +604,16 @@ fi`, ouDN, adminEmail, tenantName)
 }
 
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
-// tenant OU. It binds admins_<tenant> to UDM user/group management scoped to
-// the tenant subtree only.
+// tenant OU. It gives admins_<tenant> access to all UMC modules via a
+// tenant-scoped UMC policy.
 //
-// Two key UDM REST API invariants:
-//   - settings/umc_operationset "operation" is a list of strings ("*", "udm/*", …),
-//     not objects. Sending objects results in an empty opset and no UMC modules visible.
-//   - A policy is assigned to an object by PATCHing the TARGET object's
-//     "policies.policies/umc" field — not by anything on the policy itself.
+// UDM REST API invariants:
+//   - settings/umc_operationset "operation" must be a JSON array of objects
+//     with "command" and "option" keys, e.g. [{"command":"*","option":"*"}].
+//     Sending plain strings results in broken LDAP storage.
+//   - A policy is assigned to a group by PATCHing the GROUP object's
+//     "policies.policies/umc" field. PATCHing the policy itself only sets a
+//     backward management reference that UMC does NOT evaluate.
 func buildAdminPolicyScript(ouDN, tenantName string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
@@ -623,17 +629,18 @@ POLICY_ENC=$(urlencode "${POLICY_DN}")
 OPSET_ENC=$(urlencode "${OPSET_DN}")
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
 
-# Ensure tenant admins group exists.
+# Verify admins group exists (created by the OU job).
 STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
-	echo "admins group ${ADMINS_GRP_DN} is missing"
+	echo "admins group ${ADMINS_GRP_DN} is missing — run OU job first"
 	exit 1
 fi
 
-# Ensure UMC operation set exists with correct string-list "operation" format.
-# NOTE: operation must be a JSON array of strings (e.g. ["*"]), not objects.
+# Ensure UMC operation set exists.
+# NOTE: operation must be an array of objects with "command" and "option" keys.
+# Plain strings like ["*"] result in broken umcOperationSetCommand LDAP storage.
 STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/umc_operationset/${OPSET_ENC}")
@@ -642,18 +649,18 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/settings/umc_operationset/" \
-		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[\"*\"],\"hosts\":[\"*\"]},\"position\":\"${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]},\"position\":\"${UDM_LDAP_BASE}\"}"
 	echo "UMC operation set tenant-%s-admin created"
 else
 	echo "UMC operation set tenant-%s-admin already exists"
 fi
 
-# Reconcile operation set (idempotent — fixes any pre-existing objects with wrong format).
+# Reconcile operation set (idempotent — ensures correct format on pre-existing objects).
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/umc_operationset/${OPSET_ENC}" \
-	-d "{\"properties\":{\"operation\":[\"*\"],\"hosts\":[\"*\"]}}"
+	-d "{\"properties\":{\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]}}"
 echo "UMC operation set tenant-%s-admin reconciled"
 
 # Ensure UMC policy exists.
@@ -671,7 +678,7 @@ else
 	echo "UMC policy tenant-admins-%s already exists"
 fi
 
-# Ensure policy allows the operation set (idempotent PATCH).
+# Ensure policy allows the operation set (idempotent PATCH on the policy's allow list).
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
@@ -679,8 +686,9 @@ curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-d "{\"properties\":{\"allow\":[\"${OPSET_DN}\"]}}"
 echo "UMC policy tenant-admins-%s now allows ${OPSET_DN}"
 
-# Assign the UMC policy to the admins group.
-# NOTE: in UDM, policies are attached by PATCHing the TARGET object, not the policy.
+# Assign the UMC policy to the admins group by PATCHing the GROUP (not the policy).
+# UMC evaluates policies by walking the LDAP hierarchy from the user and checking
+# univentionPolicyReference on each group/OU. The reference must be on the GROUP.
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
