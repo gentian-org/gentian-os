@@ -32,6 +32,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
 GENTIAN_MANAGED_CERT_MANAGER="${GENTIAN_MANAGED_CERT_MANAGER:-0}"
 
+# Shared CRI / kubelet runtime helpers (ensure_sudo, cri_cleanup,
+# kubelite_restart). Same implementation install.sh uses.
+# shellcheck source=scripts/lib-runtime.sh
+source "${SCRIPT_DIR}/scripts/lib-runtime.sh"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -f)
@@ -595,11 +600,22 @@ else
     # kubelet can't tear down a pod's network sandbox, which in turn keeps
     # the kubernetes.io/pvc-protection finalizer on its PVCs and prevents
     # the namespace from terminating.
+    #
+    # IMPORTANT: We try a graceful delete first (10s) so kubelet has a chance
+    # to instruct the CRI runtime to tear down each pod's sandbox. Only the
+    # genuinely-stuck pods get the --grace-period=0 --force escalation. The
+    # naive "force everything" approach is what was leaking orphan containerd
+    # sandboxes between install/uninstall cycles and wedging the next install
+    # in ContainerCreating with the well-known status-sync hang.
     for ns in "${local_namespaces[@]}"; do
         if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
             continue
         fi
-        # Force-delete any pods in the namespace.
+        # Phase 1: graceful delete (10s) so containerd can tear down sandboxes.
+        for pod in $(kubectl get pods -n "$ns" -o name 2>/dev/null); do
+            kubectl delete -n "$ns" "$pod" --grace-period=10 --timeout=15s --ignore-not-found >/dev/null 2>&1 || true
+        done
+        # Phase 2: force-delete only what's still left.
         for pod in $(kubectl get pods -n "$ns" -o name 2>/dev/null); do
             kubectl delete -n "$ns" "$pod" --grace-period=0 --force --ignore-not-found >/dev/null 2>&1 || true
         done
@@ -622,6 +638,36 @@ else
     done
 
     success "Force uninstall completed."
+fi
+
+# =============================================================================
+# Final runtime cleanup — leave the cluster ready for a fresh install.sh
+# =============================================================================
+# Even with graceful pod deletes above, containerd can still hold:
+#   - orphan sandboxes whose pod object is gone (name reservations that block
+#     re-creating a pod with the same StatefulSet name on the next install,
+#     symptom: pod stuck in ContainerCreating with container Started but
+#     PodReadyToStartContainers stays False — the kubelet status-sync wedge);
+#   - exited containers and STOPPED tasks left over from torn-down workloads.
+#
+# Industry best practice: a teardown script should reset runtime state so
+# subsequent bootstraps don't inherit it. This is the appropriate place to
+# ask for sudo (uninstall is operator-driven and destructive), so install.sh
+# never has to.
+#
+# Skip with GENTIAN_SKIP_RUNTIME_CLEANUP=1 (e.g. in CI on ephemeral nodes
+# where the whole VM is about to be discarded anyway).
+if [[ "${GENTIAN_SKIP_RUNTIME_CLEANUP:-0}" != "1" ]]; then
+    echo ""
+    info "Final runtime cleanup (orphan sandboxes + kubelet status sync)..."
+    cri_cleanup
+    # Only restart kubelite when CRI cleanup actually had something to do or
+    # the operator explicitly asked for it; otherwise the restart is wasted
+    # downtime. We always restart in force mode because we just deleted
+    # entire namespaces and want kubelet to resync from a clean slate.
+    if [[ "$MODE" == "force" || "${GENTIAN_FORCE_KUBELITE_RESTART:-0}" == "1" ]]; then
+        kubelite_restart
+    fi
 fi
 
 echo ""
