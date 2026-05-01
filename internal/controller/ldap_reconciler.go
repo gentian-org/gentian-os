@@ -605,14 +605,14 @@ BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
 ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 POLICY_DN="cn=tenant-admins-%s,cn=UMC,cn=policies,${UDM_LDAP_BASE}"
-MODULE_DN="cn=tenant-%s,cn=udm,cn=settings,${UDM_LDAP_BASE}"
+OPSET_DN="cn=tenant-%s-admin,${UDM_LDAP_BASE}"
 
 POLICY_ENC=$(urlencode "${POLICY_DN}")
-MODULE_ENC=$(urlencode "${MODULE_DN}")
+OPSET_ENC=$(urlencode "${OPSET_DN}")
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
 
 # Ensure tenant admins group exists.
-STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if [ "${STATUS}" = "404" ]; then
@@ -621,11 +621,11 @@ if [ "${STATUS}" = "404" ]; then
 fi
 
 # Ensure UMC policy exists and is linked to admins_<tenant>.
-STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/policies/umc/${POLICY_ENC}")
 if [ "${STATUS}" = "404" ]; then
-	curl -s -o /dev/null -X POST ${CREDS} \
+	curl -sf --max-time 30 -X POST ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/policies/umc/" \
@@ -635,20 +635,28 @@ else
 	echo "UMC policy tenant-admins-%s already exists"
 fi
 
-# Ensure UDM module scope entry exists for tenant OU.
-STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+# Ensure tenant operation set exists (UMC commands allowed by this policy).
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \
-	"${BASE_URL}/settings/udm_module/${MODULE_ENC}")
+	"${BASE_URL}/settings/umc_operationset/${OPSET_ENC}")
 if [ "${STATUS}" = "404" ]; then
-	curl -s -o /dev/null -X POST ${CREDS} \
+	curl -sf --max-time 30 -X POST ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
-		"${BASE_URL}/settings/udm_module/" \
-		-d "{\"properties\":{\"name\":\"tenant-%s\",\"module\":\"users/user\",\"subtree\":\"${OU_POS}\"},\"position\":\"cn=udm,cn=settings,${UDM_LDAP_BASE}\"}"
-	echo "UDM module scope tenant-%s created"
+		"${BASE_URL}/settings/umc_operationset/" \
+		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[{\"command\":\"udm/*\",\"option\":\"*\"}],\"hosts\":[]},\"position\":\"${UDM_LDAP_BASE}\"}"
+	echo "UMC operation set tenant-%s-admin created"
 else
-	echo "UDM module scope tenant-%s already exists"
-fi`,
+	echo "UMC operation set tenant-%s-admin already exists"
+fi
+
+# Ensure policy allows this operation set.
+curl -sf --max-time 30 -X PATCH ${CREDS} \
+	-H "Content-Type: application/json" \
+	-H "Accept: application/json" \
+	"${BASE_URL}/policies/umc/${POLICY_ENC}" \
+	-d "{\"properties\":{\"allow\":[\"${OPSET_DN}\"]}}"
+echo "UMC policy tenant-admins-%s now allows ${OPSET_DN}"`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName)
