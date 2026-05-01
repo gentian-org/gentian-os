@@ -111,6 +111,68 @@ t.Errorf("expected reason NoStorageRequired, got %q", cond.Reason)
 }
 }
 
+// TestStorage_NextcloudGroupAlwaysCreated verifies that a Tenant with NO storage-requiring
+// apps still gets a Nextcloud group Job — Nextcloud is a kernel service, not app-gated.
+func TestStorage_NextcloudGroupAlwaysCreated(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "nc-always"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "NC Always Co",
+			Domain:      "nc-always.example.com",
+			AdminEmail:  "admin@nc-always.example.com",
+			// Intentionally no Apps — NC group should appear regardless.
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// NC group job must be created even with no apps.
+	job := &batchv1.Job{}
+	waitFor(t, 10*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "nc-group-nc-always", Namespace: "platform-kernel"}, job) == nil
+	})
+
+	if job.Labels["gentianos.io/tenant"] != "nc-always" {
+		t.Errorf("expected tenant label 'nc-always', got %q", job.Labels["gentianos.io/tenant"])
+	}
+	if len(job.Spec.Template.Spec.Containers) == 0 {
+		t.Fatal("expected container in NC group Job")
+	}
+	// Confirm credentials come from the nextcloud-admin Secret.
+	secretEnvs := make(map[string]string)
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
+		}
+	}
+	for _, required := range []string{"NEXTCLOUD_URL", "NEXTCLOUD_ADMIN_USER", "NEXTCLOUD_ADMIN_PASSWORD"} {
+		if secretEnvs[required] != "nextcloud-admin" {
+			t.Errorf("expected %s from nextcloud-admin Secret, got %q", required, secretEnvs[required])
+		}
+	}
+
+	// StorageReady must still be True/NoStorageRequired (no S3 apps).
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, 10*time.Second, func() bool {
+		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nc-always"}, updated)
+		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
+	})
+	var cond *metav1.Condition
+	for i := range updated.Status.Conditions {
+		if updated.Status.Conditions[i].Type == "StorageReady" {
+			cond = &updated.Status.Conditions[i]
+			break
+		}
+	}
+	if cond == nil || cond.Reason != "NoStorageRequired" {
+		t.Errorf("expected StorageReady/NoStorageRequired, got %v", cond)
+	}
+}
+
 // TestStorage_CreatesS3BucketJob verifies that a Tenant with an S3-requiring app
 // creates the MinIO mc bucket Job in the kernel namespace with the correct labels
 // and credentials.

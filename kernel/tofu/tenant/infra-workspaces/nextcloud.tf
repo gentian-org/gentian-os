@@ -215,3 +215,22 @@ resource "helm_release" "nextcloud_notifypush" {
     value = data.vault_kv_secret_v2.redis_nc.data["auth_password"]
   }
 }
+
+# ── 4. Operator provisioner Secret (platform-kernel/nextcloud-admin) ──────────
+# The gentian-os operator creates a per-tenant Nextcloud group via the OCS API
+# on every Tenant reconcile. It reads connection details from this Secret.
+# Must live in platform-kernel so Jobs created by the operator can reference it.
+resource "kubernetes_secret" "nextcloud_admin" {
+  depends_on = [helm_release.nextcloud_management]
+
+  metadata {
+    name      = "nextcloud-admin"
+    namespace = "platform-kernel"
+  }
+
+  data = {
+    url      = "http://nextcloud-${var.env}-aio.gentian-${var.env}.svc.cluster.local"
+    username = "nextcloud"
+    password = data.vault_kv_secret_v2.nextcloud.data["admin_password"]
+  }
+}

@@ -337,6 +337,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	// 14b. Nextcloud kernel file-storage service — provision a per-tenant group in
+	// the shared Nextcloud instance for every tenant regardless of installed apps.
+	// Non-blocking: errors are returned so the reconciler retries, but this step
+	// does not affect the provisioning flag or Phase=Ready (same model as mail).
+	if err := r.ensureNextcloudGroup(ctx, tenant); err != nil {
+		logger.Error(err, "ensure Nextcloud group (non-blocking, will retry)")
+	}
+
 	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName

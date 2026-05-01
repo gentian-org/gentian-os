@@ -42,16 +42,18 @@ const (
 	storageRequeueAfter       = 2 * time.Second
 )
 
-// ensureStorage provisions per-app MinIO S3 buckets and per-tenant Nextcloud
-// groups. Each pathway creates a Job in the kernel namespace; StorageReady is
-// set to True once all Jobs complete.
+// ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
+// KernelRequirements.Storage.S3. Each pathway creates a Job in the kernel namespace;
+// StorageReady is set to True once all Jobs complete.
+// Note: per-tenant Nextcloud groups are provisioned separately via ensureNextcloudGroup,
+// which runs for every tenant regardless of installed apps.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	s3Apps, ncApps, err := r.collectStorageApps(ctx, tenant)
+	s3Apps, err := r.collectStorageApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if len(s3Apps) == 0 && len(ncApps) == 0 {
+	if len(s3Apps) == 0 {
 		r.setCondition(tenant, conditionStorageReady, metav1.ConditionTrue,
 			"NoStorageRequired", "No apps require storage provisioning")
 		return ctrl.Result{}, nil
@@ -70,18 +72,6 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 		}
 	}
 
-	// --- Nextcloud group (WebDAV) ---
-	// A single group covers all WebDAV-requiring apps in the same tenant.
-	if len(ncApps) > 0 {
-		done, err := r.ensureNextcloudGroupJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Nextcloud group Job: %w", err)
-		}
-		if !done {
-			allDone = false
-		}
-	}
-
 	if !allDone {
 		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse,
 			"Provisioning", "Waiting for storage resources to be ready")
@@ -93,29 +83,36 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 	return ctrl.Result{}, nil
 }
 
-// collectStorageApps returns two slices: app profile names that require S3 and
-// app profile names that require WebDAV file access.
-func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (s3Apps, ncApps []string, err error) {
+// ensureNextcloudGroup provisions the per-tenant Nextcloud group on every reconcile.
+// Nextcloud is a kernel file-storage service, available to every tenant regardless of
+// installed apps. This step does NOT block Phase=Ready — it runs concurrently alongside
+// app provisioning (like mail). If Nextcloud is not yet deployed, the Job will pend
+// and be retried on the next reconcile cycle.
+func (r *TenantReconciler) ensureNextcloudGroup(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	_, err := r.ensureNextcloudGroupJob(ctx, tenant)
+	return err
+}
+
+// collectStorageApps returns the app profile names that require an S3 bucket.
+// WebDAV/Files requirements are no longer tracked here — Nextcloud group
+// provisioning happens unconditionally via ensureNextcloudGroup.
+func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (s3Apps []string, err error) {
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Storage == nil {
 			continue
 		}
-		stor := profile.Spec.KernelRequirements.Storage
-		if stor.S3 != nil {
+		if profile.Spec.KernelRequirements.Storage.S3 != nil {
 			s3Apps = append(s3Apps, app.Profile)
 		}
-		if stor.Files != nil {
-			ncApps = append(ncApps, app.Profile)
-		}
 	}
-	return s3Apps, ncApps, nil
+	return s3Apps, nil
 }
 
 // ensureS3BucketJob creates (or checks) the MinIO bucket setup Job for one app.
@@ -178,7 +175,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		return nil
 	}
 
-	s3Apps, ncApps, err := r.collectStorageApps(ctx, tenant)
+	s3Apps, err := r.collectStorageApps(ctx, tenant)
 	if err != nil {
 		return err
 	}
@@ -195,16 +192,16 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		}
 	}
 
-	if len(ncApps) > 0 {
-		deleteJobName := nextcloudGroupDeleteJobName(tenant.Name)
-		existing := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, existing); errors.IsNotFound(err) {
-			if err := r.Create(ctx, makeNextcloudGroupDeleteJob(tenant)); err != nil {
-				return fmt.Errorf("create Nextcloud delete Job: %w", err)
-			}
-		} else if err != nil {
-			return err
+	// Always delete the Nextcloud group — provisioned for every tenant
+	// unconditionally by ensureNextcloudGroup.
+	ncDeleteJobName := nextcloudGroupDeleteJobName(tenant.Name)
+	existingNC := &batchv1.Job{}
+	if err := r.Get(ctx, types.NamespacedName{Name: ncDeleteJobName, Namespace: kernelNamespace}, existingNC); errors.IsNotFound(err) {
+		if err := r.Create(ctx, makeNextcloudGroupDeleteJob(tenant)); err != nil {
+			return fmt.Errorf("create Nextcloud delete Job: %w", err)
 		}
+	} else if err != nil {
+		return err
 	}
 
 	return nil
