@@ -644,11 +644,19 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/settings/umc_operationset/" \
-		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[]},\"position\":\"${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]},\"position\":\"${UDM_LDAP_BASE}\"}"
 	echo "UMC operation set tenant-%s-admin created"
 else
 	echo "UMC operation set tenant-%s-admin already exists"
 fi
+
+# Ensure operation set permissions are reconciled even for pre-existing objects.
+curl -sf --max-time 30 -X PATCH ${CREDS} \
+	-H "Content-Type: application/json" \
+	-H "Accept: application/json" \
+	"${BASE_URL}/settings/umc_operationset/${OPSET_ENC}" \
+	-d "{\"properties\":{\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]}}"
+echo "UMC operation set tenant-%s-admin reconciled"
 
 # Ensure policy allows this operation set.
 curl -sf --max-time 30 -X PATCH ${CREDS} \
@@ -660,7 +668,7 @@ echo "UMC policy tenant-admins-%s now allows ${OPSET_DN}"`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName,
-		tenantName)
+		tenantName, tenantName)
 }
 
 // buildOUDeleteScript removes the tenant OU and all child entries.
