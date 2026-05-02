@@ -14,6 +14,12 @@ kind: Cluster
 metadata:
   name: postgres
   namespace: platform-kernel
+  annotations:
+    # Wave 1: deploy Cluster only after all ExternalSecrets (wave 0) are SecretSynced.
+    # This prevents the race where CNPG bootstraps before cnpg-superuser exists,
+    # which leaves the postgres role with no password (CNPG silently skips ALTER ROLE
+    # when the secret is absent at bootstrap time).
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   instances: 1
   enableSuperuserAccess: true  # Allow postgres superuser connections for admin role provisioning

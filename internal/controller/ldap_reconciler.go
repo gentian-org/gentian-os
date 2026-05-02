@@ -503,8 +503,11 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/container/ou/" \
     -d "{\"properties\":{\"name\":\"%s\",\"description\":\"Tenant %s\"},\"position\":\"${UDM_LDAP_BASE}\"}"
   echo "OU %s created"
-else
+elif [ "${STATUS}" = "200" ]; then
   echo "OU %s already exists (HTTP ${STATUS})"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
 fi
 
 # Create users group if absent
@@ -519,8 +522,11 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/groups/group/" \
 		-d "{\"properties\":{\"name\":\"users_%s\"},\"position\":\"${OU_POS}\"}"
   echo "group users_%s created"
-else
+elif [ "${STATUS}" = "200" ]; then
   echo "group users_%s already exists"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
 fi
 
 # Create admins group if absent
@@ -535,8 +541,11 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/groups/group/" \
 		-d "{\"properties\":{\"name\":\"admins_%s\"},\"position\":\"${OU_POS}\"}"
   echo "group admins_%s created"
-else
+elif [ "${STATUS}" = "200" ]; then
   echo "group admins_%s already exists"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
 fi`,
 		ouDN, tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName,
@@ -568,8 +577,11 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/users/ldap/" \
     -d "{\"properties\":{\"username\":\"app-%s\",\"password\":\"${BIND_PW}\"},\"position\":\"${OU_POS}\"}"
   echo "bind account app-%s created in ${OU_POS}"
-else
+elif [ "${STATUS}" = "200" ]; then
   echo "bind account app-%s already exists (HTTP ${STATUS})"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
 fi`, ouDN, appName, appName, appName, appName)
 }
 
@@ -618,8 +630,11 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/users/user/" \
 		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":false,\"opendeskFileshareAdmin\":true,\"opendeskProjectmanagementAdmin\":true,\"opendeskKnowledgemanagementAdmin\":true,\"opendeskLivecollaborationAdmin\":true},\"position\":\"${OU_POS}\"}"
   echo "UDM user ${ADMIN_USERNAME} created in ${OU_POS}"
-else
+elif [ "${STATUS}" = "200" ]; then
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
 fi
 
 # Ensure the admin user does not require a forced password change on next login.
@@ -679,6 +694,9 @@ STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 if [ "${STATUS}" = "404" ]; then
 	echo "admins group ${ADMINS_GRP_DN} is missing — run OU job first"
 	exit 1
+elif [ "${STATUS}" != "200" ]; then
+	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+	exit 1
 fi
 
 # Ensure UMC operation set exists.
@@ -694,8 +712,11 @@ if [ "${STATUS}" = "404" ]; then
 		"${BASE_URL}/settings/umc_operationset/" \
 		-d "{\"properties\":{\"name\":\"tenant-%s-admin\",\"description\":\"Tenant delegated admin operation set\",\"operation\":[{\"command\":\"*\",\"option\":\"*\"}],\"hosts\":[\"*\"]},\"position\":\"${UDM_LDAP_BASE}\"}"
 	echo "UMC operation set tenant-%s-admin created"
-else
+elif [ "${STATUS}" = "200" ]; then
 	echo "UMC operation set tenant-%s-admin already exists"
+else
+	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+	exit 1
 fi
 
 # Reconcile operation set (idempotent — ensures correct format on pre-existing objects).
@@ -717,8 +738,11 @@ if [ "${STATUS}" = "404" ]; then
 		"${BASE_URL}/policies/umc/" \
 		-d "{\"properties\":{\"name\":\"tenant-admins-%s\"},\"position\":\"cn=UMC,cn=policies,${UDM_LDAP_BASE}\"}"
 	echo "UMC policy tenant-admins-%s created"
-else
+elif [ "${STATUS}" = "200" ]; then
 	echo "UMC policy tenant-admins-%s already exists"
+else
+	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+	exit 1
 fi
 
 # Ensure policy allows the operation set (idempotent PATCH on the policy's allow list).

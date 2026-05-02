@@ -52,7 +52,7 @@ resource "helm_release" "nextcloud_management" {
   timeout          = 900
 
   values = [
-    templatefile("${path.module}/../../../services/nextcloud-management/values/_base.yaml", { domain = var.domain }),
+    templatefile("${path.module}/../../../services/nextcloud-management/values/_base.yaml", { domain = var.domain, env = var.env }),
     file("${path.module}/../../../services/nextcloud-management/values/${var.env}/values-plain.yaml"),
   ]
 
