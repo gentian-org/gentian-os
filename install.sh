@@ -1660,43 +1660,25 @@ bootstrap_argocd_apps() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-flux-iac.yaml"
     success "Applied public ArgoCD repository registrations."
 
-    if helm status flux2 -n flux-system &>/dev/null; then
-        success "Flux source-controller already installed (Helm release present). Skipping."
-    elif kubectl get deployment source-controller -n flux-system &>/dev/null; then
-        warn "source-controller already present but not Helm-managed. Skipping install."
+    if kubectl get deployment source-controller -n flux-system &>/dev/null; then
+        success "Flux source-controller already present. Skipping install."
     else
-        info "Installing Flux source-controller (chart 2.15.0, image v1.8.3)..."
-        # Chart 2.15.0 is the newest version whose flux-check pre-install hook
-        # accepts Kubernetes 1.31. We override the image tag to v1.8.3 to
-        # match the bundled CRDs (chart default is v1.5.0 which still expects
-        # the v1beta2 storage version that v1.8.x dropped).
-        # Pre-create the namespace: the flux2 chart has a pre-install hook that
-        # runs inside flux-system before Helm's --create-namespace can act,
-        # causing "namespace not found" failures on a fresh cluster.
+        info "Installing Flux source-controller (v1.8.3, static manifest)..."
+        # We apply a vendored static manifest rather than a Helm chart because
+        # the flux2 community chart's pre-install Job (flux-check) checks the
+        # Kubernetes version and blocks on k8s 1.31+ with older chart versions.
+        # The static manifest at kernel/manifests/flux-crds/source-controller.yaml
+        # was generated from the same chart with all controllers except
+        # source-controller disabled and the flux-check Job stripped out.
+        # Regeneration instructions: kernel/manifests/flux-crds/README.md
         kubectl create namespace flux-system 2>/dev/null || true
-        helm upgrade --install flux2 oci://ghcr.io/fluxcd-community/charts/flux2 \
-            --namespace flux-system \
-            --version 2.15.0 \
-            --set installCRDs=false \
-            --set sourceController.create=true \
-            --set sourceController.tag=v1.8.3 \
-            --set helmController.create=false \
-            --set kustomizeController.create=false \
-            --set notificationController.create=false \
-            --set imageAutomationController.create=false \
-            --set imageReflectionController.create=false \
-            --set policies.create=false \
-            --set rbac.createAggregation=false \
-            --wait --timeout 5m
+        kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-controller.yaml"
         success "Flux source-controller installed."
     fi
 
     # Wait for source-controller to be Available before applying Flux source CRDs.
-    # The flux2 Helm chart pre-install hook and source-controller startup can both
-    # touch CRD objects; applying our vendored CRDs *after* the controller is
-    # Available ensures they land last and are not subsequently removed or replaced.
-    # (Applying before helm install caused gitrepositories CRD to be absent at
-    # tofu-controller startup, triggering a CrashLoopBackOff on every fresh install.)
+    # source-controller rewrites CRD status on startup; applying our vendored CRDs
+    # after Available ensures they land last and are not subsequently overwritten.
     info "Waiting for Flux source-controller deployment to be Available (up to 3 min)..."
     kubectl wait --for=condition=available --timeout=180s \
         deployment/source-controller -n flux-system
