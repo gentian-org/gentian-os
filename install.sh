@@ -1660,19 +1660,6 @@ bootstrap_argocd_apps() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-flux-iac.yaml"
     success "Applied public ArgoCD repository registrations."
 
-    # Tofu Controller needs Flux source CRDs (GitRepository, OCIRepository,
-    # Bucket) to register its informers. We also need the Flux source-
-    # controller itself running because kernel/services/tofu/manifests/dev/
-    # terraform.yaml creates a GitRepository CR ('gentian-server') that all
-    # Terraform workspaces (infra-workspaces-dev, keycloak-config-dev, and
-    # every per-tenant tf-*) reference as their sourceRef. Without source-
-    # controller, that GitRepository never produces an artifact and every
-    # Terraform CR stays stuck on "Source is not ready, artifact not found"
-    # — Nubus never installs, tenants stall on IdentityReady forever.
-    # See kernel/manifests/flux-crds/README.md for CRD versioning details.
-    kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-crds.yaml"
-    success "Applied Flux source CRDs (required by tofu-controller)."
-
     if helm status flux2 -n flux-system &>/dev/null; then
         success "Flux source-controller already installed (Helm release present). Skipping."
     elif kubectl get deployment source-controller -n flux-system &>/dev/null; then
@@ -1704,14 +1691,29 @@ bootstrap_argocd_apps() {
         success "Flux source-controller installed."
     fi
 
-    # Wait for source-controller to be Available before deploying tofu-controller.
-    # source-controller rewrites its own CRDs (including gitrepositories) after
-    # startup; if tofu-controller starts in that window it crash-loops because the
-    # CRD temporarily disappears. Waiting for Available ensures CRD churn is done.
+    # Wait for source-controller to be Available before applying Flux source CRDs.
+    # The flux2 Helm chart pre-install hook and source-controller startup can both
+    # touch CRD objects; applying our vendored CRDs *after* the controller is
+    # Available ensures they land last and are not subsequently removed or replaced.
+    # (Applying before helm install caused gitrepositories CRD to be absent at
+    # tofu-controller startup, triggering a CrashLoopBackOff on every fresh install.)
     info "Waiting for Flux source-controller deployment to be Available (up to 3 min)..."
     kubectl wait --for=condition=available --timeout=180s \
         deployment/source-controller -n flux-system
     success "Flux source-controller is Available."
+
+    # Tofu Controller needs Flux source CRDs (GitRepository, OCIRepository,
+    # Bucket) to register its informers. We also need the Flux source-
+    # controller itself running because kernel/services/tofu/manifests/dev/
+    # terraform.yaml creates a GitRepository CR ('gentian-server') that all
+    # Terraform workspaces (infra-workspaces-dev, keycloak-config-dev, and
+    # every per-tenant tf-*) reference as their sourceRef. Without source-
+    # controller, that GitRepository never produces an artifact and every
+    # Terraform CR stays stuck on "Source is not ready, artifact not found"
+    # — Nubus never installs, tenants stall on IdentityReady forever.
+    # See kernel/manifests/flux-crds/README.md for CRD versioning details.
+    kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-crds.yaml"
+    success "Applied Flux source CRDs (required by tofu-controller)."
 
     local apps=(openbao tofu-controller globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
