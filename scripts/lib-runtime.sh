@@ -29,7 +29,7 @@
 
 # Guard against double-sourcing.
 if [[ -n "${__GENTIAN_LIB_RUNTIME_SH:-}" ]]; then
-    return 0 2>/dev/null || true
+    return 0 2>/dev/null
 fi
 __GENTIAN_LIB_RUNTIME_SH=1
 
