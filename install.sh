@@ -1454,6 +1454,16 @@ install_eso() {
         -n external-secrets \
         -f "${SCRIPT_DIR}/kernel/eso/values.yaml" \
         --wait --timeout 5m
+
+    # Helm silently skips some template-based CRDs (e.g. externalsecrets.external-secrets.io).
+    # Re-apply all ESO CRDs via server-side apply to ensure every CRD is registered.
+    helm get manifest external-secrets -n external-secrets \
+        | python3 -c "
+import sys
+content = sys.stdin.read()
+crds = [d for d in content.split('---') if 'kind: CustomResourceDefinition' in d and d.strip()]
+print('---\n' + '\n---\n'.join(crds))
+" | kubectl apply --server-side --force-conflicts -f - >/dev/null
     success "ESO installed."
 }
 
