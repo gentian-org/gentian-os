@@ -89,6 +89,76 @@ fi
 
 APP_NS="argocd"
 
+# =============================================================================
+# Step 0 — Reset gentian-deployments: remove all deployed tenant instances
+# =============================================================================
+# Done before any ArgoCD / Helm teardown so the deployments repo is clean when
+# install.sh runs next time. We edit the kustomization files directly (rather
+# than calling `kubectl gentian tenants undeploy`) because the plugin calls
+# `kubectl apply -k` after the git commit, which would fail on a
+# partially-torn-down cluster.
+undeploy_all_tenants() {
+    local config_file="${HOME}/.gentian/config"
+    local deployments_path=""
+
+    if [[ -f "${config_file}" ]]; then
+        # shellcheck disable=SC1090
+        source "${config_file}" 2>/dev/null || true
+    fi
+    deployments_path="${GENTIAN_DEPLOYMENTS_PATH:-}"
+
+    if [[ -z "${deployments_path}" ]]; then
+        warn "GENTIAN_DEPLOYMENTS_PATH not set; skipping tenant kustomization cleanup."
+        return 0
+    fi
+    if [[ ! -d "${deployments_path}/.git" ]]; then
+        warn "${deployments_path} is not a git repo; skipping tenant kustomization cleanup."
+        return 0
+    fi
+
+    local changed=0
+    # Find every tenants/kustomization.yaml across all envs (dev, staging, prod, …)
+    while IFS= read -r kustom_file; do
+        local env_name
+        env_name=$(basename "$(dirname "$(dirname "${kustom_file}")")")
+
+        # Extract instance names from lines like:  - instances/<name>
+        local instances=()
+        mapfile -t instances < <(
+            grep -oE '[[:space:]]*-[[:space:]]+instances/([^[:space:]]+)' "${kustom_file}" \
+                | sed 's|.*instances/||' 2>/dev/null || true
+        )
+
+        for instance in "${instances[@]}"; do
+            [[ -z "${instance}" ]] && continue
+            info "  Removing ${instance} from ${env_name} (kustomization cleanup)..."
+            # Delete the exact resource line; handles optional surrounding whitespace
+            sed -i "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
+            changed=1
+        done
+    done < <(find "${deployments_path}" -path "*/tenants/kustomization.yaml" 2>/dev/null)
+
+    if [[ "${changed}" -eq 0 ]]; then
+        success "Deployments repo already clean (no deployed tenant instances found)."
+        return 0
+    fi
+
+    (
+        cd "${deployments_path}"
+        git add -A
+        if git diff --cached --quiet; then
+            info "No deployments-repo changes to commit."
+        else
+            git commit -m "chore: undeploy all tenants (uninstall.sh cleanup)"
+            git push || warn "git push to deployments repo failed; commit is local only."
+            success "Tenant instances removed from deployments repo."
+        fi
+    )
+}
+
+info "Cleaning deployments repo: undeploying all tenant instances..."
+undeploy_all_tenants
+
 BOOTSTRAP_APPS_CORE=(
     gentian-appsets
     gentian-appprofiles
