@@ -42,6 +42,12 @@
 #
 # Optional environment variables:
 #   NODE_IP                       — cluster node IP (default: auto-detected)
+#                                    Required and validated in static-ip mode.
+#
+# Networking mode (controls NODE_IP requirements and ingress validation):
+#   NETWORK_MODE                  — tunnel (default) | static-ip
+#                                    tunnel    : cluster behind reverse-proxy/tunnel
+#                                    static-ip : node has a public reachable IP
 #   SKIP_TOOLS                    — set to "1" to skip CLI tool installation
 #   OPENBAO_INIT_FILE             — path to save OpenBao init keys (default: /tmp/openbao-init.json)
 #   GENTIAN_APPS_REPO             — default https://github.com/gentian-org/gentian-apps
@@ -289,6 +295,7 @@ INPUT_HIERARCHY_VARS=(
     EXTERNAL_SMTP_STARTTLS
     KERNEL_DOMAIN
     NODE_IP
+    NETWORK_MODE
     SKIP_TOOLS
     OPENBAO_INIT_FILE
     LETSENCRYPT_EMAIL
@@ -308,6 +315,7 @@ INPUT_HIERARCHY_VARS=(
 # ─── Versions ────────────────────────────────────────────────────────────────
 TOFU_VERSION="1.9.0"
 BAO_VERSION="2.5.1"
+ESO_CHART_VERSION="2.4.1"
 
 usage() {
     cat <<'EOF'
@@ -464,7 +472,8 @@ validate_config() {
     echo "━━━ Optional / recommended config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     _opt LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address"
     _opt INGRESS_CLASS_NAME "defaults to 'nginx' if not set"
-    _opt NODE_IP            "auto-detected at install time if not set"
+    _opt NETWORK_MODE       "networking mode: tunnel (default) or static-ip"
+    _opt NODE_IP            "required in static-ip mode; auto-detected otherwise"
     _opt CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates"
     _opt CF_ZONE_NAME       "Cloudflare zone — derived from KERNEL_DOMAIN if not set"
     _opt GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps"
@@ -773,6 +782,8 @@ save_install_state() {
         [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_SSL=%q\n' "$val"
         val="${EXTERNAL_SMTP_STARTTLS:-}"
         [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_STARTTLS=%q\n' "$val"
+        val="${NETWORK_MODE:-}"
+        [[ -n "$val" ]] && printf 'export NETWORK_MODE=%q\n' "$val"
         val="${GENTIAN_MANAGED_CERT_MANAGER:-}"
         [[ -n "$val" ]] && printf 'export GENTIAN_MANAGED_CERT_MANAGER=%q\n' "$val"
     } >"$tmp"
@@ -816,6 +827,56 @@ prompt_kernel_domain() {
         fi
     done
     export KERNEL_DOMAIN="$v"
+    save_install_state
+}
+
+# =============================================================================
+# Prompt for the cluster networking mode.
+#
+#   tunnel    — cluster sits behind a reverse-proxy/tunnel (e.g. Cloudflare
+#               Tunnel). DNS *.${KERNEL_DOMAIN} resolves to the tunnel
+#               endpoint. NODE_IP is optional. DNS-01 ACME is preferred for
+#               wildcard certificates.
+#   static-ip — node has a public/reachable static IP. DNS *.${KERNEL_DOMAIN}
+#               points directly to NODE_IP, which must be set and valid.
+#               MetalLB (or equivalent) must be pre-configured. HTTP-01 ACME
+#               challenges work without Cloudflare.
+#
+# Persisted to ${INSTALL_STATE_FILE} so re-runs do not re-prompt.
+# =============================================================================
+prompt_network_mode() {
+    if [[ -n "${NETWORK_MODE:-}" ]]; then
+        if [[ "${NETWORK_MODE}" != "tunnel" && "${NETWORK_MODE}" != "static-ip" ]]; then
+            error "NETWORK_MODE=${NETWORK_MODE} is invalid. Must be 'tunnel' or 'static-ip'."
+            exit 1
+        fi
+        info "Using NETWORK_MODE=${NETWORK_MODE}"
+        export NETWORK_MODE
+        return
+    fi
+
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        NETWORK_MODE="tunnel"
+        info "NETWORK_MODE not set; defaulting to tunnel (non-interactive)."
+        export NETWORK_MODE
+        save_install_state
+        return
+    fi
+
+    echo ""
+    info "Networking mode — how external traffic reaches this cluster:"
+    info "  tunnel    : cluster is behind a tunnel/proxy (e.g. Cloudflare Tunnel)"
+    info "  static-ip : cluster node has a public reachable static IP"
+    local v
+    while true; do
+        read -rp "  NETWORK_MODE [tunnel|static-ip] (default: tunnel): " v
+        v="${v:-tunnel}"
+        if [[ "$v" == "tunnel" || "$v" == "static-ip" ]]; then
+            break
+        fi
+        warn "Invalid value '${v}'. Enter 'tunnel' or 'static-ip'."
+    done
+    export NETWORK_MODE="$v"
     save_install_state
 }
 
@@ -978,6 +1039,25 @@ check_prereqs() {
         info "Auto-detected NODE_IP: $NODE_IP"
     fi
     export NODE_IP
+
+    # In static-ip mode NODE_IP must be a real, non-documentation address.
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        if _is_testnet_ip "${NODE_IP}"; then
+            error "NETWORK_MODE=static-ip requires a real NODE_IP, but NODE_IP=${NODE_IP} looks like a documentation/testnet address."
+            error "Set NODE_IP to the cluster node's actual public or reachable IP and re-run."
+            exit 1
+        fi
+        # Check that the ingress controller's LoadBalancer service actually has an external IP.
+        local lb_ip
+        lb_ip=$(kubectl get svc -A -l 'app.kubernetes.io/name=ingress-nginx' \
+            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        if [[ -z "$lb_ip" ]]; then
+            warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
+            warn "  Make sure MetalLB (or a cloud LB) is configured with ${NODE_IP} before traffic can reach the cluster."
+        else
+            info "Ingress LoadBalancer external IP: ${lb_ip}"
+        fi
+    fi
 
     success "All pre-flight checks passed."
 }
@@ -1486,18 +1566,9 @@ install_eso() {
     helm repo update
     helm install external-secrets external-secrets/external-secrets \
         -n external-secrets \
+        --version "${ESO_CHART_VERSION}" \
         -f "${SCRIPT_DIR}/kernel/eso/values.yaml" \
         --wait --timeout 5m
-
-    # Helm silently skips some template-based CRDs (e.g. externalsecrets.external-secrets.io).
-    # Re-apply all ESO CRDs via server-side apply to ensure every CRD is registered.
-    helm get manifest external-secrets -n external-secrets \
-        | python3 -c "
-import sys
-content = sys.stdin.read()
-crds = [d for d in content.split('---') if 'kind: CustomResourceDefinition' in d and d.strip()]
-print('---\n' + '\n---\n'.join(crds))
-" | kubectl apply --server-side --force-conflicts -f - >/dev/null
     success "ESO installed."
 }
 
@@ -2192,6 +2263,7 @@ print_summary() {
         echo -e "${GREEN}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
         echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
+        echo -e "${GREEN}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -2217,6 +2289,7 @@ print_summary() {
         echo -e "${YELLOW}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
         echo -e "${YELLOW}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${YELLOW}║  ArgoCD login : admin / ${argocd_pw}${NC}"
+        echo -e "${YELLOW}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
         echo -e "${YELLOW}║  Status       : ${VERIFY_STATUS:-unknown} (${VERIFY_TOTAL:-0} apps)${NC}"
         echo -e "${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -2265,6 +2338,7 @@ main() {
     prompt_credentials
     prompt_app_repos
     prompt_kernel_domain
+    prompt_network_mode
     prompt_kernel_secrets
     check_prereqs
     install_tools
