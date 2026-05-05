@@ -4,7 +4,7 @@
 #
 # Patch slapd.conf to give tenant admins the LDAP access needed to provision users.
 #
-# Three insertions are made (all idempotent):
+# Six insertions are made (all idempotent):
 #
 # 1. cn=temporary ACL — insert 'by set=Tenant Admins' before Domain Admins in the
 #    three lock-object blocks, so tenant admins can acquire UID/SID locks when
@@ -21,6 +21,17 @@
 #    needed to add the auxiliary univentionPerson class). Without this, UMC cannot
 #    persist the user's last-used container, causing the wizard to reset to
 #    cn=users on every login instead of remembering ou=<tenant>.
+#
+# 4. userPassword / krb5 / samba credential attributes — these have an explicit
+#    'by * none' which stops evaluation and denies tenant admins completely.
+#    Insert 'by set=Tenant Admins write' before 'by * none' so tenant admins can
+#    set passwords when creating users.
+#
+# 5. sambaAcctFlags — 'by * +0 break' falls through to the read-only catchall.
+#    Insert 'by set=Tenant Admins write' so tenant admins can set account flags.
+#
+# 6. shadowMax / krb5PasswordEnd / shadowLastChange — same break-through pattern.
+#    Insert 'by set=Tenant Admins write' so tenant admins can set expiry attrs.
 #
 # Runs as /entrypoint.d/92-gentian-tenant-acl.sh before slapd starts.
 # Idempotent: exits 0 without changes if all patches are already applied.
@@ -55,11 +66,10 @@ with open(SLAPD_CONF) as f:
     content = f.read()
 
 already_done = content.count("Tenant Admins")
-expected_patches = 5  # 3× cn=temporary + 2× tenant-OU + 1× univentionUMCProperty = 6 lines,
-                       # but we check 5 distinct insertion points (the 3 cn=temporary blocks +
-                       # the 2 OU rules + 1 self-write block = counted by presence of marker text)
+expected_patches = 8  # 3× cn=temporary + 2× tenant-OU + 1× self-write
+                       # + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
 
-if already_done >= 5:
+if already_done >= 8:
     print("slapd.conf already fully patched for Tenant Admins, skipping.")
     sys.exit(0)
 
@@ -123,6 +133,83 @@ if "univentionUMCProperty" not in content:
 
 if new_rules:
     content = content.replace(catchall_marker, new_rules + catchall_marker, 1)
+
+# ── Patch 4: userPassword / krb5 / samba credential attrs ────────────────────
+# 'by * none' hard-stops evaluation — tenant admins cannot set passwords.
+# Unique context: the memberserver read line followed by 'by * none' and then
+# the sambaAcctFlags rule is only present in this one block.
+cred_context_old = (
+    f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read\n'
+    f'   by * none\n'
+    f'access to attrs=sambaAcctFlags\n'
+)
+cred_context_new = (
+    f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read\n'
+    f'{tenant_admins_by}'
+    f'   by * none\n'
+    f'access to attrs=sambaAcctFlags\n'
+)
+if cred_context_old in content:
+    content = content.replace(cred_context_old, cred_context_new, 1)
+    print("Patched credential attrs (userPassword/krb5/samba) for Tenant Admins.")
+elif cred_context_new in content:
+    print("Credential attrs already patched.")
+else:
+    print("WARNING: credential attrs 'by * none' context not found in slapd.conf", file=sys.stderr)
+
+# ── Patch 5: sambaAcctFlags ───────────────────────────────────────────────────
+# 'by * +0 break' passes to read-only catchall. Unique context: samba block
+# ends with dc write + break, immediately before shadowMax block.
+samba_context_old = (
+    f'access to attrs=sambaAcctFlags\n'
+    f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+    f'   by dn.children="cn=dc,cn=computers,{ldap_base}" write\n'
+    f'   by * +0 break\n'
+    f'access to attrs=shadowMax,krb5PasswordEnd,shadowLastChange\n'
+)
+samba_context_new = (
+    f'access to attrs=sambaAcctFlags\n'
+    f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+    f'   by dn.children="cn=dc,cn=computers,{ldap_base}" write\n'
+    f'{tenant_admins_by}'
+    f'   by * +0 break\n'
+    f'access to attrs=shadowMax,krb5PasswordEnd,shadowLastChange\n'
+)
+if samba_context_old in content:
+    content = content.replace(samba_context_old, samba_context_new, 1)
+    print("Patched sambaAcctFlags for Tenant Admins.")
+elif samba_context_new in content:
+    print("sambaAcctFlags already patched.")
+else:
+    print("WARNING: sambaAcctFlags context not found in slapd.conf", file=sys.stderr)
+
+# ── Patch 6: shadowMax / krb5PasswordEnd / shadowLastChange ──────────────────
+# Same break-through pattern. Unique context: memberserver read + break,
+# immediately before cn=idmap block.
+shadow_context_old = (
+    f'access to attrs=shadowMax,krb5PasswordEnd,shadowLastChange\n'
+    f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+    f'   by dn.children="cn=dc,cn=computers,{ldap_base}" write\n'
+    f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read\n'
+    f'   by * +0 break\n'
+    f'access to dn.base="cn=idmap,cn=univention,{ldap_base}"'
+)
+shadow_context_new = (
+    f'access to attrs=shadowMax,krb5PasswordEnd,shadowLastChange\n'
+    f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+    f'   by dn.children="cn=dc,cn=computers,{ldap_base}" write\n'
+    f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read\n'
+    f'{tenant_admins_by}'
+    f'   by * +0 break\n'
+    f'access to dn.base="cn=idmap,cn=univention,{ldap_base}"'
+)
+if shadow_context_old in content:
+    content = content.replace(shadow_context_old, shadow_context_new, 1)
+    print("Patched shadowMax/krb5PasswordEnd/shadowLastChange for Tenant Admins.")
+elif shadow_context_new in content:
+    print("shadowMax block already patched.")
+else:
+    print("WARNING: shadowMax context not found in slapd.conf", file=sys.stderr)
 
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
