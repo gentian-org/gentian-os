@@ -66,10 +66,11 @@ with open(SLAPD_CONF) as f:
     content = f.read()
 
 already_done = content.count("Tenant Admins")
-expected_patches = 8  # 3× cn=temporary + 2× tenant-OU + 1× self-write
-                       # + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
+# 3× cn=temporary + 2× tenant-OU + 1× self-write
+# + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
+# + 1× managed-by-attribute group membership = 9
 
-if already_done >= 8:
+if already_done >= 9:
     print("slapd.conf already fully patched for Tenant Admins, skipping.")
     sys.exit(0)
 
@@ -210,6 +211,25 @@ elif shadow_context_new in content:
     print("shadowMax block already patched.")
 else:
     print("WARNING: shadowMax context not found in slapd.conf", file=sys.stderr)
+
+# ── Patch 7: managed-by-attribute group membership ───────────────────────────
+# UDM's post-create hook adds new users to openDesk attribute-managed groups
+# (cn=managed-by-attribute-*,cn=groups,...). These are in cn=groups, not the
+# tenant OU, so the tenant-OU write rule doesn't cover them. We grant write
+# to memberUid/uniqueMember on this specific cn prefix only — deliberately
+# excluding Domain Admins, Domain Users, and other privileged groups.
+mab_rule = f'access to dn.regex="^cn=managed-by-attribute-[^,]+,cn=groups,{re.escape(ldap_base)}$" attrs=entry,memberUid,uniqueMember\n'
+if mab_rule not in content:
+    mab_acl = (
+        f'# Gentian: tenant admins may manage openDesk attribute-auto groups\n'
+        f'access to dn.regex="^cn=managed-by-attribute-[^,]+,cn=groups,{ldap_base}$" attrs=entry,memberUid,uniqueMember\n'
+        f'   by {tenant_admins_set}\n'
+        f'   by * +0 break\n'
+    )
+    content = content.replace(catchall_marker, mab_acl + catchall_marker, 1)
+    print("Patched managed-by-attribute group membership for Tenant Admins.")
+else:
+    print("managed-by-attribute rule already present.")
 
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
