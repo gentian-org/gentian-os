@@ -104,6 +104,11 @@ aio:
             fi
             printf '<?php\n$CONFIG=["trusted_domains"=>["localhost","files.${domain}","nextcloud-${env}-aio.gentian-${env}.svc.cluster.local"]];\n' \
               > /var/www/html/config/trusted-domains.config.php
+            # Allow Nextcloud to fetch OIDC discovery from ClusterIP addresses.
+            # id.desk.gentian.org resolves to a 10.x ClusterIP inside the cluster;
+            # Nextcloud's IClientService blocks private-range IPs by default.
+            printf '<?php\n$CONFIG=["allow_local_remote_servers"=>true];\n' \
+              > /var/www/html/config/allow-local-servers.config.php
 
   # Fix: image has FS_ENV_PHP_REDIS_FULL_URI="" baked in, so the entrypoint
   # script sees it as set (empty string ≠ false) and skips building the Redis
