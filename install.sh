@@ -1661,6 +1661,21 @@ install_argocd() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml"
     success "AppProject applied."
 
+    # Patch argocd-cm with a custom Lua health check for Terraform CRs
+    # (infra.contrib.fluxcd.io/Terraform). By default ArgoCD has no health
+    # check for this CRD and always reports Healthy regardless of whether
+    # the Tofu workspace succeeded or failed. This makes tofu-dev show as
+    # Degraded in ArgoCD whenever a workspace has READY=False, so that
+    # verify_argocd_apps catches Tofu failures like any other app failure.
+    info "Patching argocd-cm with Terraform CR health check..."
+    kubectl patch configmap argocd-cm -n argocd --type merge -p '
+{
+  "data": {
+    "resource.customizations.health.infra.contrib.fluxcd.io_Terraform": "hs = {}\nif obj.status ~= nil and obj.status.conditions ~= nil then\n  for _, c in ipairs(obj.status.conditions) do\n    if c.type == \"Ready\" then\n      if c.status == \"True\" then\n        hs.status = \"Healthy\"\n        hs.message = c.message\n        return hs\n      else\n        hs.status = \"Degraded\"\n        hs.message = c.message\n        return hs\n      end\n    end\n  end\nend\nhs.status = \"Progressing\"\nhs.message = \"Waiting for Terraform workspace to complete\"\nreturn hs\n"
+  }
+}'
+    success "ArgoCD Terraform CR health check configured."
+
     # Print ArgoCD admin credentials early so the user sees them even if
     # the install is interrupted before print_summary runs (verify step
     # can take up to 10 minutes).
@@ -2150,6 +2165,70 @@ install_orchestrator() {
 # Verify ArgoCD Applications
 # =============================================================================
 # Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
+# =============================================================================
+# 15b. Verify OpenTofu workspaces (Pattern-B Helm releases)
+# =============================================================================
+# verify_tofu_workspaces waits until every Terraform CR in the cluster has
+# READY=True. This covers Nubus, Nextcloud, and other Pattern-B apps whose
+# deployment is managed by tofu-controller rather than ArgoCD directly.
+# Without this check, a Tofu plan/apply failure is invisible to ArgoCD
+# (which only checks whether the CR object was applied, not whether the
+# workspace reconciliation succeeded).
+verify_tofu_workspaces() {
+    banner "Step 15b — Verifying OpenTofu Workspaces"
+
+    local timeout=${VERIFY_TIMEOUT:-900}
+    local interval=15
+    local elapsed=0
+
+    info "Waiting up to ${timeout}s for all Terraform workspaces to become Ready..."
+
+    while true; do
+        local total ready not_ready_names
+        total=$(kubectl get terraform -A --no-headers 2>/dev/null | wc -l)
+
+        if [[ "$total" -eq 0 ]]; then
+            if [[ $elapsed -ge $timeout ]]; then
+                warn "No Terraform workspaces appeared within ${timeout}s."
+                return 1
+            fi
+            printf "  …no Terraform workspaces yet (%ds/%ds)\n" "$elapsed" "$timeout"
+            sleep "$interval"; elapsed=$((elapsed + interval))
+            continue
+        fi
+
+        # Count workspaces where the Ready condition is True
+        ready=$(kubectl get terraform -A \
+            -o jsonpath='{range .items[?(@.status.conditions[0].type=="Ready")]}{.status.conditions[0].status}{"\n"}{end}' \
+            2>/dev/null | grep -c "^True$" || true)
+
+        not_ready_names=$(kubectl get terraform -A --no-headers \
+            -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[0].status,MSG:.status.conditions[0].message' \
+            2>/dev/null | grep -v "^.*True " || true)
+
+        printf "  workspaces=%d ready=%d (%ds/%ds)\n" \
+            "$total" "$ready" "$elapsed" "$timeout"
+
+        if [[ "$ready" -eq "$total" ]]; then
+            success "All ${total} Terraform workspaces are Ready."
+            return 0
+        fi
+
+        if [[ $elapsed -ge $timeout ]]; then
+            warn "Timed out after ${timeout}s — some Terraform workspaces are not Ready:"
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && echo "    $line"
+            done <<< "$not_ready_names"
+            return 1
+        fi
+
+        sleep "$interval"; elapsed=$((elapsed + interval))
+    done
+}
+
+# =============================================================================
+# 16. Verify ArgoCD Applications
+# =============================================================================
 # healthy when every Application is Synced+Healthy. Returns 0 on healthy,
 # 1 if some apps are still degraded/out-of-sync after the timeout.
 verify_argocd_apps() {
@@ -2361,6 +2440,7 @@ main() {
     install_app_catalogue
     install_appprofiles_sync
     install_orchestrator
+    verify_tofu_workspaces || true
     verify_argocd_apps || true
     print_summary
 }
