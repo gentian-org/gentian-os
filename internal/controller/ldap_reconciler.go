@@ -833,6 +833,32 @@ print(json.dumps(groups))")
 		"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
 		-d "{\"properties\":{\"nestedGroup\":${NEW_NESTED}}}"
 	echo "Tenant Admins: added ${ADMINS_GRP_DN} as nested member"
+fi
+
+# Add the tenant OU to the global settings/directory 'users' default-container
+# list so UMC shows a Container dropdown (rather than silently using cn=users).
+# Without this the "openDesk User" wizard has no Container field and always
+# places new users in cn=users, which tenant admins cannot write to.
+SETTINGS_DN="cn=default containers,cn=univention,${UDM_LDAP_BASE}"
+SETTINGS_ENC=$(urlencode "${SETTINGS_DN}")
+CURRENT_USERS=$(curl -s --max-time 30 ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/settings/directory/${SETTINGS_ENC}" \
+	| python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('properties',{}).get('users',[])))" 2>/dev/null)
+if echo "${CURRENT_USERS}" | grep -qF "${OU_POS}"; then
+	echo "settings/directory: ${OU_POS} already in users default containers"
+else
+	NEW_USERS=$(echo "${CURRENT_USERS}" | tr ' ' '\n' | python3 -c "
+import sys,json
+containers = [l.strip() for l in sys.stdin if l.strip()]
+containers.append('${OU_POS}')
+print(json.dumps(containers))")
+	curl -sf --max-time 30 -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/settings/directory/${SETTINGS_ENC}" \
+		-d "{\"properties\":{\"users\":${NEW_USERS}}}"
+	echo "settings/directory: added ${OU_POS} to users default containers"
 fi`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName,
