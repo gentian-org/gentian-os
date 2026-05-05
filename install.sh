@@ -1435,6 +1435,40 @@ install_kernel_wildcard() {
         | kubectl apply -f -
     success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
     info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"
+
+    # 4) Propagate wildcard-kernel-tls → wildcard-tls in every kernel app namespace
+    #    that references it (nubus, nextcloud, intercom-service, nextcloud-notifypush).
+    #    The Tenant operator handles tenant namespaces automatically (kernel-wildcard-tls),
+    #    but the kernel service namespaces are not managed by the operator.
+    #    Wait up to 180 s for the cert to be issued first.
+    info "Waiting for wildcard-kernel-tls to be issued (max 180s)..."
+    local i
+    for i in {1..90}; do
+        if kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
+            success "wildcard-kernel-tls Secret exists after ${i}x2s."
+            break
+        fi
+        sleep 2
+    done
+    if ! kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
+        warn "wildcard-kernel-tls not yet issued; skipping namespace propagation."
+        warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
+        return
+    fi
+    local app_ns="gentian-${ENV:-dev}"
+    info "Propagating wildcard-tls into namespace ${app_ns}..."
+    kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
+        | python3 -c "
+import sys, json
+s = json.load(sys.stdin)
+for k in ('resourceVersion','uid','creationTimestamp'):
+    s['metadata'].pop(k, None)
+s['metadata'].pop('annotations', None)
+s['metadata']['namespace'] = '${app_ns}'
+s['metadata']['name'] = 'wildcard-tls'
+print(json.dumps(s))
+" | kubectl apply -f -
+    success "wildcard-tls propagated to ${app_ns}."
 }
 
 # =============================================================================

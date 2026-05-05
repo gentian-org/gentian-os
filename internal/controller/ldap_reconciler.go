@@ -761,7 +761,34 @@ curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
 	-d "{\"policies\":{\"policies/umc\":[\"${POLICY_DN}\"]}}"
-echo "UMC policy tenant-admins-%s assigned to ${ADMINS_GRP_DN}"`,
+echo "UMC policy tenant-admins-%s assigned to ${ADMINS_GRP_DN}"
+
+# Add the tenant admins group to the portal management entries so admins see the
+# UMC user/group tiles in the portal. The entries are globally shared; we append
+# the tenant group idempotently by reading the current allowedGroups and PATCHing
+# only if the group is not yet present.
+for ENTRY_CN in swp.admin_user swp.admin_group; do
+	ENTRY_ENC=$(urlencode "cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}")
+	CURRENT=$(curl -s --max-time 30 ${CREDS} \
+		-H "Accept: application/json" \
+		"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
+		| python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('properties',{}).get('allowedGroups',[])))" 2>/dev/null)
+	if echo "${CURRENT}" | grep -qF "${ADMINS_GRP_DN}"; then
+		echo "portal entry ${ENTRY_CN}: ${ADMINS_GRP_DN} already in allowedGroups"
+	else
+		NEW_GROUPS=$(echo "${CURRENT}" | tr ' ' '\n' | python3 -c "
+import sys,json
+groups = [l.strip() for l in sys.stdin if l.strip()]
+groups.append('${ADMINS_GRP_DN}')
+print(json.dumps(groups))")
+		curl -sf --max-time 30 -X PATCH ${CREDS} \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
+			-d "{\"properties\":{\"allowedGroups\":${NEW_GROUPS}}}"
+		echo "portal entry ${ENTRY_CN}: added ${ADMINS_GRP_DN} to allowedGroups"
+	fi
+done`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName,
 		tenantName, tenantName,
