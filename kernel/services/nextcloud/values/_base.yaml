@@ -79,12 +79,18 @@ aio:
   debug:
     loglevel: "2"
 
-  # Sync Redis password on every pod start.
-  # The Nextcloud entrypoint only writes the Redis password to config.php during
-  # the initial install. On subsequent restarts it reuses the PVC-persisted
-  # config.php unchanged, causing WRONGPASS if the password rotated since then.
-  # This postStart hook ensures config.php always reflects the current value of
-  # FS_ENV_REDIS_PASSWORD (injected from the nextcloud-redis-cache ESO secret).
+  # Sync Redis password and trusted_domains on every pod start.
+  # The Nextcloud entrypoint only writes config.php during the initial install.
+  # On subsequent restarts it reuses the PVC-persisted config.php unchanged.
+  #
+  # Redis password: if rotated, the new value from the ESO secret must be
+  # patched into config.php (WRONGPASS otherwise).
+  #
+  # trusted_domains: config_is_read_only=true blocks OCC writes, so we write
+  # a supplementary trusted-domains.config.php on every start that Nextcloud
+  # auto-loads and merges. This lets in-cluster provisioning jobs (nc-group,
+  # nc-user-sync, etc.) reach Nextcloud via the internal service URL without
+  # being rejected with HTTP 400 "untrusted domain".
   lifecycleHooks:
     postStart:
       exec:
@@ -96,6 +102,8 @@ aio:
             if [ -f "$CONFIG" ] && [ -n "$FS_ENV_REDIS_PASSWORD" ]; then
               sed -i "s/'password' => '[^']*'/'password' => '$FS_ENV_REDIS_PASSWORD'/" "$CONFIG"
             fi
+            printf '<?php\n$CONFIG=["trusted_domains"=>["localhost","files.${domain}","nextcloud-${env}-aio.gentian-${env}.svc.cluster.local"]];\n' \
+              > /var/www/html/config/trusted-domains.config.php
 
   # Fix: image has FS_ENV_PHP_REDIS_FULL_URI="" baked in, so the entrypoint
   # script sees it as set (empty string ≠ false) and skips building the Redis

@@ -41,11 +41,6 @@ image:
 extraEnvVars:
   - name: FS_ENV_IGNORE_STATE_CONSISTENCY
     value: "1"
-  # Include the internal AIO service URL so that provisioning jobs
-  # (nc-group, nc-user-sync, etc.) calling Nextcloud from within the cluster
-  # are not rejected with HTTP 400 (untrusted domain).
-  - name: FS_ENV_TRUSTED_DOMAINS
-    value: "files.${domain} nextcloud-${env}-aio.gentian-${env}.svc.cluster.local"
 
 cleanup:
   deletePodsOnSuccess: true
