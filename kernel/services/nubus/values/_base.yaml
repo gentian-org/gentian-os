@@ -543,6 +543,21 @@ nubusLdapServer:
   persistence:
     enabled: true
     # size in {env}/values.yaml
+  # Patch: inject script that adds cn=Tenant Admins to cn=temporary slapd ACLs.
+  # UCS hardcodes Domain Admins in cn=temporary ACLs; tenant admin groups need
+  # write access to create UID lock objects during user provisioning.
+  # The script runs as /entrypoint.d/92-gentian-tenant-acl.sh before slapd starts
+  # (entrypoint.sh runs all scripts in /entrypoint.d/ sorted by name before exec).
+  # ConfigMap is created by Tofu (see tofu/tenant/infra-workspaces/nubus.tf).
+  extraVolumes:
+    - name: gentian-tenant-acl
+      configMap:
+        name: '{{ .Release.Name }}-ldap-gentian-acl'
+        defaultMode: 0755
+  extraVolumeMounts:
+    - name: gentian-tenant-acl
+      mountPath: /entrypoint.d/92-gentian-tenant-acl.sh
+      subPath: 92-gentian-tenant-acl.sh
 
 # UMC Gateway
 nubusUmcGateway:

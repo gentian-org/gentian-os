@@ -200,3 +200,27 @@ resource "kubernetes_config_map_v1" "nubus_udm_listener_nats_patch" {
   }
 }
 
+# =============================================================================
+# LDAP slapd.conf patch — grant cn=Tenant Admins write access to cn=temporary
+# =============================================================================
+# UCS slapd.conf hardcodes Domain Admins for cn=temporary ACLs. Tenant admins
+# (cn=admins_<tenant>) need write access to lock UIDs during user creation.
+# The patch script adds cn=Tenant Admins to the three cn=temporary access rules.
+# The gentian-os controller populates cn=Tenant Admins with each tenant's
+# admins group as a nested group via buildAdminPolicyScript.
+# =============================================================================
+resource "kubernetes_config_map_v1" "nubus_ldap_gentian_acl" {
+  metadata {
+    name      = "nubus-${var.env}-ldap-gentian-acl"
+    namespace = "gentian-${var.env}"
+    labels = {
+      "app.kubernetes.io/managed-by" = "Tofu"
+      "app.kubernetes.io/part-of"    = "nubus"
+    }
+  }
+
+  data = {
+    "92-gentian-tenant-acl.sh" = file("${path.module}/../../../services/nubus/patches/92-gentian-tenant-acl.sh")
+  }
+}
+

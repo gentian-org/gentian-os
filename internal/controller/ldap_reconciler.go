@@ -788,7 +788,52 @@ print(json.dumps(groups))")
 			-d "{\"properties\":{\"allowedGroups\":${NEW_GROUPS}}}"
 		echo "portal entry ${ENTRY_CN}: added ${ADMINS_GRP_DN} to allowedGroups"
 	fi
-done`,
+done
+
+# Ensure the shared cn=Tenant Admins group exists. The group is used by the
+# slapd.conf patch (92-gentian-tenant-acl.sh) to grant all tenant admins write
+# access to cn=temporary,cn=univention. The patch adds a single ACL rule for
+# this group; the controller makes each tenant's admins group a nested member.
+TENANT_ADMINS_DN="cn=Tenant Admins,cn=groups,${UDM_LDAP_BASE}"
+TENANT_ADMINS_ENC=$(urlencode "${TENANT_ADMINS_DN}")
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}")
+if [ "${STATUS}" = "404" ]; then
+	curl -sf --max-time 30 -X POST ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/groups/group/" \
+		-d "{\"properties\":{\"name\":\"Tenant Admins\",\"description\":\"Nested-group umbrella granting LDAP cn=temporary write access to all tenant admin groups\"},\"position\":\"cn=groups,${UDM_LDAP_BASE}\"}"
+	echo "group Tenant Admins created"
+elif [ "${STATUS}" = "200" ]; then
+	echo "group Tenant Admins already exists"
+else
+	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+	exit 1
+fi
+
+# Add the tenant admins group as a nested member of cn=Tenant Admins (idempotent).
+# UDM uses 'nestedGroup' for nested groups, which writes to uniqueMember in LDAP.
+CURRENT_NESTED=$(curl -s --max-time 30 ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
+	| python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('properties',{}).get('nestedGroup',[])))" 2>/dev/null)
+if echo "${CURRENT_NESTED}" | grep -qF "${ADMINS_GRP_DN}"; then
+	echo "Tenant Admins: ${ADMINS_GRP_DN} already a nested member"
+else
+	NEW_NESTED=$(echo "${CURRENT_NESTED}" | tr ' ' '\n' | python3 -c "
+import sys,json
+groups = [l.strip() for l in sys.stdin if l.strip()]
+groups.append('${ADMINS_GRP_DN}')
+print(json.dumps(groups))")
+	curl -sf --max-time 30 -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
+		-d "{\"properties\":{\"nestedGroup\":${NEW_NESTED}}}"
+	echo "Tenant Admins: added ${ADMINS_GRP_DN} as nested member"
+fi`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName,
 		tenantName, tenantName,
