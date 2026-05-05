@@ -4,7 +4,7 @@
 #
 # Patch slapd.conf to give tenant admins the LDAP access needed to provision users.
 #
-# Six insertions are made (all idempotent):
+# Eight insertions are made (all idempotent):
 #
 # 1. cn=temporary ACL — insert 'by set=Tenant Admins' before Domain Admins in the
 #    three lock-object blocks, so tenant admins can acquire UID/SID locks when
@@ -32,6 +32,13 @@
 #
 # 6. shadowMax / krb5PasswordEnd / shadowLastChange — same break-through pattern.
 #    Insert 'by set=Tenant Admins write' so tenant admins can set expiry attrs.
+#
+# 7. managed-by-attribute group membership — openDesk attribute-auto groups
+#    (cn=managed-by-attribute-*,cn=groups,...): Tenant Admins write on
+#    memberUid/uniqueMember so the post-create hook can add users.
+#
+# 8. cn=Domain Users group membership — UDM adds every new user to this
+#    standard global group. Tenant Admins need write on memberUid/uniqueMember.
 #
 # Runs as /entrypoint.d/92-gentian-tenant-acl.sh before slapd starts.
 # Idempotent: exits 0 without changes if all patches are already applied.
@@ -68,9 +75,10 @@ with open(SLAPD_CONF) as f:
 already_done = content.count("Tenant Admins")
 # 3× cn=temporary + 2× tenant-OU + 1× self-write
 # + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
-# + 1× managed-by-attribute group membership = 9
+# + 1× managed-by-attribute group membership
+# + 1× cn=Domain Users group membership = 10
 
-if already_done >= 9:
+if already_done >= 10:
     print("slapd.conf already fully patched for Tenant Admins, skipping.")
     sys.exit(0)
 
@@ -217,7 +225,7 @@ else:
 # (cn=managed-by-attribute-*,cn=groups,...). These are in cn=groups, not the
 # tenant OU, so the tenant-OU write rule doesn't cover them. We grant write
 # to memberUid/uniqueMember on this specific cn prefix only — deliberately
-# excluding Domain Admins, Domain Users, and other privileged groups.
+# excluding Domain Admins, Domain Users (handled by patch 8), and other privileged groups.
 mab_rule = f'access to dn.regex="^cn=managed-by-attribute-[^,]+,cn=groups,{re.escape(ldap_base)}$" attrs=entry,memberUid,uniqueMember\n'
 if mab_rule not in content:
     mab_acl = (
@@ -230,6 +238,22 @@ if mab_rule not in content:
     print("Patched managed-by-attribute group membership for Tenant Admins.")
 else:
     print("managed-by-attribute rule already present.")
+
+# ── Patch 8: cn=Domain Users group membership ────────────────────────────────
+# UDM adds every newly created user to cn=Domain Users (a standard global
+# group). Tenant admins need write on memberUid/uniqueMember for this group.
+domain_users_dn_rule = f'access to dn.base="cn=Domain Users,cn=groups,{ldap_base}" attrs=entry,memberUid,uniqueMember\n'
+if domain_users_dn_rule not in content:
+    domain_users_acl = (
+        f'# Gentian: tenant admins may add users to cn=Domain Users\n'
+        f'access to dn.base="cn=Domain Users,cn=groups,{ldap_base}" attrs=entry,memberUid,uniqueMember\n'
+        f'   by {tenant_admins_set}\n'
+        f'   by * +0 break\n'
+    )
+    content = content.replace(catchall_marker, domain_users_acl + catchall_marker, 1)
+    print("Patched cn=Domain Users group membership for Tenant Admins.")
+else:
+    print("cn=Domain Users rule already present.")
 
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
