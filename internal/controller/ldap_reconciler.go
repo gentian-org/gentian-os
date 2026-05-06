@@ -663,15 +663,24 @@ fi`, ouDN, adminEmail, tenantName)
 
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
 // tenant OU. It gives admins_<tenant> access to all UMC modules via a
-// tenant-scoped UMC policy.
+// tenant-scoped UMC policy, and restricts the admin's browsing/search scope
+// to the tenant OU.
 //
 // UDM REST API invariants:
 //   - settings/umc_operationset "operation" must be a JSON array of objects
 //     with "command" and "option" keys, e.g. [{"command":"*","option":"*"}].
 //     Sending plain strings results in broken LDAP storage.
-//   - A policy is assigned to a group by PATCHing the GROUP object's
-//     "policies.policies/umc" field. PATCHing the policy itself only sets a
-//     backward management reference that UMC does NOT evaluate.
+//   - A policy is assigned via PATCHing the target object's
+//     "policies.policies/umc" field. The policy is assigned to BOTH the admins
+//     GROUP and the tenant OU. Assigning to the OU causes UMC to use that OU
+//     as the management scope (browsing/search base) for the admin.
+//   - ldapFilter on policies/umc restricts policy application to specific users.
+//     Setting it to "(uid=admin-<tenant>)" ensures regular users in the OU do
+//     not inherit admin-level UMC permissions from the OU policy reference.
+//
+// Note: UDM REST API (and UMC) bind to LDAP as cn=admin (the slapd rootdn),
+// which bypasses all LDAP ACLs. Tenant isolation for user browsing is therefore
+// enforced at the UMC application layer via the OU-scoped policy reference.
 func buildAdminPolicyScript(ouDN, tenantName string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
@@ -736,7 +745,7 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/policies/umc/" \
-		-d "{\"properties\":{\"name\":\"tenant-admins-%s\"},\"position\":\"cn=UMC,cn=policies,${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"tenant-admins-%s\",\"ldapFilter\":\"(uid=admin-%s)\"},\"position\":\"cn=UMC,cn=policies,${UDM_LDAP_BASE}\"}"
 	echo "UMC policy tenant-admins-%s created"
 elif [ "${STATUS}" = "200" ]; then
 	echo "UMC policy tenant-admins-%s already exists"
@@ -746,22 +755,40 @@ else
 fi
 
 # Ensure policy allows the operation set (idempotent PATCH on the policy's allow list).
+# Also set ldapFilter so this policy only applies to the tenant admin, not regular
+# users in the OU (which would gain unintended admin-level UMC access).
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/policies/umc/${POLICY_ENC}" \
-	-d "{\"properties\":{\"allow\":[\"${OPSET_DN}\"]}}"
+	-d "{\"properties\":{\"allow\":[\"${OPSET_DN}\"],\"ldapFilter\":\"(uid=admin-%s)\"}}"
 echo "UMC policy tenant-admins-%s now allows ${OPSET_DN}"
 
-# Assign the UMC policy to the admins group by PATCHing the GROUP (not the policy).
-# UMC evaluates policies by walking the LDAP hierarchy from the user and checking
-# univentionPolicyReference on each group/OU. The reference must be on the GROUP.
+# Assign the UMC policy to the admins group. UMC evaluates policies by walking
+# the LDAP hierarchy from the user and collecting univentionPolicyReference from
+# each group and OU. Assigning to both the group and the OU (see below) gives
+# UMC two signals: (a) the admin has UMC permissions via the group, and (b) the
+# OU is the management scope (browsing/search base) for the admin.
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
 	-d "{\"policies\":{\"policies/umc\":[\"${POLICY_DN}\"]}}"
 echo "UMC policy tenant-admins-%s assigned to ${ADMINS_GRP_DN}"
+
+# Also assign the UMC policy to the tenant OU so UMC uses it as the management
+# scope (browsing/search base) for the tenant admin. UMC evaluates policies
+# inherited from OUs in the user's DN path; when the policy is found on the OU,
+# UMC restricts all user/group browsing to within that OU. The ldapFilter on
+# the policy ensures only the tenant admin gets this scoped view — regular users
+# in the same OU are not affected (their objects don't match the filter).
+OU_ENC=$(urlencode "${OU_POS}")
+curl -sf --max-time 30 -X PATCH ${CREDS} \
+	-H "Content-Type: application/json" \
+	-H "Accept: application/json" \
+	"${BASE_URL}/container/ou/${OU_ENC}" \
+	-d "{\"policies\":{\"policies/umc\":[\"${POLICY_DN}\"]}}"
+echo "UMC policy assigned to OU ${OU_POS} (management scope restriction)"
 
 # Add the tenant admins group to the portal management entries so admins see the
 # UMC user/group tiles in the portal. The entries are globally shared; we append
@@ -864,9 +891,10 @@ else
 fi`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName,
+		tenantName, tenantName, tenantName,
 		tenantName, tenantName,
 		tenantName, tenantName,
-		tenantName, tenantName, tenantName)
+		tenantName, tenantName)
 }
 
 // buildOUDeleteScript removes the tenant OU and all child entries.
