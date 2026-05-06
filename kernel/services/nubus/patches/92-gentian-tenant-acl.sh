@@ -92,7 +92,9 @@ already_done = content.count("Tenant Admins")
 #  'by set=Tenant Admins write' granted cross-tenant read via write-implies-read,
 #  reaching patch 9's deny rule too late. The dn.regex approach ensures patch 9
 #  is reached for cross-tenant access so it can deny it.)
-patch9_sentinel = f'access to dn.regex="^.+,ou=([^,]+),{ldap_base}$"'
+patch9_sentinel = f'# Gentian patch 9a: restrict read on tenant OU entries to same-tenant users'
+# NOTE: using the comment as sentinel avoids a false-positive match against
+# patch 2b's 'access to dn.regex="^.+,ou=([^,]+),..."' line (same pattern).
 # Sentinel for the keycloak read grant added in patch 9b (upgrade detection).
 # Old deployments have patch 9 but are missing this line, so the script must
 # fall through and apply the in-place upgrade (elif branch below).
