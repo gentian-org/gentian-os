@@ -49,9 +49,9 @@ Usage:
       Uninstall an app from a tenant by committing to gentian-deployments.
 
     kubectl gentian tenants list [--env <env>]
-      List tenant instances available in git. Shows IN_KUSTOMIZATION (instance is
-      included in the env kustomization.yaml) and LIVE (Tenant CR exists in the
-      cluster). Environment defaults to dev.
+      List tenant instances available in git. Shows DEFINED (instance is listed
+      in the env kustomization.yaml) and LIVE (Tenant CR exists in the cluster).
+      Environment defaults to dev.
 
     kubectl gentian tenants deploy <instance> [--env <env>]
       Deploy a tenant instance by adding it to <env>/tenants/kustomization.yaml.
@@ -669,8 +669,8 @@ cmd_tenant_list() {
   fi
 
   local found=0
-  printf "%-24s %-14s %-10s %-18s\n" "INSTANCE" "IN_KUSTOMIZATION" "LIVE" "TENANT_NAME"
-  printf "%-24s %-14s %-10s %-18s\n" "--------" "----------------" "----" "-----------"
+  printf "%-24s %-10s %-8s %-18s\n" "INSTANCE" "DEFINED" "LIVE" "TENANT_NAME"
+  printf "%-24s %-10s %-8s %-18s\n" "--------" "-------" "----" "-----------"
 
   local instance
   for instance in "${instances_dir}"/*; do
@@ -678,16 +678,16 @@ cmd_tenant_list() {
     found=1
 
     local instance_name
-    local in_kustomization
+    local defined
     local live
     local patch
     local tenant_name
 
     instance_name="$(basename "${instance}")"
     if grep -Eq "^[[:space:]]*-[[:space:]]*instances/${instance_name}[[:space:]]*$" "${kustom_file}"; then
-      in_kustomization="yes"
+      defined="yes"
     else
-      in_kustomization="no"
+      defined="no"
     fi
 
     patch="$(tenant_instance_patch_file "${instance_name}" "${env_name}")"
@@ -702,7 +702,7 @@ cmd_tenant_list() {
       live="no"
     fi
 
-    printf "%-24s %-14s %-10s %-18s\n" "${instance_name}" "${in_kustomization}" "${live}" "${tenant_name}"
+    printf "%-24s %-10s %-8s %-18s\n" "${instance_name}" "${defined}" "${live}" "${tenant_name}"
   done
 
   if [[ "${found}" -eq 0 ]]; then
