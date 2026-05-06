@@ -4,7 +4,7 @@
 #
 # Patch slapd.conf to give tenant admins the LDAP access needed to provision users.
 #
-# Eight insertions are made (all idempotent):
+# Nine insertions are made (all idempotent):
 #
 # 1. cn=temporary ACL — insert 'by set=Tenant Admins' before Domain Admins in the
 #    three lock-object blocks, so tenant admins can acquire UID/SID locks when
@@ -39,6 +39,17 @@
 #
 # 8. cn=Domain Users group membership — UDM adds every new user to this
 #    standard global group. Tenant Admins need write on memberUid/uniqueMember.
+#
+# 9. Tenant OU read restriction — the slapd.conf catch-all 'by users read' grants
+#    any authenticated user read access to the entire LDAP tree, including other
+#    tenants' ou= subtrees (user records, hashed passwords, email addresses, etc.).
+#    Two rules inserted just before the catch-all restrict reads on tenant OU
+#    entries and their contents to same-tenant users and service/admin accounts.
+#    Uses OpenLDAP's '$1' back-reference: the tenant OU name captured from the
+#    'access to dn.regex' pattern is expanded into the 'by dn.regex' subject, so
+#    a single rule pair covers all tenant OUs without per-tenant configuration.
+#    All matching 'by' clauses use 'read break' so that write access granted by
+#    the earlier Tenant-OU write rules (patch 2) still accumulates for admins.
 #
 # Runs as /entrypoint.d/92-gentian-tenant-acl.sh before slapd starts.
 # Idempotent: exits 0 without changes if all patches are already applied.
@@ -77,9 +88,10 @@ already_done = content.count("Tenant Admins")
 # + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
 # + 1× managed-by-attribute group membership
 # + 1× cn=Domain Users group membership = 10
+patch9_sentinel = f'access to dn.regex="^\.+,ou=([^,]+),{ldap_base}$"'
 
-if already_done >= 10:
-    print("slapd.conf already fully patched for Tenant Admins, skipping.")
+if already_done >= 10 and patch9_sentinel in content:
+    print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
 # ── Patch 1: cn=temporary ACL ────────────────────────────────────────────────
@@ -255,10 +267,50 @@ if domain_users_dn_rule not in content:
 else:
     print("cn=Domain Users rule already present.")
 
+# ── Patch 9: tenant OU read restriction ──────────────────────────────────────
+# The catch-all 'by users read' grants every authenticated user read access to
+# the whole LDAP tree.  Insert two rules immediately before the catch-all that
+# restrict reads on tenant OU entries (9a) and their contents (9b) to:
+#   • local socket / cn=admin / Domain Admins / DC & member-server computers
+#   • uid=Administrator (UCS built-in, used by Keycloak LDAP federation)
+#   • the requesting user's own entry (self)
+#   • any user whose DN is under the SAME tenant OU as the target ($1 back-ref)
+# All other authenticated users get 'none' — cross-tenant reads are denied.
+# 'read break' is used on allowed clauses so write access from patch 2 rules
+# still accumulates for tenant admins.
+if patch9_sentinel not in content:
+    ou_read_rules = (
+        f'# Gentian patch 9a: restrict read on tenant OU entries to same-tenant users\n'
+        f'access to dn.regex="^ou=([^,]+),{ldap_base}$"\n'
+        f'   by sockname="PATH=/var/run/slapd/ldapi" read break\n'
+        f'   by dn="cn=admin,{ldap_base}" read break\n'
+        f'   by group/univentionGroup/uniqueMember="cn=Domain Admins,cn=groups,{ldap_base}" read break\n'
+        f'   by dn.children="cn=dc,cn=computers,{ldap_base}" read break\n'
+        f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^\.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b: restrict read on entries inside tenant OUs to same-tenant users\n'
+        f'access to dn.regex="^\.+,ou=([^,]+),{ldap_base}$"\n'
+        f'   by sockname="PATH=/var/run/slapd/ldapi" read break\n'
+        f'   by dn="cn=admin,{ldap_base}" read break\n'
+        f'   by group/univentionGroup/uniqueMember="cn=Domain Admins,cn=groups,{ldap_base}" read break\n'
+        f'   by dn.children="cn=dc,cn=computers,{ldap_base}" read break\n'
+        f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by self read break\n'
+        f'   by dn.regex="^\.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+    )
+    content = content.replace(catchall_marker, ou_read_rules + catchall_marker, 1)
+    print("Patched tenant OU read restriction (patch 9).")
+else:
+    print("Tenant OU read restriction (patch 9) already present.")
+
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
 
 print(
     f"Patched slapd.conf: {patched_count} cn=temporary block(s); "
-    f"tenant-OU write rules; univentionUMCProperty self-write."
+    f"tenant-OU write rules; univentionUMCProperty self-write; tenant OU read restriction."
 )
