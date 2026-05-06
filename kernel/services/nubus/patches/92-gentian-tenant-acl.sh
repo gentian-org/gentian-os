@@ -84,20 +84,25 @@ with open(SLAPD_CONF) as f:
     content = f.read()
 
 already_done = content.count("Tenant Admins")
-# 3× cn=temporary + 2× tenant-OU + 1× self-write
-# + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
+# 3× cn=temporary + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
 # + 1× managed-by-attribute group membership
-# + 1× cn=Domain Users group membership = 10
-# NOTE: use bare ^.+ (any char), NOT ^\.+ (literal dot). In POSIX ERE \. matches
-# a literal dot, so ^\.+ would never match a valid LDAP DN and the cross-tenant
-# read restriction (patch 9) would silently be a no-op.
+# + 1× cn=Domain Users group membership = 8
+# (Patches 2a and 2b no longer reference Tenant Admins — they use dn.regex
+#  back-references to restrict write/read to the same-tenant OU only. The old
+#  'by set=Tenant Admins write' granted cross-tenant read via write-implies-read,
+#  reaching patch 9's deny rule too late. The dn.regex approach ensures patch 9
+#  is reached for cross-tenant access so it can deny it.)
 patch9_sentinel = f'access to dn.regex="^.+,ou=([^,]+),{ldap_base}$"'
 # Sentinel for the keycloak read grant added in patch 9b (upgrade detection).
 # Old deployments have patch 9 but are missing this line, so the script must
 # fall through and apply the in-place upgrade (elif branch below).
 patch9_keycloak_sentinel = f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break'
+# Sentinel for the per-tenant OU write fix (patches 2a/2b v2).
+# Old deployments have 'by set=Tenant Admins write' in these patches; new ones
+# use 'by dn.regex="^.+,ou=$1,..." write' so only same-tenant users get write.
+patch2_new_sentinel = f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
 
-if already_done >= 10 and patch9_sentinel in content and patch9_keycloak_sentinel in content:
+if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch2_new_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -130,29 +135,57 @@ if catchall_marker not in content:
 
 new_rules = ""
 
-# Patch 2a: OU entry itself — children/entry access so Tenant Admins can add users
+# Patch 2a: OU entry itself — children/entry access so same-tenant admins can add users.
+# Uses dn.regex back-reference so only users whose DN is UNDER THE SAME OU as the
+# target entry get write. The old format used 'by set=Tenant Admins write' which
+# granted cross-tenant write (and thus cross-tenant read, since write implies read),
+# preventing patch 9's deny rule from being evaluated.
 # NOTE: do NOT use re.escape(ldap_base) here. slapd.conf contains the raw base DN
 # (e.g. dc=swp-ldap,dc=internal), not a regex-escaped version; the sentinel must
 # match the string that was actually written to disk.
-ou_entry_rule = f'access to dn.regex="^ou=[^,]+,{ldap_base}$" attrs=children,entry\n'
-if ou_entry_rule not in content:
-    new_rules += (
-        f'# Gentian: tenant admins may add/remove entries inside their OU\n'
-        f'access to dn.regex="^ou=[^,]+,{ldap_base}$" attrs=children,entry\n'
-        f'   by {tenant_admins_set}\n'
-        f'   by * +0 break\n'
-    )
+ou_entry_old = (
+    f'# Gentian: tenant admins may add/remove entries inside their OU\n'
+    f'access to dn.regex="^ou=[^,]+,{ldap_base}$" attrs=children,entry\n'
+    f'   by {tenant_admins_set}\n'
+    f'   by * +0 break\n'
+)
+ou_entry_new = (
+    f'# Gentian: tenant admins may add/remove entries inside their own OU\n'
+    f'access to dn.regex="^ou=([^,]+),{ldap_base}$" attrs=children,entry\n'
+    f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
+    f'   by * +0 break\n'
+)
+if ou_entry_old in content:
+    content = content.replace(ou_entry_old, ou_entry_new, 1)
+    print("Upgraded patch 2a (OU entry) to per-tenant dn.regex scope.")
+elif ou_entry_new not in content:
+    new_rules += ou_entry_new
 
-# Patch 2b: anything under any OU — full write for Tenant Admins
+# Patch 2b: entries under any OU — write for same-tenant users only.
+# CRITICAL: using 'by set=Tenant Admins write' here causes cross-tenant read
+# exposure because write access implies read in OpenLDAP's access hierarchy.
+# When admin-gtn-demo-2 (a Tenant Admin) reads objects in ou=gtn-demo, the set
+# rule grants write (and thus read) BEFORE patch 9b's 'by * none' deny is reached.
+# Replacing with a dn.regex back-reference means only same-OU users get write;
+# cross-tenant users fall through to 'by * +0 break' and then to patch 9b's deny.
 # (same ldap_base note as patch 2a: raw DN, not re.escape'd)
-ou_children_rule = f'dn.regex="^.+,ou=[^,]+,{ldap_base}$"'
-if ou_children_rule not in content:
-    new_rules += (
-        f'# Gentian: tenant admins may write objects under any tenant OU\n'
-        f'access to dn.regex="^.+,ou=[^,]+,{ldap_base}$"\n'
-        f'   by {tenant_admins_set}\n'
-        f'   by * +0 break\n'
-    )
+ou_children_old = (
+    f'# Gentian: tenant admins may write objects under any tenant OU\n'
+    f'access to dn.regex="^.+,ou=[^,]+,{ldap_base}$"\n'
+    f'   by {tenant_admins_set}\n'
+    f'   by * +0 break\n'
+)
+ou_children_new = (
+    f'# Gentian: same-tenant users may write objects under their own tenant OU\n'
+    f'access to dn.regex="^.+,ou=([^,]+),{ldap_base}$"\n'
+    f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
+    f'   by * +0 break\n'
+)
+if ou_children_old in content:
+    content = content.replace(ou_children_old, ou_children_new, 1)
+    print("Upgraded patch 2b (OU children) to per-tenant dn.regex scope.")
+elif ou_children_new not in content:
+    new_rules += ou_children_new
 
 # Patch 3: univentionUMCProperty self-write — UMC persists last-used container
 if "univentionUMCProperty" not in content:
