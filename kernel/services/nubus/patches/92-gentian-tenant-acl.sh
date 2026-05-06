@@ -88,7 +88,10 @@ already_done = content.count("Tenant Admins")
 # + 1× userPassword + 1× sambaAcctFlags + 1× shadowMax
 # + 1× managed-by-attribute group membership
 # + 1× cn=Domain Users group membership = 10
-patch9_sentinel = f'access to dn.regex="^\.+,ou=([^,]+),{ldap_base}$"'
+# NOTE: use bare ^.+ (any char), NOT ^\.+ (literal dot). In POSIX ERE \. matches
+# a literal dot, so ^\.+ would never match a valid LDAP DN and the cross-tenant
+# read restriction (patch 9) would silently be a no-op.
+patch9_sentinel = f'access to dn.regex="^.+,ou=([^,]+),{ldap_base}$"'
 
 if already_done >= 10 and patch9_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
@@ -124,8 +127,11 @@ if catchall_marker not in content:
 new_rules = ""
 
 # Patch 2a: OU entry itself — children/entry access so Tenant Admins can add users
-ou_entry_rule = f'access to dn.regex="^ou=[^,]+,{re.escape(ldap_base)}$" attrs=children,entry\n'
-if "ou_entry_rule" not in content and ou_entry_rule not in content:
+# NOTE: do NOT use re.escape(ldap_base) here. slapd.conf contains the raw base DN
+# (e.g. dc=swp-ldap,dc=internal), not a regex-escaped version; the sentinel must
+# match the string that was actually written to disk.
+ou_entry_rule = f'access to dn.regex="^ou=[^,]+,{ldap_base}$" attrs=children,entry\n'
+if ou_entry_rule not in content:
     new_rules += (
         f'# Gentian: tenant admins may add/remove entries inside their OU\n'
         f'access to dn.regex="^ou=[^,]+,{ldap_base}$" attrs=children,entry\n'
@@ -134,7 +140,8 @@ if "ou_entry_rule" not in content and ou_entry_rule not in content:
     )
 
 # Patch 2b: anything under any OU — full write for Tenant Admins
-ou_children_rule = f'dn.regex="^.+,ou=[^,]+,{re.escape(ldap_base)}$"'
+# (same ldap_base note as patch 2a: raw DN, not re.escape'd)
+ou_children_rule = f'dn.regex="^.+,ou=[^,]+,{ldap_base}$"'
 if ou_children_rule not in content:
     new_rules += (
         f'# Gentian: tenant admins may write objects under any tenant OU\n'
@@ -238,7 +245,8 @@ else:
 # tenant OU, so the tenant-OU write rule doesn't cover them. We grant write
 # to memberUid/uniqueMember on this specific cn prefix only — deliberately
 # excluding Domain Admins, Domain Users (handled by patch 8), and other privileged groups.
-mab_rule = f'access to dn.regex="^cn=managed-by-attribute-[^,]+,cn=groups,{re.escape(ldap_base)}$" attrs=entry,memberUid,uniqueMember\n'
+# (same ldap_base note as patch 2a: raw DN, not re.escape'd)
+mab_rule = f'access to dn.regex="^cn=managed-by-attribute-[^,]+,cn=groups,{ldap_base}$" attrs=entry,memberUid,uniqueMember\n'
 if mab_rule not in content:
     mab_acl = (
         f'# Gentian: tenant admins may manage openDesk attribute-auto groups\n'
@@ -288,10 +296,10 @@ if patch9_sentinel not in content:
         f'   by dn.children="cn=dc,cn=computers,{ldap_base}" read break\n'
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
-        f'   by dn.regex="^\.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
         f'# Gentian patch 9b: restrict read on entries inside tenant OUs to same-tenant users\n'
-        f'access to dn.regex="^\.+,ou=([^,]+),{ldap_base}$"\n'
+        f'access to dn.regex="^.+,ou=([^,]+),{ldap_base}$"\n'
         f'   by sockname="PATH=/var/run/slapd/ldapi" read break\n'
         f'   by dn="cn=admin,{ldap_base}" read break\n'
         f'   by group/univentionGroup/uniqueMember="cn=Domain Admins,cn=groups,{ldap_base}" read break\n'
@@ -299,7 +307,7 @@ if patch9_sentinel not in content:
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by self read break\n'
-        f'   by dn.regex="^\.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
     )
     content = content.replace(catchall_marker, ou_read_rules + catchall_marker, 1)
