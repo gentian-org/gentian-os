@@ -92,8 +92,12 @@ already_done = content.count("Tenant Admins")
 # a literal dot, so ^\.+ would never match a valid LDAP DN and the cross-tenant
 # read restriction (patch 9) would silently be a no-op.
 patch9_sentinel = f'access to dn.regex="^.+,ou=([^,]+),{ldap_base}$"'
+# Sentinel for the keycloak read grant added in patch 9b (upgrade detection).
+# Old deployments have patch 9 but are missing this line, so the script must
+# fall through and apply the in-place upgrade (elif branch below).
+patch9_keycloak_sentinel = f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break'
 
-if already_done >= 10 and patch9_sentinel in content:
+if already_done >= 10 and patch9_sentinel in content and patch9_keycloak_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -287,6 +291,10 @@ else:
 # 'read break' is used on allowed clauses so write access from patch 2 rules
 # still accumulates for tenant admins.
 if patch9_sentinel not in content:
+    # Fresh config: insert full rules (including keycloak service account) before catchall.
+    # ldapsearch_keycloak is the bind DN used by Keycloak LDAP federation (see
+    # kernel/services/nubus/values/_base.yaml) and must be able to read users in
+    # every tenant OU regardless of the same-tenant restriction.
     ou_read_rules = (
         f'# Gentian patch 9a: restrict read on tenant OU entries to same-tenant users\n'
         f'access to dn.regex="^ou=([^,]+),{ldap_base}$"\n'
@@ -296,6 +304,7 @@ if patch9_sentinel not in content:
         f'   by dn.children="cn=dc,cn=computers,{ldap_base}" read break\n'
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
         f'# Gentian patch 9b: restrict read on entries inside tenant OUs to same-tenant users\n'
@@ -307,13 +316,55 @@ if patch9_sentinel not in content:
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
     )
     content = content.replace(catchall_marker, ou_read_rules + catchall_marker, 1)
     print("Patched tenant OU read restriction (patch 9).")
+elif patch9_keycloak_sentinel not in content:
+    # Upgrade path: patch 9 already applied (old version) but missing the
+    # ldapsearch_keycloak grant.  Add the missing lines in-place rather than
+    # re-inserting the whole block.
+    old_9a_tail = (
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    new_9a_tail = (
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    old_9b_tail = (
+        f'   by self read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'access to *\n'
+        f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+        f'   by users read'
+    )
+    new_9b_tail = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'access to *\n'
+        f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+        f'   by users read'
+    )
+    if old_9a_tail not in content or old_9b_tail not in content:
+        print("WARNING: could not locate expected patch 9 tail for upgrade; skipping keycloak grant.",
+              file=sys.stderr)
+    else:
+        content = content.replace(old_9a_tail, new_9a_tail, 1)
+        content = content.replace(old_9b_tail, new_9b_tail, 1)
+        print("Upgraded tenant OU read restriction to grant ldapsearch_keycloak access (patch 9 keycloak).")
 else:
-    print("Tenant OU read restriction (patch 9) already present.")
+    print("Tenant OU read restriction (patch 9) with ldapsearch_keycloak already present.")
 
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
