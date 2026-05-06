@@ -109,6 +109,17 @@ aio:
             # Nextcloud's IClientService blocks private-range IPs by default.
             printf '<?php\n$CONFIG=["allow_local_remote_servers"=>true];\n' \
               > /var/www/html/config/allow-local-servers.config.php
+            # Register Collabora empty document templates (New Document/Sheet/Presentation
+            # in the Files menu) — only if the richdocuments app is actually enabled.
+            # Wait up to 120 s for config.php to be written by the runtime entrypoint
+            # (supervisord starts it concurrently; it copies config.d → config/).
+            waited=0; max=120
+            while [ "$waited" -lt "$max" ] && ! [ -f /var/www/html/config/config.php ]; do
+              sleep 2; waited=$((waited+2))
+            done
+            if php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
+              php /var/www/html/occ richdocuments:update-empty-templates || true
+            fi
 
   # Fix: image has FS_ENV_PHP_REDIS_FULL_URI="" baked in, so the entrypoint
   # script sees it as set (empty string ≠ false) and skips building the Redis
