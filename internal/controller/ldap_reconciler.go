@@ -774,7 +774,7 @@ for ENTRY_CN in swp.admin_user swp.admin_group; do
 	BODY=$(curl -s --max-time 30 ${CREDS} \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/${ENTRY_ENC}" | tr -d '\n')
-	CURRENT_ARR=$(printf '%%s' "${BODY}" | sed -n 's/.*"allowedGroups":\[\([^]]*\)\].*/\1/p')
+	CURRENT_ARR=$(printf '%%s' "${BODY}" | sed -n 's/.*"allowedGroups":[[:space:]]*\[\([^]]*\)\].*/\1/p')
 	if printf '%%s' "${CURRENT_ARR}" | grep -qF "\"${ADMINS_GRP_DN}\""; then
 		echo "portal entry ${ENTRY_CN}: ${ADMINS_GRP_DN} already in allowedGroups"
 	else
@@ -820,7 +820,7 @@ fi
 NESTED_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" | tr -d '\n')
-CURRENT_NESTED=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"nestedGroup":\[\([^]]*\)\].*/\1/p')
+CURRENT_NESTED=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"nestedGroup":[[:space:]]*\[\([^]]*\)\].*/\1/p')
 if printf '%%s' "${CURRENT_NESTED}" | grep -qF "\"${ADMINS_GRP_DN}\""; then
 	echo "Tenant Admins: ${ADMINS_GRP_DN} already a nested member"
 else
@@ -846,7 +846,7 @@ SETTINGS_ENC=$(urlencode "${SETTINGS_DN}")
 SETTINGS_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/directory/${SETTINGS_ENC}" | tr -d '\n')
-CURRENT_USERS=$(printf '%%s' "${SETTINGS_BODY}" | sed -n 's/.*"users":\[\([^]]*\)\].*/\1/p')
+CURRENT_USERS=$(printf '%%s' "${SETTINGS_BODY}" | sed -n 's/.*"users":[[:space:]]*\[\([^]]*\)\].*/\1/p')
 if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${OU_POS}\""; then
 	echo "settings/directory: ${OU_POS} already in users default containers"
 else
