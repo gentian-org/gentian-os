@@ -230,25 +230,32 @@ print_tenant_admin_login_instructions() {
   local username="${4}"
   local password="${5}"
 
-  echo ""
-  echo "Tenant admin login (Nubus user provisioning):"
+  local id_base portal_base
   if [[ -n "${domain}" ]]; then
-    echo "  Nubus management URL:"
-    echo "  https://portal.${domain}/univention/management/"
+    id_base="https://id.${domain}"
+    portal_base="https://portal.${domain}"
   else
-    echo "  Nubus management URL:"
-    echo "  https://portal.<KERNEL_DOMAIN>/univention/management/"
+    id_base="https://id.<KERNEL_DOMAIN>"
+    portal_base="https://portal.<KERNEL_DOMAIN>"
   fi
-  echo "  Realm: ${realm}"
-  echo "  Username: ${username}"
-  echo "  Password: ${password}"
+
   echo ""
-  echo "If browser SSO/session setup requires Keycloak account access, use:"
-  if [[ -n "${domain}" ]]; then
-    echo "  https://id.${domain}/realms/${realm}/account/"
-  else
-    echo "  https://id.<KERNEL_DOMAIN>/realms/${realm}/account/"
-  fi
+  echo "─── Tenant Keycloak realm admin ─────────────────────────────────────────────"
+  echo "  This user manages users, groups, and OIDC clients within the '${realm}' realm."
+  echo "  Keycloak Admin Console:"
+  echo "    ${id_base}/admin/${realm}/console"
+  echo "  Username : ${username}"
+  echo "  Password : ${password}"
+  echo ""
+  echo "─── Portal / Nubus management (cluster admin) ───────────────────────────────"
+  echo "  The Gentian portal uses the 'opendesk' Keycloak realm (LDAP-backed)."
+  echo "  Portal URL : ${portal_base}/univention/portal/"
+  echo "  Nubus UMC  : ${portal_base}/univention/management/"
+  echo "  Username   : administrator"
+  echo "  Password   : see install.sh summary, or run:"
+  echo "    kubectl get secret nubus-credentials -n gentian-dev \\"
+  echo "      -o jsonpath='{.data.admin-password}' | base64 -d && echo"
+  echo "─────────────────────────────────────────────────────────────────────────────"
 }
 
 wait_for_tenant_ready() {
