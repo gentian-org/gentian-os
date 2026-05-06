@@ -49,7 +49,7 @@ Usage:
       Uninstall an app from a tenant by committing to gentian-deployments.
 
     kubectl gentian tenants list [--env <env>]
-      List tenant instances available in git. Shows DEFINED (instance is listed
+      List tenant instances available in git. Shows ACTIVE (instance is listed
       in the env kustomization.yaml) and LIVE (Tenant CR exists in the cluster).
       Environment defaults to dev.
 
@@ -669,8 +669,8 @@ cmd_tenant_list() {
   fi
 
   local found=0
-  printf "%-24s %-10s %-8s %-18s\n" "INSTANCE" "DEFINED" "LIVE" "TENANT_NAME"
-  printf "%-24s %-10s %-8s %-18s\n" "--------" "-------" "----" "-----------"
+  printf "%-24s %-10s %-8s %-18s\n" "INSTANCE" "ACTIVE" "LIVE" "TENANT_NAME"
+  printf "%-24s %-10s %-8s %-18s\n" "--------" "------" "----" "-----------"
 
   local instance
   for instance in "${instances_dir}"/*; do
@@ -678,16 +678,16 @@ cmd_tenant_list() {
     found=1
 
     local instance_name
-    local defined
+    local active
     local live
     local patch
     local tenant_name
 
     instance_name="$(basename "${instance}")"
     if grep -Eq "^[[:space:]]*-[[:space:]]*instances/${instance_name}[[:space:]]*$" "${kustom_file}"; then
-      defined="yes"
+      active="yes"
     else
-      defined="no"
+      active="no"
     fi
 
     patch="$(tenant_instance_patch_file "${instance_name}" "${env_name}")"
@@ -702,7 +702,7 @@ cmd_tenant_list() {
       live="no"
     fi
 
-    printf "%-24s %-10s %-8s %-18s\n" "${instance_name}" "${defined}" "${live}" "${tenant_name}"
+    printf "%-24s %-10s %-8s %-18s\n" "${instance_name}" "${active}" "${live}" "${tenant_name}"
   done
 
   if [[ "${found}" -eq 0 ]]; then
@@ -743,24 +743,32 @@ cmd_tenant_deploy() {
     realm="${tenant_name}"
   fi
 
-  if is_instance_deployed "${instance}" "${env_name}"; then
-    echo "Tenant instance '${instance}' is already deployed in '${env_name}'."
+  local already_in_kustomization=false
+  local already_live=false
+  is_instance_deployed "${instance}" "${env_name}" && already_in_kustomization=true
+  kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1 && already_live=true
+
+  if [[ "${already_live}" == "true" ]]; then
+    echo "Tenant instance '${instance}' is already live in '${env_name}'."
     if fetch_tenant_admin_credentials "${tenant_name}" 1; then
       print_tenant_admin_login_instructions "${tenant_name}" "${realm}" "${domain}" "${TENANT_ADMIN_USERNAME}" "${TENANT_ADMIN_PASSWORD}"
     else
-      echo "Tenant '${tenant_name}' is deployed but credentials could not be retrieved automatically." >&2
+      echo "Tenant '${tenant_name}' is live but credentials could not be retrieved automatically." >&2
       echo "Try: kubectl logs -n platform-kernel job/keycloak-admin-${tenant_name} | grep INITIAL_TENANT_ADMIN" >&2
     fi
     exit 0
   fi
 
-  append_instance_resource "${kustom_file}" "${instance}"
-
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    git add "${kustom_file}"
-  )
-  git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
+  if [[ "${already_in_kustomization}" == "false" ]]; then
+    append_instance_resource "${kustom_file}" "${instance}"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${kustom_file}"
+    )
+    git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
+  else
+    echo "Tenant instance '${instance}' is already in kustomization but not yet live — applying now..."
+  fi
 
   echo "Applying tenant desired state for '${env_name}'..."
   if ! apply_env_kustomization "${env_name}"; then
