@@ -766,21 +766,23 @@ echo "UMC policy tenant-admins-%s assigned to ${ADMINS_GRP_DN}"
 # Add the tenant admins group to the portal management entries so admins see the
 # UMC user/group tiles in the portal. The entries are globally shared; we append
 # the tenant group idempotently by reading the current allowedGroups and PATCHing
-# only if the group is not yet present.
+# only if the group is not yet present. Pure-shell JSON parsing is used because
+# the curl image does not ship python3 or jq; allowedGroups values are LDAP DNs
+# that never contain ']' so the sed extraction is safe.
 for ENTRY_CN in swp.admin_user swp.admin_group; do
 	ENTRY_ENC=$(urlencode "cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}")
-	CURRENT=$(curl -s --max-time 30 ${CREDS} \
+	BODY=$(curl -s --max-time 30 ${CREDS} \
 		-H "Accept: application/json" \
-		"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
-		| python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('properties',{}).get('allowedGroups',[])))" 2>/dev/null)
-	if echo "${CURRENT}" | grep -qF "${ADMINS_GRP_DN}"; then
+		"${BASE_URL}/portals/entry/${ENTRY_ENC}" | tr -d '\n')
+	CURRENT_ARR=$(printf '%%s' "${BODY}" | sed -n 's/.*"allowedGroups":\[\([^]]*\)\].*/\1/p')
+	if printf '%%s' "${CURRENT_ARR}" | grep -qF "\"${ADMINS_GRP_DN}\""; then
 		echo "portal entry ${ENTRY_CN}: ${ADMINS_GRP_DN} already in allowedGroups"
 	else
-		NEW_GROUPS=$(echo "${CURRENT}" | tr ' ' '\n' | python3 -c "
-import sys,json
-groups = [l.strip() for l in sys.stdin if l.strip()]
-groups.append('${ADMINS_GRP_DN}')
-print(json.dumps(groups))")
+		if [ -z "${CURRENT_ARR}" ]; then
+			NEW_GROUPS="[\"${ADMINS_GRP_DN}\"]"
+		else
+			NEW_GROUPS="[${CURRENT_ARR},\"${ADMINS_GRP_DN}\"]"
+		fi
 		curl -sf --max-time 30 -X PATCH ${CREDS} \
 			-H "Content-Type: application/json" \
 			-H "Accept: application/json" \
@@ -815,18 +817,18 @@ fi
 
 # Add the tenant admins group as a nested member of cn=Tenant Admins (idempotent).
 # UDM uses 'nestedGroup' for nested groups, which writes to uniqueMember in LDAP.
-CURRENT_NESTED=$(curl -s --max-time 30 ${CREDS} \
+NESTED_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
-	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
-	| python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('properties',{}).get('nestedGroup',[])))" 2>/dev/null)
-if echo "${CURRENT_NESTED}" | grep -qF "${ADMINS_GRP_DN}"; then
+	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" | tr -d '\n')
+CURRENT_NESTED=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"nestedGroup":\[\([^]]*\)\].*/\1/p')
+if printf '%%s' "${CURRENT_NESTED}" | grep -qF "\"${ADMINS_GRP_DN}\""; then
 	echo "Tenant Admins: ${ADMINS_GRP_DN} already a nested member"
 else
-	NEW_NESTED=$(echo "${CURRENT_NESTED}" | tr ' ' '\n' | python3 -c "
-import sys,json
-groups = [l.strip() for l in sys.stdin if l.strip()]
-groups.append('${ADMINS_GRP_DN}')
-print(json.dumps(groups))")
+	if [ -z "${CURRENT_NESTED}" ]; then
+		NEW_NESTED="[\"${ADMINS_GRP_DN}\"]"
+	else
+		NEW_NESTED="[${CURRENT_NESTED},\"${ADMINS_GRP_DN}\"]"
+	fi
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
@@ -841,18 +843,18 @@ fi
 # places new users in cn=users, which tenant admins cannot write to.
 SETTINGS_DN="cn=default containers,cn=univention,${UDM_LDAP_BASE}"
 SETTINGS_ENC=$(urlencode "${SETTINGS_DN}")
-CURRENT_USERS=$(curl -s --max-time 30 ${CREDS} \
+SETTINGS_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
-	"${BASE_URL}/settings/directory/${SETTINGS_ENC}" \
-	| python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('properties',{}).get('users',[])))" 2>/dev/null)
-if echo "${CURRENT_USERS}" | grep -qF "${OU_POS}"; then
+	"${BASE_URL}/settings/directory/${SETTINGS_ENC}" | tr -d '\n')
+CURRENT_USERS=$(printf '%%s' "${SETTINGS_BODY}" | sed -n 's/.*"users":\[\([^]]*\)\].*/\1/p')
+if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${OU_POS}\""; then
 	echo "settings/directory: ${OU_POS} already in users default containers"
 else
-	NEW_USERS=$(echo "${CURRENT_USERS}" | tr ' ' '\n' | python3 -c "
-import sys,json
-containers = [l.strip() for l in sys.stdin if l.strip()]
-containers.append('${OU_POS}')
-print(json.dumps(containers))")
+	if [ -z "${CURRENT_USERS}" ]; then
+		NEW_USERS="[\"${OU_POS}\"]"
+	else
+		NEW_USERS="[${CURRENT_USERS},\"${OU_POS}\"]"
+	fi
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
