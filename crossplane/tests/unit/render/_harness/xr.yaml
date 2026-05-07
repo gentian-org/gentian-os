@@ -1,0 +1,6 @@
+apiVersion: harness.gentianos.io/v1alpha1
+kind: XHarness
+metadata:
+  name: test-harness
+spec:
+  testLabel: harness-ok

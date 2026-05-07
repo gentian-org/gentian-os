@@ -1,0 +1,29 @@
+---
+apiVersion: harness.gentianos.io/v1alpha1
+kind: XHarness
+metadata:
+  name: test-harness
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: test-namespace'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: test-namespace
+  labels:
+    crossplane.io/composite: test-harness
+    gentianos.io/test-harness: harness-ok
+  name: test-harness
+  ownerReferences:
+  - apiVersion: harness.gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XHarness
+    name: test-harness
+    uid: ""

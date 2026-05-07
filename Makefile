@@ -2,6 +2,8 @@ GOPATH ?= $(HOME)/go
 LOCALBIN ?= $(GOPATH)/bin
 export PATH := $(PATH):/usr/local/go/bin:$(LOCALBIN)
 
+SHELL := /bin/bash
+
 CONTROLLER_GEN ?= controller-gen
 KUBECONFORM ?= kubeconform
 
@@ -58,3 +60,145 @@ docker-build:
 
 clean:
 	rm -rf config/crd/*.yaml api/v1alpha1/zz_generated.deepcopy.go
+
+# ---------------------------------------------------------------------------
+# Crossplane unit tests (no cluster required)
+# ---------------------------------------------------------------------------
+
+## Run crossplane render golden-file tests for all test cases in crossplane/tests/unit/render/
+## Skip directories without an expected.yaml (run 'make test-unit-render-update' to generate them)
+test-unit-render:
+	@echo "=== crossplane render golden tests ==="
+	@failed=0; \
+	for dir in crossplane/tests/unit/render/*/; do \
+		name=$$(basename "$$dir"); \
+		if [ ! -f "$$dir/xr.yaml" ] || [ ! -f "$$dir/composition.yaml" ] || [ ! -f "$$dir/functions.yaml" ]; then \
+			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
+			continue; \
+		fi; \
+		if [ ! -f "$$dir/expected.yaml" ]; then \
+			echo "SKIP: $$name (no expected.yaml — run 'make test-unit-render-update' to generate)"; \
+			continue; \
+		fi; \
+		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" 2>&1); \
+		rc=$$?; \
+		if [ $$rc -ne 0 ]; then \
+			echo "FAIL: $$name (crossplane render exited $$rc)"; \
+			echo "$$actual"; \
+			failed=1; \
+		else \
+			diff_out=$$(diff -u "$$dir/expected.yaml" <(echo "$$actual")); \
+			if [ -n "$$diff_out" ]; then \
+				echo "FAIL: $$name (output differs from expected.yaml)"; \
+				echo "$$diff_out"; \
+				failed=1; \
+			else \
+				echo "PASS: $$name"; \
+			fi; \
+		fi; \
+	done; \
+	exit $$failed
+
+## Regenerate all expected.yaml golden files under crossplane/tests/unit/render/
+test-unit-render-update:
+	@echo "=== regenerating render golden files ==="
+	@for dir in crossplane/tests/unit/render/*/; do \
+		name=$$(basename "$$dir"); \
+		if [ ! -f "$$dir/xr.yaml" ] || [ ! -f "$$dir/composition.yaml" ] || [ ! -f "$$dir/functions.yaml" ]; then \
+			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
+			continue; \
+		fi; \
+		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" \
+			> "$$dir/expected.yaml" && echo "UPDATED: $$name" || echo "FAIL: $$name"; \
+	done
+
+## Run language-native function unit tests (populated from P1 onwards)
+test-unit-functions:
+	@echo "=== function unit tests ==="
+	@if find crossplane/tests/unit/functions -name '*.py' -o -name '*_test.go' -o -name '*.test.kcl' 2>/dev/null | grep -q .; then \
+		find crossplane/tests/unit/functions -name '*.py' | while read f; do \
+			python3 -m pytest "$$f" -v; \
+		done; \
+		find crossplane/tests/unit/functions -name '*_test.go' | while read f; do \
+			go test "$$(dirname $$f)/..."; \
+		done; \
+	else \
+		echo "SKIP: no function tests found (populated from P1 onwards)"; \
+	fi
+
+## Run XRD schema validation tests (populated from P1 onwards)
+test-unit-schema:
+	@echo "=== XRD schema tests ==="
+	@if find crossplane/tests/unit/schema/valid crossplane/tests/unit/schema/invalid \
+		-name '*.yaml' ! -name '.gitkeep' 2>/dev/null | grep -q .; then \
+		which kubeconform >/dev/null 2>&1 || { echo "ERROR: kubeconform not installed. Run: make install-tools"; exit 1; }; \
+		echo "--- valid fixtures (must pass)"; \
+		for f in crossplane/tests/unit/schema/valid/*.yaml; do \
+			[ -f "$$f" ] || continue; \
+			kubeconform -strict -summary "$$f" && echo "PASS: $$f" || { echo "FAIL: $$f"; exit 1; }; \
+		done; \
+		echo "--- invalid fixtures (must fail kubeconform)"; \
+		for f in crossplane/tests/unit/schema/invalid/*.yaml; do \
+			[ -f "$$f" ] || continue; \
+			kubeconform -strict -summary "$$f" && { echo "FAIL (expected rejection): $$f"; exit 1; } || echo "PASS (correctly rejected): $$f"; \
+		done; \
+	else \
+		echo "SKIP: no schema fixtures found (populated from P1 onwards)"; \
+	fi
+
+## Run all crossplane unit tests (render + functions + schema)
+test-unit: test-unit-render test-unit-functions test-unit-schema
+	@echo "=== all crossplane unit tests passed ==="
+
+# ---------------------------------------------------------------------------
+# E2E tests (live dev cluster required)
+# ---------------------------------------------------------------------------
+
+## Install crossplane CLI (if not present) and kubeconform (if not present)
+install-tools:
+	@which crossplane >/dev/null 2>&1 || { \
+		echo "Installing crossplane CLI..."; \
+		curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh; \
+		sudo mv crossplane /usr/local/bin/crossplane; \
+	}
+	@which kubeconform >/dev/null 2>&1 || { \
+		echo "Installing kubeconform..."; \
+		KUBECONFORM_VERSION=v0.6.7; \
+		OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+		ARCH=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
+		curl -sL "https://github.com/yannh/kubeconform/releases/download/$${KUBECONFORM_VERSION}/kubeconform-$${OS}-$${ARCH}.tar.gz" \
+			| sudo tar -xz -C /usr/local/bin kubeconform; \
+	}
+	@echo "crossplane: $$(crossplane version 2>&1 | head -1)"
+	@echo "kubeconform: $$(kubeconform -v)"
+
+## P0 — Install Crossplane core on the dev cluster and verify it is Ready
+e2e-p0:
+	@crossplane/tests/e2e/scripts/p0-crossplane-install.sh
+
+## P0 rollback — uninstall Crossplane core from the dev cluster
+e2e-p0-clean:
+	@echo "Uninstalling Crossplane core..."
+	helm uninstall crossplane -n crossplane-system 2>/dev/null || true
+	kubectl delete ns crossplane-system --ignore-not-found=true
+	@echo "Done."
+
+## P1 — Kernel provisioning via Cluster XR (dev only) — not yet implemented
+e2e-p1:
+	@crossplane/tests/e2e/scripts/p1-kernel-dev.sh
+
+## P2 — Migrate Pattern B charts to provider-helm (dev only) — not yet implemented
+e2e-p2:
+	@crossplane/tests/e2e/scripts/p2-pattern-b.sh
+
+## P3 — Tenant XRD shadow deployment (dev only) — not yet implemented
+e2e-p3:
+	@crossplane/tests/e2e/scripts/p3-tenant-shadow.sh
+
+## P4 — Cutover of a real tenant (dev only) — not yet implemented
+e2e-p4:
+	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh
+
+## P5 — Migrate all tenants and decommission legacy stack — not yet implemented
+e2e-p5:
+	@crossplane/tests/e2e/scripts/p5-tofu-decommission.sh
