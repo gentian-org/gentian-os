@@ -388,16 +388,34 @@ _has_pvc() {
 }
 
 # Strip all custom resource finalizers in a namespace so it can terminate.
-# Iterates every CRD group and removes finalizers from any remaining instances.
+# Uses kubectl get all + any remaining resources from a targeted list rather
+# than iterating every api-resource (which hangs when CRDs are mid-deletion).
 _clear_ns_finalizers() {
     local ns="$1"
     info "  Clearing finalizers in namespace ${ns}..."
-    while IFS= read -r resource_type; do
-        kubectl get "${resource_type}" -n "${ns}" -o name 2>/dev/null \
+    # Patch everything returned by 'kubectl get all' first (fast, covers core types).
+    kubectl get all -n "${ns}" -o name 2>/dev/null \
         | xargs -r -I%% kubectl patch %% -n "${ns}" \
             --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
             2>/dev/null || true
-    done < <(kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null)
+    # Then try a fixed list of custom resource types we know may linger.
+    for rt in \
+        externalsecrets.external-secrets.io \
+        clusterexternalsecrets.external-secrets.io \
+        secretstores.external-secrets.io \
+        releases.helm.crossplane.io \
+        objects.kubernetes.crossplane.io \
+        providerconfigs.kubernetes.crossplane.io \
+        providerconfigs.helm.crossplane.io \
+        providerconfigs.vault.upbound.io \
+        managedresources.crossplane.io \
+        certificates.cert-manager.io \
+        issuers.cert-manager.io; do
+        kubectl get "${rt}" -n "${ns}" -o name 2>/dev/null \
+            | xargs -r -I%% kubectl patch %% -n "${ns}" \
+                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                2>/dev/null || true
+    done
 }
 
 _delete_namespace() {
