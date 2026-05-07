@@ -113,18 +113,23 @@ spec:
               forProvider:
                 name: crossplane-write
                 policy: |
-                  path "{{ $kvMount }}/data/gentian-os/*" {
-                    capabilities = ["create", "read", "update", "delete"]
-                  }
-                  path "{{ $kvMount }}/metadata/gentian-os/*" {
-                    capabilities = ["list", "read", "delete"]
-                  }
-                  path "auth/token/create" {
-                    capabilities = ["update"]
-                  }
-                  path "auth/token/lookup-self" {
-                    capabilities = ["read"]
-                  }
+                  # KV operations (create/manage kernel and tenant secrets)
+                  path "{{ $kvMount }}/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
+                  path "{{ $kvMount }}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+                  # Mount management — required for SecretMount MR (KV engine lifecycle)
+                  path "sys/mounts/*"   { capabilities = ["create","read","update","delete","sudo"] }
+                  path "sys/mounts"     { capabilities = ["read","list"] }
+                  # Policy management — required for Policy MRs (eso-read, etc.)
+                  path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","list"] }
+                  path "sys/policies/acl"   { capabilities = ["read","list"] }
+                  # Auth method management — required for Backend/BackendConfig/BackendRole MRs
+                  path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
+                  path "sys/auth"    { capabilities = ["read"] }
+                  path "auth/+/config"  { capabilities = ["create","read","update"] }
+                  path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"] }
+                  # Token operations
+                  path "auth/token/create"      { capabilities = ["update"] }
+                  path "auth/token/lookup-self" { capabilities = ["read"] }
               providerConfigRef:
                 name: openbao
 

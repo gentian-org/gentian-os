@@ -2445,4 +2445,6 @@ main() {
     print_summary
 }
 
-main "$@"
+# Allow install.sh to be sourced as a function library by sibling scripts
+# without running main(). Set GENTIAN_INSTALL_LIB_ONLY=1 before sourcing.
+[[ "${GENTIAN_INSTALL_LIB_ONLY:-0}" == "1" ]] || main "$@"
