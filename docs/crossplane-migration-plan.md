@@ -1,7 +1,7 @@
 # Gentian OS — Crossplane Migration Plan
 
-**Version:** 0.1-draft
-**Status:** Proposal
+**Version:** 0.2
+**Status:** In progress — P0 ✅  P1 ✅
 **Companion to:** [architecture.md](architecture.md), [architecture-crossplane.md](architecture-crossplane.md)
 
 ---
@@ -122,16 +122,16 @@ running system changes.
 
 ### 2.1 Deliverables
 
-- [ ] `crossplane/tests/` directory committed with stub directories.
-- [ ] `Makefile` targets:
+- [x] `crossplane/tests/` directory committed with stub directories.
+- [x] `Makefile` targets:
   - `make test-unit-render` — runs `crossplane render` golden tests.
   - `make test-unit-functions` — runs language-native function tests.
   - `make test-unit-schema` — runs XRD schema valid/invalid fixtures.
   - `make test-unit` — all three.
   - `make e2e-p1` … `make e2e-p5` — phase-specific E2E scripts (initially
     print "phase not yet implemented").
-- [ ] CI pipeline runs `make test-unit` on every PR.
-- [ ] Dev cluster has `crossplane` CLI installed and reachable
+- [x] CI pipeline runs `make test-unit` on every PR.
+- [x] Dev cluster has `crossplane` CLI installed and reachable
   (`crossplane version` succeeds).
 
 ### 2.2 Unit tests
@@ -172,30 +172,29 @@ No production impact — Crossplane was not yet wired to anything.
 
 ---
 
-## 3. Phase 1 — Kernel Provisioning via `Cluster` XR (dev only)
+## 3. Phase 1 — Kernel Provisioning via `Cluster` XR ✅
 
 **Scope:** Replace the OpenTofu HCL that seeds kernel resources
 (namespaces, OpenBao mounts, KV secrets, ArgoCD AppProject, kernel Helm
-releases) with a `Cluster` XRD + Composition. Apply only on the **dev**
-cluster. Staging and prod continue to use OpenTofu.
+releases) with a `Cluster` XRD + Composition.
 
 ### 3.1 Deliverables
 
-- [ ] Providers installed: `provider-kubernetes`, `provider-helm`,
-      `provider-vault`. ProviderConfigs reference the in-cluster
-      OpenBao via service account.
-- [ ] `crossplane/xrds/cluster.yaml` — `Cluster` / `XCluster` schema
+- [x] Providers installed: `provider-kubernetes`, `provider-vault`.
+      `function-go-templating`. ProviderConfigs reference the in-cluster
+      OpenBao via service account. (`provider-helm` deferred to Phase 2.)
+- [x] `crossplane/xrds/cluster.yaml` — `Cluster` / `XCluster` schema
       with fields matching architecture.md §13 Tofu variables
       (`kernelDomain`, `ldapBaseDn`, root credential refs).
-- [ ] `crossplane/compositions/cluster-default.yaml` — emits MRs for:
-      kernel namespaces; OpenBao mount + policy; KV seeds for
-      `kernel/identity`, `kernel/database`, `kernel/storage`,
-      `kernel/cache`, `kernel/mail`; ArgoCD AppProject; ClusterIssuer;
+- [x] `crossplane/compositions/cluster-default.yaml` — emits MRs for:
+      kernel namespaces; OpenBao mount + policies; KV seeds for
+      `kernel/database`, `kernel/cache`, `kernel/storage`,
+      `kernel/identity`, `kernel/mail`; ArgoCD AppProject; ClusterIssuer;
       ClusterSecretStore.
-- [ ] `crossplane/functions/derive-secrets/` — KCL or Python composition
+- [x] `crossplane/functions/derive-secrets/` — Python composition
       function implementing the HMAC-SHA256 derivation from
       architecture.md §5.1. Pure function, fully unit-testable.
-- [ ] `managementPolicies: ["Observe", "Create"]` on every KV MR — the
+- [x] `managementPolicies: ["Observe", "Create"]` on every KV MR — the
       Crossplane equivalent of architecture.md §5.2's Tofu lifecycle
       guard. Crossplane will create on first reconcile and never
       overwrite.
@@ -246,14 +245,12 @@ ArgoCD and see `gentianos-tenants` AppProject unchanged.
 ### 3.5 Rollback
 
 ```bash
-kubectl delete cluster dev-cluster      # Crossplane GC removes MRs
+kubectl delete cluster dev-cluster -n crossplane-system  # Crossplane GC removes MRs
                                         # but managementPolicies prevent
                                         # OpenBao deletion (Observe/Create only)
 kubectl delete -f crossplane/xrds/cluster.yaml
-# OpenTofu state is untouched throughout — re-run `tofu apply` to reassert.
+# OpenTofu state is untouched — re-run `tofu apply` to reassert.
 ```
-
-OpenTofu remains the source of truth for staging/prod.
 
 ---
 
@@ -262,7 +259,7 @@ OpenTofu remains the source of truth for staging/prod.
 **Scope:** Replace the Tofu Controller `set_sensitive` releases for
 Pattern B charts (Nubus, OX App Suite — see architecture.md §5.3) with
 `provider-helm` `Release` MRs that consume secrets via
-`valuesFrom: secretKeyRef`. Apply on dev only.
+`valuesFrom: secretKeyRef`.
 
 ### 4.1 Deliverables
 
@@ -499,9 +496,8 @@ run.
 
 ## 7. Phase 5 — Migrate All Tenants, Decommission Legacy Stack
 
-**Scope:** Repeat Phase 4 for every remaining tenant (dev → staging →
-prod), then remove the Go orchestrator, Tofu Controller, and OpenTofu
-modules.
+**Scope:** Repeat Phase 4 for all remaining tenants, then remove the
+Go orchestrator, Tofu Controller, and OpenTofu modules.
 
 ### 7.1 Deliverables
 
@@ -519,7 +515,7 @@ No new unit tests. The full suite from P0–P4 keeps running on every PR.
 
 ### 7.3 E2E test (per environment)
 
-`make e2e-p5 ENV=staging`:
+`make e2e-p5`:
 
 ```text
 1. Iterate over all Tenant CRs in the environment.
@@ -558,7 +554,7 @@ The unit-test suite from P0–P5 stays in CI permanently. The E2E
 scripts become part of the platform's release process: every new
 release of `gentian-os` runs `make e2e-p3` (shadow tenant) and `make
 e2e-p4` (cutover smoke) against a dedicated test cluster before being
-promoted to staging/prod.
+released.
 
 Additionally, two new ongoing E2E checks:
 
