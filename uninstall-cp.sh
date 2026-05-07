@@ -243,12 +243,13 @@ if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" || "${GENTIAN_MANAGED_CERT_MANAGER}" =
 
     if helm status cert-manager -n cert-manager >/dev/null 2>&1; then
         helm uninstall cert-manager -n cert-manager
-        success "cert-manager Helm release uninstalled."
+        kubectl delete namespace cert-manager --ignore-not-found=true 2>/dev/null || true
+        kubectl get crd -o name 2>/dev/null | grep cert-manager.io \
+            | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+        success "cert-manager removed."
+    else
+        info "cert-manager has no Helm release — skipping (likely managed outside Gentian, e.g. microk8s addon)."
     fi
-    kubectl delete namespace cert-manager --ignore-not-found=true 2>/dev/null || true
-    kubectl get crd -o name 2>/dev/null | grep cert-manager.io \
-        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
-    success "cert-manager removed."
 else
     info "Skipping cert-manager removal (not Gentian-managed; use --cluster-infra to force)."
 fi
