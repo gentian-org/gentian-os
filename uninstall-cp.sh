@@ -265,20 +265,51 @@ _has_pvc() {
     [[ "$(kubectl get pvc -n "${ns}" --no-headers 2>/dev/null | wc -l)" -gt 0 ]]
 }
 
+# Strip all custom resource finalizers in a namespace so it can terminate.
+# Iterates every CRD group and removes finalizers from any remaining instances.
+_clear_ns_finalizers() {
+    local ns="$1"
+    info "  Clearing finalizers in namespace ${ns}..."
+    kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null \
+    | xargs -r -I{} sh -c \
+        "kubectl get {} -n ${ns} -o name 2>/dev/null \
+         | xargs -r -I%% kubectl patch %% -n ${ns} \
+             --type=json -p='[{\"op\":\"remove\",\"path\":\"/metadata/finalizers\"}]' \
+             2>/dev/null || true"
+}
+
+_delete_namespace() {
+    local ns="$1"
+    kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=5 2>/dev/null || true
+    # Wait up to 30s; if still Terminating, strip finalizers and retry.
+    local deadline=$((SECONDS + 30))
+    while kubectl get namespace "${ns}" >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "  ${ns} stuck in Terminating — stripping remaining finalizers..."
+            _clear_ns_finalizers "${ns}"
+            # Also clear the namespace-level finalizer itself.
+            kubectl get namespace "${ns}" -o json 2>/dev/null \
+              | jq '.spec.finalizers=[]' \
+              | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - 2>/dev/null || true
+            break
+        fi
+        sleep 3
+    done
+    kubectl get namespace "${ns}" >/dev/null 2>&1 \
+        && warn "  ${ns} may still be terminating in the background." \
+        || success "  Deleted namespace: ${ns}"
+}
+
 for ns in openbao gentian-system platform-kernel tofu-system; do
     if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
         continue
     fi
     if [[ "${MODE}" == "force" ]]; then
-        kubectl delete namespace "${ns}" --ignore-not-found=true \
-            --grace-period=5 2>/dev/null || true
-        success "  Deleted namespace: ${ns}"
+        _delete_namespace "${ns}"
     elif _has_pvc "${ns}"; then
         warn "  Skipping namespace ${ns} (contains PVCs — use -f to delete)"
     else
-        kubectl delete namespace "${ns}" --ignore-not-found=true \
-            --grace-period=5 2>/dev/null || true
-        success "  Deleted namespace: ${ns}"
+        _delete_namespace "${ns}"
     fi
 done
 
