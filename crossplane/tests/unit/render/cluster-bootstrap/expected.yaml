@@ -1,0 +1,585 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: argocd-appproject-tenants, cert-issuer-http01, eso-cluster-secret-store,
+      and 16 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-appproject-tenants
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-appproject-tenants
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        clusterResourceWhitelist:
+        - group: ""
+          kind: Namespace
+        - group: cert-manager.io
+          kind: ClusterIssuer
+        description: Gentian OS — tenant workloads managed by Crossplane
+        destinations:
+        - namespace: tenant-*
+          server: https://kubernetes.default.svc
+        - namespace: argocd
+          server: https://kubernetes.default.svc
+        sourceRepos:
+        - https://github.com/gentian-org/gentian-os
+        - https://github.com/gentian-org/gentian-apps
+        - https://github.com/gentian-org/gentian-deployments
+        - registry.opencode.de/*
+        - oci://registry.opencode.de/*
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: cert-issuer-http01
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-cluster-issuer-http01
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: letsencrypt-http01
+      spec:
+        acme:
+          email: admin@desk.gentian.org
+          privateKeySecretRef:
+            name: letsencrypt-http01-account-key
+          server: https://acme-v02.api.letsencrypt.org/directory
+          solvers:
+          - http01:
+              ingress:
+                ingressClassName: public
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: eso-cluster-secret-store
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-cluster-secret-store
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ClusterSecretStore
+      metadata:
+        name: openbao
+      spec:
+        provider:
+          vault:
+            auth:
+              kubernetes:
+                mountPath: kubernetes
+                role: eso
+                serviceAccountRef:
+                  name: external-secrets
+                  namespace: external-secrets
+            path: secret
+            server: http://openbao.openbao.svc.cluster.local:8200
+            version: v2
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace-gentian-system
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-ns-gentian-system
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          gentianos.io/cluster: dev-cluster
+          gentianos.io/managed-by: crossplane
+        name: gentian-system
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace-platform-kernel
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-ns-platform-kernel
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          gentianos.io/cluster: dev-cluster
+          gentianos.io/managed-by: crossplane
+        name: platform-kernel
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: auth.vault.upbound.io/v1alpha1
+kind: BackendConfig
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-backend-config
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-k8s-config
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: auth.vault.upbound.io/v1alpha1
+kind: Backend
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-kubernetes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    description: Kubernetes service-account auth for Crossplane providers and ESO
+    path: kubernetes
+    type: kubernetes
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: auth.vault.upbound.io/v1alpha1
+kind: BackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-crossplane
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-crossplane
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - crossplane-provider-vault
+    boundServiceAccountNamespaces:
+    - crossplane-system
+    roleName: crossplane-provider
+    tokenPolicies:
+    - crossplane-write
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: auth.vault.upbound.io/v1alpha1
+kind: BackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-eso
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-eso
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - external-secrets
+    boundServiceAccountNamespaces:
+    - external-secrets
+    roleName: eso
+    tokenPolicies:
+    - eso-read
+    tokenTtl: 3600
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-cache-redis
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-cache-redis
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-cache-redis
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/cache/redis
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-database-mariadb
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-database-mariadb
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-database-mariadb
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/database/mariadb
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-database-postgresql
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-database-postgresql
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-database-postgresql
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/database/postgresql
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-identity-keycloak-bootstrap
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-identity-keycloak-bootstrap
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-identity-keycloak-bootstrap
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/identity/keycloak-bootstrap
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-identity-nubus
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-identity-nubus
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-identity-nubus
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/identity/nubus
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-mail-postfix
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-mail-postfix
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-mail-postfix
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/mail/postfix
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: mount.vault.upbound.io/v1alpha1
+kind: SecretMount
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-mount
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-mount
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    description: KV v2 store for all Gentian OS secrets
+    options:
+      version: "2"
+    path: secret
+    type: kv
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-kv-storage-minio
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-storage-minio
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-storage-minio
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/storage/minio
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: policy.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-crossplane-write
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-crossplane-write
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: crossplane-write
+    policy: |
+      path "secret/data/gentian-os/*" {
+        capabilities = ["create", "read", "update", "delete"]
+      }
+      path "secret/metadata/gentian-os/*" {
+        capabilities = ["list", "read", "delete"]
+      }
+      path "auth/token/create" {
+        capabilities = ["update"]
+      }
+      path "auth/token/lookup-self" {
+        capabilities = ["read"]
+      }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: policy.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-eso-read
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-eso-read
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: eso-read
+    policy: |
+      path "secret/data/gentian-os/kernel/*" {
+        capabilities = ["read"]
+      }
+      path "secret/metadata/gentian-os/kernel/*" {
+        capabilities = ["list"]
+      }
+      path "secret/data/gentian-os/tenants/*/apps/*/*" {
+        capabilities = ["read"]
+      }
+      path "secret/metadata/gentian-os/tenants/*" {
+        capabilities = ["list"]
+      }
+  providerConfigRef:
+    name: openbao

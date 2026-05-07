@@ -1,0 +1,28 @@
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: desk.gentian.org
+  ldapBaseDn: "dc=gentian,dc=org"
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: crossplane-system
+  openbao:
+    server: http://openbao.openbao.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    namespace: argocd
+    sourceRepos: []
+  eso:
+    namespace: external-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@desk.gentian.org
+    ingressClassName: public
+  compositeDeletePolicy: Background
+  resourceRefs: []

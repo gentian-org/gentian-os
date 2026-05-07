@@ -1,0 +1,9 @@
+# Invalid Cluster claim — kernelDomain is required but intentionally omitted.
+# Used by test-unit-schema to verify the XRD rejects this input.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-no-domain
+  namespace: default
+spec:
+  compositeDeletePolicy: Background

@@ -1,0 +1,8 @@
+# functions.yaml — references the functions used in the Composition.
+# crossplane render resolves functionRef.name to an image from this list.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: Function
+metadata:
+  name: function-go-templating
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/function-go-templating:v0.7.0

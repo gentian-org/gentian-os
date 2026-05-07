@@ -1,0 +1,26 @@
+---
+# Crossplane Providers required for Phase 1 kernel provisioning.
+# Apply once per cluster, before applying XRDs and Compositions.
+#
+# Provider versions are pinned; bump in sync with the Composition image refs.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-go-templating
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/function-go-templating:v0.7.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-kubernetes
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v0.15.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-vault
+spec:
+  # upbound/provider-vault wraps the OpenBao-compatible Vault API.
+  package: xpkg.upbound.io/upbound/provider-vault:v0.8.0

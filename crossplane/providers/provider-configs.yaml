@@ -1,0 +1,25 @@
+---
+# ProviderConfig for provider-kubernetes.
+# Uses the in-cluster service account (default); no extra secret needed when
+# running inside the same cluster.
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: kubernetes
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+# ProviderConfig for provider-vault (OpenBao-compatible).
+# Crossplane uses the vault-provider ServiceAccount token via Kubernetes auth.
+# The token path is the default projected service-account token.
+apiVersion: vault.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: openbao
+spec:
+  # Address of the OpenBao server reachable from within the cluster.
+  # Override this per-environment using a Cluster XR or a patch.
+  address: http://openbao.openbao.svc.cluster.local:8200
+  credentials:
+    source: InjectedIdentity

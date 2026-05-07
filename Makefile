@@ -112,39 +112,35 @@ test-unit-render-update:
 			> "$$dir/expected.yaml" && echo "UPDATED: $$name" || echo "FAIL: $$name"; \
 	done
 
-## Run language-native function unit tests (populated from P1 onwards)
+## Run language-native function unit tests
 test-unit-functions:
 	@echo "=== function unit tests ==="
-	@if find crossplane/tests/unit/functions -name '*.py' -o -name '*_test.go' -o -name '*.test.kcl' 2>/dev/null | grep -q .; then \
-		find crossplane/tests/unit/functions -name '*.py' | while read f; do \
-			python3 -m pytest "$$f" -v; \
-		done; \
+	@python3 -m pytest crossplane/tests/unit/functions/ -v; \
+	PY_EXIT=$$?; \
+	if find crossplane/tests/unit/functions -name '*_test.go' 2>/dev/null | grep -q .; then \
 		find crossplane/tests/unit/functions -name '*_test.go' | while read f; do \
 			go test "$$(dirname $$f)/..."; \
 		done; \
-	else \
-		echo "SKIP: no function tests found (populated from P1 onwards)"; \
-	fi
+	fi; \
+	exit $$PY_EXIT
 
-## Run XRD schema validation tests (populated from P1 onwards)
+## Run XRD schema validation tests using crossplane beta validate
 test-unit-schema:
 	@echo "=== XRD schema tests ==="
-	@if find crossplane/tests/unit/schema/valid crossplane/tests/unit/schema/invalid \
-		-name '*.yaml' ! -name '.gitkeep' 2>/dev/null | grep -q .; then \
-		which kubeconform >/dev/null 2>&1 || { echo "ERROR: kubeconform not installed. Run: make install-tools"; exit 1; }; \
-		echo "--- valid fixtures (must pass)"; \
-		for f in crossplane/tests/unit/schema/valid/*.yaml; do \
-			[ -f "$$f" ] || continue; \
-			kubeconform -strict -summary "$$f" && echo "PASS: $$f" || { echo "FAIL: $$f"; exit 1; }; \
-		done; \
-		echo "--- invalid fixtures (must fail kubeconform)"; \
-		for f in crossplane/tests/unit/schema/invalid/*.yaml; do \
-			[ -f "$$f" ] || continue; \
-			kubeconform -strict -summary "$$f" && { echo "FAIL (expected rejection): $$f"; exit 1; } || echo "PASS (correctly rejected): $$f"; \
-		done; \
-	else \
-		echo "SKIP: no schema fixtures found (populated from P1 onwards)"; \
-	fi
+	@echo "--- valid fixtures (must pass)"
+	@for f in crossplane/tests/unit/schema/valid/*.yaml; do \
+		[ -f "$$f" ] || continue; \
+		crossplane beta validate crossplane/xrds/ "$$f" 2>&1 && echo "PASS: $$f" || { echo "FAIL: $$f"; exit 1; }; \
+	done
+	@echo "--- invalid fixtures (must fail validation)"
+	@for f in crossplane/tests/unit/schema/invalid/*.yaml; do \
+		[ -f "$$f" ] || continue; \
+		if crossplane beta validate crossplane/xrds/ "$$f" 2>&1; then \
+			echo "FAIL (expected rejection): $$f"; exit 1; \
+		else \
+			echo "PASS (correctly rejected): $$f"; \
+		fi; \
+	done
 
 ## Run all crossplane unit tests (render + functions + schema)
 test-unit: test-unit-render test-unit-functions test-unit-schema
