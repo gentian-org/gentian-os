@@ -348,6 +348,20 @@ apply_cluster_xr() {
     info "Applying crossplane/claims/dev-cluster.yaml..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml"
 
+    # The XCluster composite is created asynchronously by Crossplane after the
+    # Claim is admitted. kubectl wait returns NotFound immediately if the object
+    # doesn't exist yet, so poll until it appears before handing off to wait.
+    info "Waiting for XCluster dev-cluster composite to be created (up to 60s)..."
+    local deadline=$((SECONDS + 60))
+    until kubectl get xcluster dev-cluster >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            error "XCluster dev-cluster composite was never created after 60s."
+            error "  kubectl describe cluster dev-cluster -n crossplane-system"
+            exit 1
+        fi
+        sleep 3
+    done
+
     info "Waiting for XCluster dev-cluster to be Ready (timeout: ${CLUSTER_XR_TIMEOUT})..."
     kubectl wait xcluster/dev-cluster \
         --for=condition=Ready --timeout="${CLUSTER_XR_TIMEOUT}" \
