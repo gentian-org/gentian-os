@@ -447,6 +447,117 @@ seed_secrets_remaining() {
 }
 
 # =============================================================================
+# Phase 2 — Step 13: Install provider-helm
+# provider-helm deploys Helm charts into the local cluster. It replaces the
+# Tofu Controller set_sensitive pattern for secrets-hostile charts (Pattern B).
+# =============================================================================
+install_provider_helm() {
+    banner "Step 13 — Install provider-helm (Pattern B chart deployments)"
+
+    # providers.yaml already contains provider-helm; apply idempotently.
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
+
+    info "Waiting for provider-helm to become Healthy (up to 3m)..."
+    kubectl wait provider/provider-helm \
+        --for=condition=Healthy --timeout=180s \
+    || {
+        error "provider-helm did not become Healthy within 180s."
+        error "  kubectl describe provider/provider-helm"
+        exit 1
+    }
+
+    success "provider-helm Healthy."
+}
+
+# =============================================================================
+# Phase 2 — Step 14: Deploy Nubus via provider-helm (Pattern B migration)
+#
+# Creates:
+#   - gentian-dev + gentian-infra-dev namespaces
+#   - registry-credentials-helm Secret (crossplane-system) for OCI chart pull
+#   - registry-credentials imagePullSecret (gentian-dev) for pod image pull
+#   - nubus-base-values + nubus-dev-values ConfigMaps (non-sensitive values)
+#   - nubus-dev-udm-listener-nats-patch ConfigMap (NATS subject bug workaround)
+#   - ExternalSecrets: nubus-credentials + nubus-sensitive-values (via ESO)
+#   - provider-helm Release CR (nubus-dev)
+# =============================================================================
+deploy_nubus() {
+    banner "Step 14 — Deploy Nubus via provider-helm"
+
+    local ns="gentian-${ENV:-dev}"
+    local infra_ns="gentian-infra-${ENV:-dev}"
+    local release_name="nubus-${ENV:-dev}"
+
+    # ── Namespaces ────────────────────────────────────────────────────────────
+    info "Creating namespaces ${ns} and ${infra_ns}..."
+    kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create namespace "${infra_ns}" --dry-run=client -o yaml | kubectl apply -f -
+
+    # ── Registry credentials ──────────────────────────────────────────────────
+    info "Creating registry-credentials-helm Secret in ${CROSSPLANE_NAMESPACE}..."
+    kubectl create secret generic registry-credentials-helm \
+        -n "${CROSSPLANE_NAMESPACE}" \
+        --from-literal=username="${OD_PRIVATE_REGISTRY_USERNAME}" \
+        --from-literal=password="${OD_PRIVATE_REGISTRY_PASSWORD}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    info "Creating registry-credentials imagePullSecret in ${ns}..."
+    kubectl create secret docker-registry registry-credentials \
+        -n "${ns}" \
+        --docker-server="registry.opencode.de" \
+        --docker-username="${OD_PRIVATE_REGISTRY_USERNAME}" \
+        --docker-password="${OD_PRIVATE_REGISTRY_PASSWORD}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # ── Non-sensitive values ConfigMaps ───────────────────────────────────────
+    info "Creating nubus values ConfigMaps in ${ns}..."
+    kubectl create configmap nubus-base-values \
+        -n "${ns}" \
+        --from-file=values.yaml="${SCRIPT_DIR}/crossplane/apps/nubus/values/_base.yaml" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create configmap nubus-dev-values \
+        -n "${ns}" \
+        --from-file=values.yaml="${SCRIPT_DIR}/crossplane/apps/nubus/values/dev.yaml" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # ── NATS subject patch ConfigMap ──────────────────────────────────────────
+    # Fixes LDAP_SUBJECT mismatch between udm-listener and udm-transformer
+    # images in nubus 1.16.0. Referenced by nubusUdmListener.extraVolumes.
+    info "Creating ${release_name}-udm-listener-nats-patch ConfigMap in ${ns}..."
+    kubectl create configmap "${release_name}-udm-listener-nats-patch" \
+        -n "${ns}" \
+        --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/crossplane/apps/nubus/patches/mq_adapter_nats.py" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # ── ExternalSecrets (ESO → OpenBao → K8s Secrets) ────────────────────────
+    info "Applying nubus ExternalSecrets..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/externalsecrets.yaml"
+
+    info "Waiting for ESO to sync nubus-credentials (up to 60s)..."
+    kubectl wait externalsecret/nubus-credentials \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || { error "nubus-credentials ExternalSecret did not sync. Check ESO logs."; exit 1; }
+
+    info "Waiting for ESO to sync nubus-sensitive-values (up to 60s)..."
+    kubectl wait externalsecret/nubus-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || { error "nubus-sensitive-values ExternalSecret did not sync. Check ESO logs."; exit 1; }
+
+    success "  nubus-credentials synced."
+    success "  nubus-sensitive-values synced."
+
+    # ── provider-helm Release CR ──────────────────────────────────────────────
+    info "Applying nubus Release CR (provider-helm)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/release.yaml"
+
+    info "Nubus Release submitted. Chart deployment proceeds asynchronously."
+    info "  Monitor: kubectl get release.helm.crossplane.io/nubus-dev"
+    info "  Pods:    kubectl get pods -n ${ns}"
+    success "Phase 2 — Nubus Release submitted via provider-helm."
+}
+
+# =============================================================================
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
@@ -462,17 +573,25 @@ print_summary_cp() {
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
 
+    local nubus_synced
+    nubus_synced=$(kubectl get release.helm.crossplane.io/nubus-dev \
+        -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "unknown")
+
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     Gentian OS — Phase 1 Bootstrap Complete              ║${NC}"
+    echo -e "${CYAN}║     Gentian OS — Phase 1 + 2 Bootstrap Complete          ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo "  Kernel domain  : ${KERNEL_DOMAIN:-<not set>}"
     echo "  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})"
+    echo "  Nubus Release  : nubus-dev (Synced=${nubus_synced})"
     echo ""
     echo "  Inspect Crossplane managed resources:"
     echo "    kubectl get managed -l crossplane.io/composite=${xr_name}"
-    echo "    kubectl describe xcluster ${xr_name}"
+    echo "    kubectl get release.helm.crossplane.io/nubus-dev"
+    echo ""
+    echo "  Nubus pods:"
+    echo "    kubectl get pods -n gentian-${ENV:-dev} -l app.kubernetes.io/part-of=nubus"
     echo ""
     echo "  ArgoCD:"
     echo "    URL  : https://argocd.${KERNEL_DOMAIN:-<kernel-domain>}"
@@ -482,7 +601,8 @@ print_summary_cp() {
     echo ""
     echo "  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}"
     echo ""
-    echo "  Next: Phase 2 (app charts) — see docs/crossplane-migration-plan.md"
+    echo "  Next: Phase 3 (Tenant XRD shadow deployment)"
+    echo "        see docs/crossplane-migration-plan.md"
     echo ""
 }
 
@@ -544,7 +664,11 @@ main_cp() {
     seed_secrets_remaining            # Step 12b — remaining paths (registry, DNS, etc.)
 
     # ── Optional TLS wildcard ─────────────────────────────────────────────────
-    install_kernel_wildcard     # Step 13 — wildcard cert (requires CF_API_TOKEN)
+    install_kernel_wildcard     # Step 13b — wildcard cert (requires CF_API_TOKEN)
+
+    # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
+    install_provider_helm       # Step 13 — provider-helm provider
+    deploy_nubus                # Step 14 — Nubus via provider-helm
 
     print_summary_cp
 }

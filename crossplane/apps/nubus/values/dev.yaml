@@ -1,0 +1,191 @@
+# =============================================================================
+# Nubus dev — non-secret overrides
+# =============================================================================
+# Applied after _base.yaml. Provides env-specific connection strings and
+# resource sizes. All secret fields are in nubus-sensitive-values (ESO Secret).
+# =============================================================================
+
+# Cluster-wide env defaults (from values/env/dev.yaml)
+global:
+  storageClass: nfs-csi
+  imagePullSecrets:
+    - registry-credentials
+  certManagerClusterIssuer: letsencrypt-dns01-cloudflare
+
+nubusUmcServer:
+  smtp:
+    connection:
+      host: postfix-dev.gentian-dev.svc.cluster.local
+      port: 25
+      ssl: false
+      starttls: false
+    auth:
+      enabled: true
+  postgresql:
+    selfservice:
+      connection:
+        host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+        port: "5432"
+      auth:
+        existingSecret:
+          name: nubus-credentials
+          keyMapping:
+            password: pg-selfservice-password
+    authSession:
+      connection:
+        host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+        port: "5432"
+      auth:
+        existingSecret:
+          name: nubus-credentials
+          keyMapping:
+            password: pg-authsession-password
+
+keycloak:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-keycloak-password
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+nubusGuardian:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-guardian-password
+
+nubusNotificationsApi:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-notifications-password
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+nubusKeycloakExtensions:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-keycloak-extensions-password
+  smtp:
+    auth:
+      enabled: true
+
+nubusStackDataUms:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-keycloak-password
+  nubusUmcServer:
+    postgresql:
+      connection:
+        host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+  nubusPortalConsumer:
+    objectStorage:
+      endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+  nubusPortalServer:
+    objectStorage:
+      endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+  stackDataContext:
+    smtpHost: postfix-dev.gentian-dev.svc.cluster.local
+    smtpPort: 25
+  templateContext:
+    # Usernames and lastnames only — passwords injected via nubus-sensitive-values ESO secret
+    ldapSearchUsers:
+      - username: ldapsearch_keycloak
+        lastname: LDAP-Search-User
+      - username: ldapsearch_nextcloud
+        lastname: LDAP-Search-User
+      - username: ldapsearch_dovecot
+        lastname: LDAP-Search-User
+      - username: ldapsearch_element
+        lastname: LDAP-Search-User
+      - username: ldapsearch_ox
+        lastname: LDAP-Search-User
+      - username: ldapsearch_postfix
+        lastname: LDAP-Search-User
+      - username: ldapsearch_openproject
+        lastname: LDAP-Search-User
+      - username: ldapsearch_xwiki
+        lastname: LDAP-Search-User
+
+nubusUdmListener:
+  nats:
+    auth:
+      enabled: true
+
+nubusProvisioning:
+  api:
+    nats:
+      auth:
+        enabled: true
+  dispatcher:
+    nats:
+      auth:
+        enabled: true
+  udmTransformer:
+    nats:
+      auth:
+        enabled: true
+  prefill:
+    nats:
+      auth:
+        enabled: true
+
+nubusPortalServer:
+  objectStorage:
+    endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+
+nubusPortalConsumer:
+  objectStorage:
+    endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+
+nubusLdapServer:
+  ldapServer:
+    auth:
+      enabled: true
+  persistence:
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi

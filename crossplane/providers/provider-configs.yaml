@@ -10,6 +10,16 @@ spec:
   credentials:
     source: InjectedIdentity
 ---
+# ProviderConfig for provider-helm.
+# Deploys Helm releases into the local cluster using the pod's service account.
+apiVersion: helm.crossplane.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: kubernetes
+spec:
+  credentials:
+    source: InjectedIdentity
+---
 # ProviderConfig for provider-vault (OpenBao-compatible).
 # provider-vault v3.x is Terraform/upjet-based and does not support
 # InjectedIdentity. A periodic token with the crossplane-write policy is
