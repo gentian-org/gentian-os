@@ -75,6 +75,17 @@ if [[ "$INIT_STATUS" == "true" ]]; then
   else
     echo "  (token is read silently — characters will not appear as you type)"
     read -rsp "  Enter openbao-transit root token: " TRANSIT_ROOT_TOKEN; echo ""
+    if [[ -z "${TRANSIT_ROOT_TOKEN}" ]]; then
+      error "Root token must not be empty."
+      exit 1
+    fi
+    LOOKUP_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+      -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+      "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
+    if [[ "${LOOKUP_HTTP}" != "200" ]]; then
+      error "Root token rejected by transit (HTTP ${LOOKUP_HTTP}). Check the token and retry."
+      exit 1
+    fi
   fi
 
   SEALED=$(curl -sf "${TRANSIT_ADDR}/v1/sys/seal-status" | jq -r '.sealed')
