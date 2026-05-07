@@ -2,14 +2,16 @@
 # =============================================================================
 # uninstall-cp.sh — Gentian OS Crossplane-based uninstall
 # =============================================================================
-# Reverses install-cp.sh (Phase 1 bootstrap) in reverse order.
+# Reverses install-cp.sh (Phase 1 + Phase 2 bootstrap) in reverse order.
 #
 # Default (safe) mode:
+#   - Removes the Nubus provider-helm Release and associated Secrets/ConfigMaps
 #   - Removes the Cluster XR (waits for Crossplane GC)
 #   - Removes Crossplane resources (XRD, Composition, providers)
 #   - Uninstalls Crossplane core
 #   - Removes ArgoCD, ESO, cert-manager
 #   - Preserves PVC/PV data and namespaces that contain PVCs
+#   - Preserves OpenBao KV paths (managementPolicies: Observe, Create)
 #
 # Force mode (-f):
 #   - All safe-mode steps
@@ -112,6 +114,53 @@ else
 fi
 
 # =============================================================================
+# Step 1b — Remove Phase 2 resources (provider-helm Release, nubus Secrets/CMs)
+# Must run before Crossplane providers are removed so the Release GC can run.
+# =============================================================================
+banner "Step 1b — Remove Nubus provider-helm Release"
+
+if kubectl get release.helm.crossplane.io/nubus-dev >/dev/null 2>&1; then
+    info "Deleting provider-helm Release nubus-dev..."
+    kubectl delete release.helm.crossplane.io/nubus-dev --timeout=60s || true
+    info "Waiting for Helm GC (nubus-dev uninstall, max 3m)..."
+    local_deadline=$((SECONDS + 180))
+    while kubectl get release.helm.crossplane.io/nubus-dev >/dev/null 2>&1; do
+        if (( SECONDS > local_deadline )); then
+            warn "Release nubus-dev still present after 3m — forcing finalizer removal."
+            kubectl patch release.helm.crossplane.io/nubus-dev \
+                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                2>/dev/null || true
+            break
+        fi
+        sleep 5
+    done
+    success "Release nubus-dev removed."
+else
+    info "Release nubus-dev not found; skipping."
+fi
+
+for ns in gentian-dev gentian-infra-dev; do
+    info "Removing nubus ConfigMaps / Secrets from ${ns}..."
+    kubectl delete configmap \
+        nubus-base-values \
+        nubus-dev-values \
+        nubus-dev-udm-listener-nats-patch \
+        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+    kubectl delete externalsecret \
+        nubus-credentials \
+        nubus-sensitive-values \
+        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+    # ESO-owned Secrets: delete only if ExternalSecrets are gone
+    kubectl delete secret \
+        nubus-credentials \
+        nubus-sensitive-values \
+        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+    kubectl delete secret registry-credentials \
+        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+done
+success "Phase 2 nubus resources removed."
+
+# =============================================================================
 # Step 2 — Remove Crossplane compositions, XRDs, and ProviderConfigs
 # =============================================================================
 banner "Step 2 — Remove Crossplane XRDs, Compositions, ProviderConfigs"
@@ -132,7 +181,13 @@ done
 # =============================================================================
 banner "Step 3 — Uninstall Crossplane providers"
 
-for provider in function-go-templating provider-kubernetes provider-vault; do
+for provider in \
+    function-go-templating \
+    function-auto-ready \
+    provider-helm \
+    provider-kubernetes \
+    provider-vault
+do
     kubectl delete "function.pkg.crossplane.io/${provider}" \
         --ignore-not-found=true 2>/dev/null \
     || kubectl delete "provider.pkg.crossplane.io/${provider}" \
@@ -181,12 +236,13 @@ for secret in \
     gentian-os-kernel-storage-minio \
     gentian-os-kernel-identity-nubus \
     gentian-os-kernel-identity-keycloak-bootstrap \
-    gentian-os-kernel-mail-postfix
+    gentian-os-kernel-mail-postfix \
+    registry-credentials-helm
 do
     kubectl delete secret "${secret}" -n crossplane-system \
         --ignore-not-found=true 2>/dev/null || true
 done
-success "Derived-credential Secrets removed."
+success "Derived-credential and registry Secrets removed."
 
 # =============================================================================
 # Step 6 — Uninstall ArgoCD
@@ -301,7 +357,7 @@ _delete_namespace() {
         || success "  Deleted namespace: ${ns}"
 }
 
-for ns in openbao gentian-system platform-kernel tofu-system; do
+for ns in openbao gentian-dev gentian-infra-dev gentian-system platform-kernel tofu-system; do
     if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
         continue
     fi

@@ -664,11 +664,11 @@ main_cp() {
     seed_secrets_remaining            # Step 12b — remaining paths (registry, DNS, etc.)
 
     # ── Optional TLS wildcard ─────────────────────────────────────────────────
-    install_kernel_wildcard     # Step 13b — wildcard cert (requires CF_API_TOKEN)
+    install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
 
     # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
-    install_provider_helm       # Step 13 — provider-helm provider
-    deploy_nubus                # Step 14 — Nubus via provider-helm
+    install_provider_helm       # Step 13 — wait for provider-helm Healthy
+    deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
 
     print_summary_cp
 }

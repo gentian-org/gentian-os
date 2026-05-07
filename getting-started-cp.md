@@ -1,10 +1,10 @@
-# Getting Started — Gentian OS (Crossplane-based install)
+# Getting Started — Gentian OS
 
 This guide covers the prerequisites and steps to bootstrap a Gentian OS kernel
-cluster using **`install-cp.sh`** (Phase 1). After completing this guide you
-will have Crossplane, cert-manager, External Secrets Operator, ArgoCD, and
-OpenBao running, with all kernel structural resources provisioned by the
-Cluster XR.
+cluster using **`install-cp.sh`** (Phase 1 + Phase 2). After completing this guide
+you will have Crossplane, cert-manager, External Secrets Operator, ArgoCD, and
+OpenBao running, with all kernel structural resources provisioned by the Cluster XR,
+and Nubus deployed via the `provider-helm` Release CR.
 
 ---
 
@@ -83,7 +83,7 @@ running the installer.
 | Step | Component | Description |
 |------|-----------|-------------|
 | 0 | Crossplane | Install Crossplane core (controller + RBAC) via Helm |
-| 0b | Crossplane | Install providers: `provider-kubernetes`, `provider-vault`, `function-go-templating` |
+| 0b | Crossplane | Install providers: `provider-kubernetes`, `provider-vault`, `provider-helm`, `function-go-templating`, `function-auto-ready` |
 | 0c | Crossplane | Apply XRD (`XCluster` / `Cluster`) + Composition |
 | 1 | Namespaces | Create kernel namespaces |
 | 2 | Cluster | Pre-warm cluster (PLEG/CRI race mitigation) |
@@ -97,15 +97,17 @@ running the installer.
 | 9 | OpenBao | Init primary OpenBao (KV engine, recovery keys) |
 | 10 | OpenBao | Bootstrap Kubernetes auth backend for Crossplane *(replaces `tofu apply openbao-init`)* |
 | 11 | Crossplane | Create 8 derived-credential K8s Secrets in `crossplane-system` |
-| 12 | Cluster XR | Apply Cluster claim → kernel structural resources reconciled by provider-vault and provider-kubernetes: KV mount + policies + K8s auth backend/roles, KV seed paths (database, cache, storage, identity, mail), ArgoCD AppProject, ESO ClusterSecretStore, cert-manager ClusterIssuer |
+| 12 | Cluster XR | Apply Cluster claim → kernel structural resources reconciled by `provider-vault` and `provider-kubernetes`: KV mount + policies + K8s auth backend/roles, KV seed paths (database, cache, storage, identity, mail), ArgoCD AppProject, ESO ClusterSecretStore, cert-manager ClusterIssuer |
 | 12b | Secrets | Seed remaining secrets: registry, DNS/Cloudflare, internal |
-| 13 | TLS | Install kernel wildcard Certificate (requires `CF_API_TOKEN`) |
+| 12c _(optional)_ | TLS | Install kernel wildcard Certificate (requires `CF_API_TOKEN`) |
+| **13** | **Crossplane** | **Wait for `provider-helm` Healthy** |
+| **14** | **Nubus** | **Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR** |
 
-**Not done in Phase 1** (planned for later phases):
+**Not yet implemented** (planned for later phases):
 
 | Phase | Component | Description |
 |-------|-----------|-------------|
-| P2 | Apps | Pattern B app charts (Nubus, OX App Suite, …) via `provider-helm` |
+| P2 _(future)_ | OX App Suite | Pattern B chart via `provider-helm` (planned) |
 | P3 | Tenants | Tenant XRD + provisioning via Cluster XR |
 
 ---
@@ -116,7 +118,7 @@ running the installer.
 # Verify your environment first (runs check_prereqs, exits with list of issues)
 ./install-cp.sh --validate
 
-# Full bootstrap (Phase 1)
+# Full bootstrap (Phase 1 + Phase 2)
 ./install-cp.sh
 ```
 
@@ -129,6 +131,7 @@ skip already-completed steps.
 
 ```bash
 # Safe teardown: removes Crossplane, ArgoCD, ESO, cert-manager.
+# Removes provider-helm Release (nubus-dev) and associated Secrets/ConfigMaps.
 # Preserves PVC/PV data and OpenBao KV paths.
 ./uninstall-cp.sh
 
@@ -177,4 +180,45 @@ bao read auth/kubernetes/role/crossplane-provider
 ```bash
 kubectl get secret argocd-initial-admin-secret -n argocd \
   -o jsonpath='{.data.password}' | base64 -d
+```
+
+### Nubus deployment status
+
+```bash
+# provider-helm Release status
+kubectl get release.helm.crossplane.io/nubus-dev
+kubectl describe release.helm.crossplane.io/nubus-dev | tail -20
+
+# ESO secret sync status
+kubectl get externalsecret -n gentian-dev
+
+# Nubus pods
+kubectl get pods -n gentian-dev -l app.kubernetes.io/part-of=nubus
+
+# Values actually applied (sensitive values are redacted by Helm)
+kubectl get release.helm.crossplane.io/nubus-dev \
+  -o jsonpath='{.status.atProvider.releaseDescription}'
+```
+
+### provider-helm not Healthy
+
+```bash
+kubectl describe provider.pkg.crossplane.io/provider-helm
+# Check the provider pod logs
+kubectl logs -n crossplane-system \
+  -l pkg.crossplane.io/revision=provider-helm --tail=50
+```
+
+### ESO ExternalSecret stuck
+
+```bash
+# Check ESO operator logs
+kubectl logs -n external-secrets deploy/external-secrets --tail=50
+
+# Describe the failing ExternalSecret
+kubectl describe externalsecret nubus-sensitive-values -n gentian-dev
+
+# Verify the OpenBao path exists
+bao kv get gentian-os/kernel/identity/nubus
+bao kv get gentian-os/kernel/mail/postfix
 ```
