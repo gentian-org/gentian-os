@@ -153,5 +153,8 @@ jobs:
             | sudo tar -xz -C /usr/local/bin kubeconform
           kubeconform -v
 
+      - name: Install Python test dependencies
+        run: pip install pytest
+
       - name: Run crossplane unit tests
         run: make test-unit

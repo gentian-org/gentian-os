@@ -32,7 +32,8 @@ spec:
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
             {{- $ingressClass     := default "public" (dig "certManager" "ingressClassName" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
-            {{- $masterRef        := default (dict "name" "gentian-os-master-password" "namespace" "crossplane-system") (default (dict) $spec.masterPasswordSecretRef) }}
+            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
+            {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
 
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
             {{- range list "platform-kernel" "gentian-system" }}
