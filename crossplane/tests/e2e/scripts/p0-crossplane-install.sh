@@ -34,6 +34,19 @@ if kubectl get deployment crossplane -n "${NAMESPACE}" >/dev/null 2>&1; then
 elif helm status crossplane -n "${NAMESPACE}" >/dev/null 2>&1; then
   info "Crossplane already installed via Helm in ${NAMESPACE}; skipping install."
 else
+  # Clean up any orphaned cluster-scoped resources left by a previous failed
+  # install (they lack Helm ownership labels and would block a fresh install).
+  if kubectl get clusterrole crossplane >/dev/null 2>&1; then
+    info "Removing orphaned Crossplane cluster-scoped resources before install..."
+    kubectl delete clusterrole \
+      crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
+      --ignore-not-found=true
+    kubectl delete clusterrolebinding \
+      crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
+      --ignore-not-found=true
+    kubectl delete namespace "${NAMESPACE}" --ignore-not-found=true
+  fi
+
   info "Adding Crossplane Helm repo..."
   helm repo add crossplane-stable "${HELM_REPO}" --force-update
   helm repo update

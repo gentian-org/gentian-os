@@ -177,6 +177,8 @@ e2e-p0-clean:
 	@echo "Uninstalling Crossplane core..."
 	helm uninstall crossplane -n crossplane-system 2>/dev/null || true
 	kubectl delete ns crossplane-system --ignore-not-found=true
+	kubectl delete clusterrole crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
+	kubectl delete clusterrolebinding crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
 	@echo "Done."
 
 ## P1 — Kernel provisioning via Cluster XR (dev only) — not yet implemented
