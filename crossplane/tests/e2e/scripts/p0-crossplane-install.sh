@@ -26,9 +26,13 @@ kubectl cluster-info --request-timeout=5s >/dev/null 2>&1 \
 info "Cluster reachable: $(kubectl config current-context)"
 
 # ── Install Crossplane ───────────────────────────────────────────────────────
+# Detect any existing Crossplane install (Helm-managed, microk8s addon, or
+# kubectl-applied) by checking for the crossplane Deployment directly.
 
-if helm status crossplane -n "${NAMESPACE}" >/dev/null 2>&1; then
-  info "Crossplane already installed in ${NAMESPACE}; skipping install."
+if kubectl get deployment crossplane -n "${NAMESPACE}" >/dev/null 2>&1; then
+  info "Crossplane deployment already present in ${NAMESPACE}; skipping install."
+elif helm status crossplane -n "${NAMESPACE}" >/dev/null 2>&1; then
+  info "Crossplane already installed via Helm in ${NAMESPACE}; skipping install."
 else
   info "Adding Crossplane Helm repo..."
   helm repo add crossplane-stable "${HELM_REPO}" --force-update
