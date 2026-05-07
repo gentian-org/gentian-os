@@ -162,6 +162,49 @@ done
 success "Phase 2 nubus resources removed."
 
 # =============================================================================
+# Step 1c — Drain all remaining Crossplane managed resources
+#
+# After the XR is GC'd the vault/kubernetes provider controllers start
+# finalizing the composed MRs. With managementPolicies:[Observe,Create] they
+# skip the external delete and just strip the finalizer — but this can be slow
+# or stuck if the provider pod is busy or OpenBao is unreachable.
+#
+# We wait up to 60 s for MRs to drain on their own, then force-strip any
+# remaining finalizers so the subsequent ProviderConfig deletes don't hang.
+# =============================================================================
+banner "Step 1c — Drain Crossplane managed resources"
+
+_mr_count() {
+    kubectl get managed --no-headers 2>/dev/null | wc -l | tr -d ' '
+}
+
+info "Waiting up to 60s for managed resources to drain..."
+drain_deadline=$((SECONDS + 60))
+while [[ "$(_mr_count)" -gt 0 ]]; do
+    if (( SECONDS > drain_deadline )); then
+        warn "Managed resources still present after 60s — stripping finalizers."
+        break
+    fi
+    sleep 5
+done
+
+remaining_count="$(_mr_count)"
+if [[ "${remaining_count}" -gt 0 ]]; then
+    warn "  ${remaining_count} managed resource(s) still present — forcing finalizer removal."
+    while IFS= read -r mr; do
+        [[ -z "${mr}" ]] && continue
+        kubectl patch "${mr}" \
+            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || true
+        kubectl delete "${mr}" --grace-period=0 --force \
+            --ignore-not-found=true 2>/dev/null || true
+    done < <(kubectl get managed -o name 2>/dev/null)
+    success "  Finalizers stripped; managed resources removed."
+else
+    success "  All managed resources drained."
+fi
+
+# =============================================================================
 # Step 2 — Remove Crossplane compositions, XRDs, and ProviderConfigs
 # =============================================================================
 banner "Step 2 — Remove Crossplane XRDs, Compositions, ProviderConfigs"
@@ -178,11 +221,16 @@ done
 
 # ProviderConfigs must be deleted individually — kubectl delete -f fails if
 # a CRD is not registered (e.g. provider-helm was never installed).
+# Add --wait=false so deletion doesn't block if a stale usage reference lingers.
 _delete_provider_config() {
     local resource="$1"   # e.g. providerconfig.kubernetes.crossplane.io/kubernetes
     local label="$2"
     if kubectl get "${resource}" >/dev/null 2>&1; then
-        kubectl delete "${resource}" --ignore-not-found=true 2>/dev/null || true
+        # Strip the usage finalizer explicitly first, then delete without waiting.
+        kubectl patch "${resource}" \
+            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || true
+        kubectl delete "${resource}" --ignore-not-found=true --wait=false 2>/dev/null || true
         success "  ProviderConfig ${label} removed."
     else
         info "  ProviderConfig ${label} not found or CRD absent; skipping."
