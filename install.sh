@@ -1003,7 +1003,14 @@ check_prereqs() {
     banner "Pre-flight checks"
 
     local missing=0
-    for cmd in kubectl helm jq openssl curl; do
+
+    # ── CLI tools ─────────────────────────────────────────────────────────────
+    local base_tools=(kubectl helm jq openssl curl bao)
+    # Crossplane-based installer also needs the crossplane CLI and python3.
+    local extra_tools=()
+    [[ "${CROSSPLANE_MODE:-0}" == "1" ]] && extra_tools=(crossplane python3)
+
+    for cmd in "${base_tools[@]}" "${extra_tools[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
             error "Required command not found: $cmd"
             missing=$((missing + 1))
@@ -1012,6 +1019,15 @@ check_prereqs() {
         fi
     done
 
+    # ── Cluster connectivity ──────────────────────────────────────────────────
+    if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+        error "No reachable Kubernetes cluster — set KUBECONFIG or connect to your cluster first."
+        missing=$((missing + 1))
+    else
+        success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
+    fi
+
+    # ── Required environment variables ───────────────────────────────────────
     for var in MASTER_PASSWORD OD_PRIVATE_REGISTRY_USERNAME OD_PRIVATE_REGISTRY_PASSWORD \
                OD_SMTP_RELAY_USERNAME OD_SMTP_RELAY_PASSWORD; do
         if [[ -z "${!var:-}" ]]; then

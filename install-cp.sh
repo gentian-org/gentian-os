@@ -436,7 +436,7 @@ main_cp() {
     prompt_kernel_domain
     prompt_network_mode
     prompt_kernel_secrets
-    check_prereqs
+    CROSSPLANE_MODE=1 check_prereqs
 
     # ── Crossplane core + providers ──────────────────────────────────────────
     install_crossplane          # Step 0   — Crossplane controller
