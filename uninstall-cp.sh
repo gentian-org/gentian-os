@@ -190,10 +190,22 @@ success "Derived-credential Secrets removed."
 
 # =============================================================================
 # Step 6 — Uninstall ArgoCD
-# Phase 1 installs ArgoCD but does NOT apply the root ApplicationSet, so
-# there are no ArgoCD Applications to finalise here.
+# Strip Application finalizers first: when the ArgoCD API server is deleted
+# its finalizer handler disappears, leaving Applications stuck in Terminating
+# and blocking namespace deletion indefinitely.
 # =============================================================================
 banner "Step 6 — Uninstall ArgoCD"
+
+# Remove resources-finalizer.argocd.argoproj.io from all Applications so the
+# namespace can terminate cleanly even after the ArgoCD server is gone.
+if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
+    info "Stripping ArgoCD Application finalizers..."
+    kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null \
+        | xargs -r -I{} kubectl patch {} -n argocd \
+            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || true
+    success "  Application finalizers cleared."
+fi
 
 if helm status argocd -n argocd >/dev/null 2>&1; then
     helm uninstall argocd -n argocd
