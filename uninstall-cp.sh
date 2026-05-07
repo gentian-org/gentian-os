@@ -270,12 +270,12 @@ _has_pvc() {
 _clear_ns_finalizers() {
     local ns="$1"
     info "  Clearing finalizers in namespace ${ns}..."
-    kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null \
-    | xargs -r -I{} sh -c \
-        "kubectl get {} -n ${ns} -o name 2>/dev/null \
-         | xargs -r -I%% kubectl patch %% -n ${ns} \
-             --type=json -p='[{\"op\":\"remove\",\"path\":\"/metadata/finalizers\"}]' \
-             2>/dev/null || true"
+    while IFS= read -r resource_type; do
+        kubectl get "${resource_type}" -n "${ns}" -o name 2>/dev/null \
+        | xargs -r -I%% kubectl patch %% -n "${ns}" \
+            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || true
+    done < <(kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null)
 }
 
 _delete_namespace() {
