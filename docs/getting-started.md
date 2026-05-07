@@ -16,9 +16,17 @@ Kubernetes cluster and provision your first tenant.
 | `jq` | JSON parsing in bootstrap scripts (e.g. PV cleanup) |
 | `openssl` | HKDF-based secret derivation from `MASTER_PASSWORD` |
 | `curl` | health checks and OpenBao API calls |
+| `crossplane` CLI | required for `make test-unit` (render golden tests) and `make e2e-p0` |
+| `kubeconform` | required for `make test-unit-schema` (XRD schema validation) |
 
 `tofu` (OpenTofu) and `bao` (OpenBao CLI) are installed automatically by
 `install.sh`. Pass `SKIP_TOOLS=1` to skip if they are already present.
+
+`crossplane` and `kubeconform` can be installed in one step:
+
+```bash
+make install-tools
+```
 
 ### Required credentials
 
@@ -398,9 +406,94 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 
 ---
 
+---
+
+## Crossplane migration — Phase 0
+
+Phase 0 of the [Crossplane migration plan](crossplane-migration-plan.md) is
+already in place on the `develop` branch. It is **pure additive scaffolding**:
+nothing in the running system changes, but the test harness and CI hooks are
+live and ready for Phase 1 work.
+
+### What is in place
+
+| Deliverable | Location |
+|---|---|
+| Test scaffold | `crossplane/tests/unit/render/_harness/` |
+| Render golden-file test | `make test-unit-render` |
+| Function unit tests (stub, P1+) | `make test-unit-functions` |
+| XRD schema tests (stub, P1+) | `make test-unit-schema` |
+| All unit tests combined | `make test-unit` |
+| CI job on every PR | `.github/workflows/ci.yaml` → `crossplane-unit` job |
+| E2E: install Crossplane core | `make e2e-p0` |
+| E2E: uninstall Crossplane core | `make e2e-p0-clean` |
+| E2E stubs P1–P5 | `make e2e-p1` … `make e2e-p5` |
+
+### Running the unit tests (no cluster required)
+
+```bash
+# Install tooling once
+make install-tools
+
+# Run the full unit test suite
+make test-unit
+```
+
+Expected output:
+
+```
+=== crossplane render golden tests ===
+PASS: _harness
+=== function unit tests ===
+SKIP: no function tests found (populated from P1 onwards)
+=== XRD schema tests ===
+SKIP: no schema fixtures found (populated from P1 onwards)
+=== all crossplane unit tests passed ===
+```
+
+### Running the P0 E2E test (dev cluster required)
+
+Point `KUBECONFIG` at your dev cluster, then:
+
+```bash
+make e2e-p0
+```
+
+The script installs Crossplane core (Helm chart v1.18.0) into
+`crossplane-system`, waits for the deployment to be `Available`, and verifies
+all core CRDs are registered. It prints `P0 E2E RESULT: PASS` on success.
+
+To uninstall Crossplane core again:
+
+```bash
+make e2e-p0-clean
+```
+
+> **Note:** The legacy stack (OpenTofu + Go orchestrator) is completely
+> unaffected by Phase 0. The Crossplane install from `make e2e-p0` is
+> isolated to the `crossplane-system` namespace and is not wired to any
+> running workloads.
+
+### Adding new render tests
+
+Every Composition written in subsequent phases gets a golden-file render test
+under `crossplane/tests/unit/render/<test-name>/` with four files:
+`xr.yaml`, `composition.yaml`, `functions.yaml`, and `expected.yaml`.
+
+To regenerate all golden files after updating a Composition:
+
+```bash
+make test-unit-render-update
+```
+
+---
+
 ## Further reading
 
-- [Architecture](architecture.md) — system design and component relationships
+- [Architecture](architecture.md) — current system design (Go orchestrator + OpenTofu)
+- [Architecture — Crossplane](architecture-crossplane.md) — target architecture (Crossplane-based)
+- [Crossplane Migration Plan](crossplane-migration-plan.md) — P0–P5 migration plan with unit and E2E tests
+- [Design docs](design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
 - [Implementation Plan](implementation-plan.md) — increment history and decisions
 - [scripts/seed-openbao.sh](../scripts/seed-openbao.sh) — secret derivation details
 - [kernel/tofu/platform/openbao-init/](../kernel/tofu/platform/openbao-init/) — OpenBao Tofu workspace
