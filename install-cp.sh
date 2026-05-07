@@ -43,7 +43,7 @@ unset GENTIAN_INSTALL_LIB_ONLY
 CROSSPLANE_NAMESPACE=crossplane-system
 CROSSPLANE_VERSION="1.18.0"
 CROSSPLANE_HELM_REPO=https://charts.crossplane.io/stable
-PROVIDER_WAIT_TIMEOUT=10m
+PROVIDER_WAIT_TIMEOUT=15m
 CLUSTER_XR_TIMEOUT=15m
 
 # =============================================================================
@@ -100,15 +100,22 @@ install_crossplane_providers() {
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
 
     info "Waiting for providers to become Healthy (timeout: ${PROVIDER_WAIT_TIMEOUT})..."
-    for provider in function-go-templating provider-kubernetes provider-vault; do
+
+    # function-go-templating is a Function resource; provider-kubernetes and
+    # provider-vault are Provider resources. Use the correct type for each so
+    # we don't burn the full timeout on the wrong resource kind.
+    info "  Waiting for: function-go-templating"
+    kubectl wait function.pkg.crossplane.io/function-go-templating \
+        --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
+
+    for provider in provider-kubernetes provider-vault; do
         info "  Waiting for: ${provider}"
-        kubectl wait "function.pkg.crossplane.io/${provider}" \
-            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}" 2>/dev/null \
-        || kubectl wait "provider.pkg.crossplane.io/${provider}" \
-            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}" \
-        || warn "  ${provider} not yet Healthy — Crossplane will retry"
+        kubectl wait "provider.pkg.crossplane.io/${provider}" \
+            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
     done
 
+    # Apply ProviderConfigs only after all providers are Healthy so the CRDs
+    # (e.g. vault.upbound.io/v1beta1 ProviderConfig) exist.
     info "Applying ProviderConfigs (InjectedIdentity for both kubernetes and openbao)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
 
