@@ -168,14 +168,30 @@ banner "Step 2 — Remove Crossplane XRDs, Compositions, ProviderConfigs"
 
 for file in \
     "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml" \
-    "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml" \
-    "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
+    "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
 do
     if [[ -f "${file}" ]]; then
         kubectl delete -f "${file}" --ignore-not-found=true
         success "  Removed: $(basename "${file}")"
     fi
 done
+
+# ProviderConfigs must be deleted individually — kubectl delete -f fails if
+# a CRD is not registered (e.g. provider-helm was never installed).
+_delete_provider_config() {
+    local resource="$1"   # e.g. providerconfig.kubernetes.crossplane.io/kubernetes
+    local label="$2"
+    if kubectl get "${resource}" >/dev/null 2>&1; then
+        kubectl delete "${resource}" --ignore-not-found=true 2>/dev/null || true
+        success "  ProviderConfig ${label} removed."
+    else
+        info "  ProviderConfig ${label} not found or CRD absent; skipping."
+    fi
+}
+
+_delete_provider_config "providerconfig.kubernetes.crossplane.io/kubernetes" "provider-kubernetes/kubernetes"
+_delete_provider_config "providerconfig.helm.crossplane.io/kubernetes"       "provider-helm/kubernetes"
+_delete_provider_config "providerconfig.vault.upbound.io/openbao"            "provider-vault/openbao"
 
 # =============================================================================
 # Step 3 — Uninstall Crossplane providers
