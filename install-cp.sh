@@ -348,35 +348,38 @@ apply_cluster_xr() {
     info "Applying crossplane/claims/dev-cluster.yaml..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml"
 
-    # The XCluster composite is created asynchronously by Crossplane after the
-    # Claim is admitted. kubectl wait returns NotFound immediately if the object
-    # doesn't exist yet, so poll until it appears before handing off to wait.
-    info "Waiting for XCluster dev-cluster composite to be created (up to 60s)..."
+    # Crossplane generates a unique name for the XCluster composite (e.g.
+    # dev-cluster-k4d2m). Read it from the Claim's resourceRef once populated.
+    info "Waiting for Claim dev-cluster to be bound to a composite (up to 60s)..."
+    local xr_name=""
     local deadline=$((SECONDS + 60))
-    until kubectl get xcluster dev-cluster >/dev/null 2>&1; do
+    until [[ -n "${xr_name}" ]]; do
+        xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
-            error "XCluster dev-cluster composite was never created after 60s."
+            error "Claim dev-cluster was never bound to a composite after 60s."
             error "  kubectl describe cluster dev-cluster -n crossplane-system"
             exit 1
         fi
-        sleep 3
+        [[ -n "${xr_name}" ]] || sleep 3
     done
+    info "  Composite name: ${xr_name}"
 
-    info "Waiting for XCluster dev-cluster to be Ready (timeout: ${CLUSTER_XR_TIMEOUT})..."
-    kubectl wait xcluster/dev-cluster \
+    info "Waiting for XCluster ${xr_name} to be Ready (timeout: ${CLUSTER_XR_TIMEOUT})..."
+    kubectl wait "xcluster/${xr_name}" \
         --for=condition=Ready --timeout="${CLUSTER_XR_TIMEOUT}" \
     || {
-        error "XCluster dev-cluster did not become Ready within ${CLUSTER_XR_TIMEOUT}."
+        error "XCluster ${xr_name} did not become Ready within ${CLUSTER_XR_TIMEOUT}."
         error "Diagnose with:"
-        error "  kubectl describe xcluster dev-cluster"
-        error "  kubectl get managed -l crossplane.io/composite=dev-cluster"
+        error "  kubectl describe xcluster ${xr_name}"
+        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
         exit 1
     }
 
-    success "Cluster XR dev-cluster is Ready — kernel structural resources provisioned."
+    success "Cluster XR ${xr_name} is Ready — kernel structural resources provisioned."
 
     local mr_count
-    mr_count=$(kubectl get managed -l crossplane.io/composite=dev-cluster --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     info "  ${mr_count} managed resource(s) reconciled."
 }
 
@@ -398,11 +401,16 @@ seed_secrets_remaining() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
+    local xr_name
+    xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+    xr_name="${xr_name:-dev-cluster}"   # fallback for display if claim missing
+
     local xr_ready
-    xr_ready=$(kubectl get xcluster dev-cluster \
+    xr_ready=$(kubectl get "xcluster/${xr_name}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     local mr_count
-    mr_count=$(kubectl get managed -l crossplane.io/composite=dev-cluster \
+    mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
 
     echo ""
@@ -411,11 +419,11 @@ print_summary_cp() {
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo "  Kernel domain  : ${KERNEL_DOMAIN:-<not set>}"
-    echo "  Cluster XR     : dev-cluster (Ready=${xr_ready}, MRs=${mr_count})"
+    echo "  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})"
     echo ""
     echo "  Inspect Crossplane managed resources:"
-    echo "    kubectl get managed -l crossplane.io/composite=dev-cluster"
-    echo "    kubectl describe xcluster dev-cluster"
+    echo "    kubectl get managed -l crossplane.io/composite=${xr_name}"
+    echo "    kubectl describe xcluster ${xr_name}"
     echo ""
     echo "  ArgoCD:"
     echo "    URL  : https://argocd.${KERNEL_DOMAIN:-<kernel-domain>}"
