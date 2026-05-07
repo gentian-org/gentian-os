@@ -115,8 +115,13 @@ test-unit-render-update:
 ## Run language-native function unit tests
 test-unit-functions:
 	@echo "=== function unit tests ==="
-	@python3 -m pytest crossplane/tests/unit/functions/ -v; \
-	PY_EXIT=$$?; \
+	@PY_EXIT=0; \
+	if find crossplane/tests/unit/functions -name 'test_*.py' 2>/dev/null | grep -q .; then \
+		python3 -m pytest crossplane/tests/unit/functions/ -v; \
+		PY_EXIT=$$?; \
+	else \
+		echo "SKIP: no Python function tests found"; \
+	fi; \
 	if find crossplane/tests/unit/functions -name '*_test.go' 2>/dev/null | grep -q .; then \
 		find crossplane/tests/unit/functions -name '*_test.go' | while read f; do \
 			go test "$$(dirname $$f)/..."; \

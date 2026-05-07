@@ -121,6 +121,7 @@ check_k8s_object() {
   local kind="$1" name="$2" ns="${3:-}"
   local flags=""
   [[ -n "${ns}" ]] && flags="-n ${ns}"
+  # shellcheck disable=SC2086  # flags is intentionally word-split (empty or "-n ns")
   if kubectl get "${kind}" "${name}" ${flags} >/dev/null 2>&1; then
     pass "  ${kind}/${name} found"
   else

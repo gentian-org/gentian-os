@@ -87,9 +87,11 @@ for crd in \
   compositions.apiextensions.crossplane.io \
   functions.pkg.crossplane.io \
   providers.pkg.crossplane.io; do
-  kubectl get crd "${crd}" >/dev/null 2>&1 \
-    && pass "CRD present: ${crd}" \
-    || fail "CRD missing:  ${crd}"
+  if kubectl get crd "${crd}" >/dev/null 2>&1; then
+    pass "CRD present: ${crd}"
+  else
+    fail "CRD missing:  ${crd}"
+  fi
 done
 
 # ── crossplane CLI health ─────────────────────────────────────────────────────

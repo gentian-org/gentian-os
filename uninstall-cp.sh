@@ -39,6 +39,7 @@ INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
 GENTIAN_MANAGED_CERT_MANAGER="${GENTIAN_MANAGED_CERT_MANAGER:-0}"
 
 # Load install state to know if cert-manager is Gentian-managed.
+# shellcheck source=/dev/null
 [[ -r "${INSTALL_STATE_FILE}" ]] && source "${INSTALL_STATE_FILE}" || true
 
 while [[ $# -gt 0 ]]; do
@@ -352,9 +353,11 @@ _delete_namespace() {
         fi
         sleep 3
     done
-    kubectl get namespace "${ns}" >/dev/null 2>&1 \
-        && warn "  ${ns} may still be terminating in the background." \
-        || success "  Deleted namespace: ${ns}"
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+        warn "  ${ns} may still be terminating in the background."
+    else
+        success "  Deleted namespace: ${ns}"
+    fi
 }
 
 for ns in openbao gentian-dev gentian-infra-dev gentian-system platform-kernel tofu-system; do
