@@ -11,15 +11,20 @@ spec:
     source: InjectedIdentity
 ---
 # ProviderConfig for provider-vault (OpenBao-compatible).
-# Crossplane uses the vault-provider ServiceAccount token via Kubernetes auth.
-# The token path is the default projected service-account token.
+# provider-vault v3.x is Terraform/upjet-based and does not support
+# InjectedIdentity. A periodic token with the crossplane-write policy is
+# minted by install-cp.sh (bootstrap_openbao_for_crossplane) and stored in
+# the openbao-crossplane-token Secret in crossplane-system.
 apiVersion: vault.upbound.io/v1beta1
 kind: ProviderConfig
 metadata:
   name: openbao
 spec:
   # Address of the OpenBao server reachable from within the cluster.
-  # Override this per-environment using a Cluster XR or a patch.
   address: http://openbao.openbao.svc.cluster.local:8200
   credentials:
-    source: InjectedIdentity
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: openbao-crossplane-token
+      key: credentials

@@ -65,8 +65,12 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-mount
+                # Tell upjet the external resource ID so observe finds the
+                # pre-existing mount rather than attempting a duplicate create.
+                crossplane.io/external-name: {{ $kvMount }}
               name: {{ $name }}-kv-mount
             spec:
+              managementPolicies: ["Observe", "Create"]
               forProvider:
                 path: {{ $kvMount }}
                 type: kv
@@ -141,8 +145,10 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+                crossplane.io/external-name: {{ $authMount }}
               name: {{ $name }}-auth-kubernetes
             spec:
+              managementPolicies: ["Observe", "Create"]
               forProvider:
                 type: kubernetes
                 path: {{ $authMount }}

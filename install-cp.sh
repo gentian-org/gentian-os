@@ -202,7 +202,8 @@ POLICY
     success "crossplane-write policy written."
 
     # ── 4. crossplane-provider Kubernetes auth role ───────────────────────────
-    # Bound to the provider-vault controller's ServiceAccount.
+    # Kept for future use (K8s auth for dynamic tokens); not used by the
+    # provider-vault ProviderConfig which requires a static token Secret.
     bao write auth/kubernetes/role/crossplane-provider \
         bound_service_account_names=crossplane-provider-vault \
         bound_service_account_namespaces="${CROSSPLANE_NAMESPACE}" \
@@ -210,7 +211,55 @@ POLICY
         token_ttl=3600
     success "crossplane-provider K8s auth role created."
 
-    info "provider-vault can now authenticate via InjectedIdentity."
+    # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
+    # provider-vault v3.x (upjet/Terraform-based) does not support
+    # InjectedIdentity. It reads credentials from a k8s Secret whose 'credentials'
+    # key must contain a JSON object with a 'token' field.
+    # Validate existing Secret before re-minting to stay idempotent.
+    local need_new_token=1
+    if kubectl get secret openbao-crossplane-token -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
+        local existing_token
+        existing_token=$(kubectl get secret openbao-crossplane-token -n "${CROSSPLANE_NAMESPACE}" \
+            -o jsonpath='{.data.credentials}' 2>/dev/null \
+            | base64 -d 2>/dev/null \
+            | jq -r '.token // empty' 2>/dev/null || true)
+        if [[ -n "${existing_token}" ]]; then
+            local http_code
+            http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                -H "X-Vault-Token: ${existing_token}" \
+                "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
+            if [[ "${http_code}" == "200" ]]; then
+                success "openbao-crossplane-token Secret already valid — skipping."
+                need_new_token=0
+            else
+                info "Existing openbao-crossplane-token is stale (HTTP ${http_code}); recreating."
+                kubectl delete secret openbao-crossplane-token \
+                    -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
+    if [[ "${need_new_token}" == "1" ]]; then
+        info "Minting periodic crossplane-provider token (period=8760h)..."
+        local cp_token
+        cp_token=$(bao token create \
+            -policy=crossplane-write \
+            -period=8760h \
+            -orphan \
+            -display-name=crossplane-provider \
+            -format=json \
+            | jq -r '.auth.client_token')
+        if [[ -z "${cp_token}" || "${cp_token}" == "null" ]]; then
+            error "Failed to mint crossplane-provider token."
+            exit 1
+        fi
+        kubectl create secret generic openbao-crossplane-token \
+            -n "${CROSSPLANE_NAMESPACE}" \
+            --from-literal=credentials="{\"token\":\"${cp_token}\"}"
+        success "openbao-crossplane-token Secret created in ${CROSSPLANE_NAMESPACE}."
+    fi
+
+    info "provider-vault ProviderConfig will authenticate via openbao-crossplane-token Secret."
 }
 
 # =============================================================================
