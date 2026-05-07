@@ -139,8 +139,9 @@ install_crossplane_providers() {
 # that backend doesn't exist yet — this step creates it with the root token
 # so that the Cluster XR can reconcile on the first apply.
 #
-# The Cluster XR then ADOPTS these resources (Observe/Create managementPolicy)
-# and manages them going forward. This step replaces 'tofu apply openbao-init'.
+    # The `crossplane-write` policy in the Cluster XR Policy MR keeps the policy in
+    # sync going forward. The Cluster XR uses Mount (KV engine), Policy, Backend,
+    # AuthBackendConfig, AuthBackendRole, SecretV2, and Object (K8s) resources.
 # =============================================================================
 bootstrap_openbao_for_crossplane() {
     banner "Step 10 — Bootstrap OpenBao auth for Crossplane (replaces tofu apply openbao-init)"

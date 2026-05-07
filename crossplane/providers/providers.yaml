@@ -23,4 +23,4 @@ metadata:
   name: provider-vault
 spec:
   # upbound/provider-vault wraps the OpenBao-compatible Vault API.
-  package: xpkg.upbound.io/upbound/provider-vault:v0.8.0
+  package: xpkg.upbound.io/upbound/provider-vault:v3.0.7

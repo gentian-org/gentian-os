@@ -59,8 +59,8 @@ spec:
 
             {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
             ---
-            apiVersion: mount.vault.upbound.io/v1alpha1
-            kind: SecretMount
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Mount
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-mount
@@ -77,7 +77,7 @@ spec:
 
             {{- /* ── OpenBao policies ─────────────────────────────────────────── */}}
             ---
-            apiVersion: policy.vault.upbound.io/v1alpha1
+            apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
             metadata:
               annotations:
@@ -103,7 +103,7 @@ spec:
                 name: openbao
 
             ---
-            apiVersion: policy.vault.upbound.io/v1alpha1
+            apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
             metadata:
               annotations:
@@ -122,7 +122,7 @@ spec:
                   # Policy management — required for Policy MRs (eso-read, etc.)
                   path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","list"] }
                   path "sys/policies/acl"   { capabilities = ["read","list"] }
-                  # Auth method management — required for Backend/BackendConfig/BackendRole MRs
+                  # Auth method management — required for Backend/AuthBackendConfig/AuthBackendRole MRs
                   path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
                   path "sys/auth"    { capabilities = ["read"] }
                   path "auth/+/config"  { capabilities = ["create","read","update"] }
@@ -150,8 +150,8 @@ spec:
                 name: openbao
 
             ---
-            apiVersion: auth.vault.upbound.io/v1alpha1
-            kind: BackendConfig
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendConfig
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-config
@@ -164,8 +164,8 @@ spec:
                 name: openbao
 
             ---
-            apiVersion: auth.vault.upbound.io/v1alpha1
-            kind: BackendRole
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-eso
@@ -185,8 +185,8 @@ spec:
                 name: openbao
 
             ---
-            apiVersion: auth.vault.upbound.io/v1alpha1
-            kind: BackendRole
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-crossplane
