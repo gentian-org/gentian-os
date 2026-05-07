@@ -339,7 +339,7 @@ fi
 
 # Remove ArgoCD CRDs (safe since no Applications were deployed in Phase 1).
 kubectl get crd -o name 2>/dev/null | grep argoproj.io \
-    | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+    | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
 success "ArgoCD CRDs removed."
 
 # =============================================================================
@@ -352,8 +352,29 @@ if helm status external-secrets -n external-secrets >/dev/null 2>&1; then
     success "ESO Helm release uninstalled."
 fi
 kubectl delete namespace external-secrets --ignore-not-found=true 2>/dev/null || true
-kubectl get crd -o name 2>/dev/null | grep external-secrets.io \
-    | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+
+# Strip finalizers from all ESO CRs before deleting CRDs.
+# If the CRD is deleted while CR instances still carry finalizers the API
+# server blocks indefinitely waiting for a controller that no longer exists.
+for eso_type in \
+    externalsecrets.external-secrets.io \
+    clusterexternalsecrets.external-secrets.io \
+    secretstores.external-secrets.io \
+    clustersecretstores.external-secrets.io \
+    pushsecrets.external-secrets.io; do
+    kubectl get "${eso_type}" --all-namespaces -o json 2>/dev/null \
+        | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)"' \
+        | while IFS=/ read -r ns name; do
+            kubectl patch "${eso_type}" "${name}" \
+                ${ns:+-n "${ns}"} \
+                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                2>/dev/null || true
+        done
+done
+
+# Delete CRDs without waiting so we don't block on GC.
+kubectl get crd -o name 2>/dev/null | grep "external-secrets.io" \
+    | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
 success "ESO removed."
 
 # =============================================================================
@@ -365,8 +386,25 @@ if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" || "${GENTIAN_MANAGED_CERT_MANAGER}" =
     if helm status cert-manager -n cert-manager >/dev/null 2>&1; then
         helm uninstall cert-manager -n cert-manager
         kubectl delete namespace cert-manager --ignore-not-found=true 2>/dev/null || true
+        # Strip finalizers from cert-manager CRs before deleting CRDs.
+        for cm_type in \
+            certificates.cert-manager.io \
+            certificaterequests.cert-manager.io \
+            issuers.cert-manager.io \
+            clusterissuers.cert-manager.io \
+            orders.acme.cert-manager.io \
+            challenges.acme.cert-manager.io; do
+            kubectl get "${cm_type}" --all-namespaces -o json 2>/dev/null \
+                | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)"' \
+                | while IFS=/ read -r ns name; do
+                    kubectl patch "${cm_type}" "${name}" \
+                        ${ns:+-n "${ns}"} \
+                        --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                        2>/dev/null || true
+                done
+        done
         kubectl get crd -o name 2>/dev/null | grep cert-manager.io \
-            | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+            | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
         success "cert-manager removed."
     else
         info "cert-manager has no Helm release — skipping (likely managed outside Gentian, e.g. microk8s addon)."
