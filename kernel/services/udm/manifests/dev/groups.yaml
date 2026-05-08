@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# groups.yaml — UDM group membership via provider-http
+# =============================================================================
+# Manages UDM groups and their membership declaratively.
+#
+# IMPORTANT — do NOT attempt to create the Nubus-bootstrapped system groups
+# (Domain Admins, Domain Users, managed-by-attribute-*, etc.) via provider-http.
+# Those groups already exist in LDAP; provider-http has no import mechanism,
+# so it would fail to CREATE them (409 Conflict) and mark the resource
+# Unsynced.  Leave system groups unmanaged, or create new tenant-specific
+# groups here.
+#
+# Bootstrapped groups (from live cluster, 2026-05-08) — leave unmanaged:
+#   cn=Domain Admins, cn=Domain Users, cn=Domain Service Users, cn=2FA Users
+#   cn=managed-by-attribute-Groupware, cn=managed-by-attribute-Fileshare
+#   cn=managed-by-attribute-FileshareAdmin
+#   cn=managed-by-attribute-Projectmanagement
+#   cn=managed-by-attribute-ProjectmanagementAdmin
+#   cn=IAM API - Full Access, cn=Tenant Admins
+#
+# How to create a new group
+# ─────────────────────────
+# Copy the example below, set name/groupName, and list member user DNs.
+# Groups go under cn=groups,dc=swp-ldap,dc=internal by default.
+# Use ou=<tenant>,dc=swp-ldap,dc=internal for tenant-scoped groups.
+# =============================================================================
+
+# ── Example group — uncomment and adapt ──────────────────────────────────────
+#
+# apiVersion: http.crossplane.io/v1alpha2
+# kind: Request
+# metadata:
+#   name: udm-group-gentian-operators
+#   namespace: crossplane-system
+#   annotations:
+#     argocd.argoproj.io/sync-wave: "27"    # after users (wave 26)
+# spec:
+#   providerConfigRef:
+#     name: udm
+#   forProvider:
+#     insecureSkipTLSVerify: true
+#     waitTimeout: 2m
+#     headers:
+#       Content-Type:
+#         - application/json
+#       Accept:
+#         - application/json
+#       Authorization:
+#         - "Basic {{ udm-admin-creds:crossplane-system:basic_auth }}"
+#     payload:
+#       baseUrl: https://portal.desk.gentian.org/univention/udm/groups/group
+#       body: |
+#         {
+#           "position": "cn=groups,dc=swp-ldap,dc=internal",
+#           "properties": {
+#             "name":  "gentian-operators",
+#             "users": [
+#               "uid=alice.example,cn=users,dc=swp-ldap,dc=internal"
+#             ]
+#           }
+#         }
+#     mappings:
+#       - action: CREATE
+#         url: .payload.baseUrl
+#         body: .payload.body
+#       - action: OBSERVE
+#         url: .payload.baseUrl + "/" + (.response.body.dn | @uri)
+#       - method: PUT
+#         url: .payload.baseUrl + "/" + (.response.body.dn | @uri)
+#         body: .payload.body
+#       - action: REMOVE
+#         url: .payload.baseUrl + "/" + (.response.body.dn | @uri)
+#     expectedResponseCheck:
+#       type: CUSTOM
+#       logic: |
+#         .response.body.properties.name == (.payload.body | fromjson | .properties.name)

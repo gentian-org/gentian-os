@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# users.yaml — UDM user provisioning via provider-http
+# =============================================================================
+# Each user is a provider-http Request managed resource.  Crossplane performs
+# full CRUD lifecycle: CREATE (POST), OBSERVE (GET), UPDATE (PUT), REMOVE (DELETE).
+#
+# The UDM REST API contract (confirmed against live cluster, 2026-05-08):
+#   POST   /univention/udm/users/user/                     → 201, body: {dn, uuid}
+#   GET    /univention/udm/users/user/<url-encoded-dn>     → 200, full user object
+#   PUT    /univention/udm/users/user/<url-encoded-dn>     → 200
+#   DELETE /univention/udm/users/user/<url-encoded-dn>     → 204
+#
+# The OBSERVE URL uses .response.body.dn from the CREATE response,
+# URL-encoded via JQ's @uri filter.
+#
+# Drift detection:
+#   UDM GET returns ~150 auto-set fields (ox*, samba*, uidNumber, etc.) that
+#   are absent from the POST/PUT body.  The expectedResponseCheck uses a
+#   CUSTOM JQ expression that only compares managed properties, ignoring the
+#   auto-set fields.  This avoids spurious UPDATE calls on every reconcile.
+#
+# Secret injection:
+#   The Authorization header uses provider-http's template syntax:
+#     {{ udm-admin-creds:crossplane-system:basic_auth }}
+#   The `udm-admin-creds` Secret is created by the ExternalSecret in this
+#   same directory.  The `basic_auth` key holds base64("Administrator:<pw>").
+#
+# How to add a user
+# ─────────────────
+# 1. Copy the commented example block below.
+# 2. Set `name` (K8s resource name), `username`, `firstname`, `lastname`,
+#    `mailPrimaryAddress`, and any opendesk access flags.
+# 3. Set the password via a separate ExternalSecret or reference an existing
+#    secret: replace the literal password with
+#    {{ <secret-name>:crossplane-system:<key> }}
+# 4. Commit and push — ArgoCD and the provider-http controller handle the rest.
+#
+# How to import a pre-existing user (created manually or by Nubus bootstrap)
+# ──────────────────────────────────────────────────────────────────────────
+# Pre-existing users cannot be imported into a Request managed resource
+# (provider-http has no import mechanism like `terraform import`).
+# If you need lifecycle management for a pre-existing user, re-create the
+# account via a Request resource and migrate any state manually, OR accept
+# that bootstrapped system accounts (Administrator, etc.) stay unmanaged.
+# =============================================================================
+
+# ── Example user — uncomment and adapt ────────────────────────────────────────
+#
+# apiVersion: http.crossplane.io/v1alpha2
+# kind: Request
+# metadata:
+#   name: udm-user-alice-example
+#   namespace: crossplane-system
+#   annotations:
+#     argocd.argoproj.io/sync-wave: "26"
+# spec:
+#   providerConfigRef:
+#     name: udm
+#   forProvider:
+#     insecureSkipTLSVerify: true    # Remove once a proper CA cert is available
+#     waitTimeout: 2m
+#     headers:
+#       Content-Type:
+#         - application/json
+#       Accept:
+#         - application/json
+#       Authorization:
+#         - "Basic {{ udm-admin-creds:crossplane-system:basic_auth }}"
+#     payload:
+#       baseUrl: https://portal.desk.gentian.org/univention/udm/users/user
+#       body: |
+#         {
+#           "position": "cn=users,dc=swp-ldap,dc=internal",
+#           "properties": {
+#             "username":           "alice.example",
+#             "firstname":          "Alice",
+#             "lastname":           "Example",
+#             "mailPrimaryAddress": "alice.example@desk.gentian.org",
+#             "password":           "{{ alice-password:crossplane-system:password }}",
+#             "opendeskFileshareEnabled":           true,
+#             "opendeskProjectmanagementEnabled":   false,
+#             "opendeskKnowledgemanagementEnabled": false,
+#             "opendeskLivecollaborationEnabled":   false,
+#             "opendeskVideoconferenceEnabled":     false
+#           }
+#         }
+#     mappings:
+#       - action: CREATE
+#         url: .payload.baseUrl
+#         body: .payload.body
+#       - action: OBSERVE
+#         # .response.body.dn from the 201 POST response, URL-encoded for the GET path.
+#         url: .payload.baseUrl + "/" + (.response.body.dn | @uri)
+#       - method: PUT
+#         url: .payload.baseUrl + "/" + (.response.body.dn | @uri)
+#         body: .payload.body
+#       - action: REMOVE
+#         url: .payload.baseUrl + "/" + (.response.body.dn | @uri)
+#     # Only compare managed properties — ignore the ~150 auto-set UDM fields.
+#     expectedResponseCheck:
+#       type: CUSTOM
+#       logic: |
+#         (.response.body.properties.username           == (.payload.body | fromjson | .properties.username))
+#         and
+#         (.response.body.properties.mailPrimaryAddress == (.payload.body | fromjson | .properties.mailPrimaryAddress))
+#     # UDM returns 404 when a user is absent — that is the default REMOVE check.
