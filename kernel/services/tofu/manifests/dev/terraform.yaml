@@ -96,3 +96,34 @@ spec:
             name: minio-tofu-state
   writeOutputsToSecret:
     name: keycloak-config-dev-outputs
+---
+# Terraform CR: manages UDM users and groups in the Nubus LDAP directory.
+# UDM is the authoritative identity source in Nubus — users created here
+# propagate to LDAP and are federated into Keycloak automatically.
+# Runs at wave 26: after nubus (wave 21) and keycloak-config (wave 25).
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: udm-config-dev
+  namespace: tofu-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "26"
+spec:
+  approvePlan: auto
+  interval: 10m
+  path: kernel/tofu/tenant/udm-config
+  sourceRef:
+    kind: GitRepository
+    name: gentian-server
+  backendConfig:
+    disable: true
+  vars:
+    - name: env
+      value: dev
+  runnerPodTemplate:
+    spec:
+      envFrom:
+        - secretRef:
+            name: minio-tofu-state
+  writeOutputsToSecret:
+    name: udm-config-dev-outputs
