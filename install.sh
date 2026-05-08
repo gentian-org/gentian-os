@@ -688,27 +688,25 @@ deploy_nubus() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name
+    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_pw
+
     xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
-    xr_name="${xr_name:-dev-cluster}"   # fallback for display if claim missing
+    xr_name="${xr_name:-dev-cluster}"
 
-    local xr_ready
     xr_ready=$(kubectl get "xcluster/${xr_name}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    local mr_count
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
-
-    local nubus_synced
     nubus_synced=$(kubectl get release.helm.crossplane.io/nubus-dev \
         -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "unknown")
 
-    # Resolve values that may emit warnings BEFORE the banner so the output
-    # block is clean.
-    local argocd_url argocd_pw
+    # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    portal_pw=$(kubectl get secret "nubus-${ENV:-dev}-stack-data-ums-administrator" \
+        -n "gentian-${ENV:-dev}" \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
     echo ""
@@ -716,33 +714,25 @@ print_summary_cp() {
     echo -e "${CYAN}║     Gentian OS — Phase 1 + 2 Bootstrap Complete          ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Kernel domain  : ${KERNEL_DOMAIN:-<not set>}"
-    echo "  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})"
-    echo "  Nubus Release  : nubus-dev (Synced=${nubus_synced})"
+    echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
+    echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
+    echo -e "${GREEN}  Nubus Release  : nubus-dev (Synced=${nubus_synced})${NC}"
     echo ""
-    echo "  Inspect Crossplane managed resources:"
-    echo "    kubectl get managed -l crossplane.io/composite=${xr_name}"
-    echo "    kubectl get release.helm.crossplane.io/nubus-dev"
+    echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
+    echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
+    echo -e "${GREEN}    kubectl get release.helm.crossplane.io/nubus-dev${NC}"
     echo ""
-    echo "  Nubus pods:"
-    echo "    kubectl get pods -n gentian-${ENV:-dev} -l app.kubernetes.io/part-of=nubus"
+    echo -e "${GREEN}  ArgoCD:${NC}"
+    echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
+    echo -e "${GREEN}    User : admin${NC}"
+    echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
     echo ""
-    local portal_pw
-    portal_pw=$(kubectl get secret "nubus-${ENV:-dev}-stack-data-ums-administrator" \
-        -n "gentian-${ENV:-dev}" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-
-    echo "  ArgoCD:"
-    echo "    URL  : ${argocd_url}"
-    echo "    User : admin"
-    echo "    Pass : ${argocd_pw}"
+    echo -e "${GREEN}  Portal / UMC admin:${NC}"
+    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}${NC}"
+    echo -e "${GREEN}    User : Administrator${NC}"
+    echo -e "${GREEN}    Pass : ${portal_pw:-not available}${NC}"
     echo ""
-    echo "  Portal / UMC admin:"
-    echo "    URL  : https://portal.${KERNEL_DOMAIN:-<kernel-domain>}"
-    echo "    User : Administrator"
-    echo "    Pass : ${portal_pw:-<see nubus-dev-stack-data-ums-administrator secret>}"
-    echo ""
-    echo "  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}"
+    echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
     echo -e "${GREEN}  Gentian OS installation complete.${NC}"
     echo ""
