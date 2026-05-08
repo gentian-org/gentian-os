@@ -9,6 +9,15 @@ ARGOCD_NAMESPACE="argocd"
 
 echo "Installing ArgoCD ${ARGOCD_VERSION}..."
 
+# Wait for any pre-existing terminating namespace to fully disappear before
+# recreating it.  A previous install run may have left the namespace in
+# "Terminating" state; applying into it results in Forbidden errors.
+if kubectl get namespace "${ARGOCD_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
+    echo "Namespace ${ARGOCD_NAMESPACE} is Terminating — waiting up to 120 s for deletion..."
+    kubectl wait --for=delete namespace/"${ARGOCD_NAMESPACE}" --timeout=120s 2>/dev/null || true
+    echo "Namespace ${ARGOCD_NAMESPACE} gone."
+fi
+
 # Create namespace
 echo "Creating namespace ${ARGOCD_NAMESPACE}..."
 kubectl create namespace "${ARGOCD_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
