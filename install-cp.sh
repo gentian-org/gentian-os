@@ -676,7 +676,7 @@ print_summary_cp() {
     echo "    kubectl get pods -n gentian-${ENV:-dev} -l app.kubernetes.io/part-of=nubus"
     echo ""
     echo "  ArgoCD:"
-    echo "    URL  : https://argocd.${KERNEL_DOMAIN:-<kernel-domain>}"
+    echo "    URL  : $(resolve_argocd_url)"
     echo "    User : admin"
     echo "    Pass : kubectl get secret argocd-initial-admin-secret -n argocd \\"
     echo "             -o jsonpath='{.data.password}' | base64 -d"
