@@ -1,7 +1,14 @@
-# Gentian OS — Platform Architecture
+> **LEGACY DOCUMENT — DO NOT UPDATE**
+> This file describes the previous architecture based on OpenTofu + Thin Go Orchestrator.
+> The current target architecture is [architecture-crossplane.md](architecture-crossplane.md).
+> This file is kept for historical reference only.
+
+---
+
+# Gentian OS — Platform Architecture (Legacy)
 
 **Version:** 2.0-draft
-**Status:** Proposal
+**Status:** Superseded by architecture-crossplane.md
 
 ---
 

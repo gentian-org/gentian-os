@@ -217,6 +217,67 @@ Two key properties:
    `managementPolicies: [Observe, Create]` — the platform creates
    secrets on first reconcile and never overwrites live credentials.
 
+### 7.1 Two Secret Delivery Patterns
+
+All upstream Helm charts fall into one of two categories, both served
+by the same ESO → K8s Secret pipeline:
+
+| Pattern | Mechanism | When to use |
+|---|---|---|
+| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **all current kernel apps**: Nubus, Nextcloud, OX App Suite, PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO. |
+| **Pattern B** | ESO syncs OpenBao → K8s Secret; `provider-helm` `spec.valuesFrom` maps individual keys to Helm value paths | Charts that accept secrets as plain values but have no structured `existingSecret` field. |
+
+In both patterns:
+- Secrets are RBAC-restricted K8s Secrets, never written to Git or CR specs.
+- `provider-helm` manages the full Helm release lifecycle as a Crossplane
+  Managed Resource — drift detection, upgrade, and rollback are all visible
+  in ArgoCD.
+- etcd encryption at rest applies to the K8s Secrets.
+
+**Pattern A example** (Nubus — already supported upstream):
+```yaml
+# ExternalSecret (ESO) pulls from OpenBao → creates k8s Secret nubus-credentials
+# provider-helm HelmRelease references it:
+spec:
+  values:
+    postgresql:
+      auth:
+        existingSecret: nubus-credentials
+        secretKeys:
+          adminPasswordKey: postgresql-admin-password
+```
+
+**Pattern B example** (hypothetical chart with no existingSecret):
+```yaml
+# Same ExternalSecret creates k8s Secret my-app-secrets
+# provider-helm HelmRelease references individual keys:
+spec:
+  valuesFrom:
+    - kind: Secret
+      name: my-app-secrets
+      valuesKey: admin-password
+      targetPath: app.adminPassword
+```
+
+### 7.2 OpenBao Bootstrap
+
+OpenBao itself must be configured before ESO or Crossplane can
+authenticate to it — a one-time bootstrap. The `install.sh` script
+performs this via `bao` CLI calls directly:
+
+```bash
+bao secrets enable -path=secret kv-v2
+bao auth enable kubernetes
+bao write auth/kubernetes/config kubernetes_host="$K8S_HOST"
+bao policy write eso-read <(cat kernel/bootstrap/eso-policy.hcl)
+bao write auth/kubernetes/role/eso ...
+```
+
+After this bootstrap, all further OpenBao configuration (additional
+policies, roles for new services) is managed as Crossplane Managed
+Resources via `provider-vault`, which can authenticate using the
+already-configured Kubernetes auth backend. No OpenTofu is needed.
+
 The OpenBao path layout, ESO sync flow, derivation algorithm, rotation
 mechanics (Stakater Reloader), and credential-leak guard rails are in
 [design/secrets.md](design/secrets.md).

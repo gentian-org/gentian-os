@@ -254,74 +254,165 @@ kubectl delete -f crossplane/xrds/cluster.yaml
 
 ---
 
-## 4. Phase 2 — Migrate Pattern B Charts to `provider-helm`
+## 4. Phase 2A — Replace `openbao-init` Tofu with `bao` CLI + `provider-vault`
 
-**Scope:** Replace the Tofu Controller `set_sensitive` releases for
-Pattern B charts (Nubus, OX App Suite — see architecture.md §5.3) with
-`provider-helm` `Release` MRs that consume secrets via
-`valuesFrom: secretKeyRef`.
+**Scope:** Eliminate OpenTofu from the OpenBao bootstrap. The one-time
+platform initialisation (KV engine, Kubernetes auth backend, ESO policy
+and role) is replaced by direct `bao` CLI calls in `install.sh`. All
+ongoing OpenBao configuration (additional policies, roles for new
+services) is migrated to `provider-vault` Crossplane Managed Resources,
+making OpenBao config GitOps-managed and drift-detected.
+
+After this phase `kernel/tofu/platform/openbao-init/` is deleted and
+the `tofu-write` policy / `tofu-runner` role are removed once Phase 2B
+is also complete.
 
 ### 4.1 Deliverables
 
-- [ ] One `Release` MR per Pattern B chart, referencing OpenBao-backed
-      Secrets (synced by ESO) for sensitive values.
-- [ ] An ESO `ExternalSecret` per chart that materialises a single
-      `values.yaml`-shaped Secret for `valuesFrom`.
-- [ ] Argo Application updated to track the `Release` MR instead of the
-      Tofu workspace.
+- [ ] `install.sh` gains a `bao_bootstrap()` function that calls the
+      `bao` CLI for the minimum chicken-and-egg setup:
+      - `bao secrets enable -path=secret kv-v2`
+      - `bao auth enable kubernetes`
+      - `bao write auth/kubernetes/config kubernetes_host=$K8S_HOST`
+      - `bao policy write eso-read <(cat kernel/bootstrap/eso-policy.hcl)`
+      - `bao write auth/kubernetes/role/eso ...`
+      All calls are idempotent (check-then-write).
+- [ ] `kernel/services/openbao-config/manifests/` ArgoCD Application +
+      `provider-vault` MRs managing:
+      - `tofu-write` policy → `operator-write` policy (scoped to
+        operator ServiceAccount, not tofu-runner)
+      - `gentian-os-operator` Kubernetes auth role
+      - Any future roles/policies added here as Crossplane MRs
+- [ ] `kernel/tofu/platform/openbao-init/` deleted.
+- [ ] `terraform.tfstate` removed (OpenBao resources are now orphaned
+      from Tofu but continue running; `provider-vault` MRs adopt them
+      via `managementPolicies: [Observe, Create]`).
 
 ### 4.2 Unit tests
 
 | Test | Validates |
 |---|---|
-| `tests/unit/render/release-nubus/` | Generated `Release` MR has correct chart coordinates, `valuesFrom` refs, no plaintext secrets |
-| `tests/unit/render/release-ox-appsuite/` | Same for OX |
-| `tests/unit/schema/invalid/release-with-plaintext-secret.yaml` | A `Release` MR that puts a secret literal into `set:` (not `valueFrom:`) is rejected by an admission policy (Kyverno or `validatingAdmissionPolicy`) |
-
-The plaintext-rejection policy is part of the deliverable — it
-guarantees future Compositions cannot regress the secrets posture.
+| `tests/unit/render/openbao-config/` | `provider-vault` MRs render correctly; no sensitive fields in spec |
+| `tests/unit/script/bao-bootstrap.bats` | Bootstrap function calls are idempotent: running twice produces zero changes (mock `bao` with a stub) |
 
 ### 4.3 E2E test (dev cluster)
 
-`make e2e-p2`:
+`make e2e-p2a`:
 
 ```text
-1. Snapshot OpenBao + take a CNPG backup of Nubus's database (safety net).
-2. Pause the legacy Tofu Controller GitRepository for Nubus.
-3. Apply the Crossplane Release MR for Nubus.
-4. kubectl wait --for=condition=Synced release.helm.crossplane.io/nubus
-5. Verify pods restart cleanly (Reloader picks up the Secret).
-6. Login as a test user via Keycloak (browser check, scriptable with
-   chromedp or by curl-ing the OIDC discovery endpoint and decoding a
-   token).
-7. Repeat for OX App Suite.
-8. Grep all rendered Argo manifests and Crossplane MR specs for known
-   secret values: must return zero matches.
+1. Run `install.sh --bootstrap-openbao-only` on the dev cluster
+   (already bootstrapped — all calls should be no-ops).
+2. Verify ESO can still sync secrets:
+     kubectl get externalsecret -A | grep -v Ready  # must be empty
+3. Apply the openbao-config Application and wait for all MRs to be Synced.
+4. Delete the openbao-init Tofu workspace files from the branch.
+5. Verify: kubectl get terraform -n tofu-system  # must show no openbao-init CR
+6. Verify: bao policy list | grep eso-read  # policy still present (adopted by MR)
+7. Trigger an ESO full resync and confirm all ExternalSecrets remain Ready.
 ```
-
-Operator-visible verification: ArgoCD UI now shows a `Release` resource
-where it previously showed a Tofu workspace; clicking through reveals
-the chart name and `valuesFrom` references but no plaintext.
 
 ### 4.4 Acceptance
 
-- Nubus and OX App Suite running healthily on `provider-helm` releases.
-- Argo UI shows them as Synced + Healthy.
-- Secret-leak grep returns zero results.
-- Existing tenant logins continue to work (no realm/user disruption).
+- `kernel/tofu/platform/openbao-init/` deleted from the repo.
+- No Tofu CR in the cluster for openbao-init.
+- All ESO ExternalSecrets Synced/Ready on the dev cluster.
+- `provider-vault` MRs for policies and roles Synced/Healthy.
 
 ### 4.5 Rollback
 
 ```bash
-kubectl delete release.helm.crossplane.io/nubus
-# Resume Tofu Controller GitRepository → Tofu re-deploys the chart
-# from the same OpenBao secrets. No data loss because backing DBs/PVs
-# are untouched.
+cd kernel/tofu/platform/openbao-init
+tofu init && tofu apply  # re-asserts state from local tfstate backup
+# Remove the provider-vault MRs (they orphan the OpenBao resources
+# because managementPolicies: Observe/Create — no deletion occurs).
 ```
 
 ---
 
-## 5. Phase 3 — `Tenant` XRD Shadow Deployment
+## 5. Phase 2B — Migrate Kernel Helm Releases from Tofu to `provider-helm`
+
+**Scope:** Replace the `infra-workspaces-dev` Tofu Controller workspace
+(which manages Nubus, Nextcloud, PostgreSQL, MariaDB, Keycloak bootstrap
+as Helm releases with `set_sensitive` secret injection) with
+`provider-helm` Release MRs. All target charts natively support
+`existingSecret` — this is **Pattern A** throughout, no `valuesFrom`
+workaround needed.
+
+After this phase the Tofu Controller is idle and can be uninstalled in
+Phase 5.
+
+### 5.1 Deliverables
+
+One set of files per chart under `kernel/services/<app>/manifests/dev/`:
+- [ ] `externalsecrets.yaml` — ESO ExternalSecrets pulling all sensitive
+      values from OpenBao into one or more K8s Secrets.
+- [ ] `release.yaml` — `provider-helm` Release MR referencing the
+      K8s Secret via `spec.values.*.existingSecret`.
+- [ ] `providerconfig.yaml` (shared) — already exists from keycloak-config.
+
+Charts to migrate:
+| Chart | Current Tofu resource | existingSecret support |
+|---|---|---|
+| **postgresql** | `helm_release.postgresql` | ✅ `auth.existingSecret` |
+| **mariadb** | `helm_release.mariadb` | ✅ `auth.existingSecret` |
+| **keycloak-bootstrap** | `helm_release.keycloak_bootstrap` | ✅ `auth.existingSecret` |
+| **nextcloud** | `helm_release.nextcloud` + management + notifypush | ✅ `existingSecret` |
+| **nubus** | `helm_release.nubus` | ✅ `existingSecret` (multiple, per opendesk helmfile) |
+
+Additional resources managed by infra-workspaces that are not Helm charts:
+- [ ] `kubernetes_config_map_v1.nubus_udm_listener_nats_patch` →
+      `provider-kubernetes` Object MR.
+- [ ] `kubernetes_config_map_v1.nubus_ldap_gentian_acl` →
+      `provider-kubernetes` Object MR.
+- [ ] `kubernetes_secret.nextcloud_admin` → ESO ExternalSecret.
+
+### 5.2 Unit tests
+
+| Test | Validates |
+|---|---|
+| `tests/unit/render/release-postgresql/` | Release MR has correct chart, `existingSecret` ref, no plaintext in spec |
+| `tests/unit/render/release-nubus/` | Same; `existingSecret` used for all ~30 credential fields |
+| `tests/unit/schema/invalid/release-with-plaintext-secret.yaml` | Admission policy (Kyverno) rejects any Release MR with a secret literal in `spec.values` |
+
+### 5.3 E2E test (dev cluster)
+
+`make e2e-p2b`:
+
+```text
+1. Snapshot OpenBao + take CNPG backup of all databases (safety net).
+2. Apply ExternalSecrets for all charts; wait for Ready.
+3. Apply provider-helm Release MRs (starting with postgresql, mariadb —
+   stateful services first, then keycloak-bootstrap, nubus, nextcloud).
+4. For each release: kubectl wait --for=condition=Synced release.helm.crossplane.io/<name>
+5. Verify pods are Running and healthy (readiness probes).
+6. Smoke-test login via Keycloak OIDC endpoint.
+7. Remove Terraform infra-workspaces-dev CR from tofu/manifests/dev/terraform.yaml.
+8. Confirm: kubectl get terraform -n tofu-system  # empty
+9. Grep all MR specs for known secret values — must return zero matches.
+```
+
+### 5.4 Acceptance
+
+- All five charts running on `provider-helm` Release MRs.
+- `infra-workspaces-dev` Terraform CR deleted from cluster.
+- ArgoCD shows all Release MRs as Synced + Healthy.
+- `kernel/tofu/tenant/infra-workspaces/` deleted from repo.
+- Tofu Controller has no active workspaces → can be uninstalled.
+- Secret-leak grep returns zero results.
+
+### 5.5 Rollback
+
+```bash
+# Re-add infra-workspaces-dev to kernel/services/tofu/manifests/dev/terraform.yaml
+# ArgoCD syncs → Tofu Controller re-applies infra-workspaces workspace.
+# provider-helm Release MRs can coexist temporarily (same Helm release name,
+# Tofu wins on next apply because it owns the Helm state).
+# Delete the provider-helm MRs once Tofu is confirmed healthy.
+```
+
+---
+
+## 6. Phase 3 — `Tenant` XRD Shadow Deployment
 
 **Scope:** Stand up the `Tenant` XRD + Composition Pipeline, but apply
 it only against **shadow tenants** in dev — namespaces named
@@ -411,7 +502,7 @@ unaffected throughout this phase.
 
 ---
 
-## 6. Phase 4 — Cutover of a Real Tenant
+## 7. Phase 4 — Cutover of a Real Tenant
 
 **Scope:** Pick one low-risk dev tenant (e.g., `gtn-demo` in dev), stop
 the Go orchestrator's reconciliation for it, and let the Crossplane
@@ -494,7 +585,7 @@ run.
 
 ---
 
-## 7. Phase 5 — Migrate All Tenants, Decommission Legacy Stack
+## 8. Phase 5 — Migrate All Tenants, Decommission Legacy Stack
 
 **Scope:** Repeat Phase 4 for all remaining tenants, then remove the
 Go orchestrator, Tofu Controller, and OpenTofu modules.
@@ -548,7 +639,7 @@ Crossplane has been proven for 48h+ across the whole fleet.
 
 ---
 
-## 8. Continuous Verification After Migration
+## 9. Continuous Verification After Migration
 
 The unit-test suite from P0–P5 stays in CI permanently. The E2E
 scripts become part of the platform's release process: every new
@@ -569,7 +660,7 @@ Argo sync timing).
 
 ---
 
-## 9. Risk Register
+## 10. Risk Register
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
@@ -581,7 +672,7 @@ Argo sync timing).
 
 ---
 
-## 10. Done Criteria
+## 11. Done Criteria
 
 The migration is **done** when, in production:
 
