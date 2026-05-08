@@ -37,7 +37,6 @@ spec:
     namespace: gentian-dev
     # wait=false: nubus has long-running init jobs; reconcile would time out otherwise.
     wait: false
-    timeout: 900
     valuesFrom:
       # 1. Base values (non-sensitive defaults, all environments)
       - configMapKeyRef:
