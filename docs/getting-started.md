@@ -1,7 +1,14 @@
 # Getting Started
 
-This guide describes how to bootstrap the full Gentian platform on a fresh
-Kubernetes cluster and provision your first tenant.
+This guide describes how to bootstrap the full Gentian OS platform on a fresh
+Kubernetes cluster using the Crossplane-based installer, and how to provision
+your first tenant.
+
+The bootstrap installs **Crossplane** as the provisioning plane and **ArgoCD**
+as the deployment plane, then drives all kernel resource provisioning through a
+single `Cluster` XR claim. After completion the cluster is fully self-healing —
+drift in any managed resource is detected and corrected by the Crossplane
+reconcile loop, while ArgoCD keeps deployed manifests in sync with Git.
 
 ---
 
@@ -12,11 +19,11 @@ Kubernetes cluster and provision your first tenant.
 | Tool | Notes |
 |------|-------|
 | `kubectl` | configured and pointing at your target cluster |
-| `helm` v3 | used to install ArgoCD, cert-manager, CNPG, Reloader |
-| `jq` | JSON parsing in bootstrap scripts (e.g. PV cleanup) |
-| `openssl` | HKDF-based secret derivation from `MASTER_PASSWORD` |
+| `helm` v3 | installs Crossplane core, ArgoCD, cert-manager, ESO |
+| `jq` | JSON parsing in bootstrap scripts |
+| `openssl` | HMAC-SHA256 secret derivation from `MASTER_PASSWORD` |
 | `curl` | health checks and OpenBao API calls |
-| `crossplane` CLI | required for `make test-unit` (render golden tests) and `make e2e-p0` |
+| `crossplane` CLI | required for `make test-unit` (render golden tests) |
 | `kubeconform` | required for `make test-unit-schema` (XRD schema validation) |
 
 `tofu` (OpenTofu) and `bao` (OpenBao CLI) are installed automatically by
@@ -60,15 +67,13 @@ Optional provider-specific input:
 
 ## Bootstrap
 
-The bootstrap installs the cluster infrastructure (ArgoCD, OpenBao, ESO, Tofu
-Controller) and seeds kernel service credentials. A single self-contained
-wrapper script (`install.sh` at the repository root) runs the full flow; the
-individual scripts it calls live under `scripts/`.
+A single self-contained wrapper script (`install.sh` at the repository root)
+runs the full flow; all helper functions live in `scripts/install-lib.sh`.
 
-Gentian OS is fully self-contained — bootstrapping a cluster requires only the
-following three repositories (no other Gentian repo is referenced):
+Gentian OS is fully self-contained — bootstrapping a cluster requires only
+the following three repositories (no other Gentian repo is referenced):
 
-- `gentian-os` (this repo) — kernel, operator, and bootstrap scripts
+- `gentian-os` (this repo) — kernel, Crossplane XRDs/Compositions, and bootstrap
 - `gentian-apps` — app catalogue and profiles
 - `gentian-deployments` — per-environment overlays
 
@@ -138,44 +143,23 @@ From the `gentian-os` repository root:
 ./install.sh
 ```
 
-This runs all 17 steps end-to-end (see the header of `install.sh` for the list).
+This runs all bootstrap steps end-to-end (see [What the installer does](#what-the-installer-does) below).
 The script is idempotent — re-running it on a partially-bootstrapped cluster
-picks up where it left off. After completion, the cluster is ready to provision
-tenants — the `Tenant`, `AppProfile`, `IntegrationBinding` and `AppCatalogue`
-CRDs are installed, the AppCatalogue is populated from `gentian-apps/profiles/`
-via ArgoCD (step 14b), and the orchestrator is reconciling.
+picks up where it left off. After completion:
 
-To run the individual steps manually instead (all paths relative to
-`gentian-os/`):
+- Crossplane core, providers, XRD, and Composition are installed and ready.
+- The `Cluster` XR claim has reconciled all 19+ kernel managed resources
+  (OpenBao KV mounts, policies, K8s auth backend, ESO ClusterSecretStore,
+  ArgoCD AppProject, cert-manager ClusterIssuer).
+- All kernel secrets are seeded in OpenBao.
+- The root ArgoCD ApplicationSet is bootstrapped — it drives minio, redis,
+  IAM, and infrastructure Helm releases via ArgoCD Applications.
+- Nubus is deployed via the `provider-helm` Release CR.
+
+To validate the current cluster state without making changes:
 
 ```bash
-# Steps 1–5: tools, namespaces, ESO, ArgoCD, OCI secrets
-SKIP_TOOLS=1  # omit if tofu/bao not installed
-bash scripts/install-argocd.sh
-bash scripts/create-argocd-oci-secrets.sh "$OD_PRIVATE_REGISTRY_USERNAME" "$OD_PRIVATE_REGISTRY_PASSWORD"
-
-# Steps 6–9: OpenBao bootstrap
-kubectl apply -f kernel/bootstrap/openbao-transit-application.yaml
-bash scripts/init-openbao-transit.sh
-kubectl apply -f kernel/bootstrap/openbao-application.yaml
-kubectl apply -f kernel/bootstrap/tofu-controller-application.yaml
-kubectl apply -f kernel/bootstrap/globals-application.yaml
-# Then initialise primary OpenBao (see install.sh step 9 for the full flow)
-
-# Step 10: Configure OpenBao via Tofu
-cd kernel/tofu/platform/openbao-init
-tofu init -backend=false && tofu apply
-
-# Step 11: Seed kernel secrets
-bash scripts/seed-openbao.sh "$MASTER_PASSWORD" "$OD_PRIVATE_REGISTRY_USERNAME" \
-  "$OD_PRIVATE_REGISTRY_PASSWORD" "$OD_SMTP_RELAY_USERNAME" "$OD_SMTP_RELAY_PASSWORD"
-
-# Step 12: Apply root ApplicationSet
-bash scripts/bootstrap.sh
-
-# Step 13: Install AppCatalogue CRD + kubectl-gentian plugin
-kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
-sudo install -m 755 scripts/kubectl-gentian /usr/local/bin/kubectl-gentian
+./install.sh --validate
 ```
 
 ### 4. Save OpenBao keys when prompted
@@ -197,38 +181,77 @@ restart — no manual intervention needed after a normal reboot.
 
 | Step | What happens |
 |------|-------------|
-| 1 | Installs `tofu` and `bao` CLI tools |
-| 2 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
-| 2b | Creates kernel cert-manager resources: HTTP-01 issuer for per-host certs and an optional DNS-01 Cloudflare issuer. If `CF_API_TOKEN` is provided, also applies a wildcard Certificate for `*.${KERNEL_DOMAIN}`. See [architecture.md §2.5](architecture.md#25-domains-and-tls). |
-| 3 | Installs External Secrets Operator via Helm (`kernel/eso/values.yaml`) |
-| 4 | Installs ArgoCD and applies the `gentian` AppProject |
-| 5 | Creates ArgoCD repository secrets for the OCI Helm registries (`scripts/create-argocd-oci-secrets.sh`) |
-| 6 | Deploys the `openbao-transit` ArgoCD Application (transit auto-unseal instance using `kernel/openbao/transit-values.yaml`) |
-| 7 | Runs `scripts/init-openbao-transit.sh` — initialises transit with Shamir 1-of-1, creates the `openbao-transit-unseal` k8s Secret |
-| 8 | Applies the primary `openbao`, `tofu-controller`, and `globals` ArgoCD Applications from `kernel/bootstrap/` |
+| 0 | Installs `tofu` and `bao` CLI tools |
+| 0 | Installs Crossplane core via Helm (`crossplane-stable/crossplane` v1.18.0) into `crossplane-system` |
+| 0b/0c | Installs Crossplane providers (`provider-helm`, `provider-kubernetes`, `provider-vault`, `function-go-templating`, `function-auto-ready`) and applies `ProviderConfig`s, XRD (`XCluster`/`Cluster`), and Composition (`cluster-default`) |
+| 1 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
+| 2 | Pre-warms the cluster (OCI image pull-through cache, node labels) |
+| 3 | Installs cert-manager via Helm |
+| 3b | Creates kernel cert-manager resources: HTTP-01 ClusterIssuer and optional DNS-01 Cloudflare ClusterIssuer. If `CF_API_TOKEN` is provided, also applies a wildcard Certificate for `*.${KERNEL_DOMAIN}`. |
+| 4 | Installs External Secrets Operator via Helm (`kernel/eso/values.yaml`) |
+| 5 | Installs ArgoCD and applies the `gentian` AppProject |
+| 5b | Configures ArgoCD repository credentials for the OCI Helm registries |
+| 5c | Installs ArgoCD Image Updater |
+| 6 | Deploys the `openbao-transit` ArgoCD Application (transit auto-unseal instance) |
+| 7 | Initialises transit OpenBao with Shamir 1-of-1; creates the `openbao-transit-unseal` k8s Secret |
+| 8 | Applies the primary `openbao`, `reloader`, `cnpg`, and `globals` ArgoCD Applications from `kernel/bootstrap/` |
 | 9 | Initialises primary OpenBao with transit seal — auto-unseals immediately; saves recovery key + root token to `${OPENBAO_INIT_FILE}` |
-| 10 | Runs `tofu apply` in `kernel/tofu/platform/openbao-init/` to configure KV engine, Kubernetes auth backend, and ESO policy |
-| 11 | Runs `scripts/seed-openbao.sh` to write all kernel service secrets into OpenBao |
-| 12 | Applies the root ApplicationSet (`kernel/bootstrap/root-applicationset.yaml`) — ArgoCD syncs the full kernel stack |
-| 13 | Applies the `AppCatalogue` CRD and installs the `kubectl-gentian` plugin to `/usr/local/bin` |
-| 14 | Persists the chosen `gentian-apps` / `gentian-deployments` repo URLs and branches to `~/.gentian/config` (sourced by the `kubectl-gentian` plugin) |
-| 14b | Renders `kernel/bootstrap/appprofiles-application.yaml.tmpl` with the chosen repo + branch and applies it as the `gentian-appprofiles` ArgoCD Application — every YAML under `<gentian-apps>/profiles/` becomes a cluster-scoped `AppProfile` CR, which the operator projects into the `AppCatalogue` |
-| 15 | Installs the `gentian-os` orchestrator Helm chart in `gentian-system` (`Tenant` / `AppProfile` / `IntegrationBinding` CRDs + operator). After this step the cluster can provision tenants. |
-| 16 | Waits for every ArgoCD Application to become Synced + Healthy and prints a summary |
+| 10 | Bootstraps OpenBao for Crossplane: enables KV v2 mount at `secret/`, enables the Kubernetes auth backend, writes `crossplane-write` / `eso-read` / `tofu-write` policies, creates Kubernetes auth roles, mints and stores the `openbao-crossplane-token` Secret used by `provider-vault` |
+| 11 | Creates HMAC-derived input Secrets in `crossplane-system` (one per OpenBao KV path: postgresql, mariadb, redis, minio, nubus, keycloak-bootstrap, postfix, master-password) |
+| 12 | Applies the `Cluster` XR claim (`crossplane/claims/dev-cluster.yaml`) and waits for the `XCluster` composite to become Ready — provisions all 19+ kernel managed resources via `provider-vault` and `provider-kubernetes` |
+| 12b | Seeds remaining OpenBao KV paths not managed by the Cluster XR (registry credentials, DNS/Cloudflare, app-level paths) |
+| 12c | (Optional) Applies a wildcard TLS Certificate for `*.${KERNEL_DOMAIN}` — requires `CF_API_TOKEN` |
+| 12d | Applies the root ArgoCD ApplicationSet (`kernel/bootstrap/root-applicationset.yaml`) — ArgoCD syncs minio, redis, MariaDB, IAM, infra Helm releases |
+| 13 | Waits for `provider-helm` Healthy (already included in providers from step 0b) |
+| 14 | Deploys Nubus: creates namespaces, registry credentials, plain-values ConfigMaps, ESO ExternalSecrets, and the `provider-helm` Release CR (`nubus-dev`) |
 ---
 
 ## After bootstrap
 
+### Inspect Crossplane managed resources
+
+The `Cluster` XR fans out into ~19 managed resources. Inspect them with:
+
+```bash
+# All MRs belonging to the Cluster XR composite
+kubectl get managed -l crossplane.io/composite=<xr-name>
+
+# Or get the composite name from the Claim
+XR=$(kubectl get cluster dev-cluster -n crossplane-system \
+  -o jsonpath='{.spec.resourceRef.name}')
+kubectl get managed -l crossplane.io/composite="${XR}"
+
+# Full dependency trace (requires crossplane CLI)
+crossplane beta trace cluster dev-cluster -n crossplane-system
+```
+
+### Monitor ArgoCD ApplicationSets
+
+The root ApplicationSet (`gentian-appsets`) drives all kernel workloads:
+
+```bash
+kubectl get applicationsets -n argocd
+kubectl get applications -n argocd
+```
+
 ### Access ArgoCD
 
 ```
-URL:      printed by install.sh (Ingress, LoadBalancer, NodePort, or port-forward command)
+URL:      printed by install.sh at completion
 Username: admin
 Password: kubectl get secret argocd-initial-admin-secret -n argocd \
               -o jsonpath='{.data.password}' | base64 -d
 ```
 
-The installer prints these values at the end of Step 12.
+### Inspect the Nubus Release
+
+```bash
+# Crossplane Release CR status
+kubectl get release.helm.crossplane.io/nubus-dev
+
+# Nubus pods
+kubectl get pods -n gentian-dev -l app.kubernetes.io/part-of=nubus
+```
 
 ### Monitor sync progress
 
@@ -239,9 +262,6 @@ kubectl get pods -A
 
 ### Verify the App Store
 
-Once the `gentian-os` orchestrator is running (step 13 complete), the App
-Store catalogue is available:
-
 ```bash
 # Summary view
 kubectl get appcatalogue default
@@ -251,32 +271,6 @@ kubectl get appcatalogue default -o yaml
 
 # Via the kubectl plugin
 kubectl gentian apps list
-```
-
-If `kubectl get appcatalogue` reports `the server doesn't have a resource type
-"appcatalogue"`, apply the CRD manually:
-
-```bash
-kubectl apply -f config/crd/gentianos.io_appcatalogues.yaml
-```
-
-### Verify the orchestrator (step 15)
-
-```bash
-kubectl get pods -n gentian-system
-kubectl get crds | grep gentianos.io
-```
-
-To re-run or upgrade the orchestrator manually, use the same Helm command
-`install.sh` runs in step 15:
-
-```bash
-helm upgrade --install gentian-os ./charts/gentian-os \
-  --namespace gentian-system \
-  --create-namespace \
-  --set openbao.address=http://openbao.openbao.svc.cluster.local:8200 \
-  --set argocd.namespace=argocd \
-  --wait --timeout 5m
 ```
 
 ---
@@ -303,7 +297,7 @@ The orchestrator provisions these in order:
 5. MariaDB databases (SQL Jobs)
 6. MinIO S3 buckets + Nextcloud groups
 7. Redis ACL users + Memcached ArgoCD Applications
-8. App deployment (ArgoCD Application CRs or Tofu Controller `Terraform` CRs)
+8. App deployment (ArgoCD Application CRs)
 9. Ingress + TLS certificate
 10. IntegrationBinding CRs (auto-wired cross-app contracts)
 
@@ -360,8 +354,8 @@ The transit key is stored in your password manager (`gentian/openbao-transit`).
 
 ### ArgoCD shows "Unknown" status for bootstrap apps
 
-The bootstrap Applications (OpenBao, Tofu Controller, globals) may take a few
-minutes to pull and deploy. Force a sync:
+The bootstrap Applications (OpenBao, globals) may take a few minutes to pull
+and deploy. Force a sync:
 
 ```bash
 kubectl annotate application openbao argocd.argoproj.io/refresh=hard -n argocd
@@ -376,18 +370,34 @@ ESO was not yet ready when it first synced, trigger a re-sync:
 kubectl annotate application globals argocd.argoproj.io/refresh=hard -n argocd
 ```
 
-### `tofu apply` fails with "connection refused"
-
-If OpenBao's ClusterIP is unreachable from the operator machine, use a
-port-forward:
+### Crossplane managed resource stuck in `NotFound` or not reconciling
 
 ```bash
-kubectl port-forward -n openbao svc/openbao 8200:8200 &
-export VAULT_ADDR=http://127.0.0.1:8200
-export VAULT_TOKEN=$(jq -r .root_token /tmp/openbao-init.json)
-cd kernel/tofu/platform/openbao-init
-tofu init -backend=false && tofu apply
+# Describe the composite to see which MR is blocking
+kubectl describe xcluster <xr-name>
+
+# Describe the individual managed resource
+kubectl describe <resource-kind> <resource-name>
+
+# Check provider pod logs (e.g. provider-vault)
+kubectl logs -n crossplane-system \
+  $(kubectl get pods -n crossplane-system -l pkg.crossplane.io/revision=provider-vault -o name | head -1)
 ```
+
+### `provider-vault` authentication failing
+
+Verify the `openbao-crossplane-token` Secret is valid:
+
+```bash
+TOKEN=$(kubectl get secret openbao-crossplane-token -n crossplane-system \
+  -o jsonpath='{.data.credentials}' | base64 -d | jq -r '.token')
+curl -s -H "X-Vault-Token: ${TOKEN}" \
+  http://openbao.openbao.svc.cluster.local:8200/v1/auth/token/lookup-self \
+  | jq .data.policies
+```
+
+If invalid, re-run `./install.sh` — step 10 mints a fresh token and recreates
+the Secret.
 
 ### Tenant stuck in provisioning
 
@@ -406,95 +416,61 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 
 ---
 
+## Uninstall
+
+```bash
+# Safe mode — preserves PVC/PV data
+./uninstall.sh
+
+# Force mode — deletes all namespaces and bound PVs (dev/test only)
+./uninstall.sh -f
+
+# Also remove cert-manager/reloader/CNPG (only if Gentian-managed)
+./uninstall.sh -f --cluster-infra
+```
+
+OpenBao KV data is always preserved across uninstalls — `managementPolicies:
+[Observe, Create]` prevents Crossplane from deleting KV paths on XR deletion.
+Re-running `./install.sh` on the same cluster will adopt the existing secrets.
+
 ---
 
-## Crossplane migration — Phase 0
+## Running the test suite
 
-Phase 0 of the [Crossplane migration plan](crossplane-migration-plan.md) is
-already in place on the `develop` branch. It is **pure additive scaffolding**:
-nothing in the running system changes, but the test harness and CI hooks are
-live and ready for Phase 1 work.
-
-### What is in place
-
-| Deliverable | Location |
-|---|---|
-| Test scaffold | `crossplane/tests/unit/render/_harness/` |
-| Render golden-file test | `make test-unit-render` |
-| Function unit tests (stub, P1+) | `make test-unit-functions` |
-| XRD schema tests (stub, P1+) | `make test-unit-schema` |
-| All unit tests combined | `make test-unit` |
-| CI job on every PR | `.github/workflows/ci.yaml` → `crossplane-unit` job |
-| E2E: install Crossplane core | `make e2e-p0` |
-| E2E: uninstall Crossplane core | `make e2e-p0-clean` |
-| E2E stubs P1–P5 | `make e2e-p1` … `make e2e-p5` |
-
-### Running the unit tests (no cluster required)
+### Unit tests (no cluster required)
 
 ```bash
 # Install tooling once
 make install-tools
 
-# Run the full unit test suite
+# Run the full unit test suite (render golden tests, XRD schema, function tests)
 make test-unit
 ```
 
-Expected output:
-
-```
-=== crossplane render golden tests ===
-PASS: _harness
-=== function unit tests ===
-SKIP: no function tests found (populated from P1 onwards)
-=== XRD schema tests ===
-SKIP: no schema fixtures found (populated from P1 onwards)
-=== all crossplane unit tests passed ===
-```
-
-### Running the P0 E2E test (dev cluster required)
-
-Point `KUBECONFIG` at your dev cluster, then:
+### E2E tests (dev cluster required)
 
 ```bash
+# Install Crossplane core and verify CRDs
 make e2e-p0
-```
 
-The script installs Crossplane core (Helm chart v1.18.0) into
-`crossplane-system`, waits for the deployment to be `Available`, and verifies
-all core CRDs are registered. It prints `P0 E2E RESULT: PASS` on success.
+# Full Phase 1 kernel provisioning E2E
+make e2e-p1
 
-To uninstall Crossplane core again:
-
-```bash
+# Tear down
 make e2e-p0-clean
-```
-
-> **Note:** The legacy stack (OpenTofu + Go orchestrator) is completely
-> unaffected by Phase 0. The Crossplane install from `make e2e-p0` is
-> isolated to the `crossplane-system` namespace and is not wired to any
-> running workloads.
-
-### Adding new render tests
-
-Every Composition written in subsequent phases gets a golden-file render test
-under `crossplane/tests/unit/render/<test-name>/` with four files:
-`xr.yaml`, `composition.yaml`, `functions.yaml`, and `expected.yaml`.
-
-To regenerate all golden files after updating a Composition:
-
-```bash
-make test-unit-render-update
 ```
 
 ---
 
 ## Further reading
 
-- [Architecture](architecture.md) — current system design (Go orchestrator + OpenTofu)
-- [Architecture — Crossplane](architecture-crossplane.md) — target architecture (Crossplane-based)
-- [Crossplane Migration Plan](crossplane-migration-plan.md) — P0–P5 migration plan with unit and E2E tests
+- [Architecture — Crossplane](architecture-crossplane.md) — full system design (current)
+- [Architecture — Legacy](architecture-legacy.md) — previous Go orchestrator + OpenTofu design
+- [Crossplane Migration Plan](crossplane-migration-plan.md) — P0–P5 migration phases and status
 - [Design docs](design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
+- [commands.md](commands.md) — reference for day-2 kubectl commands
 - [Implementation Plan](implementation-plan.md) — increment history and decisions
-- [scripts/seed-openbao.sh](../scripts/seed-openbao.sh) — secret derivation details
-- [kernel/tofu/platform/openbao-init/](../kernel/tofu/platform/openbao-init/) — OpenBao Tofu workspace
+- [scripts/seed-openbao.sh](../scripts/seed-openbao.sh) — secret derivation details (HMAC-SHA256)
+- [crossplane/claims/dev-cluster.yaml](../crossplane/claims/dev-cluster.yaml) — the Cluster XR claim
+- [crossplane/compositions/cluster-default.yaml](../crossplane/compositions/cluster-default.yaml) — Composition that provisions all kernel MRs
 - [config/samples/](../config/samples/) — example Tenant, AppProfile, and IntegrationBinding CRs
