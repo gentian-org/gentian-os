@@ -43,7 +43,7 @@ spec:
 # Authentication is per-Request (Basic auth header injected via ESO-managed secret).
 # source: None because there is no global token — each Request injects its own
 # Authorization header using the {{ secret-name:namespace:key }} syntax.
-apiVersion: http.crossplane.io/v1alpha2
+apiVersion: http.crossplane.io/v1alpha1
 kind: ProviderConfig
 metadata:
   name: udm

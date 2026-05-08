@@ -28,7 +28,7 @@
 
 # ── Example group — uncomment and adapt ──────────────────────────────────────
 #
-# apiVersion: http.crossplane.io/v1alpha2
+# apiVersion: http.crossplane.io/v1alpha2   # Request is v1alpha2
 # kind: Request
 # metadata:
 #   name: udm-group-gentian-operators
