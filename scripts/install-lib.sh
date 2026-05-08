@@ -1863,6 +1863,15 @@ init_openbao() {
             [[ "$sealed" == "true" ]] && { error "Auto-unseal failed."; exit 1; }
             success "Transit auto-unseal completed."
         fi
+        # Re-display stored credentials so the operator can verify them on re-runs.
+        if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
+            local stored_key stored_token
+            stored_key=$(jq -r '(.recovery_keys_base64 // .recovery_keys_b64 // .keys_base64 // [])[0] // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
+            stored_token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
+            info "Stored init credentials (${OPENBAO_INIT_FILE}):"
+            [[ -n "$stored_key"   ]] && info "  Recovery/Unseal Key : ${stored_key}"
+            [[ -n "$stored_token" ]] && info "  Root Token          : ${stored_token}"
+        fi
         return
     fi
 
@@ -1876,7 +1885,7 @@ init_openbao() {
             -H "Content-Type: application/json" \
             -d '{"recovery_shares": 1, "recovery_threshold": 1}')
 
-        echo "$init_resp" > "${OPENBAO_INIT_FILE}"
+        echo "$init_resp" | jq '.' > "${OPENBAO_INIT_FILE}"
         chmod 600 "${OPENBAO_INIT_FILE}"
 
         local recovery_key root_token
@@ -1893,8 +1902,8 @@ init_openbao() {
         echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${RED}║  ⚠  SAVE THESE VALUES (password manager)                     ║${NC}"
         echo -e "${RED}╠═══════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${RED}║  Recovery Key : ${recovery_key}${NC}"
-        echo -e "${RED}║  Root Token   : ${root_token}${NC}"
+        echo -e "${RED}║  Recovery Key (= unseal key) : ${recovery_key}${NC}"
+        echo -e "${RED}║  Root Token                  : ${root_token}${NC}"
         echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
         read -rp "  Saved both values? [yes/no]: " confirmed
@@ -1921,7 +1930,7 @@ init_openbao() {
             exit 1
         }
 
-        echo "$init_resp" > "${OPENBAO_INIT_FILE}"
+        echo "$init_resp" | jq '.' > "${OPENBAO_INIT_FILE}"
         chmod 600 "${OPENBAO_INIT_FILE}"
 
         local unseal_key root_token
