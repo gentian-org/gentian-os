@@ -620,11 +620,18 @@ deploy_nubus() {
     # clean JetStream state and consumer registration always succeeds with 201.
     local nats_pvc="nats-data-${release_name}-provisioning-nats-0"
     if kubectl get pvc "${nats_pvc}" -n "${ns}" >/dev/null 2>&1; then
-        if ! kubectl get pod "${release_name}-provisioning-nats-0" \
-                -n "${ns}" --field-selector=status.phase=Running \
-                --no-headers 2>/dev/null | grep -q .; then
+        # Use jsonpath to reliably read the pod phase; --field-selector is
+        # ignored by kubectl when a specific resource name is also given.
+        local _nats_phase
+        _nats_phase=$(kubectl get pod "${release_name}-provisioning-nats-0" \
+            -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+        if [[ "$_nats_phase" != "Running" ]]; then
             info "Deleting stale NATS PVC (consumer state from previous install)..."
-            kubectl delete pvc "${nats_pvc}" -n "${ns}" 2>/dev/null || true
+            # --wait=false: mark for deletion and return immediately; the PVC
+            # will be reclaimed once the old NATS pod (if any) fully terminates.
+            kubectl delete pvc "${nats_pvc}" -n "${ns}" --wait=false 2>/dev/null || true
+        else
+            info "NATS pod is Running; skipping PVC deletion (healthy install)."
         fi
     fi
     # Remove any leftover failed register-consumers job so Helm creates it fresh.
