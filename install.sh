@@ -613,6 +613,24 @@ deploy_nubus() {
         --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/crossplane/apps/nubus/patches/mq_adapter_nats.py" \
         --dry-run=client -o yaml | kubectl apply -f -
 
+    # ── Pre-flight: clear stale NATS consumer state ──────────────────────────
+    # The provisioning register-consumers job fails with 409 if NATS retained
+    # consumer registrations from a previous interrupted install/uninstall.
+    # Delete the NATS PVC (only when NATS is not running) so NATS starts with
+    # clean JetStream state and consumer registration always succeeds with 201.
+    local nats_pvc="nats-data-${release_name}-provisioning-nats-0"
+    if kubectl get pvc "${nats_pvc}" -n "${ns}" >/dev/null 2>&1; then
+        if ! kubectl get pod "${release_name}-provisioning-nats-0" \
+                -n "${ns}" --field-selector=status.phase=Running \
+                --no-headers 2>/dev/null | grep -q .; then
+            info "Deleting stale NATS PVC (consumer state from previous install)..."
+            kubectl delete pvc "${nats_pvc}" -n "${ns}" 2>/dev/null || true
+        fi
+    fi
+    # Remove any leftover failed register-consumers job so Helm creates it fresh.
+    kubectl delete job "${release_name}-provisioning-register-consumers-1" \
+        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+
     # ── ExternalSecrets (ESO → OpenBao → K8s Secrets) ────────────────────────
     info "Applying nubus ExternalSecrets..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/externalsecrets.yaml"
@@ -634,10 +652,29 @@ deploy_nubus() {
     info "Applying nubus Release CR (provider-helm)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/release.yaml"
 
-    info "Nubus Release submitted. Chart deployment proceeds asynchronously."
-    info "  Monitor: kubectl get release.helm.crossplane.io/nubus-dev"
-    info "  Pods:    kubectl get pods -n ${ns}"
-    success "Phase 2 — Nubus Release submitted via provider-helm."
+    # Wait for the register-consumers job to appear (provider-helm must reconcile
+    # and helm-install the chart first) then wait for it to complete successfully.
+    info "Waiting for register-consumers job to appear (up to 5m)..."
+    local job_name="${release_name}-provisioning-register-consumers-1"
+    local deadline=$((SECONDS + 300))
+    until kubectl get job "${job_name}" -n "${ns}" >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "  register-consumers job did not appear within 5m — continuing async."
+            warn "  Monitor: kubectl get pods -n ${ns} -l job-name=${job_name}"
+            success "Phase 2 — Nubus Release submitted via provider-helm."
+            return 0
+        fi
+        sleep 5
+    done
+    info "Waiting for register-consumers job to complete (up to 2m)..."
+    if kubectl wait "job/${job_name}" -n "${ns}" \
+            --for=condition=Complete --timeout=120s 2>/dev/null; then
+        success "  Consumer registration complete."
+    else
+        warn "  register-consumers job did not complete within 2m."
+        warn "  Check: kubectl logs -n ${ns} -l job-name=${job_name} --tail=20"
+    fi
+    success "Phase 2 — Nubus deployed via provider-helm."
 }
 
 # =============================================================================
