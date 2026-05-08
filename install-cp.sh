@@ -101,14 +101,16 @@ install_crossplane_providers() {
 
     info "Waiting for providers to become Healthy (timeout: ${PROVIDER_WAIT_TIMEOUT})..."
 
-    # function-go-templating is a Function resource; provider-kubernetes and
-    # provider-vault are Provider resources. Use the correct type for each so
+    # function-go-templating and function-auto-ready are Function resources;
+    # the rest are Provider resources. Use the correct type for each so
     # we don't burn the full timeout on the wrong resource kind.
-    info "  Waiting for: function-go-templating"
-    kubectl wait function.pkg.crossplane.io/function-go-templating \
-        --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
+    for fn in function-go-templating function-auto-ready; do
+        info "  Waiting for: ${fn}"
+        kubectl wait "function.pkg.crossplane.io/${fn}" \
+            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
+    done
 
-    for provider in provider-kubernetes provider-vault; do
+    for provider in provider-helm provider-kubernetes provider-vault; do
         info "  Waiting for: ${provider}"
         kubectl wait "provider.pkg.crossplane.io/${provider}" \
             --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
