@@ -349,29 +349,26 @@ if helm status argocd -n argocd >/dev/null 2>&1; then
     helm uninstall argocd -n argocd
     success "ArgoCD Helm release uninstalled."
 else
-    # Non-Helm install: delete namespace and wait for full termination.
-    # Finalizers were stripped above so termination should be quick.
-    # Waiting here ensures a subsequent install.sh run does not encounter
-    # "namespace is being terminated" Forbidden errors.
+    # Non-Helm install: delete namespace then immediately force-clear its
+    # spec.finalizers via the /finalize subresource.  The kubernetes namespace
+    # controller holds the namespace in Terminating until every object inside
+    # is fully GC'd — which can take minutes with many resources.  During that
+    # time the plain `kubectl get namespace argocd` call (which has no default
+    # request timeout) blocks indefinitely against a busy API server.
+    # Forcing spec.finalizers=[] tells the API server to remove the namespace
+    # object from etcd right away; cascade GC continues in the background but
+    # no longer blocks us.
     kubectl delete namespace argocd --ignore-not-found=true || true
-    _argocd_deadline=$((SECONDS + 30))
-    while kubectl get namespace argocd >/dev/null 2>&1; do
-        if (( SECONDS > _argocd_deadline )); then
-            warn "  argocd stuck in Terminating — stripping remaining resource finalizers..."
-            # Clear finalizers on any objects still alive inside the namespace.
-            kubectl get all -n argocd -o name 2>/dev/null \
-                | xargs -r -I%% kubectl patch %% -n argocd \
-                    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                    2>/dev/null || true
-            # Force-clear the namespace-level kubernetes finalizer so the API
-            # server terminates the namespace without waiting for a GC controller.
-            kubectl get namespace argocd -o json 2>/dev/null \
-                | jq '.spec.finalizers=[]' \
-                | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
-                2>/dev/null || true
-            break
-        fi
-        sleep 3
+    sleep 2
+    kubectl get namespace argocd -o json --request-timeout=10s 2>/dev/null \
+        | jq '.spec.finalizers=[]' \
+        | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
+        2>/dev/null || true
+    # Short bounded poll — per-call timeout so we can never hang.
+    local _t=$((SECONDS + 20))
+    while kubectl get namespace argocd --request-timeout=5s >/dev/null 2>&1; do
+        (( SECONDS > _t )) && break
+        sleep 2
     done
     success "ArgoCD namespace removed."
 fi

@@ -12,9 +12,20 @@ echo "Installing ArgoCD ${ARGOCD_VERSION}..."
 # Wait for any pre-existing terminating namespace to fully disappear before
 # recreating it.  A previous install run may have left the namespace in
 # "Terminating" state; applying into it results in Forbidden errors.
-if kubectl get namespace "${ARGOCD_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
-    echo "Namespace ${ARGOCD_NAMESPACE} is Terminating — waiting up to 120 s for deletion..."
-    kubectl wait --for=delete namespace/"${ARGOCD_NAMESPACE}" --timeout=120s 2>/dev/null || true
+if kubectl get namespace "${ARGOCD_NAMESPACE}" --request-timeout=5s \
+        -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
+    echo "Namespace ${ARGOCD_NAMESPACE} is Terminating — force-finalizing..."
+    # Same force-finalize pattern as uninstall.sh: clear spec.finalizers so the
+    # API server removes the namespace immediately without waiting for GC.
+    kubectl get namespace "${ARGOCD_NAMESPACE}" -o json --request-timeout=10s 2>/dev/null \
+        | jq '.spec.finalizers=[]' \
+        | kubectl replace --raw "/api/v1/namespaces/${ARGOCD_NAMESPACE}/finalize" -f - \
+        2>/dev/null || true
+    _t=$((SECONDS + 20))
+    while kubectl get namespace "${ARGOCD_NAMESPACE}" --request-timeout=5s >/dev/null 2>&1; do
+        (( SECONDS > _t )) && break
+        sleep 2
+    done
     echo "Namespace ${ARGOCD_NAMESPACE} gone."
 fi
 
