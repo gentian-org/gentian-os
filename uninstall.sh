@@ -320,11 +320,19 @@ banner "Step 6 — Uninstall ArgoCD"
 # Remove resources-finalizer.argocd.argoproj.io from all Applications so the
 # namespace can terminate cleanly even after the ArgoCD server is gone.
 if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
-    info "Stripping ArgoCD Application finalizers..."
-    kubectl get applications.argoproj.io -n argocd -o name 2>/dev/null \
-        | xargs -r -I{} kubectl patch {} -n argocd \
-            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
+    info "Stripping ArgoCD Application/ApplicationSet/AppProject finalizers..."
+    # Strip ALL ArgoCD CR types that carry finalizers (resources-finalizer.argocd.argoproj.io
+    # and finalizer.argocd.argoproj.io). Missing types here leave objects stuck in
+    # Terminating after their CRD is deleted with --wait=false below.
+    for argocd_type in \
+        applications.argoproj.io \
+        applicationsets.argoproj.io \
+        appprojects.argoproj.io; do
+        kubectl get "${argocd_type}" -n argocd -o name 2>/dev/null \
+            | xargs -r -I{} kubectl patch {} -n argocd \
+                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                2>/dev/null || true
+    done
     success "  Application finalizers cleared."
 
     # Delete ArgoCD CRDs BEFORE the namespace so that the API server drops all
@@ -346,11 +354,25 @@ else
     # Waiting here ensures a subsequent install.sh run does not encounter
     # "namespace is being terminated" Forbidden errors.
     kubectl delete namespace argocd --ignore-not-found=true || true
-    if kubectl get namespace argocd &>/dev/null; then
-        info "Waiting up to 120 s for argocd namespace to terminate..."
-        kubectl wait --for=delete namespace/argocd --timeout=120s 2>/dev/null || \
-            warn "argocd namespace still terminating after 120 s — proceeding anyway."
-    fi
+    _argocd_deadline=$((SECONDS + 30))
+    while kubectl get namespace argocd >/dev/null 2>&1; do
+        if (( SECONDS > _argocd_deadline )); then
+            warn "  argocd stuck in Terminating — stripping remaining resource finalizers..."
+            # Clear finalizers on any objects still alive inside the namespace.
+            kubectl get all -n argocd -o name 2>/dev/null \
+                | xargs -r -I%% kubectl patch %% -n argocd \
+                    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                    2>/dev/null || true
+            # Force-clear the namespace-level kubernetes finalizer so the API
+            # server terminates the namespace without waiting for a GC controller.
+            kubectl get namespace argocd -o json 2>/dev/null \
+                | jq '.spec.finalizers=[]' \
+                | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
+                2>/dev/null || true
+            break
+        fi
+        sleep 3
+    done
     success "ArgoCD namespace removed."
 fi
 
