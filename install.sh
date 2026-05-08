@@ -720,10 +720,20 @@ print_summary_cp() {
     echo "  Nubus pods:"
     echo "    kubectl get pods -n gentian-${ENV:-dev} -l app.kubernetes.io/part-of=nubus"
     echo ""
+    local portal_pw
+    portal_pw=$(kubectl get secret "nubus-${ENV:-dev}-stack-data-ums-administrator" \
+        -n "gentian-${ENV:-dev}" \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
     echo "  ArgoCD:"
     echo "    URL  : ${argocd_url}"
     echo "    User : admin"
     echo "    Pass : ${argocd_pw}"
+    echo ""
+    echo "  Portal / UMC admin:"
+    echo "    URL  : https://portal.${KERNEL_DOMAIN:-<kernel-domain>}"
+    echo "    User : Administrator"
+    echo "    Pass : ${portal_pw:-<see nubus-dev-stack-data-ums-administrator secret>}"
     echo ""
     echo "  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}"
     echo ""

@@ -1509,19 +1509,22 @@ install_kernel_wildcard() {
         return
     fi
     local app_ns="gentian-${ENV:-dev}"
-    info "Propagating wildcard-tls into namespace ${app_ns}..."
-    kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
-        | python3 -c "
+    # Propagate to all namespaces that reference wildcard-tls.
+    for _wc_ns in "${app_ns}" argocd; do
+        info "Propagating wildcard-tls into namespace ${_wc_ns}..."
+        kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
+            | python3 -c "
 import sys, json
 s = json.load(sys.stdin)
 for k in ('resourceVersion','uid','creationTimestamp'):
     s['metadata'].pop(k, None)
 s['metadata'].pop('annotations', None)
-s['metadata']['namespace'] = '${app_ns}'
+s['metadata']['namespace'] = sys.argv[1]
 s['metadata']['name'] = 'wildcard-tls'
 print(json.dumps(s))
-" | kubectl apply -f -
-    success "wildcard-tls propagated to ${app_ns}."
+" "${_wc_ns}" | kubectl apply -f -
+        success "wildcard-tls propagated to ${_wc_ns}."
+    done
 }
 
 # =============================================================================
@@ -1649,6 +1652,52 @@ install_argocd() {
 }'
     success "ArgoCD Terraform CR health check configured."
 
+    # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
+    # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
+    # into a redirect loop when doing TLS termination at the ingress.
+    info "Configuring ArgoCD server for HTTP (insecure) mode behind ingress..."
+    kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge \
+        -p '{"data":{"server.insecure":"true"}}'
+    kubectl rollout restart deployment argocd-server -n argocd
+    kubectl rollout status deployment argocd-server -n argocd --timeout=90s \
+        2>/dev/null || true
+    success "ArgoCD server running in HTTP mode."
+
+    # Create Ingress for argocd.${KERNEL_DOMAIN} if KERNEL_DOMAIN is set.
+    # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
+    # the Ingress is safe to create before the Secret exists.
+    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        info "Creating ArgoCD Ingress for argocd.${KERNEL_DOMAIN}..."
+        kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: public
+  rules:
+  - host: argocd.${KERNEL_DOMAIN}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: argocd-server
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - argocd.${KERNEL_DOMAIN}
+    secretName: wildcard-tls
+EOF
+        success "ArgoCD Ingress created: https://argocd.${KERNEL_DOMAIN}"
+    fi
+
     # Print ArgoCD admin credentials early so the user sees them even if
     # the install is interrupted before print_summary runs (verify step
     # can take up to 10 minutes).
@@ -1656,7 +1705,7 @@ install_argocd() {
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null \
                     | base64 -d 2>/dev/null || echo "")
-    argocd_url=$(resolve_argocd_url)
+    argocd_url=$(resolve_argocd_url 2>/dev/null)
     if [[ -n "$argocd_pw" ]]; then
         info "ArgoCD URL   : ${argocd_url}"
         info "ArgoCD login : admin / ${argocd_pw}"
