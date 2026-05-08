@@ -619,6 +619,7 @@ deploy_nubus() {
     # Delete the NATS PVC (only when NATS is not running) so NATS starts with
     # clean JetStream state and consumer registration always succeeds with 201.
     local nats_pvc="nats-data-${release_name}-provisioning-nats-0"
+    local _stale_nats=0
     if kubectl get pvc "${nats_pvc}" -n "${ns}" >/dev/null 2>&1; then
         # Use jsonpath to reliably read the pod phase; --field-selector is
         # ignored by kubectl when a specific resource name is also given.
@@ -630,13 +631,16 @@ deploy_nubus() {
             # --wait=false: mark for deletion and return immediately; the PVC
             # will be reclaimed once the old NATS pod (if any) fully terminates.
             kubectl delete pvc "${nats_pvc}" -n "${ns}" --wait=false 2>/dev/null || true
+            _stale_nats=1
         else
             info "NATS pod is Running; skipping PVC deletion (healthy install)."
         fi
     fi
     # Remove any leftover failed register-consumers job so Helm creates it fresh.
-    kubectl delete job "${release_name}-provisioning-register-consumers-1" \
-        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+    # Match any revision suffix (-1, -2, …) to cover manual helm upgrade remnants.
+    kubectl get jobs -n "${ns}" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+        | grep "^${release_name}-provisioning-register-consumers-" \
+        | xargs -r kubectl delete job -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
     # ── ExternalSecrets (ESO → OpenBao → K8s Secrets) ────────────────────────
     info "Applying nubus ExternalSecrets..."
@@ -659,19 +663,76 @@ deploy_nubus() {
     info "Applying nubus Release CR (provider-helm)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/release.yaml"
 
+    # If stale NATS was detected and cleared, provider-helm may already report
+    # the release as Synced (from a previous reconcile) and will NOT run helm
+    # upgrade automatically — leaving the NATS StatefulSet missing. Force a
+    # direct helm upgrade in that case to guarantee all resources are present.
+    if [[ "$_stale_nats" == "1" ]]; then
+        info "Stale NATS was cleared; running helm upgrade to restore missing resources..."
+        local _base_vals _dev_vals _sens_vals _reg_cfg
+        _base_vals=$(kubectl get configmap nubus-base-values \
+            -n "${ns}" -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
+        _dev_vals=$(kubectl get configmap nubus-dev-values \
+            -n "${ns}" -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
+        _sens_vals=$(kubectl get secret nubus-sensitive-values \
+            -n "${ns}" -o jsonpath='{.data.sensitive-values\.yaml}' \
+            2>/dev/null | base64 -d 2>/dev/null || true)
+        _reg_cfg=$(kubectl get secret registry-credentials-helm \
+            -n "${CROSSPLANE_NAMESPACE}" -o json 2>/dev/null \
+            | python3 -c "
+import sys, json, base64
+s = json.load(sys.stdin)
+u = base64.b64decode(s['data']['username']).decode()
+p = base64.b64decode(s['data']['password']).decode()
+cfg = {'auths': {'registry.opencode.de': {'auth': base64.b64encode((u+':'+p).encode()).decode()}}}
+print(json.dumps(cfg))
+" 2>/dev/null || true)
+        local _nubus_chart_repo _nubus_chart_ver
+        _nubus_chart_repo=$(kubectl get release.helm.crossplane.io "${release_name}" \
+            -o jsonpath='{.spec.forProvider.chart.repository}' 2>/dev/null || true)
+        _nubus_chart_ver=$(kubectl get release.helm.crossplane.io "${release_name}" \
+            -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null || true)
+        if [[ -n "$_base_vals" && -n "$_sens_vals" && -n "$_nubus_chart_repo" ]]; then
+            printf '%s' "$_base_vals"  > /tmp/_nubus_base.yaml
+            printf '%s' "$_dev_vals"   > /tmp/_nubus_dev.yaml
+            printf '%s' "$_sens_vals"  > /tmp/_nubus_sens.yaml
+            printf '%s' "$_reg_cfg"    > /tmp/_nubus_reg.json
+            helm upgrade "${release_name}" \
+                "${_nubus_chart_repo}/nubus" \
+                --version "${_nubus_chart_ver}" \
+                -n "${ns}" \
+                --reuse-values \
+                -f /tmp/_nubus_base.yaml \
+                -f /tmp/_nubus_dev.yaml \
+                -f /tmp/_nubus_sens.yaml \
+                --registry-config /tmp/_nubus_reg.json \
+                --timeout 5m 2>&1 | tail -3 || true
+            rm -f /tmp/_nubus_base.yaml /tmp/_nubus_dev.yaml \
+                  /tmp/_nubus_sens.yaml /tmp/_nubus_reg.json
+            success "helm upgrade complete — NATS StatefulSet restored."
+        else
+            warn "Could not gather helm values for forced upgrade; NATS may need manual recovery."
+        fi
+    fi
+
     # Wait for the register-consumers job to appear (provider-helm must reconcile
     # and helm-install the chart first) then wait for it to complete successfully.
     info "Waiting for register-consumers job to appear (up to 5m)..."
-    local job_name="${release_name}-provisioning-register-consumers-1"
+    # Match any revision suffix to be resilient to multiple helm upgrade cycles.
     local deadline=$((SECONDS + 300))
-    until kubectl get job "${job_name}" -n "${ns}" >/dev/null 2>&1; do
+    local job_name=""
+    until [[ -n "$job_name" ]]; do
+        job_name=$(kubectl get jobs -n "${ns}" --no-headers \
+            -o custom-columns=NAME:.metadata.name 2>/dev/null \
+            | grep "^${release_name}-provisioning-register-consumers-" \
+            | tail -1 || true)
         if (( SECONDS > deadline )); then
             warn "  register-consumers job did not appear within 5m — continuing async."
-            warn "  Monitor: kubectl get pods -n ${ns} -l job-name=${job_name}"
+            warn "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=register-consumers"
             success "Phase 2 — Nubus Release submitted via provider-helm."
             return 0
         fi
-        sleep 5
+        [[ -n "$job_name" ]] || sleep 5
     done
     info "Waiting for register-consumers job to complete (up to 2m)..."
     if kubectl wait "job/${job_name}" -n "${ns}" \
