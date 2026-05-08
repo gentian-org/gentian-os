@@ -53,6 +53,8 @@ spec:
     server: https://kubernetes.default.svc
   - namespace: 'platform-kernel'             # Shared CNPG Cluster + psql provisioner Jobs
     server: https://kubernetes.default.svc
+  - namespace: 'crossplane-system'           # Crossplane managed resources (provider-http Requests, ESO)
+    server: https://kubernetes.default.svc
 
   # Cluster-scoped resources (allowed at cluster level)
   clusterResourceWhitelist:
