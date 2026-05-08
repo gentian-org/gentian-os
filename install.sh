@@ -573,6 +573,23 @@ deploy_nubus() {
     local release_name="nubus-${ENV:-dev}"
 
     # ── Namespaces ────────────────────────────────────────────────────────────
+    # Guard: if a previous uninstall is still in progress, the namespace may be
+    # Terminating. Applying into a Terminating namespace reuses existing PVCs
+    # (incl. LDAP data), defeating a clean reinstall. Wait up to 120s.
+    for _guard_ns in "${ns}" "${infra_ns}"; do
+        local _deadline=$(( SECONDS + 120 ))
+        while [[ "$(kubectl get namespace "${_guard_ns}" \
+                -o jsonpath='{.status.phase}' 2>/dev/null)" == "Terminating" ]]; do
+            if (( SECONDS > _deadline )); then
+                error "Namespace ${_guard_ns} is still Terminating after 120s."
+                error "Run: kubectl delete namespace ${_guard_ns} --force --grace-period=0"
+                exit 1
+            fi
+            info "  Waiting for ${_guard_ns} to finish terminating..."
+            sleep 5
+        done
+    done
+
     info "Creating namespaces ${ns} and ${infra_ns}..."
     kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f -
     kubectl create namespace "${infra_ns}" --dry-run=client -o yaml | kubectl apply -f -

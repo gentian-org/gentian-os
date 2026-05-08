@@ -335,6 +335,13 @@ nubusStackDataUms:
     smtpUser: opendesk-system@desk.gentian.org
     smtpStartTls: false
     ldapBase: dc=swp-ldap,dc=internal
+    # Suppress the 'SSL certificate will expire in -N days' UMC warning.
+    # Nubus mounts a cert-manager-issued TLS cert at runtime; the validity
+    # values below reflect a 2-year cert. sslUpdateExpired: "no" prevents
+    # UMC from overwriting them on every start (ported from commit 22e0232).
+    sslUpdateExpired: "no"
+    sslValidityHost: 24221
+    sslValidityRoot: 24221
     # smtpHost and smtpPort in {env}/values.yaml
   templateContext:
     opendeskAdminAttributes: true
