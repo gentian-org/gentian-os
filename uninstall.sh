@@ -365,7 +365,7 @@ else
         | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
         2>/dev/null || true
     # Short bounded poll — per-call timeout so we can never hang.
-    local _t=$((SECONDS + 20))
+    _t=$((SECONDS + 20))
     while kubectl get namespace argocd --request-timeout=5s >/dev/null 2>&1; do
         (( SECONDS > _t )) && break
         sleep 2
