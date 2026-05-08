@@ -19,7 +19,7 @@
 #   10. Remaining ArgoCD bootstrap Applications
 #       (openbao, tofu-controller, reloader, cnpg, cnpg-cluster, globals)
 #   11. Primary OpenBao init (transit auto-unseal)
-#   12. OpenBao configuration via Tofu (KV engine, K8s auth, policies, operator role)
+#   12. OpenBao bootstrap via bao CLI (KV engine, K8s auth, policies, roles)
 #   13. Seed kernel secrets (scripts/seed-openbao.sh)
 #   14. Apply root ApplicationSet → ArgoCD syncs the full stack
 #   15. Install AppCatalogue CRD + kubectl-gentian plugin
@@ -1993,10 +1993,21 @@ init_openbao() {
 }
 
 # =============================================================================
-# 11. Configure OpenBao via Tofu
+# 11. Bootstrap OpenBao via bao CLI (KV engine, K8s auth, policies, roles)
+#
+# Creates the minimal permanent resources that the rest of the install needs:
+#   • KV v2 mount at secret/
+#   • Kubernetes auth backend + config
+#   • eso-read policy + eso role  (ESO ClusterSecretStore authentication)
+#   • tofu-write policy + tofu-runner role  (TEMPORARY – removed in Phase 2B
+#     once infra-workspaces is migrated off the Tofu Controller)
+#
+# The operator-write policy and gentian-os-operator role are NOT created here;
+# they are managed as provider-vault Crossplane MRs in
+# kernel/services/openbao-config/manifests/{env}/ (wave 15).
 # =============================================================================
-run_tofu_openbao_init() {
-    banner "Step 11 — OpenBao configuration via Tofu"
+bao_bootstrap() {
+    banner "Step 11 — OpenBao bootstrap (bao CLI)"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
@@ -2011,11 +2022,60 @@ run_tofu_openbao_init() {
     fi
     export VAULT_TOKEN="$BAO_TOKEN"
 
-    pushd "${SCRIPT_DIR}/kernel/tofu/platform/openbao-init" > /dev/null
-        tofu init -backend=false
-        tofu apply -auto-approve
-    popd > /dev/null
-    success "OpenBao configured via Tofu."
+    # ── 1. KV v2 mount at 'secret/' ──────────────────────────────────────────
+    if bao secrets list -format=json 2>/dev/null | jq -e '."secret/"' >/dev/null 2>&1; then
+        success "KV v2 mount at 'secret/' already present."
+    else
+        bao secrets enable -path=secret kv-v2
+        success "KV v2 mount at 'secret/' enabled."
+    fi
+
+    # ── 2. Kubernetes auth backend ────────────────────────────────────────────
+    if bao auth list -format=json 2>/dev/null | jq -e '."kubernetes/"' >/dev/null 2>&1; then
+        success "Kubernetes auth backend already present."
+    else
+        bao auth enable -path=kubernetes kubernetes
+        success "Kubernetes auth backend enabled."
+    fi
+    bao write auth/kubernetes/config \
+        kubernetes_host="https://kubernetes.default.svc"
+    success "Kubernetes auth backend configured."
+
+    # ── 3. eso-read policy ────────────────────────────────────────────────────
+    bao policy write eso-read - <<'POLICY'
+path "secret/data/gentian-os/kernel/*"          { capabilities = ["read"] }
+path "secret/metadata/gentian-os/kernel/*"      { capabilities = ["list"] }
+path "secret/data/gentian-os/tenants/*/apps/*/*" { capabilities = ["read"] }
+path "secret/metadata/gentian-os/tenants/*"     { capabilities = ["list"] }
+POLICY
+    success "eso-read policy written."
+
+    # ── 4. eso Kubernetes auth role ───────────────────────────────────────────
+    bao write auth/kubernetes/role/eso \
+        bound_service_account_names=external-secrets \
+        bound_service_account_namespaces=external-secrets \
+        token_policies=eso-read \
+        token_ttl=3600
+    success "eso K8s auth role created."
+
+    # ── 5. tofu-write policy (TEMPORARY — removed in Phase 2B) ───────────────
+    bao policy write tofu-write - <<'POLICY'
+path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
+path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+path "auth/token/create"            { capabilities = ["update"] }
+path "auth/token/lookup-self"       { capabilities = ["read"] }
+POLICY
+    success "tofu-write policy written."
+
+    # ── 6. tofu-runner role (TEMPORARY — removed in Phase 2B) ────────────────
+    bao write auth/kubernetes/role/tofu-runner \
+        bound_service_account_names=tf-runner \
+        bound_service_account_namespaces=tofu-system \
+        token_policies=tofu-write \
+        token_ttl=3600
+    success "tofu-runner K8s auth role created."
+
+    success "OpenBao bootstrap complete."
 }
 
 # =============================================================================
@@ -2449,7 +2509,7 @@ main() {
     init_openbao_transit
     bootstrap_argocd_apps
     init_openbao
-    run_tofu_openbao_init
+    bao_bootstrap
     seed_secrets
     install_kernel_wildcard
     bootstrap_root_appset

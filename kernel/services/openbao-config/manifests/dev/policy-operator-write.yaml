@@ -1,0 +1,28 @@
+---
+# provider-vault Policy MR: operator-write
+#
+# Grants the gentian-os operator ServiceAccount full read/write access to
+# gentian-os KV secrets and token operations.  Replaces the old tofu-write
+# policy for the operator use case (tofu-write is kept separately as a
+# temporary policy for the Tofu Controller runner until Phase 2B removes it).
+#
+# Managed by Crossplane provider-vault (vault.vault.upbound.io/v1alpha1).
+# Wave 2: applied after the ProviderConfig (wave 1) so provider-vault can
+#         authenticate to OpenBao before reconciling policy resources.
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  name: openbao-policy-operator-write
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  providerConfigRef:
+    name: openbao
+  forProvider:
+    name: operator-write
+    policy: |
+      path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
+      path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+      path "auth/token/create"            { capabilities = ["update"] }
+      path "auth/token/lookup-self"       { capabilities = ["read"] }
