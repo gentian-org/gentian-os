@@ -317,20 +317,30 @@ success "Derived-credential and registry Secrets removed."
 # =============================================================================
 banner "Step 6 — Uninstall ArgoCD"
 
+# Helm-uninstall ArgoCD FIRST so that the app-controller and repo-server stop
+# running. If we strip finalizers while the controller is live it reconciles
+# and immediately re-adds resources-finalizer.argocd.argoproj.io, leaving 10+
+# Application objects stuck after CRD deletion.
+if helm status argocd -n argocd >/dev/null 2>&1; then
+    helm uninstall argocd -n argocd
+    success "ArgoCD Helm release uninstalled."
+fi
+
+# Now strip finalizers — controller is gone so it cannot re-add them.
 # Remove resources-finalizer.argocd.argoproj.io from all Applications so the
-# namespace can terminate cleanly even after the ArgoCD server is gone.
+# namespace can terminate cleanly after the CRDs are gone.
 if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
     info "Stripping ArgoCD Application/ApplicationSet/AppProject finalizers..."
     # Strip ALL ArgoCD CR types that carry finalizers (resources-finalizer.argocd.argoproj.io
     # and finalizer.argocd.argoproj.io). Missing types here leave objects stuck in
-    # Terminating after their CRD is deleted with --wait=false below.
+    # Terminating after their CRD is deleted.
     for argocd_type in \
         applications.argoproj.io \
         applicationsets.argoproj.io \
         appprojects.argoproj.io; do
         kubectl get "${argocd_type}" -n argocd -o name 2>/dev/null \
             | xargs -r -I{} kubectl patch {} -n argocd \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                --type=merge -p='{"metadata":{"finalizers":[]}}' \
                 2>/dev/null || true
     done
     success "  Application finalizers cleared."
@@ -345,33 +355,20 @@ if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
     success "  ArgoCD CRDs removed."
 fi
 
-if helm status argocd -n argocd >/dev/null 2>&1; then
-    helm uninstall argocd -n argocd
-    success "ArgoCD Helm release uninstalled."
-else
-    # Non-Helm install: delete namespace then immediately force-clear its
-    # spec.finalizers via the /finalize subresource.  The kubernetes namespace
-    # controller holds the namespace in Terminating until every object inside
-    # is fully GC'd — which can take minutes with many resources.  During that
-    # time the plain `kubectl get namespace argocd` call (which has no default
-    # request timeout) blocks indefinitely against a busy API server.
-    # Forcing spec.finalizers=[] tells the API server to remove the namespace
-    # object from etcd right away; cascade GC continues in the background but
-    # no longer blocks us.
-    kubectl delete namespace argocd --ignore-not-found=true || true
+# Delete the argocd namespace. Force-clear spec.finalizers immediately so we
+# don't block on namespace GC (which can stall for minutes).
+kubectl delete namespace argocd --ignore-not-found=true || true
+sleep 2
+kubectl get namespace argocd -o json --request-timeout=10s 2>/dev/null \
+    | jq '.spec.finalizers=[]' \
+    | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
+    2>/dev/null || true
+_t=$((SECONDS + 20))
+while kubectl get namespace argocd --request-timeout=5s >/dev/null 2>&1; do
+    (( SECONDS > _t )) && break
     sleep 2
-    kubectl get namespace argocd -o json --request-timeout=10s 2>/dev/null \
-        | jq '.spec.finalizers=[]' \
-        | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
-        2>/dev/null || true
-    # Short bounded poll — per-call timeout so we can never hang.
-    _t=$((SECONDS + 20))
-    while kubectl get namespace argocd --request-timeout=5s >/dev/null 2>&1; do
-        (( SECONDS > _t )) && break
-        sleep 2
-    done
-    success "ArgoCD namespace removed."
-fi
+done
+success "ArgoCD namespace removed."
 
 # ArgoCD CRDs already removed above (before namespace delete); this is a
 # no-op safety net for the Helm-uninstall path where they may still exist.
