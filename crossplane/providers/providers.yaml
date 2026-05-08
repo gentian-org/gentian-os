@@ -26,7 +26,7 @@ metadata:
 spec:
   # Deploys Helm charts into the local cluster (Pattern B: secrets-hostile charts).
   # Uses InjectedIdentity for in-cluster access.
-  package: xpkg.upbound.io/crossplane-contrib/provider-helm:v0.20.0
+  package: xpkg.upbound.io/crossplane-contrib/provider-helm:v0.20.4
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
