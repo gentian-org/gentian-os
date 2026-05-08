@@ -95,6 +95,7 @@ KERNEL_CREDENTIALS: list[dict] = [
     # LDAP / Nubus
     {"context": "cn=admin",  "purpose": "ldap",                           "path": "identity/nubus",      "key": "ldap_admin_password"},
     {"context": "nubus",     "purpose": "Administrator",                  "path": "identity/nubus",      "key": "admin_password"},
+    {"context": "smtp",      "purpose": "password",                       "path": "identity/nubus",      "key": "smtp_password"},
     # Dovecot
     {"context": "dovecot",   "purpose": "doveadm_password",               "path": "mail/postfix",        "key": "doveadm_password"},
 ]

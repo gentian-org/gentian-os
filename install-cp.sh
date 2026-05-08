@@ -449,6 +449,49 @@ seed_secrets_remaining() {
 }
 
 # =============================================================================
+# Step 12d — Apply root ArgoCD ApplicationSet
+#
+# gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
+# cluster. Each YAML in that directory becomes an ApplicationSet, driving:
+#   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
+#   - 05-tofu:             Tofu workspaces (keycloak-config, etc.)
+#   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
+#   - 20-iam:              keycloak-bootstrap job
+#   - 21-nubus:            (reserved, currently deployed via provider-helm)
+#   - 30-kernel-services:  mariadb, postgresql, nextcloud, etc.
+#   - 40-apps:             tenant-facing applications
+#
+# Prerequisites:
+#   - ArgoCD must be installed and the 'gentian' AppProject must exist.
+#   - The 'gentian' AppProject is created by apply_cluster_xr (Cluster XR).
+#   - seed_secrets_remaining must have run so ESO can sync the globals secrets.
+# =============================================================================
+bootstrap_root_appset() {
+    banner "Step 12d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
+
+    kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml"
+    success "gentian-appsets Application applied."
+
+    info "Waiting for gentian-appsets Application to be Synced (up to 2m)..."
+    local i=0
+    until kubectl get application gentian-appsets -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; do
+        echo -n "."
+        sleep 5; i=$((i + 5))
+        [[ $i -lt 120 ]] || {
+            warn "gentian-appsets not yet Synced after 2m — continuing anyway."
+            echo ""
+            break
+        }
+    done
+    echo ""
+
+    success "Root ApplicationSet bootstrapped — ApplicationSets being deployed."
+    info "  Monitor: kubectl get applicationsets -n argocd"
+    info "  Apps:    kubectl get applications -n argocd"
+}
+
+# =============================================================================
 # Phase 2 — Step 13: Install provider-helm
 # provider-helm deploys Helm charts into the local cluster. It replaces the
 # Tofu Controller set_sensitive pattern for secrets-hostile charts (Pattern B).
@@ -667,6 +710,7 @@ main_cp() {
 
     # ── Optional TLS wildcard ─────────────────────────────────────────────────
     install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
+    bootstrap_root_appset       # Step 12d — root app-of-apps (minio, redis, mariadb, IAM…)
 
     # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
