@@ -420,6 +420,21 @@ if [[ "$MODE" == "force" ]]; then
         rm -f "$_state_cache"
         success "Removed install-time state cache ${_state_cache}."
     fi
+
+    # Remove OpenBao init files from /tmp so a follow-up install re-prompts
+    # for the transit and primary tokens. These files survive namespace
+    # deletion because they are written to the host filesystem. Without
+    # clearing them, openbao-transit (which uses a microk8s-hostpath PVC whose
+    # underlying directory persists across reinstalls) silently reuses the old
+    # token from the file — bypassing the "save to Bitwarden" prompts entirely.
+    _transit_init="${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}"
+    _primary_init="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+    for _f in "$_transit_init" "$_primary_init"; do
+        if [[ -e "$_f" ]]; then
+            rm -f "$_f"
+            success "Removed OpenBao init cache ${_f}."
+        fi
+    done
 fi
 
 info "Uninstalling Helm releases installed directly by install.sh..."

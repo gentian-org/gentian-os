@@ -72,7 +72,21 @@ if [[ "$INIT_STATUS" == "true" ]]; then
 
   if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
     TRANSIT_ROOT_TOKEN=$(jq -r '.root_token' "${TRANSIT_INIT_FILE}")
-  else
+    # Validate the cached token is still accepted by this transit instance.
+    # If the hostpath data was wiped or the instance was re-keyed, the cached
+    # token will be stale and we must fall back to prompting the user.
+    LOOKUP_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+      -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+      "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
+    if [[ "${LOOKUP_HTTP}" != "200" ]]; then
+      warn "Cached token in ${TRANSIT_INIT_FILE} rejected by transit (HTTP ${LOOKUP_HTTP}). Falling back to prompt."
+      TRANSIT_ROOT_TOKEN=""
+      rm -f "${TRANSIT_INIT_FILE}"
+    else
+      success "Cached openbao-transit token validated."
+    fi
+  fi
+  if [[ -z "${TRANSIT_ROOT_TOKEN}" ]]; then
     echo "  (token is read silently — characters will not appear as you type)"
     read -rsp "  Enter openbao-transit root token: " TRANSIT_ROOT_TOKEN; echo ""
     if [[ -z "${TRANSIT_ROOT_TOKEN}" ]]; then
