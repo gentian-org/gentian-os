@@ -206,7 +206,10 @@ wait_for_running_pod() {
 # (sourced near the top of this file) so they can be reused by uninstall.sh.
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# When sourced as a library (GENTIAN_INSTALL_LIB_ONLY=1), SCRIPT_DIR is
+# already set by the outer install.sh to the repo root.  Do not overwrite it.
+# The ":-" default only applies when SCRIPT_DIR is unset or empty.
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # ─── Runtime defaults ─────────────────────────────────────────────────────────
 OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
