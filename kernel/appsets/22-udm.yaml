@@ -64,6 +64,8 @@ spec:
             - .spec.refreshPolicy
             - .spec.refreshInterval
             - .spec.target.template.engineVersion
+            - .spec.target.template.mergePolicy
             - .spec.target.deletionPolicy
             - .spec.target.creationPolicy
             - .spec.dataFrom[]?.find?.conversionStrategy
+            - .spec.data[]?.remoteRef?.nullBytePolicy
