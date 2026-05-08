@@ -514,11 +514,42 @@ _delete_namespace() {
     fi
 }
 
+# Delete all PVCs in a namespace and wait for the backing PVs to be Released/Deleted.
+# Must be called BEFORE _delete_namespace so that:
+#  (a) NFS directories are actually cleaned up (reclaimPolicy: Delete)
+#  (b) PVC etcd entries are gone before the new install creates StatefulSets
+#      with the same volumeClaimTemplate names — otherwise the new StatefulSets
+#      bind to the surviving old PVCs and inherit old data (e.g. LDAP users).
+# Helm uninstall intentionally preserves StatefulSet volumeClaimTemplate PVCs.
+_drain_pvcs() {
+    local ns="$1"
+    local pvcs
+    pvcs=$(kubectl get pvc -n "${ns}" -o name 2>/dev/null) || return 0
+    [[ -z "${pvcs}" ]] && return 0
+
+    info "  Draining PVCs in ${ns} (waiting for pods to terminate first)..."
+    # Wait up to 90s for all pods to exit — the pvc-protection controller
+    # clears the kubernetes.io/pvc-protection finalizer only once no pod
+    # mounts the PVC. Without this wait, kubectl delete pvc hangs.
+    kubectl wait pod --all -n "${ns}" --for=delete --timeout=90s 2>/dev/null || true
+
+    info "  Deleting PVCs in ${ns}..."
+    kubectl delete pvc --all -n "${ns}" --wait=true --timeout=120s 2>/dev/null || true
+
+    # Belt-and-suspenders: strip any lingering pvc-protection finalizers so
+    # that a timed-out delete doesn't block namespace termination.
+    kubectl get pvc -n "${ns}" -o name 2>/dev/null \
+        | xargs -r -I%% kubectl patch %% -n "${ns}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+}
+
 for ns in openbao gentian-dev gentian-infra-dev gentian-system platform-kernel tofu-system; do
     if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
         continue
     fi
     if [[ "${MODE}" == "force" ]]; then
+        _drain_pvcs "${ns}"
         _delete_namespace "${ns}"
     elif _has_pvc "${ns}"; then
         warn "  Skipping namespace ${ns} (contains PVCs — use -f to delete)"
