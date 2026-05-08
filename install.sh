@@ -697,6 +697,13 @@ print_summary_cp() {
     nubus_synced=$(kubectl get release.helm.crossplane.io/nubus-dev \
         -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "unknown")
 
+    # Resolve values that may emit warnings BEFORE the banner so the output
+    # block is clean.
+    local argocd_url argocd_pw
+    argocd_url=$(resolve_argocd_url 2>/dev/null)
+    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║     Gentian OS — Phase 1 + 2 Bootstrap Complete          ║${NC}"
@@ -714,10 +721,9 @@ print_summary_cp() {
     echo "    kubectl get pods -n gentian-${ENV:-dev} -l app.kubernetes.io/part-of=nubus"
     echo ""
     echo "  ArgoCD:"
-    echo "    URL  : $(resolve_argocd_url)"
+    echo "    URL  : ${argocd_url}"
     echo "    User : admin"
-    echo "    Pass : kubectl get secret argocd-initial-admin-secret -n argocd \\"
-    echo "             -o jsonpath='{.data.password}' | base64 -d"
+    echo "    Pass : ${argocd_pw}"
     echo ""
     echo "  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}"
     echo ""
