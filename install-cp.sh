@@ -403,7 +403,8 @@ create_crossplane_secrets() {
             --arg y  "$(_derive centralnavigation api_key)" \
             --arg z  "$(_derive portal-consumer provisioning-api)" \
             --arg z2 "$(_derive selfservice-consumer provisioning-api)" \
-            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,ox_system_user_password:$d,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_nextcloud:$r,ldapsearch_dovecot:$s,ldapsearch_element:$t,ldapsearch_ox:$u,ldapsearch_postfix:$v,ldapsearch_openproject:$w,ldapsearch_xwiki:$x,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2}')"
+            --arg z3 "$(_derive smtp password)" \
+            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,ox_system_user_password:$d,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_nextcloud:$r,ldapsearch_dovecot:$s,ldapsearch_element:$t,ldapsearch_ox:$u,ldapsearch_postfix:$v,ldapsearch_openproject:$w,ldapsearch_xwiki:$x,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
 
     # ── identity/keycloak-bootstrap ───────────────────────────────────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
