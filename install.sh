@@ -684,8 +684,7 @@ print_summary_cp() {
     echo ""
     echo "  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}"
     echo ""
-    echo "  Next: Phase 3 (Tenant XRD shadow deployment)"
-    echo "        see docs/crossplane-migration-plan.md"
+    echo -e "${GREEN}  Gentian OS installation complete.${NC}"
     echo ""
 }
 
