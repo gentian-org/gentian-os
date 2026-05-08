@@ -1,0 +1,172 @@
+---
+# =============================================================================
+# scopes.yaml — Client scope, scope mappers, and intercom scope overrides
+# =============================================================================
+#
+# Contains:
+#   1. ClientScope: opendesk-openproject-scope (shared realm scope)
+#   2. ProtocolMappers attached to the scope (3 mappers)
+#   3. ClientDefaultScopes / ClientOptionalScopes for opendesk-intercom
+#      (intercom deviates from Keycloak defaults: offline_access in default,
+#       reduced optional scope list)
+# =============================================================================
+
+# ── opendesk-openproject-scope ────────────────────────────────────────────────
+# Realm-level client scope providing protocol mappers for OpenProject OIDC.
+# The OpenProject CLIENT is provisioned per-tenant by the orchestrator's
+# Identity reconciler; only this shared scope lives at kernel level.
+#
+# Import ID format for keycloak_openid_client_scope: {realm_id}/{scope_uuid}
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: opendesk-openproject-scope
+  annotations:
+    crossplane.io/external-name: "opendesk/767e74e9-d1ec-4b33-83dc-0e1cfa027463"
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    name: opendesk-openproject-scope
+    description: Protocol mappers for OpenProject
+    protocol: openid-connect
+  providerConfigRef:
+    name: keycloak
+---
+# ── OpenProject scope — opendesk_useruuid ────────────────────────────────────
+# Import ID: {realm}/client-scope/{scope_uuid}/{mapper_uuid}
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: openproject-scope-opendesk-useruuid
+  annotations:
+    crossplane.io/external-name: "opendesk/client-scope/767e74e9-d1ec-4b33-83dc-0e1cfa027463/f9472e37-a4fc-4a0c-bfd7-497488e0e2fb"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeId: 767e74e9-d1ec-4b33-83dc-0e1cfa027463
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OpenProject scope — opendesk_username ────────────────────────────────────
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: openproject-scope-opendesk-username
+  annotations:
+    crossplane.io/external-name: "opendesk/client-scope/767e74e9-d1ec-4b33-83dc-0e1cfa027463/ef162fa1-916d-4021-9028-c6873812f99a"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeId: 767e74e9-d1ec-4b33-83dc-0e1cfa027463
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OpenProject scope — opendeskProjectmanagementAdmin ───────────────────────
+# Maps the opendeskProjectmanagementAdmin LDAP attribute to the
+# openproject_admin claim.  Used by OpenProject's OIDC provider to grant
+# admin access automatically.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: openproject-scope-admin
+  annotations:
+    crossplane.io/external-name: "opendesk/client-scope/767e74e9-d1ec-4b33-83dc-0e1cfa027463/f9b44a2e-2503-424b-b996-82502f3dc91c"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeId: 767e74e9-d1ec-4b33-83dc-0e1cfa027463
+    name: opendeskProjectmanagementAdmin
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: opendeskProjectmanagementAdmin
+      claim.name: openproject_admin
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-intercom — default scopes ───────────────────────────────────────
+# keycloak_openid_client_default_scopes does not support TF import; this CR
+# is created fresh and sets default scopes authoritatively (REPLACE semantics).
+# offline_access is moved from optional to default for ICS session persistence.
+#
+# forProvider.clientId = Keycloak UUID of opendesk-intercom client.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  name: intercom-default-scopes
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    defaultScopes:
+      - profile
+      - email
+      - roles
+      - web-origins
+      - offline_access
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-intercom — optional scopes ──────────────────────────────────────
+# Explicit optional scope override for intercom.  offline_access was moved to
+# default scopes above; it must be removed from optional to avoid Keycloak
+# rejecting the conflict.  address, phone, microprofile-jwt, organization
+# remain as optional.
+#
+# keycloak_openid_client_optional_scopes does not support TF import.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  name: intercom-optional-scopes
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    optionalScopes:
+      - address
+      - phone
+      - microprofile-jwt
+      - organization
+  providerConfigRef:
+    name: keycloak

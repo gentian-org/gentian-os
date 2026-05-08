@@ -1,0 +1,156 @@
+---
+# =============================================================================
+# clients.yaml — Keycloak OIDC clients for the opendesk realm (dev)
+# =============================================================================
+#
+# All four clients already exist in Keycloak (created by the keycloak-config-dev
+# Tofu workspace).  Each Client CR carries a crossplane.io/external-name
+# annotation with the Terraform import ID format used by keycloak_openid_client:
+#
+#   {realm_id}/{client_keycloak_uuid}
+#
+# Upjet reads this annotation and imports the existing resource into its state
+# rather than creating a new one.
+#
+# Domain: desk.gentian.org (var.domain default from Tofu variables.tf)
+# Realm:  opendesk
+# =============================================================================
+
+# ── opendesk-intercom ─────────────────────────────────────────────────────────
+# ICS (Intercom Service) client.  Token exchange enabled so ICS can exchange
+# tokens on behalf of other services.  offline_access added to default scopes.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: opendesk-intercom
+  annotations:
+    crossplane.io/external-name: "opendesk/1f210642-7d2e-41b6-95a2-fbb59a0434c3"
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientId: opendesk-intercom
+    name: opendesk Intercom
+    realmId: opendesk
+    accessType: CONFIDENTIAL
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    validRedirectUris:
+      - "https://ics.desk.gentian.org/callback"
+    webOrigins:
+      - "+"
+    backchannelLogoutUrl: "https://ics.desk.gentian.org/backchannel-logout"
+    backchannelLogoutSessionRequired: true
+    extraConfig:
+      # RFC 8693 standard token exchange (enabled via Keycloak extra_config)
+      standard.token.exchange.enabled: "true"
+      standard.token.exchange.enableRefreshRequestedTokenType: "SAME_SESSION"
+    clientSecretSecretRef:
+      name: keycloak-client-secrets
+      namespace: crossplane-system
+      key: intercom_client_secret
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-nextcloud ────────────────────────────────────────────────────────
+# Nextcloud OIDC client.  Standard flow only; post-logout redirects configured
+# so the portal can redirect back after OIDC logout.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: opendesk-nextcloud
+  annotations:
+    crossplane.io/external-name: "opendesk/28357a28-8778-4f36-96d6-a2916ca952dd"
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientId: opendesk-nextcloud
+    name: Nextcloud
+    realmId: opendesk
+    accessType: CONFIDENTIAL
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    validRedirectUris:
+      - "https://files.desk.gentian.org/*"
+      - "https://portal.desk.gentian.org/*"
+    webOrigins:
+      - "+"
+    backchannelLogoutUrl: "https://files.desk.gentian.org/apps/user_oidc/backchannel-logout/opendesk"
+    backchannelLogoutSessionRequired: true
+    validPostLogoutRedirectUris:
+      - "https://files.desk.gentian.org/*"
+      - "https://portal.desk.gentian.org/*"
+    clientSecretSecretRef:
+      name: keycloak-client-secrets
+      namespace: crossplane-system
+      key: nextcloud_client_secret
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-oxappsuite ───────────────────────────────────────────────────────
+# OX App Suite OIDC client.  direct_access_grants enabled for the OX login
+# form and mobile app password grant.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: opendesk-oxappsuite
+  annotations:
+    crossplane.io/external-name: "opendesk/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f"
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientId: opendesk-oxappsuite
+    name: OX App Suite
+    realmId: opendesk
+    accessType: CONFIDENTIAL
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: false
+    validRedirectUris:
+      - "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
+    webOrigins:
+      - "+"
+    backchannelLogoutUrl: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
+    backchannelLogoutSessionRequired: true
+    validPostLogoutRedirectUris:
+      - "https://webmail.desk.gentian.org/*"
+      - "https://portal.desk.gentian.org/*"
+    clientSecretSecretRef:
+      name: keycloak-client-secrets
+      namespace: crossplane-system
+      key: ox_client_secret
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-dovecot ──────────────────────────────────────────────────────────
+# Dovecot IMAP OIDC client.  No standard flow — Dovecot only introspects
+# tokens issued by other clients; it never redirects users.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: opendesk-dovecot
+  annotations:
+    crossplane.io/external-name: "opendesk/a19cebbf-da09-4a61-8aef-fbdf13d8f591"
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientId: opendesk-dovecot
+    name: Dovecot IMAP
+    realmId: opendesk
+    accessType: CONFIDENTIAL
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    validRedirectUris: []
+    webOrigins: []
+    clientSecretSecretRef:
+      name: keycloak-client-secrets
+      namespace: crossplane-system
+      key: dovecot_client_secret
+  providerConfigRef:
+    name: keycloak

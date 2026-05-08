@@ -1,0 +1,263 @@
+---
+# =============================================================================
+# protocol-mappers.yaml — Protocol mappers attached to the four opendesk clients
+# =============================================================================
+#
+# All mappers already exist in Keycloak.  Each ProtocolMapper CR carries a
+# crossplane.io/external-name with the Terraform import ID format used by
+# keycloak_generic_protocol_mapper:
+#
+#   {realm_id}/client/{client_keycloak_uuid}/{mapper_uuid}
+#
+# forProvider.clientId = the Keycloak client UUID (not the clientId string).
+# =============================================================================
+
+# ── Dovecot — opendesk_useruuid ──────────────────────────────────────────────
+# Maps entryUUID LDAP attribute to opendesk_useruuid claim.
+# Dovecot pass_attrs uses this to resolve user and home directory.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: dovecot-opendesk-useruuid
+  annotations:
+    crossplane.io/external-name: "opendesk/client/a19cebbf-da09-4a61-8aef-fbdf13d8f591/e02df015-6062-405e-8fc5-6f1a713f1dad"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: a19cebbf-da09-4a61-8aef-fbdf13d8f591
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Dovecot — opendesk_username ──────────────────────────────────────────────
+# Maps uid LDAP attribute to opendesk_username claim.
+# Dovecot username_attribute references this for XOAUTH2 username matching.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: dovecot-opendesk-username
+  annotations:
+    crossplane.io/external-name: "opendesk/client/a19cebbf-da09-4a61-8aef-fbdf13d8f591/073ebcb6-631a-4be6-8387-59e234e601f3"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: a19cebbf-da09-4a61-8aef-fbdf13d8f591
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Intercom — opendesk_useruuid ─────────────────────────────────────────────
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: intercom-opendesk-useruuid
+  annotations:
+    crossplane.io/external-name: "opendesk/client/1f210642-7d2e-41b6-95a2-fbb59a0434c3/593e69c9-8393-4a9c-98dd-bc44a68c8f7e"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Intercom — opendesk_username ─────────────────────────────────────────────
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: intercom-opendesk-username
+  annotations:
+    crossplane.io/external-name: "opendesk/client/1f210642-7d2e-41b6-95a2-fbb59a0434c3/291e0792-6423-4f3a-98d3-3a8c8e062e7e"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Intercom — audience (self-trust for token exchange) ──────────────────────
+# Adds opendesk-intercom as an audience in intercom's own access tokens.
+# Required so the ICS backend can validate tokens issued for this client.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: intercom-audience
+  annotations:
+    crossplane.io/external-name: "opendesk/client/1f210642-7d2e-41b6-95a2-fbb59a0434c3/b186a9a2-3cce-4a59-b20d-634f37d307bd"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    name: opendesk-intercom-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    config:
+      included.client.audience: opendesk-intercom
+      id.token.claim: "false"
+      access.token.claim: "true"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud — opendesk_useruuid ────────────────────────────────────────────
+# Maps entryUUID LDAP attribute to opendesk_useruuid claim.
+# Nextcloud management chart uses mappingUid: "opendesk_useruuid".
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-opendesk-useruuid
+  annotations:
+    crossplane.io/external-name: "opendesk/client/28357a28-8778-4f36-96d6-a2916ca952dd/91fa2716-ad16-48b8-8b25-214e06032a91"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: 28357a28-8778-4f36-96d6-a2916ca952dd
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OX App Suite — opendesk_useruuid ─────────────────────────────────────────
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: ox-opendesk-useruuid
+  annotations:
+    crossplane.io/external-name: "opendesk/client/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f/27970314-e1fa-4abb-bdce-2c4681ad7070"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OX App Suite — opendesk_username ─────────────────────────────────────────
+# Maps uid LDAP attribute to opendesk_username claim.
+# Used by com.openexchange.oidc.userLookupClaim in OX configuration.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: ox-opendesk-username
+  annotations:
+    crossplane.io/external-name: "opendesk/client/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f/1c5b0290-5780-4241-b73b-58d52a2bb335"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OX App Suite — context (hardcoded "1") ────────────────────────────────────
+# Hardcoded context claim.  Used by com.openexchange.oidc.contextLookupClaim
+# in OX configuration; all users are in context 1.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: ox-context
+  annotations:
+    crossplane.io/external-name: "opendesk/client/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f/93d198e5-f5a3-45a8-9d0b-96039a080ad0"
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientId: d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f
+    name: context
+    protocol: openid-connect
+    protocolMapper: oidc-hardcoded-claim-mapper
+    config:
+      claim.name: context
+      claim.value: "1"
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+  providerConfigRef:
+    name: keycloak

@@ -65,34 +65,4 @@ spec:
   # Write sensitive outputs to a Secret (none expected, but required by spec)
   writeOutputsToSecret:
     name: infra-workspaces-dev-outputs
----
-# Terraform CR: manages Keycloak OIDC clients for the dev environment.
-# Runs after nubus (wave 21) so Keycloak is ready to accept API calls.
-# Uses the same S3/MinIO backend pattern as infra-workspaces-dev.
-apiVersion: infra.contrib.fluxcd.io/v1alpha2
-kind: Terraform
-metadata:
-  name: keycloak-config-dev
-  namespace: tofu-system
-  annotations:
-    # wave 25: after nubus (wave 21) but well within the app wave (50+)
-    argocd.argoproj.io/sync-wave: "25"
-spec:
-  approvePlan: auto
-  interval: 10m
-  path: kernel/tofu/tenant/keycloak-config
-  sourceRef:
-    kind: GitRepository
-    name: gentian-server
-  backendConfig:
-    disable: true
-  vars:
-    - name: env
-      value: dev
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: minio-tofu-state
-  writeOutputsToSecret:
-    name: keycloak-config-dev-outputs
+
