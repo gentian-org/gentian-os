@@ -1,7 +1,7 @@
 # Getting Started — Gentian OS
 
 This guide covers the prerequisites and steps to bootstrap a Gentian OS kernel
-cluster using **`install-cp.sh`** (Phase 1 + Phase 2). After completing this guide
+cluster using **`install.sh`** (Phase 1 + Phase 2). After completing this guide
 you will have Crossplane, cert-manager, External Secrets Operator, ArgoCD, and
 OpenBao running, with all kernel structural resources provisioned by the Cluster XR,
 and Nubus deployed via the `provider-helm` Release CR.
@@ -25,8 +25,8 @@ and Nubus deployed via the `provider-helm` Release CR.
 
 ### Kubernetes cluster
 
-You need a running, reachable cluster. Both `install-cp.sh` and
-`uninstall-cp.sh` verify this at startup via `kubectl cluster-info`.
+You need a running, reachable cluster. Both `install.sh` and
+`uninstall.sh` verify this at startup via `kubectl cluster-info`.
 
 Tested cluster distributions:
 - **microk8s** (local dev, with `dns`, `hostpath-storage`, `ingress`, and
@@ -35,7 +35,7 @@ Tested cluster distributions:
 
 ### Environment variables
 
-`install-cp.sh` will **prompt** for any missing value. You can also pre-export
+`install.sh` will **prompt** for any missing value. You can also pre-export
 them or store them in the config files below.
 
 **Required:**
@@ -68,7 +68,7 @@ cp install.env.template install.env
 cp install.secrets.env.template install.secrets.env
 ```
 
-Both files are loaded automatically by `install-cp.sh` if present.
+Both files are loaded automatically by `install.sh` if present.
 
 ### Cluster claim
 
@@ -78,7 +78,7 @@ running the installer.
 
 ---
 
-## What `install-cp.sh` does
+## What `install.sh` does
 
 | Step | Component | Description |
 |------|-----------|-------------|
@@ -116,10 +116,10 @@ running the installer.
 
 ```bash
 # Verify your environment first (runs check_prereqs, exits with list of issues)
-./install-cp.sh --validate
+./install.sh --validate
 
 # Full bootstrap (Phase 1 + Phase 2)
-./install-cp.sh
+./install.sh
 ```
 
 The installer is **idempotent**: re-running it after a partial failure will
@@ -133,10 +133,10 @@ skip already-completed steps.
 # Safe teardown: removes Crossplane, ArgoCD, ESO, cert-manager.
 # Removes provider-helm Release (nubus-dev) and associated Secrets/ConfigMaps.
 # Preserves PVC/PV data and OpenBao KV paths.
-./uninstall-cp.sh
+./uninstall.sh
 
 # Full teardown: also deletes data namespaces and bound PVs.
-./uninstall-cp.sh -f
+./uninstall.sh -f
 ```
 
 > **Note:** OpenBao KV data is always preserved because the Cluster XR uses
@@ -172,7 +172,7 @@ bao read auth/kubernetes/role/crossplane-provider
 
 # Re-run bootstrap if missing (safe to re-run)
 # Set BAO_TOKEN first, then:
-./install-cp.sh --validate  # shows current state
+./install.sh --validate  # shows current state
 ```
 
 ### ArgoCD credentials

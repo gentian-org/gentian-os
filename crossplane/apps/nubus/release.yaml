@@ -10,7 +10,7 @@
 #   2. nubus-dev-values   ConfigMap  — env-specific plain overrides (dev.yaml)
 #   3. nubus-sensitive-values Secret — all sensitive fields (ESO-synced)
 #
-# The ConfigMaps are created by install-cp.sh (deploy_nubus step) from the
+# The ConfigMaps are created by install.sh (deploy_nubus step) from the
 # files in crossplane/apps/nubus/values/. The Secret is created by ESO from
 # the ExternalSecrets in externalsecrets.yaml.
 # =============================================================================
@@ -29,7 +29,7 @@ spec:
       name: nubus
       repository: oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
       version: "1.16.0"
-      # OCI registry credentials — Secret created by install-cp.sh (deploy_nubus step).
+      # OCI registry credentials — Secret created by install.sh (deploy_nubus step).
       # The Secret must contain 'username' and 'password' keys.
       pullSecretRef:
         name: registry-credentials-helm

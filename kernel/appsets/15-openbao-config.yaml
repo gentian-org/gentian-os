@@ -15,7 +15,7 @@
 # Wave 15: after infra (wave 10, which deploys OpenBao) and before IAM/nubus
 #          (wave 20+) which depends on ESO ExternalSecrets reading from OpenBao.
 #          The ProviderConfig (crossplane/providers/provider-configs.yaml) and
-#          openbao-crossplane-token Secret are created earlier by install-cp.sh
+#          openbao-crossplane-token Secret are created earlier by install.sh
 #          bootstrap_openbao_for_crossplane().
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet

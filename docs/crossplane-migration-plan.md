@@ -1,8 +1,14 @@
 # Gentian OS — Crossplane Migration Plan
 
 **Version:** 0.2
-**Status:** In progress — P0 ✅  P1 ✅
-**Companion to:** [architecture.md](architecture.md), [architecture-crossplane.md](architecture-crossplane.md)
+**Status:** In progress — P0 ✅  P1 ✅  P2A ✅
+**Companion to:** [architecture-legacy.md](architecture-legacy.md), [architecture-crossplane.md](architecture-crossplane.md)
+
+> **Script names:** `install-cp.sh` and `uninstall-cp.sh` have been renamed
+> to `install.sh` and `uninstall.sh` respectively.  The old Tofu-based
+> `install.sh` / `uninstall.sh` have been removed; the shared helper
+> functions are preserved in `scripts/install-lib.sh` (sourced by the new
+> `install.sh`). All references below use the current names.
 
 ---
 
@@ -683,7 +689,8 @@ The migration is **done** when, in production:
 3. Every Pattern B chart is a `provider-helm` `Release` MR (Tofu
    Controller is not running).
 4. The `gentian-os` repo no longer contains a Go module (`go.mod`
-   removed) or HCL files (`*.tf` removed).
+   removed) or HCL files (`*.tf` removed), and `scripts/install-lib.sh`
+   is removed once no longer needed by `install.sh`.
 5. The full unit-test suite is green in CI.
 6. The full E2E smoke (`make e2e-p3 && make e2e-p4`) passes on every
    release candidate.
