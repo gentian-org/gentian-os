@@ -1,7 +1,7 @@
 # Gentian OS — Crossplane Migration Plan
 
 **Version:** 0.2
-**Status:** In progress — P0 ✅  P1 ✅  P2A ✅
+**Status:** In progress — P0 ✅  P1 ✅  P2A ✅  P2B 🔄
 **Companion to:** [architecture-legacy.md](architecture-legacy.md), [architecture-crossplane.md](architecture-crossplane.md)
 
 > **Script names:** `install-cp.sh` and `uninstall-cp.sh` have been renamed
@@ -275,24 +275,22 @@ is also complete.
 
 ### 4.1 Deliverables
 
-- [ ] `install.sh` gains a `bao_bootstrap()` function that calls the
+- [x] `install.sh` gains a `bao_bootstrap()` function that calls the
       `bao` CLI for the minimum chicken-and-egg setup:
       - `bao secrets enable -path=secret kv-v2`
       - `bao auth enable kubernetes`
       - `bao write auth/kubernetes/config kubernetes_host=$K8S_HOST`
-      - `bao policy write eso-read <(cat kernel/bootstrap/eso-policy.hcl)`
+      - `bao policy write eso-read ...`
       - `bao write auth/kubernetes/role/eso ...`
       All calls are idempotent (check-then-write).
-- [ ] `kernel/services/openbao-config/manifests/` ArgoCD Application +
+- [x] `kernel/services/openbao-config/manifests/` ArgoCD Application +
       `provider-vault` MRs managing:
-      - `tofu-write` policy → `operator-write` policy (scoped to
-        operator ServiceAccount, not tofu-runner)
+      - `operator-write` policy (scoped to gentian-os operator SA)
       - `gentian-os-operator` Kubernetes auth role
-      - Any future roles/policies added here as Crossplane MRs
-- [ ] `kernel/tofu/platform/openbao-init/` deleted.
-- [ ] `terraform.tfstate` removed (OpenBao resources are now orphaned
-      from Tofu but continue running; `provider-vault` MRs adopt them
-      via `managementPolicies: [Observe, Create]`).
+- [x] `kernel/tofu/platform/openbao-init/` deleted.
+- [x] Transit auto-unseal confirmed working (`Seal Type: transit`,
+      `Sealed: false`; `openbao-transit` Synced+Healthy).
+      `openbao-init.json` pretty-printed; creds re-displayed on re-runs.
 
 ### 4.2 Unit tests
 
@@ -340,37 +338,56 @@ tofu init && tofu apply  # re-asserts state from local tfstate backup
 **Scope:** Replace the `infra-workspaces-dev` Tofu Controller workspace
 (which manages Nubus, Nextcloud, PostgreSQL, MariaDB, Keycloak bootstrap
 as Helm releases with `set_sensitive` secret injection) with
-`provider-helm` Release MRs. All target charts natively support
-`existingSecret` — this is **Pattern A** throughout, no `valuesFrom`
-workaround needed.
+`provider-helm` Release MRs. The openDesk charts use indexed `set_sensitive`
+calls (not a single `existingSecret` key), so all migrations use **Pattern B**:
+an ESO ExternalSecret with a `template` that renders a `sensitive-values.yaml`
+Helm values file, consumed by `Release.spec.forProvider.valuesFrom.secretKeyRef`.
 
 After this phase the Tofu Controller is idle and can be uninstalled in
 Phase 5.
 
 ### 5.1 Deliverables
 
-One set of files per chart under `kernel/services/<app>/manifests/dev/`:
-- [ ] `externalsecrets.yaml` — ESO ExternalSecrets pulling all sensitive
-      values from OpenBao into one or more K8s Secrets.
-- [ ] `release.yaml` — `provider-helm` Release MR referencing the
-      K8s Secret via `spec.values.*.existingSecret`.
-- [ ] `providerconfig.yaml` (shared) — already exists from keycloak-config.
+Pattern: per-chart directory `kernel/services/<app>/manifests/dev/` containing
+an ESO ExternalSecret (template-based `sensitive-values.yaml` key), plain-values
+ConfigMaps, and a `provider-helm` Release CR. The new AppSet
+`kernel/appsets/09-infra-helm.yaml` (wave 9) deploys all these directories.
 
-Charts to migrate:
-| Chart | Current Tofu resource | existingSecret support |
+- [x] **nubus** — ESO ExternalSecrets (`nubus-credentials` + `nubus-sensitive-values`)
+      + Release CR `nubus-dev` in `crossplane/apps/nubus/`; applied by install.sh.
+      Synced+Ready (confirmed on dev cluster). Tofu `nubus.tf` set `count = 0`.
+- [x] **opendesk-postgresql** — `postgresql-sensitive-values` ESO + plain-values
+      ConfigMaps + Release CR in `kernel/services/opendesk-postgresql/manifests/dev/`.
+- [x] **opendesk-mariadb** — `mariadb-sensitive-values` ESO + plain-values
+      ConfigMaps + Release CR in `kernel/services/opendesk-mariadb/manifests/dev/`.
+- [x] `kernel/appsets/09-infra-helm.yaml` — AppSet (wave 9) for provider-helm
+      managed infra charts (opendesk-postgresql, opendesk-mariadb).
+- [ ] **nextcloud** (3 charts) — Pattern B migration; charts explicitly do **not**
+      support `existingSecret` natively (confirmed in nextcloud.tf comments). Needs:
+      `nextcloud-management-sensitive-values`, `nextcloud-sensitive-values`,
+      `nextcloud-notifypush-sensitive-values` ESOs + 3 Release CRs.
+      Secret sources: `kernel/apps/nextcloud`, `kernel/cache/redis`,
+      `kernel/storage/minio`, `kernel/identity/nubus`, `kernel/database/postgresql`.
+- [ ] nubus ConfigMaps (`nubus-dev-udm-listener-nats-patch`,
+      `nubus-dev-ldap-gentian-acl`) — currently created imperatively by install.sh;
+      migrate to `provider-kubernetes` Object MRs in `crossplane/apps/nubus/`.
+- [ ] Remove `helm_release.postgresql` + `helm_release.mariadb` from
+      `kernel/tofu/tenant/infra-workspaces/stubs.tf` once Release CRs confirmed
+      stable (requires `tofu state rm` to avoid Tofu destroying the live release).
+- [ ] Remove `kernel/tofu/tenant/infra-workspaces/nextcloud.tf` once nextcloud
+      Release CRs confirmed stable.
+- [ ] Delete `infra-workspaces-dev` Terraform CR from
+      `kernel/services/tofu/manifests/dev/terraform.yaml` once all resources
+      have been removed from the Tofu workspace.
+
+Current chart migration status:
+| Chart | Tofu state | provider-helm Release |
 |---|---|---|
-| **postgresql** | `helm_release.postgresql` | ✅ `auth.existingSecret` |
-| **mariadb** | `helm_release.mariadb` | ✅ `auth.existingSecret` |
-| **keycloak-bootstrap** | `helm_release.keycloak_bootstrap` | ✅ `auth.existingSecret` |
-| **nextcloud** | `helm_release.nextcloud` + management + notifypush | ✅ `existingSecret` |
-| **nubus** | `helm_release.nubus` | ✅ `existingSecret` (multiple, per opendesk helmfile) |
-
-Additional resources managed by infra-workspaces that are not Helm charts:
-- [ ] `kubernetes_config_map_v1.nubus_udm_listener_nats_patch` →
-      `provider-kubernetes` Object MR.
-- [ ] `kubernetes_config_map_v1.nubus_ldap_gentian_acl` →
-      `provider-kubernetes` Object MR.
-- [ ] `kubernetes_secret.nextcloud_admin` → ESO ExternalSecret.
+| **nubus** | `count = 0` (disabled) | ✅ Synced+Ready |
+| **opendesk-postgresql** | `count = 1` (active — cutover pending) | ✅ CR created |
+| **opendesk-mariadb** | `count = 1` (active — cutover pending) | ✅ CR created |
+| **nextcloud** (×3) | active | ❌ not yet migrated |
+| **keycloak-bootstrap** | `count = 0` (deprecated) | n/a |
 
 ### 5.2 Unit tests
 

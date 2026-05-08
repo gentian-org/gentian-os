@@ -33,6 +33,14 @@ locals {
 }
 
 resource "helm_release" "nubus" {
+  # count = 0: Phase 2B migration — nubus is now managed by the provider-helm
+  # Release CR in crossplane/apps/nubus/release.yaml (applied by install.sh).
+  # Tofu's helm_release state was retained via `tofu state rm` to prevent
+  # Tofu from destroying the live Helm release on the next plan.
+  # Remove this block entirely once `tofu state rm helm_release.nubus` has
+  # been run against the infra-workspaces-dev workspace.
+  count = 0
+
   name       = "nubus-${var.env}"
   repository = "oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror"
   chart      = "nubus"
