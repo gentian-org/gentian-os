@@ -444,6 +444,22 @@ if [[ "$UNINSTALL_CERT_MANAGER" == "1" ]]; then
     helm uninstall cert-manager -n cert-manager >/dev/null 2>&1 || true
 fi
 
+# Uninstall all Helm releases from application namespaces (managed by Tofu or
+# ArgoCD). Without this, stale Helm release secrets survive workload deletion
+# and fool the Tofu Helm provider into thinking charts are already deployed on
+# the next install — it skips the Helm install entirely, leaving pods absent.
+info "Uninstalling all Helm releases from application namespaces..."
+for _ns in gentian-infra-dev gentian-infra-staging gentian-infra-prod \
+           gentian-dev gentian-staging gentian-prod; do
+    if ! kubectl get namespace "$_ns" >/dev/null 2>&1; then continue; fi
+    mapfile -t _rels < <(helm list -n "$_ns" -q 2>/dev/null || true)
+    for _rel in "${_rels[@]}"; do
+        [[ -z "$_rel" ]] && continue
+        helm uninstall "$_rel" -n "$_ns" >/dev/null 2>&1 || true
+        info "  Uninstalled Helm release ${_rel} from ${_ns}."
+    done
+done
+
 # Delete workload controllers in target namespaces BEFORE deleting the
 # namespaces themselves. Otherwise the namespace deletion can race ahead and
 # leave orphaned Deployments/ReplicaSets behind in api-server. Those orphans
