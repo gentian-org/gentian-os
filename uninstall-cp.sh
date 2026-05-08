@@ -326,6 +326,15 @@ if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
             --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
             2>/dev/null || true
     success "  Application finalizers cleared."
+
+    # Delete ArgoCD CRDs BEFORE the namespace so that the API server drops all
+    # Application/ApplicationSet objects immediately (no waiting for a GC
+    # controller that no longer exists). Without this, the namespace stalls in
+    # Terminating for the remaining Application instances.
+    info "Removing ArgoCD CRDs (before namespace delete to avoid GC stall)..."
+    kubectl get crd -o name 2>/dev/null | grep argoproj.io \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    success "  ArgoCD CRDs removed."
 fi
 
 if helm status argocd -n argocd >/dev/null 2>&1; then
@@ -333,11 +342,16 @@ if helm status argocd -n argocd >/dev/null 2>&1; then
     success "ArgoCD Helm release uninstalled."
 else
     # Non-Helm install: delete namespace directly.
-    kubectl delete namespace argocd --ignore-not-found=true || true
+    # Use --wait=false: Applications that still carry argoproj.io finalizers
+    # can block termination indefinitely once the API server pod is gone.
+    # We've already stripped finalizers above; issue the delete non-blocking
+    # and let the GC finish in the background.
+    kubectl delete namespace argocd --ignore-not-found=true --wait=false || true
     success "ArgoCD namespace removed."
 fi
 
-# Remove ArgoCD CRDs (safe since no Applications were deployed in Phase 1).
+# ArgoCD CRDs already removed above (before namespace delete); this is a
+# no-op safety net for the Helm-uninstall path where they may still exist.
 kubectl get crd -o name 2>/dev/null | grep argoproj.io \
     | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
 success "ArgoCD CRDs removed."
