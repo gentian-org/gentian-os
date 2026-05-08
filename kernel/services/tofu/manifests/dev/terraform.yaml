@@ -65,4 +65,3 @@ spec:
   # Write sensitive outputs to a Secret (none expected, but required by spec)
   writeOutputsToSecret:
     name: infra-workspaces-dev-outputs
-
