@@ -82,6 +82,15 @@ spec:
     kind: ValidatingWebhookConfiguration
   - group: 'admissionregistration.k8s.io'
     kind: MutatingWebhookConfiguration
+  # Crossplane vault provider resources (cluster-scoped CRDs)
+  - group: 'vault.vault.upbound.io'
+    kind: '*'
+  - group: 'kubernetes.vault.upbound.io'
+    kind: '*'
+  - group: 'auth.vault.upbound.io'
+    kind: '*'
+  - group: 'kv.vault.upbound.io'
+    kind: '*'
 
   # Namespace-scoped resources (allow all)
   namespaceResourceWhitelist:
