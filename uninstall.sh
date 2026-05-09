@@ -311,70 +311,125 @@ success "Derived-credential and registry Secrets removed."
 
 # =============================================================================
 # Step 6 — Uninstall ArgoCD
-# Strip Application finalizers first: when the ArgoCD API server is deleted
-# its finalizer handler disappears, leaving Applications stuck in Terminating
-# and blocking namespace deletion indefinitely.
+#
+# Root cause of the recurring stuck argocd namespace:
+#   Application objects carry resources-finalizer.argocd.argoproj.io.
+#   After Helm uninstall the ArgoCD app-controller is gone so no process
+#   ever removes the finalizer; namespace GC stalls indefinitely.
+#
+# Correct teardown sequence (two independent finalizer-strip paths):
+#  1. helm uninstall — kills all ArgoCD controllers, prevents finalizer re-add
+#  2. Brief pause so reconcile goroutines exit
+#  3a. kubectl patch path — standard CRD API; reliable while CRD is alive
+#  3b. Raw REST PUT path — works even after CRD deletion because the API
+#      server deregisters CRD endpoints asynchronously (--wait=false returns
+#      before the endpoint is torn down, and etcd objects remain accessible)
+#  4. Delete CRDs (--wait=false, non-blocking)
+#  5. Second raw REST sweep to catch any orphans that slipped through step 3
+#  6. kubectl delete namespace argocd
+#  7. Immediately force-clear spec.finalizers via /finalize subresource
+#  8. Poll ≤30 s; force-finalize again if namespace still lingers
 # =============================================================================
 banner "Step 6 — Uninstall ArgoCD"
 
-# Helm-uninstall ArgoCD FIRST so that the app-controller and repo-server stop
-# running. If we strip finalizers while the controller is live it reconciles
-# and immediately re-adds resources-finalizer.argocd.argoproj.io, leaving 10+
-# Application objects stuck after CRD deletion.
+# 1. Kill all ArgoCD controllers first — live controller reconciles within
+#    seconds and re-adds resources-finalizer.argocd.argoproj.io to every app.
 if helm status argocd -n argocd >/dev/null 2>&1; then
+    info "Uninstalling ArgoCD Helm release..."
     helm uninstall argocd -n argocd
-    success "ArgoCD Helm release uninstalled."
+    success "  ArgoCD Helm release uninstalled."
 fi
 
-# Now strip finalizers — controller is gone so it cannot re-add them.
-# Remove resources-finalizer.argocd.argoproj.io from all Applications so the
-# namespace can terminate cleanly after the CRDs are gone.
+# 2. Give controller goroutines a moment to exit before we strip finalizers.
+sleep 3
+
+# Helper: strip finalizers via kubectl patch (standard CRD API path).
+# Works reliably while the CRD is still registered.
+_argocd_strip_kubectl() {
+    local _crd="${1}"
+    kubectl get "${_crd}" -n argocd -o name 2>/dev/null \
+        | xargs -r -I{} kubectl patch {} -n argocd \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+}
+
+# Helper: strip finalizers via raw REST PUT.
+# The Kubernetes API server deregisters CRD API endpoints asynchronously after
+# CRD deletion, so this path remains reachable for a window after the CRD is
+# gone.  It also catches objects missed by the kubectl path due to timing.
+_argocd_strip_raw() {
+    local _api_path="${1}"
+    local _list _obj _name _clean
+    _list=$(kubectl get --raw "${_api_path}" 2>/dev/null) || return 0
+    printf '%s' "${_list}" \
+        | jq -c '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length) > 0)' \
+        2>/dev/null \
+        | while IFS= read -r _obj; do
+            _name=$(printf '%s' "${_obj}" | jq -r '.metadata.name')
+            _clean=$(printf '%s' "${_obj}" | jq '.metadata.finalizers = []')
+            printf '%s\n' "${_clean}" \
+                | kubectl replace --raw "${_api_path}/${_name}" -f - 2>/dev/null || true
+        done
+}
+
+# 3a. kubectl path (needs CRD alive — run before CRD deletion).
 if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
-    info "Stripping ArgoCD Application/ApplicationSet/AppProject finalizers..."
-    # Strip ALL ArgoCD CR types that carry finalizers (resources-finalizer.argocd.argoproj.io
-    # and finalizer.argocd.argoproj.io). Missing types here leave objects stuck in
-    # Terminating after their CRD is deleted.
-    for argocd_type in \
-        applications.argoproj.io \
-        applicationsets.argoproj.io \
-        appprojects.argoproj.io; do
-        kubectl get "${argocd_type}" -n argocd -o name 2>/dev/null \
-            | xargs -r -I{} kubectl patch {} -n argocd \
-                --type=merge -p='{"metadata":{"finalizers":[]}}' \
-                2>/dev/null || true
-    done
-    success "  Application finalizers cleared."
-
-    # Delete ArgoCD CRDs BEFORE the namespace so that the API server drops all
-    # Application/ApplicationSet objects immediately (no waiting for a GC
-    # controller that no longer exists). Without this, the namespace stalls in
-    # Terminating for the remaining Application instances.
-    info "Removing ArgoCD CRDs (before namespace delete to avoid GC stall)..."
-    kubectl get crd -o name 2>/dev/null | grep argoproj.io \
-        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
-    success "  ArgoCD CRDs removed."
+    info "Stripping ArgoCD CR finalizers (kubectl path)..."
+    _argocd_strip_kubectl applications.argoproj.io
+    _argocd_strip_kubectl applicationsets.argoproj.io
+    _argocd_strip_kubectl appprojects.argoproj.io
+    success "  kubectl path done."
 fi
 
-# Delete the argocd namespace. Force-clear spec.finalizers immediately so we
-# don't block on namespace GC (which can stall for minutes).
-kubectl delete namespace argocd --ignore-not-found=true || true
+# 3b. Raw REST path (belt-and-suspenders; also works after CRD deletion).
+info "Stripping ArgoCD CR finalizers (raw API path)..."
+_argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications"
+_argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applicationsets"
+_argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/appprojects"
+success "  Raw API path done."
+
+# 4. Delete CRDs without blocking.  Objects with finalizers already cleared
+#    above are GC'd immediately; orphans are caught in the step-5 sweep.
+info "Deleting ArgoCD CRDs..."
+kubectl get crd -o name 2>/dev/null | grep argoproj.io \
+    | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+success "  ArgoCD CRDs queued for deletion."
+
+# 5. Second raw-REST sweep — catches objects that still carry finalizers while
+#    the API server is still serving the endpoint in the teardown window.
 sleep 2
+_argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications"
+_argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/applicationsets"
+_argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/appprojects"
+
+# 6. Delete the namespace.
+kubectl delete namespace argocd --ignore-not-found=true 2>/dev/null || true
+
+# 7. Immediately force-clear spec.finalizers via the /finalize subresource.
+#    This bypasses the content-check that blocks normal namespace deletion,
+#    allowing Kubernetes to remove the namespace from etcd even when orphan
+#    objects with unknown finalizers are still present.
+info "Force-finalizing argocd namespace..."
 kubectl get namespace argocd -o json --request-timeout=10s 2>/dev/null \
-    | jq '.spec.finalizers=[]' \
+    | jq '.spec.finalizers = []' \
     | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
     2>/dev/null || true
-_t=$((SECONDS + 20))
+
+# 8. Poll until gone; force-finalize again if namespace still lingers.
+_t=$((SECONDS + 30))
 while kubectl get namespace argocd --request-timeout=5s >/dev/null 2>&1; do
-    (( SECONDS > _t )) && break
+    if (( SECONDS > _t )); then
+        info "  argocd namespace still present — forcing finalize again..."
+        kubectl get namespace argocd -o json --request-timeout=10s 2>/dev/null \
+            | jq '.spec.finalizers = []' \
+            | kubectl replace --raw "/api/v1/namespaces/argocd/finalize" -f - \
+            2>/dev/null || true
+        sleep 5
+        break
+    fi
     sleep 2
 done
 success "ArgoCD namespace removed."
-
-# ArgoCD CRDs already removed above (before namespace delete); this is a
-# no-op safety net for the Helm-uninstall path where they may still exist.
-kubectl get crd -o name 2>/dev/null | grep argoproj.io \
-    | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
-success "ArgoCD CRDs removed."
 
 # =============================================================================
 # Step 7 — Uninstall External Secrets Operator
