@@ -458,7 +458,7 @@ for eso_type in \
                 ${ns:+-n "${ns}"} \
                 --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
                 2>/dev/null || true
-        done
+        done || true
 done
 
 # Delete CRDs without waiting so we don't block on GC.
@@ -490,7 +490,7 @@ if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" || "${GENTIAN_MANAGED_CERT_MANAGER}" =
                         ${ns:+-n "${ns}"} \
                         --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
                         2>/dev/null || true
-                done
+                done || true
         done
         kubectl get crd -o name 2>/dev/null | grep cert-manager.io \
             | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
@@ -582,11 +582,16 @@ _drain_pvcs() {
     pvcs=$(kubectl get pvc -n "${ns}" -o name 2>/dev/null) || return 0
     [[ -z "${pvcs}" ]] && return 0
 
-    info "  Draining PVCs in ${ns} (waiting for pods to terminate first)..."
-    # Wait up to 90s for all pods to exit — the pvc-protection controller
-    # clears the kubernetes.io/pvc-protection finalizer only once no pod
-    # mounts the PVC. Without this wait, kubectl delete pvc hangs.
-    kubectl wait pod --all -n "${ns}" --for=delete --timeout=90s 2>/dev/null || true
+    info "  Draining PVCs in ${ns} (terminating pods first)..."
+    # Force-delete all pods so the pvc-protection controller can immediately
+    # clear the kubernetes.io/pvc-protection finalizer.  Passive waiting (90s)
+    # does not work for pods that were deployed by ArgoCD or other controllers
+    # that are no longer running to orchestrate teardown.
+    kubectl delete pods --all -n "${ns}" --grace-period=0 --force 2>/dev/null || true
+    # Still wait up to 30s for pod objects to disappear (they do once kubelet
+    # confirms the containers are gone) so the pvc-protection controller has
+    # time to process the removal.
+    kubectl wait pod --all -n "${ns}" --for=delete --timeout=30s 2>/dev/null || true
 
     info "  Deleting PVCs in ${ns}..."
     kubectl delete pvc --all -n "${ns}" --wait=true --timeout=120s 2>/dev/null || true
