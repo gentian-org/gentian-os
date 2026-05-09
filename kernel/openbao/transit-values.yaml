@@ -56,13 +56,20 @@ server:
       secretKey: unseal-key
 
   # Automatically unseal on every pod start (node reboot, rolling upgrade, etc.)
-  # Loops with a short sleep until the listener is up, then calls unseal.
+  # Waits for the listener, then unseals only if already initialized.
+  # On a fresh install the vault is not yet initialized — exit cleanly so the
+  # pod reaches Running and init-openbao-transit.sh can initialize it.
   # Idempotent: bao operator unseal is a no-op when already unsealed.
   postStart:
     - /bin/sh
     - -c
     - |
-      until bao status 2>/dev/null | grep -q 'Initialized.*true'; do sleep 1; done
+      WAIT=0
+      until bao status >/dev/null 2>&1; do
+        [ $WAIT -ge 30 ] && exit 0
+        WAIT=$((WAIT+1)); sleep 1
+      done
+      bao status 2>/dev/null | grep -q 'Initialized.*true' || exit 0
       bao operator unseal "$TRANSIT_UNSEAL_KEY" || true
 
   standalone:
