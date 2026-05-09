@@ -33,7 +33,7 @@ spec:
         namespace: crossplane-system
     namespace: gentian-infra-dev
     wait: true
-    timeout: 300
+    waitTimeout: "5m"
     valuesFrom:
       # 1. Base values (non-secret defaults, all environments)
       - configMapKeyRef:
