@@ -175,7 +175,18 @@ success "Phase 2 nubus resources removed."
 banner "Step 1c — Drain Crossplane managed resources"
 
 _mr_count() {
-    kubectl get managed --no-headers 2>/dev/null | wc -l | tr -d ' '
+    # Under strict mode, `kubectl get managed` can return non-zero if the
+    # API alias is unavailable; treat that as "no managed resources".
+    local mr_list
+    if mr_list="$(kubectl get managed --no-headers 2>/dev/null)"; then
+        if [[ -z "${mr_list}" ]]; then
+            echo 0
+        else
+            printf '%s\n' "${mr_list}" | wc -l | tr -d ' '
+        fi
+    else
+        echo 0
+    fi
 }
 
 info "Waiting up to 60s for managed resources to drain..."
@@ -209,15 +220,25 @@ fi
 # =============================================================================
 banner "Step 2 — Remove Crossplane XRDs, Compositions, ProviderConfigs"
 
-for file in \
-    "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml" \
-    "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
-do
+if kubectl get crd compositions.apiextensions.crossplane.io >/dev/null 2>&1; then
+    file="${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
     if [[ -f "${file}" ]]; then
-        kubectl delete -f "${file}" --ignore-not-found=true
+        kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
         success "  Removed: $(basename "${file}")"
     fi
-done
+else
+    info "  Composition CRD absent; skipping cluster-default deletion."
+fi
+
+if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/null 2>&1; then
+    file="${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+    if [[ -f "${file}" ]]; then
+        kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
+        success "  Removed: $(basename "${file}")"
+    fi
+else
+    info "  XRD CRD absent; skipping cluster XRD deletion."
+fi
 
 # ProviderConfigs must be deleted individually — kubectl delete -f fails if
 # a CRD is not registered (e.g. provider-helm was never installed).
@@ -276,6 +297,55 @@ elif kubectl get deployment crossplane -n crossplane-system >/dev/null 2>&1; the
 else
     info "Crossplane not found; skipping."
 fi
+
+# Explicitly delete all provider-installed CRDs.  When providers are removed
+# (Step 3), Crossplane's package manager normally GCs their CRDs.  But if
+# Crossplane core is already gone (re-entrant uninstall), the package manager
+# is not running and CRDs become orphaned.  Belt-and-suspenders: always
+# sweep these groups after helm uninstall so the next install gets clean CRDs.
+_delete_crossplane_crds() {
+    local pattern='crossplane\.io|upbound\.io'
+    local crds left deadline
+
+    crds=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep -E "${pattern}" || true)
+
+    if [[ -z "${crds}" ]]; then
+        info "No Crossplane/Upbound CRDs found; skipping CRD sweep."
+        return 0
+    fi
+
+    info "Deleting Crossplane/Upbound CRDs..."
+    while IFS= read -r crd; do
+        [[ -z "${crd}" ]] && continue
+        kubectl patch crd "${crd}" \
+            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || true
+        kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done <<< "${crds}"
+
+    deadline=$((SECONDS + 180))
+    while :; do
+        left=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+            | grep -E "${pattern}" || true)
+        [[ -z "${left}" ]] && break
+        if (( SECONDS > deadline )); then
+            warn "Some Crossplane/Upbound CRDs still remain after 180s."
+            while IFS= read -r crd; do
+                [[ -z "${crd}" ]] && continue
+                kubectl patch crd "${crd}" \
+                    --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                    2>/dev/null || true
+            done <<< "${left}"
+            break
+        fi
+        sleep 3
+    done
+
+    success "Crossplane/Upbound CRD sweep completed."
+}
+
+_delete_crossplane_crds
 
 # Clean up cluster-scoped RBAC (left behind by either Helm or addon installs).
 kubectl delete clusterrole \
@@ -469,10 +539,23 @@ success "ESO removed."
 # =============================================================================
 # Step 8 — Uninstall cert-manager (only if Gentian-managed)
 # =============================================================================
+cm_helm_present=0
+if helm status cert-manager -n cert-manager >/dev/null 2>&1; then
+    cm_helm_present=1
+fi
+
+# If install-state says Gentian-managed but there is no Helm release, treat it
+# as stale state (e.g. cluster switched to distro addon-managed cert-manager).
+if [[ "${GENTIAN_MANAGED_CERT_MANAGER}" == "1" && "${cm_helm_present}" != "1" ]]; then
+    warn "GENTIAN_MANAGED_CERT_MANAGER=1 but no cert-manager Helm release found."
+    warn "Treating cert-manager as externally managed for this uninstall run."
+    GENTIAN_MANAGED_CERT_MANAGER="0"
+fi
+
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" || "${GENTIAN_MANAGED_CERT_MANAGER}" == "1" ]]; then
     banner "Step 8 — Uninstall cert-manager"
 
-    if helm status cert-manager -n cert-manager >/dev/null 2>&1; then
+    if [[ "${cm_helm_present}" == "1" ]]; then
         helm uninstall cert-manager -n cert-manager
         kubectl delete namespace cert-manager --ignore-not-found=true 2>/dev/null || true
         # Strip finalizers from cert-manager CRs before deleting CRDs.
@@ -503,6 +586,29 @@ else
 fi
 
 # =============================================================================
+# Step 8b — Remove additional cluster infra installed by install.sh
+# =============================================================================
+if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
+    banner "Step 8b — Remove additional cluster infra"
+
+    # Installed by install_argocd_image_updater() in scripts/install-lib.sh.
+    if helm status argocd-image-updater -n argocd-image-updater >/dev/null 2>&1; then
+        helm uninstall argocd-image-updater -n argocd-image-updater 2>/dev/null || true
+        success "argocd-image-updater Helm release uninstalled."
+    else
+        info "argocd-image-updater Helm release not found; skipping uninstall."
+    fi
+
+    # Installed by bootstrap_argocd_apps() when cluster infra is enabled.
+    # Remove CRDs as a best-effort cleanup in case the namespace teardown has
+    # already removed the operator pod before finalizer processing completes.
+    kubectl get crd -o name 2>/dev/null | grep "cnpg.io" \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    success "Additional cluster infra cleanup queued."
+fi
+
+# =============================================================================
 # Step 9 — Remove remaining kernel namespaces
 # In safe mode, namespaces that contain PVCs are preserved.
 # In force mode, all kernel namespaces are deleted.
@@ -530,6 +636,7 @@ _clear_ns_finalizers() {
         externalsecrets.external-secrets.io \
         clusterexternalsecrets.external-secrets.io \
         secretstores.external-secrets.io \
+        terraforms.infra.contrib.fluxcd.io \
         releases.helm.crossplane.io \
         objects.kubernetes.crossplane.io \
         providerconfigs.kubernetes.crossplane.io \
@@ -550,19 +657,19 @@ _delete_namespace() {
     kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=5 2>/dev/null || true
     # Wait up to 30s; if still Terminating, strip finalizers and retry.
     local deadline=$((SECONDS + 30))
-    while kubectl get namespace "${ns}" >/dev/null 2>&1; do
+    while kubectl get namespace "${ns}" --request-timeout=5s >/dev/null 2>&1; do
         if (( SECONDS > deadline )); then
             warn "  ${ns} stuck in Terminating — stripping remaining finalizers..."
             _clear_ns_finalizers "${ns}"
             # Also clear the namespace-level finalizer itself.
-            kubectl get namespace "${ns}" -o json 2>/dev/null \
+            kubectl get namespace "${ns}" -o json --request-timeout=10s 2>/dev/null \
               | jq '.spec.finalizers=[]' \
               | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - 2>/dev/null || true
             break
         fi
         sleep 3
     done
-    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    if kubectl get namespace "${ns}" --request-timeout=5s >/dev/null 2>&1; then
         warn "  ${ns} may still be terminating in the background."
     else
         success "  Deleted namespace: ${ns}"
@@ -604,7 +711,57 @@ _drain_pvcs() {
             2>/dev/null || true
 }
 
-for ns in openbao gentian-dev gentian-infra-dev gentian-system platform-kernel tofu-system; do
+# Delete PVs that were previously bound to PVCs in a namespace.
+# This is required for full data destruction when reclaimPolicy is Retain.
+_delete_pvs_for_namespace() {
+    local ns="$1"
+    local pvs
+    pvs=$(kubectl get pv -o json 2>/dev/null \
+        | jq -r --arg ns "${ns}" '.items[] | select(.spec.claimRef.namespace == $ns) | .metadata.name') || return 0
+    [[ -z "${pvs}" ]] && return 0
+
+    info "  Deleting PVs previously bound to namespace ${ns}..."
+    while IFS= read -r pv; do
+        [[ -z "${pv}" ]] && continue
+        kubectl patch pv "${pv}" \
+            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+            2>/dev/null || true
+        kubectl delete pv "${pv}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done <<< "${pvs}"
+}
+
+# =============================================================================
+# Step 8c — Purge OpenBao data/secrets (force mode or cluster-infra)
+# =============================================================================
+if [[ "${MODE}" == "force" || "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
+    banner "Step 8c — Purge OpenBao data/secrets"
+
+    # Remove in-cluster OpenBao bootstrap/runtime secrets first.
+    if kubectl get namespace openbao >/dev/null 2>&1; then
+        kubectl delete secret --all -n openbao --ignore-not-found=true 2>/dev/null || true
+        kubectl delete configmap --all -n openbao --ignore-not-found=true 2>/dev/null || true
+        success "OpenBao namespace secrets/configmaps deleted."
+    else
+        info "OpenBao namespace not present; skipping in-namespace secret purge."
+    fi
+
+    # Force-remove OpenBao PVCs/PVs so no logical data survives via Retain PVs.
+    _drain_pvcs "openbao"
+    _delete_pvs_for_namespace "openbao"
+
+    # If ESO CRDs are still present at this point, explicitly remove OpenBao stores.
+    kubectl delete clustersecretstore openbao --ignore-not-found=true 2>/dev/null || true
+    kubectl delete secretstore openbao -A --ignore-not-found=true 2>/dev/null || true
+
+    success "OpenBao purge requested (KV backing storage, secrets, and stores)."
+fi
+
+namespaces_to_remove=(openbao gentian-dev gentian-infra-dev gentian-system platform-kernel tofu-system)
+if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
+    namespaces_to_remove+=(stakater-system cnpg-system argocd-image-updater flux-system)
+fi
+
+for ns in "${namespaces_to_remove[@]}"; do
     if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
         continue
     fi
@@ -612,11 +769,48 @@ for ns in openbao gentian-dev gentian-infra-dev gentian-system platform-kernel t
         _drain_pvcs "${ns}"
         _delete_namespace "${ns}"
     elif _has_pvc "${ns}"; then
-        warn "  Skipping namespace ${ns} (contains PVCs — use -f to delete)"
+        warn "  Skipping namespace ${ns} (contains PVCs - use -f to delete)"
     else
         _delete_namespace "${ns}"
     fi
 done
+
+# =============================================================================
+# Step 10 — Remove tenant resources (force mode)
+# =============================================================================
+if [[ "${MODE}" == "force" ]]; then
+    banner "Step 10 — Remove tenant resources"
+
+    if kubectl get crd tenants.gentianos.io >/dev/null 2>&1; then
+        info "Removing Tenant finalizers and deleting Tenant CRs..."
+        while IFS= read -r tenant; do
+            [[ -z "${tenant}" ]] && continue
+            kubectl patch "${tenant}" \
+                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                2>/dev/null || true
+            kubectl delete "${tenant}" --ignore-not-found=true --wait=false 2>/dev/null || true
+        done < <(kubectl get tenants.gentianos.io -o name 2>/dev/null)
+        success "Tenant CR deletion requested."
+    else
+        info "Tenant CRD not found; skipping Tenant CR deletion."
+    fi
+
+    mapfile -t tenant_namespaces < <(
+        kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+            | awk '/^tenant-/ {print $0}'
+    )
+
+    if [[ "${#tenant_namespaces[@]}" -eq 0 ]]; then
+        info "No tenant-* namespaces found."
+    else
+        for ns in "${tenant_namespaces[@]}"; do
+            _drain_pvcs "${ns}"
+            _delete_namespace "${ns}"
+        done
+    fi
+else
+    info "Skipping tenant resource removal (only enabled with -f)."
+fi
 
 # =============================================================================
 # Done
@@ -626,8 +820,13 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║     Gentian OS — Uninstall complete                      ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  OpenBao KV data is PRESERVED (managementPolicies: Observe/Create"
-echo "  prevents Crossplane from deleting KV paths on XR deletion)."
+if [[ "${MODE}" == "force" || "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
+    echo "  OpenBao KV/secrets purge was requested (force/cluster-infra mode)."
+    echo "  Verify with: kubectl get ns openbao && kubectl get pv | grep openbao"
+else
+    echo "  OpenBao KV data is PRESERVED (managementPolicies: Observe/Create"
+    echo "  prevents Crossplane from deleting KV paths on XR deletion)."
+fi
 echo ""
 if [[ "${MODE}" == "safe" ]]; then
     echo "  PVC/PV data is preserved (safe mode)."
