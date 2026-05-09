@@ -82,10 +82,10 @@ spec:
     kind: ValidatingWebhookConfiguration
   - group: 'admissionregistration.k8s.io'
     kind: MutatingWebhookConfiguration
-  # Crossplane managed resources (all provider CRDs are cluster-scoped)
-  - group: '*.crossplane.io'
-    kind: '*'
-  - group: '*.upbound.io'
+  # Crossplane managed resources are cluster-scoped CRDs across many provider
+  # API groups. Rather than maintaining a per-group list, allow all cluster
+  # resources — source-repo restriction already limits what can be synced.
+  - group: '*'
     kind: '*'
 
   # Namespace-scoped resources (allow all)
