@@ -1767,7 +1767,7 @@ bootstrap_transit_app() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/openbao-transit-application.yaml"
     success "Applied openbao-transit-application.yaml"
 
-    if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 300; then
+    if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
         error "Step 7 failed: openbao-transit pod never became Ready. Aborting install."
         exit 1
     fi

@@ -70,6 +70,26 @@ INIT_STATUS=$(curl -sf "${TRANSIT_ADDR}/v1/sys/init" | jq -r '.initialized')
 if [[ "$INIT_STATUS" == "true" ]]; then
   success "openbao-transit already initialized."
 
+  # Unseal BEFORE token validation — a sealed vault returns 503 for all auth
+  # requests, which would falsely invalidate a perfectly good cached token and
+  # delete the cache file (including the unseal key), leaving no way to recover.
+  SEALED=$(curl -sf "${TRANSIT_ADDR}/v1/sys/seal-status" | jq -r '.sealed')
+  if [[ "$SEALED" == "true" ]]; then
+    info "Transit is sealed — unsealing..."
+    if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
+      UNSEAL_KEY=$(jq -r '.keys_base64[0]' "${TRANSIT_INIT_FILE}")
+    else
+      echo "  (key is read silently — characters will not appear as you type)"
+      read -rsp "  Enter transit unseal key: " UNSEAL_KEY; echo ""
+    fi
+    curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/unseal" \
+      -H "Content-Type: application/json" \
+      -d "{\"key\": \"${UNSEAL_KEY}\"}" >/dev/null
+    success "Transit unsealed."
+  else
+    success "Transit already unsealed."
+  fi
+
   if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
     TRANSIT_ROOT_TOKEN=$(jq -r '.root_token' "${TRANSIT_INIT_FILE}")
     # Validate the cached token is still accepted by this transit instance.
@@ -100,23 +120,6 @@ if [[ "$INIT_STATUS" == "true" ]]; then
       error "Root token rejected by transit (HTTP ${LOOKUP_HTTP}). Check the token and retry."
       exit 1
     fi
-  fi
-
-  SEALED=$(curl -sf "${TRANSIT_ADDR}/v1/sys/seal-status" | jq -r '.sealed')
-  if [[ "$SEALED" == "true" ]]; then
-    info "Transit is sealed — unsealing..."
-    if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
-      UNSEAL_KEY=$(jq -r '.keys_base64[0]' "${TRANSIT_INIT_FILE}")
-    else
-      echo "  (key is read silently — characters will not appear as you type)"
-      read -rsp "  Enter transit unseal key: " UNSEAL_KEY; echo ""
-    fi
-    curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/unseal" \
-      -H "Content-Type: application/json" \
-      -d "{\"key\": \"${UNSEAL_KEY}\"}" >/dev/null
-    success "Transit unsealed."
-  else
-    success "Transit already unsealed."
   fi
 
 else
