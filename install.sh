@@ -630,6 +630,35 @@ deploy_nubus() {
         --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/crossplane/apps/nubus/patches/mq_adapter_nats.py" \
         --dry-run=client -o yaml | kubectl apply -f -
 
+    # ── Pre-flight: abort if stale data PVCs exist ───────────────────────────
+    # Nubus StatefulSets (LDAP, UDM listener, portal-consumer, …) bind to
+    # volumeClaimTemplate PVCs by name. Helm never deletes these PVCs on
+    # uninstall. If they survive from a previous installation the new
+    # StatefulSets silently reuse the old volumes, inheriting old users, old
+    # LDAP passwords, and expired SSL certificates. Abort loudly instead.
+    local _stale_pvcs
+    _stale_pvcs=$(kubectl get pvc -n "${ns}" -o name 2>/dev/null \
+        | grep -v "nats-data-${release_name}-provisioning-nats-0" || true)
+    if [[ -n "${_stale_pvcs}" ]]; then
+        error "Stale PVCs detected in ${ns} — aborting to avoid installing on old data:"
+        kubectl get pvc -n "${ns}" --no-headers 2>/dev/null | sed 's/^/    /' >&2 || true
+        error ""
+        error "These PVCs are from a previous installation (LDAP data, SSL certs, etc.)."
+        error "Clean them up first, then re-run install.sh:"
+        error "    ./uninstall.sh -f && ./install.sh"
+        exit 1
+    fi
+    _stale_pvcs=$(kubectl get pvc -n "${infra_ns}" -o name 2>/dev/null || true)
+    if [[ -n "${_stale_pvcs}" ]]; then
+        error "Stale PVCs detected in ${infra_ns} — aborting to avoid installing on old data:"
+        kubectl get pvc -n "${infra_ns}" --no-headers 2>/dev/null | sed 's/^/    /' >&2 || true
+        error ""
+        error "These PVCs are from a previous installation (postgres, MariaDB, MinIO, …)."
+        error "Clean them up first, then re-run install.sh:"
+        error "    ./uninstall.sh -f && ./install.sh"
+        exit 1
+    fi
+
     # ── Pre-flight: clear stale NATS consumer state ──────────────────────────
     # The provisioning register-consumers job fails with 409 if NATS retained
     # consumer registrations from a previous interrupted install/uninstall.
