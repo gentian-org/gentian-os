@@ -685,7 +685,11 @@ _clear_ns_finalizers() {
 
 _delete_namespace() {
     local ns="$1"
-    kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=5 2>/dev/null || true
+    # IMPORTANT: --wait=false is required.  Without it, `kubectl delete namespace`
+    # blocks indefinitely if the namespace has resources with stuck finalizers
+    # (e.g. terraforms.infra.contrib.fluxcd.io after tf-controller is gone),
+    # which prevents the polling loop below from ever running to strip them.
+    kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=5 --wait=false 2>/dev/null || true
     # Wait up to 30s; if still Terminating, strip finalizers and retry.
     local deadline=$((SECONDS + 30))
     while kubectl get namespace "${ns}" --request-timeout=5s >/dev/null 2>&1; do
