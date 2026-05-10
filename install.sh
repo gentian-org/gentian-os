@@ -41,7 +41,7 @@ unset GENTIAN_INSTALL_LIB_ONLY
 
 # ─── Crossplane settings ──────────────────────────────────────────────────────
 CROSSPLANE_NAMESPACE=crossplane-system
-CROSSPLANE_VERSION="1.18.0"
+CROSSPLANE_VERSION="2.2.1"
 CROSSPLANE_HELM_REPO=https://charts.crossplane.io/stable
 PROVIDER_WAIT_TIMEOUT=15m
 CLUSTER_XR_TIMEOUT=15m
@@ -161,7 +161,7 @@ install_crossplane_providers() {
     # function-go-templating and function-auto-ready are Function resources;
     # the rest are Provider resources. Use the correct type for each so
     # we don't burn the full timeout on the wrong resource kind.
-    for fn in function-go-templating function-auto-ready; do
+    for fn in function-go-templating function-extra-resources function-auto-ready; do
         info "  Waiting for: ${fn}"
         kubectl wait "function.pkg.crossplane.io/${fn}" \
             --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
@@ -183,10 +183,19 @@ install_crossplane_providers() {
     kubectl wait xrd xclusters.gentianos.io \
         --for=condition=Established --timeout=2m
 
+    info "Applying XRD (XApp / App)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
+    kubectl wait xrd xapps.gentianos.io \
+        --for=condition=Established --timeout=2m
+
     info "Applying Composition (cluster-default)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
 
-    success "Crossplane providers, XRD, and Composition are ready."
+    info "Applying Compositions (app-default, app-ox)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml"
+
+    success "Crossplane providers, XRDs, and Compositions are ready."
 }
 
 # =============================================================================
