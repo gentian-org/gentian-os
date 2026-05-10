@@ -277,10 +277,13 @@ kubectl gentian apps list
 
 ## Provision your first tenant
 
-Apply a Tenant CR to trigger full tenant provisioning:
+Apply a Tenant CR to trigger full tenant provisioning. Example Tenant CRs
+live in the [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
+repo (per-environment) and example AppProfile CRs in
+[`gentian-apps`](https://github.com/gentian-org/gentian-apps) under `profiles/`.
 
 ```bash
-kubectl apply -f config/samples/tenant_gtn-demo.yaml
+kubectl apply -f path/to/your/tenant.yaml
 ```
 
 Watch provisioning progress:
@@ -473,4 +476,5 @@ make e2e-p0-clean
 - [scripts/seed-openbao.sh](../scripts/seed-openbao.sh) — secret derivation details (HMAC-SHA256)
 - [crossplane/claims/dev-cluster.yaml](../crossplane/claims/dev-cluster.yaml) — the Cluster XR claim
 - [crossplane/compositions/cluster-default.yaml](../crossplane/compositions/cluster-default.yaml) — Composition that provisions all kernel MRs
-- [config/samples/](../config/samples/) — example Tenant, AppProfile, and IntegrationBinding CRs
+- [`gentian-apps`](https://github.com/gentian-org/gentian-apps) — catalogue of AppProfile CRs (one per app)
+- [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments) — per-environment Tenant and IntegrationBinding CRs
