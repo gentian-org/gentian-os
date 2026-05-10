@@ -58,15 +58,16 @@ const (
 )
 
 // DeploymentMethod determines how the orchestrator delivers the app Helm release.
-// +kubebuilder:validation:Enum=argocd;tofu-controller
+// +kubebuilder:validation:Enum=argocd;crossplane
 type DeploymentMethod string
 
 const (
-	// DeploymentMethodArgoCD uses an ArgoCD Application CR (Pattern A — existingSecret).
+	// DeploymentMethodArgoCD uses an ArgoCD Application CR for kernel-layer services
+	// that are managed directly by the cache or identity reconcilers.
 	DeploymentMethodArgoCD DeploymentMethod = "argocd"
-	// DeploymentMethodTofuController uses a Tofu Controller Workspace with set_sensitive
-	// for charts that do not support existingSecret references (Pattern B).
-	DeploymentMethodTofuController DeploymentMethod = "tofu-controller"
+	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
+	// App Composition that emits an ExternalSecret and a provider-helm Release.
+	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
 )
 
 // TenantPhase represents the overall lifecycle phase of a Tenant.

@@ -115,13 +115,6 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// tofu-system namespace is required by the app reconciler for Terraform CRs.
-	if err := testClient.Create(context.Background(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "tofu-system"},
-	}); err != nil {
-		panic(err)
-	}
-
 	// udm-admin Secret is required by the mail reconciler for Dovecot LDAP config.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},

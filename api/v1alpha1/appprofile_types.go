@@ -55,20 +55,11 @@ type AppProfileSpec struct {
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// DeploymentMethod controls how the orchestrator deploys this app.
-	// Defaults to argocd (Pattern A). Use tofu-controller for charts that
-	// don't support existingSecret references (Pattern B).
+	// Defaults to crossplane. Use argocd for kernel-layer services managed
+	// directly by the cache or identity reconcilers.
 	// +optional
-	// +kubebuilder:default=argocd
+	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
-
-	// TofuModulePath overrides the default Terraform module path used when
-	// deploymentMethod is tofu-controller. When empty, the orchestrator uses
-	// the generic kernel/tofu/tenant/app-workspace module. Set this to a
-	// custom module path (e.g. kernel/tofu/tenant/ox-workspace) for apps that
-	// require a dedicated Terraform module (e.g. apps with complex propertiesFiles
-	// key paths that cannot be expressed as Helm --set values).
-	// +optional
-	TofuModulePath string `json:"tofuModulePath,omitempty"`
 
 	// Ingress declares the HTTP routing configuration for this app.
 	// When set, the orchestrator creates a Kubernetes Ingress resource and a
