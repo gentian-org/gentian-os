@@ -671,6 +671,10 @@ deploy_nubus() {
 
             [[ -n "${reason}" ]] && printf '%s\t%s\n' "${pvc}" "${reason}"
         done <<< "${pvc_list}"
+        # Always return 0: under set -e, an exit code of 1 from the loop's
+        # last `[[ -n ... ]] && printf` (when the final PVC is non-stale) would
+        # propagate through $(...) and abort the caller silently.
+        return 0
     }
 
     # ── Namespaces ────────────────────────────────────────────────────────────
