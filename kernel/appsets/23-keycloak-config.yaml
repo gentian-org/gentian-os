@@ -70,3 +70,19 @@ spec:
             - .spec.target.creationPolicy
             - .spec.dataFrom[]?.find?.conversionStrategy
             - .spec.data[]?.remoteRef?.nullBytePolicy
+        # Crossplane provider-keycloak resolves *Ref/*Selector and writes the
+        # resolved UUID back into spec.forProvider.{clientId,clientScopeId}.
+        # That round-trip drift is expected; ignore it so apps stay Synced.
+        - group: client.keycloak.crossplane.io
+          kind: ProtocolMapper
+          jqPathExpressions:
+            - .spec.forProvider.clientId
+            - .spec.forProvider.clientScopeId
+        - group: openidclient.keycloak.crossplane.io
+          kind: ClientDefaultScopes
+          jqPathExpressions:
+            - .spec.forProvider.clientId
+        - group: openidclient.keycloak.crossplane.io
+          kind: ClientOptionalScopes
+          jqPathExpressions:
+            - .spec.forProvider.clientId

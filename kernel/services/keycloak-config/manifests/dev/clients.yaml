@@ -24,7 +24,6 @@ kind: Client
 metadata:
   name: opendesk-intercom
   annotations:
-    crossplane.io/external-name: "opendesk/1f210642-7d2e-41b6-95a2-fbb59a0434c3"
     argocd.argoproj.io/sync-wave: "10"
 spec:
   deletionPolicy: Orphan
@@ -61,7 +60,6 @@ kind: Client
 metadata:
   name: opendesk-nextcloud
   annotations:
-    crossplane.io/external-name: "opendesk/28357a28-8778-4f36-96d6-a2916ca952dd"
     argocd.argoproj.io/sync-wave: "10"
 spec:
   deletionPolicy: Orphan
@@ -98,7 +96,6 @@ kind: Client
 metadata:
   name: opendesk-oxappsuite
   annotations:
-    crossplane.io/external-name: "opendesk/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f"
     argocd.argoproj.io/sync-wave: "10"
 spec:
   deletionPolicy: Orphan
@@ -134,7 +131,6 @@ kind: Client
 metadata:
   name: opendesk-dovecot
   annotations:
-    crossplane.io/external-name: "opendesk/a19cebbf-da09-4a61-8aef-fbdf13d8f591"
     argocd.argoproj.io/sync-wave: "10"
 spec:
   deletionPolicy: Orphan

@@ -20,13 +20,13 @@ kind: ProtocolMapper
 metadata:
   name: dovecot-opendesk-useruuid
   annotations:
-    crossplane.io/external-name: "opendesk/client/a19cebbf-da09-4a61-8aef-fbdf13d8f591/e02df015-6062-405e-8fc5-6f1a713f1dad"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: a19cebbf-da09-4a61-8aef-fbdf13d8f591
+    clientIdRef:
+      name: opendesk-dovecot
     name: opendesk_useruuid
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -49,13 +49,13 @@ kind: ProtocolMapper
 metadata:
   name: dovecot-opendesk-username
   annotations:
-    crossplane.io/external-name: "opendesk/client/a19cebbf-da09-4a61-8aef-fbdf13d8f591/073ebcb6-631a-4be6-8387-59e234e601f3"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: a19cebbf-da09-4a61-8aef-fbdf13d8f591
+    clientIdRef:
+      name: opendesk-dovecot
     name: opendesk_username
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -76,13 +76,13 @@ kind: ProtocolMapper
 metadata:
   name: intercom-opendesk-useruuid
   annotations:
-    crossplane.io/external-name: "opendesk/client/1f210642-7d2e-41b6-95a2-fbb59a0434c3/593e69c9-8393-4a9c-98dd-bc44a68c8f7e"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    clientIdRef:
+      name: opendesk-intercom
     name: opendesk_useruuid
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -103,13 +103,13 @@ kind: ProtocolMapper
 metadata:
   name: intercom-opendesk-username
   annotations:
-    crossplane.io/external-name: "opendesk/client/1f210642-7d2e-41b6-95a2-fbb59a0434c3/291e0792-6423-4f3a-98d3-3a8c8e062e7e"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    clientIdRef:
+      name: opendesk-intercom
     name: opendesk_username
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -132,13 +132,13 @@ kind: ProtocolMapper
 metadata:
   name: intercom-audience
   annotations:
-    crossplane.io/external-name: "opendesk/client/1f210642-7d2e-41b6-95a2-fbb59a0434c3/b186a9a2-3cce-4a59-b20d-634f37d307bd"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    clientIdRef:
+      name: opendesk-intercom
     name: opendesk-intercom-audience
     protocol: openid-connect
     protocolMapper: oidc-audience-mapper
@@ -157,13 +157,13 @@ kind: ProtocolMapper
 metadata:
   name: nextcloud-opendesk-useruuid
   annotations:
-    crossplane.io/external-name: "opendesk/client/28357a28-8778-4f36-96d6-a2916ca952dd/91fa2716-ad16-48b8-8b25-214e06032a91"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: 28357a28-8778-4f36-96d6-a2916ca952dd
+    clientIdRef:
+      name: opendesk-nextcloud
     name: opendesk_useruuid
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -184,13 +184,13 @@ kind: ProtocolMapper
 metadata:
   name: ox-opendesk-useruuid
   annotations:
-    crossplane.io/external-name: "opendesk/client/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f/27970314-e1fa-4abb-bdce-2c4681ad7070"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f
+    clientIdRef:
+      name: opendesk-oxappsuite
     name: opendesk_useruuid
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -213,13 +213,13 @@ kind: ProtocolMapper
 metadata:
   name: ox-opendesk-username
   annotations:
-    crossplane.io/external-name: "opendesk/client/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f/1c5b0290-5780-4241-b73b-58d52a2bb335"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f
+    clientIdRef:
+      name: opendesk-oxappsuite
     name: opendesk_username
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -242,13 +242,13 @@ kind: ProtocolMapper
 metadata:
   name: ox-context
   annotations:
-    crossplane.io/external-name: "opendesk/client/d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f/93d198e5-f5a3-45a8-9d0b-96039a080ad0"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: d5f14b4d-d28d-4edc-ad9e-c0d363f12d1f
+    clientIdRef:
+      name: opendesk-oxappsuite
     name: context
     protocol: openid-connect
     protocolMapper: oidc-hardcoded-claim-mapper

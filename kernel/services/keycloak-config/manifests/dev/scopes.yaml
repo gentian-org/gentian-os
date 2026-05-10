@@ -22,7 +22,6 @@ kind: ClientScope
 metadata:
   name: opendesk-openproject-scope
   annotations:
-    crossplane.io/external-name: "opendesk/767e74e9-d1ec-4b33-83dc-0e1cfa027463"
     argocd.argoproj.io/sync-wave: "10"
 spec:
   deletionPolicy: Orphan
@@ -30,7 +29,8 @@ spec:
     realmId: opendesk
     name: opendesk-openproject-scope
     description: Protocol mappers for OpenProject
-    protocol: openid-connect
+    # Protocol is implied by the CRD group `openidclient.keycloak.crossplane.io`
+    # (openid-connect). The provider's ClientScope schema has no `protocol` field.
   providerConfigRef:
     name: keycloak
 ---
@@ -41,13 +41,13 @@ kind: ProtocolMapper
 metadata:
   name: openproject-scope-opendesk-useruuid
   annotations:
-    crossplane.io/external-name: "opendesk/client-scope/767e74e9-d1ec-4b33-83dc-0e1cfa027463/f9472e37-a4fc-4a0c-bfd7-497488e0e2fb"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientScopeId: 767e74e9-d1ec-4b33-83dc-0e1cfa027463
+    clientScopeIdRef:
+      name: opendesk-openproject-scope
     name: opendesk_useruuid
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -68,13 +68,13 @@ kind: ProtocolMapper
 metadata:
   name: openproject-scope-opendesk-username
   annotations:
-    crossplane.io/external-name: "opendesk/client-scope/767e74e9-d1ec-4b33-83dc-0e1cfa027463/ef162fa1-916d-4021-9028-c6873812f99a"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientScopeId: 767e74e9-d1ec-4b33-83dc-0e1cfa027463
+    clientScopeIdRef:
+      name: opendesk-openproject-scope
     name: opendesk_username
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -98,13 +98,13 @@ kind: ProtocolMapper
 metadata:
   name: openproject-scope-admin
   annotations:
-    crossplane.io/external-name: "opendesk/client-scope/767e74e9-d1ec-4b33-83dc-0e1cfa027463/f9b44a2e-2503-424b-b996-82502f3dc91c"
     argocd.argoproj.io/sync-wave: "11"
 spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientScopeId: 767e74e9-d1ec-4b33-83dc-0e1cfa027463
+    clientScopeIdRef:
+      name: opendesk-openproject-scope
     name: opendeskProjectmanagementAdmin
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
@@ -135,7 +135,8 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    clientIdRef:
+      name: opendesk-intercom
     defaultScopes:
       - profile
       - email
@@ -162,7 +163,8 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     realmId: opendesk
-    clientId: 1f210642-7d2e-41b6-95a2-fbb59a0434c3
+    clientIdRef:
+      name: opendesk-intercom
     optionalScopes:
       - address
       - phone
