@@ -735,6 +735,16 @@ deploy_nubus() {
         --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/crossplane/apps/nubus/patches/mq_adapter_nats.py" \
         --dry-run=client -o yaml | kubectl apply -f -
 
+    # ── Multi-tenant LDAP ACL patch ConfigMap ─────────────────────────────────
+    # Adds cn=Tenant Admins to the cn=temporary ACL rules so tenant admins can
+    # provision users (UID lock objects). Referenced by nubusLdapServer.extraVolumes.
+    # Replaces the legacy Tofu kubernetes_config_map_v1.nubus_ldap_gentian_acl resource.
+    info "Creating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
+    kubectl create configmap "${release_name}-ldap-gentian-acl" \
+        -n "${ns}" \
+        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/crossplane/apps/nubus/patches/92-gentian-tenant-acl.sh" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
     # ── Pre-flight: abort if stale data PVCs exist ───────────────────────────
     # Nubus StatefulSets (LDAP, UDM listener, portal-consumer, …) bind to
     # volumeClaimTemplate PVCs by name. Helm never deletes these PVCs on

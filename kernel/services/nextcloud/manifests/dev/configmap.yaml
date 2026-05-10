@@ -1,0 +1,123 @@
+# =============================================================================
+# nextcloud (AIO) — plain values ConfigMaps (Pattern B)
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    global:
+      domain: desk.gentian.org
+      hosts:
+        nextcloud: files
+
+    aio:
+      podAnnotations:
+        reloader.stakater.com/auto: "true"
+
+      image:
+        tag: "2.12.2"
+
+      configuration:
+        database:
+          type: "pgsql"
+          port: "5432"
+          name: "nextcloud"
+          auth:
+            username:
+              value: "nextcloud_user"
+        cache:
+          auth:
+            enabled: true
+            username:
+              # ESO-managed (nextcloud-redis-cache) — Reloader picks up rotations
+              secret:
+                name: nextcloud-redis-cache
+                key: username
+            password:
+              secret:
+                name: nextcloud-redis-cache
+                key: password
+          port: "6379"
+          tls: false
+
+        trustedProxy: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
+        statusPhp:
+          password:
+            enabled: true
+
+      ingress:
+        enabled: true
+        ingressClassName: "nginx"
+        host: "files.desk.gentian.org"
+        tls:
+          secretName: "wildcard-tls"
+
+      debug:
+        loglevel: "2"
+
+      lifecycleHooks:
+        postStart:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - |
+                CONFIG=/var/www/html/config/config.php
+                if [ -f "$CONFIG" ] && [ -n "$FS_ENV_REDIS_PASSWORD" ]; then
+                  sed -i "s/'password' => '[^']*'/'password' => '$FS_ENV_REDIS_PASSWORD'/" "$CONFIG"
+                fi
+                printf '<?php\n$CONFIG=["trusted_domains"=>["localhost","files.desk.gentian.org","nextcloud-dev-aio.gentian-dev.svc.cluster.local"]];\n' \
+                  > /var/www/html/config/trusted-domains.config.php
+                printf '<?php\n$CONFIG=["allow_local_remote_servers"=>true];\n' \
+                  > /var/www/html/config/allow-local-servers.config.php
+                waited=0; max=120
+                while [ "$waited" -lt "$max" ] && ! [ -f /var/www/html/config/config.php ]; do
+                  sleep 2; waited=$((waited+2))
+                done
+                if php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
+                  php /var/www/html/occ richdocuments:update-empty-templates || true
+                fi
+
+      # Override baked FS_ENV_PHP_REDIS_FULL_URI so PHP sessions don't drop.
+      # Only auth[pass]= (not auth[user]=) to avoid phpredis ACL format.
+      extraEnvVars:
+        - name: FS_ENV_PHP_REDIS_FULL_URI
+          value: "tcp://$(FS_ENV_REDIS_HOST):$(FS_ENV_REDIS_PORT)?database=$(FS_ENV_PHP_REDIS_DBINDEX)&auth[pass]=$(FS_ENV_REDIS_PASSWORD)"
+
+    exporter:
+      enabled: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-dev-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    aio:
+      configuration:
+        database:
+          host: "opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local"
+        cache:
+          host: "redis-dev-master.gentian-infra-dev.svc.cluster.local"
+
+    exporter:
+      configuration:
+        server: "http://nextcloud-dev-aio"
+
+    resources:
+      limits:
+        cpu: "4"
+        memory: 2Gi
+      requests:
+        cpu: 200m
+        memory: 512Mi

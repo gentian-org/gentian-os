@@ -1,0 +1,75 @@
+# =============================================================================
+# nextcloud-notifypush — plain values ConfigMaps (Pattern B)
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-notifypush-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    image:
+      tag: "2.12.2"
+
+    global:
+      domain: desk.gentian.org
+      hosts:
+        nextcloud: files
+
+    configuration:
+      database:
+        type: "postgres"
+        port: "5432"
+        name: "nextcloud"
+        auth:
+          username:
+            value: "nextcloud_user"
+      cache:
+        auth:
+          enabled: true
+          username:
+            value: "default"
+        port: "6379"
+        tls: false
+      trustedProxy: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+      logging:
+        level: "info"
+
+    ingress:
+      enabled: true
+      ingressClassName: "nginx"
+      host: "files.desk.gentian.org"
+      tls:
+        secretName: "wildcard-tls"
+
+    metrics:
+      enabled: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-notifypush-dev-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    configuration:
+      database:
+        host: "opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local"
+      cache:
+        host: "redis-dev-master.gentian-infra-dev.svc.cluster.local"
+      nextcloudUrl: "http://nextcloud-dev-aio"
+
+    replicaCount: 1
+
+    resources:
+      limits:
+        cpu: "1"
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi

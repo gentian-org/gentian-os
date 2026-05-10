@@ -1,67 +1,20 @@
----
-# GitRepository: source of truth for the Tofu workspace.
-# The repo is public — no secretRef needed.
-# The Tofu Controller checks out this repo, locates the Terraform module
-# at spec.path, and runs tofu plan/apply inside a runner pod.
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: gentian-server
-  namespace: tofu-system
-spec:
-  interval: 1m
-  ref:
-    branch: develop
-  url: https://github.com/gentian-org/gentian-os
----
-# Terraform CR: manages all Pattern-B Helm releases for the dev environment.
-# Reads secrets from OpenBao via the tofu-runner Kubernetes auth role.
-# Uses MinIO S3 backend for Terraform state.
-apiVersion: infra.contrib.fluxcd.io/v1alpha2
-kind: Terraform
-metadata:
-  name: infra-workspaces-dev
-  namespace: tofu-system
-spec:
-  # Auto-approve plans — no manual intervention needed in dev
-  approvePlan: auto
-
-  # Reconcile every 10 minutes
-  interval: 10m
-
-  # Path within the repo to the Terraform module
-  path: kernel/tofu/tenant/infra-workspaces
-
-  # Source: the GitRepository CR above
-  sourceRef:
-    kind: GitRepository
-    name: gentian-server
-
-  # Disable the Tofu Controller's built-in Kubernetes backend —
-  # our main.tf defines its own S3 (MinIO) backend.
-  backendConfig:
-    disable: true
-
-  # Pass variables to the workspace
-  vars:
-    - name: env
-      value: dev
-
-  # Registry credentials: loaded from an ESO-managed Secret whose keys match
-  # the Terraform variable names (registry_username, registry_password).
-  # The Tofu Controller blocks TF_VAR_* env vars, so varsFrom is required.
-  varsFrom:
-    - kind: Secret
-      name: registry-credentials-tofu
-
-  # Inject MinIO backend credentials as env vars (AWS_ACCESS_KEY_ID,
-  # AWS_SECRET_ACCESS_KEY) so the S3 backend can authenticate to MinIO.
-  runnerPodTemplate:
-    spec:
-      envFrom:
-        - secretRef:
-            name: minio-tofu-state
-
-  # Write sensitive outputs to a Secret (none expected, but required by spec)
-  writeOutputsToSecret:
-    name: infra-workspaces-dev-outputs
+# =============================================================================
+# Tofu Controller workspace manifests — DEV
+#
+# As of Phase 2B of the Crossplane migration, all Helm releases that used to
+# be managed by Tofu (postgresql, mariadb, nextcloud × 3, plus the nubus
+# udm-listener-nats-patch and ldap-gentian-acl ConfigMaps) have been
+# migrated to:
+#   • Crossplane provider-helm Release CRs
+#     (kernel/services/<chart>/manifests/<env>/release.yaml)
+#   • Declarative install.sh kubectl-applied ConfigMaps
+#     (crossplane/apps/nubus/patches/*)
+#
+# The infra-workspaces-dev Terraform CR has been retired.  The Tofu Controller
+# itself stays installed (deployed by AppSet 05-tofu.yaml → globals app) until
+# Phase 5, when the per-tenant operator subsumes the remaining tenant-tier
+# workspaces (app-workspace, keycloak-config, ox-workspace).
+#
+# This file intentionally creates no resources — it exists to keep the
+# AppSet 05-tofu.yaml path resolvable.
+# =============================================================================

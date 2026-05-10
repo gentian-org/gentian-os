@@ -37,26 +37,11 @@ spec:
       - list:
           elements: []  # add envs: - env: dev / - env: prod  (once at least one app is uncommented)
       - list:
-          # Nextcloud (3 sub-charts) — currently Pattern B (Tofu-managed via infra-workspaces).
-          # Uncomment each entry after ZenDiS adds existingSecret support and the
-          # helm_release blocks are removed from tofu/tenant/infra-workspaces/nextcloud.tf.
-          #
-          # - app: nextcloud-management
-          #   chart: opendesk-nextcloud-management
-          #   repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
-          #   version: "4.7.2"
-          #   wave: "31"
-          # - app: nextcloud
-          #   chart: opendesk-nextcloud
-          #   repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
-          #   version: "4.7.2"
-          #   wave: "32"
-          # - app: nextcloud-notifypush
-          #   chart: opendesk-nextcloud-notifypush
-          #   repoURL: registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
-          #   version: "4.7.2"
-          #   wave: "33"
-          elements: []  # placeholder: remove [] and uncomment Nextcloud entries when Pattern A
+          # Pattern A (existingSecret-friendly) kernel services would be listed here.
+          # Nextcloud (3 sub-charts) is Pattern B and lives in
+          # kernel/services/{nextcloud,nextcloud-management,nextcloud-notifypush}/manifests/<env>
+          # — deployed by AppSet 09-infra-helm.yaml.
+          elements: []  # placeholder: add Pattern A apps here when introduced
   template:
     metadata:
       name: '{{.app}}-{{.env}}'

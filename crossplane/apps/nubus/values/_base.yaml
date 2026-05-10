@@ -502,7 +502,8 @@ nubusUdmListener:
   # the transformer uses subjects=["ldap-producer"] (just the queue name).
   # The transformer's ensure_stream overwrites the stream config on startup,
   # causing NoStreamResponseError for the listener. This patch aligns them.
-  # ConfigMap is created by Tofu (see tofu/tenant/infra-workspaces/nubus.tf).
+  # ConfigMap is created declaratively by install.sh (deploy_nubus) from
+  # crossplane/apps/nubus/patches/mq_adapter_nats.py.
   extraVolumes:
     - name: nats-subject-patch
       configMap:
@@ -550,6 +551,25 @@ nubusLdapServer:
   persistence:
     enabled: true
     # size in {env}/values.yaml
+
+  # ─── Multi-tenant feature: cn=Tenant Admins write access to cn=temporary ──
+  # UCS slapd.conf hardcodes Domain Admins for cn=temporary ACLs. Tenant admin
+  # groups (cn=admins_<tenant>) need write access to lock UIDs during user
+  # provisioning. The 92-gentian-tenant-acl.sh script (mounted from a
+  # ConfigMap created declaratively by install.sh as part of the nubus
+  # bootstrap) runs in /entrypoint.d/ before slapd starts and inserts the
+  # cn=Tenant Admins group into the three cn=temporary ACL rules.
+  # The Gentian operator populates cn=Tenant Admins with each tenant's
+  # admins group as a nested group via buildAdminPolicyScript.
+  extraVolumes:
+    - name: gentian-tenant-acl
+      configMap:
+        name: '{{ .Release.Name }}-ldap-gentian-acl'
+        defaultMode: 0755
+  extraVolumeMounts:
+    - name: gentian-tenant-acl
+      mountPath: /entrypoint.d/92-gentian-tenant-acl.sh
+      subPath: 92-gentian-tenant-acl.sh
 
 # UMC Gateway
 nubusUmcGateway:

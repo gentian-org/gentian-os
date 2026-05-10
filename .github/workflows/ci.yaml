@@ -87,7 +87,7 @@ jobs:
           # 92-gentian-tenant-acl.sh is a Python script mounted into
           # nubus-ldap-server's entrypoint.d; its .sh extension is required
           # for numbering order but its content is Python (SC1071).
-          ignore_paths: kernel/services/nubus/patches
+          ignore_paths: crossplane/apps/nubus/patches
 
       - name: Install OpenTofu
         uses: opentofu/setup-opentofu@v1

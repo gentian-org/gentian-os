@@ -140,26 +140,88 @@ else
     info "Release nubus-dev not found; skipping."
 fi
 
+# ── Pattern B Release CRs (postgresql, mariadb, nextcloud × 3) ──────────────
+# These were migrated from Tofu (kernel/tofu/tenant/infra-workspaces) to
+# Crossplane provider-helm during P2B.  Delete in reverse install order so
+# notifypush stops before the AIO chart it depends on, etc.
+for release_name in \
+    nextcloud-notifypush-dev \
+    nextcloud-dev \
+    nextcloud-management-dev \
+    opendesk-mariadb-dev \
+    opendesk-postgresql-dev; do
+    if kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
+        info "Deleting provider-helm Release ${release_name}..."
+        kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
+        local_deadline=$((SECONDS + 180))
+        while kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; do
+            if (( SECONDS > local_deadline )); then
+                warn "Release ${release_name} still present after 3m — forcing finalizer removal."
+                kubectl patch release.helm.crossplane.io/"${release_name}" \
+                    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                    2>/dev/null || true
+                break
+            fi
+            sleep 5
+        done
+        success "Release ${release_name} removed."
+    fi
+done
+
 for ns in gentian-dev gentian-infra-dev; do
     info "Removing nubus ConfigMaps / Secrets from ${ns}..."
     kubectl delete configmap \
         nubus-base-values \
         nubus-dev-values \
         nubus-dev-udm-listener-nats-patch \
+        nubus-dev-ldap-gentian-acl \
+        postgresql-base-values \
+        postgresql-dev-values \
+        mariadb-base-values \
+        mariadb-dev-values \
+        nextcloud-base-values \
+        nextcloud-dev-values \
+        nextcloud-management-base-values \
+        nextcloud-management-dev-values \
+        nextcloud-notifypush-base-values \
+        nextcloud-notifypush-dev-values \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
     kubectl delete externalsecret \
         nubus-credentials \
         nubus-sensitive-values \
+        portal-object-storage-credentials \
+        keycloak-bootstrap-ldap-credentials \
+        postgresql-sensitive-values \
+        mariadb-sensitive-values \
+        nextcloud-sensitive-values \
+        nextcloud-management-sensitive-values \
+        nextcloud-notifypush-sensitive-values \
+        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+    kubectl delete secretstore nubus-static \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
     # ESO-owned Secrets: delete only if ExternalSecrets are gone
     kubectl delete secret \
         nubus-credentials \
         nubus-sensitive-values \
+        portal-object-storage-credentials \
+        ums-keycloak-bootstrap-ldap-credentials \
+        postgresql-sensitive-values \
+        mariadb-sensitive-values \
+        nextcloud-sensitive-values \
+        nextcloud-management-sensitive-values \
+        nextcloud-notifypush-sensitive-values \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
     kubectl delete secret registry-credentials \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 done
-success "Phase 2 nubus resources removed."
+
+# Operator Secret in platform-kernel (replaces kubernetes_secret.nextcloud_admin)
+kubectl delete externalsecret nextcloud-admin -n platform-kernel \
+    --ignore-not-found=true 2>/dev/null || true
+kubectl delete secret nextcloud-admin -n platform-kernel \
+    --ignore-not-found=true 2>/dev/null || true
+
+success "Phase 2 nubus + Pattern B resources removed."
 
 # =============================================================================
 # Step 1c — Drain all remaining Crossplane managed resources

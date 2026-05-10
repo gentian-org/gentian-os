@@ -40,6 +40,9 @@ spec:
           elements:
           - app: opendesk-postgresql
           - app: opendesk-mariadb
+          - app: nextcloud-management
+          - app: nextcloud
+          - app: nextcloud-notifypush
   template:
     metadata:
       name: '{{.app}}-{{.env}}'

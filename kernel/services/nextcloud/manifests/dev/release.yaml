@@ -1,0 +1,42 @@
+# =============================================================================
+# nextcloud (AIO) — provider-helm Release CR (Pattern B migration)
+# Replaces helm_release.nextcloud from nextcloud.tf.
+# wait=false — long-running init; the notifypush Release CR's wait will gate it.
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: nextcloud-dev
+  annotations:
+    crossplane.io/external-name: nextcloud-dev
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  forProvider:
+    chart:
+      name: opendesk-nextcloud
+      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
+      version: "4.7.2"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: false
+    waitTimeout: "15m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: nextcloud-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: nextcloud-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: nextcloud-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes
