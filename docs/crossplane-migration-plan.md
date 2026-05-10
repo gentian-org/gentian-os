@@ -1,6 +1,6 @@
 # Gentian OS — Crossplane Migration Plan
 
-**Version:** 0.3
+**Version:** 0.4
 **Status:** In progress — P0 ✅  P1 ✅  P2A ✅  P2B ✅  P2C 🔄
 **Companion to:** [architecture-legacy.md](architecture-legacy.md), [architecture-crossplane.md](architecture-crossplane.md)
 
@@ -448,195 +448,191 @@ Final chart migration status:
 
 ---
 
-## 5b. Phase 2C — Migrate Per-Tenant App Provisioning to Crossplane 🔄
+## 5b. Phase 2C — App XRD + Composition + Tofu Removal 🔄
 
-**Scope:** Replace the per-tenant Tofu Controller workspaces
-(`kernel/tofu/tenant/app-workspace`, `kernel/tofu/tenant/keycloak-config`,
-`kernel/tofu/tenant/ox-workspace`) — currently emitted as `Terraform` CRs
-by the `AppReconciler` (see
-[internal/controller/app_reconciler.go](../internal/controller/app_reconciler.go))
-— with native Crossplane resources composed from the `AppProfile` /
-`Tenant` spec.
+**Scope:** Introduce the `App` XRD as the tenant-admin-facing primitive
+for installing applications, rewrite the `AppReconciler` to emit `App`
+claims instead of `Terraform` CRs, and delete the Tofu Controller and
+all `kernel/tofu/` modules.
 
-After this phase the Tofu Controller binary itself can be uninstalled
-(no remaining workspaces) and `kernel/tofu/` can be deleted from the repo.
-This collapses the kernel’s deployment plane to a single technology
-(Crossplane + ESO) and is a hard prerequisite for the clean cutover
-in Phase 4 / Phase 5.
+This is a clean architectural replacement on a cluster with no live
+tenants. There is no state to preserve, no live Helm releases to adopt,
+and no rollback path that requires state snapshots. The dev cluster is
+the proving ground; the result is a stack that can provision fresh
+tenants end-to-end using Crossplane alone.
 
-### 5b.0 Why this is feasible (architectural note)
-
-The `app-workspace` Tofu module today does five things, each of which
-has a direct Crossplane equivalent already proven in P2B:
-
-| Tofu thing | Crossplane equivalent (proven in P2B) |
-|---|---|
-| `helm_release.app` | `helm.crossplane.io/Release` MR with `valuesFrom.secretKeyRef` |
-| `templatefile()` rendering of secret values | ESO `ExternalSecret` with a `template` block |
-| `kubernetes_*` ad-hoc resources | `kubernetes.crossplane.io/Object` MRs |
-| `terraform.tfstate` in MinIO `tofu-state` bucket | Crossplane MR `status` (no separate state store) |
-| `dynamic "app_secrets"` map | composition function (`function-go-templating` or `function-kcl`) translating `AppProfile.spec.appSecrets[]` into `valuesFrom` entries |
-
-The `keycloak-config` workspace is a thin wrapper around the
-`provider-keycloak` resources already deployed in P1; it migrates to
-plain `provider-keycloak` MRs composed from the AppProfile.
-
-The `ox-workspace` workspace is identical to `app-workspace` plus the
-OX-specific `templatefile()` step that renders `appsuite.properties`
-from OpenBao-derived values — also expressible via ESO `template`.
+After this phase the provisioning plane is a single technology
+(Crossplane + ESO). Phases 3 onwards operate on this baseline.
 
 ### 5b.1 Deliverables
 
-- [ ] **`XApp` XRD + Composition** (`crossplane/xrds/app.yaml`,
-      `crossplane/compositions/app-default.yaml`) — one XR instance per
-      `(tenant, app)` pair. The XR spec mirrors the relevant subset of
-      `AppProfile` + `Tenant`: `chart`, `version`, `repository`,
-      `extraValues`, `appSecrets[]`, `tenantNamespace`, `domain`.
-- [ ] **Composition function** — either pin
-      `xpkg.upbound.io/crossplane-contrib/function-go-templating` or
-      `function-kcl` (decision in §5b.0). Function reads the XR and emits:
-      - 1× `ExternalSecret` (Pattern B `sensitive-values.yaml` template,
-        `dataFrom` referencing the `AppProfile.spec.appSecrets[*].valuePath`).
-      - 1× `helm.crossplane.io/Release` MR consuming the rendered values.
-      - 0..n× `kubernetes.crossplane.io/Object` MRs for any
-        `AppProfile.spec.extraResources[]` (Secrets, ConfigMaps,
-        NetworkPolicies the chart does not ship).
-- [ ] **`XKeycloakAppConfig` XRD + Composition** — emits
-      `provider-keycloak` MRs for the per-app realm role / client-scope /
-      protocol-mapper objects currently created by the
-      `keycloak-config` workspace.
-- [ ] **`XOXAppSuite` Composition variant** — reuses the `XApp`
-      Composition pipeline plus an extra ESO `ExternalSecret` that
-      renders `appsuite.properties` (the only ox-specific templating).
-      The dedicated `ox-workspace` Tofu module is retired.
-- [ ] **`AppReconciler` rewrite** (Go) —
-      [internal/controller/app_reconciler.go](../internal/controller/app_reconciler.go)
-      stops emitting `Terraform` CRs and instead emits `XApp` /
-      `XKeycloakAppConfig` / `XOXAppSuite` claims. The constants
-      `tofuSystemNamespace`, `tofuGitRepositoryName`, `tofuModulePath`,
-      `tofuFinalizer`, `tofuStateBucket`, `tofuStateEndpoint` are
-      removed. `DeploymentMethod` enum loses the `tofu-controller`
-      variant (becomes `crossplane` only).
-- [ ] **State migration helper** — `crossplane/e2e/scripts/p2c-adopt-app.sh`
-      that, for every existing tenant’s active `Terraform` CR:
-      1. Reads the live Helm release name + namespace from the Tofu
-         state in MinIO.
-      2. Creates the corresponding `XApp` claim with
-         `crossplane.io/external-name: <release-name>` so provider-helm
-         **adopts** the existing release in place (no pod restart, no
-         secret rotation).
-      3. Removes the `Terraform` CR (`kubectl delete --wait=false` plus
-         finalizer cleanup if the controller is gone).
-- [ ] **Tofu Controller uninstall** — once all `Terraform` CRs are gone
-      across all envs:
-      - `helm uninstall tofu-controller -n tofu-system`
-      - Delete `kernel/tofu/` from the repo.
-      - Delete `kernel/services/tofu/` and `AppSet 05-tofu.yaml`.
-      - Delete `tofu-state` MinIO bucket (after a 30-day retention
-        snapshot stored out-of-band).
-- [ ] **install.sh / uninstall.sh updates** — drop the Tofu install
-      step; add `XApp` claim drain to uninstall (mirrors the P2B
-      Pattern B Release drain in Step 1b).
-- [ ] **Documentation** —
-      [docs/architecture-crossplane.md](architecture-crossplane.md)
-      updated to describe `XApp` as the per-app composition root;
-      [docs/architecture-legacy.md](architecture-legacy.md) marked as
-      historical-only.
+#### App XRD + Composition
+
+- [ ] **`crossplane/xrds/app.yaml`** — `XApp` (composite) / `App`
+      (claim, namespace-scoped). Spec fields:
+      - `profileRef.name` — references an `AppProfile` by name.
+      - `tenantNamespace` — target namespace (set by the reconciler from
+        the owning `Tenant`).
+      - `domain` — effective tenant domain (vanity or
+        `<tenant>.<kernelDomain>`).
+      - `config.replicas` — optional replica override.
+      - `config.extraValues` — optional RawExtension merged over the
+        profile's `extraValues`.
+- [ ] **`function-extra-resources`** pinned in
+      `crossplane/functions/functions.yaml` — fetches the `AppProfile`
+      named by `spec.profileRef.name` so the Composition can read its
+      `valueMapping`, `appSecrets`, `chart`, and `extraValues`.
+- [ ] **`crossplane/compositions/app-default.yaml`** — Composition
+      Pipeline using `function-extra-resources` + `function-go-templating`.
+      For each `App` claim it emits into `spec.tenantNamespace`:
+      - 1× `ExternalSecret` with an ESO `template` that renders a
+        `sensitive-values.yaml` Helm values file. Each entry in
+        `AppProfile.spec.valueMapping` maps to a per-tenant OpenBao path
+        (`gentian-os/tenants/{tenant}/apps/{app}/{category}`). Each
+        `AppProfile.spec.appSecrets[]` entry maps to
+        `gentian-os/tenants/{tenant}/apps/{app}/internal/{name}`.
+      - 1× `helm.crossplane.io/Release` consuming the rendered
+        `sensitive-values.yaml` Secret via `valuesFrom.secretKeyRef`,
+        plus the profile's non-sensitive `extraValues` merged with any
+        `spec.config.extraValues` override.
+- [ ] **`crossplane/compositions/app-ox.yaml`** — Composition variant
+      for OX App Suite. Identical to `app-default` plus a second
+      `ExternalSecret` whose template renders `appsuite.properties` from
+      the same per-tenant OpenBao paths. Selected via a Composition
+      label selector when `AppProfile.spec.chart.name == "appsuite"`.
+- [ ] **RBAC** — `ClusterRole` granting tenant admins
+      `create`/`delete`/`get`/`list`/`watch`/`patch`/`update` on
+      `apps.gentianos.io` in their own namespace; `get`/`list` on
+      `appprofiles.gentianos.io` cluster-wide. Bound per-tenant by the
+      `TenantReconciler` when it provisions the tenant namespace.
+
+#### AppReconciler rewrite
+
+- [ ] **`internal/controller/app_reconciler.go`** — replace
+      `ensureTerraformCR` / `buildTerraformCR` / `deleteTerraformCR`
+      with `ensureAppClaim` / `buildAppClaim` / `deleteAppClaim` that
+      create/watch/delete `App` claims in the tenant namespace. Remove
+      all `tofu*` constants, `terraformGVK`, `helmWorkloadGVKs` cleanup
+      logic, and the `corev1.SecretList` Helm-tracking-secret purge.
+      `cleanupOrphanedAppCRs` lists `App` claims instead of `Terraform`
+      CRs. `deleteAppDeployment` deletes `App` claims (Crossplane GCs
+      composed resources via ownerReferences).
+- [ ] **`api/v1alpha1/appprofile_types.go`** — remove the
+      `DeploymentMethodTofuController` enum value; `deploymentMethod`
+      field becomes optional and defaults to `crossplane`. Existing
+      `AppProfile` CRs without the field continue to work.
+
+#### Tofu removal
+
+- [ ] **Tofu Controller uninstall** —
+      `helm uninstall tofu-controller -n tofu-system` run once on dev,
+      and the install step removed from `install.sh`.
+- [ ] **`kernel/tofu/` deleted** — `kernel/tofu/tenant/app-workspace/`,
+      `kernel/tofu/tenant/keycloak-config/`,
+      `kernel/tofu/tenant/ox-workspace/`, and any remaining platform
+      workspaces removed from the repo.
+- [ ] **`kernel/services/tofu/` deleted** — the AppSet entry and
+      Terraform placeholder CR removed.
+- [ ] **`kernel/appsets/05-tofu.yaml` deleted**.
+- [ ] **`install.sh`** — remove the `install_tofu_controller` step and
+      any `tofu-state` MinIO bucket creation. Add `App` claim drain to
+      the uninstall path (delete all `apps.gentianos.io` in tenant
+      namespaces before draining Pattern B Releases).
+- [ ] **`go.mod` / `go.sum`** — `infra.contrib.fluxcd.io` import
+      removed; `go mod tidy` run.
 
 ### 5b.2 Unit tests
 
 | Test | Validates |
 |---|---|
-| `tests/unit/render/xapp-collabora/` | XApp XR + Collabora AppProfile fixture renders the expected Release + ExternalSecret golden YAML |
-| `tests/unit/render/xapp-element/` | Same for Element (multiple `appSecrets`: oidc, smtp, db) |
-| `tests/unit/render/xapp-extra-resources/` | An AppProfile declaring `extraResources[]` produces matching `provider-kubernetes` Object MRs in dependency order |
-| `tests/unit/render/xkeycloakappconfig-default/` | Realm role + client-scope + protocol-mapper MRs match what `keycloak-config` Tofu emits today |
-| `tests/unit/render/xoxappsuite/` | OX appsuite.properties ExternalSecret template renders all expected keys; OIDC realm role MR is emitted |
-| `tests/unit/functions/render-appsecrets/test_valuepath_to_valuesfrom.py` | `appSecrets[].valuePath` correctly resolves to a `dataFrom.extract` ref + a `valuesFrom` Helm key |
-| `tests/unit/orchestrator/app_reconciler_emits_xapp_test.go` | `AppReconciler` emits an `XApp` claim (not a `Terraform` CR) for every AppProfile with `deploymentMethod: crossplane` |
-| `tests/unit/orchestrator/app_reconciler_no_tofu_constants.go` | Constants `tofuSystemNamespace` etc. no longer exist in the Go module (compile-time guard) |
+| `tests/unit/render/app-collabora/` | `App` XR + Collabora `AppProfile` fixture → Release + ExternalSecret golden YAML |
+| `tests/unit/render/app-with-appsecrets/` | `AppProfile` with `appSecrets[]` → ExternalSecret template includes `internal/{name}` data entries at the correct Helm value paths |
+| `tests/unit/render/app-extravalues-merge/` | Claim-level `config.extraValues` deep-merges over profile-level `extraValues`; profile chart ref is preserved |
+| `tests/unit/render/app-ox/` | OX variant Composition emits the `appsuite.properties` ExternalSecret in addition to the standard Release + sensitive-values ExternalSecret |
+| `tests/unit/orchestrator/app_reconciler_emits_claim_test.go` | `AppReconciler.ensureAppClaim` creates an `App` claim with the correct `profileRef`, `tenantNamespace`, and `domain` |
+| `tests/unit/orchestrator/app_reconciler_cleanup_test.go` | Removing an app from `Tenant.spec.apps` causes `cleanupOrphanedAppCRs` to delete the matching `App` claim |
+| `tests/unit/schema/valid/app-minimal.yaml` | Minimal `App` claim (profileRef only) is accepted |
+| `tests/unit/schema/invalid/app-unknown-profile.yaml` | `App` claim referencing a non-existent `AppProfile` is rejected by the validating webhook |
+
+CI command: `make test-unit` — full suite must pass before E2E.
 
 ### 5b.3 E2E test (dev cluster)
 
 `make e2e-p2c`:
 
 ```text
-PRE-CHECKS
-  1. Snapshot all live Helm release revisions, OpenBao secret versions,
-     and tenant OIDC client IDs to a fixture file.
-  2. CNPG base backup of every per-tenant database (safety net).
+SETUP
+  1. Confirm zero Tenant CRs and zero Terraform CRs exist.
+  2. Apply XRD + Compositions + function pins:
+       kubectl apply -f crossplane/xrds/app.yaml
+       kubectl apply -f crossplane/compositions/app-default.yaml
+       kubectl apply -f crossplane/compositions/app-ox.yaml
+       kubectl apply -f crossplane/functions/functions.yaml
+  3. Redeploy the operator from the rewritten image tag.
 
-ADOPTION
-  3. For each Terraform CR in tofu-system:
-     a. Run p2c-adopt-app.sh <terraform-cr> — creates XApp claim with
-        crossplane.io/external-name set to existing release name.
-     b. kubectl wait --for=condition=Ready xapp/<name>
-     c. Verify Helm revision counter unchanged (provider-helm adopted,
-        not re-installed).
-     d. Delete the Terraform CR.
-  4. Repeat for keycloak-config workspaces (XKeycloakAppConfig).
-  5. Repeat for ox-workspace (XOXAppSuite).
+SMOKE — single tenant, single app
+  4. Create a test Tenant: test-alpha (no apps in spec.apps).
+  5. kubectl wait --for=condition=Ready tenant/test-alpha --timeout=5m
+  6. Apply an App claim in the tenant namespace:
+       kubectl apply -n tenant-test-alpha -f e2e/fixtures/app-collabora.yaml
+  7. kubectl wait --for=condition=Ready app/collabora -n tenant-test-alpha --timeout=10m
+  8. Verify composed resources:
+       kubectl get release.helm.crossplane.io -n tenant-test-alpha
+       kubectl get externalsecret -n tenant-test-alpha
+     Both must show Synced=True Ready=True.
+  9. Verify the Helm release is installed:
+       helm list -n tenant-test-alpha | grep collabora
 
-POST-CHECKS
-  6. Diff post-state vs pre-state. Allowed differences:
-       - ownerReferences on Helm Secrets / Keycloak CRs (now point at XR).
-       - Crossplane controller annotations.
-     No Helm revision bump, no pod restart, no OpenBao secret rotation.
-  7. Browser smoke: login via Keycloak, open Nextcloud, edit a file in
-     Collabora (exercises adopted Release + IntegrationBinding), open
-     OX App Suite mailbox.
-  8. 30-minute soak: kubectl get xapps,releases.helm.crossplane.io
-     shows zero churn (no spec drift, no reconcile thrash).
-  9. helm uninstall tofu-controller && verify no orphan finalizers.
- 10. Grep repo: `grep -r tofu-system\|tofuSystemNamespace .` returns
-     only history/changelog matches.
+SMOKE — app uninstall
+ 10. kubectl delete app collabora -n tenant-test-alpha
+ 11. kubectl wait --for=delete release.helm.crossplane.io/collabora \
+       -n tenant-test-alpha --timeout=5m
+     Release and ExternalSecret must be garbage-collected via ownerReferences.
+
+TOFU REMOVAL
+ 12. Confirm zero Terraform CRs: kubectl get terraform -A  # must be empty
+ 13. helm uninstall tofu-controller -n tofu-system
+ 14. kubectl delete ns tofu-system --wait=true
+ 15. Re-apply the App claim and confirm it reaches Ready without Tofu.
+
+CLEANUP
+ 16. kubectl delete tenant test-alpha
+ 17. kubectl wait --for=delete ns/tenant-test-alpha --timeout=5m
 ```
 
 ### 5b.4 Acceptance
 
-- [ ] Zero `Terraform` CRs exist in any environment.
-- [ ] Tofu Controller chart uninstalled; `kernel/tofu/`,
-      `kernel/services/tofu/`, `kernel/appsets/05-tofu.yaml` removed
-      from the repo.
+- [ ] `crossplane/xrds/app.yaml` and `crossplane/compositions/app-default.yaml`
+      committed and ArgoCD-synced.
 - [ ] `internal/controller/app_reconciler.go` contains no `tofu*`
-      identifiers.
-- [ ] All AppProfiles in `gentian-apps/profiles/` have
-      `deploymentMethod: crossplane` (or the field is removed entirely).
-- [ ] `gentian-os` Go binary builds with no `terraform` /
-      `tf.contrib.fluxcd.io` imports.
-- [ ] CI matrix removes the Tofu image and the Tofu Helm chart from
-      the dev install workflow.
-- [ ] Phase 2C E2E (`make e2e-p2c`) green on dev cluster.
+      identifiers and no `infra.contrib.fluxcd.io` import.
+- [ ] `go.mod` has no `terraform` / `tf.contrib.fluxcd.io` dependency.
+- [ ] `kernel/tofu/`, `kernel/services/tofu/`, `kernel/appsets/05-tofu.yaml`
+      deleted from the repo.
+- [ ] Tofu Controller chart uninstalled from dev cluster.
+- [ ] `make e2e-p2c` green on dev cluster.
+- [ ] `make test-unit` green in CI.
 
 ### 5b.5 Rollback
 
-P2C is the most invasive phase before the Tenant XRD work because it
-deletes a controller. Rollback paths, in increasing cost:
-
-1. **Per-app rollback (cheap).** While Tofu Controller is still
-   installed, recreate the matching `Terraform` CR and delete the
-   `XApp` claim with `--cascade=orphan` so the Helm release survives.
-   Tofu re-adopts on next sync.
-2. **Phase rollback (medium).** Revert the `AppReconciler` change so it
-   emits `Terraform` CRs again; redeploy from the previous container
-   tag; re-create all `Terraform` CRs from the per-tenant fixtures
-   captured in step 1 of the E2E run.
-3. **Post-uninstall rollback (expensive).** Reinstall Tofu Controller
-   from the chart pinned in `kernel/services/tofu/`; restore the
-   `tofu-state` MinIO bucket from the 30-day snapshot; restore the
-   `kernel/tofu/` directory from `git revert`. Live Helm releases are
-   not touched in any of these steps; only the controller that owns
-   their state changes.
+Since there are no live tenants, rollback is a `git revert` of the
+commits in this phase plus reinstalling the operator from the previous
+image tag. No data is at risk.
 
 ---
 
-## 6. Phase 3 — `Tenant` XRD Shadow Deployment
+## 6. Phase 3 — `Tenant` XRD + Full End-to-End Tenant Provisioning
 
-**Scope:** Stand up the `Tenant` XRD + Composition Pipeline, but apply
-it only against **shadow tenants** in dev — namespaces named
-`tenant-shadow-*` that exist in parallel to the real tenants managed
-by the Go orchestrator. Compare resulting MRs to legacy state before
-any cutover.
+**Scope:** Replace the Go `TenantReconciler`'s imperative provisioning
+loop (namespace, OpenBao policies, LDAP entries, DNS) with a `Tenant`
+XRD + Composition Pipeline, and verify that creating a `Tenant` CR
+plus one or more `App` claims produces a fully functional tenant
+end-to-end: SSO login, installed apps reachable, app-to-app
+`IntegrationBinding` wired.
+
+Since the cluster has no live tenants, there is no shadow-deployment
+phase needed. Tenants created in Phase 3 are the first real tenants on
+the new stack.
 
 ### 5.1 Deliverables
 
@@ -677,46 +673,41 @@ CI command: `make test-unit` — full suite must pass.
 `make e2e-p3`:
 
 ```text
-1. Apply a shadow Tenant: tenant-shadow-alpha with apps [notes].
-2. kubectl wait --for=condition=Ready tenant.gentianos.io/shadow-alpha
-3. Diff every composed MR against what the legacy Go orchestrator
-   produces for an equivalent input. Differences must be limited to:
-     - resource names (shadow- prefix)
-     - namespace (tenant-shadow-alpha)
-     - labels (gentianos.io/shadow=true)
-   Any other diff = FAIL.
-4. Verify the shadow Argo Application syncs Healthy.
-5. Browser check: the shadow Notes URL responds 200 and SSO works
-   against a shadow Keycloak realm.
-6. Apply a multi-app shadow Tenant: tenant-shadow-beta with apps
-   [nextcloud, ox-appsuite, openproject]. Verify all 3 apps Healthy
-   AND the filepicker IntegrationBinding shows status Ready.
-7. Delete tenant-shadow-alpha. Verify all composed MRs are GC'd via
-   ownerReferences and the namespace is removed.
+SINGLE-APP TENANT
+  1. Apply a Tenant CR: tenant-alpha (domain: alpha.desk.gentian.org).
+  2. kubectl wait --for=condition=Ready tenant/tenant-alpha --timeout=5m
+  3. Apply an App claim: kubectl apply -n tenant-alpha -f e2e/fixtures/app-nextcloud.yaml
+  4. kubectl wait --for=condition=Ready app/nextcloud -n tenant-alpha --timeout=10m
+  5. Browser check: Nextcloud URL responds 200; SSO login via Keycloak works.
+
+MULTI-APP TENANT WITH INTEGRATION
+  6. Apply tenant-beta with App claims for nextcloud + collabora.
+  7. kubectl wait --for=condition=Ready app/nextcloud app/collabora -n tenant-beta --timeout=15m
+  8. Verify IntegrationBinding for filepicker shows Ready=True.
+  9. Browser check: open a document in Collabora from within Nextcloud.
+
+TENANT DELETE
+ 10. kubectl delete tenant tenant-alpha
+ 11. kubectl wait --for=delete ns/tenant-alpha --timeout=5m
+     Namespace and all composed resources (Releases, ExternalSecrets,
+     Keycloak realm, OpenBao paths) must be gone.
 ```
 
-Operator visibility: `kubectl get xtenants` shows shadow tenants
-side-by-side with legacy tenants; conditions explain readiness;
-`crossplane trace tenant/shadow-alpha` walks the entire MR graph.
+Operator visibility: `kubectl get tenants`, `crossplane trace
+tenant/tenant-alpha` walks the full composed resource graph.
 
 ### 5.4 Acceptance
 
 - All unit tests green (full catalogue coverage).
-- Shadow tenants reach Ready in under 5 minutes (architecture.md §4.2
-  baseline).
-- Diff against legacy Go orchestrator output is empty modulo the
-  documented shadow-prefix differences.
-- Manual browser smoke against shadow tenant URLs passes.
+- Single-app and multi-app tenants reach Ready.
+- IntegrationBinding wires correctly between Nextcloud and Collabora.
+- Tenant delete removes all composed resources cleanly.
 
 ### 5.5 Rollback
 
-```bash
-kubectl delete tenants -l gentianos.io/shadow=true
-kubectl delete -f crossplane/xrds/tenant.yaml
-```
-
-The legacy Go orchestrator never stopped running; real tenants are
-unaffected throughout this phase.
+`kubectl delete tenant tenant-alpha tenant-beta` removes all composed
+resources via ownerReferences. The kernel (Nubus, Nextcloud, databases)
+is unaffected.
 
 ---
 

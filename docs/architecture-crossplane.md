@@ -100,36 +100,65 @@ A full dependency-graph walk for a single `Tenant` claim is in
 
 ---
 
-## 4. The Three User-Facing CRDs
+## 4. The Four User-Facing CRDs
 
-The platform exposes exactly three custom resources to humans. Everything
-else is generated.
+The platform exposes four custom resources to humans, separated by who
+owns them. Everything else is generated.
 
-### 4.1 `AppProfile` (cluster-scoped) — the catalogue entry
+### 4.1 `AppProfile` (cluster-scoped) — the app catalogue entry
 
 Declares **what an app is**: its kernel requirements (does it need a
-database? OIDC? S3? mail?), the capabilities it provides to other apps
-(file storage? project management?), the upstream Helm chart, and a
-typed `valueMapping` that tells the platform how to feed kernel-provided
-values into the chart's `values.yaml`. Adding a new app to the catalogue
-is one YAML file.
+database? OIDC? S3? mail?), the capabilities it exposes to other apps
+(file storage? project management? MCP server?), the upstream Helm
+chart, a typed `valueMapping` that tells the platform how to wire
+kernel-provided values into the chart's `values.yaml`, and optional
+branding tokens and integration hooks. Adding a new app to the catalogue
+is one YAML file in `gentian-apps`. Cluster admins publish `AppProfile`
+CRs; tenant admins consume them by name.
 
-### 4.2 `Tenant` — the customer
+### 4.2 `Tenant` (cluster-scoped) — the customer
 
 Declares **who** uses the platform: an optional vanity domain, an
-isolation mode (namespace or vCluster), resource quotas, mail mode, a
-deletion policy, and the list of apps to install by profile name.
-Creating a `Tenant` is the only action required to onboard an
-organisation.
+isolation mode (namespace or vCluster), resource quotas, mail mode, and
+a deletion policy. Creating a `Tenant` provisions the kernel-layer
+infrastructure for an organisation: namespace, RBAC, OpenBao policies,
+LDAP entries, DNS record, and the Keycloak realm. It does **not** dictate
+which apps the tenant installs — that is the `App` claim's job.
 
-### 4.3 `IntegrationBinding` — the cross-app contract (auto-generated)
+### 4.3 `App` (namespace-scoped) — the tenant's app installation
 
-When two apps in the same tenant declare matching provider/consumer
-contracts (e.g., OX App Suite consumes a `file-store` provided by
-Nextcloud), the platform generates an `IntegrationBinding` that
-provisions shared credentials, configures OIDC token exchange (RFC 8693),
-and tracks health. Bindings are owned by the `Tenant` and
-garbage-collected on delete.
+Declares **which app a tenant wants installed**: a reference to an
+`AppProfile` by name and optional per-installation overrides (replica
+count, branding tokens, enabled integrations). `App` claims live in the
+tenant's namespace (`tenant-{name}`), so RBAC limits write access to the
+tenant admin — the cluster admin never needs to be involved in
+installing or uninstalling a tenant's applications.
+
+A Crossplane Composition processes each `App` claim by fetching the
+referenced `AppProfile` (via `function-extra-resources`) and emitting:
+- One `ExternalSecret` that renders a `sensitive-values.yaml` file from
+  per-tenant OpenBao paths (OIDC credentials, database password, S3
+  keys, etc.), consuming the `valueMapping` from the profile.
+- One `helm.crossplane.io/Release` MR that deploys the chart into the
+  tenant namespace with `valuesFrom` pointing at the rendered secret.
+- Zero or more `kubernetes.crossplane.io/Object` MRs for extra
+  Kubernetes resources the chart does not ship (RBAC, NetworkPolicies,
+  `ConfigMap` patches).
+
+This model allows the Kubernetes API to act as the app store: tenant
+admins install apps with `kubectl apply`, browse the catalogue with
+`kubectl get appprofiles`, and watch install progress via the `App`
+claim's `.status.conditions`. A web UI or CLI is a thin wrapper over
+this API — no separate store backend is required.
+
+### 4.4 `IntegrationBinding` (namespace-scoped) — the cross-app contract
+
+When two `App` claims in the same tenant namespace declare matching
+provider/consumer contracts (e.g., OX App Suite consumes `file-store`
+provided by Nextcloud), the platform generates an `IntegrationBinding`
+that provisions shared credentials, configures OIDC token exchange
+(RFC 8693), and tracks health. Bindings are owned by the constituent
+`App` claims and garbage-collected when either app is uninstalled.
 
 Schema details, value-mapping rules, contract definitions, and worked
 examples are in [design/app-catalogue.md](design/app-catalogue.md).
@@ -291,7 +320,7 @@ Three Git repositories, separated by rate of change:
 ```
 gentian-os/              # The OS itself (versioned artifact)
 ├── crossplane/
-│   ├── xrds/            # Tenant, Cluster, Mail XRDs
+│   ├── xrds/            # Tenant, App, Cluster XRDs
 │   ├── compositions/    # Pipelines that fan out into MRs
 │   ├── functions/       # Composition functions (HMAC, valueMapping)
 │   └── providers/       # Provider configs
@@ -305,13 +334,22 @@ gentian-apps/            # The catalogue (versioned artifact)
 gentian-deployments/     # Per-cluster state (the only repo specific to a cluster)
 └── <env>/
     ├── kernel/          # Cluster XR + per-env values
-    └── tenants/         # One Tenant CR per organisation
+    └── tenants/
+        └── <tenant>/
+            ├── tenant.yaml      # Tenant CR (cluster-admin managed)
+            └── apps/
+                ├── nextcloud.yaml   # App claim (tenant-admin managed)
+                ├── collabora.yaml
+                └── openproject.yaml
 ```
 
 `gentian-os` and `gentian-apps` publish versioned OCI artifacts;
 `gentian-deployments` references them by version. ArgoCD watches all
-three. Adding an app touches `gentian-apps`; creating a tenant touches
-`gentian-deployments`; nothing else moves.
+three. Adding an app to the catalogue touches `gentian-apps`;
+creating a tenant touches `gentian-deployments/tenants/`; installing
+an app for a tenant adds an `App` claim under that tenant's `apps/`
+directory — no cluster-admin action required after initial tenant
+provisioning.
 
 ---
 
@@ -390,14 +428,18 @@ are in [design/agentic-ai.md](design/agentic-ai.md).
 
 Three roles, three scopes:
 
-| Role | Scope | Can do | Cannot do |
+| Role | Scope | Kubernetes primitives | Cannot do |
 |---|---|---|---|
-| **Cluster admin** | Cluster + kernel | Run installer, manage kernel upgrades, approve tenant onboarding | Bypass GitOps in prod, perform tenant business actions |
-| **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant config, view health | Touch kernel, modify other tenants |
+| **Cluster admin** | Cluster + kernel | `Tenant`, `AppProfile`, `Cluster` XRs; all verbs | Bypass GitOps in prod, perform tenant business actions |
+| **Tenant admin** | One tenant namespace | `App` claims (create/delete/get/list in `tenant-{name}`); read `AppProfile` catalogue | Touch kernel, write outside own namespace |
 | **Tenant user** | Day-to-day app use | Use installed apps with SSO | Install/uninstall, see admin surfaces |
 
-The current model is process-controlled (tenant admins edit Git
-manifests via PR); a future CLI/WebUI will write commits on their
+Tenant admin RBAC is namespace-scoped: they hold `create`/`delete`
+verbs on `apps.gentianos.io` in their own namespace and read-only on
+`appprofiles.gentianos.io` cluster-wide. They cannot read `Tenant`
+CRs or touch another tenant's namespace. The current model is
+GitOps-driven (tenant admins open PRs against `gentian-deployments`);
+a future CLI/WebUI will write the `App` claims on their
 behalf. Permissions, audit, and the future tenant-self-service flow
 are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 
@@ -405,9 +447,12 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 
 ## 14. Why This Architecture Scales
 
-- **Adding an app = one YAML file** in `gentian-apps`. No code, no
-  Composition change for typical apps; the generic Composition
-  iterates `Tenant.spec.apps` and reads the `AppProfile`.
+- **Adding an app to the catalogue = one YAML file** in `gentian-apps`.
+  No code, no Composition change for typical apps; the generic `App`
+  Composition reads the `AppProfile` via `function-extra-resources`.
+- **Installing an app for a tenant = one `App` claim** in
+  `gentian-deployments/tenants/<name>/apps/`. Tenant admins do this
+  themselves; cluster admins are not involved.
 - **Adding a tenant = one CR.** Crossplane fans out to many providers
   in parallel; reconciliation is not serialised by a single controller.
 - **Adding a cluster = one Argo App-of-Apps + one `Cluster` XR.** The
