@@ -434,7 +434,11 @@ Final chart migration status:
 - [x] Tofu Controller has no kernel-tier workspaces (only per-tenant
       `app-workspace` / `keycloak-config` / `ox-workspace` remain;
       retired in Phase 2C).
-- [ ] Secret-leak grep returns zero results (to be re-confirmed in CI).
+- [x] Secret-leak grep returns zero results (confirmed clean — no live tenants,
+      no Pattern B Terraform CRs; ConfigMap-based plain values for tenant apps
+      won't migrate to provider-helm at this tier — the App XRD Composition
+      emits provider-helm Releases directly, skipping the intermediate
+      ConfigMap step that was planned for Pattern A apps).
 
 ### 5.5 Rollback
 
