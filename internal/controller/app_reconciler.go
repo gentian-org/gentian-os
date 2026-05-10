@@ -259,9 +259,4 @@ func appClaimIsReady(obj *unstructured.Unstructured) bool {
 	return false
 }
 
-// appClaimName returns the App claim name for a tenant app. The claim name
-// matches the app profile name so it is stable and human-readable.
-func appClaimName(appProfile string) string {
-	return appProfile
-}
 

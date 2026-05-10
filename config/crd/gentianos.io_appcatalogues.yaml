@@ -73,7 +73,7 @@ spec:
                         or tofu-controller).
                       enum:
                       - argocd
-                      - tofu-controller
+                      - crossplane
                       type: string
                     description:
                       description: Description is the optional human-readable description.
