@@ -531,16 +531,15 @@ nubusProvisioning:
   nats:
     podAnnotations:
       reloader.stakater.com/auto: "true"
-  # Register the ox-connector as a provisioning consumer.
-  # The ESO-managed secret already contains the 'registration' JSON;
-  # nubus reads it and POSTs it to the provisioning API on each Helm sync.
-  registerConsumers:
-    createUsers:
-      oxConsumer:
-        existingSecret:
-          name: "ox-connector-provisioning-api"
-          keyMapping:
-            registration: "registration"
+  # NOTE: OX App Suite is an optional kernel extension (deployed per tenant
+  # by the ox-workspace module).  Its provisioning-API consumer registration
+  # — and the matching ESO-rendered `ox-connector-provisioning-api` secret —
+  # is owned by that module, not by the kernel nubus chart.  Pre-registering
+  # an OX consumer here would make the kernel install fail on any cluster
+  # without OX (the register-consumers Job blocks on a tenant-scoped Secret
+  # that does not yet exist), violating the "OX is optional" architecture.
+  # Per-tenant OX adoption adds its own entry to nubusProvisioning.registerConsumers
+  # via the ox-workspace module / its successor XOXAppSuite Composition (P2C).
 
 # LDAP Server — replicaCounts; persistence/resources in {env}/values.yaml
 nubusLdapServer:
