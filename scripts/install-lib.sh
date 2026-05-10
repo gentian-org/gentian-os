@@ -1645,14 +1645,29 @@ install_argocd() {
     # the Tofu workspace succeeded or failed. This makes tofu-dev show as
     # Degraded in ArgoCD whenever a workspace has READY=False, so that
     # verify_argocd_apps catches Tofu failures like any other app failure.
-    info "Patching argocd-cm with Terraform CR health check..."
+    info "Patching argocd-cm with Terraform CR health check and annotation-based resource tracking..."
+    # application.resourceTrackingMethod=annotation prevents ArgoCD from
+    # treating Helm-managed resources as part of an ArgoCD app via the
+    # default app.kubernetes.io/instance label. Helm charts (e.g. the
+    # opendesk-postgresql/mariadb charts wrapped by Crossplane provider-helm
+    # Release CRs) stamp every rendered resource with
+    #   app.kubernetes.io/instance: <release-name>
+    # which equals the ArgoCD Application name. With label-based tracking
+    # ArgoCD then "adopts" those Helm-rendered StatefulSets/Services/etc.,
+    # finds them missing from git, and PRUNES them seconds after Helm
+    # creates them — leaving the Helm release in state=failed with errors
+    # like 'services "opendesk-postgresql-dev" not found'. Annotation-based
+    # tracking uses argocd.argoproj.io/tracking-id and only tracks resources
+    # ArgoCD itself applied. See:
+    # https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/
     kubectl patch configmap argocd-cm -n argocd --type merge -p '
 {
   "data": {
+    "application.resourceTrackingMethod": "annotation",
     "resource.customizations.health.infra.contrib.fluxcd.io_Terraform": "hs = {}\nif obj.status ~= nil and obj.status.conditions ~= nil then\n  for _, c in ipairs(obj.status.conditions) do\n    if c.type == \"Ready\" then\n      if c.status == \"True\" then\n        hs.status = \"Healthy\"\n        hs.message = c.message\n        return hs\n      else\n        hs.status = \"Degraded\"\n        hs.message = c.message\n        return hs\n      end\n    end\n  end\nend\nhs.status = \"Progressing\"\nhs.message = \"Waiting for Terraform workspace to complete\"\nreturn hs\n"
   }
 }'
-    success "ArgoCD Terraform CR health check configured."
+    success "ArgoCD Terraform CR health check + annotation tracking configured."
 
     # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
