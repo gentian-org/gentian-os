@@ -1,0 +1,372 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: app-ox
+  labels:
+    gentianos.io/composition: app
+    gentianos.io/app-variant: ox-appsuite
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XApp
+  mode: Pipeline
+  pipeline:
+
+    # ── Step 1: Fetch the AppProfile referenced by spec.profileRef.name ──────
+    - step: fetch-profile
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: AppProfile
+              into: appProfile
+              apiVersion: gentianos.io/v1alpha1
+              type: Reference
+              ref:
+                name: "{{ .observed.composite.resource.spec.profileRef.name }}"
+
+    # ── Step 2: Render composed resources ─────────────────────────────────────
+    # OX App Suite variant: emits the standard ExternalSecret + Release from
+    # app-default, PLUS a second ExternalSecret that renders the OX
+    # appsuite.properties file format required for com.openexchange.* property
+    # keys that cannot be expressed as dot-notation --set flags.
+    - step: render-app-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr     := .observed.composite.resource }}
+            {{- $spec   := $xr.spec }}
+            {{- $xrName := $xr.metadata.name }}
+            {{- $app    := $spec.claimRef.name }}
+            {{- $ns     := $spec.tenantNamespace }}
+            {{- $tenant := trimPrefix "tenant-" $ns }}
+
+            {{- $extraRes := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $profiles := dig "appProfile" list $extraRes }}
+            {{- if eq (len $profiles) 0 }}
+              {{- fail (printf "AppProfile %q not found in cluster" $spec.profileRef.name) }}
+            {{- end }}
+            {{- $profile   := index (index $profiles 0) "resource" }}
+            {{- $pSpec     := $profile.spec }}
+            {{- $vm        := default dict $pSpec.valueMapping }}
+            {{- $appSecrets := default list $pSpec.appSecrets }}
+            {{- $chart     := $pSpec.chart }}
+
+            {{- /* ── ExternalSecret data[] entries (same logic as app-default) ─ */}}
+            {{- $esData := list }}
+
+            {{- if $vm.oidc }}
+            {{- $oidcPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $app }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-issuer"        "remoteRef" (dict "key" $oidcPath "property" "issuer")) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client_id")) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $oidcPath "property" "client_secret")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.database }}
+            {{- $dbPath := printf "gentian-os/tenants/%s/apps/%s/database" $tenant $app }}
+            {{- if $vm.database.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-host"     "remoteRef" (dict "key" $dbPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.database.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-port"     "remoteRef" (dict "key" $dbPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.database.nameKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-name"     "remoteRef" (dict "key" $dbPath "property" "name")) }}
+            {{- end }}
+            {{- if $vm.database.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-user"     "remoteRef" (dict "key" $dbPath "property" "user")) }}
+            {{- end }}
+            {{- if $vm.database.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-password" "remoteRef" (dict "key" $dbPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.s3 }}
+            {{- $s3Path := printf "gentian-os/tenants/%s/apps/%s/s3" $tenant $app }}
+            {{- if $vm.s3.endpointKey }}
+            {{- $esData = append $esData (dict "secretKey" "s3-endpoint"   "remoteRef" (dict "key" $s3Path "property" "endpoint")) }}
+            {{- end }}
+            {{- if $vm.s3.bucketKey }}
+            {{- $esData = append $esData (dict "secretKey" "s3-bucket"     "remoteRef" (dict "key" $s3Path "property" "bucket")) }}
+            {{- end }}
+            {{- if $vm.s3.accessKeyKey }}
+            {{- $esData = append $esData (dict "secretKey" "s3-access-key" "remoteRef" (dict "key" $s3Path "property" "access_key")) }}
+            {{- end }}
+            {{- if $vm.s3.secretKeyKey }}
+            {{- $esData = append $esData (dict "secretKey" "s3-secret-key" "remoteRef" (dict "key" $s3Path "property" "secret_key")) }}
+            {{- end }}
+            {{- if $vm.s3.regionKey }}
+            {{- $esData = append $esData (dict "secretKey" "s3-region"     "remoteRef" (dict "key" $s3Path "property" "region")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.smtp }}
+            {{- $smtpPath := printf "gentian-os/tenants/%s/apps/%s/smtp" $tenant $app }}
+            {{- if $vm.smtp.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-host"     "remoteRef" (dict "key" $smtpPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.smtp.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-port"     "remoteRef" (dict "key" $smtpPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.smtp.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-user"     "remoteRef" (dict "key" $smtpPath "property" "user")) }}
+            {{- end }}
+            {{- if $vm.smtp.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-password" "remoteRef" (dict "key" $smtpPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.ldap }}
+            {{- $ldapPath := printf "gentian-os/tenants/%s/apps/%s/ldap" $tenant $app }}
+            {{- if $vm.ldap.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-host"          "remoteRef" (dict "key" $ldapPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.ldap.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-port"          "remoteRef" (dict "key" $ldapPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.ldap.baseDnKey }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base_dn")) }}
+            {{- end }}
+            {{- if $vm.ldap.bindDnKey }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind_dn")) }}
+            {{- end }}
+            {{- if $vm.ldap.bindPasswordKey }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind_password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $esData = append $esData (dict "secretKey" (printf "internal-%s" $s.name) "remoteRef" (dict "key" (printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name) "property" "value")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Build Release set[] entries ──────────────────────────────── */}}
+            {{- $secretName := printf "%s-sensitive-values" $app }}
+            {{- $relSet := list }}
+
+            {{- if $vm.oidc }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.issuerKey        "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientIdKey      "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientSecretKey  "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.database }}
+            {{- if $vm.database.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.hostKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-host"))) }}
+            {{- end }}
+            {{- if $vm.database.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.portKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-port"))) }}
+            {{- end }}
+            {{- if $vm.database.nameKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.nameKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
+            {{- end }}
+            {{- if $vm.database.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.userKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
+            {{- end }}
+            {{- if $vm.database.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.passwordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.smtp }}
+            {{- if $vm.smtp.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.hostKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-host"))) }}
+            {{- end }}
+            {{- if $vm.smtp.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.portKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-port"))) }}
+            {{- end }}
+            {{- if $vm.smtp.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.userKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-user"))) }}
+            {{- end }}
+            {{- if $vm.smtp.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.passwordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.ldap }}
+            {{- if $vm.ldap.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.hostKey         "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-host"))) }}
+            {{- end }}
+            {{- if $vm.ldap.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.portKey         "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-port"))) }}
+            {{- end }}
+            {{- if $vm.ldap.baseDnKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.baseDnKey       "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-base-dn"))) }}
+            {{- end }}
+            {{- if $vm.ldap.bindDnKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindDnKey       "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-dn"))) }}
+            {{- end }}
+            {{- if $vm.ldap.bindPasswordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindPasswordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $relSet = append $relSet (dict "name" $s.valuePath "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- $extraVals := dict }}
+            {{- if and $pSpec.extraValues $pSpec.extraValues.raw }}
+            {{- $raw := $pSpec.extraValues.raw | toString }}
+            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+            {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
+            {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $extraVals = $raw | fromJson }}
+            {{- end }}
+            {{- if and $spec.config $spec.config.extraValues }}
+            {{- $extraVals = mergeOverwrite $extraVals $spec.config.extraValues }}
+            {{- end }}
+            {{- if and $spec.config $spec.config.replicas }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
+            {{- end }}
+
+            {{- /* ── OX appsuite.properties ExternalSecret ──────────────────── */}}
+            {{- /* Fetches the same OpenBao paths as the standard ES but renders  */}}
+            {{- /* them into a Java .properties file format. The Release mounts    */}}
+            {{- /* this Secret as a valuesFrom configMapKeyRef substitute.         */}}
+            {{- $oxSecretName := printf "%s-appsuite-props" $app }}
+            {{- if gt (len $esData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ox-props-es
+              name: {{ $xrName }}-ox-props
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $oxSecretName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $oxSecretName }}
+                      creationPolicy: Owner
+                      deletionPolicy: Retain
+                      template:
+                        engineVersion: v2
+                        data:
+                          appsuite.properties: |
+                            {{- if $vm.oidc }}
+                            {{- if $vm.oidc.issuerKey }}
+                            {{ $vm.oidc.issuerKey }}={{ "{{ .oidc_issuer }}" }}
+                            {{- end }}
+                            {{- if $vm.oidc.clientIdKey }}
+                            {{ $vm.oidc.clientIdKey }}={{ "{{ .oidc_client_id }}" }}
+                            {{- end }}
+                            {{- if $vm.oidc.clientSecretKey }}
+                            {{ $vm.oidc.clientSecretKey }}={{ "{{ .oidc_client_secret }}" }}
+                            {{- end }}
+                            {{- end }}
+                            {{- range $s := $appSecrets }}
+                            {{- if and $s.name $s.valuePath }}
+                            {{ $s.valuePath }}={{ printf "{{ .internal_%s }}" ($s.name | replace "-" "_") }}
+                            {{- end }}
+                            {{- end }}
+                    data:
+                      {{ toYaml $esData | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Standard ExternalSecret for --set entries ─────────────── */}}
+            {{- if gt (len $esData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-externalsecret
+              name: {{ $xrName }}-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $secretName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $secretName }}
+                      creationPolicy: Owner
+                      deletionPolicy: Retain
+                    data:
+                      {{ toYaml $esData | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Helm Release ──────────────────────────────────────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
+              name: {{ $xrName }}-release
+            spec:
+              forProvider:
+                chart:
+                  repository: {{ $chart.repository }}
+                  name: {{ $chart.name }}
+                  version: {{ $chart.version | quote }}
+                namespace: {{ $ns }}
+                wait: false
+                {{- if gt (len $esData) 0 }}
+                valuesFrom:
+                  - secretKeyRef:
+                      name: {{ $oxSecretName }}
+                      namespace: {{ $ns }}
+                      key: appsuite.properties
+                      optional: false
+                {{- end }}
+                {{- if gt (len $extraVals) 0 }}
+                values:
+                  {{ toYaml $extraVals | nindent 18 }}
+                {{- end }}
+                {{- if gt (len $relSet) 0 }}
+                set:
+                  {{ toYaml $relSet | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
+    # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready
