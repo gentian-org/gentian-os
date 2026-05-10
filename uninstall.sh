@@ -305,7 +305,7 @@ fi
 # sweep these groups after helm uninstall so the next install gets clean CRDs.
 _delete_crossplane_crds() {
     local pattern='crossplane\.io|upbound\.io'
-    local crds left deadline
+    local crds left deadline last_report=0 left_count=0 aggressive_done=0
 
     crds=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
         | grep -E "${pattern}" || true)
@@ -329,6 +329,40 @@ _delete_crossplane_crds() {
         left=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
             | grep -E "${pattern}" || true)
         [[ -z "${left}" ]] && break
+        left_count=$(printf '%s\n' "${left}" | wc -l | tr -d ' ')
+        if (( SECONDS - last_report >= 10 )); then
+            info "Waiting for Crossplane/Upbound CRDs to terminate (${left_count} remaining)..."
+            info "  Remaining: $(printf '%s' "${left}" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
+            last_report=${SECONDS}
+        fi
+
+        if (( aggressive_done == 0 && SECONDS - (deadline - 180) >= 45 )); then
+            warn "Crossplane CRD deletion stalled; forcing cleanup of remaining CR instances/finalizers..."
+            while IFS= read -r crd; do
+                [[ -z "${crd}" ]] && continue
+
+                # Clear any remaining custom resources that block CRD cleanup.
+                while IFS= read -r obj; do
+                    [[ -z "${obj}" ]] && continue
+                    # Ignore unexpected lines; valid resources are kind/name.
+                    [[ "${obj}" != */* ]] && continue
+                    kubectl patch "${obj}" \
+                        --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                        2>/dev/null || true
+                    kubectl delete "${obj}" --ignore-not-found=true --wait=false 2>/dev/null || true
+                done < <(
+                    kubectl get "${crd}" -A -o name 2>/dev/null || true
+                    kubectl get "${crd}" -o name 2>/dev/null || true
+                )
+
+                kubectl patch crd "${crd}" \
+                    --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                    2>/dev/null || true
+                kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
+            done <<< "${left}"
+            aggressive_done=1
+        fi
+
         if (( SECONDS > deadline )); then
             warn "Some Crossplane/Upbound CRDs still remain after 180s."
             while IFS= read -r crd; do
@@ -586,10 +620,10 @@ else
 fi
 
 # =============================================================================
-# Step 8b — Remove additional cluster infra installed by install.sh
+# Step 9 — Remove additional cluster infra installed by install.sh
 # =============================================================================
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
-    banner "Step 8b — Remove additional cluster infra"
+    banner "Step 9 — Remove additional cluster infra"
 
     # Installed by install_argocd_image_updater() in scripts/install-lib.sh.
     if helm status argocd-image-updater -n argocd-image-updater >/dev/null 2>&1; then
@@ -609,11 +643,8 @@ if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
 fi
 
 # =============================================================================
-# Step 9 — Remove remaining kernel namespaces
-# In safe mode, namespaces that contain PVCs are preserved.
-# In force mode, all kernel namespaces are deleted.
+# Helper functions — namespace and volume cleanup
 # =============================================================================
-banner "Step 9 — Remove kernel namespaces"
 
 _has_pvc() {
     local ns="$1"
@@ -731,10 +762,10 @@ _delete_pvs_for_namespace() {
 }
 
 # =============================================================================
-# Step 8c — Purge OpenBao data/secrets (force mode or cluster-infra)
+# Step 10 — Purge OpenBao data/secrets (force mode or cluster-infra)
 # =============================================================================
 if [[ "${MODE}" == "force" || "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
-    banner "Step 8c — Purge OpenBao data/secrets"
+    banner "Step 10 — Purge OpenBao data/secrets"
 
     # Remove in-cluster OpenBao bootstrap/runtime secrets first.
     if kubectl get namespace openbao >/dev/null 2>&1; then
@@ -756,6 +787,13 @@ if [[ "${MODE}" == "force" || "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
     success "OpenBao purge requested (KV backing storage, secrets, and stores)."
 fi
 
+# =============================================================================
+# Step 11 — Remove kernel namespaces
+# In safe mode, namespaces that contain PVCs are preserved.
+# In force mode, all kernel namespaces are deleted.
+# =============================================================================
+banner "Step 11 — Remove kernel namespaces"
+
 namespaces_to_remove=(openbao gentian-dev gentian-infra-dev gentian-system platform-kernel tofu-system)
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
     namespaces_to_remove+=(stakater-system cnpg-system argocd-image-updater flux-system)
@@ -776,10 +814,10 @@ for ns in "${namespaces_to_remove[@]}"; do
 done
 
 # =============================================================================
-# Step 10 — Remove tenant resources (force mode)
+# Step 12 — Remove tenant resources (force mode)
 # =============================================================================
 if [[ "${MODE}" == "force" ]]; then
-    banner "Step 10 — Remove tenant resources"
+    banner "Step 12 — Remove tenant resources"
 
     if kubectl get crd tenants.gentianos.io >/dev/null 2>&1; then
         info "Removing Tenant finalizers and deleting Tenant CRs..."

@@ -46,6 +46,60 @@ CROSSPLANE_HELM_REPO=https://charts.crossplane.io/stable
 PROVIDER_WAIT_TIMEOUT=15m
 CLUSTER_XR_TIMEOUT=15m
 
+_ensure_crossplane_package_crds() {
+    local required missing=()
+    required=(
+        providers.pkg.crossplane.io
+        providerrevisions.pkg.crossplane.io
+        functions.pkg.crossplane.io
+        functionrevisions.pkg.crossplane.io
+        deploymentruntimeconfigs.pkg.crossplane.io
+    )
+
+    for crd in "${required[@]}"; do
+        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+            missing+=("${crd}")
+        fi
+    done
+
+    if [[ "${#missing[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    warn "Crossplane package CRDs missing: ${missing[*]}"
+    info "Re-applying Crossplane CRDs from Helm chart..."
+    helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update >/dev/null
+    helm repo update >/dev/null
+    helm template crossplane crossplane-stable/crossplane \
+        --version "${CROSSPLANE_VERSION}" \
+        --namespace "${CROSSPLANE_NAMESPACE}" \
+        --include-crds \
+        | kubectl apply -f - >/dev/null
+
+    # Some chart packaging modes do not include CRDs in Helm output. Ensure the
+    # required package CRDs are explicitly applied from upstream release assets.
+    local crossplane_minor="${CROSSPLANE_VERSION%.*}"
+    for crd in providers providerrevisions functions functionrevisions deploymentruntimeconfigs; do
+        kubectl apply -f "https://raw.githubusercontent.com/crossplane/crossplane/release-${crossplane_minor}/cluster/crds/pkg.crossplane.io_${crd}.yaml" >/dev/null 2>&1 || true
+    done
+
+    for crd in "${required[@]}"; do
+        kubectl wait --for=condition=Established "crd/${crd}" --timeout=90s >/dev/null 2>&1 || true
+    done
+
+    local unresolved=()
+    for crd in "${required[@]}"; do
+        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+            unresolved+=("${crd}")
+        fi
+    done
+    if [[ "${#unresolved[@]}" -gt 0 ]]; then
+        error "Crossplane CRDs still missing after re-apply: ${unresolved[*]}"
+        exit 1
+    fi
+    success "Crossplane package CRDs are present."
+}
+
 # =============================================================================
 # Crossplane 0 — Install Crossplane core
 # (mirrors the logic of crossplane/tests/e2e/scripts/p0-crossplane-install.sh)
@@ -55,10 +109,12 @@ install_crossplane() {
 
     if kubectl get deployment crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
         success "Crossplane deployment already present in ${CROSSPLANE_NAMESPACE}; skipping."
+        _ensure_crossplane_package_crds
         return
     fi
     if helm status crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
         success "Crossplane already installed via Helm; skipping."
+        _ensure_crossplane_package_crds
         return
     fi
 
@@ -86,6 +142,7 @@ install_crossplane() {
     kubectl wait deployment/crossplane \
         -n "${CROSSPLANE_NAMESPACE}" \
         --for=condition=Available --timeout=5m
+    _ensure_crossplane_package_crds
     success "Crossplane core installed and Ready."
 }
 
@@ -571,6 +628,50 @@ deploy_nubus() {
     local ns="gentian-${ENV:-dev}"
     local infra_ns="gentian-infra-${ENV:-dev}"
     local release_name="nubus-${ENV:-dev}"
+    local install_start_epoch="${INSTALL_START_EPOCH:-0}"
+
+    # Return lines: <pvc_name>\t<reason>
+    # reason is one of: pvc-created-before-install, pv-created-before-install
+    # This avoids false positives when ArgoCD app-of-apps creates fresh PVCs
+    # during the same install run.
+    _find_stale_pvcs() {
+        local scan_ns="$1"
+        local exclude_regex="$2"
+        local cutoff=$((install_start_epoch - 15))
+        local pvc_list pvc pvc_epoch pvc_ts pv pv_epoch pv_ts reason
+
+        pvc_list=$(kubectl get pvc -n "${scan_ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+        [[ -z "${pvc_list}" ]] && return 0
+
+        while IFS= read -r pvc; do
+            [[ -z "${pvc}" ]] && continue
+            [[ -n "${exclude_regex}" && "${pvc}" =~ ${exclude_regex} ]] && continue
+
+            reason=""
+            pvc_ts=$(kubectl get pvc "${pvc}" -n "${scan_ns}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
+            pvc_epoch=0
+            [[ -n "${pvc_ts}" ]] && pvc_epoch=$(date -d "${pvc_ts}" +%s 2>/dev/null || echo 0)
+            if (( install_start_epoch > 0 && pvc_epoch > 0 && pvc_epoch < cutoff )); then
+                reason="pvc-created-before-install"
+            fi
+
+            pv=$(kubectl get pvc "${pvc}" -n "${scan_ns}" -o jsonpath='{.spec.volumeName}' 2>/dev/null || true)
+            if [[ -n "${pv}" ]]; then
+                pv_ts=$(kubectl get pv "${pv}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
+                pv_epoch=0
+                [[ -n "${pv_ts}" ]] && pv_epoch=$(date -d "${pv_ts}" +%s 2>/dev/null || echo 0)
+                if (( install_start_epoch > 0 && pv_epoch > 0 && pv_epoch < cutoff )); then
+                    if [[ -n "${reason}" ]]; then
+                        reason="${reason},pv-created-before-install"
+                    else
+                        reason="pv-created-before-install"
+                    fi
+                fi
+            fi
+
+            [[ -n "${reason}" ]] && printf '%s\t%s\n' "${pvc}" "${reason}"
+        done <<< "${pvc_list}"
+    }
 
     # ── Namespaces ────────────────────────────────────────────────────────────
     # Guard: if a previous uninstall is still in progress, the namespace may be
@@ -636,22 +737,30 @@ deploy_nubus() {
     # uninstall. If they survive from a previous installation the new
     # StatefulSets silently reuse the old volumes, inheriting old users, old
     # LDAP passwords, and expired SSL certificates. Abort loudly instead.
-    local _stale_pvcs
-    _stale_pvcs=$(kubectl get pvc -n "${ns}" -o name 2>/dev/null \
-        | grep -v "nats-data-${release_name}-provisioning-nats-0" || true)
+    local _stale_pvcs _stale_list
+    _stale_pvcs=$(_find_stale_pvcs "${ns}" "^nats-data-${release_name}-provisioning-nats-0$")
     if [[ -n "${_stale_pvcs}" ]]; then
         error "Stale PVCs detected in ${ns} — aborting to avoid installing on old data:"
-        kubectl get pvc -n "${ns}" --no-headers 2>/dev/null | sed 's/^/    /' >&2 || true
+        while IFS=$'\t' read -r pvc reason; do
+            [[ -z "${pvc}" ]] && continue
+            _stale_list+="|${pvc}|${reason}|\n"
+        done <<< "${_stale_pvcs}"
+        printf '%b' "${_stale_list}" | sed 's/^/    /' >&2 || true
         error ""
         error "These PVCs are from a previous installation (LDAP data, SSL certs, etc.)."
         error "Clean them up first, then re-run install.sh:"
         error "    ./uninstall.sh -f && ./install.sh"
         exit 1
     fi
-    _stale_pvcs=$(kubectl get pvc -n "${infra_ns}" -o name 2>/dev/null || true)
+    _stale_list=""
+    _stale_pvcs=$(_find_stale_pvcs "${infra_ns}" "")
     if [[ -n "${_stale_pvcs}" ]]; then
         error "Stale PVCs detected in ${infra_ns} — aborting to avoid installing on old data:"
-        kubectl get pvc -n "${infra_ns}" --no-headers 2>/dev/null | sed 's/^/    /' >&2 || true
+        while IFS=$'\t' read -r pvc reason; do
+            [[ -z "${pvc}" ]] && continue
+            _stale_list+="|${pvc}|${reason}|\n"
+        done <<< "${_stale_pvcs}"
+        printf '%b' "${_stale_list}" | sed 's/^/    /' >&2 || true
         error ""
         error "These PVCs are from a previous installation (postgres, MariaDB, MinIO, …)."
         error "Clean them up first, then re-run install.sh:"
@@ -856,6 +965,11 @@ main_cp() {
     echo ""
 
     parse_args "$@"
+
+    # Capture run start so stale-data guards can distinguish resources created
+    # during this install from leftovers from previous cycles.
+    INSTALL_START_EPOCH="$(date -u +%s)"
+    export INSTALL_START_EPOCH
 
     if [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]]; then
         verify_argocd_apps || true
