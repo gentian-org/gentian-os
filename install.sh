@@ -271,16 +271,6 @@ path "secret/metadata/gentian-os/tenants/*"       { capabilities = ["list"] }
 POLICY
     success "eso-read policy written."
 
-    # ── 3c. tofu-write policy ─────────────────────────────────────────────────
-    # Tofu runner needs read+write to seed and read secrets managed by Tofu.
-    bao policy write tofu-write - <<'POLICY'
-path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
-path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
-path "auth/token/create"      { capabilities = ["update"] }
-path "auth/token/lookup-self" { capabilities = ["read"] }
-POLICY
-    success "tofu-write policy written."
-
     # ── 4. Kubernetes auth roles ──────────────────────────────────────────────
     # crossplane-provider: kept for future dynamic-token use (not used by
     # provider-vault ProviderConfig which reads a static token Secret).
@@ -298,14 +288,6 @@ POLICY
         token_policies=eso-read \
         token_ttl=3600
     success "eso K8s auth role created."
-
-    # tofu-runner: Tofu Controller runner pod in tofu-system (infra-workspaces, etc.).
-    bao write auth/kubernetes/role/tofu-runner \
-        bound_service_account_names=tf-runner \
-        bound_service_account_namespaces=tofu-system \
-        token_policies=tofu-write \
-        token_ttl=3600
-    success "tofu-runner K8s auth role created."
 
     # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
     # provider-vault v3.x (upjet/Terraform-based) does not support
