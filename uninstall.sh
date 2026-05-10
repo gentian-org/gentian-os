@@ -18,9 +18,9 @@
 #   - Also deletes data namespaces and bound PVs (full teardown)
 #
 # Usage:
-#   ./uninstall-cp.sh            # safe teardown
-#   ./uninstall-cp.sh -f         # full teardown (DESTROYS DATA)
-#   ./uninstall-cp.sh --cluster-infra  # also remove cert-manager/CNPG/reloader
+#   ./uninstall.sh            # safe teardown
+#   ./uninstall.sh -f         # full teardown (DESTROYS DATA)
+#   ./uninstall.sh --cluster-infra  # also remove cert-manager/CNPG/reloader
 # =============================================================================
 
 set -euo pipefail
@@ -875,5 +875,5 @@ if [[ "${MODE}" == "safe" ]]; then
     echo "  Re-run with -f to also remove namespaces and bound PVs."
 fi
 echo ""
-echo "  To re-install: ./install-cp.sh"
+echo "  To re-install: ./install.sh"
 echo ""
