@@ -1,7 +1,7 @@
 # Gentian OS — Crossplane Migration Plan
 
-**Version:** 0.2
-**Status:** In progress — P0 ✅  P1 ✅  P2A ✅  P2B 🔄
+**Version:** 0.3
+**Status:** In progress — P0 ✅  P1 ✅  P2A ✅  P2B ✅  P2C 🔄
 **Companion to:** [architecture-legacy.md](architecture-legacy.md), [architecture-crossplane.md](architecture-crossplane.md)
 
 > **Script names:** `install-cp.sh` and `uninstall-cp.sh` have been renamed
@@ -333,18 +333,21 @@ tofu init && tofu apply  # re-asserts state from local tfstate backup
 
 ---
 
-## 5. Phase 2B — Migrate Kernel Helm Releases from Tofu to `provider-helm`
+## 5. Phase 2B — Migrate Kernel Helm Releases from Tofu to `provider-helm` ✅
 
 **Scope:** Replace the `infra-workspaces-dev` Tofu Controller workspace
-(which manages Nubus, Nextcloud, PostgreSQL, MariaDB, Keycloak bootstrap
+(which managed Nubus, Nextcloud × 3, PostgreSQL, MariaDB, Keycloak bootstrap
 as Helm releases with `set_sensitive` secret injection) with
 `provider-helm` Release MRs. The openDesk charts use indexed `set_sensitive`
 calls (not a single `existingSecret` key), so all migrations use **Pattern B**:
 an ESO ExternalSecret with a `template` that renders a `sensitive-values.yaml`
 Helm values file, consumed by `Release.spec.forProvider.valuesFrom.secretKeyRef`.
 
-After this phase the Tofu Controller is idle and can be uninstalled in
-Phase 5.
+The `infra-workspaces-dev` Tofu workspace and the entire
+`kernel/tofu/tenant/infra-workspaces/` module have been removed. The Tofu
+Controller binary stays installed (still owns the per-tenant `app-workspace`,
+`keycloak-config`, and `ox-workspace` workspaces) and will be uninstalled in
+Phase 2C / Phase 5.
 
 ### 5.1 Deliverables
 
@@ -353,41 +356,49 @@ an ESO ExternalSecret (template-based `sensitive-values.yaml` key), plain-values
 ConfigMaps, and a `provider-helm` Release CR. The new AppSet
 `kernel/appsets/09-infra-helm.yaml` (wave 9) deploys all these directories.
 
-- [x] **nubus** — ESO ExternalSecrets (`nubus-credentials` + `nubus-sensitive-values`)
+- [x] **nubus** — ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`,
+      `nubus-static`, `portal-object-storage`, `keycloak-bootstrap-ldap-credentials`)
       + Release CR `nubus-dev` in `crossplane/apps/nubus/`; applied by install.sh.
-      Synced+Ready (confirmed on dev cluster). Tofu `nubus.tf` set `count = 0`.
+      Synced+Ready on dev cluster.
 - [x] **opendesk-postgresql** — `postgresql-sensitive-values` ESO + plain-values
       ConfigMaps + Release CR in `kernel/services/opendesk-postgresql/manifests/dev/`.
 - [x] **opendesk-mariadb** — `mariadb-sensitive-values` ESO + plain-values
       ConfigMaps + Release CR in `kernel/services/opendesk-mariadb/manifests/dev/`.
-- [x] `kernel/appsets/09-infra-helm.yaml` — AppSet (wave 9) for provider-helm
-      managed infra charts (opendesk-postgresql, opendesk-mariadb).
-- [ ] **nextcloud** (3 charts) — Pattern B migration; charts explicitly do **not**
-      support `existingSecret` natively (confirmed in nextcloud.tf comments). Needs:
-      `nextcloud-management-sensitive-values`, `nextcloud-sensitive-values`,
-      `nextcloud-notifypush-sensitive-values` ESOs + 3 Release CRs.
+- [x] **nextcloud** (3 charts) — Pattern B migration complete:
+      `kernel/services/{nextcloud,nextcloud-management,nextcloud-notifypush}/manifests/dev/`
+      each carry `externalsecret.yaml` + `configmap.yaml` + `release.yaml`.
       Secret sources: `kernel/apps/nextcloud`, `kernel/cache/redis`,
       `kernel/storage/minio`, `kernel/identity/nubus`, `kernel/database/postgresql`.
-- [ ] nubus ConfigMaps (`nubus-dev-udm-listener-nats-patch`,
-      `nubus-dev-ldap-gentian-acl`) — currently created imperatively by install.sh;
-      migrate to `provider-kubernetes` Object MRs in `crossplane/apps/nubus/`.
-- [ ] Remove `helm_release.postgresql` + `helm_release.mariadb` from
-      `kernel/tofu/tenant/infra-workspaces/stubs.tf` once Release CRs confirmed
-      stable (requires `tofu state rm` to avoid Tofu destroying the live release).
-- [ ] Remove `kernel/tofu/tenant/infra-workspaces/nextcloud.tf` once nextcloud
-      Release CRs confirmed stable.
-- [ ] Delete `infra-workspaces-dev` Terraform CR from
-      `kernel/services/tofu/manifests/dev/terraform.yaml` once all resources
-      have been removed from the Tofu workspace.
+- [x] `kernel/appsets/09-infra-helm.yaml` — AppSet (wave 9) matrix covers
+      `opendesk-postgresql`, `opendesk-mariadb`, `nextcloud-management`,
+      `nextcloud`, `nextcloud-notifypush`.
+- [x] `kernel/tofu/tenant/infra-workspaces/` — deleted in full (no
+      `nubus.tf`, `nextcloud.tf`, `stubs.tf`).
+- [x] `kernel/services/tofu/manifests/dev/terraform.yaml` — reduced to a
+      placeholder; `infra-workspaces-dev` Terraform CR retired.
+- [x] Multi-tenant LDAP ACL feature preserved — `ldap-gentian-acl` ConfigMap
+      mount restored on the migrated `nubus-dev` Release
+      (`crossplane/apps/nubus/values/_base.yaml` + patch script
+      `crossplane/apps/nubus/patches/92-gentian-tenant-acl.sh`).
+- [x] `install.sh` / `uninstall.sh` updated to deploy/drain Pattern B Release
+      CRs end-to-end (Step 1b drains Releases before Crossplane teardown).
+- [ ] **Deferred to P2C** — the `nubus-dev-udm-listener-nats-patch` and
+      `nubus-dev-ldap-gentian-acl` ConfigMaps are still created imperatively
+      by `install.sh` (idempotent `kubectl create --dry-run | apply`).
+      Migrating them to `provider-kubernetes` `Object` MRs is a cosmetic
+      cleanup with no functional impact and is grouped with the per-tenant
+      `provider-kubernetes` work in Phase 2C.
 
-Current chart migration status:
+Final chart migration status:
 | Chart | Tofu state | provider-helm Release |
 |---|---|---|
-| **nubus** | `count = 0` (disabled) | ✅ Synced+Ready |
-| **opendesk-postgresql** | `count = 1` (active — cutover pending) | ✅ CR created |
-| **opendesk-mariadb** | `count = 1` (active — cutover pending) | ✅ CR created |
-| **nextcloud** (×3) | active | ❌ not yet migrated |
-| **keycloak-bootstrap** | `count = 0` (deprecated) | n/a |
+| **nubus** | removed | ✅ Synced+Ready |
+| **opendesk-postgresql** | removed | ✅ Synced+Ready |
+| **opendesk-mariadb** | removed | ✅ Synced+Ready |
+| **nextcloud-management** | removed | ✅ Synced+Ready |
+| **nextcloud** | removed | ✅ Synced+Ready |
+| **nextcloud-notifypush** | removed | ✅ Synced+Ready |
+| **keycloak-bootstrap** | removed (deprecated) | n/a |
 
 ### 5.2 Unit tests
 
@@ -416,12 +427,14 @@ Current chart migration status:
 
 ### 5.4 Acceptance
 
-- All five charts running on `provider-helm` Release MRs.
-- `infra-workspaces-dev` Terraform CR deleted from cluster.
-- ArgoCD shows all Release MRs as Synced + Healthy.
-- `kernel/tofu/tenant/infra-workspaces/` deleted from repo.
-- Tofu Controller has no active workspaces → can be uninstalled.
-- Secret-leak grep returns zero results.
+- [x] All six charts running on `provider-helm` Release MRs.
+- [x] `infra-workspaces-dev` Terraform CR deleted from cluster.
+- [x] ArgoCD shows all Release MRs as Synced + Healthy.
+- [x] `kernel/tofu/tenant/infra-workspaces/` deleted from repo.
+- [x] Tofu Controller has no kernel-tier workspaces (only per-tenant
+      `app-workspace` / `keycloak-config` / `ox-workspace` remain;
+      retired in Phase 2C).
+- [ ] Secret-leak grep returns zero results (to be re-confirmed in CI).
 
 ### 5.5 Rollback
 
@@ -432,6 +445,188 @@ Current chart migration status:
 # Tofu wins on next apply because it owns the Helm state).
 # Delete the provider-helm MRs once Tofu is confirmed healthy.
 ```
+
+---
+
+## 5b. Phase 2C — Migrate Per-Tenant App Provisioning to Crossplane 🔄
+
+**Scope:** Replace the per-tenant Tofu Controller workspaces
+(`kernel/tofu/tenant/app-workspace`, `kernel/tofu/tenant/keycloak-config`,
+`kernel/tofu/tenant/ox-workspace`) — currently emitted as `Terraform` CRs
+by the `AppReconciler` (see
+[internal/controller/app_reconciler.go](../internal/controller/app_reconciler.go))
+— with native Crossplane resources composed from the `AppProfile` /
+`Tenant` spec.
+
+After this phase the Tofu Controller binary itself can be uninstalled
+(no remaining workspaces) and `kernel/tofu/` can be deleted from the repo.
+This collapses the kernel’s deployment plane to a single technology
+(Crossplane + ESO) and is a hard prerequisite for the clean cutover
+in Phase 4 / Phase 5.
+
+### 5b.0 Why this is feasible (architectural note)
+
+The `app-workspace` Tofu module today does five things, each of which
+has a direct Crossplane equivalent already proven in P2B:
+
+| Tofu thing | Crossplane equivalent (proven in P2B) |
+|---|---|
+| `helm_release.app` | `helm.crossplane.io/Release` MR with `valuesFrom.secretKeyRef` |
+| `templatefile()` rendering of secret values | ESO `ExternalSecret` with a `template` block |
+| `kubernetes_*` ad-hoc resources | `kubernetes.crossplane.io/Object` MRs |
+| `terraform.tfstate` in MinIO `tofu-state` bucket | Crossplane MR `status` (no separate state store) |
+| `dynamic "app_secrets"` map | composition function (`function-go-templating` or `function-kcl`) translating `AppProfile.spec.appSecrets[]` into `valuesFrom` entries |
+
+The `keycloak-config` workspace is a thin wrapper around the
+`provider-keycloak` resources already deployed in P1; it migrates to
+plain `provider-keycloak` MRs composed from the AppProfile.
+
+The `ox-workspace` workspace is identical to `app-workspace` plus the
+OX-specific `templatefile()` step that renders `appsuite.properties`
+from OpenBao-derived values — also expressible via ESO `template`.
+
+### 5b.1 Deliverables
+
+- [ ] **`XApp` XRD + Composition** (`crossplane/xrds/app.yaml`,
+      `crossplane/compositions/app-default.yaml`) — one XR instance per
+      `(tenant, app)` pair. The XR spec mirrors the relevant subset of
+      `AppProfile` + `Tenant`: `chart`, `version`, `repository`,
+      `extraValues`, `appSecrets[]`, `tenantNamespace`, `domain`.
+- [ ] **Composition function** — either pin
+      `xpkg.upbound.io/crossplane-contrib/function-go-templating` or
+      `function-kcl` (decision in §5b.0). Function reads the XR and emits:
+      - 1× `ExternalSecret` (Pattern B `sensitive-values.yaml` template,
+        `dataFrom` referencing the `AppProfile.spec.appSecrets[*].valuePath`).
+      - 1× `helm.crossplane.io/Release` MR consuming the rendered values.
+      - 0..n× `kubernetes.crossplane.io/Object` MRs for any
+        `AppProfile.spec.extraResources[]` (Secrets, ConfigMaps,
+        NetworkPolicies the chart does not ship).
+- [ ] **`XKeycloakAppConfig` XRD + Composition** — emits
+      `provider-keycloak` MRs for the per-app realm role / client-scope /
+      protocol-mapper objects currently created by the
+      `keycloak-config` workspace.
+- [ ] **`XOXAppSuite` Composition variant** — reuses the `XApp`
+      Composition pipeline plus an extra ESO `ExternalSecret` that
+      renders `appsuite.properties` (the only ox-specific templating).
+      The dedicated `ox-workspace` Tofu module is retired.
+- [ ] **`AppReconciler` rewrite** (Go) —
+      [internal/controller/app_reconciler.go](../internal/controller/app_reconciler.go)
+      stops emitting `Terraform` CRs and instead emits `XApp` /
+      `XKeycloakAppConfig` / `XOXAppSuite` claims. The constants
+      `tofuSystemNamespace`, `tofuGitRepositoryName`, `tofuModulePath`,
+      `tofuFinalizer`, `tofuStateBucket`, `tofuStateEndpoint` are
+      removed. `DeploymentMethod` enum loses the `tofu-controller`
+      variant (becomes `crossplane` only).
+- [ ] **State migration helper** — `crossplane/e2e/scripts/p2c-adopt-app.sh`
+      that, for every existing tenant’s active `Terraform` CR:
+      1. Reads the live Helm release name + namespace from the Tofu
+         state in MinIO.
+      2. Creates the corresponding `XApp` claim with
+         `crossplane.io/external-name: <release-name>` so provider-helm
+         **adopts** the existing release in place (no pod restart, no
+         secret rotation).
+      3. Removes the `Terraform` CR (`kubectl delete --wait=false` plus
+         finalizer cleanup if the controller is gone).
+- [ ] **Tofu Controller uninstall** — once all `Terraform` CRs are gone
+      across all envs:
+      - `helm uninstall tofu-controller -n tofu-system`
+      - Delete `kernel/tofu/` from the repo.
+      - Delete `kernel/services/tofu/` and `AppSet 05-tofu.yaml`.
+      - Delete `tofu-state` MinIO bucket (after a 30-day retention
+        snapshot stored out-of-band).
+- [ ] **install.sh / uninstall.sh updates** — drop the Tofu install
+      step; add `XApp` claim drain to uninstall (mirrors the P2B
+      Pattern B Release drain in Step 1b).
+- [ ] **Documentation** —
+      [docs/architecture-crossplane.md](architecture-crossplane.md)
+      updated to describe `XApp` as the per-app composition root;
+      [docs/architecture-legacy.md](architecture-legacy.md) marked as
+      historical-only.
+
+### 5b.2 Unit tests
+
+| Test | Validates |
+|---|---|
+| `tests/unit/render/xapp-collabora/` | XApp XR + Collabora AppProfile fixture renders the expected Release + ExternalSecret golden YAML |
+| `tests/unit/render/xapp-element/` | Same for Element (multiple `appSecrets`: oidc, smtp, db) |
+| `tests/unit/render/xapp-extra-resources/` | An AppProfile declaring `extraResources[]` produces matching `provider-kubernetes` Object MRs in dependency order |
+| `tests/unit/render/xkeycloakappconfig-default/` | Realm role + client-scope + protocol-mapper MRs match what `keycloak-config` Tofu emits today |
+| `tests/unit/render/xoxappsuite/` | OX appsuite.properties ExternalSecret template renders all expected keys; OIDC realm role MR is emitted |
+| `tests/unit/functions/render-appsecrets/test_valuepath_to_valuesfrom.py` | `appSecrets[].valuePath` correctly resolves to a `dataFrom.extract` ref + a `valuesFrom` Helm key |
+| `tests/unit/orchestrator/app_reconciler_emits_xapp_test.go` | `AppReconciler` emits an `XApp` claim (not a `Terraform` CR) for every AppProfile with `deploymentMethod: crossplane` |
+| `tests/unit/orchestrator/app_reconciler_no_tofu_constants.go` | Constants `tofuSystemNamespace` etc. no longer exist in the Go module (compile-time guard) |
+
+### 5b.3 E2E test (dev cluster)
+
+`make e2e-p2c`:
+
+```text
+PRE-CHECKS
+  1. Snapshot all live Helm release revisions, OpenBao secret versions,
+     and tenant OIDC client IDs to a fixture file.
+  2. CNPG base backup of every per-tenant database (safety net).
+
+ADOPTION
+  3. For each Terraform CR in tofu-system:
+     a. Run p2c-adopt-app.sh <terraform-cr> — creates XApp claim with
+        crossplane.io/external-name set to existing release name.
+     b. kubectl wait --for=condition=Ready xapp/<name>
+     c. Verify Helm revision counter unchanged (provider-helm adopted,
+        not re-installed).
+     d. Delete the Terraform CR.
+  4. Repeat for keycloak-config workspaces (XKeycloakAppConfig).
+  5. Repeat for ox-workspace (XOXAppSuite).
+
+POST-CHECKS
+  6. Diff post-state vs pre-state. Allowed differences:
+       - ownerReferences on Helm Secrets / Keycloak CRs (now point at XR).
+       - Crossplane controller annotations.
+     No Helm revision bump, no pod restart, no OpenBao secret rotation.
+  7. Browser smoke: login via Keycloak, open Nextcloud, edit a file in
+     Collabora (exercises adopted Release + IntegrationBinding), open
+     OX App Suite mailbox.
+  8. 30-minute soak: kubectl get xapps,releases.helm.crossplane.io
+     shows zero churn (no spec drift, no reconcile thrash).
+  9. helm uninstall tofu-controller && verify no orphan finalizers.
+ 10. Grep repo: `grep -r tofu-system\|tofuSystemNamespace .` returns
+     only history/changelog matches.
+```
+
+### 5b.4 Acceptance
+
+- [ ] Zero `Terraform` CRs exist in any environment.
+- [ ] Tofu Controller chart uninstalled; `kernel/tofu/`,
+      `kernel/services/tofu/`, `kernel/appsets/05-tofu.yaml` removed
+      from the repo.
+- [ ] `internal/controller/app_reconciler.go` contains no `tofu*`
+      identifiers.
+- [ ] All AppProfiles in `gentian-apps/profiles/` have
+      `deploymentMethod: crossplane` (or the field is removed entirely).
+- [ ] `gentian-os` Go binary builds with no `terraform` /
+      `tf.contrib.fluxcd.io` imports.
+- [ ] CI matrix removes the Tofu image and the Tofu Helm chart from
+      the dev install workflow.
+- [ ] Phase 2C E2E (`make e2e-p2c`) green on dev cluster.
+
+### 5b.5 Rollback
+
+P2C is the most invasive phase before the Tenant XRD work because it
+deletes a controller. Rollback paths, in increasing cost:
+
+1. **Per-app rollback (cheap).** While Tofu Controller is still
+   installed, recreate the matching `Terraform` CR and delete the
+   `XApp` claim with `--cascade=orphan` so the Helm release survives.
+   Tofu re-adopts on next sync.
+2. **Phase rollback (medium).** Revert the `AppReconciler` change so it
+   emits `Terraform` CRs again; redeploy from the previous container
+   tag; re-create all `Terraform` CRs from the per-tenant fixtures
+   captured in step 1 of the E2E run.
+3. **Post-uninstall rollback (expensive).** Reinstall Tofu Controller
+   from the chart pinned in `kernel/services/tofu/`; restore the
+   `tofu-state` MinIO bucket from the 30-day snapshot; restore the
+   `kernel/tofu/` directory from `git revert`. Live Helm releases are
+   not touched in any of these steps; only the controller that owns
+   their state changes.
 
 ---
 
@@ -703,8 +898,8 @@ The migration is **done** when, in production:
    Tofu state file exists).
 2. Every tenant resource is an MR composed from a `Tenant` XR (the Go
    orchestrator is not running).
-3. Every Pattern B chart is a `provider-helm` `Release` MR (Tofu
-   Controller is not running).
+3. Every Pattern B chart is a `provider-helm` `Release` MR and every
+   per-tenant app is an `XApp` claim (Tofu Controller is uninstalled).
 4. The `gentian-os` repo no longer contains a Go module (`go.mod`
    removed) or HCL files (`*.tf` removed), and `scripts/install-lib.sh`
    is removed once no longer needed by `install.sh`.
