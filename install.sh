@@ -970,11 +970,6 @@ main_cp() {
 
     parse_args "$@"
 
-    # Capture run start so stale-data guards can distinguish resources created
-    # during this install from leftovers from previous cycles.
-    INSTALL_START_EPOCH="$(date -u +%s)"
-    export INSTALL_START_EPOCH
-
     if [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]]; then
         verify_argocd_apps || true
         print_summary_cp
@@ -985,6 +980,17 @@ main_cp() {
     load_creds_cache
     load_install_state
     try_load_creds_from_openbao
+
+    # Capture run start so stale-data guards can distinguish resources created
+    # during this install attempt from leftovers from previous cycles.
+    # IMPORTANT: this must be set AFTER load_install_state and reused across
+    # re-runs of a partially-completed install. Otherwise PVCs created by
+    # ArgoCD / Crossplane during a previous (aborted) run get reclassified as
+    # stale on the next run because their creationTimestamp predates the new
+    # run's epoch. Cleared on successful completion (see end of main_cp).
+    INSTALL_START_EPOCH="${INSTALL_START_EPOCH:-$(date -u +%s)}"
+    export INSTALL_START_EPOCH
+    save_install_state
 
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
@@ -1027,6 +1033,11 @@ main_cp() {
     # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
+
+    # Clear the persisted run-start epoch so the next install (after a future
+    # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.
+    unset INSTALL_START_EPOCH
+    save_install_state
 
     print_summary_cp
 }

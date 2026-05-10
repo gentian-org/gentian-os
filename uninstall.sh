@@ -874,6 +874,14 @@ if [[ "${MODE}" == "safe" ]]; then
     echo "  PVC/PV data is preserved (safe mode)."
     echo "  Re-run with -f to also remove namespaces and bound PVs."
 fi
+
+# Clear the persisted run-start epoch so the next install starts with a fresh
+# stale-data cutoff (otherwise PVCs created during the upcoming install could
+# be misclassified as stale relative to a previous run's epoch).
+if [[ -f "${INSTALL_STATE_FILE}" ]]; then
+    sed -i '/^export INSTALL_START_EPOCH=/d' "${INSTALL_STATE_FILE}" 2>/dev/null || true
+fi
+
 echo ""
 echo "  To re-install: ./install.sh"
 echo ""

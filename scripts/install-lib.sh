@@ -743,6 +743,8 @@ save_install_state() {
         [[ -n "$val" ]] && printf 'export NETWORK_MODE=%q\n' "$val"
         val="${GENTIAN_MANAGED_CERT_MANAGER:-}"
         [[ -n "$val" ]] && printf 'export GENTIAN_MANAGED_CERT_MANAGER=%q\n' "$val"
+        val="${INSTALL_START_EPOCH:-}"
+        [[ -n "$val" ]] && printf 'export INSTALL_START_EPOCH=%q\n' "$val"
     } >"$tmp"
     install -m 0644 "$tmp" "${INSTALL_STATE_FILE}"
     rm -f "$tmp"
