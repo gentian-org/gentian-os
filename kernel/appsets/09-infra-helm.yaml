@@ -43,6 +43,7 @@ spec:
           - app: nextcloud-management
           - app: nextcloud
           - app: nextcloud-notifypush
+          - app: postfix
   template:
     metadata:
       name: '{{.app}}-{{.env}}'
