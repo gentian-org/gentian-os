@@ -195,7 +195,8 @@ spec:
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
             {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
-            {{- $esData = append $esData (dict "secretKey" (printf "internal-%s" $s.name) "remoteRef" (dict "key" $internalPath "property" "value")) }}
+            {{- $esData = append $esData (dict "secretKey" (printf "internal-%s" $s.name)
+                "remoteRef" (dict "key" $internalPath "property" "value")) }}
             {{- end }}
             {{- end }}
 
@@ -208,110 +209,138 @@ spec:
 
             {{- if $vm.oidc }}
             {{- if $vm.oidc.issuerKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.oidc.issuerKey        "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.issuerKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
             {{- end }}
             {{- if $vm.oidc.clientIdKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientIdKey      "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientIdKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
             {{- end }}
             {{- if $vm.oidc.clientSecretKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientSecretKey  "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientSecretKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
             {{- end }}
             {{- end }}
 
             {{- if $vm.database }}
             {{- if $vm.database.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.database.hostKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-host"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-host"))) }}
             {{- end }}
             {{- if $vm.database.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.database.portKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-port"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-port"))) }}
             {{- end }}
             {{- if $vm.database.nameKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.database.nameKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.nameKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
             {{- end }}
             {{- if $vm.database.userKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.database.userKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
             {{- end }}
             {{- if $vm.database.passwordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.database.passwordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-password"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-password"))) }}
             {{- end }}
             {{- end }}
 
             {{- if $vm.s3 }}
             {{- if $vm.s3.endpointKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.s3.endpointKey  "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-endpoint"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.s3.endpointKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-endpoint"))) }}
             {{- end }}
             {{- if $vm.s3.bucketKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.s3.bucketKey    "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-bucket"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.s3.bucketKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-bucket"))) }}
             {{- end }}
             {{- if $vm.s3.accessKeyKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.s3.accessKeyKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-access-key"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.s3.accessKeyKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-access-key"))) }}
             {{- end }}
             {{- if $vm.s3.secretKeyKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.s3.secretKeyKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-secret-key"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.s3.secretKeyKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-secret-key"))) }}
             {{- end }}
             {{- if $vm.s3.regionKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.s3.regionKey    "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-region"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.s3.regionKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "s3-region"))) }}
             {{- end }}
             {{- end }}
 
             {{- if $vm.cache }}
             {{- if $vm.cache.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.cache.hostKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-host"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-host"))) }}
             {{- end }}
             {{- if $vm.cache.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.cache.portKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-port"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-port"))) }}
             {{- end }}
             {{- if $vm.cache.passwordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-password"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-password"))) }}
             {{- end }}
             {{- end }}
 
             {{- if $vm.smtp }}
             {{- if $vm.smtp.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.hostKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-host"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-host"))) }}
             {{- end }}
             {{- if $vm.smtp.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.portKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-port"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-port"))) }}
             {{- end }}
             {{- if $vm.smtp.userKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.userKey     "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-user"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-user"))) }}
             {{- end }}
             {{- if $vm.smtp.passwordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.smtp.passwordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-password"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-password"))) }}
             {{- end }}
             {{- end }}
 
             {{- if $vm.imap }}
             {{- if $vm.imap.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.imap.hostKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "imap-host"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.imap.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "imap-host"))) }}
             {{- end }}
             {{- if $vm.imap.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.imap.portKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "imap-port"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.imap.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "imap-port"))) }}
             {{- end }}
             {{- end }}
 
             {{- if $vm.ldap }}
             {{- if $vm.ldap.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.hostKey         "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-host"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-host"))) }}
             {{- end }}
             {{- if $vm.ldap.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.portKey         "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-port"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-port"))) }}
             {{- end }}
             {{- if $vm.ldap.baseDnKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.baseDnKey       "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-base-dn"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.baseDnKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-base-dn"))) }}
             {{- end }}
             {{- if $vm.ldap.bindDnKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindDnKey       "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-dn"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindDnKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-dn"))) }}
             {{- end }}
             {{- if $vm.ldap.bindPasswordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindPasswordKey "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-password"))) }}
+            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindPasswordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-password"))) }}
             {{- end }}
             {{- end }}
 
             {{- /* App-internal secrets */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
-            {{- $relSet = append $relSet (dict "name" $s.valuePath "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- $relSet = append $relSet (dict "name" $s.valuePath
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
             {{- end }}
             {{- end }}
 

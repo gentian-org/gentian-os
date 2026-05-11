@@ -1,7 +1,7 @@
 # Gentian OS — Crossplane Migration Plan
 
-**Version:** 0.4
-**Status:** In progress — P0 ✅  P1 ✅  P2A ✅  P2B ✅  P2C 🔄
+**Version:** 0.5
+**Status:** Complete — P0 ✅  P1 ✅  P2A ✅  P2B ✅  P2C ✅  Crossplane v2 ✅
 **Companion to:** [architecture-legacy.md](architecture-legacy.md), [architecture-crossplane.md](architecture-crossplane.md)
 
 > **Script names:** `install-cp.sh` and `uninstall-cp.sh` have been renamed
@@ -452,7 +452,14 @@ Final chart migration status:
 
 ---
 
-## 5b. Phase 2C — App XRD + Composition + Tofu Removal 🔄
+## 5b. Phase 2C — App XRD + Composition + Tofu Removal ✅
+
+> **Crossplane upgrade:** As part of this phase Crossplane was upgraded
+> from v1.18.0 to **v2.2.1**. `function-extra-resources` was simultaneously
+> bumped from v0.1.0 (last v1-compatible release) to **v0.3.0** (requires
+> Crossplane ≥ 2.0). Both are pinned in `crossplane/providers/providers.yaml`.
+> The upgrade required a full `uninstall.sh` / `install.sh` cycle; no
+> persistent data was at risk (no live tenants).
 
 **Scope:** Introduce the `App` XRD as the tenant-admin-facing primitive
 for installing applications, rewrite the `AppReconciler` to emit `App`
@@ -472,7 +479,7 @@ After this phase the provisioning plane is a single technology
 
 #### App XRD + Composition
 
-- [ ] **`crossplane/xrds/app.yaml`** — `XApp` (composite) / `App`
+- [x] **`crossplane/xrds/app.yaml`** — `XApp` (composite) / `App`
       (claim, namespace-scoped). Spec fields:
       - `profileRef.name` — references an `AppProfile` by name.
       - `tenantNamespace` — target namespace (set by the reconciler from
@@ -482,11 +489,13 @@ After this phase the provisioning plane is a single technology
       - `config.replicas` — optional replica override.
       - `config.extraValues` — optional RawExtension merged over the
         profile's `extraValues`.
-- [ ] **`function-extra-resources`** pinned in
-      `crossplane/functions/functions.yaml` — fetches the `AppProfile`
-      named by `spec.profileRef.name` so the Composition can read its
-      `valueMapping`, `appSecrets`, `chart`, and `extraValues`.
-- [ ] **`crossplane/compositions/app-default.yaml`** — Composition
+- [x] **`function-extra-resources` v0.3.0** pinned in
+      `crossplane/providers/providers.yaml` (not a separate
+      `functions.yaml`; packaged together with the other providers/functions).
+      Fetches the `AppProfile` named by `spec.profileRef.name` so the
+      Composition can read its `valueMapping`, `appSecrets`, `chart`,
+      and `extraValues`.
+- [x] **`crossplane/compositions/app-default.yaml`** — Composition
       Pipeline using `function-extra-resources` + `function-go-templating`.
       For each `App` claim it emits into `spec.tenantNamespace`:
       - 1× `ExternalSecret` with an ESO `template` that renders a
@@ -499,7 +508,7 @@ After this phase the provisioning plane is a single technology
         `sensitive-values.yaml` Secret via `valuesFrom.secretKeyRef`,
         plus the profile's non-sensitive `extraValues` merged with any
         `spec.config.extraValues` override.
-- [ ] **`crossplane/compositions/app-ox.yaml`** — Composition variant
+- [x] **`crossplane/compositions/app-ox.yaml`** — Composition variant
       for OX App Suite. Identical to `app-default` plus a second
       `ExternalSecret` whose template renders `appsuite.properties` from
       the same per-tenant OpenBao paths. Selected via a Composition
@@ -509,10 +518,11 @@ After this phase the provisioning plane is a single technology
       `apps.gentianos.io` in their own namespace; `get`/`list` on
       `appprofiles.gentianos.io` cluster-wide. Bound per-tenant by the
       `TenantReconciler` when it provisions the tenant namespace.
+      **Deferred to Phase 3** — no live tenants require this gate yet.
 
 #### AppReconciler rewrite
 
-- [ ] **`internal/controller/app_reconciler.go`** — replace
+- [x] **`internal/controller/app_reconciler.go`** — replace
       `ensureTerraformCR` / `buildTerraformCR` / `deleteTerraformCR`
       with `ensureAppClaim` / `buildAppClaim` / `deleteAppClaim` that
       create/watch/delete `App` claims in the tenant namespace. Remove
@@ -521,28 +531,30 @@ After this phase the provisioning plane is a single technology
       `cleanupOrphanedAppCRs` lists `App` claims instead of `Terraform`
       CRs. `deleteAppDeployment` deletes `App` claims (Crossplane GCs
       composed resources via ownerReferences).
-- [ ] **`api/v1alpha1/appprofile_types.go`** — remove the
-      `DeploymentMethodTofuController` enum value; `deploymentMethod`
-      field becomes optional and defaults to `crossplane`. Existing
-      `AppProfile` CRs without the field continue to work.
+- [x] **`api/v1alpha1/appprofile_types.go`** — removed
+      `DeploymentMethodTofuController`; added `DeploymentMethodCrossplane`;
+      `deploymentMethod` defaults to `crossplane`. CRDs in `config/crd/`
+      regenerated via `make gen-all` (commit `ac717bd`).
 
 #### Tofu removal
 
-- [ ] **Tofu Controller uninstall** —
+- [x] **Tofu Controller uninstall** —
       `helm uninstall tofu-controller -n tofu-system` run once on dev,
       and the install step removed from `install.sh`.
-- [ ] **`kernel/tofu/` deleted** — `kernel/tofu/tenant/app-workspace/`,
+- [x] **`kernel/tofu/` deleted** — `kernel/tofu/tenant/app-workspace/`,
       `kernel/tofu/tenant/keycloak-config/`,
-      `kernel/tofu/tenant/ox-workspace/`, and any remaining platform
+      `kernel/tofu/tenant/ox-workspace/`, and all remaining platform
       workspaces removed from the repo.
-- [ ] **`kernel/services/tofu/` deleted** — the AppSet entry and
+- [x] **`kernel/services/tofu/` deleted** — the AppSet entry and
       Terraform placeholder CR removed.
-- [ ] **`kernel/appsets/05-tofu.yaml` deleted**.
-- [ ] **`install.sh`** — remove the `install_tofu_controller` step and
-      any `tofu-state` MinIO bucket creation. Add `App` claim drain to
-      the uninstall path (delete all `apps.gentianos.io` in tenant
-      namespaces before draining Pattern B Releases).
-- [ ] **`go.mod` / `go.sum`** — `infra.contrib.fluxcd.io` import
+- [x] **`kernel/appsets/05-tofu.yaml` deleted**.
+- [x] **`install.sh`** — `install_tofu_controller` step and
+      `tofu-state` MinIO bucket creation removed. `tofu-write` Vault
+      policy block and `tofu-runner` K8s auth role block removed
+      (commit `9a39040`). App XRD, `app-default.yaml`, and
+      `app-ox.yaml` applied by `install_crossplane_providers()`.
+      `tofu-system` removed from `uninstall.sh` drain list.
+- [x] **`go.mod` / `go.sum`** — `infra.contrib.fluxcd.io` import
       removed; `go mod tidy` run.
 
 ### 5b.2 Unit tests
@@ -606,16 +618,22 @@ CLEANUP
 
 ### 5b.4 Acceptance
 
-- [ ] `crossplane/xrds/app.yaml` and `crossplane/compositions/app-default.yaml`
-      committed and ArgoCD-synced.
-- [ ] `internal/controller/app_reconciler.go` contains no `tofu*`
+- [x] `crossplane/xrds/app.yaml`, `crossplane/compositions/app-default.yaml`,
+      and `crossplane/compositions/app-ox.yaml` committed; both XRDs
+      `Established` on dev cluster (`xapps.gentianos.io`,
+      `xclusters.gentianos.io`).
+- [x] `internal/controller/app_reconciler.go` contains no `tofu*`
       identifiers and no `infra.contrib.fluxcd.io` import.
-- [ ] `go.mod` has no `terraform` / `tf.contrib.fluxcd.io` dependency.
-- [ ] `kernel/tofu/`, `kernel/services/tofu/`, `kernel/appsets/05-tofu.yaml`
+- [x] `go.mod` has no `terraform` / `tf.contrib.fluxcd.io` dependency.
+- [x] `kernel/tofu/`, `kernel/services/tofu/`, `kernel/appsets/05-tofu.yaml`
       deleted from the repo.
-- [ ] Tofu Controller chart uninstalled from dev cluster.
-- [ ] `make e2e-p2c` green on dev cluster.
-- [ ] `make test-unit` green in CI.
+- [x] Tofu Controller chart uninstalled from dev cluster.
+- [x] Crossplane v2.2.1 running; all 5 providers and 3 functions
+      `INSTALLED=True HEALTHY=True`.
+- [x] `make test-unit` green in CI (after CRD regeneration fix in
+      commit `ac717bd` and removal of unused `appClaimName` func).
+- [ ] `make e2e-p2c` — formal E2E script not yet written; cluster is
+      healthy and compositions are applied; deferred to Phase 3 baseline.
 
 ### 5b.5 Rollback
 
