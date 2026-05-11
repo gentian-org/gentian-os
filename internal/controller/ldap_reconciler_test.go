@@ -147,7 +147,7 @@ func TestLDAP_CreatesOUJob(t *testing.T) {
 }
 
 // TestLDAP_CreatesBindAccountJobAfterOUComplete verifies that the bind account
-// Job is only created after the OU and admin-policy Jobs have completed.
+// Job is only created after the OU, admin-user, and admin-policy Jobs have completed.
 func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	t.Parallel()
 	profile := newLDAPProfile("ldap-app2")
@@ -178,6 +178,14 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-ou-bindtest", "platform-kernel")
 
+	// Wait for admin-user Job (runs before admin-policy), then mark it complete.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-bindtest", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "ldap-admin-user-bindtest", "platform-kernel")
+
 	// Wait for admin-policy Job, then mark it complete.
 	waitFor(t, 10*time.Second, func() bool {
 		j := &batchv1.Job{}
@@ -186,15 +194,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-admin-policy-bindtest", "platform-kernel")
 
-	// Wait for admin-user Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-admin-user-bindtest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "ldap-admin-user-bindtest", "platform-kernel")
-
-	// Bind account Job should appear after OU and admin-policy are complete.
+	// Bind account Job should appear after all predecessor Jobs are complete.
 	bindJob := &batchv1.Job{}
 	waitFor(t, 15*time.Second, func() bool {
 		return testClient.Get(context.Background(),
@@ -209,8 +209,10 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	}
 }
 
-// TestLDAP_CreatesAdminPolicyJobAfterOU verifies that delegated-admin policy
-// provisioning is ordered between OU creation and bind-account provisioning.
+// TestLDAP_CreatesAdminPolicyJobAfterOU verifies the provisioning chain:
+// OU → admin-user → admin-policy → bind-accounts.
+// Admin-user runs before admin-policy so the Nubus portal consumer groups
+// cache is populated before portal allowedGroups are updated.
 func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	t.Parallel()
 	profile := newLDAPProfile("ldap-app2b")
@@ -240,16 +242,31 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 			types.NamespacedName{Name: "ldap-ou-adminpolicy", Namespace: "platform-kernel"}, j) == nil
 	})
 
-	// Admin-policy Job must not exist before OU completion.
+	// Admin-user Job must not exist before OU completion.
 	job := &batchv1.Job{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-admin-policy-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no admin-policy Job before OU completion")
+		types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
+		t.Fatal("expected no admin-user Job before OU completion")
 	}
 
 	markJobComplete(t, "ldap-ou-adminpolicy", "platform-kernel")
 
-	// Admin-policy Job should appear after OU completion.
+	// Admin-user Job should appear after OU completion.
+	waitFor(t, 15*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, j) == nil
+	})
+
+	// Admin-policy Job must not exist before admin-user completion.
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "ldap-admin-policy-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
+		t.Fatal("expected no admin-policy Job before admin-user completion")
+	}
+
+	markJobComplete(t, "ldap-admin-user-adminpolicy", "platform-kernel")
+
+	// Admin-policy Job should appear after admin-user completion.
 	waitFor(t, 15*time.Second, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
@@ -295,6 +312,14 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-ou-ldapready", "platform-kernel")
 
+	// Mark admin-user Job complete (runs before admin-policy).
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-ldapready", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "ldap-admin-user-ldapready", "platform-kernel")
+
 	// Mark admin-policy Job complete.
 	waitFor(t, 10*time.Second, func() bool {
 		j := &batchv1.Job{}
@@ -302,14 +327,6 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 			types.NamespacedName{Name: "ldap-admin-policy-ldapready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "ldap-admin-policy-ldapready", "platform-kernel")
-
-	// Wait for admin-user Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-admin-user-ldapready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "ldap-admin-user-ldapready", "platform-kernel")
 
 	// Wait for bind account Job, then mark it complete.
 	waitFor(t, 15*time.Second, func() bool {

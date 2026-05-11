@@ -46,10 +46,17 @@ const (
 // Jobs run in the kernel namespace and are idempotent (check-before-create).
 // Returns a non-zero RequeueAfter while Jobs are still running.
 //
-// Steps 1-2.5 (OU, admin policy, admin user) are handled non-blocking by
-// ensureLDAPBase for tenants with no LDAP-requiring apps. When LDAP apps are
-// present, this function handles all steps (1-3) and blocks Phase=Ready until
-// complete. Step 3 (per-app bind accounts) is always app-gated.
+// Steps 1-3 (OU, admin user, admin policy, bind accounts) are handled
+// non-blocking by ensureLDAPBase for tenants with no LDAP-requiring apps.
+// When LDAP apps are present, this function handles all steps and blocks
+// Phase=Ready until complete. Step 4 (per-app bind accounts) is app-gated.
+//
+// Admin user must run BEFORE admin policy: the policy job updates the portal
+// entry allowedGroups, and the Nubus portal consumer's groups cache must
+// already contain the admin user in admins_<tenant> at that point. If the
+// policy job ran first (old order), the portal server would see the group in
+// allowedGroups but find it empty in the cache, so admin tiles would not show
+// until the user reloaded the portal after the subsequent user job completed.
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	ouDN := tenantOUDN(tenant)
 
@@ -76,18 +83,11 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
-	// Step 2 — tenant-scoped delegated admin policy
-	adminPolicyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure LDAP admin policy Job: %w", err)
-	}
-	if !adminPolicyDone {
-		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
-			"ProvisioningAdminPolicy", "Waiting for UDM admin policy Job to complete")
-		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
-	}
-
-	// Step 2.5 — tenant admin UDM user (so the admin can log into the Nubus portal)
+	// Step 2 — tenant admin UDM user.
+	// Must run BEFORE the admin policy job: the policy job updates the portal
+	// entry allowedGroups, and the Nubus portal consumer groups cache must
+	// already contain the admin user so that portal tile visibility is correct
+	// on first login (no page reload required).
 	var adminCreds secrets.TenantAdminCreds
 	if r.Seeder != nil {
 		adminCreds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
@@ -104,6 +104,18 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	if !adminUserDone {
 		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
 			"ProvisioningAdminUser", "Waiting for UDM admin user Job to complete")
+		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
+	}
+
+	// Step 3 — tenant-scoped delegated admin policy + portal tile allowedGroups.
+	// Runs after the admin user so the groups cache is already populated.
+	adminPolicyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure LDAP admin policy Job: %w", err)
+	}
+	if !adminPolicyDone {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
+			"ProvisioningAdminPolicy", "Waiting for UDM admin policy Job to complete")
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
@@ -267,12 +279,14 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	return r.Create(ctx, makeOUDeleteJob(tenant, ouDN))
 }
 
-// ensureLDAPBase provisions the LDAP OU, delegated-admin policy, and admin
-// user for tenants that have no LDAP-requiring apps. This is a non-blocking
+// ensureLDAPBase provisions the LDAP OU, admin user, and delegated-admin
+// policy for tenants that have no LDAP-requiring apps. This is a non-blocking
 // best-effort step identical in purpose to ensureNextcloudGroup: it does not
 // affect Phase=Ready. For tenants WITH LDAP apps, ensureLDAP already handles
-// all steps (1-3) so this function is a no-op to avoid duplicate Job creation.
-// Sequence: OU → admin-policy → admin-user (each step waits for the previous).
+// all steps so this function is a no-op to avoid duplicate Job creation.
+// Sequence: OU → admin-user → admin-policy (each step waits for the previous).
+// Admin user runs before policy for the same reason as in ensureLDAP: the
+// portal groups cache must be populated before portal allowedGroups are set.
 func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	ldapApps, err := r.collectLDAPApps(ctx, tenant)
 	if err != nil {
@@ -290,11 +304,6 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 		return err
 	}
 
-	policyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
-	if err != nil || !policyDone {
-		return err
-	}
-
 	var adminCreds secrets.TenantAdminCreds
 	if r.Seeder != nil {
 		adminCreds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
@@ -304,7 +313,12 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 	} else {
 		adminCreds = secrets.TenantAdminCreds{Username: "admin-" + tenant.Name, Password: "placeholder"}
 	}
-	_, err = r.ensureAdminUserJob(ctx, tenant, ouDN, adminCreds)
+	userDone, err := r.ensureAdminUserJob(ctx, tenant, ouDN, adminCreds)
+	if err != nil || !userDone {
+		return err
+	}
+
+	_, err = r.ensureAdminPolicyJob(ctx, tenant, ouDN)
 	return err
 }
 
