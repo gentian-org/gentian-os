@@ -940,6 +940,87 @@ print(json.dumps(cfg))
         warn "  Check: kubectl logs -n ${ns} -l job-name=${job_name} --tail=20"
     fi
     success "Phase 2 — Nubus deployed via provider-helm."
+
+    # ── Wait for stack-data-ums job; auto-recover if it fails ────────────────
+    # The stack-data-ums job:
+    #   1. Creates settings/extended_attribute LDAP objects (opendesk properties)
+    #   2. Immediately uses those properties to update the Administrator user
+    # The UDM REST API caches its module registry at startup, so it doesn't
+    # know about extended_attributes created in step 1.  If the job fails with
+    # "The User module has no property opendeskFileshare*", restart the UDM
+    # REST API (which reloads the module registry from LDAP) then reapply the job.
+    _wait_and_fix_stack_data_ums() {
+        local sdu_job="" sdu_ns="${ns}" sdu_deadline
+        info "Waiting for stack-data-ums job to appear (up to 5m)..."
+        sdu_deadline=$((SECONDS + 300))
+        until [[ -n "$sdu_job" ]]; do
+            sdu_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
+                -o custom-columns=NAME:.metadata.name 2>/dev/null \
+                | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+            if (( SECONDS > sdu_deadline )); then
+                warn "  stack-data-ums job did not appear in 5m — skipping wait."
+                return 0
+            fi
+            [[ -n "$sdu_job" ]] || sleep 5
+        done
+
+        info "Waiting for stack-data-ums job '${sdu_job}' to complete (up to 10m)..."
+        if kubectl wait "job/${sdu_job}" -n "${sdu_ns}" \
+                --for=condition=Complete --timeout=600s 2>/dev/null; then
+            success "  stack-data-ums job completed successfully."
+            return 0
+        fi
+
+        # Job failed — check if it's the known extended_attribute cache issue.
+        local sdu_logs
+        sdu_logs=$(kubectl logs -n "${sdu_ns}" \
+            -l "app.kubernetes.io/name=stack-data-ums,job-name=${sdu_job}" \
+            --tail=30 2>/dev/null || true)
+        if printf '%s' "${sdu_logs}" | grep -q "has no property opendesk"; then
+            warn "  stack-data-ums failed: UDM REST API had stale module cache."
+            warn "  Restarting UDM REST API to reload extended_attribute definitions..."
+            kubectl rollout restart deployment "${release_name}-udm-rest-api" \
+                -n "${sdu_ns}" 2>/dev/null || true
+            kubectl rollout status deployment "${release_name}-udm-rest-api" \
+                -n "${sdu_ns}" --timeout=2m 2>/dev/null || true
+            success "  UDM REST API restarted."
+
+            # Delete the failed job and reapply from the Helm manifest.
+            info "  Reapplying stack-data-ums job..."
+            kubectl delete job "${sdu_job}" -n "${sdu_ns}" \
+                --ignore-not-found=true 2>/dev/null || true
+            helm get manifest "${release_name}" -n "${sdu_ns}" 2>/dev/null \
+                | awk "/# Source:.*nubusStackDataUms.*job-load-data-ums/{found=1} found{print} found && /^---/{found=0; exit}" \
+                | kubectl apply -f - 2>/dev/null || true
+
+            info "  Waiting for reapplied stack-data-ums job to complete (up to 10m)..."
+            sdu_deadline=$((SECONDS + 600))
+            local new_job=""
+            until [[ -n "$new_job" ]]; do
+                new_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
+                    -o custom-columns=NAME:.metadata.name 2>/dev/null \
+                    | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+                if (( SECONDS > sdu_deadline )); then
+                    warn "  Reapplied stack-data-ums job did not appear — check manually."
+                    return 1
+                fi
+                [[ -n "$new_job" ]] || sleep 3
+            done
+            if kubectl wait "job/${new_job}" -n "${sdu_ns}" \
+                    --for=condition=Complete --timeout=600s 2>/dev/null; then
+                success "  stack-data-ums job succeeded after UDM restart."
+            else
+                warn "  stack-data-ums still failing after UDM restart."
+                warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${new_job} --tail=40"
+                return 1
+            fi
+        else
+            warn "  stack-data-ums job failed for an unknown reason."
+            warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${sdu_job} --tail=40"
+            return 1
+        fi
+    }
+    _wait_and_fix_stack_data_ums || true
 }
 
 # =============================================================================
