@@ -178,13 +178,41 @@ install_crossplane_providers() {
     info "Applying ProviderConfigs (InjectedIdentity for both kubernetes and openbao)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
 
+    # After a partial uninstall or a failed prior run the CRDs that Crossplane
+    # creates for each XRD (e.g. xapps.gentianos.io, apps.gentianos.io) can
+    # survive with ownerReferences pointing to the now-deleted XRD object UID.
+    # The XRD controller refuses to adopt CRDs owned by a different UID and
+    # the XRD never reaches Established.  Fix: after applying an XRD, if any
+    # of its owned CRDs still carry a stale UID, patch them to the current one.
+    _adopt_xrd_crds() {
+        local xrd_name="$1"; shift   # e.g. xapps.gentianos.io
+        local -a crds=("$@")        # e.g. xapps.gentianos.io apps.gentianos.io
+        local xrd_uid
+        xrd_uid=$(kubectl get compositeresourcedefinition "${xrd_name}" \
+            -o jsonpath='{.metadata.uid}' 2>/dev/null) || return 0
+        for crd in "${crds[@]}"; do
+            local owner_uid
+            owner_uid=$(kubectl get crd "${crd}" \
+                -o jsonpath='{.metadata.ownerReferences[0].uid}' 2>/dev/null) || continue
+            if [[ -n "${owner_uid}" && "${owner_uid}" != "${xrd_uid}" ]]; then
+                warn "  CRD ${crd} has stale ownerRef UID ${owner_uid} (XRD is ${xrd_uid}); patching..."
+                kubectl patch crd "${crd}" --type=json \
+                    -p="[{\"op\":\"replace\",\"path\":\"/metadata/ownerReferences/0/uid\",\"value\":\"${xrd_uid}\"}]" \
+                    2>/dev/null || true
+                success "  Patched ownerRef on ${crd}."
+            fi
+        done
+    }
+
     info "Applying XRD (XCluster / Cluster)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+    _adopt_xrd_crds xclusters.gentianos.io xclusters.gentianos.io clusters.gentianos.io
     kubectl wait xrd xclusters.gentianos.io \
         --for=condition=Established --timeout=2m
 
     info "Applying XRD (XApp / App)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
+    _adopt_xrd_crds xapps.gentianos.io xapps.gentianos.io apps.gentianos.io
     kubectl wait xrd xapps.gentianos.io \
         --for=condition=Established --timeout=2m
 
@@ -197,6 +225,7 @@ install_crossplane_providers() {
 
     info "Applying XRD (XTenant / Tenant)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
+    _adopt_xrd_crds xtenants.gentianos.io xtenants.gentianos.io tenants.gentianos.io
     kubectl wait xrd xtenants.gentianos.io \
         --for=condition=Established --timeout=2m
 
