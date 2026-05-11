@@ -1,12 +1,14 @@
 ---
 extends: default
 
-# Exclude machine-generated files and Helm templates (Go template syntax breaks YAML parsing)
+# Exclude machine-generated files and files containing Go template syntax
+# (Go template actions {{ }} break yamllint's line-length and syntax checks)
 ignore: |
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/
   kernel/manifests/flux-crds/
+  crossplane/compositions/
 
 rules:
   indentation:
