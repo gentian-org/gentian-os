@@ -656,20 +656,40 @@ Since the cluster has no live tenants, there is no shadow-deployment
 phase needed. Tenants created in Phase 3 are the first real tenants on
 the new stack.
 
+> **Phase 3 approach (parallel migration):** The `XTenant` composite is
+> created alongside the existing Go provisioners. The Composition
+> handles namespace, networking, and OpenBao policy declaratively; the
+> imperative Go reconcilers (identity, LDAP, databases, storage, cache,
+> mail) continue running in parallel — they are idempotent so there is
+> no conflict. Phase 3b will migrate each imperative step into the
+> Composition once validated on the cluster.
+
 ### 5.1 Deliverables
 
-- [ ] `crossplane/xrds/tenant.yaml` — XRD with the schema from
-      architecture.md §12.2 (identical to the existing CRD).
-- [ ] `crossplane/compositions/tenant-default.yaml` — Composition
-      Pipeline with two functions: `function-extra-resources`
-      (load AppProfiles) and `function-go-templating` (render MRs).
-- [ ] `crossplane/functions/render-valuemapping/` — composition
-      function that implements architecture.md §4.1 schema-based
-      valueMapping rendering.
+- [x] `crossplane/xrds/tenant.yaml` — `XTenant` XRD (cluster-scoped
+      composite, no namespace-scoped claim). Schema mirrors the
+      existing Go `Tenant` CRD. Established on dev cluster.
+- [x] `crossplane/compositions/tenant-default.yaml` — Composition
+      Pipeline using `function-go-templating`. Emits per-tenant:
+      Namespace, LimitRange, NetworkPolicy, OpenBao Policy, and one
+      `App` claim per `spec.apps` entry.
+- [x] `config/crd/gentianos.io_xtenants.yaml` — envtest stub CRD so
+      the `TenantReconciler` can create/watch `XTenant` objects in
+      unit tests without a live Crossplane.
+- [x] `internal/controller/tenant_controller.go` — `ensureTenantXR()`
+      + `buildXTenant()` + `deleteXTenant()` added. The reconciler now
+      creates/updates an `XTenant` composite on every reconcile and
+      deletes it on tenant deletion (Crossplane cascades cleanup).
+- [x] `install.sh` — `install_crossplane_providers()` applies
+      `crossplane/xrds/tenant.yaml` and
+      `crossplane/compositions/tenant-default.yaml` with a readiness
+      wait after each.
+- [ ] Phase 3b — Migrate identity (Keycloak), LDAP, databases (CNPG),
+      MariaDB, storage (MinIO), cache (Redis), mail from Go reconcilers
+      into the Composition (using provider-keycloak, provider-http,
+      provider-kubernetes Objects/Jobs).
 - [ ] `crossplane/compositions/tenant-vcluster.yaml` — selected when
       `spec.isolation.mode == vcluster`.
-- [ ] Shadow-namespace label on rendered MRs so they cannot collide
-      with legacy ones (`gentianos.io/shadow: "true"`).
 
 ### 5.2 Unit tests
 
@@ -678,15 +698,12 @@ in the catalogue gets a render test:
 
 | Test | Validates |
 |---|---|
-| `tests/unit/render/tenant-minimal/` | Tenant with one app (Notes) renders namespace + DB + ExternalSecret + Argo Application — golden diff |
+| `tests/unit/render/tenant-minimal/` | Tenant with one app renders namespace + NetworkPolicy + LimitRange + OpenBao Policy + App claim — golden diff |
 | `tests/unit/render/tenant-multi-app/` | Tenant with 6 apps renders the correct fan-out with no missing or extra MRs |
-| `tests/unit/render/tenant-with-mail/` | `mail.mode=selfhosted` produces DKIM Secret MR, virtual-domain ConfigMap patch MR, SMTP credentials Secret MR |
-| `tests/unit/render/tenant-vcluster/` | `isolation.mode=vcluster` selects the alternate Composition; vCluster Helm release MR is emitted |
-| `tests/unit/render/integration-binding-emit/` | When both `nextcloud` and `ox-appsuite` are in `spec.apps`, an `IntegrationBinding` MR for `filepicker` is emitted |
-| `tests/unit/render/integration-binding-skip/` | When only `ox-appsuite` is in `spec.apps`, no `filepicker` binding is emitted |
-| `tests/unit/functions/render-valuemapping/test_oidc.py` | OIDC schema mapping renders to the chart's expected `oidc.*` keys |
-| `tests/unit/functions/render-valuemapping/test_extra_values_merge.py` | `extraValues` correctly deep-merges over the typed mapping |
-| `tests/unit/functions/derive-secrets/test_appSecrets.py` | `appSecrets` derivation matches legacy bash-derived values for known fixtures |
+| `tests/unit/render/tenant-with-mail/` | `mail.mode=selfhosted` (Phase 3b) |
+| `tests/unit/render/tenant-vcluster/` | `isolation.mode=vcluster` selects the alternate Composition (Phase 3b) |
+| `tests/unit/render/integration-binding-emit/` | When both `nextcloud` and `ox-appsuite` are in `spec.apps`, an `IntegrationBinding` MR for `filepicker` is emitted (Phase 3b) |
+| `tests/unit/render/integration-binding-skip/` | When only `ox-appsuite` is in `spec.apps`, no `filepicker` binding is emitted (Phase 3b) |
 
 CI command: `make test-unit` — full suite must pass.
 

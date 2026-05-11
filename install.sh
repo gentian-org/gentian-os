@@ -195,6 +195,14 @@ install_crossplane_providers() {
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml"
 
+    info "Applying XRD (XTenant / Tenant)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
+    kubectl wait xrd xtenants.gentianos.io \
+        --for=condition=Established --timeout=2m
+
+    info "Applying Composition (tenant-default)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
+
     success "Crossplane providers, XRDs, and Compositions are ready."
 }
 

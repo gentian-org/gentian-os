@@ -71,6 +71,16 @@ const (
 	conditionNamespaceReady = "NamespaceReady"
 )
 
+// xTenantGVK is the GroupVersionKind for the XTenant composite resource managed
+// by Crossplane. The TenantReconciler creates one XTenant per Tenant so the
+// Crossplane Composition can provision namespace, networking, OpenBao policy,
+// and App claims declaratively alongside the imperative Go provisioners.
+var xTenantGVK = schema.GroupVersionKind{
+	Group:   "gentianos.io",
+	Version: "v1alpha1",
+	Kind:    "XTenant",
+}
+
 // TenantReconciler reconciles Tenant objects.
 //
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
@@ -230,6 +240,16 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	nsName := tenantNamespaceName(tenant)
 	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName)
+
+	// Phase 3: Ensure the XTenant composite exists so the Crossplane Composition
+	// can provision the tenant namespace, networking, OpenBao policy, and App
+	// claims declaratively. This runs alongside the existing imperative steps
+	// below; the two paths are idempotent and will gradually converge in Phase 3b
+	// as imperative steps are migrated into the Composition.
+	if err := r.ensureTenantXR(ctx, tenant); err != nil {
+		logger.Error(err, "ensure XTenant composite (non-blocking, will retry)")
+		// Non-fatal: log the error and continue with imperative provisioning.
+	}
 
 	// 1. Namespace
 	if err := r.ensureNamespace(ctx, tenant, nsName); err != nil {
@@ -485,6 +505,13 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up mail resources (Application CRs always; Secrets under DeletionPolicy=Delete).
 	if err := r.deleteMail(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Phase 3: Delete the XTenant composite so Crossplane cascades deletion of
+	// the Composition-managed resources (Namespace, NetworkPolicy, OpenBao policy,
+	// App claims). "Not found" is treated as already deleted.
+	if err := r.deleteXTenant(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -979,4 +1006,114 @@ func buildResourceList(q *gentianov1alpha1.TenantQuotas) corev1.ResourceList {
 		rl[corev1.ResourceLimitsMemory] = *q.Memory
 	}
 	return rl
+}
+
+// ── Phase 3: XTenant helpers ─────────────────────────────────────────────────
+
+// ensureTenantXR creates or updates the XTenant composite resource that drives
+// the Crossplane Composition for this tenant. The Composition provisions the
+// tenant namespace, networking, OpenBao policy, and App claims declaratively.
+func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	xr := &unstructured.Unstructured{}
+	xr.SetGroupVersionKind(xTenantGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, xr)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, buildXTenant(tenant, r.KernelDomain))
+	}
+	if err != nil {
+		return err
+	}
+	// Patch only the user-controlled spec fields so that Crossplane-managed
+	// fields (compositionRef, resourceRefs, managementPolicies, etc.) are not
+	// overwritten. We build the desired state, then merge-patch just the fields
+	// that differ.
+	desired := buildXTenant(tenant, r.KernelDomain)
+	patch := client.MergeFrom(xr.DeepCopy())
+	desiredSpec, _ := desired.Object["spec"].(map[string]interface{})
+	if specMap, ok := xr.Object["spec"].(map[string]interface{}); ok {
+		for k, v := range desiredSpec {
+			specMap[k] = v
+		}
+	} else {
+		xr.Object["spec"] = desiredSpec
+	}
+	return r.Patch(ctx, xr, patch)
+}
+
+// deleteXTenant deletes the XTenant composite. Crossplane cascades deletion to
+// all composed resources (Namespace, NetworkPolicy, OpenBao policy, App claims).
+// "Not found" is treated as already deleted (idempotent).
+func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	xr := &unstructured.Unstructured{}
+	xr.SetGroupVersionKind(xTenantGVK)
+	xr.SetName(tenant.Name)
+	return client.IgnoreNotFound(r.Delete(ctx, xr))
+}
+
+// buildXTenant constructs an XTenant composite object from a Tenant's spec.
+// The XTenant is cluster-scoped; its name matches the Tenant name.
+func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstructured.Unstructured {
+	xr := &unstructured.Unstructured{}
+	xr.SetGroupVersionKind(xTenantGVK)
+	xr.SetName(tenant.Name)
+	xr.SetLabels(map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	})
+
+	spec := map[string]interface{}{
+		"displayName":  tenant.Spec.DisplayName,
+		"adminEmail":   tenant.Spec.AdminEmail,
+		"kernelDomain": kernelDomain,
+	}
+	if tenant.Spec.Domain != "" {
+		spec["domain"] = tenant.Spec.Domain
+	}
+	if tenant.Spec.DeletionPolicy != "" {
+		spec["deletionPolicy"] = string(tenant.Spec.DeletionPolicy)
+	}
+
+	if tenant.Spec.Isolation != nil {
+		iso := map[string]interface{}{}
+		if tenant.Spec.Isolation.Mode != "" {
+			iso["mode"] = string(tenant.Spec.Isolation.Mode)
+		}
+		if tenant.Spec.Isolation.Namespace != "" {
+			iso["namespace"] = tenant.Spec.Isolation.Namespace
+		}
+		if tenant.Spec.Isolation.LDAPOu != "" {
+			iso["ldapOU"] = tenant.Spec.Isolation.LDAPOu
+		}
+		if tenant.Spec.Isolation.KeycloakRealm != "" {
+			iso["keycloakRealm"] = tenant.Spec.Isolation.KeycloakRealm
+		}
+		if tenant.Spec.Isolation.DatabasePrefix != "" {
+			iso["databasePrefix"] = tenant.Spec.Isolation.DatabasePrefix
+		}
+		if tenant.Spec.Isolation.S3Prefix != "" {
+			iso["s3Prefix"] = tenant.Spec.Isolation.S3Prefix
+		}
+		if len(iso) > 0 {
+			spec["isolation"] = iso
+		}
+	}
+
+	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
+	for _, app := range tenant.Spec.Apps {
+		entry := map[string]interface{}{"profile": app.Profile}
+		if app.Config != nil {
+			cfg := map[string]interface{}{}
+			if app.Config.Replicas != nil {
+				cfg["replicas"] = int64(*app.Config.Replicas)
+			}
+			if len(cfg) > 0 {
+				entry["config"] = cfg
+			}
+		}
+		apps = append(apps, entry)
+	}
+	spec["apps"] = apps
+
+	_ = unstructured.SetNestedField(xr.Object, spec, "spec")
+	return xr
 }

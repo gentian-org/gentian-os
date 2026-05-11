@@ -1,0 +1,192 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: tenant-default
+  labels:
+    gentianos.io/composition: tenant
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XTenant
+  mode: Pipeline
+  pipeline:
+
+    # ── Step 1: Render composed resources ─────────────────────────────────────
+    # Emits per-tenant:
+    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping the tenant Namespace
+    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping a LimitRange with
+    #     sensible container defaults
+    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping a NetworkPolicy
+    #     (deny cross-tenant ingress; allow same-ns and platform-kernel ingress)
+    #   • vault.vault.upbound.io/v1alpha1 Policy granting the tenant's ESO
+    #     ServiceAccount read/write to its own secret paths
+    #   • One gentianos.io/v1alpha1 App claim per entry in spec.apps, placed
+    #     in the tenant namespace so the App Composition can reconcile it
+    - step: render-tenant-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr     := .observed.composite.resource }}
+            {{- $spec   := $xr.spec }}
+            {{- $tenant := $xr.metadata.name }}
+            {{- /* Resolve namespace: use isolation.namespace override or convention. */}}
+            {{- $ns     := default (printf "tenant-%s" $tenant) (dig "isolation" "namespace" "" $spec) }}
+            {{- /* Resolve effective domain for app claims. */}}
+            {{- $kd     := default "" $spec.kernelDomain }}
+            {{- $domain := default (printf "%s.%s" $tenant $kd) (default "" $spec.domain) }}
+            {{- $kvMount := "secret" }}
+
+            ---
+            # ── Tenant Namespace ─────────────────────────────────────────────────
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-namespace
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: namespace
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Namespace
+                  metadata:
+                    name: {{ $ns }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/managed-by: crossplane
+
+            ---
+            # ── LimitRange — sensible per-container defaults ──────────────────────
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-limitrange
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: limitrange
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: LimitRange
+                  metadata:
+                    name: default-limits
+                    namespace: {{ $ns }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/managed-by: crossplane
+                  spec:
+                    limits:
+                      - type: Container
+                        default:
+                          cpu: "1"
+                          memory: 512Mi
+                        defaultRequest:
+                          cpu: 100m
+                          memory: 128Mi
+
+            ---
+            # ── NetworkPolicy — tenant isolation ─────────────────────────────────
+            # Deny ingress from other tenant namespaces; allow intra-tenant,
+            # platform-kernel (Jobs, ESO), and ingress-controller traffic.
+            # All egress is unrestricted so tenant pods can reach shared services.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-networkpolicy
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: networkpolicy
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  apiVersion: networking.k8s.io/v1
+                  kind: NetworkPolicy
+                  metadata:
+                    name: tenant-isolation
+                    namespace: {{ $ns }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/managed-by: crossplane
+                  spec:
+                    podSelector: {}
+                    policyTypes:
+                      - Ingress
+                      - Egress
+                    ingress:
+                      - from:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $ns }}
+                      - from:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: platform-kernel
+                      - from:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: ingress
+                    egress:
+                      - {}
+
+            ---
+            # ── OpenBao policy — tenant read/write on its own secret paths ────────
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              name: {{ $tenant }}-tenant-policy
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy
+            spec:
+              providerConfigRef:
+                name: openbao
+              forProvider:
+                name: tenant-{{ $tenant }}
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ $tenant }}/*" {
+                    capabilities = ["create", "read", "update", "delete", "list"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/*" {
+                    capabilities = ["list", "delete"]
+                  }
+
+            {{- /* ── App claims ─────────────────────────────────────────────────── */}}
+            {{- range $app := dig "apps" list $spec }}
+            ---
+            # App claim for {{ $app.profile }}
+            apiVersion: gentianos.io/v1alpha1
+            kind: App
+            metadata:
+              name: {{ $app.profile }}
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: app-{{ $app.profile }}
+              labels:
+                gentianos.io/tenant: {{ $tenant }}
+                gentianos.io/managed-by: crossplane
+            spec:
+              profileRef:
+                name: {{ $app.profile }}
+              tenantNamespace: {{ $ns }}
+              domain: {{ $domain }}
+              {{- if $app.config }}
+              config:
+                {{- if dig "replicas" nil $app.config }}
+                replicas: {{ dig "replicas" 1 $app.config }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+
+    # ── Step 2: Mark XTenant Ready when all composed resources are Ready ───────
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready
