@@ -9,6 +9,7 @@ ignore: |
   charts/gentian-os/templates/
   kernel/manifests/flux-crds/
   crossplane/compositions/
+  kernel/services/nextcloud-management/manifests/
 
 rules:
   indentation:
