@@ -283,23 +283,49 @@ fi
 banner "Step 2 — Remove Crossplane XRDs, Compositions, ProviderConfigs"
 
 if kubectl get crd compositions.apiextensions.crossplane.io >/dev/null 2>&1; then
-    file="${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
-    if [[ -f "${file}" ]]; then
-        kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
-        success "  Removed: $(basename "${file}")"
-    fi
+    for file in \
+        "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml" \
+        "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml" \
+        "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml" \
+        "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
+    do
+        if [[ -f "${file}" ]]; then
+            kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
+            success "  Removed: $(basename "${file}")"
+        fi
+    done
 else
-    info "  Composition CRD absent; skipping cluster-default deletion."
+    info "  Composition CRD absent; skipping Composition deletion."
 fi
 
 if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/null 2>&1; then
-    file="${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
-    if [[ -f "${file}" ]]; then
-        kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
-        success "  Removed: $(basename "${file}")"
-    fi
+    for file in \
+        "${SCRIPT_DIR}/crossplane/xrds/app.yaml" \
+        "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml" \
+        "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+    do
+        if [[ -f "${file}" ]]; then
+            kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
+            success "  Removed: $(basename "${file}")"
+        fi
+    done
+    # Explicitly delete the CRDs that each XRD manages. If the Crossplane
+    # package manager is not running (e.g. re-entrant uninstall), it won't GC
+    # these, leaving them with an old ownerReference UID that blocks the next
+    # install.sh run from establishing the same XRDs.
+    for crd in \
+        xapps.gentianos.io \
+        apps.gentianos.io \
+        xtenants.gentianos.io \
+        tenants.gentianos.io \
+        xclusters.gentianos.io \
+        clusters.gentianos.io
+    do
+        kubectl delete crd "${crd}" --ignore-not-found=true 2>/dev/null || true
+    done
+    success "  XRD-owned CRDs removed."
 else
-    info "  XRD CRD absent; skipping cluster XRD deletion."
+    info "  XRD CRD absent; skipping XRD/CRD deletion."
 fi
 
 # ProviderConfigs must be deleted individually — kubectl delete -f fails if
