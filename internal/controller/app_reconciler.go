@@ -258,5 +258,3 @@ func appClaimIsReady(obj *unstructured.Unstructured) bool {
 	}
 	return false
 }
-
-
