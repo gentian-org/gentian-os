@@ -32,9 +32,17 @@ data:
       tag: "2.12.2"
 
     # Workaround: chart hardcodes FS_ENV_CREATE_OCDATA=true; bypass guard.
+    # FS_ENV_OIDC_DISCOVERY_URI: override the chart-computed external HTTPS URL
+    # with the in-cluster HTTP URL so that Nextcloud's backend OIDC calls never
+    # go through the ingress (avoids TLS cert trust issues for server-side calls).
+    # The browser-facing redirect still uses the external HTTPS URL because
+    # Keycloak's discovery document advertises id.desk.gentian.org for
+    # authorization_endpoint regardless of how the document was fetched.
     extraEnvVars:
       - name: FS_ENV_IGNORE_STATE_CONSISTENCY
         value: "1"
+      - name: FS_ENV_OIDC_DISCOVERY_URI
+        value: "http://nubus-dev-keycloak-extensions-proxy.gentian-dev.svc.cluster.local:8181/realms/opendesk/.well-known/openid-configuration"
 
     cleanup:
       deletePodsOnSuccess: true

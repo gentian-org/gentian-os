@@ -1505,12 +1505,45 @@ install_kernel_wildcard() {
         fi
         sleep 2
     done
+    local app_ns="gentian-${ENV:-dev}"
     if ! kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
-        warn "wildcard-kernel-tls not yet issued; skipping namespace propagation."
-        warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
+        warn "wildcard-kernel-tls not yet issued (LE rate-limited or still pending)."
+        # Fallback: if the nubus CA Issuer is available in the app namespace,
+        # issue wildcard-tls directly from it so ingresses work immediately.
+        local nubus_issuer="nubus-${ENV:-dev}-ca-issuer"
+        if kubectl get issuer "${nubus_issuer}" -n "${app_ns}" &>/dev/null; then
+            info "Issuing wildcard-tls from nubus CA (${nubus_issuer}) in ${app_ns}..."
+            kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-dev-tls
+  namespace: ${app_ns}
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  secretName: wildcard-tls
+  issuerRef:
+    name: ${nubus_issuer}
+    kind: Issuer
+  commonName: "*.${KERNEL_DOMAIN:-desk.gentian.org}"
+  dnsNames:
+    - "${KERNEL_DOMAIN:-desk.gentian.org}"
+    - "*.${KERNEL_DOMAIN:-desk.gentian.org}"
+  duration: 8760h
+  renewBefore: 720h
+EOF
+            kubectl wait certificate "wildcard-dev-tls" -n "${app_ns}" \
+                --for=condition=Ready --timeout=60s \
+                && success "wildcard-tls issued from nubus CA in ${app_ns}." \
+                || warn "wildcard-dev-tls not ready in time; ingresses may show TLS warnings."
+        else
+            warn "No nubus CA issuer (${nubus_issuer}) found; wildcard-tls unavailable."
+            warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
+        fi
         return
     fi
-    local app_ns="gentian-${ENV:-dev}"
     # Propagate to all namespaces that reference wildcard-tls.
     for _wc_ns in "${app_ns}" argocd; do
         info "Propagating wildcard-tls into namespace ${_wc_ns}..."
