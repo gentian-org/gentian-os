@@ -4,7 +4,7 @@
 #
 # Patch slapd.conf to give tenant admins the LDAP access needed to provision users.
 #
-# Nine insertions are made (all idempotent):
+# Ten insertions are made (all idempotent):
 #
 # 1. cn=temporary ACL — insert 'by set=Tenant Admins' before Domain Admins in the
 #    three lock-object blocks, so tenant admins can acquire UID/SID locks when
@@ -50,6 +50,18 @@
 #    a single rule pair covers all tenant OUs without per-tenant configuration.
 #    All matching 'by' clauses use 'read break' so that write access granted by
 #    the earlier Tenant-OU write rules (patch 2) still accumulates for admins.
+#
+# 10. mail/domain visibility restriction — the same catch-all makes all
+#     mail/domain objects (cn=<tenant>.<base>,cn=domain,cn=mail,...) visible to
+#     every authenticated user.  This causes the domain dropdown in the UMC user
+#     creation wizard to show all tenant domains and the parent domain, letting a
+#     tenant admin select a domain that does not belong to their tenant (user
+#     provisioning then fails because the email address is invalid for their OU).
+#     A single rule inserted before the catch-all restricts each mail/domain read
+#     to users in the matching tenant OU: the first DNS label of the domain CN
+#     (e.g. 'gtn-test' from 'gtn-test.gentian.cloud') is captured as '$1' and
+#     matched against 'ou=$1' in the requesting user's DN.  System and admin
+#     accounts always get read access via 'break' clauses before the tenant check.
 #
 # Runs as /entrypoint.d/92-gentian-tenant-acl.sh before slapd starts.
 # Idempotent: exits 0 without changes if all patches are already applied.
@@ -99,12 +111,14 @@ patch9_sentinel = f'# Gentian patch 9a: restrict read on tenant OU entries to sa
 # Old deployments have patch 9 but are missing this line, so the script must
 # fall through and apply the in-place upgrade (elif branch below).
 patch9_keycloak_sentinel = f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break'
+# Sentinel for patch 10: mail/domain visibility restriction.
+patch10_sentinel = f'# Gentian patch 10: restrict mail/domain visibility to owning tenant'
 # Sentinel for the per-tenant OU write fix (patches 2a/2b v2).
 # Old deployments have 'by set=Tenant Admins write' in these patches; new ones
 # use 'by dn.regex="^.+,ou=$1,..." write' so only same-tenant users get write.
 patch2_new_sentinel = f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
 
-if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch2_new_sentinel in content:
+if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -401,10 +415,48 @@ elif patch9_keycloak_sentinel not in content:
 else:
     print("Tenant OU read restriction (patch 9) with ldapsearch_keycloak already present.")
 
+# ── Patch 10: mail/domain visibility restriction ──────────────────────────────
+# The mail/domain objects live at cn=<domain>,cn=domain,cn=mail,<ldapbase> —
+# outside any tenant OU.  The catch-all 'by users read' makes them visible to
+# every authenticated user, so the UMC domain dropdown shows domains of other
+# tenants and the parent domain.  Selecting any of those causes user creation
+# to fail (the email address falls outside the admin's write scope).
+#
+# The fix uses an OpenLDAP $1 back-reference: the regex captures the first DNS
+# label of the domain CN (everything up to the first dot, e.g. 'gtn-test' from
+# 'gtn-test.gentian.cloud') and allows reads only from users whose DN contains
+# 'ou=$1' — i.e. users in the matching tenant OU.  System and admin accounts
+# always get access via 'read break' before the tenant-scope check.
+#
+# Mail domains that do NOT follow the '<tenant>.<rest>' naming pattern (e.g.
+# a bare parent domain like 'gentian.cloud') are intentionally NOT matched by
+# this rule (the dn.regex requires at least one dot in the CN portion), so they
+# fall through to 'by * none' in this rule — making the parent domain invisible
+# to tenant admins, which is the desired behaviour.
+if patch10_sentinel not in content:
+    mail_domain_acl = (
+        f'# Gentian patch 10: restrict mail/domain visibility to owning tenant\n'
+        f'access to dn.regex="^cn=([^,.]+)\\.[^,]+,cn=domain,cn=mail,{ldap_base}$"\n'
+        f'   by sockname="PATH=/var/run/slapd/ldapi" read break\n'
+        f'   by dn="cn=admin,{ldap_base}" read break\n'
+        f'   by group/univentionGroup/uniqueMember="cn=Domain Admins,cn=groups,{ldap_base}" read break\n'
+        f'   by dn.children="cn=dc,cn=computers,{ldap_base}" read break\n'
+        f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+    )
+    content = content.replace(catchall_marker, mail_domain_acl + catchall_marker, 1)
+    print("Patched mail/domain visibility restriction (patch 10).")
+else:
+    print("mail/domain visibility restriction (patch 10) already present.")
+
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
 
 print(
     f"Patched slapd.conf: {patched_count} cn=temporary block(s); "
-    f"tenant-OU write rules; univentionUMCProperty self-write; tenant OU read restriction."
+    f"tenant-OU write rules; univentionUMCProperty self-write; tenant OU read restriction; "
+    f"mail/domain visibility restriction."
 )
