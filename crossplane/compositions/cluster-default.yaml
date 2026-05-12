@@ -228,6 +228,7 @@ spec:
                   "identity/nubus"
                   "identity/keycloak-bootstrap"
                   "mail/postfix"
+                  "mail/dovecot"
             }}
             {{- range $kvSeeds }}
             {{- $safeName := . | replace "/" "-" }}

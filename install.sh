@@ -507,7 +507,17 @@ create_crossplane_secrets() {
             --arg pass "${OD_SMTP_RELAY_PASSWORD:-}" \
             '{relay_host:$host,relay_port:$port,relay_username:$user,relay_password:$pass}')"
 
-    success "All 8 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
+    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
+    # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
+    # on first apply. The doveadm_password shares its derivation namespace with
+    # the minio secret to keep it consistent with the legacy Tofu layout.
+    _kv_secret "gentian-os-kernel-mail-dovecot" \
+        "$(jq -nc \
+            --arg doveadm "$(_derive minio dovecot_user)" \
+            --arg oidc "$(_derive dovecot oidcClientSecret)" \
+            '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
+
+    success "All 9 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
 }
 
 # =============================================================================

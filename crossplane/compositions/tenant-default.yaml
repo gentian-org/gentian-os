@@ -178,6 +178,10 @@ spec:
                 name: {{ $app.profile }}
               tenantNamespace: {{ $ns }}
               domain: {{ $domain }}
+              {{- if $app.variant }}
+              compositionRef:
+                name: app-{{ $app.variant }}
+              {{- end }}
               {{- if $app.config }}
               config:
                 {{- if dig "replicas" nil $app.config }}

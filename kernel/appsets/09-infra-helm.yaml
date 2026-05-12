@@ -44,6 +44,7 @@ spec:
           - app: nextcloud
           - app: nextcloud-notifypush
           - app: postfix
+          - app: dovecot
   template:
     metadata:
       name: '{{.app}}-{{.env}}'

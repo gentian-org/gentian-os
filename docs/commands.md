@@ -189,3 +189,138 @@ kubectl logs -n gentian-system deploy/gentian-os -f
 kubectl get integrationbindings -A
 kubectl describe application -n argocd gentian-os
 ```
+
+## 9. Kernel Mail Stack (Dovecot + Postfix)
+
+### Enable kernel mail delivery
+
+Kernel mail mode deploys Dovecot alongside Postfix and configures Postfix
+to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
+
+**Step 1** — Update `install.env`:
+```ini
+MAIL_SERVICE_MODE=kernel
+```
+
+**Step 2** — Run `update.sh` to seed Dovecot secrets in OpenBao:
+```bash
+./update.sh --mail
+```
+
+**Step 3** — Update `kernel/services/postfix/manifests/dev/configmap.yaml`
+to switch Postfix to local-delivery mode. In the `postfix-dev-values` ConfigMap,
+replace the relay section with:
+```yaml
+postfix:
+  smtpSASLAuthEnable: "no"
+  relayHost:
+    enabled: false
+  ldapVirtualMailboxDomains:
+    server: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389"
+    # add LDAP query for virtual mailbox domains (mailDomain objects in UCS LDAP)
+  ldapTransportMaps:
+    server: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389"
+    # add LDAP query returning "lmtp:dovecot-dev.gentian-dev.svc.cluster.local:24"
+```
+
+**Step 4** — Commit and push (ArgoCD auto-sync picks it up):
+```bash
+git add kernel/services/postfix/manifests/dev/configmap.yaml
+git commit -m "feat: switch MAIL_SERVICE_MODE to kernel"
+git push
+```
+
+### Check mail component health
+
+```bash
+# Dovecot
+kubectl get release dovecot-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+kubectl logs -n gentian-dev -l app.kubernetes.io/name=dovecot --tail=20
+
+# Postfix
+kubectl get release postfix-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+kubectl logs -n gentian-dev -l app.kubernetes.io/name=postfix --tail=20
+
+# ESO secrets synced
+kubectl get externalsecret -n gentian-dev dovecot-sensitive-values postfix-sensitive-values
+```
+
+### Switch back to external relay mode
+
+```ini
+# install.env
+MAIL_SERVICE_MODE=external
+EXTERNAL_SMTP_HOST=smtp.gmail.com
+EXTERNAL_SMTP_PORT=587
+OD_SMTP_RELAY_USERNAME=<gmail-address>
+OD_SMTP_RELAY_PASSWORD=<app-password>
+```
+
+```bash
+./update.sh --mail
+```
+
+## 10. OX App Suite (per-tenant groupware)
+
+OX App Suite is a per-tenant app deployed via Crossplane App claims. It requires
+the kernel mail stack (`MAIL_SERVICE_MODE=kernel`) and MariaDB, OIDC, and LDAP.
+
+### Install OX for a tenant
+
+Add `ox-appsuite` to the tenant's `spec.apps` with `variant: ox` so the
+`app-ox` Composition is selected (which handles OX-specific appsuite.properties):
+
+```yaml
+# gentian-deployments/dev/tenants/<tenant>.yaml
+spec:
+  apps:
+    - profile: ox-appsuite
+      variant: ox
+```
+
+Push the change — ArgoCD and the tenant-default Composition will create the
+App claim and deploy the chart.
+
+### Check OX deployment status
+
+```bash
+# App claim status
+kubectl get app ox-appsuite -n tenant-<name> -o wide
+
+# Release status
+kubectl get release -n tenant-<name> | grep ox
+
+# OX logs
+kubectl logs -n tenant-<name> -l app.kubernetes.io/name=appsuite-public-sector --tail=30
+```
+
+### Run OX bootstrap (first-time DB migration)
+
+The bootstrap chart (`opendesk-open-xchange-bootstrap`) creates the initial OX
+context and admin user. Deploy it once before the main chart:
+
+```bash
+# Apply the bootstrap release manually (or via a separate App claim)
+helm upgrade --install ox-bootstrap \
+  oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-open-xchange-bootstrap \
+  --version 4.0.2 \
+  -n tenant-<name> \
+  --set global.mysql.host=<mariadb-host> \
+  --set global.mysql.database=<db-name> \
+  --set global.mysql.auth.user=<db-user> \
+  --set global.mysql.auth.password=<db-password>
+```
+
+### Deploy OX LDAP connector
+
+The `ox-connector` syncs users and groups from nubus LDAP into OX contexts.
+Deploy after the main chart is running:
+
+```bash
+helm upgrade --install ox-connector \
+  oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror/ox-connector \
+  --version 0.34.0 \
+  -n tenant-<name> \
+  --set openXchange.provisioning.host=http://ums-provisioning-api.gentian-dev.svc.cluster.local \
+  --set openXchange.host=http://open-xchange-core-mw-admin.tenant-<name>.svc.cluster.local
+```

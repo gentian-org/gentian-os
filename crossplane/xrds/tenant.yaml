@@ -128,6 +128,13 @@ spec:
                       profile:
                         type: string
                         description: Name of the AppProfile CR to install.
+                      variant:
+                        type: string
+                        description: >
+                          Optional Composition variant selector.  When set, the generated
+                          App claim uses spec.compositionRef.name: app-{variant} instead
+                          of the cluster default Composition.  Example: "ox" selects the
+                          app-ox Composition for OX App Suite.
                       config:
                         type: object
                         description: Per-tenant overrides for this app.
