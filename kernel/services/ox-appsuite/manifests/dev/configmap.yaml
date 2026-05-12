@@ -52,6 +52,12 @@ data:
       switchboard:
         jwtSecret:
           enabled: false
+        appsuiteSecret:
+          enabled: false
+      office-web:
+        enabled: false
+      plugins-ui:
+        enabled: false
       istio:
         enabled: false
       ingress:
