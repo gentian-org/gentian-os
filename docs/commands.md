@@ -202,33 +202,16 @@ to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
 MAIL_SERVICE_MODE=kernel
 ```
 
-**Step 2** — Run `update.sh` to seed Dovecot secrets in OpenBao:
+**Step 2** — Run `update.sh`. It detects the drift and patches the cluster:
 ```bash
-./update.sh --mail
+./update.sh
 ```
 
-**Step 3** — Update `kernel/services/postfix/manifests/dev/configmap.yaml`
-to switch Postfix to local-delivery mode. In the `postfix-dev-values` ConfigMap,
-replace the relay section with:
-```yaml
-postfix:
-  smtpSASLAuthEnable: "no"
-  relayHost:
-    enabled: false
-  ldapVirtualMailboxDomains:
-    server: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389"
-    # add LDAP query for virtual mailbox domains (mailDomain objects in UCS LDAP)
-  ldapTransportMaps:
-    server: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389"
-    # add LDAP query returning "lmtp:dovecot-dev.gentian-dev.svc.cluster.local:24"
-```
-
-**Step 4** — Commit and push (ArgoCD auto-sync picks it up):
-```bash
-git add kernel/services/postfix/manifests/dev/configmap.yaml
-git commit -m "feat: switch MAIL_SERVICE_MODE to kernel"
-git push
-```
+`update.sh` will detect that the deployed Postfix mode (`external`) does not match
+the desired mode (`kernel`), patch the `postfix-dev-values` ConfigMap in-cluster
+with the correct LMTP transport configuration, re-seed all mail secrets in OpenBao,
+and force-refresh the ESO ExternalSecrets. provider-helm reconciles the Release
+within a few minutes (or run `argocd app sync gentian-infra-helm-dev` immediately).
 
 ### Check mail component health
 
@@ -257,7 +240,7 @@ OD_SMTP_RELAY_PASSWORD=<app-password>
 ```
 
 ```bash
-./update.sh --mail
+./update.sh
 ```
 
 ## 10. OX App Suite (per-tenant groupware)
