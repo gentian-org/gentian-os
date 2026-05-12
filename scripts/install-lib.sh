@@ -1534,10 +1534,12 @@ spec:
   duration: 8760h
   renewBefore: 720h
 EOF
-            kubectl wait certificate "wildcard-dev-tls" -n "${app_ns}" \
-                --for=condition=Ready --timeout=60s \
-                && success "wildcard-tls issued from nubus CA in ${app_ns}." \
-                || warn "wildcard-dev-tls not ready in time; ingresses may show TLS warnings."
+            if kubectl wait certificate "wildcard-dev-tls" -n "${app_ns}" \
+                --for=condition=Ready --timeout=60s; then
+                success "wildcard-tls issued from nubus CA in ${app_ns}."
+            else
+                warn "wildcard-dev-tls not ready in time; ingresses may show TLS warnings."
+            fi
         else
             warn "No nubus CA issuer (${nubus_issuer}) found; wildcard-tls unavailable."
             warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
