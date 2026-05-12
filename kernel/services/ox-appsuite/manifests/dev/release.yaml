@@ -1,0 +1,141 @@
+# =============================================================================
+# ox-appsuite — provider-helm Release CRs (Pattern B)
+#
+# Three releases deployed in order:
+#   1. ox-bootstrap-dev      (wave 9)   — opendesk-open-xchange-bootstrap v4.0.2
+#      One-time DB migration + OX context creation job (ArgoCD Sync hook).
+#      Must complete before appsuite starts. wait=true.
+#
+#   2. ox-appsuite-dev       (wave 10)  — appsuite-public-sector v2.26.32
+#      Main OX App Suite deployment. wait=false (long startup).
+#
+#   3. ox-connector-dev      (wave 11)  — ox-connector v0.34.0
+#      Syncs Nubus LDAP users into OX contexts.
+#      Depends on appsuite being up (SOAP endpoint available).
+#
+# Values merge order (later wins) per release — see configmap.yaml:
+#   bootstrap:  ox-appsuite-base-values + ox-bootstrap-base-values + ox-appsuite-sensitive-values
+#   appsuite:   ox-appsuite-base-values + ox-appsuite-dev-values   + ox-appsuite-sensitive-values
+#   connector:  ox-connector-base-values                           + ox-appsuite-sensitive-values
+#
+# All Release CRs are cluster-scoped; namespace: gentian-dev tells
+# provider-helm which namespace to deploy the Helm release into.
+# =============================================================================
+
+# ── 1. opendesk-open-xchange-bootstrap ───────────────────────────────────────
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: ox-bootstrap-dev
+  annotations:
+    crossplane.io/external-name: ox-bootstrap-dev
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  forProvider:
+    chart:
+      name: opendesk-open-xchange-bootstrap
+      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-open-xchange-bootstrap
+      version: "4.0.2"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: true
+    waitTimeout: "15m"
+    valuesFrom:
+      # Provides global.mysql.host/database/auth.user (non-sensitive)
+      - configMapKeyRef:
+          name: ox-appsuite-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      # Provides filestore, security contexts
+      - configMapKeyRef:
+          name: ox-bootstrap-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      # Provides global.mysql.auth.password/rootPassword (sensitive)
+      - secretKeyRef:
+          name: ox-appsuite-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes
+
+# ── 2. appsuite-public-sector ────────────────────────────────────────────────
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: ox-appsuite-dev
+  annotations:
+    crossplane.io/external-name: ox-appsuite-dev
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  forProvider:
+    chart:
+      name: appsuite-public-sector
+      repository: oci://registry.opencode.de/bmi/opendesk/components/supplier/open-xchange/charts-mirror
+      version: "2.26.32"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: false
+    waitTimeout: "20m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: ox-appsuite-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: ox-appsuite-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: ox-appsuite-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes
+
+# ── 3. ox-connector ──────────────────────────────────────────────────────────
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: ox-connector-dev
+  annotations:
+    crossplane.io/external-name: ox-connector-dev
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  forProvider:
+    chart:
+      name: ox-connector
+      repository: oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
+      version: "0.34.0"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: false
+    waitTimeout: "10m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: ox-connector-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: ox-appsuite-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes

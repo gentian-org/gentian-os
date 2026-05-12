@@ -2305,7 +2305,78 @@ install_orchestrator() {
 }
 
 # =============================================================================
-# Verify ArgoCD Applications
+# Step 15b — Deploy kernel mail services (Postfix + Dovecot)
+#
+# Called when MAIL_SERVICE_MODE=kernel. Applies the provider-helm Release CRs,
+# ConfigMaps, and ExternalSecrets for postfix and dovecot from:
+#   kernel/services/postfix/manifests/${ENV:-dev}/
+#   kernel/services/dovecot/manifests/${ENV:-dev}/
+#
+# Both service directories follow the standard Pattern B layout:
+#   configmap.yaml        — non-sensitive Helm values ConfigMaps
+#   externalsecret.yaml   — ESO ExternalSecret (reads from OpenBao)
+#   release.yaml          — Crossplane provider-helm Release CR
+#
+# Prerequisites:
+#   - provider-helm must be Healthy (Step 13).
+#   - OpenBao KV paths must be seeded (gentian-os-kernel-mail-postfix and
+#     gentian-os-kernel-mail-dovecot Secrets must exist in crossplane-system).
+#   - ESO ClusterSecretStore openbao must be ready.
+#
+# This function is idempotent (kubectl apply) and is also called from update.sh
+# when --mail is used and MAIL_SERVICE_MODE=kernel, so it must not fail if
+# resources already exist.
+# =============================================================================
+deploy_kernel_mail_services() {
+    local mode="${MAIL_SERVICE_MODE:-external}"
+    [[ "${mode}" != "kernel" ]] && return 0
+
+    banner "Step 15b — Deploy kernel mail services (MAIL_SERVICE_MODE=kernel)"
+
+    local env="${ENV:-dev}"
+    local ns="gentian-${env}"
+
+    # Ensure the target namespace exists (it is created by deploy_nubus but
+    # calling this standalone from update.sh requires it to pre-exist).
+    if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
+        info "Creating namespace ${ns}..."
+        kubectl create namespace "${ns}"
+    fi
+
+    # ── Postfix manifests ─────────────────────────────────────────────────────
+    info "Applying postfix manifests (ConfigMaps, ExternalSecret, Release)..."
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/postfix/manifests/${env}/"
+
+    info "Waiting for postfix-sensitive-values ExternalSecret to sync (up to 60s)..."
+    kubectl wait externalsecret/postfix-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || warn "postfix-sensitive-values not yet Ready — it will sync when OpenBao is available."
+
+    # ── Dovecot manifests ─────────────────────────────────────────────────────
+    info "Applying dovecot manifests (ConfigMaps, ExternalSecret, Release)..."
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/dovecot/manifests/${env}/"
+
+    info "Waiting for dovecot-sensitive-values ExternalSecret to sync (up to 60s)..."
+    kubectl wait externalsecret/dovecot-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || warn "dovecot-sensitive-values not yet Ready — it will sync when OpenBao is available."
+
+    # ── OX App Suite manifests ────────────────────────────────────────────────
+    info "Applying ox-appsuite manifests (ConfigMaps, ExternalSecret, Release CRs)..."
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/ox-appsuite/manifests/${env}/"
+
+    info "Waiting for ox-appsuite-sensitive-values ExternalSecret to sync (up to 60s)..."
+    kubectl wait externalsecret/ox-appsuite-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || warn "ox-appsuite-sensitive-values not yet Ready — it will sync when OpenBao is available."
+
+    success "Kernel mail services (postfix + dovecot + ox-appsuite) manifests applied."
+    info "provider-helm will reconcile the Release CRs within 5 minutes."
+    info "Monitor: kubectl get release.helm.crossplane.io | grep -E 'postfix|dovecot|ox'"
+    info "         argocd app sync gentian-infra-helm-${env}"
+}
+
+
 # =============================================================================
 # Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
 # =============================================================================

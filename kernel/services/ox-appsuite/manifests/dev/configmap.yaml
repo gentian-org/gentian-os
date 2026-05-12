@@ -1,0 +1,210 @@
+# =============================================================================
+# ox-appsuite — plain values ConfigMaps (Pattern B)
+#
+# Four ConfigMaps, one per chart role:
+#   ox-appsuite-base-values   — appsuite-public-sector non-sensitive defaults
+#                               (also used by opendesk-open-xchange-bootstrap
+#                                for global.mysql.* host/db/user values)
+#   ox-appsuite-dev-values    — dev env overrides for appsuite-public-sector
+#   ox-bootstrap-base-values  — opendesk-open-xchange-bootstrap only
+#   ox-connector-base-values  — ox-connector only
+#
+# All ConfigMaps land in gentian-dev (same namespace as the OX pods).
+# Sensitive values come from ox-appsuite-sensitive-values Secret
+# (see externalsecret.yaml).
+#
+# Kernel service topology (dev):
+#   MariaDB:  opendesk-mariadb-dev.gentian-infra-dev.svc.cluster.local:3306
+#   SMTP:     postfix-dev.gentian-dev.svc.cluster.local:587
+#   IMAP:     dovecot-dev.gentian-dev.svc.cluster.local:143
+#   LDAP:     nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389
+#   Keycloak: https://id.desk.gentian.org/realms/opendesk
+#   MinIO:    http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+#   Webmail:  https://webmail.desk.gentian.org
+# =============================================================================
+
+# ── appsuite-public-sector: base values ──────────────────────────────────────
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ox-appsuite-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    global:
+      hostname: "webmail.desk.gentian.org"
+
+      mysql:
+        host: "opendesk-mariadb-dev.gentian-infra-dev.svc.cluster.local"
+        database: "openxchange_dummy"
+        readHost: "opendesk-mariadb-dev.gentian-infra-dev.svc.cluster.local"
+        readDatabase: "openxchange_dummy"
+        auth:
+          user: "openxchange_user"
+          readUser: "openxchange_user"
+
+    appsuite:
+      ingress:
+        enabled: true
+        ingressClassName: "nginx"
+        tls:
+          enabled: true
+          existingSecret: "wildcard-tls"
+        appsuite:
+          hosts:
+            - "webmail.desk.gentian.org"
+        dav:
+          enabled: false
+
+      packages:
+        status:
+          open-xchange-oidc: "enabled"
+          open-xchange-filestore-s3: "enabled"
+
+      properties:
+        # ── OIDC (Keycloak opendesk realm) ─────────────────────────────────
+        com.openexchange.oidc.enabled: "true"
+        com.openexchange.oidc.autologinCookieMode: "ox_direct"
+        com.openexchange.oidc.backchannelLogoutEnabled: "true"
+        com.openexchange.oidc.clientId: "opendesk-oxappsuite"
+        com.openexchange.oidc.contextLookupClaim: "context"
+        com.openexchange.oidc.contextLookupNamePart: "full"
+        com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/auth"
+        com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/opendesk"
+        com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
+        com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
+        com.openexchange.oidc.opTokenEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/token"
+        com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
+        com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
+        com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
+
+        # ── Mail (kernel Postfix + Dovecot) ─────────────────────────────────
+        com.openexchange.mail.authType: "xoauth2"
+        com.openexchange.mail.loginSource: "name"
+        com.openexchange.mail.mailServer: "dovecot-dev.gentian-dev.svc.cluster.local"
+        com.openexchange.mail.mailServerSource: "global"
+        com.openexchange.mail.transport.authType: "xoauth2"
+        com.openexchange.mail.transportServer: "postfix-dev.gentian-dev.svc.cluster.local"
+        com.openexchange.mail.transportServerSource: "global"
+        com.openexchange.mail.filter.server: "dovecot-dev.gentian-dev.svc.cluster.local"
+        com.openexchange.mail.filter.loginType: "global"
+        com.openexchange.mail.filter.credentialSource: "mail"
+        com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
+
+        # ── S3 filestore (kernel MinIO) ─────────────────────────────────────
+        /opt/open-xchange/etc/filestore-s3.properties:
+          com.openexchange.filestore.s3.ox-filestore-s3.endpoint: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000"
+          com.openexchange.filestore.s3.ox-filestore-s3.bucketName: "openxchange"
+          com.openexchange.filestore.s3.ox-filestore-s3.accessKey: "openxchange_user"
+          com.openexchange.filestore.s3.ox-filestore-s3.pathStyleAccess: "true"
+
+        # ── LDAP (Nubus) ────────────────────────────────────────────────────
+        /opt/open-xchange/etc/ldapauth.properties:
+          java.naming.provider.url: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389/dc=swp-ldap,dc=internal"
+          bindDN: "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal"
+
+        # ── Noreply address ─────────────────────────────────────────────────
+        com.openexchange.noreply.address: "noreply@desk.gentian.org"
+
+        # ── OX Connector requirements ───────────────────────────────────────
+        com.openexchange.user.enforceUniqueDisplayName: "false"
+        com.openexchange.folderstorage.database.preferDisplayName: "false"
+
+        # ── Capabilities ────────────────────────────────────────────────────
+        com.openexchange.capability.public-sector: "true"
+        com.openexchange.capability.public-sector-navigation: "true"
+
+# ── appsuite-public-sector: dev env overrides ────────────────────────────────
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ox-appsuite-dev-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    # Dev: single replica, small PVC sizes
+    appsuite:
+      coreMw:
+        replicaCount: 1
+      core:
+        persistence:
+          size: 2Gi
+
+# ── opendesk-open-xchange-bootstrap: base values ─────────────────────────────
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ox-bootstrap-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    additionalAnnotations:
+      argocd.argoproj.io/hook: "Sync"
+      argocd.argoproj.io/hook-delete-policy: "HookSucceeded"
+
+    cleanup:
+      deletePodsOnSuccess: true
+      deletePodsOnSuccessTimeout: 60
+
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+      runAsUser: 1000
+      runAsGroup: 1000
+      seccompProfile:
+        type: "RuntimeDefault"
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+
+    imagePullSecrets:
+      - name: registry-credentials
+
+    filestore:
+      identifier: "ox-filestore-s3"
+      size: "10G"
+
+# ── ox-connector: base values ────────────────────────────────────────────────
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ox-connector-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    openXchange:
+      domainName: "desk.gentian.org"
+      logLevel: "INFO"
+      oxDefaultContext: "1"
+      oxLocalTimezone: "Europe/Berlin"
+      # IMAP host referenced by OX internally (for xoauth2 mail)
+      oxImapServer: "imap://dovecot-dev.gentian-dev.svc.cluster.local:143"
+      oxSmtpServer: "smtp://postfix-dev.gentian-dev.svc.cluster.local:587"
+      # OX SOAP admin endpoint (created when appsuite-public-sector deploys)
+      oxSoapServer: "http://open-xchange-core-mw-admin.gentian-dev.svc.cluster.local"
+      auth:
+        username: "admin"
+
+    provisioningApi:
+      connection:
+        baseUrl: "http://nubus-dev-provisioning-api.gentian-dev.svc.cluster.local"
+      auth:
+        username: "ox-connector"
+
+    persistence:
+      size: "1Gi"
+
+    replicaCount: 1

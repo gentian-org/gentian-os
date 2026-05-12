@@ -238,7 +238,12 @@ for release_name in \
     nextcloud-dev \
     nextcloud-management-dev \
     opendesk-mariadb-dev \
-    opendesk-postgresql-dev; do
+    opendesk-postgresql-dev \
+    dovecot-dev \
+    postfix-dev \
+    ox-connector-dev \
+    ox-appsuite-dev \
+    ox-bootstrap-dev; do
     if kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
         info "Deleting provider-helm Release ${release_name}..."
         kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
@@ -274,6 +279,14 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-management-dev-values \
         nextcloud-notifypush-base-values \
         nextcloud-notifypush-dev-values \
+        postfix-base-values \
+        postfix-dev-values \
+        dovecot-base-values \
+        dovecot-dev-values \
+        ox-appsuite-base-values \
+        ox-appsuite-dev-values \
+        ox-bootstrap-base-values \
+        ox-connector-base-values \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
     kubectl delete externalsecret \
         nubus-credentials \
@@ -285,6 +298,10 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-sensitive-values \
         nextcloud-management-sensitive-values \
         nextcloud-notifypush-sensitive-values \
+        postfix-sensitive-values \
+        dovecot-sensitive-values \
+        ox-appsuite-sensitive-values \
+        ox-appsuite-credentials \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
     kubectl delete secretstore nubus-static \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
@@ -299,6 +316,10 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-sensitive-values \
         nextcloud-management-sensitive-values \
         nextcloud-notifypush-sensitive-values \
+        postfix-sensitive-values \
+        dovecot-sensitive-values \
+        ox-appsuite-sensitive-values \
+        ox-appsuite-credentials \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
     kubectl delete secret registry-credentials \
         -n "${ns}" --ignore-not-found=true 2>/dev/null || true
@@ -583,6 +604,7 @@ for secret in \
     gentian-os-kernel-identity-nubus \
     gentian-os-kernel-identity-keycloak-bootstrap \
     gentian-os-kernel-mail-postfix \
+    gentian-os-kernel-mail-dovecot \
     registry-credentials-helm
 do
     kubectl delete secret "${secret}" -n crossplane-system \
