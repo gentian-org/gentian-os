@@ -47,6 +47,13 @@ data:
           readUser: "openxchange_user"
 
     appsuite:
+      appsuite-toolkit:
+        enabled: false
+      switchboard:
+        jwtSecret:
+          enabled: false
+      istio:
+        enabled: false
       ingress:
         enabled: true
         ingressClassName: "nginx"
