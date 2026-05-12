@@ -50,6 +50,7 @@ data:
       appsuite-toolkit:
         enabled: false
       switchboard:
+        enabled: false
         jwtSecret:
           enabled: false
         appsuiteSecret:
@@ -60,6 +61,15 @@ data:
         enabled: false
       istio:
         enabled: false
+      core-mw:
+        redis:
+          enabled: true
+          mode: "standalone"
+          hosts:
+            - "redis-dev-master.gentian-infra-dev.svc.cluster.local:6379"
+          auth:
+            enabled: true
+            username: ""
       ingress:
         enabled: true
         ingressClassName: "nginx"
