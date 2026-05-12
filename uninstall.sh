@@ -84,6 +84,95 @@ if [[ "${MODE}" == "force" ]]; then
 fi
 
 # =============================================================================
+# Step 0 — Undeploy all live tenants
+#
+# Tenant CRs are managed by the gentian-os operator (gentian-system), which
+# runs a cleanup finalizer (gentianos.io/tenant-cleanup).  The operator must
+# be present and reachable for a clean deletion; if it is absent or stuck we
+# force-strip the finalizer so uninstall can proceed.
+#
+# App CRs (apps.gentianos.io) live in each tenant namespace and are owned by
+# the operator; delete them first so the operator's GC loop has less work.
+# =============================================================================
+banner "Step 0 — Undeploy live tenants"
+
+# The gentian-os operator registers a ValidatingWebhookConfiguration that
+# intercepts PATCH on Tenant CRs.  If the operator is not running its
+# webhook service is unavailable, causing kubectl patch to fail with
+# "service not found".  Delete the webhook config first so we can
+# force-strip finalizers without being blocked.
+if kubectl get validatingwebhookconfiguration gentian-os-tenant-validator &>/dev/null; then
+    info "Removing stale gentian-os-tenant-validator webhook (operator not running)..."
+    kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator \
+        --ignore-not-found=true 2>/dev/null || true
+fi
+
+_live_tenants() {
+    kubectl get tenant --no-headers \
+        -o custom-columns='NAME:.metadata.name' 2>/dev/null \
+        | grep -v '^$' || true
+}
+
+mapfile -t LIVE_TENANTS < <(_live_tenants)
+
+if [[ ${#LIVE_TENANTS[@]} -eq 0 ]]; then
+    info "No live tenants found; skipping."
+else
+    info "Found ${#LIVE_TENANTS[@]} live tenant(s): ${LIVE_TENANTS[*]}"
+
+    # 1. Delete App CRs for every tenant (namespaced; iterate over all namespaces)
+    for tenant_name in "${LIVE_TENANTS[@]}"; do
+        local_deadline=$((SECONDS + 60))
+        info "Deleting App CRs for tenant ${tenant_name}..."
+        kubectl delete app --all \
+            -l "gentianos.io/tenant=${tenant_name}" \
+            --all-namespaces --ignore-not-found=true 2>/dev/null || \
+        kubectl get app -A --no-headers 2>/dev/null \
+            | awk -v t="${tenant_name}" '$0 ~ t {print $1, $2}' \
+            | while read -r ns app_name; do
+                kubectl delete app "${app_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+              done || true
+    done
+
+    # 2. Delete each Tenant CR and wait for the operator to remove the finalizer.
+    #    If the operator is not running (timeout 60 s), force-strip the finalizer.
+    for tenant_name in "${LIVE_TENANTS[@]}"; do
+        if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
+            info "Tenant ${tenant_name} already gone; skipping."
+            continue
+        fi
+
+        info "Deleting Tenant CR ${tenant_name}..."
+        kubectl delete tenant "${tenant_name}" --ignore-not-found=true 2>/dev/null || true
+
+        info "Waiting for Tenant ${tenant_name} finalizer to clear (max 60 s)..."
+        local_deadline=$((SECONDS + 60))
+        while kubectl get tenant "${tenant_name}" &>/dev/null; do
+            if (( SECONDS > local_deadline )); then
+                warn "Tenant ${tenant_name} finalizer not cleared after 60 s — operator not running?"
+                warn "Force-stripping gentianos.io/tenant-cleanup finalizer from ${tenant_name}..."
+                kubectl patch tenant "${tenant_name}" \
+                    --type=json \
+                    -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                    2>/dev/null || true
+                break
+            fi
+            sleep 3
+        done
+
+        if kubectl get tenant "${tenant_name}" &>/dev/null; then
+            warn "Tenant ${tenant_name} still present after finalizer strip — forcing deletion."
+            kubectl delete tenant "${tenant_name}" \
+                --grace-period=0 --force 2>/dev/null || true
+        else
+            success "Tenant ${tenant_name} removed."
+        fi
+    done
+
+    success "All tenants undeployed."
+fi
+
+# =============================================================================
 # Step 1 — Remove Cluster XR claim and wait for Crossplane GC
 # managementPolicies: [Observe, Create] on KV seeds means Crossplane will NOT
 # delete the OpenBao KV paths when the XR is deleted. All other MRs
