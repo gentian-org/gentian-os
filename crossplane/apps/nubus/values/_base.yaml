@@ -30,6 +30,19 @@ global:
     keycloak: id
   # UCR configuration: controls UDM REST API access, user templates, and UI behavior
   configUcr:
+    # Suppress the 'SSL certificate will expire in X days' UMC warning.
+    # The stack-data-ums chart merges global.configUcr over its default-base.conf
+    # (which hardcodes host/root: 20523 — a date in early 2026). Override with
+    # the actual cert-manager CA cert expiry (nubus-dev-ecdsa-ca-secret, 10y).
+    # ssl/validity/host and /root are integer days-since-epoch; 24234 = 2036-05-08.
+    # ssl/update/expired: "no" prevents the UMC server from overwriting these on
+    # each startup from a stale LDAP object.
+    ssl:
+      update:
+        expired: "no"
+      validity:
+        host: 24234
+        root: 24234
     ldap:
       shadowbind: "false"
     directory:
@@ -335,13 +348,6 @@ nubusStackDataUms:
     smtpUser: opendesk-system@desk.gentian.org
     smtpStartTls: false
     ldapBase: dc=swp-ldap,dc=internal
-    # Suppress the 'SSL certificate will expire in -N days' UMC warning.
-    # Nubus mounts a cert-manager-issued TLS cert at runtime; the validity
-    # values below reflect a 2-year cert. sslUpdateExpired: "no" prevents
-    # UMC from overwriting them on every start (ported from commit 22e0232).
-    sslUpdateExpired: "no"
-    sslValidityHost: 24221
-    sslValidityRoot: 24221
     # smtpHost and smtpPort in {env}/values.yaml
   templateContext:
     opendeskAdminAttributes: true
