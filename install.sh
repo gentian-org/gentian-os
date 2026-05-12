@@ -1152,6 +1152,7 @@ main_cp() {
     # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
+    install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
 
     # Clear the persisted run-start epoch so the next install (after a future
     # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.
