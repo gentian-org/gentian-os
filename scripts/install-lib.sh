@@ -2085,7 +2085,7 @@ POLICY
         token_ttl=3600
     success "eso K8s auth role created."
 
-    success "OpenBao bootstrap complete.""
+    success "OpenBao bootstrap complete."
 }
 
 # =============================================================================
