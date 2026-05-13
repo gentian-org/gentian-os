@@ -47,6 +47,7 @@ data:
           readUser: "openxchange_user"
 
     appsuite:
+      masterAdmin: "admin"          # must match openXchange.auth.username in ox-connector
       appsuite-toolkit:
         enabled: false
       switchboard:
