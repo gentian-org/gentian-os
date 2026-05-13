@@ -1,8 +1,13 @@
 ---
-# Job 1: Patch the ox-connector PVC to add 'infostore' to the opendesk_standard
-# access profile. The PVC persists across reinstalls; this is idempotent.
-# Root cause: opendesk_standard has globalAddressBookDisabled=TRUE but not
-# infostore — OX rejects disabling the GAB for "non-PIM" (no infostore) users.
+# Job 1: Fix the ox-connector PVC ModuleAccessDefinitions.properties.
+# Root cause: opendesk_standard has globalAddressBookDisabled=TRUE but the user
+# marco-testo was created in OX without infostore. OX refuses changeByModuleAccess
+# when setting globalAddressBookDisabled=True for a non-PIM (no infostore) user,
+# even if infostore=True is also being set in the same call (OX validates current
+# state, not desired state).
+# Fix: remove globalAddressBookDisabled from opendesk_standard profile.
+# Standard users in a single-org deployment should be able to see the GAB.
+# infostore=True (set via Job 2/LDAP fix) is kept so users have full PIM.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -36,11 +41,15 @@ spec:
               echo "Current content:"
               cat "$FILE"
               echo ""
-              if grep -q "^opendesk_standard=.*infostore" "$FILE"; then
-                echo "infostore already present in opendesk_standard — no change needed"
+              # Write the correct profile: all original modules + infostore,
+              # WITHOUT globaladdressbookdisabled (which causes OX crash).
+              CORRECT="opendesk_standard=activesync,calendar,collectemailaddresses,contacts,delegatetask,deniedportal,editpublicfolders,ical,infostore,multiplemailaccounts,readcreatesharedfolders,subscription,syncml,tasks,usm,vcard,webdav,webmail"
+              CURRENT=$(grep "^opendesk_standard=" "$FILE" || true)
+              if [ "$CURRENT" = "$CORRECT" ]; then
+                echo "Profile already correct — no change needed"
               else
-                sed -i 's/^\(opendesk_standard=.*\)$/\1,infostore/' "$FILE"
-                echo "Patched: added infostore to opendesk_standard"
+                sed -i "s|^opendesk_standard=.*|${CORRECT}|" "$FILE"
+                echo "Patched: removed globaladdressbookdisabled from opendesk_standard"
                 echo "New content:"
                 cat "$FILE"
               fi
@@ -48,9 +57,11 @@ spec:
             - name: appcenter
               mountPath: /appcenter
 ---
-# Job 2: Add oxRightInfostore: TRUE to the opendesk_standard LDAP access
-# profile. This is the root-cause fix: ensures that any fresh ox-connector
-# deployment (new PVC populated via provisioning prefill) also gets infostore.
+# Job 2: Fix the opendesk_standard LDAP access profile.
+# Sets oxRightGlobaladdressbookdisabled: FALSE (removes the GAB restriction that
+# triggers the OX crash) and keeps oxRightInfostore: TRUE (already set).
+# This is the root-cause fix for fresh installs: when ox-connector prefills from
+# LDAP, the generated profile will not include globaladdressbookdisabled.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -67,11 +78,12 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: ldapmodify
-          image: docker.io/bitnami/openldap:2.6.7
+          image: docker.io/alpine:3.19
           command:
-            - /bin/bash
+            - /bin/sh
             - -c
             - |
+              apk add --no-cache openldap-clients 2>/dev/null
               until ldapsearch -x -H ldap://nubus-dev-ldap-server:389 \
                 -D "cn=admin,dc=swp-ldap,dc=internal" \
                 -w "${LDAP_ADMIN_PW}" \
@@ -80,31 +92,31 @@ spec:
                 sleep 5
               done
 
-              # Check if oxRightInfostore is already set to TRUE
               CURRENT=$(ldapsearch -x -H ldap://nubus-dev-ldap-server:389 \
                 -D "cn=admin,dc=swp-ldap,dc=internal" \
                 -w "${LDAP_ADMIN_PW}" \
                 -b "cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
-                "(cn=opendesk_standard)" oxRightInfostore 2>/dev/null)
+                "(cn=opendesk_standard)" oxRightGlobaladdressbookdisabled 2>/dev/null)
 
-              if echo "$CURRENT" | grep -q "oxRightInfostore: TRUE"; then
-                echo "oxRightInfostore already TRUE — no change needed"
+              if echo "$CURRENT" | grep -q "oxRightGlobaladdressbookdisabled: FALSE"; then
+                echo "oxRightGlobaladdressbookdisabled already FALSE — no change needed"
                 exit 0
               fi
 
-              echo "Setting oxRightInfostore: TRUE on opendesk_standard..."
+              echo "Setting oxRightGlobaladdressbookdisabled: FALSE on opendesk_standard..."
               printf '%s\n' \
                 "dn: cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
                 "changetype: modify" \
-                "replace: oxRightInfostore" \
-                "oxRightInfostore: TRUE" \
+                "replace: oxRightGlobaladdressbookdisabled" \
+                "oxRightGlobaladdressbookdisabled: FALSE" \
                 | ldapmodify -x -H ldap://nubus-dev-ldap-server:389 \
                   -D "cn=admin,dc=swp-ldap,dc=internal" \
                   -w "${LDAP_ADMIN_PW}"
-              echo "Done: oxRightInfostore: TRUE set on opendesk_standard"
+              echo "Done: oxRightGlobaladdressbookdisabled: FALSE set on opendesk_standard"
           env:
             - name: LDAP_ADMIN_PW
               valueFrom:
                 secretKeyRef:
                   name: nubus-dev-ldap-server-admin
                   key: password
+
