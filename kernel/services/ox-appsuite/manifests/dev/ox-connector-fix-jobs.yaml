@@ -119,4 +119,3 @@ spec:
                 secretKeyRef:
                   name: nubus-dev-ldap-server-admin
                   key: password
-
