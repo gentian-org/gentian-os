@@ -1,0 +1,28 @@
+# =============================================================================
+# Nextcloud data PVC — persistent storage for Nextcloud user home directories.
+#
+# The opendesk-nextcloud chart hard-codes the nextcloud-data volume as emptyDir,
+# which means user home directories (under /var/nextcloud/data/nextcloud_data/)
+# are wiped on every pod restart.  This PVC is mounted over that subdirectory
+# via aio.extraVolumes / aio.extraVolumeMounts in the nextcloud-base-values
+# ConfigMap, making user home directories persist across pod restarts.
+#
+# Size 10 Gi is sufficient for dev: actual file content lives in MinIO (S3
+# primary objectstore); the local data dir only holds user metadata (app data,
+# thumbnails, and the nextcloud_data/<user>/ skeleton directories).
+# =============================================================================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-data-pvc
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nfs-csi
+  resources:
+    requests:
+      storage: 10Gi

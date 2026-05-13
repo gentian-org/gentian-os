@@ -79,6 +79,17 @@ data:
         - name: FS_ENV_PHP_REDIS_FULL_URI
           value: "tcp://$(FS_ENV_REDIS_HOST):$(FS_ENV_REDIS_PORT)?database=$(FS_ENV_PHP_REDIS_DBINDEX)&auth[pass]=$(FS_ENV_REDIS_PASSWORD)"
 
+      # Mount the PVC at the nextcloud_data subdirectory so user home
+      # directories survive pod restarts.  The parent emptyDir (/var/nextcloud/
+      # data) stays intact for AIO init artefacts (log/, tmp/, .ncdata).
+      extraVolumes:
+        - name: nextcloud-data-persistent
+          persistentVolumeClaim:
+            claimName: nextcloud-data-pvc
+      extraVolumeMounts:
+        - name: nextcloud-data-persistent
+          mountPath: /var/nextcloud/data/nextcloud_data
+
     exporter:
       enabled: true
 ---
