@@ -136,6 +136,15 @@ data:
           com.openexchange.mail.filter.loginType: "global"
           com.openexchange.mail.filter.credentialSource: "mail"
           com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
+          # ── Noreply address ───────────────────────────────────────────────
+          com.openexchange.noreply.address: "noreply@desk.gentian.org"
+          # ── OX Connector requirements ─────────────────────────────────────
+          com.openexchange.user.enforceUniqueDisplayName: "false"
+          com.openexchange.folderstorage.database.preferDisplayName: "false"
+          # ── Capabilities ──────────────────────────────────────────────────
+          com.openexchange.capability.public-sector: "true"
+          com.openexchange.capability.public-sector-navigation: "true"
+        propertiesFiles:
           # ── S3 filestore (kernel MinIO) ───────────────────────────────────
           /opt/open-xchange/etc/filestore-s3.properties:
             com.openexchange.filestore.s3.ox-filestore-s3.endpoint: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000"
@@ -146,14 +155,6 @@ data:
           /opt/open-xchange/etc/ldapauth.properties:
             java.naming.provider.url: "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389/dc=swp-ldap,dc=internal"
             bindDN: "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal"
-          # ── Noreply address ───────────────────────────────────────────────
-          com.openexchange.noreply.address: "noreply@desk.gentian.org"
-          # ── OX Connector requirements ─────────────────────────────────────
-          com.openexchange.user.enforceUniqueDisplayName: "false"
-          com.openexchange.folderstorage.database.preferDisplayName: "false"
-          # ── Capabilities ──────────────────────────────────────────────────
-          com.openexchange.capability.public-sector: "true"
-          com.openexchange.capability.public-sector-navigation: "true"
       ingress:
         enabled: true
         ingressClassName: "nginx"
