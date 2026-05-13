@@ -2,7 +2,6 @@
 # =============================================================================
 # install.sh — Gentian OS bootstrap (Crossplane-based)
 # =============================================================================
-# Replaces the OpenTofu-based kernel provisioning with a Crossplane Cluster XR.
 #
 # After this script completes:
 #   ✓ Crossplane core installed with provider-kubernetes, provider-vault,
@@ -17,16 +16,12 @@
 #       - cert-manager ClusterIssuer (letsencrypt-http01)
 #   ✓ Remaining secrets seeded (registry, DNS/Cloudflare, internal)
 #
-# Not done (future phases):
-#   Phase 2 — Pattern B app charts via provider-helm
-#   Phase 3 — Tenant XRD provisioning
-#
 # Usage:
 #   ./install.sh
 #   ./install.sh --validate          # validate config only, no cluster changes
 #   ./install.sh --no-cluster-infra  # skip cert-manager/CNPG/reloader
 #
-# Required environment variables: same as install.sh (see getting-started.sh)
+# Required environment variables: same as install.sh (see getting-started.md)
 # =============================================================================
 
 set -euo pipefail
@@ -1162,6 +1157,7 @@ main_cp() {
     # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
+    deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
 
     # Clear the persisted run-start epoch so the next install (after a future
