@@ -93,15 +93,15 @@ spec:
               fi
 
               echo "Setting oxRightInfostore: TRUE on opendesk_standard..."
-              ldapmodify -x -H ldap://nubus-dev-ldap-server:389 \
-                -D "cn=admin,dc=swp-ldap,dc=internal" \
-                -w "${LDAP_ADMIN_PW}" <<'LDIF'
-dn: cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal
-changetype: modify
-replace: oxRightInfostore
-oxRightInfostore: TRUE
-LDIF
-              echo "Done — oxRightInfostore: TRUE set on opendesk_standard"
+              printf '%s\n' \
+                "dn: cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
+                "changetype: modify" \
+                "replace: oxRightInfostore" \
+                "oxRightInfostore: TRUE" \
+                | ldapmodify -x -H ldap://nubus-dev-ldap-server:389 \
+                  -D "cn=admin,dc=swp-ldap,dc=internal" \
+                  -w "${LDAP_ADMIN_PW}"
+              echo "Done: oxRightInfostore: TRUE set on opendesk_standard"
           env:
             - name: LDAP_ADMIN_PW
               valueFrom:
