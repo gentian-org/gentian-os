@@ -60,7 +60,7 @@ jobs:
         run: make verify-gen
 
   lint:
-    name: Lint — Go, YAML, shell, Tofu
+    name: Lint — Go, YAML, shell
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,14 +88,6 @@ jobs:
           # nubus-ldap-server's entrypoint.d; its .sh extension is required
           # for numbering order but its content is Python (SC1071).
           ignore_paths: crossplane/apps/nubus/patches
-
-      - name: Install OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: "1.9.0"
-
-      - name: tofu fmt check (modules)
-        run: tofu fmt -check -recursive kernel/tofu/
 
   docker:
     name: Docker build and push

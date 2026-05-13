@@ -999,7 +999,7 @@ banner "Step 11 — Remove kernel namespaces"
 
 namespaces_to_remove=(openbao gentian-dev gentian-infra-dev gentian-system platform-kernel)
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
-    namespaces_to_remove+=(stakater-system cnpg-system argocd-image-updater flux-system)
+    namespaces_to_remove+=(stakater-system cnpg-system argocd-image-updater)
 fi
 
 for ns in "${namespaces_to_remove[@]}"; do

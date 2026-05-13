@@ -216,7 +216,7 @@ type TenantMailStatus struct {
 // Tenant is cluster-scoped and represents a customer organisation. Creating a
 // Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
 // creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
-// ArgoCD Application (or Tofu Workspace) CRs for each requested app.
+// ArgoCD Application (or Crossplane App claim) CRs for each requested app.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

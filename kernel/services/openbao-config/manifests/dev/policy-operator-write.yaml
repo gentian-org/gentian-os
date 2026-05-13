@@ -2,9 +2,7 @@
 # provider-vault Policy MR: operator-write
 #
 # Grants the gentian-os operator ServiceAccount full read/write access to
-# gentian-os KV secrets and token operations.  Replaces the old tofu-write
-# policy for the operator use case (tofu-write is kept separately as a
-# temporary policy for the Tofu Controller runner until Phase 2B removes it).
+# gentian-os KV secrets and token operations.
 #
 # Managed by Crossplane provider-vault (vault.vault.upbound.io/v1alpha1).
 # Wave 2: applied after the ProviderConfig (wave 1) so provider-vault can

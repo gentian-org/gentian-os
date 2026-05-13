@@ -29,7 +29,6 @@ spec:
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
-  - 'ghcr.io/flux-iac/charts'  # flux-iac OCI charts registry (Tofu Controller Helm chart)
   - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
   - 'ghcr.io/cloudnative-pg/charts'                                                                     # CloudNativePG OCI charts registry
 
@@ -40,10 +39,6 @@ spec:
   - namespace: 'argocd'                      # ArgoCD namespace for ApplicationSets
     server: https://kubernetes.default.svc
   - namespace: 'openbao'                     # OpenBao secret backend
-    server: https://kubernetes.default.svc
-  - namespace: 'tofu-system'                 # Tofu Controller workspaces
-    server: https://kubernetes.default.svc
-  - namespace: 'flux-system'                 # flux-system: Tofu Controller creates runner SA here
     server: https://kubernetes.default.svc
   - namespace: 'stakater-system'             # Stakater Reloader (cluster-wide controller)
     server: https://kubernetes.default.svc
@@ -94,10 +89,10 @@ spec:
     kind: '*'
 
   # Orphaned resources handling
-  # warn: false — the cluster uses a dual GitOps+Tofu approach; many resources are
-  # intentionally managed by Tofu outside ArgoCD. Warnings would be permanently
+  # warn: false — some resources are intentionally managed outside ArgoCD (e.g. init
+  # job outputs, Crossplane managed resources). Warnings would be permanently
   # noisy and mask real health issues (e.g. the openbao ClusterSecretStore going
-  # Degraded after a reboot is hidden behind 444 orphan warnings).
+  # Degraded after a reboot is hidden behind orphan warnings).
   orphanedResources:
     warn: false
     ignore:

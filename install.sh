@@ -582,7 +582,6 @@ seed_secrets_remaining() {
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
-#   - 05-tofu:             Tofu workspaces (keycloak-config, etc.)
 #   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
 #   - 20-iam:              keycloak-bootstrap job
 #   - 21-nubus:            (reserved, currently deployed via provider-helm)
@@ -622,7 +621,7 @@ bootstrap_root_appset() {
 # =============================================================================
 # Phase 2 — Step 13: Install provider-helm
 # provider-helm deploys Helm charts into the local cluster. It replaces the
-# Tofu Controller set_sensitive pattern for secrets-hostile charts (Pattern B).
+# legacy Pattern B approach for secrets-hostile charts.
 # =============================================================================
 install_provider_helm() {
     banner "Step 13 — Install provider-helm (Pattern B chart deployments)"

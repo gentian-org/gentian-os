@@ -9,8 +9,6 @@
 #   • eso-read policy + eso role         → Cluster XR (crossplane/compositions/)
 #   • crossplane-write policy            → Cluster XR (crossplane/compositions/)
 #   • KV v2 mount + Kubernetes auth backend → bao_bootstrap() in install.sh
-#   • tofu-write policy + tofu-runner role  → bao_bootstrap() (TEMPORARY,
-#                                             removed in Phase 2B)
 #
 # Wave 15: after infra (wave 10, which deploys OpenBao) and before IAM/nubus
 #          (wave 20+) which depends on ESO ExternalSecrets reading from OpenBao.

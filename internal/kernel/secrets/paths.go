@@ -18,15 +18,14 @@ const Mount = "secret"
 // CategoryPath returns the canonical KV v2 logical path (no "data/" prefix) for
 // a kernel-requirement category (oidc, database, s3, cache, smtp, imap, ldap).
 //
-// The resulting path is identical to what kernel/tofu/tenant/app-workspace/main.tf
-// reads via data "vault_kv_secret_v2".
+// The resulting path is read via ExternalSecret by Crossplane-managed app compositions.
 func CategoryPath(tenant, app, category string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/%s", tenant, app, category)
 }
 
 // InternalPath returns the canonical KV v2 logical path for a per-app internal
 // secret (an AppProfile.spec.appSecrets entry). The value is stored with a
-// single "value" key so the Tofu module can read it generically.
+// single "value" key so the ExternalSecret can read it generically.
 func InternalPath(tenant, app, name string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, app, name)
 }

@@ -33,7 +33,6 @@ set -euo pipefail
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
 #   storage/registry              (optional, requires args 2+3)
-#   platform/tofu-state           (written by MinIO setup, not this script)
 # =============================================================================
 
 MASTER_PASSWORD="${1:-sovereign-workplace}"
@@ -365,24 +364,6 @@ kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 EOF
 )"
 
-# --- Tofu State (MinIO S3 backend — random credentials, not HMAC-derived) ---
-# Uses kv_put_once like all other paths — the check above handles the skip.
-_TOFU_STATE_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
-  "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/platform/tofu-state" 2>/dev/null || true)
-if echo "${_TOFU_STATE_EXISTING}" | grep -q '"data":{'; then
-  echo "  Skipping gentian-os/kernel/platform/tofu-state (already exists — not regenerated)"
-else
-  TOFU_STATE_ACCESS_KEY=$(openssl rand -hex 10 | tr '[:lower:]' '[:upper:]')
-  TOFU_STATE_SECRET_KEY=$(openssl rand -hex 20)
-  kv_put "platform/tofu-state" "$(cat <<EOF
-{
-  "access_key_id":     "${TOFU_STATE_ACCESS_KEY}",
-  "secret_access_key": "${TOFU_STATE_SECRET_KEY}"
-}
-EOF
-)"
-fi
-
 # --- OX App Suite ---
 OX_ADMIN_PW=$(derive_password "ox_appsuite" "admin_password")
 OX_HZ_GROUP_PW=$(derive_password "ox_appsuite" "hz_group_password")
@@ -419,7 +400,7 @@ fi
 
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
-# oidc_client_secret: written by keycloak-config Tofu workspace (module "dovecot" in clients.tf)
+# oidc_client_secret: written by the keycloak-config Crossplane composition on first run.
 #   If the keycloak-config workspace has already run, this kv_put_once is a no-op because
 #   the secret already exists with oidc_client_secret.  In that case, patch manually:
 #     bao kv patch gentian-os/kernel/mail/dovecot doveadm_password=<value>
@@ -466,7 +447,7 @@ else
     echo "  To add them later: bao kv put gentian-os/kernel/mail/postfix relay_username=<u> relay_password=<p>"
 fi
 
-# --- Mail transport settings consumed by Tofu/Nubus rendering ---
+# --- Mail transport settings consumed by Nubus rendering ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
 if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then

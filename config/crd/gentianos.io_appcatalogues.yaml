@@ -70,7 +70,7 @@ spec:
                       type: string
                     deploymentMethod:
                       description: DeploymentMethod is the deployment pattern (argocd
-                        or tofu-controller).
+                        or crossplane).
                       enum:
                       - argocd
                       - crossplane

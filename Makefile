@@ -201,7 +201,3 @@ e2e-p3:
 ## P4 — Cutover of a real tenant (dev only) — not yet implemented
 e2e-p4:
 	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh
-
-## P5 — Migrate all tenants and decommission legacy stack — not yet implemented
-e2e-p5:
-	@crossplane/tests/e2e/scripts/p5-tofu-decommission.sh

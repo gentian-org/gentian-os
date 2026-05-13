@@ -42,8 +42,7 @@ type AppProfileSpec struct {
 	// cluster tokens) that don't correspond to any kernel function. The
 	// orchestrator generates these deterministically (HMAC-SHA256 from master
 	// password + tenant + app + secret name), stores them in OpenBao, and syncs
-	// them via ExternalSecret. For Pattern B apps they are injected via
-	// Tofu Controller set_sensitive.
+	// them via ExternalSecret.
 	// +optional
 	AppSecrets []AppSecret `json:"appSecrets,omitempty"`
 

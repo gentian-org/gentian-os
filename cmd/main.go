@@ -123,8 +123,7 @@ func main() {
 }
 
 // buildSeeder constructs a secrets.Seeder backed by an OpenBao KV v2 client
-// authenticated via the Kubernetes auth method (the same pattern the
-// tofu-runner already uses). Required env vars:
+// authenticated via the Kubernetes auth method. Required env vars:
 //
 //	BAO_ADDR  — OpenBao address (e.g. http://openbao.openbao.svc.cluster.local:8200)
 //	BAO_ROLE  — Kubernetes auth role name (default: gentian-os-operator)

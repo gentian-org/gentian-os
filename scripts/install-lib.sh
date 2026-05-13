@@ -1079,7 +1079,7 @@ install_tools() {
 create_namespaces() {
     banner "Step 2 — Creating namespaces"
 
-    local namespaces=(openbao external-secrets argocd gentian-system platform-kernel tofu-system)
+    local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         namespaces+=(stakater-system cnpg-system)
     fi
@@ -1546,6 +1546,13 @@ EOF
         fi
         return
     fi
+    # Remove the fallback nubus-CA Certificate CR if present — it was created when
+    # wildcard-kernel-tls was not yet ready, and cert-manager will keep overwriting
+    # wildcard-tls with the nubus-CA cert as long as it exists.
+    if kubectl get certificate wildcard-dev-tls -n "${app_ns}" &>/dev/null; then
+        kubectl delete certificate wildcard-dev-tls -n "${app_ns}"
+        success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
+    fi
     # Propagate to all namespaces that reference wildcard-tls.
     for _wc_ns in "${app_ns}" argocd; do
         info "Propagating wildcard-tls into namespace ${_wc_ns}..."
@@ -1674,13 +1681,7 @@ install_argocd() {
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml"
     success "AppProject applied."
 
-    # Patch argocd-cm with a custom Lua health check for Terraform CRs
-    # (infra.contrib.fluxcd.io/Terraform). By default ArgoCD has no health
-    # check for this CRD and always reports Healthy regardless of whether
-    # the Tofu workspace succeeded or failed. This makes tofu-dev show as
-    # Degraded in ArgoCD whenever a workspace has READY=False, so that
-    # verify_argocd_apps catches Tofu failures like any other app failure.
-    info "Patching argocd-cm with Terraform CR health check and annotation-based resource tracking..."
+    info "Patching argocd-cm with annotation-based resource tracking..."
     # application.resourceTrackingMethod=annotation prevents ArgoCD from
     # treating Helm-managed resources as part of an ArgoCD app via the
     # default app.kubernetes.io/instance label. Helm charts (e.g. the
@@ -1698,11 +1699,10 @@ install_argocd() {
     kubectl patch configmap argocd-cm -n argocd --type merge -p '
 {
   "data": {
-    "application.resourceTrackingMethod": "annotation",
-    "resource.customizations.health.infra.contrib.fluxcd.io_Terraform": "hs = {}\nif obj.status ~= nil and obj.status.conditions ~= nil then\n  for _, c in ipairs(obj.status.conditions) do\n    if c.type == \"Ready\" then\n      if c.status == \"True\" then\n        hs.status = \"Healthy\"\n        hs.message = c.message\n        return hs\n      else\n        hs.status = \"Degraded\"\n        hs.message = c.message\n        return hs\n      end\n    end\n  end\nend\nhs.status = \"Progressing\"\nhs.message = \"Waiting for Terraform workspace to complete\"\nreturn hs\n"
+    "application.resourceTrackingMethod": "annotation"
   }
 }'
-    success "ArgoCD Terraform CR health check + annotation tracking configured."
+    success "ArgoCD annotation-based resource tracking configured." 
 
     # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
@@ -1861,47 +1861,9 @@ bootstrap_argocd_apps() {
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-stakater.yaml"
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-cloudnative-pg.yaml"
     fi
-    kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-flux-iac.yaml"
     success "Applied public ArgoCD repository registrations."
 
-    if kubectl get deployment source-controller -n flux-system &>/dev/null; then
-        success "Flux source-controller already present. Skipping install."
-    else
-        info "Installing Flux source-controller (v1.8.3, static manifest)..."
-        # We apply a vendored static manifest rather than a Helm chart because
-        # the flux2 community chart's pre-install Job (flux-check) checks the
-        # Kubernetes version and blocks on k8s 1.31+ with older chart versions.
-        # The static manifest at kernel/manifests/flux-crds/source-controller.yaml
-        # was generated from the same chart with all controllers except
-        # source-controller disabled and the flux-check Job stripped out.
-        # Regeneration instructions: kernel/manifests/flux-crds/README.md
-        kubectl create namespace flux-system 2>/dev/null || true
-        kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-controller.yaml"
-        success "Flux source-controller installed."
-    fi
-
-    # Wait for source-controller to be Available before applying Flux source CRDs.
-    # source-controller rewrites CRD status on startup; applying our vendored CRDs
-    # after Available ensures they land last and are not subsequently overwritten.
-    info "Waiting for Flux source-controller deployment to be Available (up to 3 min)..."
-    kubectl wait --for=condition=available --timeout=180s \
-        deployment/source-controller -n flux-system
-    success "Flux source-controller is Available."
-
-    # Tofu Controller needs Flux source CRDs (GitRepository, OCIRepository,
-    # Bucket) to register its informers. We also need the Flux source-
-    # controller itself running because kernel/services/tofu/manifests/dev/
-    # terraform.yaml creates a GitRepository CR ('gentian-server') that all
-    # Terraform workspaces (infra-workspaces-dev, keycloak-config-dev, and
-    # every per-tenant tf-*) reference as their sourceRef. Without source-
-    # controller, that GitRepository never produces an artifact and every
-    # Terraform CR stays stuck on "Source is not ready, artifact not found"
-    # — Nubus never installs, tenants stall on IdentityReady forever.
-    # See kernel/manifests/flux-crds/README.md for CRD versioning details.
-    kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/flux-crds/source-crds.yaml"
-    success "Applied Flux source CRDs (required by tofu-controller)."
-
-    local apps=(openbao tofu-controller globals)
+    local apps=(openbao globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         apps+=(reloader cnpg cnpg-cluster)
     fi
@@ -2066,8 +2028,6 @@ init_openbao() {
 #   • KV v2 mount at secret/
 #   • Kubernetes auth backend + config
 #   • eso-read policy + eso role  (ESO ClusterSecretStore authentication)
-#   • tofu-write policy + tofu-runner role  (TEMPORARY – removed in Phase 2B
-#     once infra-workspaces is migrated off the Tofu Controller)
 #
 # The operator-write policy and gentian-os-operator role are NOT created here;
 # they are managed as provider-vault Crossplane MRs in
@@ -2125,24 +2085,7 @@ POLICY
         token_ttl=3600
     success "eso K8s auth role created."
 
-    # ── 5. tofu-write policy (TEMPORARY — removed in Phase 2B) ───────────────
-    bao policy write tofu-write - <<'POLICY'
-path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
-path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
-path "auth/token/create"            { capabilities = ["update"] }
-path "auth/token/lookup-self"       { capabilities = ["read"] }
-POLICY
-    success "tofu-write policy written."
-
-    # ── 6. tofu-runner role (TEMPORARY — removed in Phase 2B) ────────────────
-    bao write auth/kubernetes/role/tofu-runner \
-        bound_service_account_names=tf-runner \
-        bound_service_account_namespaces=tofu-system \
-        token_policies=tofu-write \
-        token_ttl=3600
-    success "tofu-runner K8s auth role created."
-
-    success "OpenBao bootstrap complete."
+    success "OpenBao bootstrap complete.""
 }
 
 # =============================================================================
@@ -2379,66 +2322,6 @@ deploy_kernel_mail_services() {
 
 # =============================================================================
 # Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
-# =============================================================================
-# 15b. Verify OpenTofu workspaces (Pattern-B Helm releases)
-# =============================================================================
-# verify_tofu_workspaces waits until every Terraform CR in the cluster has
-# READY=True. This covers Nubus, Nextcloud, and other Pattern-B apps whose
-# deployment is managed by tofu-controller rather than ArgoCD directly.
-# Without this check, a Tofu plan/apply failure is invisible to ArgoCD
-# (which only checks whether the CR object was applied, not whether the
-# workspace reconciliation succeeded).
-verify_tofu_workspaces() {
-    banner "Step 15b — Verifying OpenTofu Workspaces"
-
-    local timeout=${VERIFY_TIMEOUT:-900}
-    local interval=15
-    local elapsed=0
-
-    info "Waiting up to ${timeout}s for all Terraform workspaces to become Ready..."
-
-    while true; do
-        local total ready not_ready_names
-        total=$(kubectl get terraform -A --no-headers 2>/dev/null | wc -l)
-
-        if [[ "$total" -eq 0 ]]; then
-            if [[ $elapsed -ge $timeout ]]; then
-                warn "No Terraform workspaces appeared within ${timeout}s."
-                return 1
-            fi
-            printf "  …no Terraform workspaces yet (%ds/%ds)\n" "$elapsed" "$timeout"
-            sleep "$interval"; elapsed=$((elapsed + interval))
-            continue
-        fi
-
-        # Count workspaces where the Ready condition is True
-        ready=$(kubectl get terraform -A \
-            -o jsonpath='{range .items[?(@.status.conditions[0].type=="Ready")]}{.status.conditions[0].status}{"\n"}{end}' \
-            2>/dev/null | grep -c "^True$" || true)
-
-        not_ready_names=$(kubectl get terraform -A --no-headers \
-            -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[0].status,MSG:.status.conditions[0].message' \
-            2>/dev/null | grep -v "^.*True " || true)
-
-        printf "  workspaces=%d ready=%d (%ds/%ds)\n" \
-            "$total" "$ready" "$elapsed" "$timeout"
-
-        if [[ "$ready" -eq "$total" ]]; then
-            success "All ${total} Terraform workspaces are Ready."
-            return 0
-        fi
-
-        if [[ $elapsed -ge $timeout ]]; then
-            warn "Timed out after ${timeout}s — some Terraform workspaces are not Ready:"
-            while IFS= read -r line; do
-                [[ -n "$line" ]] && echo "    $line"
-            done <<< "$not_ready_names"
-            return 1
-        fi
-
-        sleep "$interval"; elapsed=$((elapsed + interval))
-    done
-}
 
 # =============================================================================
 # 16. Verify ArgoCD Applications
@@ -2654,7 +2537,6 @@ main() {
     install_app_catalogue
     install_appprofiles_sync
     install_orchestrator
-    verify_tofu_workspaces || true
     verify_argocd_apps || true
     print_summary
 }

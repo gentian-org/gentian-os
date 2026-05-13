@@ -70,8 +70,7 @@ spec:
                   cluster tokens) that don't correspond to any kernel function. The
                   orchestrator generates these deterministically (HMAC-SHA256 from master
                   password + tenant + app + secret name), stores them in OpenBao, and syncs
-                  them via ExternalSecret. For Pattern B apps they are injected via
-                  Tofu Controller set_sensitive.
+                  them via ExternalSecret.
                 items:
                   description: |-
                     AppSecret declares an app-internal secret the orchestrator must generate
@@ -119,14 +118,14 @@ spec:
                 - version
                 type: object
               deploymentMethod:
-                default: argocd
+                default: crossplane
                 description: |-
                   DeploymentMethod controls how the orchestrator deploys this app.
-                  Defaults to argocd (Pattern A). Use tofu-controller for charts that
-                  don't support existingSecret references (Pattern B).
+                  Defaults to crossplane. Use argocd for kernel-layer services managed
+                  directly by the cache or identity reconcilers.
                 enum:
                 - argocd
-                - tofu-controller
+                - crossplane
                 type: string
               description:
                 description: Description is an optional human-readable description.
@@ -385,15 +384,6 @@ spec:
                   - name
                   type: object
                 type: array
-              tofuModulePath:
-                description: |-
-                  TofuModulePath overrides the default Terraform module path used when
-                  deploymentMethod is tofu-controller. When empty, the orchestrator uses
-                  the generic kernel/tofu/tenant/app-workspace module. Set this to a
-                  custom module path (e.g. kernel/tofu/tenant/ox-workspace) for apps that
-                  require a dedicated Terraform module (e.g. apps with complex propertiesFiles
-                  key paths that cannot be expressed as Helm --set values).
-                type: string
               valueMapping:
                 description: |-
                   ValueMapping is the schema-based mapping of kernel-provided values to

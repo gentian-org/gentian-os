@@ -123,9 +123,6 @@ provisioning:
     - name: ums
       versioning: Suspended
       withLock: false
-    - name: tofu-state
-      versioning: Suspended
-      withLock: false
   # Per-bucket IAM policies (no secrets — just ARN statements)
   policies:
     - name: migrations-bucket-policy
@@ -174,13 +171,5 @@ provisioning:
           effect: Allow
           actions: [s3:*]
         - resources: [arn:aws:s3:::ums/*]
-          effect: Allow
-          actions: [s3:*]
-    - name: tofu-state-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::tofu-state]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::tofu-state/*]
           effect: Allow
           actions: [s3:*]
