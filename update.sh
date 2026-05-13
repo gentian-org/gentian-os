@@ -59,6 +59,7 @@ DRY_RUN=0
 OP_MAIL=0
 OP_SECRETS=0
 OP_RECONCILE=0
+OP_NUBUS_RECOVER=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -79,6 +80,9 @@ Options:
   --force                  Modifier for --reconcile-releases: also re-reconcile
                            currently healthy Release CRs (forces value pick-up
                            after a ConfigMap change on a working release).
+  --nubus-recover          Recover a stuck nubus installation: reapply the
+                           stack-data-ums job in the correct namespace when the
+                           done marker is absent and register-consumers is stuck.
   --all                    Run all update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -92,6 +96,7 @@ while [[ $# -gt 0 ]]; do
         --secrets)             OP_SECRETS=1 ;;
         --reconcile-releases)  OP_RECONCILE=1 ;;
         --force)               FORCE_RECONCILE=1 ;;
+        --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
         --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
@@ -553,6 +558,121 @@ op_reconcile_releases() {
 }
 
 # =============================================================================
+# op_nubus_recover — reapply the stack-data-ums job in the correct namespace
+#
+# Background: install.sh's _wait_and_fix_stack_data_ums() calls `helm get
+# manifest | kubectl apply -f -` without an explicit -n flag.  When the
+# kubectl context has a non-gentian-dev default namespace (e.g. argocd), the
+# reapplied job silently lands in the wrong namespace, never creates the
+# cn=stack-data-ums.done LDAP marker, and leaves register-consumers stuck in
+# Init:1/2 (wait-for-data-loader) forever.
+#
+# This function:
+#   1. Checks whether register-consumers has already completed (noop if so).
+#   2. Deletes any existing failed/stuck stack-data-ums job in the target ns.
+#   3. Extracts the job manifest from the Helm release and applies it with an
+#      explicit -n flag so it lands in KERNEL_NAMESPACE regardless of the
+#      kubectl context default namespace.
+#   4. Waits up to 10 minutes for the job to complete.
+# =============================================================================
+op_nubus_recover() {
+    local release_name="nubus-dev"
+    local ns="${KERNEL_NAMESPACE}"
+
+    banner "Nubus: stack-data-ums recovery (ns=${ns})"
+
+    # ── 1. Check if register-consumers is already complete ────────────────────
+    local rc_job
+    rc_job=$(kubectl get jobs -n "${ns}" --no-headers \
+        -o custom-columns=NAME:.metadata.name 2>/dev/null \
+        | grep "^${release_name}-provisioning-register-consumers-" | tail -1 || true)
+
+    if [[ -z "$rc_job" ]]; then
+        info "No register-consumers job found — nubus may not be installed yet."
+        return 0
+    fi
+
+    local rc_complete
+    rc_complete=$(kubectl get job "${rc_job}" -n "${ns}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' \
+        2>/dev/null || echo "")
+
+    if [[ "${rc_complete}" == "True" ]]; then
+        success "register-consumers already completed — done marker is present, nothing to do."
+        return 0
+    fi
+
+    info "register-consumers job '${rc_job}' is not complete — proceeding with recovery."
+
+    # ── 2. Delete any existing failed/stuck stack-data-ums job ───────────────
+    local sdu_job
+    sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
+        -o custom-columns=NAME:.metadata.name 2>/dev/null \
+        | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+
+    if [[ -n "$sdu_job" ]]; then
+        local sdu_complete
+        sdu_complete=$(kubectl get job "${sdu_job}" -n "${ns}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' \
+            2>/dev/null || echo "")
+        if [[ "${sdu_complete}" == "True" ]]; then
+            success "stack-data-ums job '${sdu_job}' is already Complete."
+            info "register-consumers may still be catching up — wait a moment and re-run."
+            return 0
+        fi
+        warn "Removing existing non-complete stack-data-ums job '${sdu_job}'..."
+        if [[ "${DRY_RUN}" != "1" ]]; then
+            kubectl delete job "${sdu_job}" -n "${ns}" \
+                --ignore-not-found=true >/dev/null 2>&1 || true
+        else
+            info "  [dry-run] Would: kubectl delete job ${sdu_job} -n ${ns}"
+        fi
+    fi
+
+    # ── 3. Extract and apply the job from the Helm manifest ──────────────────
+    info "Applying stack-data-ums job from Helm manifest into namespace '${ns}'..."
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "  [dry-run] Would: helm get manifest ${release_name} -n ${ns} | awk ... | kubectl apply -n ${ns} -f -"
+        return 0
+    fi
+
+    helm get manifest "${release_name}" -n "${ns}" 2>/dev/null \
+        | awk '/# Source:.*nubusStackDataUms.*job-load-data-ums/{found=1} found{print} found && /^---/{found=0; exit}' \
+        | kubectl apply -n "${ns}" -f - >/dev/null || {
+        warn "Failed to apply stack-data-ums job — is the nubus Helm release deployed?"
+        warn "  helm list -n ${ns}"
+        return 1
+    }
+
+    # ── 4. Wait for the job to appear and complete ───────────────────────────
+    info "Waiting for stack-data-ums job to appear in namespace '${ns}' (up to 2m)..."
+    local deadline=$((SECONDS + 120))
+    local new_job=""
+    until [[ -n "$new_job" ]]; do
+        new_job=$(kubectl get jobs -n "${ns}" --no-headers \
+            -o custom-columns=NAME:.metadata.name 2>/dev/null \
+            | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+        if (( SECONDS > deadline )); then
+            warn "stack-data-ums job did not appear within 2m."
+            warn "  Check: kubectl get jobs -n ${ns}"
+            return 1
+        fi
+        [[ -n "$new_job" ]] || sleep 3
+    done
+
+    info "Waiting for stack-data-ums job '${new_job}' to complete (up to 10m)..."
+    if kubectl wait "job/${new_job}" -n "${ns}" \
+            --for=condition=Complete --timeout=600s 2>/dev/null; then
+        success "stack-data-ums job completed — portal stack should recover within a few minutes."
+        info "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=portal-consumer"
+    else
+        warn "stack-data-ums job did not complete within 10m."
+        warn "  Check: kubectl logs -n ${ns} -l job-name=${new_job} --tail=40"
+        return 1
+    fi
+}
+
+# =============================================================================
 # main
 # =============================================================================
 echo ""
@@ -566,9 +686,10 @@ echo ""
 
 _init
 
-[[ "${OP_MAIL}"      == "1" ]] && op_mail
-[[ "${OP_SECRETS}"   == "1" ]] && op_secrets
-[[ "${OP_RECONCILE}" == "1" ]] && op_reconcile_releases
+[[ "${OP_MAIL}"          == "1" ]] && op_mail
+[[ "${OP_SECRETS}"       == "1" ]] && op_secrets
+[[ "${OP_RECONCILE}"     == "1" ]] && op_reconcile_releases
+[[ "${OP_NUBUS_RECOVER}" == "1" ]] && op_nubus_recover
 
 echo ""
 success "update.sh completed."

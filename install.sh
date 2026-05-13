@@ -995,7 +995,7 @@ print(json.dumps(cfg))
                 --ignore-not-found=true 2>/dev/null || true
             helm get manifest "${release_name}" -n "${sdu_ns}" 2>/dev/null \
                 | awk "/# Source:.*nubusStackDataUms.*job-load-data-ums/{found=1} found{print} found && /^---/{found=0; exit}" \
-                | kubectl apply -f - 2>/dev/null || true
+                | kubectl apply -n "${sdu_ns}" -f - 2>/dev/null || true
 
             info "  Waiting for reapplied stack-data-ums job to complete (up to 10m)..."
             sdu_deadline=$((SECONDS + 600))
