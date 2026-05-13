@@ -1,0 +1,110 @@
+---
+# Job 1: Patch the ox-connector PVC to add 'infostore' to the opendesk_standard
+# access profile. The PVC persists across reinstalls; this is idempotent.
+# Root cause: opendesk_standard has globalAddressBookDisabled=TRUE but not
+# infostore — OX rejects disabling the GAB for "non-PIM" (no infostore) users.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ox-connector-pvc-patch-infostore
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      volumes:
+        - name: appcenter
+          persistentVolumeClaim:
+            claimName: ox-connector-dev-appcenter-ox-connector-dev-0
+      containers:
+        - name: patch
+          image: docker.io/alpine:3.19
+          command:
+            - /bin/sh
+            - -c
+            - |
+              FILE=/appcenter/data/ModuleAccessDefinitions.properties
+              if [ ! -f "$FILE" ]; then
+                echo "ERROR: $FILE not found"
+                exit 1
+              fi
+              echo "Current content:"
+              cat "$FILE"
+              echo ""
+              if grep -q "^opendesk_standard=.*infostore" "$FILE"; then
+                echo "infostore already present in opendesk_standard — no change needed"
+              else
+                sed -i 's/^\(opendesk_standard=.*\)$/\1,infostore/' "$FILE"
+                echo "Patched: added infostore to opendesk_standard"
+                echo "New content:"
+                cat "$FILE"
+              fi
+          volumeMounts:
+            - name: appcenter
+              mountPath: /appcenter
+---
+# Job 2: Add oxRightInfostore: TRUE to the opendesk_standard LDAP access
+# profile. This is the root-cause fix: ensures that any fresh ox-connector
+# deployment (new PVC populated via provisioning prefill) also gets infostore.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ox-connector-ldap-infostore
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ldapmodify
+          image: docker.io/bitnami/openldap:2.6.7
+          command:
+            - /bin/bash
+            - -c
+            - |
+              until ldapsearch -x -H ldap://nubus-dev-ldap-server:389 \
+                -D "cn=admin,dc=swp-ldap,dc=internal" \
+                -w "${LDAP_ADMIN_PW}" \
+                -b "dc=swp-ldap,dc=internal" "(cn=opendesk_standard)" cn >/dev/null 2>&1; do
+                echo "Waiting for LDAP..."
+                sleep 5
+              done
+
+              # Check if oxRightInfostore is already set to TRUE
+              CURRENT=$(ldapsearch -x -H ldap://nubus-dev-ldap-server:389 \
+                -D "cn=admin,dc=swp-ldap,dc=internal" \
+                -w "${LDAP_ADMIN_PW}" \
+                -b "cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
+                "(cn=opendesk_standard)" oxRightInfostore 2>/dev/null)
+
+              if echo "$CURRENT" | grep -q "oxRightInfostore: TRUE"; then
+                echo "oxRightInfostore already TRUE — no change needed"
+                exit 0
+              fi
+
+              echo "Setting oxRightInfostore: TRUE on opendesk_standard..."
+              ldapmodify -x -H ldap://nubus-dev-ldap-server:389 \
+                -D "cn=admin,dc=swp-ldap,dc=internal" \
+                -w "${LDAP_ADMIN_PW}" <<'LDIF'
+dn: cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal
+changetype: modify
+replace: oxRightInfostore
+oxRightInfostore: TRUE
+LDIF
+              echo "Done — oxRightInfostore: TRUE set on opendesk_standard"
+          env:
+            - name: LDAP_ADMIN_PW
+              valueFrom:
+                secretKeyRef:
+                  name: nubus-dev-ldap-server-admin
+                  key: password
