@@ -70,6 +70,13 @@ data:
           auth:
             enabled: true
             username: ""
+        asConfig:
+          default:
+            # Tell the OX UI to skip its own login form and redirect
+            # directly to Keycloak. Without this, users see an OX sign-in
+            # prompt even when they already have a valid Keycloak session.
+            oidcLogin: true
+            oidcPath: "/oidc/"
       ingress:
         enabled: true
         ingressClassName: "nginx"
@@ -86,15 +93,33 @@ data:
         status:
           open-xchange-oidc: "enabled"
           open-xchange-filestore-s3: "enabled"
+          # Disable legacy auth backends so only OIDC is active
+          open-xchange-authentication-masterpassword: "disabled"
+          open-xchange-authentication-oauth: "disabled"
+          open-xchange-authentication-database: "disabled"
+          open-xchange-authentication-ldap: "disabled"
+          # Required for OAuth2 API provider (e.g. Nextcloud → OX integration)
+          open-xchange-oauth-provider: "enabled"
 
       properties:
         # ── OIDC (Keycloak opendesk realm) ─────────────────────────────────
         com.openexchange.oidc.enabled: "true"
+        # startDefaultBackend: OX server auto-uses OIDC backend; without this
+        # unauthenticated API calls hit OX's own login handler, not Keycloak.
+        com.openexchange.oidc.startDefaultBackend: "true"
         com.openexchange.oidc.autologinCookieMode: "ox_direct"
         com.openexchange.oidc.backchannelLogoutEnabled: "true"
+        com.openexchange.oidc.ssoLogout: "true"
         com.openexchange.oidc.clientId: "opendesk-oxappsuite"
         com.openexchange.oidc.contextLookupClaim: "context"
         com.openexchange.oidc.contextLookupNamePart: "full"
+        # userLookupClaim: which JWT claim maps to the OX username.
+        # Keycloak sends opendesk_username = uid (LDAP); without this OX
+        # falls back to sub (UUID) and cannot find the user after OIDC auth.
+        com.openexchange.oidc.userLookupClaim: "opendesk_username"
+        com.openexchange.oidc.userLookupNamePart: "full"
+        com.openexchange.oidc.enablePasswordGrant: "true"
+        com.openexchange.oidc.passwordGrantUserNamePart: "local-part"
         com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/auth"
         com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/opendesk"
         com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
@@ -103,6 +128,15 @@ data:
         com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
         com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
         com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
+        # ── OAuth2 API provider ─────────────────────────────────────────────
+        com.openexchange.oauth.provider.enabled: "true"
+        com.openexchange.oauth.provider.mode: "expect_jwt"
+        com.openexchange.oauth.provider.allowedIssuer: "https://id.desk.gentian.org/realms/opendesk"
+        com.openexchange.oauth.provider.contextLookupClaim: "context"
+        com.openexchange.oauth.provider.contextLookupNamePart: "full"
+        com.openexchange.oauth.provider.userLookupClaim: "opendesk_username"
+        com.openexchange.oauth.provider.userLookupNamePart: "full"
+        com.openexchange.oauth.provider.jwt.jwksUri: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
 
         # ── Mail (kernel Postfix + Dovecot) ─────────────────────────────────
         com.openexchange.mail.authType: "xoauth2"
