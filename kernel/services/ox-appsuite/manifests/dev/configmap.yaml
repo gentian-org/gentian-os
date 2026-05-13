@@ -244,7 +244,7 @@ data:
       oxImapServer: "imap://dovecot-dev.gentian-dev.svc.cluster.local:143"
       oxSmtpServer: "smtp://postfix-dev.gentian-dev.svc.cluster.local:587"
       # OX SOAP admin endpoint (created when appsuite-public-sector deploys)
-      oxSoapServer: "http://open-xchange-core-mw-admin.gentian-dev.svc.cluster.local"
+      oxSoapServer: "http://ox-appsuite-dev-core-mw-admin.gentian-dev.svc.cluster.local"
       auth:
         username: "admin"
 
