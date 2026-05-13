@@ -62,47 +62,22 @@ data:
       debug:
         loglevel: "2"
 
-      lifecycleHooks:
-        postStart:
-          exec:
-            command:
-              - /bin/sh
-              - -c
-              - |
-                CONFIG=/var/www/html/config/config.php
-                if [ -f "$CONFIG" ] && [ -n "$FS_ENV_REDIS_PASSWORD" ]; then
-                  sed -i "s/'password' => '[^']*'/'password' => '$FS_ENV_REDIS_PASSWORD'/" "$CONFIG"
-                fi
-                printf '<?php\n$CONFIG=["trusted_domains"=>["localhost","files.desk.gentian.org","nextcloud-dev-aio.gentian-dev.svc.cluster.local"]];\n' \
-                  > /var/www/html/config/trusted-domains.config.php
-                printf '<?php\n$CONFIG=["allow_local_remote_servers"=>true];\n' \
-                  > /var/www/html/config/allow-local-servers.config.php
-                waited=0; max=120
-                while [ "$waited" -lt "$max" ] && ! [ -f /var/www/html/config/config.php ]; do
-                  sleep 2; waited=$((waited+2))
-                done
-                if php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
-                  php /var/www/html/occ richdocuments:update-empty-templates || true
-                fi
-
-      # Override baked FS_ENV_PHP_REDIS_FULL_URI so PHP sessions don't drop.
-      # Only auth[pass]= (not auth[user]=) to avoid phpredis ACL format.
+      # The AIO entrypoint reads FS_ENV_TRUSTED_DOMAINS (space-separated) and
+      # FS_ENV_TRUSTED_PROXIES from env vars natively (config_base.php).
+      # allow_local_remote_servers is already true in the entrypoint base config.
+      # Using env vars instead of lifecycleHooks avoids FailedPostStartHook on
+      # the cron pod (the chart applies lifecycleHooks to both deployment and
+      # cron job, and the cron pod context does not support the hook commands).
       extraEnvVars:
+        # Override FS_ENV_TRUSTED_DOMAINS to add in-cluster service hostname and
+        # localhost alongside the public ingress host.  Placed after the chart's
+        # hardcoded entry so it takes precedence (last env var wins).
+        - name: FS_ENV_TRUSTED_DOMAINS
+          value: "files.desk.gentian.org localhost nextcloud-dev-aio.gentian-dev.svc.cluster.local"
+        # Override baked FS_ENV_PHP_REDIS_FULL_URI so PHP sessions don't drop.
+        # Only auth[pass]= (not auth[user]=) to avoid phpredis ACL format.
         - name: FS_ENV_PHP_REDIS_FULL_URI
           value: "tcp://$(FS_ENV_REDIS_HOST):$(FS_ENV_REDIS_PORT)?database=$(FS_ENV_PHP_REDIS_DBINDEX)&auth[pass]=$(FS_ENV_REDIS_PASSWORD)"
-
-      # Persist user home directories across pod restarts.
-      # The chart hard-codes nextcloud-data as emptyDir at /var/nextcloud/data.
-      # Mounting the PVC at the nextcloud_data subdirectory overrides that path
-      # for all user directories while leaving the parent emptyDir intact for
-      # AIO init artefacts (/var/nextcloud/data/log, /tmp, etc.).
-      extraVolumes:
-        - name: nextcloud-data-persistent
-          persistentVolumeClaim:
-            claimName: nextcloud-data-pvc
-      extraVolumeMounts:
-        - name: nextcloud-data-persistent
-          mountPath: /var/nextcloud/data/nextcloud_data
 
     exporter:
       enabled: true
