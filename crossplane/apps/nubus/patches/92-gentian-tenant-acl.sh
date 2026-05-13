@@ -113,12 +113,16 @@ patch9_sentinel = f'# Gentian patch 9a: restrict read on tenant OU entries to sa
 patch9_keycloak_sentinel = f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break'
 # Sentinel for patch 10: mail/domain visibility restriction.
 patch10_sentinel = f'# Gentian patch 10: restrict mail/domain visibility to owning tenant'
+# Sentinel for the Tenant Admins read grant in patch 10 (upgrade detection).
+# Old deployments have patch 10 but are missing this line; the elif branch
+# below applies the in-place upgrade so tenant admins can resolve mail domains.
+patch10_tenant_admins_sentinel = f'   by set="user & [cn=Tenant Admins,cn=groups,{ldap_base}]/uniqueMember*" read break\n   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
 # Sentinel for the per-tenant OU write fix (patches 2a/2b v2).
 # Old deployments have 'by set=Tenant Admins write' in these patches; new ones
 # use 'by dn.regex="^.+,ou=$1,..." write' so only same-tenant users get write.
 patch2_new_sentinel = f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
 
-if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content:
+if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -444,11 +448,46 @@ if patch10_sentinel not in content:
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by set="user & [cn=Tenant Admins,cn=groups,{ldap_base}]/uniqueMember*" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
     )
     content = content.replace(catchall_marker, mail_domain_acl + catchall_marker, 1)
     print("Patched mail/domain visibility restriction (patch 10).")
+elif patch10_tenant_admins_sentinel not in content:
+    # Upgrade: patch 10 is applied but missing Tenant Admins read grant.
+    # Mail domains like 'gentian.org' have first-label 'gentian' which doesn't
+    # match any tenant OU, so the existing dn.regex rule denies ALL tenant admins.
+    # This breaks oxAccess.py mail domain validation when tenant admins create users.
+    # Fix: add Tenant Admins read before the per-tenant dn.regex line.
+    # Unique context: patch 10 has no 'by self read break' between Administrator and
+    # ldapsearch_keycloak (unlike patch 9b), and patch 10 is the last rule before
+    # the catchall — so this replacement uniquely targets patch 10.
+    old_p10_tail = (
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'access to *\n'
+        f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+        f'   by users read\n'
+    )
+    new_p10_tail = (
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by set="user & [cn=Tenant Admins,cn=groups,{ldap_base}]/uniqueMember*" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'access to *\n'
+        f'   by set="user & [cn=Domain Admins,cn=groups,{ldap_base}]/uniqueMember*" write\n'
+        f'   by users read\n'
+    )
+    if old_p10_tail not in content:
+        print("WARNING: could not locate expected patch 10 tail for Tenant Admins upgrade; skipping.",
+              file=sys.stderr)
+    else:
+        content = content.replace(old_p10_tail, new_p10_tail, 1)
+        print("Upgraded mail/domain visibility to grant Tenant Admins read (patch 10 tenant-admins).")
 else:
     print("mail/domain visibility restriction (patch 10) already present.")
 

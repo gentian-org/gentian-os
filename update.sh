@@ -60,6 +60,7 @@ OP_MAIL=0
 OP_SECRETS=0
 OP_RECONCILE=0
 OP_NUBUS_RECOVER=0
+OP_LDAP_ACL=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -83,6 +84,8 @@ Options:
   --nubus-recover          Recover a stuck nubus installation: reapply the
                            stack-data-ums job in the correct namespace when the
                            done marker is absent and register-consumers is stuck.
+  --ldap-acl               Update the LDAP ACL configmap from source and restart
+                           the LDAP primary pod to apply the latest ACL patches.
   --all                    Run all update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -97,7 +100,8 @@ while [[ $# -gt 0 ]]; do
         --reconcile-releases)  OP_RECONCILE=1 ;;
         --force)               FORCE_RECONCILE=1 ;;
         --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1 ;;
+        --ldap-acl)            OP_LDAP_ACL=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -106,10 +110,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
+    OP_LDAP_ACL=1
 fi
 
 # =============================================================================
@@ -558,6 +563,50 @@ op_reconcile_releases() {
 }
 
 # =============================================================================
+# op_ldap_acl_upgrade — refresh the LDAP ACL configmap and restart the LDAP
+#                        primary pod so the latest ACL patches are applied.
+#
+# Background: The 92-gentian-tenant-acl.sh script is mounted from the
+# nubus-dev-ldap-gentian-acl ConfigMap into the LDAP primary container's
+# /entrypoint.d/ and runs at pod startup to patch slapd.conf.  When the
+# script is updated (e.g. to fix mail/domain visibility in patch 10), the
+# ConfigMap must be re-applied and the pod restarted for the new ACL rules
+# to take effect.
+#
+# This function:
+#   1. Re-applies the ConfigMap from the source file (idempotent).
+#   2. Restarts the LDAP primary StatefulSet pod.
+#   3. Waits for the pod to become Ready again.
+# =============================================================================
+op_ldap_acl_upgrade() {
+    local release_name="nubus-dev"
+    local ns="${KERNEL_NAMESPACE}"
+    local sts="${release_name}-ldap-server-primary"
+
+    info "Updating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would apply: ${SCRIPT_DIR}/crossplane/apps/nubus/patches/92-gentian-tenant-acl.sh"
+        return 0
+    fi
+
+    kubectl create configmap "${release_name}-ldap-gentian-acl" \
+        -n "${ns}" \
+        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/crossplane/apps/nubus/patches/92-gentian-tenant-acl.sh" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    info "Restarting LDAP primary StatefulSet (${sts}) to apply new ACL patches..."
+    kubectl rollout restart statefulset/"${sts}" -n "${ns}"
+
+    info "Waiting for LDAP primary pod to be Ready..."
+    if ! kubectl rollout status statefulset/"${sts}" -n "${ns}" --timeout=120s; then
+        warn "LDAP primary pod did not become Ready within 120s — check: kubectl get pods -n ${ns}"
+        return 1
+    fi
+
+    success "LDAP ACL upgrade complete."
+}
+
+# =============================================================================
 # op_nubus_recover — reapply the stack-data-ums job in the correct namespace
 #
 # Background: install.sh's _wait_and_fix_stack_data_ums() calls `helm get
@@ -698,6 +747,7 @@ _init
 [[ "${OP_MAIL}"          == "1" ]] && op_mail
 [[ "${OP_SECRETS}"       == "1" ]] && op_secrets
 [[ "${OP_RECONCILE}"     == "1" ]] && op_reconcile_releases
+[[ "${OP_LDAP_ACL}"      == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}" == "1" ]] && op_nubus_recover
 
 echo ""
