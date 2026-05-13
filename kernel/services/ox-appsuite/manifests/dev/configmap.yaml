@@ -63,6 +63,7 @@ data:
         enabled: false
       core-mw:
         masterAdmin: "admin"          # must match openXchange.auth.username in ox-connector
+        serverName: "oxserver"        # must match bootstrap's registerserver -n oxserver
         redis:
           enabled: true
           mode: "standalone"
@@ -223,7 +224,7 @@ data:
 
     filestore:
       identifier: "ox-filestore-s3"
-      size: "10G"
+      size: 10240               # MB (10 * 1024); chart expects MB not a size string
 
 # ── ox-connector: base values ────────────────────────────────────────────────
 ---
