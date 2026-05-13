@@ -7,10 +7,12 @@
 # any necessary changes.
 #
 # Usage:
-#   ./update.sh --mail        # Reconcile mail (ConfigMap, secrets, deployments)
-#   ./update.sh --secrets     # Re-seed all OpenBao KV secrets
-#   ./update.sh --all         # Run all update operations
-#   ./update.sh --mail --dry-run   # Print what would change without applying
+#   ./update.sh --mail                     # Reconcile mail (ConfigMap, secrets, deployments)
+#   ./update.sh --secrets                  # Re-seed all OpenBao KV secrets
+#   ./update.sh --reconcile-releases       # Re-reconcile any failing Crossplane Release CRs
+#   ./update.sh --reconcile-releases --force  # Force re-reconcile ALL Release CRs
+#   ./update.sh --all                      # Run all update operations
+#   ./update.sh --mail --dry-run           # Print what would change without applying
 #
 # What it reconciles:
 #   --mail:
@@ -23,6 +25,12 @@
 #   --secrets:
 #     - Re-derives and re-applies all kernel Secrets in crossplane-system
 #     - Re-applies the Cluster XR to propagate new KV seeds to OpenBao
+#   --reconcile-releases:
+#     - Scans all kernel/services/*/manifests/${env}/release.yaml files
+#     - For each Crossplane Release CR that is not Ready+Synced: deletes and
+#       recreates it (provider-helm does not watch ConfigMaps, so this is the
+#       only way to force value pick-up after a ConfigMap change)
+#     - With --force: also re-reconciles currently healthy Release CRs
 #
 # Prerequisites:
 #   - install.sh must have completed at least once.
@@ -50,6 +58,8 @@ KERNEL_NAMESPACE=gentian-dev
 DRY_RUN=0
 OP_MAIL=0
 OP_SECRETS=0
+OP_RECONCILE=0
+FORCE_RECONCILE=0
 
 # =============================================================================
 # Argument parsing
@@ -59,32 +69,42 @@ _usage() {
 Usage: ./update.sh [OPTIONS]
 
 Options:
-  --mail          Reconcile mail: patch postfix ConfigMap, re-seed credentials,
-                  and (when MAIL_SERVICE_MODE=kernel) deploy kernel mail services.
-  --secrets       Re-seed all OpenBao KV secrets and re-apply the Cluster XR.
-  --all           Run all update operations (default when no options given).
-  --dry-run       Print what would change without applying.
-  -h, --help      Show this help.
+  --mail                   Reconcile mail: patch postfix ConfigMap, re-seed
+                           credentials, deploy kernel mail services if needed.
+  --secrets                Re-seed all OpenBao KV secrets and re-apply the
+                           Cluster XR.
+  --reconcile-releases     Re-reconcile any Crossplane Release CR that is not
+                           Ready+Synced (delete + recreate to pick up ConfigMap
+                           or Secret changes that provider-helm missed).
+  --force                  Modifier for --reconcile-releases: also re-reconcile
+                           currently healthy Release CRs (forces value pick-up
+                           after a ConfigMap change on a working release).
+  --all                    Run all update operations (default when no options).
+  --dry-run                Print what would change without applying.
+  -h, --help               Show this help.
 EOF
     exit 1
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --mail)    OP_MAIL=1 ;;
-        --secrets) OP_SECRETS=1 ;;
-        --all)     OP_MAIL=1; OP_SECRETS=1 ;;
-        --dry-run) DRY_RUN=1 ;;
-        -h|--help) _usage ;;
+        --mail)                OP_MAIL=1 ;;
+        --secrets)             OP_SECRETS=1 ;;
+        --reconcile-releases)  OP_RECONCILE=1 ;;
+        --force)               FORCE_RECONCILE=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1 ;;
+        --dry-run)             DRY_RUN=1 ;;
+        -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
     esac
     shift
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
+    OP_RECONCILE=1
 fi
 
 # =============================================================================
@@ -391,6 +411,148 @@ op_secrets() {
 }
 
 # =============================================================================
+# op_reconcile_releases — delete + recreate unhealthy (or all) Release CRs
+#
+# Crossplane provider-helm does NOT watch ConfigMaps or Secrets referenced via
+# valuesFrom.  When a ConfigMap changes after the initial install, the Release
+# CR must be deleted and recreated to pick up the new values.
+#
+# This function:
+#   1. Finds every kernel/services/*/manifests/${env}/release.yaml
+#   2. Extracts the names of all Release CRs defined in each file
+#   3. Checks each Release for Ready=True and Synced=True
+#   4. For any that fail the check (or all, when FORCE_RECONCILE=1):
+#      a. Re-applies the manifest directory (ConfigMaps + ExternalSecrets first)
+#      b. Deletes the Release CR and waits up to 30 s for it to disappear
+#      c. Re-applies the manifest directory to recreate only the missing Release
+# =============================================================================
+op_reconcile_releases() {
+    local env="${KERNEL_NAMESPACE#gentian-}"
+
+    if [[ "${FORCE_RECONCILE}" == "1" ]]; then
+        banner "Helm Release re-reconciliation — FORCE (env=${env})"
+    else
+        banner "Helm Release re-reconciliation — check failing (env=${env})"
+    fi
+
+    # ── Collect release.yaml files ────────────────────────────────────────────
+    local manifest_files=()
+    while IFS= read -r -d '' f; do
+        manifest_files+=("$f")
+    done < <(find "${SCRIPT_DIR}/kernel/services" \
+        -name "release.yaml" \
+        -path "*/${env}/*" \
+        -print0 | sort -z)
+
+    if [[ ${#manifest_files[@]} -eq 0 ]]; then
+        info "No release.yaml files found under kernel/services/*/${env}/"
+        return
+    fi
+
+    local any_action=0
+
+    for release_file in "${manifest_files[@]}"; do
+        local manifest_dir
+        manifest_dir="$(dirname "${release_file}")"
+
+        # Extract Release CR names (kind: Release blocks only, metadata.name at
+        # 2-space indent — deeper name: fields are inside spec and are ignored).
+        local names=()
+        while IFS= read -r name; do
+            [[ -n "$name" ]] && names+=("$name")
+        done < <(awk '
+            /^kind: Release/ { in_release=1 }
+            in_release && /^  name:/ { print $2; in_release=0 }
+            /^---/ { in_release=0 }
+        ' "${release_file}")
+
+        [[ ${#names[@]} -eq 0 ]] && continue
+
+        for name in "${names[@]}"; do
+            # ── Missing release ────────────────────────────────────────────────
+            if ! kubectl get release.helm.crossplane.io/"${name}" \
+                    >/dev/null 2>&1; then
+                warn "  ${name}: not found — applying manifest directory"
+                if [[ "${DRY_RUN}" != "1" ]]; then
+                    kubectl apply -f "${manifest_dir}/" >/dev/null
+                    any_action=1
+                else
+                    info "  [dry-run] Would: kubectl apply -f ${manifest_dir}/"
+                fi
+                continue
+            fi
+
+            # ── Check current status ───────────────────────────────────────────
+            local ready synced message
+            ready=$(kubectl get release.helm.crossplane.io/"${name}" \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
+                2>/dev/null || echo "Unknown")
+            synced=$(kubectl get release.helm.crossplane.io/"${name}" \
+                -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' \
+                2>/dev/null || echo "Unknown")
+            message=$(kubectl get release.helm.crossplane.io/"${name}" \
+                -o jsonpath='{.status.conditions[?(@.type=="Synced")].message}' \
+                2>/dev/null || echo "")
+
+            local needs_reconcile=0
+            if [[ "${ready}" != "True" || "${synced}" != "True" ]]; then
+                needs_reconcile=1
+                warn "  ${name}: READY=${ready} SYNCED=${synced} — unhealthy"
+                [[ -n "$message" ]] && warn "    ↳ ${message:0:120}"
+            elif [[ "${FORCE_RECONCILE}" == "1" ]]; then
+                needs_reconcile=1
+                info "  ${name}: READY=${ready} SYNCED=${synced} — forcing re-reconcile"
+            else
+                success "  ${name}: READY=${ready} SYNCED=${synced} — OK"
+            fi
+
+            [[ "${needs_reconcile}" == "0" ]] && continue
+
+            # ── Re-reconcile ───────────────────────────────────────────────────
+            if [[ "${DRY_RUN}" == "1" ]]; then
+                info "  [dry-run] Would delete and recreate: ${name}"
+                continue
+            fi
+
+            # Apply manifest dir first so ConfigMaps/ExternalSecrets are current.
+            info "  Applying manifest directory (ConfigMaps / ExternalSecrets)..."
+            kubectl apply -f "${manifest_dir}/" >/dev/null
+
+            info "  Deleting ${name}..."
+            kubectl delete release.helm.crossplane.io/"${name}" \
+                --ignore-not-found >/dev/null
+
+            # Wait up to 30 s for the resource to disappear.
+            local i=0
+            while kubectl get release.helm.crossplane.io/"${name}" \
+                    >/dev/null 2>&1; do
+                sleep 1
+                (( ++i ))
+                if [[ $i -ge 30 ]]; then
+                    warn "  Timed out waiting for ${name} deletion — skipping"
+                    break
+                fi
+            done
+
+            info "  Recreating ${name}..."
+            kubectl apply -f "${manifest_dir}/" >/dev/null
+            success "  ${name}: re-reconciled"
+            any_action=1
+        done
+    done
+
+    echo ""
+    if [[ "${DRY_RUN}" != "1" ]]; then
+        if [[ "${any_action}" == "1" ]]; then
+            info "Re-reconciliation triggered. Monitor with:"
+            info "  kubectl get release.helm.crossplane.io"
+        else
+            success "All Release CRs are healthy — no re-reconciliation needed."
+        fi
+    fi
+}
+
+# =============================================================================
 # main
 # =============================================================================
 echo ""
@@ -404,8 +566,9 @@ echo ""
 
 _init
 
-[[ "${OP_MAIL}"    == "1" ]] && op_mail
-[[ "${OP_SECRETS}" == "1" ]] && op_secrets
+[[ "${OP_MAIL}"      == "1" ]] && op_mail
+[[ "${OP_SECRETS}"   == "1" ]] && op_secrets
+[[ "${OP_RECONCILE}" == "1" ]] && op_reconcile_releases
 
 echo ""
 success "update.sh completed."
