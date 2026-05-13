@@ -629,15 +629,24 @@ op_nubus_recover() {
         fi
     fi
 
-    # ── 3. Extract and apply the job from the Helm manifest ──────────────────
-    info "Applying stack-data-ums job from Helm manifest into namespace '${ns}'..."
+    # ── 3. Extract and apply the job from the Helm release ───────────────────
+    # NOTE: the stack-data-ums job is a Helm hook so it only appears in
+    # `helm get all`, NOT in `helm get manifest`.
+    info "Applying stack-data-ums job from Helm release into namespace '${ns}'..."
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "  [dry-run] Would: helm get manifest ${release_name} -n ${ns} | awk ... | kubectl apply -n ${ns} -f -"
+        info "  [dry-run] Would: helm get all ${release_name} -n ${ns} | python3 ... | kubectl apply -n ${ns} -f -"
         return 0
     fi
 
-    helm get manifest "${release_name}" -n "${ns}" 2>/dev/null \
-        | awk '/# Source:.*nubusStackDataUms.*job-load-data-ums/{found=1} found{print} found && /^---/{found=0; exit}' \
+    helm get all "${release_name}" -n "${ns}" 2>/dev/null \
+        | python3 -c "
+import sys
+for section in sys.stdin.read().split('---'):
+    if 'stack-data-ums' in section and 'kind: \"Job\"' in section:
+        print('---')
+        print(section.strip())
+        break
+" \
         | kubectl apply -n "${ns}" -f - >/dev/null || {
         warn "Failed to apply stack-data-ums job — is the nubus Helm release deployed?"
         warn "  helm list -n ${ns}"
