@@ -1,0 +1,181 @@
+---
+# RBAC for the ox-bootstrap-init-fix Job:
+# mirrors the bootstrap chart's role/SA so this PostSync job can
+# kubectl exec into the OX core-mw pod and restart the StatefulSet.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ox-bootstrap-init-fix
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ox-bootstrap-init-fix
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ox-bootstrap-init-fix
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ox-bootstrap-init-fix
+subjects:
+  - kind: ServiceAccount
+    name: ox-bootstrap-init-fix
+    namespace: gentian-dev
+---
+# PostSync Job: ensures the OX configdb (openxchange_dummy) is fully
+# initialised after a fresh deploy or when the bootstrap chart's
+# initconfigdb call failed because the DB already existed (empty).
+#
+# The bootstrap chart's bootstrap.sh runs  initconfigdb  WITHOUT -i.
+# When openxchange_dummy is pre-created by the MariaDB init job (empty),
+# initconfigdb exits non-zero and swallows the error, leaving the
+# configdb with no tables.  This job detects that state and re-runs
+# initconfigdb -i, then runs the three register steps.
+#
+# Idempotent: when configdb already has ≥5 tables the job exits 0
+# immediately.  registerfilestore/registerserver/registerdatabase are
+# safe to re-run; they report an error when the resource already exists
+# but we tolerate that with "|| true".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ox-bootstrap-init-fix
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: ox-bootstrap-init-fix
+      restartPolicy: OnFailure
+      containers:
+        - name: init-fix
+          # Same image as the bootstrap chart (alpine/k8s with kubectl).
+          image: docker.io/alpine/k8s:1.27.4
+          env:
+            - name: NAMESPACE
+              value: gentian-dev
+            - name: ADMIN_SELECTOR
+              value: "roles.middleware.open-xchange.com/admin=true"
+            - name: SELECTOR
+              value: "app.kubernetes.io/instance=ox-appsuite-dev,app.kubernetes.io/name=core-mw"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              # ── 1. Find the OX admin pod ─────────────────────────────────────
+              echo "Locating OX admin pod in namespace ${NAMESPACE}..."
+              until pod=$(kubectl get pod -n "${NAMESPACE}" \
+                          -l "${ADMIN_SELECTOR}" \
+                          -o jsonpath="{.items[0].metadata.name}" 2>/dev/null) \
+                   && [ -n "${pod}" ]; do
+                echo "  waiting for OX admin pod..."
+                sleep 5
+              done
+              echo "Found pod: ${pod}"
+
+              # ── 2. Wait for core-mw container ───────────────────────────────
+              until kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                    -- bash -c 'echo core-mw running' 2>/dev/null; do
+                echo "  waiting for core-mw container..."
+                sleep 5
+              done
+
+              # ── 3. Check whether configdb is already initialised ─────────────
+              TABLE_COUNT=$(kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                -- bash -c \
+                'mysql --skip-ssl \
+                       -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+                       -h "$MYSQL_HOST" "$MYSQL_DATABASE" \
+                       -e "SHOW TABLES;" 2>/dev/null | wc -l')
+              echo "Table count in configdb (incl. header): ${TABLE_COUNT}"
+
+              if [ "${TABLE_COUNT:-0}" -ge 5 ]; then
+                echo "ConfigDB already initialised — nothing to do."
+                exit 0
+              fi
+
+              echo "ConfigDB not initialised. Running initconfigdb -i ..."
+
+              # ── 4. Initialise configdb tables ────────────────────────────────
+              kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                -- bash -c \
+                '/opt/open-xchange/sbin/initconfigdb -i \
+                 --mysql-args "--skip-ssl-verify-server-cert" \
+                 --configdb-user "${MYSQL_USER}" \
+                 --configdb-pass "${MYSQL_PASSWORD}" \
+                 --configdb-host "${MYSQL_HOST}" \
+                 --mysql-root-passwd "${MYSQL_PASSWORD}" \
+                 --configdb-dbname "${MYSQL_DATABASE}"'
+
+              # ── 5. Wait for OX admin API (port 8009) ─────────────────────────
+              echo "Waiting for OX admin port 8009..."
+              kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                -- bash -c \
+                'until nc -z localhost 8009; do echo "  waiting for port 8009..."; sleep 5; done'
+
+              # ── 6. Register filestore ────────────────────────────────────────
+              echo "Registering filestore..."
+              kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                -- bash -c \
+                '/opt/open-xchange/sbin/registerfilestore \
+                 -A "${MASTER_ADMIN_USER}" -P "${MASTER_ADMIN_PW}" \
+                 -t s3://ox-filestore-s3 -s 10240' \
+              || echo "  registerfilestore: already registered or failed (continuing)"
+
+              # ── 7. Register server ───────────────────────────────────────────
+              echo "Registering server..."
+              kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                -- bash -c \
+                '/opt/open-xchange/sbin/registerserver \
+                 -A "${MASTER_ADMIN_USER}" -P "${MASTER_ADMIN_PW}" \
+                 -n oxserver' \
+              || echo "  registerserver: already registered or failed (continuing)"
+
+              # ── 8. Register database ─────────────────────────────────────────
+              echo "Registering database..."
+              kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                -- bash -c \
+                '/opt/open-xchange/sbin/registerdatabase \
+                 -A "${MASTER_ADMIN_USER}" -P "${MASTER_ADMIN_PW}" \
+                 --name "PRIMARYDB" \
+                 --hostname "${MYSQL_HOST}" \
+                 --dbuser "${MYSQL_USER}" \
+                 --dbpasswd "${MYSQL_PASSWORD}" \
+                 --master true' \
+              || echo "  registerdatabase: already registered or failed (continuing)"
+
+              # ── 9. Restart OX StatefulSet so it picks up the initialised DB ──
+              echo "Restarting OX StatefulSet..."
+              kubectl -n "${NAMESPACE}" rollout restart statefulset \
+                --selector="${SELECTOR}" \
+              || echo "  rollout restart: no matching StatefulSets (continuing)"
+
+              echo "OX configdb initialisation complete."

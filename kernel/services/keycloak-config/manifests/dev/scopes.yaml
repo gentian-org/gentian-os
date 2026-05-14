@@ -172,3 +172,176 @@ spec:
       - organization
   providerConfigRef:
     name: keycloak
+---
+# =============================================================================
+# opendesk-nextcloud-scope
+# =============================================================================
+# Realm-level client scope providing the OIDC claims required by Nextcloud's
+# user_oidc app.  Matches the opendesk reference implementation at
+# opendesk/helmfile/apps/nubus/values-opendesk-keycloak-bootstrap.yaml.gotmpl
+# (section opendesk-nextcloud-scope, lines ~263-311).
+#
+# The scope is assigned as a default scope on opendesk-nextcloud so the
+# opendesk_useruuid claim (Nextcloud mappingUid) is always present in tokens.
+# =============================================================================
+
+# ── opendesk-nextcloud-scope ──────────────────────────────────────────────────
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: opendesk-nextcloud-scope
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    name: opendesk-nextcloud-scope
+    description: "Scope for the claims required by openDesk's Nextcloud instance."
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — opendesk_useruuid ──────────────────────────────────────
+# Maps the LDAP entryUUID attribute to the opendesk_useruuid claim.
+# Nextcloud user_oidc uses this as mappingUid to identify users.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-opendesk-useruuid
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — opendesk_username ──────────────────────────────────────
+# Maps the LDAP uid attribute to the opendesk_username claim.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-opendesk-username
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — email ───────────────────────────────────────────────────
+# Maps the LDAP email attribute to the email claim.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-email
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: email
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: email
+      claim.name: email
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      introspection.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — context ─────────────────────────────────────────────────
+# Maps the LDAP oxContextIDNum attribute to the context claim.
+# Used by OX App Suite and the ox-connector to identify the user's OX context.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-context
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: context
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: oxContextIDNum
+      claim.name: context
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-nextcloud — default scopes ──────────────────────────────────────
+# Authoritatively sets the default scopes for opendesk-nextcloud.
+# Includes opendesk-nextcloud-scope so that opendesk_useruuid is always
+# present in access/ID tokens (required for Nextcloud mappingUid lookup).
+#
+# Uses REPLACE semantics: lists ALL scopes that should be default.
+# keycloak_openid_client_default_scopes does not support TF import.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  name: nextcloud-default-scopes
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: opendesk
+    clientIdRef:
+      name: opendesk-nextcloud
+    defaultScopes:
+      - profile
+      - email
+      - roles
+      - web-origins
+      - acr
+      - basic
+      - opendesk-nextcloud-scope
+  providerConfigRef:
+    name: keycloak

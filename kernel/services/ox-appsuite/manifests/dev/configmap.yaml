@@ -226,6 +226,11 @@ data:
       identifier: "ox-filestore-s3"
       size: 10240               # MB (10 * 1024); chart expects MB not a size string
 
+    # Override default selectors which assume instance=open-xchange; our release name is ox-appsuite-dev
+    coreMiddleware:
+      selector: "app.kubernetes.io/instance=ox-appsuite-dev,app.kubernetes.io/name=core-mw"
+      adminSelector: "roles.middleware.open-xchange.com/admin=true"
+
 # ── ox-connector: base values ────────────────────────────────────────────────
 ---
 apiVersion: v1
