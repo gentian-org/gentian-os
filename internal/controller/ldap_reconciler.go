@@ -651,13 +651,16 @@ else
   exit 1
 fi
 
-# Ensure the admin user does not require a forced password change on next login.
+# Ensure the admin user is enabled and does not require a forced password change.
+# "disabled":"0" explicitly clears shadowExpire (which UDM may briefly set to 1
+# during user creation), preventing Keycloak's univention-ldap-mapper from
+# importing the account as disabled on first login.
 curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
-	-d "{\"properties\":{\"pwdChangeNextLogin\":false,\"opendeskFileshareAdmin\":true,\"opendeskProjectmanagementAdmin\":true,\"opendeskKnowledgemanagementAdmin\":true,\"opendeskLivecollaborationAdmin\":true}}"
-echo "pwdChangeNextLogin cleared for ${ADMIN_USERNAME}"
+	-d "{\"properties\":{\"disabled\":\"0\",\"pwdChangeNextLogin\":false,\"opendeskFileshareAdmin\":true,\"opendeskProjectmanagementAdmin\":true,\"opendeskKnowledgemanagementAdmin\":true,\"opendeskLivecollaborationAdmin\":true}}"
+echo "user ${ADMIN_USERNAME} enabled and pwdChangeNextLogin cleared"
 
 # Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
 ADMINS_BODY=$(curl -s --max-time 30 ${CREDS} \

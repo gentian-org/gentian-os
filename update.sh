@@ -61,6 +61,7 @@ OP_SECRETS=0
 OP_RECONCILE=0
 OP_NUBUS_RECOVER=0
 OP_LDAP_ACL=0
+OP_KEYCLOAK_SYNC=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -86,6 +87,12 @@ Options:
                            done marker is absent and register-consumers is stuck.
   --ldap-acl               Update the LDAP ACL configmap from source and restart
                            the LDAP primary pod to apply the latest ACL patches.
+                           Also triggers a Keycloak LDAP full sync so users are
+                           re-imported with the correct enabled state.
+  --keycloak-sync          Trigger a full Keycloak LDAP sync in the opendesk realm
+                           to re-import all users with up-to-date LDAP attributes.
+                           Run this after provisioning new tenants so their admin
+                           accounts are immediately visible in the portal.
   --all                    Run all update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -101,6 +108,7 @@ while [[ $# -gt 0 ]]; do
         --force)               FORCE_RECONCILE=1 ;;
         --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
         --ldap-acl)            OP_LDAP_ACL=1 ;;
+        --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
         --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
@@ -110,7 +118,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
@@ -563,6 +571,100 @@ op_reconcile_releases() {
 }
 
 # =============================================================================
+# _trigger_keycloak_ldap_sync — trigger a full LDAP sync in Keycloak's
+#                               opendesk realm so all users (including newly
+#                               provisioned tenant admins) are re-imported with
+#                               the correct enabled state.
+#
+# Background: Keycloak's opendesk realm uses LDAP federation with
+# importEnabled=true but no automatic sync period (fullSyncPeriod=-1).  When
+# an LDAP user is first imported on login, a brief race during UDM user
+# creation can set shadowExpire=1, causing the univention-ldap-mapper to mark
+# the account as disabled (isAccountDisabled() returns true only when
+# shadowExpire==1).  A fresh full sync re-reads LDAP with the correct
+# (non-expired) attributes and updates the local Keycloak user record.
+# =============================================================================
+_trigger_keycloak_ldap_sync() {
+    local release_name="nubus-dev"
+    local ns="${KERNEL_NAMESPACE}"
+    local kc_realm="opendesk"
+
+    info "Triggering Keycloak LDAP full sync for realm '${kc_realm}'..."
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would trigger Keycloak LDAP full sync"
+        return 0
+    fi
+
+    # Get Keycloak pod IP (headless service — use pod IP directly).
+    local kc_pod_ip
+    kc_pod_ip=$(kubectl get pod "${release_name}-keycloak-0" -n "${ns}" \
+        -o jsonpath='{.status.podIP}' 2>/dev/null || true)
+    if [[ -z "${kc_pod_ip}" ]]; then
+        warn "Keycloak pod not found in ${ns} — skipping LDAP sync"
+        return 0
+    fi
+
+    # Get Keycloak admin password.
+    local kc_admin_pass
+    kc_admin_pass=$(kubectl get secret "${release_name}-keycloak-credentials" \
+        -n "${ns}" -o jsonpath='{.data.adminPassword}' 2>/dev/null | base64 -d || true)
+    if [[ -z "${kc_admin_pass}" ]]; then
+        warn "Keycloak admin credentials not found — skipping LDAP sync"
+        return 0
+    fi
+
+    # Obtain an admin CLI token.  Username is 'kcadmin' per Nubus chart defaults.
+    local kc_token
+    kc_token=$(curl -sf --max-time 30 \
+        "http://${kc_pod_ip}:8080/realms/master/protocol/openid-connect/token" \
+        -d "grant_type=password&client_id=admin-cli&username=kcadmin&password=${kc_admin_pass}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
+    if [[ -z "${kc_token}" ]]; then
+        warn "Could not obtain Keycloak admin token — skipping LDAP sync"
+        return 0
+    fi
+
+    # Discover the LDAP federation provider ID in the opendesk realm.
+    local provider_id
+    provider_id=$(curl -sf --max-time 30 \
+        -H "Authorization: Bearer ${kc_token}" \
+        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components?type=org.keycloak.storage.UserStorageProvider" \
+        | python3 -c "
+import sys, json
+for p in json.load(sys.stdin):
+    if p.get('providerId') == 'ldap':
+        print(p['id'])
+        break
+" 2>/dev/null || true)
+    if [[ -z "${provider_id}" ]]; then
+        warn "LDAP provider not found in Keycloak '${kc_realm}' realm — skipping sync"
+        return 0
+    fi
+
+    # Trigger a full user sync (re-imports all LDAP users with fresh attributes).
+    local sync_result
+    sync_result=$(curl -sf --max-time 120 \
+        -X POST \
+        -H "Authorization: Bearer ${kc_token}" \
+        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/user-storage/${provider_id}/sync?action=triggerFullSync" \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status', d))" 2>/dev/null || true)
+    if [[ -n "${sync_result}" ]]; then
+        success "Keycloak LDAP sync complete: ${sync_result}"
+    else
+        warn "Keycloak LDAP sync request sent but no result returned — check Keycloak logs"
+    fi
+}
+
+# =============================================================================
+# op_keycloak_sync — standalone wrapper around _trigger_keycloak_ldap_sync
+# =============================================================================
+op_keycloak_sync() {
+    banner "Keycloak LDAP sync (realm: opendesk)"
+    _trigger_keycloak_ldap_sync
+}
+
+# =============================================================================
 # op_ldap_acl_upgrade — refresh the LDAP ACL configmap and restart the LDAP
 #                        primary pod so the latest ACL patches are applied.
 #
@@ -577,6 +679,8 @@ op_reconcile_releases() {
 #   1. Re-applies the ConfigMap from the source file (idempotent).
 #   2. Restarts the LDAP primary StatefulSet pod.
 #   3. Waits for the pod to become Ready again.
+#   4. Triggers a Keycloak LDAP full sync so any users imported during the
+#      previous (potentially broken) LDAP ACL state are re-evaluated.
 # =============================================================================
 op_ldap_acl_upgrade() {
     local release_name="nubus-dev"
@@ -604,6 +708,8 @@ op_ldap_acl_upgrade() {
     fi
 
     success "LDAP ACL upgrade complete."
+
+    _trigger_keycloak_ldap_sync
 }
 
 # =============================================================================
@@ -744,11 +850,12 @@ echo ""
 
 _init
 
-[[ "${OP_MAIL}"          == "1" ]] && op_mail
-[[ "${OP_SECRETS}"       == "1" ]] && op_secrets
-[[ "${OP_RECONCILE}"     == "1" ]] && op_reconcile_releases
-[[ "${OP_LDAP_ACL}"      == "1" ]] && op_ldap_acl_upgrade
-[[ "${OP_NUBUS_RECOVER}" == "1" ]] && op_nubus_recover
+[[ "${OP_MAIL}"            == "1" ]] && op_mail
+[[ "${OP_SECRETS}"         == "1" ]] && op_secrets
+[[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
+[[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
+[[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
+[[ "${OP_KEYCLOAK_SYNC}"   == "1" ]] && op_keycloak_sync
 
 echo ""
 success "update.sh completed."
