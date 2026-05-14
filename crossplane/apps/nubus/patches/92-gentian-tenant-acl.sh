@@ -111,6 +111,9 @@ patch9_sentinel = f'# Gentian patch 9a: restrict read on tenant OU entries to sa
 # Old deployments have patch 9 but are missing this line, so the script must
 # fall through and apply the in-place upgrade (elif branch below).
 patch9_keycloak_sentinel = f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break'
+# Sentinel for the nextcloud read grant added in patch 9 (upgrade detection).
+# Deployments may have keycloak but not nextcloud; the elif branch below handles that.
+patch9_nextcloud_sentinel = f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break'
 # Sentinel for patch 10: mail/domain visibility restriction.
 patch10_sentinel = f'# Gentian patch 10: restrict mail/domain visibility to owning tenant'
 # Sentinel for the Tenant Admins read grant in patch 10 (upgrade detection).
@@ -122,7 +125,7 @@ patch10_tenant_admins_sentinel = f'   by set="user & [cn=Tenant Admins,cn=groups
 # use 'by dn.regex="^.+,ou=$1,..." write' so only same-tenant users get write.
 patch2_new_sentinel = f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
 
-if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
+if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch9_nextcloud_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -358,6 +361,7 @@ if patch9_sentinel not in content:
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
         f'# Gentian patch 9b: restrict read on entries inside tenant OUs to same-tenant users\n'
@@ -370,6 +374,7 @@ if patch9_sentinel not in content:
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by self read break\n'
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
     )
@@ -416,8 +421,49 @@ elif patch9_keycloak_sentinel not in content:
         content = content.replace(old_9a_tail, new_9a_tail, 1)
         content = content.replace(old_9b_tail, new_9b_tail, 1)
         print("Upgraded tenant OU read restriction to grant ldapsearch_keycloak access (patch 9 keycloak).")
+elif patch9_nextcloud_sentinel not in content:
+    # Upgrade path: patch 9 already has ldapsearch_keycloak but is missing the
+    # ldapsearch_nextcloud grant. ldapsearch_nextcloud is the bind DN used by
+    # Nextcloud's LDAP app and must be able to read users in every tenant OU
+    # regardless of the same-tenant restriction (it lives in cn=users, not in
+    # any tenant OU).
+    old_9a_nextcloud = (
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    new_9a_nextcloud = (
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    old_9b_nextcloud = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 10'
+    )
+    new_9b_nextcloud = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 10'
+    )
+    if old_9a_nextcloud not in content or old_9b_nextcloud not in content:
+        print("WARNING: could not locate expected patch 9 context for nextcloud upgrade; skipping.",
+              file=sys.stderr)
+    else:
+        content = content.replace(old_9a_nextcloud, new_9a_nextcloud, 1)
+        content = content.replace(old_9b_nextcloud, new_9b_nextcloud, 1)
+        print("Upgraded tenant OU read restriction to grant ldapsearch_nextcloud access (patch 9 nextcloud).")
 else:
-    print("Tenant OU read restriction (patch 9) with ldapsearch_keycloak already present.")
+    print("Tenant OU read restriction (patch 9) with ldapsearch_nextcloud already present.")
 
 # ── Patch 10: mail/domain visibility restriction ──────────────────────────────
 # The mail/domain objects live at cn=<domain>,cn=domain,cn=mail,<ldapbase> —
@@ -448,6 +494,7 @@ if patch10_sentinel not in content:
         f'   by dn.children="cn=memberserver,cn=computers,{ldap_base}" read break\n'
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
         f'   by set="user & [cn=Tenant Admins,cn=groups,{ldap_base}]/uniqueMember*" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
