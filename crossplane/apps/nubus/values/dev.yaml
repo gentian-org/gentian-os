@@ -144,6 +144,20 @@ nubusStackDataUms:
         lastname: LDAP-Search-User
       - username: ldapsearch_xwiki
         lastname: LDAP-Search-User
+    # Enable portal tiles for apps deployed in dev. The _base.yaml defaults these to false
+    # because not all envs run them; dev enables collabora and element explicitly.
+    apps:
+      collabora:
+        enabled: true
+      element:
+        enabled: true
+    # In dev, all domain users should see groupware (OX) and live-collaboration (Element) tiles.
+    # The base values use managed-by-attribute-* groups which require per-user LDAP attributes;
+    # overriding to Domain Users makes tiles visible to every provisioned user.
+    portaltileGroupGroupware:
+      - cn=Domain Users,cn=groups,dc=swp-ldap,dc=internal
+    portaltileGroupLiveCollaboration:
+      - cn=Domain Users,cn=groups,dc=swp-ldap,dc=internal
 
 nubusUdmListener:
   nats:
