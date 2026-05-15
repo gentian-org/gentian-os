@@ -143,6 +143,12 @@ data:
           # ── OX Connector requirements ─────────────────────────────────────
           com.openexchange.user.enforceUniqueDisplayName: "false"
           com.openexchange.folderstorage.database.preferDisplayName: "false"
+          # ── Secret source (OIDC-only: no password available) ──────────────
+          # opendesk reference: "\"<user-id> + '@' + <context-id> + '/' + <random>\""
+          # This produces a stable per-user secret even when OIDC users have no password.
+          # Without this OX falls back to <password> → empty string → SCR-0003 error
+          # → "Einige wichtige Teile der Konfiguration konnten nicht geladen werden. (namespace)"
+          com.openexchange.secret.secretSource: "\"<user-id> + '@' + <context-id> + '/' + <random>\""
           # ── Capabilities ──────────────────────────────────────────────────
           com.openexchange.capability.public-sector: "true"
           com.openexchange.capability.public-sector-navigation: "true"
