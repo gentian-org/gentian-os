@@ -133,6 +133,7 @@ if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" 
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
+    OP_CROSSPLANE=1
     OP_APPPROFILES=1
 fi
 
@@ -805,6 +806,12 @@ op_appprofiles_bootstrap() {
         "${tmpl}" | kubectl apply -f -
 
     success "gentian-appprofiles Application applied."
+
+    # Trigger an immediate ArgoCD refresh so AppProfile CRs with the updated
+    # labels are synced without waiting for the automated poll interval (~3 min).
+    kubectl annotate application gentian-appprofiles -n argocd \
+        "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
+
     info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
 }
 
