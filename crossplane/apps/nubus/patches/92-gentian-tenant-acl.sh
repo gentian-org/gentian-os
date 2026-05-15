@@ -114,6 +114,10 @@ patch9_keycloak_sentinel = f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_ba
 # Sentinel for the nextcloud read grant added in patch 9 (upgrade detection).
 # Deployments may have keycloak but not nextcloud; the elif branch below handles that.
 patch9_nextcloud_sentinel = f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break'
+# Sentinel for the dovecot read grant in patch 9 (upgrade detection).
+# ldapsearch_dovecot is the bind DN used by Dovecot's LDAP passdb/userdb and
+# must be able to read users in every tenant OU for IMAP authentication to work.
+patch9_dovecot_sentinel = f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break'
 # Sentinel for patch 10: mail/domain visibility restriction.
 patch10_sentinel = f'# Gentian patch 10: restrict mail/domain visibility to owning tenant'
 # Sentinel for the Tenant Admins read grant in patch 10 (upgrade detection).
@@ -125,7 +129,7 @@ patch10_tenant_admins_sentinel = f'   by set="user & [cn=Tenant Admins,cn=groups
 # use 'by dn.regex="^.+,ou=$1,..." write' so only same-tenant users get write.
 patch2_new_sentinel = f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
 
-if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch9_nextcloud_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
+if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch9_nextcloud_sentinel in content and patch9_dovecot_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -362,6 +366,7 @@ if patch9_sentinel not in content:
         f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
         f'# Gentian patch 9b: restrict read on entries inside tenant OUs to same-tenant users\n'
@@ -375,6 +380,7 @@ if patch9_sentinel not in content:
         f'   by self read break\n'
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
     )
@@ -462,8 +468,49 @@ elif patch9_nextcloud_sentinel not in content:
         content = content.replace(old_9a_nextcloud, new_9a_nextcloud, 1)
         content = content.replace(old_9b_nextcloud, new_9b_nextcloud, 1)
         print("Upgraded tenant OU read restriction to grant ldapsearch_nextcloud access (patch 9 nextcloud).")
+elif patch9_dovecot_sentinel not in content:
+    # Upgrade path: patch 9 already has ldapsearch_keycloak and ldapsearch_nextcloud
+    # but is missing ldapsearch_dovecot. Dovecot's LDAP passdb/userdb uses this
+    # bind DN to look up users in tenant OUs for IMAP authentication.
+    old_9a_dovecot = (
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    new_9a_dovecot = (
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    old_9b_dovecot = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 10'
+    )
+    new_9b_dovecot = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 10'
+    )
+    if old_9a_dovecot not in content or old_9b_dovecot not in content:
+        print("WARNING: could not locate expected patch 9 context for dovecot upgrade; skipping.",
+              file=sys.stderr)
+    else:
+        content = content.replace(old_9a_dovecot, new_9a_dovecot, 1)
+        content = content.replace(old_9b_dovecot, new_9b_dovecot, 1)
+        print("Upgraded tenant OU read restriction to grant ldapsearch_dovecot access (patch 9 dovecot).")
 else:
-    print("Tenant OU read restriction (patch 9) with ldapsearch_nextcloud already present.")
+    print("Tenant OU read restriction (patch 9) with ldapsearch_dovecot already present.")
 
 # ── Patch 10: mail/domain visibility restriction ──────────────────────────────
 # The mail/domain objects live at cn=<domain>,cn=domain,cn=mail,<ldapbase> —

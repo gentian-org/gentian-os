@@ -619,6 +619,32 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
+# Phase 2 — Step 15c: Bootstrap the gentian-appprofiles ArgoCD Application
+# This ArgoCD Application syncs AppProfile CRs from the gentian-apps repository
+# into the cluster. AppProfile CRs must exist before any App/XApp composite
+# can be created by tenants (the app-default composition fetches the AppProfile
+# via function-extra-resources).
+#
+# GENTIAN_APPS_REPO and GENTIAN_APPS_BRANCH are set by install-lib.sh
+# (defaulting to https://github.com/gentian-org/gentian-apps @ main).
+# =============================================================================
+bootstrap_appprofiles() {
+    banner "Step 15c — Bootstrap gentian-appprofiles ArgoCD Application"
+
+    local repo="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
+    local branch="${GENTIAN_APPS_BRANCH:-main}"
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
+
+    info "Rendering appprofiles-application.yaml (repo=${repo}, branch=${branch})..."
+    sed -e "s|%REPO_URL%|${repo}|g" \
+        -e "s|%BRANCH%|${branch}|g" \
+        "${tmpl}" | kubectl apply -f -
+
+    success "gentian-appprofiles Application applied."
+    info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
+}
+
+# =============================================================================
 # Phase 2 — Step 13: Install provider-helm
 # provider-helm deploys Helm charts into the local cluster. It replaces the
 # legacy Pattern B approach for secrets-hostile charts.
@@ -1158,6 +1184,7 @@ main_cp() {
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
     deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
+    bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
 
     # Clear the persisted run-start epoch so the next install (after a future
     # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.

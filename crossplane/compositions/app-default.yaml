@@ -26,9 +26,14 @@ spec:
             - kind: AppProfile
               into: appProfile
               apiVersion: gentianos.io/v1alpha1
-              type: Reference
-              ref:
-                name: "{{ .observed.composite.resource.spec.profileRef.name }}"
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 1
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -63,8 +68,8 @@ spec:
             {{- if eq (len $profiles) 0 }}
               {{- fail (printf "AppProfile %q not found in cluster" $spec.profileRef.name) }}
             {{- end }}
-            {{- $profile   := index (index $profiles 0) "resource" }}
-            {{- $pSpec     := $profile.spec }}
+            {{- $profile   := index $profiles 0 }}
+            {{- $pSpec     := dig "spec" dict $profile }}
             {{- $vm        := default dict $pSpec.valueMapping }}
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
@@ -349,9 +354,9 @@ spec:
             {{- /* overrides. Template variables ${TENANT_DOMAIN} and              */}}
             {{- /* ${TENANT_NAMESPACE} are substituted before marshalling.         */}}
             {{- $extraVals := dict }}
-            {{- if and $pSpec.extraValues $pSpec.extraValues.raw }}
-            {{- $raw := $pSpec.extraValues.raw | toString }}
+            {{- if $pSpec.extraValues }}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+            {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
             {{- $extraVals = $raw | fromJson }}

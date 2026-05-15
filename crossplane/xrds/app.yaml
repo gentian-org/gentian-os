@@ -75,3 +75,24 @@ spec:
                 secretSynced:
                   type: boolean
                   description: True when the ExternalSecret has synced all sensitive values.
+---
+# Grant the Crossplane SA read access to AppProfiles so that the
+# function-extra-resources composition step can fetch the AppProfile referenced
+# by an XApp's spec.profileRef.name.  The crossplane ClusterRole is an
+# aggregated role; adding the aggregate-to-crossplane label here injects the
+# rule without patching the auto-generated role directly.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:appprofiles.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - appprofiles
+    verbs:
+      - get
+      - list
+      - watch
