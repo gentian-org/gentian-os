@@ -464,7 +464,15 @@ nubusStackDataUms:
       releaseVersion: 'Release: dev-ce'
       # functional.yaml: admin.portal.deploymentTimestamp.enabled (false = GitOps mode)
       deployDate: false
-    udmCustomInitializer: []
+    # Fix: delete opendesk_standard access profile before step 32 runs create_or_modify.
+    # On upgrade (object already exists), create_or_modify falls back to PUT.
+    # UDM TrueFalseUp syntax rejects JSON `true` (from YAML bool True) with "invalid value: ".
+    # Deleting the profile first guarantees step 32 uses POST (create), which succeeds.
+    # Reference: opendesk-nubus:1.15.2 /plugins/udm-data-loader/32-ox-connector-opendesk_on.yaml
+    udmCustomInitializer:
+      - action: delete_if_exists
+        module: oxmail/accessprofile
+        position: cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal
     udmCustomFinalizer: []
 
 # Portal Server — endpoint in {env}/values.yaml (env-specific MinIO DNS)

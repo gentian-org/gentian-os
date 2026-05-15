@@ -60,6 +60,7 @@ OP_MAIL=0
 OP_SECRETS=0
 OP_RECONCILE=0
 OP_NUBUS_RECOVER=0
+OP_NUBUS_VALUES=0
 OP_LDAP_ACL=0
 OP_KEYCLOAK_SYNC=0
 OP_CROSSPLANE=0
@@ -87,6 +88,11 @@ Options:
   --nubus-recover          Recover a stuck nubus installation: reapply the
                            stack-data-ums job in the correct namespace when the
                            done marker is absent and register-consumers is stuck.
+  --nubus-values           Refresh the nubus-base-values and nubus-dev-values
+                           ConfigMaps from the repository source files and
+                           trigger Crossplane reconciliation of the nubus Release
+                           so the new values are applied. Run after committing
+                           changes to crossplane/apps/nubus/values/.
   --ldap-acl               Update the LDAP ACL configmap from source and restart
                            the LDAP primary pod to apply the latest ACL patches.
                            Also triggers a Keycloak LDAP full sync so users are
@@ -115,11 +121,12 @@ while [[ $# -gt 0 ]]; do
         --reconcile-releases)  OP_RECONCILE=1 ;;
         --force)               FORCE_RECONCILE=1 ;;
         --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
+        --nubus-values)        OP_NUBUS_VALUES=1 ;;
         --ldap-acl)            OP_LDAP_ACL=1 ;;
         --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_NUBUS_VALUES=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -128,13 +135,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_NUBUS_VALUES}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
     OP_CROSSPLANE=1
     OP_APPPROFILES=1
+    OP_NUBUS_VALUES=1
 fi
 
 # =============================================================================
@@ -816,6 +824,56 @@ op_appprofiles_bootstrap() {
 }
 
 # =============================================================================
+# op_nubus_values — refresh nubus values ConfigMaps and trigger reconciliation
+#
+# The nubus Helm Release reads its non-sensitive values from two ConfigMaps:
+#   nubus-base-values  (_base.yaml  — shared across all environments)
+#   nubus-dev-values   (dev.yaml    — dev-specific overrides)
+#
+# These are created by install.sh's deploy_nubus step but are not
+# automatically refreshed when the source YAML files change.  This function
+# re-applies them idempotently (--dry-run=client -o yaml | kubectl apply) and
+# then annotates the Release CR so provider-helm picks up the new values.
+# =============================================================================
+op_nubus_values() {
+    local ns="${KERNEL_NAMESPACE}"
+    local release_name="nubus-dev"
+
+    banner "Nubus: refresh values ConfigMaps (ns=${ns})"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] Would: kubectl create configmap nubus-base-values --from-file=values.yaml=crossplane/apps/nubus/values/_base.yaml --dry-run=client -o yaml | kubectl apply -f -"
+        info "[dry-run] Would: kubectl create configmap nubus-dev-values  --from-file=values.yaml=crossplane/apps/nubus/values/dev.yaml     --dry-run=client -o yaml | kubectl apply -f -"
+        info "[dry-run] Would: annotate Release ${release_name} to trigger reconciliation"
+        return 0
+    fi
+
+    info "Refreshing nubus-base-values ConfigMap..."
+    kubectl create configmap nubus-base-values \
+        -n "${ns}" \
+        --from-file=values.yaml="${SCRIPT_DIR}/crossplane/apps/nubus/values/_base.yaml" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    info "Refreshing nubus-dev-values ConfigMap..."
+    kubectl create configmap nubus-dev-values \
+        -n "${ns}" \
+        --from-file=values.yaml="${SCRIPT_DIR}/crossplane/apps/nubus/values/dev.yaml" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # provider-helm only re-reads ConfigMaps on the next reconciliation cycle.
+    # Bumping an annotation on the Release CR forces an immediate reconcile.
+    info "Triggering provider-helm reconciliation for Release ${release_name}..."
+    kubectl annotate release "${release_name}" \
+        -n "${ns}" \
+        "gentian-os/values-refresh=$(date -u +%Y%m%dT%H%M%SZ)" \
+        --overwrite >/dev/null
+
+    success "Nubus values ConfigMaps refreshed and reconciliation triggered."
+    info "  Monitor: kubectl get release ${release_name} -n ${ns} -w"
+    info "  After nubus reconciles, portal tiles should appear within a few minutes."
+}
+
+# =============================================================================
 # op_nubus_recover — reapply the stack-data-ums job in the correct namespace
 #
 # Background: install.sh's _wait_and_fix_stack_data_ums() calls `helm get
@@ -957,6 +1015,7 @@ _init
 [[ "${OP_SECRETS}"         == "1" ]] && op_secrets
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
+[[ "${OP_NUBUS_VALUES}"    == "1" ]] && op_nubus_values
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
