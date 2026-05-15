@@ -205,6 +205,63 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── Emit OpenBao KV seeders for each app-internal secret ──────── */}}
+            {{- /* For each appSecret we emit two composed resources:               */}}
+            {{- /*   1. A k8s Secret in crossplane-system holding a deterministic   */}}
+            {{- /*      seed value (SHA-256 of the XApp name + secret name).        */}}
+            {{- /*   2. A provider-vault SecretV2 (Observe+Create, Orphan delete)   */}}
+            {{- /*      that creates the OpenBao KV path on first reconcile and     */}}
+            {{- /*      never overwrites an existing version.                        */}}
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $safeName := $s.name | replace "_" "-" }}
+            {{- $seedName := printf "%s-%s-seed" $xrName $safeName }}
+            {{- $kvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
+            {{- $seedVal  := sha256sum (printf "%s:%s:%s" $xrName $app $s.name) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-seed-secret
+              name: {{ $seedName }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $seedName }}
+                    namespace: crossplane-system
+                  type: Opaque
+                  stringData:
+                    data.json: '{"value":"{{ $seedVal }}"}'
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-kv
+              name: {{ $seedName }}-kv
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: secret
+                name: {{ $kvPath }}
+                dataJsonSecretRef:
+                  name: {{ $seedName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Build Release set[] entries ────────────────────────────────── */}}
             {{- /* Each set entry picks a single key from the ExternalSecret-managed  */}}
             {{- /* Secret and passes it to Helm as a --set-string override. Helm      */}}

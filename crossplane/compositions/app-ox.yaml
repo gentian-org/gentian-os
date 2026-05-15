@@ -24,9 +24,14 @@ spec:
             - kind: AppProfile
               into: appProfile
               apiVersion: gentianos.io/v1alpha1
-              type: Reference
-              ref:
-                name: "{{ .observed.composite.resource.spec.profileRef.name }}"
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 1
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # OX App Suite variant: emits the standard ExternalSecret + Release from
@@ -54,8 +59,8 @@ spec:
             {{- if eq (len $profiles) 0 }}
               {{- fail (printf "AppProfile %q not found in cluster" $spec.profileRef.name) }}
             {{- end }}
-            {{- $profile   := index (index $profiles 0) "resource" }}
-            {{- $pSpec     := $profile.spec }}
+            {{- $profile   := index $profiles 0 }}
+            {{- $pSpec     := dig "spec" dict $profile }}
             {{- $vm        := default dict $pSpec.valueMapping }}
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
@@ -156,6 +161,57 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── Emit OpenBao KV seeders for each app-internal secret ──────── */}}
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $safeName := $s.name | replace "_" "-" }}
+            {{- $seedName := printf "%s-%s-seed" $xrName $safeName }}
+            {{- $kvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
+            {{- $seedVal  := sha256sum (printf "%s:%s:%s" $xrName $app $s.name) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-seed-secret
+              name: {{ $seedName }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $seedName }}
+                    namespace: crossplane-system
+                  type: Opaque
+                  stringData:
+                    data.json: '{"value":"{{ $seedVal }}"}'  
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-kv
+              name: {{ $seedName }}-kv
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: secret
+                name: {{ $kvPath }}
+                dataJsonSecretRef:
+                  name: {{ $seedName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Build Release set[] entries ──────────────────────────────── */}}
             {{- $secretName := printf "%s-sensitive-values" $app }}
             {{- $relSet := list }}
@@ -248,9 +304,9 @@ spec:
             {{- end }}
 
             {{- $extraVals := dict }}
-            {{- if and $pSpec.extraValues $pSpec.extraValues.raw }}
-            {{- $raw := $pSpec.extraValues.raw | toString }}
+            {{- if $pSpec.extraValues }}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+            {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
             {{- $extraVals = $raw | fromJson }}

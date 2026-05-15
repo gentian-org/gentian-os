@@ -62,6 +62,8 @@ OP_RECONCILE=0
 OP_NUBUS_RECOVER=0
 OP_LDAP_ACL=0
 OP_KEYCLOAK_SYNC=0
+OP_CROSSPLANE=0
+OP_APPPROFILES=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -93,6 +95,12 @@ Options:
                            to re-import all users with up-to-date LDAP attributes.
                            Run this after provisioning new tenants so their admin
                            accounts are immediately visible in the portal.
+  --crossplane             Re-apply Crossplane XRDs and Compositions from the
+                           repository. Run after committing composition changes
+                           so the cluster picks them up without a full reinstall.
+  --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
+                           exists so AppProfile CRs are kept in sync from the
+                           gentian-apps repository.
   --all                    Run all update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -109,7 +117,9 @@ while [[ $# -gt 0 ]]; do
         --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
         --ldap-acl)            OP_LDAP_ACL=1 ;;
         --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1 ;;
+        --crossplane)          OP_CROSSPLANE=1 ;;
+        --appprofiles)         OP_APPPROFILES=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -118,11 +128,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
+    OP_APPPROFILES=1
 fi
 
 # =============================================================================
@@ -709,7 +720,92 @@ op_ldap_acl_upgrade() {
 
     success "LDAP ACL upgrade complete."
 
+    # ── Restart Dovecot so it reconnects to LDAP with the new ACL rules ──────
+    # Dovecot caches LDAP connections. After the LDAP pod restarts with new
+    # ACL patches, Dovecot must restart to re-establish connections and pick
+    # up the updated ACL state (e.g. newly allowed ldapsearch_dovecot binds).
+    local dovecot_dep="dovecot-dev"
+    if kubectl get deployment/"${dovecot_dep}" -n "${ns}" >/dev/null 2>&1; then
+        info "Restarting Dovecot (${dovecot_dep}) to reconnect to LDAP..."
+        kubectl rollout restart deployment/"${dovecot_dep}" -n "${ns}"
+        if ! kubectl rollout status deployment/"${dovecot_dep}" -n "${ns}" --timeout=120s; then
+            warn "Dovecot did not become Ready within 120s — check: kubectl get pods -n ${ns}"
+        else
+            success "Dovecot restarted."
+        fi
+    else
+        info "Dovecot deployment (${dovecot_dep}) not found in ${ns} — skipping restart."
+    fi
+
     _trigger_keycloak_ldap_sync
+}
+
+# =============================================================================
+# op_crossplane_update — re-apply Crossplane XRDs and Compositions from repo
+#
+# This brings the cluster in sync with repository changes to compositions or
+# XRDs without requiring a full reinstall.  Safe to run repeatedly (idempotent
+# kubectl apply).
+# =============================================================================
+op_crossplane_update() {
+    banner "Crossplane XRD and Composition update"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would apply: crossplane/xrds/ and crossplane/compositions/"
+        return 0
+    fi
+
+    info "Applying XRDs..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
+
+    info "Applying Compositions..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
+
+    success "Crossplane XRDs and Compositions updated."
+}
+
+# =============================================================================
+# op_appprofiles_bootstrap — ensure the gentian-appprofiles ArgoCD Application
+#                            exists so AppProfile CRs are kept in sync from the
+#                            gentian-apps repository.
+#
+# AppProfile CRs carry a gentianos.io/profile-name label that the app-default
+# composition uses to look up profiles via function-extra-resources Selector.
+# Without this ArgoCD Application the profiles are not deployed (or are missing
+# the label) and all App/XApp composites fail with "AppProfile not found".
+#
+# This is idempotent: kubectl apply is a no-op if the Application already
+# exists with identical spec.
+# =============================================================================
+op_appprofiles_bootstrap() {
+    banner "gentian-appprofiles ArgoCD Application bootstrap"
+
+    local repo="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
+    local branch="${GENTIAN_APPS_BRANCH:-main}"
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
+
+    if [[ ! -f "${tmpl}" ]]; then
+        warn "Template not found: ${tmpl} — skipping appprofiles bootstrap."
+        return 0
+    fi
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would apply gentian-appprofiles Application (repo=${repo}, branch=${branch})"
+        return 0
+    fi
+
+    info "Applying gentian-appprofiles Application (repo=${repo}, branch=${branch})..."
+    sed -e "s|%REPO_URL%|${repo}|g" \
+        -e "s|%BRANCH%|${branch}|g" \
+        "${tmpl}" | kubectl apply -f -
+
+    success "gentian-appprofiles Application applied."
+    info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
 }
 
 # =============================================================================
@@ -852,6 +948,8 @@ _init
 
 [[ "${OP_MAIL}"            == "1" ]] && op_mail
 [[ "${OP_SECRETS}"         == "1" ]] && op_secrets
+[[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
+[[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
