@@ -94,7 +94,7 @@ spec:
                   path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
                     capabilities = ["list"]
                   }
-                  path "{{ $kvMount }}/data/gentian-os/tenants/*/apps/*/*" {
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/apps/*" {
                     capabilities = ["read"]
                   }
                   path "{{ $kvMount }}/metadata/gentian-os/tenants/*" {

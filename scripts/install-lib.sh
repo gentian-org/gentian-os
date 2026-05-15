@@ -2072,7 +2072,7 @@ bao_bootstrap() {
     bao policy write eso-read - <<'POLICY'
 path "secret/data/gentian-os/kernel/*"          { capabilities = ["read"] }
 path "secret/metadata/gentian-os/kernel/*"      { capabilities = ["list"] }
-path "secret/data/gentian-os/tenants/*/apps/*/*" { capabilities = ["read"] }
+path "secret/data/gentian-os/tenants/+/apps/*" { capabilities = ["read"] }
 path "secret/metadata/gentian-os/tenants/*"     { capabilities = ["list"] }
 POLICY
     success "eso-read policy written."

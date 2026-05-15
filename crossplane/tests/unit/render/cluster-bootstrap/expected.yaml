@@ -575,7 +575,7 @@ spec:
       path "secret/metadata/gentian-os/kernel/*" {
         capabilities = ["list"]
       }
-      path "secret/data/gentian-os/tenants/*/apps/*/*" {
+      path "secret/data/gentian-os/tenants/+/apps/*" {
         capabilities = ["read"]
       }
       path "secret/metadata/gentian-os/tenants/*" {
