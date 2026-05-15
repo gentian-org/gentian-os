@@ -87,10 +87,10 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "oidc-issuer"        "remoteRef" (dict "key" $oidcPath "property" "issuer")) }}
             {{- end }}
             {{- if $vm.oidc.clientIdKey }}
-            {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client_id")) }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client-id")) }}
             {{- end }}
             {{- if $vm.oidc.clientSecretKey }}
-            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $oidcPath "property" "client_secret")) }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $oidcPath "property" "client-secret")) }}
             {{- end }}
             {{- end }}
 
