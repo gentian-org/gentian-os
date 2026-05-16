@@ -354,7 +354,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 }
 
 // seedPerAppMailSecrets writes each app's SMTP/IMAP KV record into OpenBao so
-// the app-workspace Tofu module can inject the credentials as Helm values.
+// the app reconciler can inject the credentials as Helm values.
 // The SMTP password is *copied* from the per-tenant SMTP credentials Secret —
 // it is shared across all apps of a tenant since they authenticate to the
 // same Postfix submission endpoint with one user. IMAP gets only host/port

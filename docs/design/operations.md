@@ -1,6 +1,6 @@
 # Operations: Backup, DR, Observability, Image Updates
 
-**Companion to:** [architecture-crossplane.md](../architecture-crossplane.md)
+**Companion to:** [architecture.md](../architecture.md)
 
 ---
 
@@ -162,8 +162,7 @@ admins do not.
 
 ## 8. Safety Guards
 
-- **Stateful Argo Apps** (OpenBao, Crossplane, Tofu Controller during
-  migration) deploy with `prune: false` and `finalizers: []` —
+- **Stateful Argo Apps** (OpenBao, Crossplane) deploy with `prune: false` and `finalizers: []` —
   prevents Argo from ever deleting them if their manifests are
   temporarily missing from Git. Self-healing remains on for value
   drift.

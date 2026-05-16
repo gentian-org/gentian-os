@@ -27,7 +27,8 @@ limitations under the License.
 //	secret/data/gentian-os/tenants/{tenant}/apps/{app}/{category}
 //	secret/data/gentian-os/tenants/{tenant}/apps/{app}/internal/{name}
 //
-// expected by the app-workspace and service-specific Tofu modules.
+// consumed by the app reconciler (Pattern B Terraform CRs via set_sensitive
+// and Pattern A ExternalSecrets via ESO).
 //
 // The package intentionally exposes a narrow surface — one method per
 // kernel-requirement category — so every reconciler performs the same

@@ -230,8 +230,7 @@ else
 fi
 
 # ── Pattern B Release CRs (postgresql, mariadb, nextcloud × 3) ──────────────
-# These were migrated from Tofu (kernel/tofu/tenant/infra-workspaces) to
-# Crossplane provider-helm during P2B.  Delete in reverse install order so
+# Managed by Crossplane provider-helm (Pattern B). Delete in reverse install order so
 # notifypush stops before the AIO chart it depends on, etc.
 for release_name in \
     nextcloud-notifypush-dev \

@@ -6,7 +6,7 @@
 # To add an application:  add one entry to the app list.
 #
 # Kernel services classification:
-#   Layer 110  Nubus (Keycloak + UCS LDAP)        — Pattern B (Tofu); see 21-nubus.yaml
+#   Layer 110  Nubus (Keycloak + UCS LDAP)        — Pattern B (provider-helm); see 21-nubus.yaml
 #   Layer 130  Nextcloud (3 sub-charts)            — Pattern B now, moves here when
 #                                                    ZenDiS adds existingSecret support
 #              opendesk-nextcloud-management v4.7.2

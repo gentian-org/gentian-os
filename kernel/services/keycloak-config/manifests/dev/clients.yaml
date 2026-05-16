@@ -4,7 +4,7 @@
 # =============================================================================
 #
 # All four clients already exist in Keycloak (created by the keycloak-config-dev
-# Tofu workspace).  Each Client CR carries a crossplane.io/external-name
+# provider-keycloak workspace).  Each Client CR carries a crossplane.io/external-name
 # annotation with the Terraform import ID format used by keycloak_openid_client:
 #
 #   {realm_id}/{client_keycloak_uuid}
@@ -12,7 +12,7 @@
 # Upjet reads this annotation and imports the existing resource into its state
 # rather than creating a new one.
 #
-# Domain: desk.gentian.org (var.domain default from Tofu variables.tf)
+# Domain: desk.gentian.org (default configured in gentian-deployments)
 # Realm:  opendesk
 # =============================================================================
 

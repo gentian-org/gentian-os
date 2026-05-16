@@ -198,7 +198,7 @@ kv_put() {
 # with a different MASTER_PASSWORD cannot overwrite live credentials and create
 # drift between Vault and an already-deployed cluster.
 # To intentionally rotate: use 'bao kv patch' or 'bao kv put' directly, then
-# trigger Tofu reconciliation.
+# force-reconcile the affected ArgoCD Application or Terraform CR.
 kv_put_once() {
     local path="$1"
     local json_data="$2"
@@ -324,7 +324,7 @@ EOF
 #   bao kv patch secret/gentian-os/kernel/identity/nubus \
 #     portal_consumer_api_password=<derive_password output> \
 #     selfservice_consumer_api_password=<derive_password output>
-# Then trigger a Tofu reconciliation.
+# Then force-reconcile the affected Terraform CR.
 
 # --- Nextcloud ---
 NC_ADMIN_PW=$(derive_password "nextcloud" "admin_password")

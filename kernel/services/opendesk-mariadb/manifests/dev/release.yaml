@@ -1,8 +1,7 @@
 # =============================================================================
-# opendesk-mariadb — provider-helm Release CR (Pattern B migration)
+# opendesk-mariadb — provider-helm Release CR (Pattern B)
 #
-# Replaces the Tofu Controller helm_release.mariadb resource in
-# kernel/tofu/tenant/infra-workspaces/stubs.tf.
+# Managed by provider-helm (Pattern B).
 #
 # Values merge order (last wins):
 #   1. mariadb-base-values  ConfigMap  — non-secret defaults (_base.yaml)
@@ -18,7 +17,7 @@ kind: Release
 metadata:
   name: opendesk-mariadb-dev
   annotations:
-    # crossplane.io/external-name must match the Helm release name Tofu created
+    # crossplane.io/external-name must match the Helm release name
     # so provider-helm adopts the existing release rather than creating a new one.
     crossplane.io/external-name: opendesk-mariadb-dev
     argocd.argoproj.io/sync-wave: "9"

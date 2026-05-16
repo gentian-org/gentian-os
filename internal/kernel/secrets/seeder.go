@@ -142,7 +142,7 @@ func (s *Seeder) SeedDatabase(ctx context.Context, tenant, app string, conn Data
 
 // SeedMariaDB writes the MariaDB connection record under the same "database"
 // category — apps with kernelRequirements.database pick the engine and the
-// Tofu module reads by category name.
+// reconciler reads by category name.
 func (s *Seeder) SeedMariaDB(ctx context.Context, tenant, app string, conn DatabaseCreds) (DatabaseCreds, error) {
 	return s.SeedDatabase(ctx, tenant, app, conn)
 }

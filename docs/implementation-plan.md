@@ -8,7 +8,7 @@
 
 ## Strategy
 
-CRDs first, then orchestrator reconcilers one kernel function at a time, then tenant lifecycle, then apps. The `server/` repo is reference material — we cherry-pick proven patterns (HMAC-SHA256 derivation, Pattern A/B, Reloader, ApplicationSet patterns, Tofu modules) and rewrite what doesn't fit.
+CRDs first, then orchestrator reconcilers one kernel function at a time, then tenant lifecycle, then apps. The `server/` repo is reference material — we cherry-pick proven patterns (HMAC-SHA256 derivation, Pattern A/B, Reloader, ApplicationSet patterns) and rewrite what doesn't fit.
 
 ```
 CRD definitions → Thin orchestrator → Operator CRs / ExternalSecrets / ArgoCD Apps / IntegrationBindings
@@ -36,15 +36,15 @@ The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc
 | 11 | IntegrationBinding reconciler | ✅ Done | Auto-generates bindings when provider + consumer both in tenant app list. 4 envtest tests. 67 total |
 | 12 | OpenBao restructuring | ✅ Done | `gentian-os/kernel/` and `gentian-os/tenants/{name}/apps/{app}/` path hierarchy. 67 total |
 | 13 | Helm chart + observability | ✅ Done | `charts/gentian-os/` with CRDs, Deployment, RBAC, ServiceMonitor, Grafana dashboard. Prometheus metrics. Printer columns. 67 total |
-| 14 | AppProfiles + update reconciler | ✅ Done | 6 AppProfile YAMLs (collabora, element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B (Tofu Controller). 67 total |
-| 15 | Deployment repo (gentian-deployments) | ✅ Done | `gentian-deployments/dev/` — bootstrap, app-of-apps, dev-tenant, values, tofu.tfvars. 67 total |
+| 14 | AppProfiles + update reconciler | ✅ Done | 6 AppProfile YAMLs (collabora, element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B. 67 total |
+| 15 | Deployment repo (gentian-deployments) | ✅ Done | `gentian-deployments/dev/` — bootstrap, app-of-apps, dev-tenant, values, env vars. 67 total |
 | 16 | Mail kernel extension | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 78 total |
 | 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 95 total |
-| 18 | Single-line domain config | ✅ Done | `variable "domain"` in Tofu. 41 `_base.yaml` → `${domain}` template. 13 HCL → `var.domain`. `file()` → `templatefile()`. 95 total |
+| 18 | Single-line domain config | ✅ Done | Single `domain` variable. 41 `_base.yaml` → `${domain}` template. Eliminated per-file hostname repetition. 95 total |
 | 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 101 total |
 | 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. ArgoCD Source 3 + AppProject sourceRepos. `extraValues` aligned with opendesk defaults. 101 total |
 | 21 | Element AppProfile in gentian-apps | ✅ Done | `profiles/element.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. `extraValues` aligned with opendesk `values-element.yaml.gotmpl` + `values-synapse.yaml.gotmpl` (E2EE, OIDC, SMTP, ratelimits, security context). Ingress `chat.<domain>` → element:80. 101 total |
-| 21a | Kernel secret seeder (OpenBao write path) | ✅ Done | Shared `internal/kernel/secrets` package: HKDF-SHA256 deriver, KV v2 client, canonical path builder, seeder. Master password is fetched at operator startup from `secret/gentian-os/kernel/internal/master-password` via the `gentian-os-operator` Kubernetes auth role; when present, every kernel reconciler (identity, ldap, database, mariadb, storage, cache, mail, apps) derives and writes the credentials it provisions into `gentian-os/tenants/{t}/apps/{a}/{category}` and `…/internal/{name}`. Tenant is included in the derivation salt for tenant-scoped secrets but omitted for kernel-shared paths (`gentian-os/kernel/{category}/{name}`) so shared services keep a single value across tenants. Provisioning Jobs (Keycloak, psql, mariadb, mc, redis-cli, UDM) consume the derived password via env var and apply it idempotently (`ALTER ROLE`, `ALTER USER`, `ACL SETUSER`, etc.) so the live backend password always equals the OpenBao value. `app-workspace` Tofu module gains a dynamic `app_secrets` map so any AppProfile `appSecrets[].valuePath` is injected as a sensitive Helm value — no per-app module. Bootstrap (`scripts/seed-openbao.sh` + `install.sh`) writes the master and applies the Tofu OpenBao auth config so a fresh cluster works without manual steps. |
+| 21a | Kernel secret seeder (OpenBao write path) | ✅ Done | Shared `internal/kernel/secrets` package: HKDF-SHA256 deriver, KV v2 client, canonical path builder, seeder. Master password is fetched at operator startup from `secret/gentian-os/kernel/internal/master-password` via the `gentian-os-operator` Kubernetes auth role; when present, every kernel reconciler (identity, ldap, database, mariadb, storage, cache, mail, apps) derives and writes the credentials it provisions into `gentian-os/tenants/{t}/apps/{a}/{category}` and `…/internal/{name}`. Tenant is included in the derivation salt for tenant-scoped secrets but omitted for kernel-shared paths (`gentian-os/kernel/{category}/{name}`) so shared services keep a single value across tenants. Provisioning Jobs (Keycloak, psql, mariadb, mc, redis-cli, UDM) consume the derived password via env var and apply it idempotently (`ALTER ROLE`, `ALTER USER`, `ACL SETUSER`, etc.) so the live backend password always equals the OpenBao value. Bootstrap (`scripts/seed-openbao.sh` + `install.sh`) writes the master password and configures OpenBao auth so a fresh cluster works without manual steps. |
 | 22 | Jitsi AppProfile in gentian-apps | ✅ Done | `profiles/jitsi.yaml` in `gentian-apps` with `extraValues` aligned with `opendesk/helmfile/apps/jitsi/values-jitsi.yaml.gotmpl`. `kernelRequirements: oidc`. `appSecrets`: `jwt_app_secret`, `jicofo_auth_password`, `jicofo_component_secret`, `jvb_auth_password`. Hybrid-matrix-token auth scheme for Prosody. Ingress `meet.<domain>`. Jigasi disabled by default. TURN credentials injected from kernel path at deploy time. Optional Element video-conferencing IntegrationBinding. No sample to remove from `gentian-os` (sample was never added). |
 ---
 
@@ -58,7 +58,7 @@ When an AppProfile's `chart.version` is bumped (e.g., OpenProject 14.2.0 → 15.
 
 1. ArgoCD syncs the updated AppProfile CR to the cluster
 2. The AppProfile update reconciler (Increment 14) lists all Tenants referencing this profile
-3. For each tenant: update the ArgoCD Application CR (or Tofu Controller `Terraform` CR) with the new chart version
+3. For each tenant: update the ArgoCD Application CR or Terraform CR with the new chart version
 4. ArgoCD performs a rolling upgrade per tenant — health checks gate progression
 5. AppProfile status shows rollout progress (`updated: 47/50 tenants`)
 
@@ -94,7 +94,7 @@ Triggered via annotation: `kubectl annotate tenant gtn-demo gentianos.io/rotate-
 
 ### Pattern B elimination via upstream contributions
 
-Pattern B (Tofu Controller `set_sensitive`) is a workaround for Helm charts without `existingSecret` support. The long-term strategy is to contribute `existingSecret` support upstream:
+Pattern B (`set_sensitive`) is a workaround for Helm charts without `existingSecret` support. The long-term strategy is to contribute `existingSecret` support upstream:
 
 | App | Upstream project | Status | Target |
 |---|---|---|---|
@@ -120,7 +120,7 @@ Which architecture concepts are addressed by which increment — and which are n
 | §2.1 Kernel Functions — Networking | NetworkPolicies per tenant | 2 | Created by namespace reconciler |
 | §2.1 Kernel Functions — Process execution | Kubernetes + ArgoCD GitOps | 0, 9 | Kernel assets + ArgoCD Application CRs |
 | §2.1 Kernel Functions — Secrets & keyring | OpenBao + ESO, tenant-scoped policies | 0, 12 | Copied from server/, restructured |
-| §2.1 Kernel Functions — Database services | CloudNativePG, per-app-per-tenant DBs | 5 | Replaces Tofu Helm-based PostgreSQL |
+| §2.1 Kernel Functions — Database services | CloudNativePG, per-app-per-tenant DBs | 5 | CloudNativePG operator CRs |
 | §2.1 Kernel Functions — Database services (MariaDB) | MariaDB per-app-per-tenant DBs | 6 | MariaDB Operator or SQL Jobs (OX App Suite) |
 | §2.1 Kernel Functions — Cache | Redis ACLs + Memcached per-tenant | 8 | Redis ACL provisioning + Memcached deployment |
 | §2.1 Kernel Functions — Mail | Per-tenant Postfix + Dovecot, 4 modes | 16 | Kernel extension reconciler |
@@ -131,7 +131,7 @@ Which architecture concepts are addressed by which increment — and which are n
 | §2.2 Kernel Extensions | Mail as optional per-tenant extension | 16 | Four tenant modes |
 | §2.4 Multi-Tenancy | Namespace-per-tenant isolation | 2, 17 | Namespace reconciler + hardening |
 | §2.5 Contracts | IntegrationBinding auto-generation | 11 | Contract reconciler |
-| §3 Architecture Triangle | Orchestrator + OpenTofu + ArgoCD | 0–11 | Triangle fully implemented |
+| §3 Architecture Triangle | Orchestrator + ArgoCD + Crossplane | 0–11 | Triangle fully implemented |
 | §3.1 Thin Orchestrator | Delegate to operators, don't implement | 2–11 | Core of the plan (Jobs for Nubus-managed services) |
 | §3.1 Thin Orchestrator — LDAP | LDAP bind account via UDM REST API | 4 | UDM Jobs for per-tenant OUs and bind accounts |
 | §4.1 AppProfile CRD | Cluster-scoped app catalogue | 1, 14 | Types + kernel app profiles |
@@ -140,17 +140,17 @@ Which architecture concepts are addressed by which increment — and which are n
 | §4.3 IntegrationBinding CRD | Cross-app contract | 1, 11 | Types + reconciler |
 | §4.4 ArgoCD Application (generated) | Per-app-per-tenant deployment | 9 | App deployment reconciler |
 | §5.1 Secret Seeding | HMAC-SHA256 derivation | 0 | Copied from server/ |
-| §5.2 Tofu Lifecycle Guard | `ignore_changes` on secrets | 0 | Copied from server/ |
+| §5.2 Lifecycle Guard | Write-once protection on secrets | 0 | Crossplane `managementPolicies: [Observe, Create]` |
 | §5.3 Pattern A + B | Two secret delivery patterns | 0, 9 | Copied from server/; orchestrator routes by `deploymentMethod` |
 | §5.4 Credential Rotation | Reloader + ESO | 0 | Copied from server/ |
 | §5 Secret Path Structure | Per-tenant `gentian-os/tenants/{name}/apps/{app}/...` | 12 | OpenBao restructuring |
 | §5 Per-tenant OpenBao Policies | Read-only scoped to own paths | 12 | Generated during restructuring |
-| §6 Layer 000 Bootstrap | ArgoCD + Tofu Controller install | 0 | Scripts copied from server/ |
-| §6 Layer 100 Kernel | Kernel workloads via ArgoCD/Tofu | 0 | Kernel services copied from server/ |
+| §6 Layer 000 Bootstrap | ArgoCD + Crossplane install | 0 | Scripts copied from server/ |
+| §6 Layer 100 Kernel | Kernel workloads via ArgoCD/Crossplane | 0 | Kernel services copied from server/ |
 | §6 Layer 100e Kernel Extensions | Mail stack | 16 | Per-tenant mail reconciler |
 | §6 Root ApplicationSet | Meta-deployer + matrix generators | 0 | Copied from server/ |
 | §6 Layer 200 Apps | Orchestrator-managed tenant apps | 9 | App deployment reconciler |
-| §6 Ingress / DNS | Per-tenant routing + TLS + DNS records | 10 | Ingress reconciler + Tofu DNS module |
+| §6 Ingress / DNS | Per-tenant routing + TLS + DNS records | 10 | Ingress reconciler |
 | §7 Repo 1 `gentian-os` | OS definition repo | 0, 13 | Scaffolding + Helm chart |
 | §7 Repo 3 `gentian-deployments` | Cluster state repo | 15 | Deployment repo setup |
 | §8 Security Model — Network boundaries | Tenant-to-tenant deny | 2, 17 | NetworkPolicies + hardening |
@@ -158,7 +158,7 @@ Which architecture concepts are addressed by which increment — and which are n
 | §8 Security Model — Database isolation | Per-app-per-tenant databases | 5, 17 | CloudNativePG + hardening |
 | §8 Security Model — Zero-trust secrets | All secrets via OpenBao | 0, 12 | Existing + restructured |
 | §12 CRD Definitions | AppProfile, Tenant, IntegrationBinding, ExternalSecret, Application | 1 | Go types matching §12 examples |
-| §13 OpenTofu — Kernel Seeding | OpenBao path seeding, secret tree | 0, 12 | Copied then restructured |
+| §13 Kernel Seeding | OpenBao path seeding, secret tree | 0, 12 | Copied then restructured |
 | §14 Orchestrator Reconciliation Logic | Create/Update/Delete tenant flows | 2–11 | Built incrementally |
 | §14.2 Tenant Deletion | Full deletion pipeline (9-step sequence) | 2–8, 10, 17 | Delete-path in each reconciler + end-to-end test in Inc 17 |
 | §14.3 AppProfile Update | Chart version propagation to all tenants | 14 | AppProfile update reconciler |
@@ -234,7 +234,7 @@ Orchestrator reconciles:
   6. Create LDAP bind account (LDAP reconciler)
   7. Create Memcached instance (Cache reconciler)
   8. Create ExternalSecrets (all credentials)
-  9. Create ArgoCD Application CR (or Tofu CR for Pattern B)
+  9. Create ArgoCD Application CR (Pattern A) or Terraform CR (Pattern B)
   10. ArgoCD deploys the Helm chart
   ↓
 App ready — SSO works, database provisioned, storage wired
@@ -274,7 +274,7 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 | **Intercom Service** | 150 — Notifications | Kernel notification gateway |
 | **Postfix / Dovecot / Rspamd** | 100e — Mail | Kernel mail extension, shared infrastructure with tenant-scoped config |
 
-**Why OX App Suite is kernel-level:** OX App Suite is the primary mail client, calendar, and contacts interface. It depends on every kernel function (identity, LDAP, MariaDB, Redis, S3, mail). Like Nextcloud, it is deployed once per cluster and serves all tenants through the kernel's isolation mechanisms (Keycloak realms, LDAP OUs, per-tenant databases, per-tenant S3 buckets). It follows the same deployment pattern as all other kernel services — Layer 100 ApplicationSet, Tofu Controller for secret injection (Pattern B), tenant-scoped wiring via API Jobs. Making it tenant-installable would add complexity without a real use case (every openDesk tenant needs groupware).
+**Why OX App Suite is kernel-level:** OX App Suite is the primary mail client, calendar, and contacts interface. It depends on every kernel function (identity, LDAP, MariaDB, Redis, S3, mail). Like Nextcloud, it is deployed once per cluster and serves all tenants through the kernel's isolation mechanisms (Keycloak realms, LDAP OUs, per-tenant databases, per-tenant S3 buckets). It follows the same deployment pattern as all other kernel services — Layer 100 ApplicationSet, Pattern B secret injection, tenant-scoped wiring via API Jobs. Making it tenant-installable would add complexity without a real use case (every openDesk tenant needs groupware).
 
 ### App Store increments
 
@@ -578,17 +578,14 @@ drift, no race.
 2. **Write-once semantics** (`cas=0` KV v2 check-and-set) so a later
    `MASTER_PASSWORD` rotation cannot silently overwrite live credentials.
    Explicit rotation is a separate increment.
-3. **Canonical paths** identical to what the existing `app-workspace` and
-   `ox-workspace` Tofu modules already read — no module rewrites needed for
-   the kernel-requirement categories.
+3. **Canonical paths** identical to what the existing app deployment reconciler
+   already reads — no module rewrites needed for the kernel-requirement categories.
 4. **One seeder, every kernel reconciler uses it** — DRY. Adding a new app
    (Odoo, etc.) requires zero orchestrator changes: declare
    `kernelRequirements` + `appSecrets` in the AppProfile and everything is
    wired automatically.
 5. **Fully automated bootstrap.** `install.sh` / `scripts/seed-openbao.sh`
-   apply the `kernel/tofu/platform/openbao-init` module (creates the
-   `tofu-write` policy + `gentian-os-operator` K8s auth role), then write
-   the master password to `secret/gentian-os/kernel/internal/master-password`.
+   write the master password to `secret/gentian-os/kernel/internal/master-password`.
    Nothing in the getting-started flow requires manual OpenBao calls.
 
 **Deliverables:**
@@ -621,10 +618,9 @@ drift, no race.
   | mail | `smtp`, `imap` | copy kernel `gentian-os/kernel/mail/postfix` relay password into per-app path |
   | apps | `internal/{name}` | purely KV derivation + write (no backend Job) |
 
-- `app-workspace` Tofu module gains a dynamic `app_secrets` input:
-  `map(object({ value_path = string }))` → iterates
-  `vault_kv_secret_v2` per entry under `…/internal/{name}` and merges into
-  `sensitive_values`. Operator fills this from `AppProfile.spec.appSecrets`.
+- Pattern B app secrets: the app reconciler passes the name→valuePath map to
+  the Terraform CR as `app_secrets` (JSON-encoded), which injects each
+  AppProfile `appSecrets[].valuePath` as a sensitive Helm value.
 
 - Helm chart — orchestrator `Deployment` learns:
   - `BAO_ADDR` + `BAO_ROLE` env vars (configured via `openbao.address` /
@@ -635,8 +631,7 @@ drift, no race.
     `secret/gentian-os/kernel/internal/master-password` (populated by
     `scripts/seed-openbao.sh` during the documented bootstrap flow)
   - The `gentian-os-operator` Kubernetes auth role is created by the
-    existing `kernel/tofu/platform/openbao-init` workspace that the
-    getting-started guide already applies — no new manual steps
+    getting-started bootstrap — no new manual steps
 
 **Test:**
 
@@ -645,11 +640,10 @@ drift, no race.
   `ensureIdentity`/`ensureDatabase`/etc., the in-memory OpenBao mock has
   the expected keys under the tenant path.
 - Cluster smoke test (manual, run once): run the documented bootstrap
-  (`tofu apply` in `kernel/tofu/platform/openbao-init` + `seed-openbao.sh`),
-  deploy the operator chart with `openbao.address` + `openbao.role` set,
-  force-reconcile `tenant/gtn-demo`, observe Terraform plan for element
-  succeed (no `no secret found` error), Synapse pod Ready, ingress
-  reachable.
+  (`seed-openbao.sh`), deploy the operator chart with `openbao.address` +
+  `openbao.role` set, force-reconcile `tenant/gtn-demo`, observe Terraform
+  plan for element succeed (no `no secret found` error), Synapse pod Ready,
+  ingress reachable.
 
 **Scalability.** Every future app (Odoo, Plane, Lexoffice, Metabase …)
 declares its infra needs in an AppProfile and the orchestrator does the
@@ -694,16 +688,7 @@ right thing automatically. Zero code change per app.
   mail modes.
 - ✅ App reconciler — `seedAppSecrets` loop writes each
   `AppProfile.spec.appSecrets[]` entry to `…/internal/{name}` (key `value`)
-  before `ensureTerraformCR`/`ensureAppApplication`. `buildTerraformCR`
-  passes the name→valuePath map to the Tofu module as `app_secrets`
-  (JSON-encoded).
-- ✅ `kernel/tofu/tenant/app-workspace` — new `app_secrets` variable plus
-  dynamic `data "vault_kv_secret_v2" "app_secret"` (for_each) merges into
-  `sensitive_values` via a map comprehension.
-- ✅ `kernel/tofu/platform/openbao-init` — new `gentian_os_operator`
-  Kubernetes auth role bound to SA `gentian-system/gentian-os` with the
-  `tofu-write` policy; applied automatically by the getting-started bootstrap
-  step (`tofu apply` in that workspace).
+  before `ensureTerraformCR`/`ensureAppApplication`.
 - ✅ Helm chart — `values.yaml` gains `openbao.role` (default
   `gentian-os-operator`); `deployment.yaml` injects `BAO_ADDR` + `BAO_ROLE`
   env vars. No Secret, no static token — Kubernetes auth via the pod's
@@ -861,7 +846,7 @@ client is now provisioned per-tenant by the orchestrator's Identity reconciler w
 level since it is a realm-wide template, not per-tenant. As part of this increment,
 ensure the Identity reconciler creates the `opendesk-openproject` client with the
 same redirect URIs, backchannel-logout settings, and default scopes that the removed
-module used (see git history of `kernel/tofu/tenant/keycloak-config/clients.tf`).
+module used (see git history for `kernel/services/keycloak-config/`).
 
 ##### Testing
 

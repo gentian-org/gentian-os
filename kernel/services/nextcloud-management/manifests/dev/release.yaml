@@ -1,8 +1,7 @@
 # =============================================================================
-# nextcloud-management — provider-helm Release CR (Pattern B migration)
+# nextcloud-management — provider-helm Release CR (Pattern B)
 #
-# Replaces helm_release.nextcloud_management from
-# kernel/tofu/tenant/infra-workspaces/nextcloud.tf.
+# Managed by provider-helm (Pattern B).
 #
 # Values merge order (last wins):
 #   1. nextcloud-management-base-values  ConfigMap  — defaults

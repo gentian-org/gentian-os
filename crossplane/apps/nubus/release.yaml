@@ -1,7 +1,7 @@
 # =============================================================================
-# Nubus — provider-helm Release (Pattern B migration)
+# Nubus — provider-helm Release (Pattern B)
 #
-# Replaces the Tofu Controller helm_release.nubus resource.
+# Managed by provider-helm (Pattern B).
 # Sensitive values are injected via ESO-synced Secret (nubus-sensitive-values)
 # — they never appear in this file, in ArgoCD UI, or in Helm release history.
 #

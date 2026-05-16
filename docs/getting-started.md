@@ -467,9 +467,7 @@ make e2e-p0-clean
 
 ## Further reading
 
-- [Architecture — Crossplane](architecture-crossplane.md) — full system design (current)
-- [Architecture — Legacy](architecture-legacy.md) — previous Go orchestrator + OpenTofu design
-- [Crossplane Migration Plan](crossplane-migration-plan.md) — P0–P5 migration phases and status
+- [Architecture](architecture.md) — full system design
 - [Design docs](design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
 - [commands.md](commands.md) — reference for day-2 kubectl commands
 - [Implementation Plan](implementation-plan.md) — increment history and decisions

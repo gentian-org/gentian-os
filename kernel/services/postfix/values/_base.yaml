@@ -12,7 +12,7 @@
 #   postfix.smtpSASLAuthEnable ("yes" when relay, "no" without relay)
 #   postfix.relayNets         (cluster pod CIDRs)
 #   resources
-# Secrets injected via set_sensitive in tofu/tenant/infra-workspaces/postfix.tf:
+# Secrets injected via provider-helm valuesFrom (Pattern B):
 #   postfix.relayHost.authentication.password.value  (Vault: postfix.relay_password)
 #   postfix.relayHost.authentication.username.value  (Vault: postfix.relay_username)
 #   postfix.staticAuthDB.password.value              (Vault: nubus.smtp_password)

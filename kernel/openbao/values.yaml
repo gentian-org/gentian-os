@@ -20,7 +20,7 @@ server:
 
   # Expose the API + UI on a fixed NodePort so the host and any LAN machine
   # can reach OpenBao without a port-forward session.
-  # API:  http://<node-ip>:30820   (bao CLI, tofu, seed script)
+  # API:  http://<node-ip>:30820   (bao CLI, seed script)
   # UI:   http://<node-ip>:30820/ui
   service:
     type: NodePort

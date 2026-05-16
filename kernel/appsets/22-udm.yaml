@@ -8,7 +8,7 @@
 #
 # Architecture note:
 #   This ApplicationSet deploys raw Crossplane managed resources (Request CRDs)
-#   to crossplane-system.  No Helm, no Tofu.  Every user and group is a YAML
+#   to crossplane-system.  No Helm.  Every user and group is a YAML
 #   file in kernel/services/udm/manifests/{env}/ — pure GitOps.
 #
 # Wave 22: after nubus (wave 21) so the UDM REST API is available.

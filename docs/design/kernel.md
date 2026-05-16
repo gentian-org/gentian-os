@@ -1,6 +1,6 @@
 # The Kernel and the Default Install
 
-**Companion to:** [architecture-crossplane.md](../architecture-crossplane.md)
+**Companion to:** [architecture.md](../architecture.md)
 
 ---
 

@@ -1,7 +1,7 @@
 # =============================================================================
 # Postfix dev — environment-specific non-secret overrides
 # =============================================================================
-# Secrets injected via set_sensitive in tofu/tenant/infra-workspaces/postfix.tf:
+# Secrets injected via provider-helm valuesFrom (Pattern B):
 #   postfix.relayHost.authentication.username.value  (Vault: postfix.relay_username)
 #   postfix.relayHost.authentication.password.value  (Vault: postfix.relay_password)
 #   postfix.staticAuthDB.password.value              (Vault: nubus.smtp_password)

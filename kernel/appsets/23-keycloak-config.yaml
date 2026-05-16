@@ -4,7 +4,7 @@
 # Deploys Crossplane managed resources (Client, ProtocolMapper, ClientScope,
 # ClientDefaultScopes, ClientOptionalScopes) that fully manage the Keycloak
 # OIDC clients for the opendesk stack.  Replaces the keycloak-config-dev
-# Tofu workspace.
+# provider-keycloak workspace.
 #
 # Architecture note:
 #   All resources are deployed to crossplane-system where provider-keycloak

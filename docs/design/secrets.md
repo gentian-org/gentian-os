@@ -1,6 +1,6 @@
 # Secrets and Credentials
 
-**Companion to:** [architecture-crossplane.md](../architecture-crossplane.md)
+**Companion to:** [architecture.md](../architecture.md)
 
 ---
 

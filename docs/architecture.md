@@ -302,7 +302,7 @@ bao write auth/kubernetes/role/eso ...
 After this bootstrap, all further OpenBao configuration (additional
 policies, roles for new services) is managed as Crossplane Managed
 Resources via `provider-vault`, which can authenticate using the
-already-configured Kubernetes auth backend. No OpenTofu is needed.
+already-configured Kubernetes auth backend.
 
 The OpenBao path layout, ESO sync flow, derivation algorithm, rotation
 mechanics (Stakater Reloader), and credential-leak guard rails are in
@@ -475,4 +475,3 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
-| Migration from legacy stack to this architecture | [crossplane-migration-plan.md](crossplane-migration-plan.md) |

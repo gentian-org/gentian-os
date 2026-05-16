@@ -95,7 +95,7 @@ running the installer.
 | 7 | OpenBao | Init transit OpenBao (auto-unseal key setup) |
 | 8 | OpenBao | Bootstrap remaining kernel ArgoCD apps (openbao, reloader, cnpg, globals) |
 | 9 | OpenBao | Init primary OpenBao (KV engine, recovery keys) |
-| 10 | OpenBao | Bootstrap Kubernetes auth backend for Crossplane *(replaces `tofu apply openbao-init`)* |
+| 10 | OpenBao | Bootstrap Kubernetes auth backend for Crossplane |
 | 11 | Crossplane | Create 8 derived-credential K8s Secrets in `crossplane-system` |
 | 12 | Cluster XR | Apply Cluster claim → kernel structural resources reconciled by `provider-vault` and `provider-kubernetes`: KV mount + policies + K8s auth backend/roles, KV seed paths (database, cache, storage, identity, mail), ArgoCD AppProject, ESO ClusterSecretStore, cert-manager ClusterIssuer |
 | 12b | Secrets | Seed remaining secrets: registry, DNS/Cloudflare, internal |

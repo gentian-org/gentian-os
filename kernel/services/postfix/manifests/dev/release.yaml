@@ -1,8 +1,7 @@
 # =============================================================================
-# postfix — provider-helm Release CR (Pattern B migration)
+# postfix — provider-helm Release CR (Pattern B)
 #
-# Replaces the Tofu Controller helm_release.postfix resource that lived in
-# kernel/tofu/tenant/infra-workspaces/postfix.tf (retired in Phase 2B).
+# Managed by provider-helm (Pattern B).
 #
 # Values merge order (last wins):
 #   1. postfix-base-values     ConfigMap — non-secret defaults (_base.yaml)

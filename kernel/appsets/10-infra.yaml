@@ -1,6 +1,6 @@
 ---
 # Infra group: redis, minio (Pattern A — existingSecret supported)
-# postgresql and mariadb moved to Tofu Controller workspace (Pattern B).
+# postgresql and mariadb managed via provider-helm Releases (Pattern B).
 # Matrix generator: env list × app list  →  one Application per (env, app) pair.
 # To add an environment: add one entry to the env list.
 # To add an application:  add one entry to the app list.

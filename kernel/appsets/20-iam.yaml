@@ -1,6 +1,6 @@
 ---
 # IAM group: intercom-service (Pattern A — existingSecret supported)
-# keycloak-bootstrap moved to Tofu Controller workspace (Pattern B: clients[*].secret).
+# keycloak-bootstrap managed via provider-keycloak (Pattern B: clients[*].secret).
 # Matrix generator: env list × app list  →  one Application per (env, app) pair.
 # Nubus is managed separately in 21-nubus.yaml (requires per-app ignoreDifferences).
 # To add an environment: add one entry to the env list.

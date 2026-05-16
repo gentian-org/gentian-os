@@ -244,7 +244,7 @@ install_crossplane_providers() {
     # AuthBackendConfig, AuthBackendRole, SecretV2, and Object (K8s) resources.
 # =============================================================================
 bootstrap_openbao_for_crossplane() {
-    banner "Step 10 — Bootstrap OpenBao auth for Crossplane (replaces tofu apply openbao-init)"
+    banner "Step 10 — Bootstrap OpenBao auth for Crossplane"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
@@ -505,7 +505,7 @@ create_crossplane_secrets() {
     # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
-    # the minio secret to keep it consistent with the legacy Tofu layout.
+    # the minio secret for cross-service derivation consistency.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
             --arg doveadm "$(_derive minio dovecot_user)" \
@@ -796,7 +796,6 @@ deploy_nubus() {
     # ── Multi-tenant LDAP ACL patch ConfigMap ─────────────────────────────────
     # Adds cn=Tenant Admins to the cn=temporary ACL rules so tenant admins can
     # provision users (UID lock objects). Referenced by nubusLdapServer.extraVolumes.
-    # Replaces the legacy Tofu kubernetes_config_map_v1.nubus_ldap_gentian_acl resource.
     info "Creating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
     kubectl create configmap "${release_name}-ldap-gentian-acl" \
         -n "${ns}" \
