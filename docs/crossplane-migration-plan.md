@@ -1,7 +1,7 @@
 # Gentian OS — Crossplane Migration Plan
 
 **Version:** 0.5
-**Status:** Complete — P0 ✅  P1 ✅  P2A ✅  P2B ✅  P2C ✅  Crossplane v2 ✅
+**Status:** Complete — P0 ✅  P1 ✅  P2A ✅  P2B ✅  P2C ✅  Crossplane v2 ✅  P3 ✅  P4 ✅  P5 ✅
 **Companion to:** [architecture-legacy.md](architecture-legacy.md), [architecture-crossplane.md](architecture-crossplane.md)
 
 > **Script names:** `install-cp.sh` and `uninstall-cp.sh` have been renamed
@@ -684,11 +684,11 @@ the new stack.
       `crossplane/xrds/tenant.yaml` and
       `crossplane/compositions/tenant-default.yaml` with a readiness
       wait after each.
-- [ ] Phase 3b — Migrate identity (Keycloak), LDAP, databases (CNPG),
+- [x] Phase 3b — Migrate identity (Keycloak), LDAP, databases (CNPG),
       MariaDB, storage (MinIO), cache (Redis), mail from Go reconcilers
       into the Composition (using provider-keycloak, provider-http,
       provider-kubernetes Objects/Jobs).
-- [ ] `crossplane/compositions/tenant-vcluster.yaml` — selected when
+- [x] `crossplane/compositions/tenant-vcluster.yaml` — selected when
       `spec.isolation.mode == vcluster`.
 
 ### 5.2 Unit tests
@@ -758,12 +758,12 @@ Composition take over. Verify zero data loss and zero downtime.
 
 ### 6.1 Deliverables
 
-- [ ] Cutover runbook: `crossplane/e2e/scripts/p4-tenant-cutover.sh`.
-- [ ] Annotation `gentianos.io/managed-by: crossplane` recognised by
+- [x] Cutover runbook: `crossplane/e2e/scripts/p4-tenant-cutover.sh`.
+- [x] Annotation `gentianos.io/managed-by: crossplane` recognised by
       the legacy Go orchestrator as a "skip this tenant" signal.
       (This is a small, reversible change in the orchestrator: ~10
       lines, fully unit-tested.)
-- [ ] Procedure for re-importing the existing Tenant CR as a Crossplane
+- [x] Procedure for re-importing the existing Tenant CR as a Crossplane
       claim without re-running provisioning (relies on `provider-vault`
       `Observe`-only on existing KV paths and `provider-kubernetes`
       `Adopt` semantics for existing operator CRs).
@@ -840,13 +840,13 @@ Go orchestrator, Tofu Controller, and OpenTofu modules.
 
 ### 7.1 Deliverables
 
-- [ ] All tenants in all environments cut over to Crossplane.
-- [ ] Go orchestrator deployment scaled to zero, then deleted from
+- [x] All tenants in all environments cut over to Crossplane.
+- [x] Go orchestrator deployment scaled to zero, then deleted from
       `gentian-os/charts`.
-- [ ] Tofu Controller uninstalled (`helm uninstall tofu-controller`).
-- [ ] `gentian-os/kernel/tofu/` directory removed; `Cluster` XR is the
+- [x] Tofu Controller uninstalled (`helm uninstall tofu-controller`).
+- [x] `gentian-os/kernel/tofu/` directory removed; `Cluster` XR is the
       sole source of truth for kernel state.
-- [ ] CI no longer builds the Go orchestrator image.
+- [x] CI no longer builds the Go orchestrator image.
 
 ### 7.2 Unit tests
 
