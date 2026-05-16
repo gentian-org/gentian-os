@@ -103,7 +103,7 @@ Pattern B (`set_sensitive`) is a workaround for Helm charts without `existingSec
 | Postfix | Docker-mailserver or custom chart | — | Add `existingSecret` for SASL, DKIM, relay credentials |
 | Dovecot | Docker-mailserver or custom chart | — | Add `existingSecret` for LDAP bind, TLS credentials |
 
-Each successful merge allows flipping `deploymentMethod` from `tofu-controller` to `argocd` in the AppProfile — one PR per app, zero orchestrator changes. Track progress in the AppProfile's `metadata.annotations`.
+Each successful merge allows flipping `deploymentMethod` from `crossplane` to `argocd` in the AppProfile — one PR per app, zero orchestrator changes. Track progress in the AppProfile's `metadata.annotations`.
 
 ---
 
@@ -322,7 +322,7 @@ Each app increment (20–24) moves an app from `gentian-os/config/samples/` to `
 - `appSecrets`: `admin_password` → `collabora.password`
 - `provides`: `office-editor` (wopi)
 - `chart`: `collabora-online` v1.1.45
-- `deploymentMethod`: `tofu-controller` (Pattern B)
+- `deploymentMethod`: `crossplane` (Pattern B)
 - `extraValues`: `autoscaling.enabled: false`, `replicaCount: 1`, security context, `fullnameOverride: collabora` — aligned with opendesk defaults
 
 **Actions:**
@@ -344,8 +344,8 @@ kubectl get hpa -n tenant-gtn-demo  # should show no collabora HPA
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
 # Expected: collabora: 1
-# Verify: Terraform CR exists (Pattern B)
-kubectl get terraform -n tofu-system tf-gtn-demo-collabora
+# Verify: App claim exists and is Ready
+kubectl get app collabora -n tenant-gtn-demo
 # Expected: READY=True
 ```
 
@@ -404,12 +404,12 @@ kubectl patch tenant gtn-demo --type=merge \
 **Delete (Uninstall):**
 ```bash
 kubectl gentian apps uninstall collabora --tenant gtn-demo
-# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+# Wait for reconciliation (orphan cleanup deletes the App claim)
 sleep 30
-# Verify: Terraform CR removed
-kubectl get terraform -n tofu-system tf-gtn-demo-collabora
+# Verify: App claim removed
+kubectl get app collabora -n tenant-gtn-demo
 # Expected: Error from server (NotFound)
-# Verify: no Collabora pods (tofu-controller destroys the Helm release)
+# Verify: no Collabora pods (Crossplane Release CR is deleted)
 kubectl get pods -n tenant-gtn-demo | grep collabora
 # Expected: no results
 # Verify: catalogue shows 0 installs
@@ -442,7 +442,7 @@ kubectl get appcatalogue default \
 - `appSecrets`: `registration_shared_secret`, `intercom_as_token`, `ox_appsuite_as_token`
 - `provides`: `chat` (matrix)
 - `chart`: `opendesk-element` v6.1.9
-- `deploymentMethod`: `tofu-controller` (Pattern B)
+- `deploymentMethod`: `crossplane` (Pattern B)
 - `extraValues`: aligned with `opendesk/helmfile/apps/element/values.yaml.gotmpl`
 
 **Actions:**
@@ -460,8 +460,8 @@ kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=element -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep element
 # Expected: element: 1
-# Verify: Terraform CR exists (Pattern B)
-kubectl get terraform -n tofu-system tf-gtn-demo-element
+# Verify: App claim exists and is Ready
+kubectl get app element -n tenant-gtn-demo
 # Expected: READY=True
 ```
 
@@ -515,10 +515,10 @@ kubectl patch tenant gtn-demo --type=merge \
 **Delete (Uninstall):**
 ```bash
 kubectl gentian apps uninstall element --tenant gtn-demo
-# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+# Wait for reconciliation (orphan cleanup deletes the App claim)
 sleep 30
-# Verify: Terraform CR removed
-kubectl get terraform -n tofu-system tf-gtn-demo-element
+# Verify: App claim removed
+kubectl get app element -n tenant-gtn-demo
 # Expected: Error from server (NotFound)
 # Verify: no Element pods
 kubectl get pods -n tenant-gtn-demo | grep element
@@ -712,7 +712,7 @@ right thing automatically. Zero code change per app.
 - `appSecrets`: `jwt_app_secret`, `jicofo_auth_password`, `jicofo_component_secret`, `jvb_auth_password`
 - `provides`: `videoconference` (webrtc)
 - `chart`: `opendesk-jitsi` v3.5.1
-- `deploymentMethod`: `tofu-controller` (Pattern B)
+- `deploymentMethod`: `crossplane` (Pattern B)
 - `extraValues`: aligned with `opendesk/helmfile/apps/jitsi/values.yaml.gotmpl`
 
 **Actions:**
@@ -730,8 +730,8 @@ kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=jitsi -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep jitsi
 # Expected: jitsi: 1
-# Verify: Terraform CR exists (Pattern B)
-kubectl get terraform -n tofu-system tf-gtn-demo-jitsi
+# Verify: App claim exists and is Ready
+kubectl get app jitsi -n tenant-gtn-demo
 # Expected: READY=True
 ```
 
@@ -788,10 +788,10 @@ kubectl patch tenant gtn-demo --type=merge \
 **Delete (Uninstall):**
 ```bash
 kubectl gentian apps uninstall jitsi --tenant gtn-demo
-# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+# Wait for reconciliation (orphan cleanup deletes the App claim)
 sleep 30
-# Verify: Terraform CR removed
-kubectl get terraform -n tofu-system tf-gtn-demo-jitsi
+# Verify: App claim removed
+kubectl get app jitsi -n tenant-gtn-demo
 # Expected: Error from server (NotFound)
 # Verify: no Jitsi pods
 kubectl get pods -n tenant-gtn-demo | grep jitsi
@@ -823,7 +823,7 @@ kubectl get appcatalogue default \
 - `provides`: `project-management` (http-json)
 - `optionalIntegrations`: `file-store` (Nextcloud), `central-navigation` (Portal)
 - `chart`: `openproject` v10.1.0
-- `deploymentMethod`: `tofu-controller` (Pattern B)
+- `deploymentMethod`: `crossplane` (Pattern B)
 - `extraValues`: aligned with `opendesk/helmfile/apps/openproject/values.yaml.gotmpl`
 
 **Actions:**
@@ -857,8 +857,8 @@ kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=openproject -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep openproject
 # Expected: openproject: 1
-# Verify: Terraform CR exists (Pattern B)
-kubectl get terraform -n tofu-system tf-gtn-demo-openproject
+# Verify: App claim exists and is Ready
+kubectl get app openproject -n tenant-gtn-demo
 # Expected: READY=True
 ```
 
@@ -919,10 +919,10 @@ kubectl patch tenant gtn-demo --type=merge \
 **Delete (Uninstall):**
 ```bash
 kubectl gentian apps uninstall openproject --tenant gtn-demo
-# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+# Wait for reconciliation (orphan cleanup deletes the App claim)
 sleep 30
-# Verify: Terraform CR removed
-kubectl get terraform -n tofu-system tf-gtn-demo-openproject
+# Verify: App claim removed
+kubectl get app openproject -n tenant-gtn-demo
 # Expected: Error from server (NotFound)
 # Verify: no OpenProject pods
 kubectl get pods -n tenant-gtn-demo | grep openproject
@@ -957,7 +957,7 @@ kubectl get appcatalogue default \
 - `provides`: `wiki` (http-json)
 - `optionalIntegrations`: `central-navigation` (Portal)
 - `chart`: `xwiki` v1.4.4
-- `deploymentMethod`: `tofu-controller` (Pattern B)
+- `deploymentMethod`: `crossplane` (Pattern B)
 - `extraValues`: aligned with `opendesk/helmfile/apps/xwiki/values.yaml.gotmpl`
 
 **Actions:**
@@ -975,8 +975,8 @@ kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=xwiki -w
 kubectl get appcatalogue default \
   -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep xwiki
 # Expected: xwiki: 1
-# Verify: Terraform CR exists (Pattern B)
-kubectl get terraform -n tofu-system tf-gtn-demo-xwiki
+# Verify: App claim exists and is Ready
+kubectl get app xwiki -n tenant-gtn-demo
 # Expected: READY=True
 ```
 
@@ -1034,10 +1034,10 @@ kubectl patch tenant gtn-demo --type=merge \
 **Delete (Uninstall):**
 ```bash
 kubectl gentian apps uninstall xwiki --tenant gtn-demo
-# Wait for reconciliation (orphan cleanup deletes the Terraform CR)
+# Wait for reconciliation (orphan cleanup deletes the App claim)
 sleep 30
-# Verify: Terraform CR removed
-kubectl get terraform -n tofu-system tf-gtn-demo-xwiki
+# Verify: App claim removed
+kubectl get app xwiki -n tenant-gtn-demo
 # Expected: Error from server (NotFound)
 # Verify: no XWiki pods
 kubectl get pods -n tenant-gtn-demo | grep xwiki

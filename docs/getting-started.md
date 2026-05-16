@@ -184,7 +184,7 @@ restart — no manual intervention needed after a normal reboot.
 | 0 | Installs `tofu` and `bao` CLI tools |
 | 0 | Installs Crossplane core via Helm (`crossplane-stable/crossplane` v1.18.0) into `crossplane-system` |
 | 0b/0c | Installs Crossplane providers (`provider-helm`, `provider-kubernetes`, `provider-vault`, `function-go-templating`, `function-auto-ready`) and applies `ProviderConfig`s, XRD (`XCluster`/`Cluster`), and Composition (`cluster-default`) |
-| 1 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `tofu-system`, `gentian-dev`, `gentian-infra-dev` |
+| 1 | Creates namespaces: `openbao`, `external-secrets`, `argocd`, `gentian-dev`, `gentian-infra-dev` |
 | 2 | Pre-warms the cluster (OCI image pull-through cache, node labels) |
 | 3 | Installs cert-manager via Helm |
 | 3b | Creates kernel cert-manager resources: HTTP-01 ClusterIssuer and optional DNS-01 Cloudflare ClusterIssuer. If `CF_API_TOKEN` is provided, also applies a wildcard Certificate for `*.${KERNEL_DOMAIN}`. |
@@ -196,7 +196,7 @@ restart — no manual intervention needed after a normal reboot.
 | 7 | Initialises transit OpenBao with Shamir 1-of-1; creates the `openbao-transit-unseal` k8s Secret |
 | 8 | Applies the primary `openbao`, `reloader`, `cnpg`, and `globals` ArgoCD Applications from `kernel/bootstrap/` |
 | 9 | Initialises primary OpenBao with transit seal — auto-unseals immediately; saves recovery key + root token to `${OPENBAO_INIT_FILE}` |
-| 10 | Bootstraps OpenBao for Crossplane: enables KV v2 mount at `secret/`, enables the Kubernetes auth backend, writes `crossplane-write` / `eso-read` / `tofu-write` policies, creates Kubernetes auth roles, mints and stores the `openbao-crossplane-token` Secret used by `provider-vault` |
+| 10 | Bootstraps OpenBao for Crossplane: enables KV v2 mount at `secret/`, enables the Kubernetes auth backend, writes `crossplane-write` / `eso-read` policies, creates Kubernetes auth roles, mints and stores the `openbao-crossplane-token` Secret used by `provider-vault` |
 | 11 | Creates HMAC-derived input Secrets in `crossplane-system` (one per OpenBao KV path: postgresql, mariadb, redis, minio, nubus, keycloak-bootstrap, postfix, master-password) |
 | 12 | Applies the `Cluster` XR claim (`crossplane/claims/dev-cluster.yaml`) and waits for the `XCluster` composite to become Ready — provisions all 19+ kernel managed resources via `provider-vault` and `provider-kubernetes` |
 | 12b | Seeds remaining OpenBao KV paths not managed by the Cluster XR (registry credentials, DNS/Cloudflare, app-level paths) |
