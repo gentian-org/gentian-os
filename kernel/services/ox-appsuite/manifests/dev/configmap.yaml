@@ -138,6 +138,8 @@ data:
           com.openexchange.mail.filter.loginType: "global"
           com.openexchange.mail.filter.credentialSource: "mail"
           com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
+          # ── IMAP TLS (disabled: dovecot-dev has no SSL cert for internal cluster traffic) ──
+          com.openexchange.imap.enableTls: "false"
           # ── Noreply address ───────────────────────────────────────────────
           com.openexchange.noreply.address: "noreply@desk.gentian.org"
           # ── OX Connector requirements ─────────────────────────────────────
