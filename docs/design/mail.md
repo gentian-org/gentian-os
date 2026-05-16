@@ -59,11 +59,6 @@ simultaneously. This is mitigated by standard HA practices (2+
 replicas, PodDisruptionBudget) — the same approach used for every
 other shared kernel component.
 
-For tenants in `vCluster` isolation mode with strict compliance
-requirements, a **per-tenant mail stack** remains available as an
-explicit opt-in (set in the Tenant CR). This is a deliberate cost
-trade-off for high-value tenants, not the default path.
-
 ## 5. Provisioning Flow (selfhosted mode)
 
 When a Tenant with `mail.mode: selfhosted` is reconciled, the

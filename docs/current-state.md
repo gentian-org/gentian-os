@@ -73,7 +73,7 @@ The `server/` repository implements a functional single-tenant GitOps deployment
 
 | Aspect | Architecture Target | Current State | Gap |
 |---|---|---|---|
-| **Tenant isolation** | Namespace-per-tenant or vCluster-per-tenant | Single set of namespaces (`gentian-infra-dev`, `gentian-iam-dev`, etc.) | No multi-tenancy; environment-based namespacing not tenant-based |
+| **Tenant isolation** | Namespace-per-tenant | Single set of namespaces (`gentian-infra-dev`, `gentian-iam-dev`, etc.) | No multi-tenancy; environment-based namespacing not tenant-based |
 | **Database isolation** | Per-app-per-tenant databases with dedicated users | Shared databases per app | No tenant-scoped database isolation |
 | **Storage isolation** | Per-tenant S3 buckets and WebDAV namespaces | Shared MinIO and Nextcloud instances | No tenant-scoped storage |
 | **Identity isolation** | Separate Keycloak realm per tenant | Single realm | No tenant realm isolation |

@@ -172,7 +172,6 @@ Which architecture concepts are addressed by which increment — and which are n
 |---|---|---|---|
 | §2.1 Window manager | Contract-based portal navigation registration | Univention Portal works as-is | IntegrationBinding (Increment 11) |
 | §2.1 Notifications | Cross-app notification gateway | Intercom Service exists but gateway not designed | Architecture design needed |
-| §2.4 vCluster isolation | vCluster-per-tenant mode | Optional; namespace mode is default | Optional Future Features |
 | §7 Repo 2 `gentian-apps` | App catalogue repo | **Covered below** in App Store plan | Inc 19–25 |
 | §8 Mail security | DKIM keys in OpenBao, SPF/DMARC automation | Part of mail extension | Increment 16 (partial) |
 | §9 Backup Strategy | pgBackRest, Velero, OpenBao snapshots | Independent workstream; no orchestrator dependency | Can start anytime |
@@ -1120,7 +1119,6 @@ These features are architecturally sound but not required for an MVP. They can b
 
 | Feature | Description | Depends on | Effort |
 |---|---|---|---|
-| vCluster-per-tenant isolation | Run each tenant in a dedicated vCluster for full API-server-level isolation (`isolation.mode: vcluster`). Namespace mode is the default and sufficient for most deployments. | Inc 2 (namespace reconciler), vCluster operator | Large |
 | MCP Discovery Layer | MCP server registry complementing IntegrationBindings (architecture §10.1–10.5) | Inc 11 (IntegrationBinding) | Large |
 | Tenant-scoped backup & restore | `BackupTenant` / `RestoreTenant` CRs for per-tenant pgBackRest + Velero + OpenBao snapshots (architecture §9) | Backup strategy design | Large |
 | Cross-cluster tenant migration | Move a tenant between clusters (architecture §9.3) | Backup & restore | Large |

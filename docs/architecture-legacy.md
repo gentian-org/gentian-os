@@ -74,7 +74,7 @@ This model is consistent with every other shared kernel component:
 | Redis | ACL user per tenant | 2–3 (shared) |
 | Mail | SASL credentials + mailbox path per tenant | 6–9 (shared) |
 
-The one genuine trade-off compared to a fully per-tenant stack is blast radius: a shared Postfix crash affects all tenants simultaneously. This is mitigated by standard HA practices (2+ replicas, PodDisruptionBudget) — the same approach used for every other shared kernel component. For tenants running in `vCluster` isolation mode with strict compliance requirements, a per-tenant mail stack remains available as an explicit opt-in (set in the Tenant CR's isolation mode). This should be treated as a deliberate cost trade-off for high-value tenants, not the default path.
+The one genuine trade-off compared to a fully per-tenant stack is blast radius: a shared Postfix crash affects all tenants simultaneously. This is mitigated by standard HA practices (2+ replicas, PodDisruptionBudget) — the same approach used for every other shared kernel component.
 
 ### 2.3 Kernel vs Userspace
 
@@ -88,12 +88,9 @@ Gentian OS supports multiple tenants (organisations) on a single cluster. Each t
 
 Each tenant's apps are deployed into a **dedicated namespace** (`tenant-{name}`). Kubernetes RBAC, ResourceQuotas, LimitRanges, and NetworkPolicies enforce isolation at the platform level. At the application level, isolation is enforced through separate Keycloak realms, PostgreSQL databases, MinIO bucket policies, and Redis ACLs.
 
-For deployments requiring stronger isolation — regulated industries, hostile multi-tenancy, or customer-facing PaaS — each tenant can optionally run inside a **vCluster** (virtual Kubernetes cluster, Apache 2.0 licensed), providing a dedicated API server per tenant while still sharing the kernel infrastructure.
-
 | Isolation level | Mechanism | Best for |
 |---|---|---|
 | Namespace-per-tenant (default) | K8s RBAC, ResourceQuotas, NetworkPolicies | Trusted internal tenants, cost efficiency |
-| vCluster-per-tenant (optional) | Dedicated K8s API server per tenant | External customers, regulated environments |
 
 ### 2.5 Domains and TLS
 
@@ -863,7 +860,7 @@ spec:
   adminEmail: admin@gtn-demo.example.com
 
   isolation:
-    mode: namespace              # namespace | vcluster
+    mode: namespace              # namespace
     namespace: tenant-gtn-demo
     ldapOU: "ou=gtn-demo"
     keycloakRealm: gtn-demo
@@ -1067,7 +1064,7 @@ func (r *TenantReconciler) Reconcile(ctx, req) (Result, error) {
     tenant := fetch Tenant CR
 
     1. Provision tenant-level resources (via operator CRs):
-       ├── Create namespace (or vCluster if isolation.mode == vcluster)
+       ├── Create namespace
        ├── Create KeycloakRealmImport CR → Keycloak Operator provisions realm
        ├── Create LDAP OU via UDM Job
        ├── Create MinIO Tenant prefix via MinIO Operator CR
@@ -1115,7 +1112,7 @@ func (r *TenantReconciler) Reconcile(ctx, req) (Result, error) {
         9. Create/update ArgoCD Application CR:
            ├── Chart reference from AppProfile
            ├── Rendered values (existingSecret references)
-           ├── Destination: tenant namespace (or vCluster endpoint)
+           ├── Destination: tenant namespace
            ├── Sync policy: automated, self-healing
            └── Owner reference → Tenant CR
 
@@ -1138,7 +1135,7 @@ func (r *TenantReconciler) Reconcile(ctx, req) (Result, error) {
 5. Delete Keycloak realm CR → operator removes realm
 6. Remove LDAP OU via UDM Job
 7. Remove tenant from shared mail infrastructure (if selfhosted) → remove ConfigMap entries and Secrets
-8. Delete tenant namespace (or vCluster)
+8. Delete tenant namespace
 9. Remove Tenant finalizer
 ```
 

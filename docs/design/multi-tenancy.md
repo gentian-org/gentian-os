@@ -8,8 +8,7 @@
 
 A **tenant** is an organisation. Each tenant gets:
 
-- A dedicated Kubernetes namespace (`tenant-{name}`) — or, optionally, a
-  dedicated virtual Kubernetes API server (vCluster).
+- A dedicated Kubernetes namespace (`tenant-{name}`).
 - A dedicated Keycloak realm with its own user pool, branding, and
   password policy.
 - Per-app PostgreSQL/MariaDB databases with isolated users.
@@ -29,14 +28,6 @@ ext4 per user).
 | Mode | Mechanism | Best for |
 |---|---|---|
 | **namespace-per-tenant** (default) | K8s RBAC, ResourceQuotas, NetworkPolicies | Trusted internal tenants, cost efficiency |
-| **vCluster-per-tenant** (opt-in) | Dedicated K8s API server per tenant (Apache 2.0) | External customers, regulated environments |
-
-vCluster mode shares the same kernel infrastructure but gives the
-tenant their own apiserver — useful when tenants need to run their own
-operators or when API-level isolation is a compliance requirement. The
-choice is per-tenant and selected by `Tenant.spec.isolation.mode`; the
-Crossplane Composition for `Tenant` selects a different rendering
-template based on this field.
 
 ## 3. Domains and TLS — Hybrid Two-Plane Model
 

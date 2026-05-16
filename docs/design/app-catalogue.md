@@ -145,7 +145,7 @@ spec:
   adminEmail: admin@gtn-demo.example.com
 
   isolation:
-    mode: namespace             # namespace | vcluster
+    mode: namespace             # namespace
     namespace: tenant-gtn-demo
     ldapOU: "ou=gtn-demo"
     keycloakRealm: gtn-demo

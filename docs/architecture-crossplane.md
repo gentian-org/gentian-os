@@ -119,7 +119,7 @@ CRs; tenant admins consume them by name.
 ### 4.2 `Tenant` (cluster-scoped) — the customer
 
 Declares **who** uses the platform: an optional vanity domain, an
-isolation mode (namespace or vCluster), resource quotas, mail mode, and
+isolation mode (namespace), resource quotas, mail mode, and
 a deletion policy. Creating a `Tenant` provisions the kernel-layer
 infrastructure for an organisation: namespace, RBAC, OpenBao policies,
 LDAP entries, DNS record, and the Keycloak realm. It does **not** dictate
@@ -206,9 +206,6 @@ Multiple tenants share one cluster:
   LimitRanges. Identity, data, and mail are isolated through dedicated
   Keycloak realms, per-app database users, MinIO bucket policies,
   Redis ACLs, and (for mail) per-domain DKIM keys.
-- **Stronger isolation** is opt-in **vCluster-per-tenant** (a virtual
-  Kubernetes API server per tenant) for regulated tenants or external
-  customers.
 - **Domains** use a hybrid two-plane model: a per-cluster wildcard
   (`*.<kernel_domain>`) covers platform UIs and the default tenant URL
   (`<tenant>.<kernel_domain>`); customers with a vanity domain
@@ -461,9 +458,6 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 - **Adding a kernel capability = one provider.** The driver model
   scales the way Linux kernel modules scale: pluggable, independently
   versioned, no kernel fork needed.
-- **Adding stronger isolation = one Composition variant.** The
-  `vcluster` mode is a second Composition selected by the same
-  `Tenant` claim — no controller branches.
 - **AI-friendly.** The platform's full state is queryable via the K8s
   API; AI agents see exactly the same model that operators see.
 

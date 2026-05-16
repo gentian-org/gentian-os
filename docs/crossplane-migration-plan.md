@@ -97,7 +97,6 @@ gentian-os/
         │   │   │   ├── functions.yaml
         │   │   │   └── expected.yaml
         │   │   ├── tenant-with-mail/
-        │   │   ├── tenant-vcluster/
         │   │   └── cluster-bootstrap/
         │   ├── functions/             # function unit tests
         │   │   ├── derive-secrets/
@@ -688,9 +687,6 @@ the new stack.
       MariaDB, storage (MinIO), cache (Redis), mail from Go reconcilers
       into the Composition (using provider-keycloak, provider-http,
       provider-kubernetes Objects/Jobs).
-- [x] `crossplane/compositions/tenant-vcluster.yaml` — selected when
-      `spec.isolation.mode == vcluster`.
-
 ### 5.2 Unit tests
 
 This is the largest unit-test surface in the migration. Each AppProfile
@@ -701,7 +697,6 @@ in the catalogue gets a render test:
 | `tests/unit/render/tenant-minimal/` | Tenant with one app renders namespace + NetworkPolicy + LimitRange + OpenBao Policy + App claim — golden diff |
 | `tests/unit/render/tenant-multi-app/` | Tenant with 6 apps renders the correct fan-out with no missing or extra MRs |
 | `tests/unit/render/tenant-with-mail/` | `mail.mode=selfhosted` (Phase 3b) |
-| `tests/unit/render/tenant-vcluster/` | `isolation.mode=vcluster` selects the alternate Composition (Phase 3b) |
 | `tests/unit/render/integration-binding-emit/` | When both `nextcloud` and `ox-appsuite` are in `spec.apps`, an `IntegrationBinding` MR for `filepicker` is emitted (Phase 3b) |
 | `tests/unit/render/integration-binding-skip/` | When only `ox-appsuite` is in `spec.apps`, no `filepicker` binding is emitted (Phase 3b) |
 
