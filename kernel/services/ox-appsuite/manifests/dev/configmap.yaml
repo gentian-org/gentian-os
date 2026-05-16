@@ -129,7 +129,9 @@ data:
           # ── Mail (kernel Postfix + Dovecot) ──────────────────────────────
           com.openexchange.mail.authType: "xoauth2"
           com.openexchange.mail.loginSource: "name"
-          com.openexchange.mail.mailServer: "dovecot-dev.gentian-dev.svc.cluster.local"
+          # Use mail.desk.gentian.org so TLS hostname matches wildcard-tls cert (*.desk.gentian.org)
+          # CoreDNS hairpin resolves mail.desk.gentian.org → dovecot ClusterIP (cluster-internal)
+          com.openexchange.mail.mailServer: "mail.desk.gentian.org"
           com.openexchange.mail.mailServerSource: "global"
           com.openexchange.mail.transport.authType: "xoauth2"
           com.openexchange.mail.transportServer: "postfix-dev.gentian-dev.svc.cluster.local"
@@ -138,10 +140,8 @@ data:
           com.openexchange.mail.filter.loginType: "global"
           com.openexchange.mail.filter.credentialSource: "mail"
           com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
-          # ── IMAP TLS (disabled: dovecot-dev has no SSL cert for internal cluster traffic) ──
-          # enableTls=false: don't use SSL-wrapped IMAP (port 993 style)
-          # requireTls=false: don't issue STARTTLS (dovecot advertises it but has no cert)
-          com.openexchange.imap.enableTls: "false"
+          # STARTTLS on port 143: hostname mail.desk.gentian.org matches wildcard cert *.desk.gentian.org
+          com.openexchange.imap.enableTls: "true"
           com.openexchange.imap.requireTls: "false"
           # ── Noreply address ───────────────────────────────────────────────
           com.openexchange.noreply.address: "noreply@desk.gentian.org"

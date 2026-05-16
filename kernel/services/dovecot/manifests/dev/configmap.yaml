@@ -131,6 +131,11 @@ data:
     persistence:
       size: "10Gi"
 
+    # TLS certificate — wildcard cert covers *.desk.gentian.org
+    # Required for IMAPS (port 993) used by OX and external clients (Thunderbird)
+    certificate:
+      secretName: "wildcard-tls"
+
     resources:
       limits:
         cpu: "1000m"
