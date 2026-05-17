@@ -89,6 +89,8 @@ kubectl get secret gentian-os-master-password -n crossplane-system >/dev/null 2>
                --from-literal=password=<your-master-password>"
 
 info "Applying dev-cluster Cluster claim..."
+# The static dev-cluster.yaml (domain: desk.gentian.org) is used for e2e tests.
+# Production installs use crossplane/claims/dev-cluster.yaml.tmpl via install.sh.
 kubectl apply -f "${REPO_ROOT}/claims/dev-cluster.yaml"
 
 # ── Step 5: Wait for XCluster to be Ready ───────────────────────────────────

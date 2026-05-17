@@ -524,8 +524,18 @@ create_crossplane_secrets() {
 apply_cluster_xr() {
     banner "Step 12 — Apply Cluster XR (kernel structural provisioning)"
 
-    info "Applying crossplane/claims/dev-cluster.yaml..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml"
+    # Derive defaults for template variables not already set.
+    # LDAP_BASE_DN: dc= decomposition of KERNEL_DOMAIN (e.g. desk.example.com → dc=desk,dc=example,dc=com)
+    local _dn_parts
+    _dn_parts=$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')
+    export LDAP_BASE_DN="${LDAP_BASE_DN:-${_dn_parts}}"
+    export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
+    export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
+    export INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-nginx}"
+
+    info "Applying Cluster claim (kernelDomain=${KERNEL_DOMAIN})..."
+    envsubst < "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml.tmpl" \
+        | kubectl apply -f -
 
     # Crossplane generates a unique name for the XCluster composite (e.g.
     # dev-cluster-k4d2m). Read it from the Claim's resourceRef once populated.

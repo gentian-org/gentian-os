@@ -35,7 +35,7 @@ import (
 
 const (
 	conditionStorageReady     = "StorageReady"
-	minioProvisionerImage     = "minio/mc:latest"
+	minioProvisionerImage     = "minio/mc:RELEASE.2025-04-03T17-07-56Z"
 	minioAdminSecret          = "minio-admin"
 	nextcloudProvisionerImage = "curlimages/curl:8.7.1"
 	nextcloudAdminSecret      = "nextcloud-admin"
