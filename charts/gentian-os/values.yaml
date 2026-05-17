@@ -18,14 +18,6 @@ infraNamespace: "gentian-infra-dev"
 # tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
 servicesNamespace: "gentian-dev"
 
-# infraNamespace is the namespace hosting shared infrastructure (MariaDB, Redis,
-# MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
-infraNamespace: "gentian-infra-dev"
-
-# servicesNamespace is the namespace hosting platform services consumed by
-# tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
-servicesNamespace: "gentian-dev"
-
 image:
   repository: ghcr.io/gentian-org/gentian-os
   pullPolicy: Always
