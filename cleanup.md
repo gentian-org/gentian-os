@@ -65,6 +65,8 @@ registry credentials and writes NetworkPolicy rules for the dev namespaces.
 A `TODO` comment on line 61 acknowledges this.  
 **Fix:** Read from env vars `INFRA_NAMESPACE` / `SERVICES_NAMESPACE` with
 current values as defaults; inject via Helm values.
+**Status:** ✅ Fixed — `infraNamespace`/`servicesNamespace` are now `var` driven
+by `os.Getenv`; Helm `deployment.yaml` and `values.yaml` updated.
 
 ### 7. `ox-appsuite.yaml` LDAP host hardcoded to dev cluster
 **File:** `gentian-apps/profiles/ox-appsuite.yaml:133`  
@@ -74,6 +76,10 @@ OX App Suite cannot be deployed to staging/prod without editing this
 cluster-scoped CR. A `TODO` comment in the file acknowledges this.  
 **Fix:** Source LDAP connection details from a cluster-scoped ConfigMap or
 from the Cluster XR status; remove hardcoded values from the AppProfile.
+**Status:** ✅ Fixed — `install.sh` upserts `gentian-cluster-config` ConfigMap
+in `crossplane-system`; `app-ox.yaml` fetches it via `function-extra-resources`
+and substitutes `${LDAP_HOST}`, `${LDAP_BASE_DN}`, `${LDAP_BIND_DN}` in
+`extraValues.raw`; `ox-appsuite.yaml` now uses placeholders.
 
 ### 8. Cluster claim `kernelDomain` disconnected from Tenant `domain` source
 Both `dev-cluster.yaml` (Cluster claim) and `gtn-demo/patch.yaml` (Tenant)
@@ -82,12 +88,16 @@ independently specify the platform domain. There is no single source of truth.
 `<name>.<kernelDomain>` via `EffectiveDomain()`; document this as the
 canonical pattern and discourage overriding `domain` in Tenant CRs unless
 a custom vanity domain is truly needed.
+**Status:** ✅ Fixed — `docs/architecture.md` §6 updated with canonical pattern.
 
 ### 9. `VAULT_TOKEN` exported to process environment in `install.sh:260`
 `export VAULT_TOKEN="${BAO_TOKEN}"` makes the root token visible via
 `/proc/<pid>/environ` and `ps aux e`.  
 **Fix:** Pass the token per-command via `env VAULT_TOKEN=... bao ...` or
 write to a restricted temp file, unexport after bootstrap completes.
+**Status:** ✅ Fixed — `unset VAULT_TOKEN` added at the end of
+`bootstrap_openbao_for_crossplane()` so the root token is scrubbed from
+the process environment for the remainder of the install run.
 
 ### 10. `crossplane/functions/derive-secrets/` is dead code
 The Python secret derivation function is not referenced by any Composition,
@@ -95,6 +105,7 @@ XRD, or Function manifest. Derivation happens inside `install.sh` via
 `_derive`. The directory misleads readers into thinking Crossplane derives
 secrets independently.  
 **Fix:** Remove or archive `crossplane/functions/derive-secrets/`.
+**Status:** ✅ Fixed — directory deleted.
 
 ---
 

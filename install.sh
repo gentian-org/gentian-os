@@ -379,6 +379,11 @@ POLICY
     fi
 
     info "provider-vault ProviderConfig will authenticate via openbao-crossplane-token Secret."
+
+    # Scrub the root token from the process environment so it does not remain
+    # visible in /proc/<pid>/environ or child-process env for the rest of
+    # the install run.  VAULT_ADDR is kept (harmless; it is a plain URL).
+    unset VAULT_TOKEN
 }
 
 # =============================================================================
@@ -570,6 +575,27 @@ apply_cluster_xr() {
     local mr_count
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     info "  ${mr_count} managed resource(s) reconciled."
+
+    # Upsert a cluster-config ConfigMap consumed by Crossplane app-ox Composition
+    # to inject env-specific LDAP connection details into OX App Suite values.
+    # The bind DN is derived from the base DN (standard nubus LDAP convention).
+    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
+    local _ldap_bind_dn="uid=ldapsearch_ox,cn=users,${LDAP_BASE_DN}"
+    info "Upserting gentian-cluster-config ConfigMap (ldap.server=${_ldap_server})..."
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: crossplane-system
+  labels:
+    app.kubernetes.io/managed-by: gentian-os-install
+data:
+  ldap.server: "${_ldap_server}"
+  ldap.baseDn: "${LDAP_BASE_DN}"
+  ldap.bindDn: "${_ldap_bind_dn}"
+EOF
+    success "gentian-cluster-config ConfigMap upserted."
 }
 
 # =============================================================================

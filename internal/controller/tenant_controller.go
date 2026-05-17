@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -49,27 +50,34 @@ import (
 )
 
 const (
-	tenantFinalizer = "gentianos.io/tenant-cleanup"
-	tenantLabel     = "gentianos.io/tenant"
-	managedByLabel  = "app.kubernetes.io/managed-by"
-	managedByValue  = "gentian-os"
-	kernelNamespace = "platform-kernel"
-	// infraNamespace is the shared infrastructure namespace hosting MariaDB, Redis,
-	// and MinIO. Tenant-egress NetworkPolicy rules must allow traffic here so apps
-	// can reach their datastores. This is environment-specific (gentian-infra-{env})
-	// and should be made configurable via an operator env var / Helm value.
-	// TODO: read from INFRA_NAMESPACE env var (defaulting to this constant).
-	infraNamespace = "gentian-infra-dev"
-	// servicesNamespace is the shared namespace hosting platform services consumed by
-	// tenants — notably the Nubus UDM provisioning API used by the ox-connector.
-	// This is environment-specific and should be made configurable.
-	servicesNamespace = "gentian-dev"
+	tenantFinalizer         = "gentianos.io/tenant-cleanup"
+	tenantLabel             = "gentianos.io/tenant"
+	managedByLabel          = "app.kubernetes.io/managed-by"
+	managedByValue          = "gentian-os"
+	kernelNamespace         = "platform-kernel"
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	// Pods in this namespace must be allowed ingress to tenant pods so that the
 	// controller can proxy external requests to services inside the tenant namespace.
 	ingressNamespace        = "ingress"
 	conditionNamespaceReady = "NamespaceReady"
 )
+
+// infraNamespace and servicesNamespace are read from env vars at process
+// startup so that staging/prod deployments can override them without rebuilding
+// the operator. Defaults match the dev install layout.
+// Inject via INFRA_NAMESPACE / SERVICES_NAMESPACE in the operator Deployment
+// (see charts/gentian-os/templates/deployment.yaml).
+var (
+	infraNamespace    = envOrDefault("INFRA_NAMESPACE", "gentian-infra-dev")
+	servicesNamespace = envOrDefault("SERVICES_NAMESPACE", "gentian-dev")
+)
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // xTenantGVK is the GroupVersionKind for the XTenant composite resource managed
 // by Crossplane. The TenantReconciler creates one XTenant per Tenant so the

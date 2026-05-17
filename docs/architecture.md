@@ -210,7 +210,11 @@ Multiple tenants share one cluster:
   (`*.<kernel_domain>`) covers platform UIs and the default tenant URL
   (`<tenant>.<kernel_domain>`); customers with a vanity domain
   (`acme.com`) get HTTP-01 per-host certs without sharing any DNS
-  credentials with the platform.
+  credentials with the platform. The **canonical pattern** for new tenants
+  is to leave `spec.domain` unset — `EffectiveDomain()` then returns
+  `<name>.<kernelDomain>` automatically. Only set `spec.domain` when a
+  genuine custom vanity domain is required; the `kernelDomain` itself is
+  the single source of truth and is set once in the Cluster XR claim.
 - **App-to-app calls** go through OIDC token exchange, with the
   `IntegrationBinding` defining which exchanges are permitted.
 - **Database isolation:** each app within each tenant gets its own

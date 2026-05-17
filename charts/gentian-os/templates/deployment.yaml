@@ -60,6 +60,10 @@ spec:
               value: {{ .Values.openbao.role | quote }}
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
+            - name: INFRA_NAMESPACE
+              value: {{ .Values.infraNamespace | quote }}
+            - name: SERVICES_NAMESPACE
+              value: {{ .Values.servicesNamespace | quote }}
           ports:
             - name: metrics
               containerPort: 8080

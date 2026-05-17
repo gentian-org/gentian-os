@@ -12,7 +12,7 @@ spec:
   mode: Pipeline
   pipeline:
 
-    # ── Step 1: Fetch the AppProfile referenced by spec.profileRef.name ──────
+    # ── Step 1: Fetch the AppProfile and cluster-config ConfigMap ─────────────
     - step: fetch-profile
       functionRef:
         name: function-extra-resources
@@ -32,6 +32,16 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
+            # gentian-cluster-config is created by install.sh and carries
+            # cluster-specific LDAP connection details (ldap.server, ldap.baseDn,
+            # ldap.bindDn) so that the AppProfile itself remains env-agnostic.
+            - kind: ConfigMap
+              into: clusterConfig
+              apiVersion: v1
+              type: Reference
+              ref:
+                name: gentian-cluster-config
+                namespace: crossplane-system
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # OX App Suite variant: emits the standard ExternalSecret + Release from
@@ -309,6 +319,20 @@ spec:
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- /* Substitute LDAP connection details from gentian-cluster-config ConfigMap. */}}
+            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
+            {{- $ldapServer  := "nubus-dev-ldap-server.gentian-dev.svc.cluster.local" }}
+            {{- $ldapBaseDn  := "dc=swp-ldap,dc=internal" }}
+            {{- $ldapBindDn  := "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal" }}
+            {{- if gt (len $clusterCfgs) 0 }}
+            {{- $cc := index $clusterCfgs 0 }}
+            {{- $ldapServer  = dig "data" "ldap.server" $ldapServer $cc }}
+            {{- $ldapBaseDn  = dig "data" "ldap.baseDn"  $ldapBaseDn  $cc }}
+            {{- $ldapBindDn  = dig "data" "ldap.bindDn"  $ldapBindDn  $cc }}
+            {{- end }}
+            {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
+            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
+            {{- $raw = $raw | replace "${LDAP_BIND_DN}" $ldapBindDn }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
             {{- if and $spec.config $spec.config.extraValues }}
