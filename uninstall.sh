@@ -298,7 +298,7 @@ for ns in gentian-dev gentian-infra-dev; do
         ox-appsuite-dev-values \
         ox-bootstrap-base-values \
         ox-connector-base-values \
-        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete externalsecret \
         nubus-credentials \
         nubus-sensitive-values \
@@ -313,9 +313,9 @@ for ns in gentian-dev gentian-infra-dev; do
         dovecot-sensitive-values \
         ox-appsuite-sensitive-values \
         ox-appsuite-credentials \
-        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secretstore nubus-static \
-        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     # ESO-owned Secrets: delete only if ExternalSecrets are gone
     kubectl delete secret \
         nubus-credentials \
@@ -331,16 +331,16 @@ for ns in gentian-dev gentian-infra-dev; do
         dovecot-sensitive-values \
         ox-appsuite-sensitive-values \
         ox-appsuite-credentials \
-        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secret registry-credentials \
-        -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
 done
 
 # Operator Secret in platform-kernel (replaces kubernetes_secret.nextcloud_admin)
 kubectl delete externalsecret nextcloud-admin -n platform-kernel \
-    --ignore-not-found=true 2>/dev/null || true
+    --ignore-not-found=true --timeout=30s 2>/dev/null || true
 kubectl delete secret nextcloud-admin -n platform-kernel \
-    --ignore-not-found=true 2>/dev/null || true
+    --ignore-not-found=true --timeout=30s 2>/dev/null || true
 
 success "Phase 2 nubus + Pattern B resources removed."
 
@@ -389,9 +389,9 @@ if [[ "${remaining_count}" -gt 0 ]]; then
         [[ -z "${mr}" ]] && continue
         kubectl patch "${mr}" \
             --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
+            --timeout=10s 2>/dev/null || true
         kubectl delete "${mr}" --grace-period=0 --force \
-            --ignore-not-found=true 2>/dev/null || true
+            --ignore-not-found=true --timeout=10s 2>/dev/null || true
     done < <(kubectl get managed -o name 2>/dev/null)
     success "  Finalizers stripped; managed resources removed."
 else
