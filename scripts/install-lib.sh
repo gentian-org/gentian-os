@@ -1702,7 +1702,23 @@ install_argocd() {
     "application.resourceTrackingMethod": "annotation"
   }
 }'
-    success "ArgoCD annotation-based resource tracking configured." 
+    success "ArgoCD annotation-based resource tracking configured."
+
+    # Treat Pending PVCs as Healthy so ArgoCD sync waves are not blocked by
+    # WaitForFirstConsumer PVCs. On a fresh install, a PVC with
+    # volumeBindingMode=WaitForFirstConsumer (microk8s-hostpath) stays Pending
+    # until a pod mounts it. Without this override ArgoCD considers the PVC
+    # Progressing and never advances to the next wave where the consuming pod
+    # (or hook job) would be created — causing a permanent deadlock.
+    # Lost PVCs are still surfaced as Degraded.
+    info "Patching argocd-cm with PVC WaitForFirstConsumer health override..."
+    kubectl patch configmap argocd-cm -n argocd --type merge -p '
+{
+  "data": {
+    "resource.customizations.health.PersistentVolumeClaim": "hs = {}\nif obj.status ~= nil then\n  if obj.status.phase == \"Bound\" then\n    hs.status = \"Healthy\"\n    hs.message = \"PVC bound\"\n    return hs\n  end\n  if obj.status.phase == \"Pending\" then\n    hs.status = \"Healthy\"\n    hs.message = \"PVC pending (WaitForFirstConsumer)\"\n    return hs\n  end\n  if obj.status.phase == \"Lost\" then\n    hs.status = \"Degraded\"\n    hs.message = \"PVC lost\"\n    return hs\n  end\nend\nhs.status = \"Progressing\"\nhs.message = \"Waiting for PVC\"\nreturn hs\n"
+  }
+}'
+    success "ArgoCD PVC health override configured."
 
     # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
