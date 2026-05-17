@@ -1045,6 +1045,9 @@ deploy_nubus() {
     # know about extended_attributes created in step 1.  If the job fails with
     # "The User module has no property opendeskFileshare*", restart the UDM
     # REST API (which reloads the module registry from LDAP) then reapply the job.
+    # Also handles: if the job fails with "globaladdressbookdisabled has invalid
+    # value" (stale opendesk_standard profile from a previous partial install),
+    # remove the stale profile from LDAP, restart UDM, and reapply the job.
     _wait_and_fix_stack_data_ums() {
         local sdu_job="" sdu_ns="${ns}" sdu_deadline
         info "Waiting for stack-data-ums job to appear (up to 5m)..."
@@ -1072,8 +1075,18 @@ deploy_nubus() {
         sdu_logs=$(kubectl logs -n "${sdu_ns}" \
             -l "app.kubernetes.io/name=stack-data-ums,job-name=${sdu_job}" \
             --tail=30 2>/dev/null || true)
-        if printf '%s' "${sdu_logs}" | grep -q "has no property opendesk"; then
-            warn "  stack-data-ums failed: UDM REST API had stale module cache."
+        if printf '%s' "${sdu_logs}" | grep -qE "has no property opendesk|globaladdressbookdisabled"; then
+            if printf '%s' "${sdu_logs}" | grep -q "globaladdressbookdisabled"; then
+                warn "  stack-data-ums failed: stale opendesk_standard profile (invalid globaladdressbookdisabled)."
+                warn "  Removing stale opendesk_standard accessprofile from LDAP..."
+                kubectl exec -n "${sdu_ns}" \
+                    "${release_name}-ldap-server-primary-0" -- \
+                    ldapdelete -Y EXTERNAL -H ldapi:/// \
+                    "cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
+                    2>/dev/null || true
+            else
+                warn "  stack-data-ums failed: UDM REST API had stale module cache."
+            fi
             warn "  Restarting UDM REST API to reload extended_attribute definitions..."
             kubectl rollout restart deployment "${release_name}-udm-rest-api" \
                 -n "${sdu_ns}" 2>/dev/null || true
