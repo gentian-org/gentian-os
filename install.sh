@@ -41,6 +41,32 @@ CROSSPLANE_HELM_REPO=https://charts.crossplane.io/stable
 PROVIDER_WAIT_TIMEOUT=15m
 CLUSTER_XR_TIMEOUT=15m
 
+# ─── OpenBao CLI — auto-install if missing ────────────────────────────────────
+# Matches the appVersion of kernel/bootstrap/openbao-application.yaml chart 0.25.5.
+# Installed to ~/.local/bin so no sudo is required.
+OPENBAO_CLI_VERSION="${OPENBAO_CLI_VERSION:-v2.5.0}"
+
+_ensure_bao() {
+    if command -v bao >/dev/null 2>&1; then
+        return 0
+    fi
+    local _os _arch _archive _install_dir
+    _os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    _arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+    _archive="bao_${OPENBAO_CLI_VERSION#v}_${_os}_${_arch}.zip"
+    _install_dir="${HOME}/.local/bin"
+    mkdir -p "${_install_dir}"
+    info "bao CLI not found — installing ${OPENBAO_CLI_VERSION} to ${_install_dir}..."
+    curl -fsSL \
+        "https://github.com/openbao/openbao/releases/download/${OPENBAO_CLI_VERSION}/${_archive}" \
+        -o "/tmp/${_archive}"
+    unzip -qo "/tmp/${_archive}" bao -d "${_install_dir}"
+    rm -f "/tmp/${_archive}"
+    chmod +x "${_install_dir}/bao"
+    export PATH="${_install_dir}:${PATH}"
+    success "bao ${OPENBAO_CLI_VERSION} installed to ${_install_dir}/bao"
+}
+
 _ensure_crossplane_package_crds() {
     local required missing=()
     required=(
@@ -945,16 +971,15 @@ deploy_nubus() {
         _sens_vals=$(kubectl get secret nubus-sensitive-values \
             -n "${ns}" -o jsonpath='{.data.sensitive-values\.yaml}' \
             2>/dev/null | base64 -d 2>/dev/null || true)
-        _reg_cfg=$(kubectl get secret registry-credentials-helm \
-            -n "${CROSSPLANE_NAMESPACE}" -o json 2>/dev/null \
-            | python3 -c "
-import sys, json, base64
-s = json.load(sys.stdin)
-u = base64.b64decode(s['data']['username']).decode()
-p = base64.b64decode(s['data']['password']).decode()
-cfg = {'auths': {'registry.opencode.de': {'auth': base64.b64encode((u+':'+p).encode()).decode()}}}
-print(json.dumps(cfg))
-" 2>/dev/null || true)
+        _reg_cfg=$(
+            _u=$(kubectl get secret registry-credentials-helm \
+                -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d) && \
+            _p=$(kubectl get secret registry-credentials-helm \
+                -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) && \
+            _auth=$(printf '%s:%s' "${_u}" "${_p}" | base64 -w0) && \
+            printf '{"auths":{"registry.opencode.de":{"auth":"%s"}}}' "${_auth}" \
+            || true
+        )
         local _nubus_chart_repo _nubus_chart_ver
         _nubus_chart_repo=$(kubectl get release.helm.crossplane.io "${release_name}" \
             -o jsonpath='{.spec.forProvider.chart.repository}' 2>/dev/null || true)
@@ -1189,6 +1214,7 @@ main_cp() {
     prompt_network_mode
     prompt_kernel_secrets
     CROSSPLANE_MODE=1 check_prereqs
+    _ensure_bao
 
     # ── Crossplane core + providers ──────────────────────────────────────────
     install_crossplane          # Step 0   — Crossplane controller
