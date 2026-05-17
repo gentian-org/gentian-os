@@ -260,16 +260,32 @@ func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gen
 }
 
 // deleteLDAP handles LDAP cleanup on tenant deletion.
-// DeletionPolicy=Delete creates a UDM Job that removes the tenant OU
-// (cascading all child entries). DeletionPolicy=Retain is a no-op.
+// The tenant admin user is always deleted regardless of DeletionPolicy: it is
+// an operator-managed service account and must not persist across
+// undeploy/redeploy cycles (stale state would cause re-deploy to hit the PATCH
+// path with potentially incorrect property values).
+// DeletionPolicy=Delete additionally removes the tenant OU and all its children.
 func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	ouDN := tenantOUDN(tenant)
+
+	// Always delete the admin user, regardless of DeletionPolicy.
+	adminDelJobName := adminUserDeleteJobName(tenant.Name)
+	adminDelJob := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: adminDelJobName, Namespace: kernelNamespace}, adminDelJob)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, makeAdminUserDeleteJob(tenant, ouDN))
+	}
+
+	// OU deletion only when DeletionPolicy=Delete.
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	ouDN := tenantOUDN(tenant)
 	jobName := ouDeleteJobName(tenant.Name)
 	existing := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 	if err == nil {
 		return nil
 	}
@@ -423,6 +439,31 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
 						udmContainer("provision-admin-policy", buildAdminPolicyScript(ouDN, tenant.Name)),
+					},
+				},
+			},
+		},
+	}
+}
+
+func makeAdminUserDeleteJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      adminUserDeleteJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("delete-admin-user", buildAdminUserDeleteScript(ouDN)),
 					},
 				},
 			},
@@ -913,6 +954,31 @@ fi`,
 		tenantName, tenantName)
 }
 
+// buildAdminUserDeleteScript removes the tenant admin user from UDM.
+// Idempotent: a 404 response means the user is already gone.
+func buildAdminUserDeleteScript(ouDN string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+# OU_POS: ${UDM_LDAP_BASE} expands at runtime.
+OU_POS="%s"
+ADMIN_DN="uid=${ADMIN_USERNAME},${OU_POS}"
+ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
+
+HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/user/${ADMIN_DN_ENC}")
+if [ "${HTTP}" = "204" ] || [ "${HTTP}" = "200" ]; then
+  echo "UDM user ${ADMIN_USERNAME} deleted (HTTP ${HTTP})"
+elif [ "${HTTP}" = "404" ]; then
+  echo "UDM user ${ADMIN_USERNAME} not found, nothing to delete"
+else
+  echo "UDM user deletion failed (HTTP ${HTTP})" >&2
+  exit 1
+fi`, ouDN)
+}
+
 // buildOUDeleteScript removes the tenant OU and all child entries.
 func buildOUDeleteScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
@@ -965,4 +1031,8 @@ func adminUserJobName(tenantName string) string {
 
 func ouDeleteJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-ou-delete-%s", tenantName)
+}
+
+func adminUserDeleteJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-admin-user-delete-%s", tenantName)
 }
