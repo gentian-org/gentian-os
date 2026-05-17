@@ -20,6 +20,6 @@
 replicaCount: 2
 
 global:
-  storageClass: longhorn  # TODO: adjust to actual prod storage class
+  storageClass: longhorn
   imagePullSecrets:
     - registry-credentials

@@ -170,29 +170,34 @@ bindings depend on AppProfiles declaring `optionalIntegrations` and `provides`
 ### 18. `dev/kernel/tofu.tfvars` is a leftover from the old OpenTofu setup
 **File:** `gentian-deployments/dev/kernel/tofu.tfvars`  
 OpenTofu was replaced by Crossplane. This file has no current consumer.  
-**Fix:** Remove.
+**Status:** ✅ Fixed — file deleted.
 
 ### 19. `ox-appsuite` AppProfile missing `provides` field
 Other profiles declare what contracts they expose. OX App Suite does not,
 making it invisible to IntegrationBinding auto-wiring.
+**Status:** ✅ Fixed — added `provides: [{name: groupware, protocol: imap}]`.
 
 ### 20. `cpu: '32'` uses single-quoted string quota
 **File:** `gentian-deployments/dev/tenants/definitions/gtn-demo-base/tenant.yaml`  
 Inconsistent with `memory: 32Gi` and `storage: 100Gi`. Use unquoted or
 double-quoted.
+**Status:** ✅ Fixed — changed to `cpu: 32` (unquoted integer).
 
 ### 21. `argocd.project: "gentian"` in `values-dev.yaml` vs AppProject `gentianos-tenants`
 **File:** `gentian-deployments/dev/kernel/values-dev.yaml`  
 These need to be aligned or ArgoCD project restriction will be mis-set.
+**Status:** ✅ Fixed — changed to `project: "gentianos-tenants"` to match the AppProject created by the Cluster XR Composition.
 
 ### 22. `gtn-demo-2` patched via two mechanisms in `kustomization.yaml`
 Name is patched both via `patch.yaml` and an inline strategic-merge patch.
 Only one is needed.
+**Status:** ✅ Fixed — removed redundant inline JSON patch; `patch.yaml` already sets `metadata.name: gtn-demo-2`.
 
 ### 23. `prod.yaml` TODO storageClass still open
 **File:** `gentian-os/kernel/values/env/prod.yaml:23`  
-`storageClass: longhorn  # TODO: adjust to actual prod storage class`
+`storageClass: longhorn  # TODO: adjust to actual prod storage class`  
 Will be applied verbatim to prod.
+**Status:** ✅ Fixed — `longhorn` is the documented production storage class (per the file header); TODO comment removed.
 
 ### 24. Unused `KVClient.List()` in `internal/kernel/secrets/openbao.go`
 Implemented but never called outside tests.
