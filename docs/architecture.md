@@ -62,12 +62,12 @@ Two control loops do all the work, with one shared secret store:
 
 ```mermaid
 graph TD
-    GIT[Git\ngentian-os / gentian-apps / gentian-deployments]
-    AC[ArgoCD\n— deployment plane —\nGit sync · Drift · Rollback · Health]
-    XP[Crossplane\n— provisioning plane —\nXR → MR composition\nReconciliation]
-    PROV[Crossplane Providers\nprovider-helm / provider-kubernetes\nprovider-vault / provider-keycloak]
-    OB[OpenBao\n— secret store —]
-    OP[Upstream Operators\nKeycloak · CloudNativePG\nMinIO · ESO · Reloader]
+    GIT[Git<br/>gentian-os / gentian-apps / gentian-deployments]
+    AC[ArgoCD<br/>— deployment plane —<br/>Git sync · Drift · Rollback · Health]
+    XP[Crossplane<br/>— provisioning plane —<br/>XR → MR composition<br/>Reconciliation]
+    PROV[Crossplane Providers<br/>provider-helm / provider-kubernetes<br/>provider-vault / provider-keycloak]
+    OB[OpenBao<br/>— secret store —]
+    OP[Upstream Operators<br/>Keycloak · CloudNativePG<br/>MinIO · ESO · Reloader]
 
     GIT --> AC
     AC -- applies XRs, Compositions, Providers --> XP
