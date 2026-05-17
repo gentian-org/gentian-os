@@ -153,7 +153,7 @@ else
                 # force-strip. If it is running, give it an extra 30 s to
                 # complete an in-flight reconcile before we forcefully remove
                 # the finalizer and risk orphaned resources.
-                local op_running=0
+                op_running=0
                 kubectl get pods -n gentian-system -l "app.kubernetes.io/name=gentian-os" \
                     --field-selector=status.phase=Running --no-headers 2>/dev/null \
                     | grep -q . && op_running=1
