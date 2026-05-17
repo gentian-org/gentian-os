@@ -463,3 +463,54 @@ func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 			types.NamespacedName{Name: "ldap-ou-delete-ldapdelete", Namespace: "platform-kernel"}, j) == nil
 	})
 }
+// TestLDAP_RetainPolicy_DeletesAdminUser verifies that deleting a Tenant with
+// DeletionPolicy=Retain creates an admin-user deletion Job (not an OU deletion
+// Job — tenant data is preserved but the admin service account is cleaned up).
+func TestLDAP_RetainPolicy_DeletesAdminUser(t *testing.T) {
+        t.Parallel()
+        profile := newLDAPProfile("ldap-app6")
+        if err := testClient.Create(context.Background(), profile); err != nil {
+                t.Fatalf("create AppProfile: %v", err)
+        }
+        t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+        tenant := &gentianov1alpha1.Tenant{
+                ObjectMeta: metav1.ObjectMeta{Name: "ldapretain"},
+                Spec: gentianov1alpha1.TenantSpec{
+                        DisplayName:    "LDAP Retain Co",
+                        Domain:         "ldapretain.example.com",
+                        AdminEmail:     "admin@ldapretain.example.com",
+                        DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
+                        Apps:           []gentianov1alpha1.TenantApp{{Profile: "ldap-app6"}},
+                },
+        }
+        if err := testClient.Create(context.Background(), tenant); err != nil {
+                t.Fatalf("create tenant: %v", err)
+        }
+
+        // Wait until the OU Job is created (tenant provisioned).
+        waitFor(t, 10*time.Second, func() bool {
+                j := &batchv1.Job{}
+                return testClient.Get(context.Background(),
+                        types.NamespacedName{Name: "ldap-ou-ldapretain", Namespace: "platform-kernel"}, j) == nil
+        })
+
+        // Delete the tenant.
+        if err := testClient.Delete(context.Background(), tenant); err != nil {
+                t.Fatalf("delete tenant: %v", err)
+        }
+
+        // Expect the admin-user deletion Job (not the OU deletion Job).
+        waitFor(t, 10*time.Second, func() bool {
+                j := &batchv1.Job{}
+                return testClient.Get(context.Background(),
+                        types.NamespacedName{Name: "ldap-admin-user-delete-ldapretain", Namespace: "platform-kernel"}, j) == nil
+        })
+
+        // Must NOT create an OU deletion Job for Retain policy.
+        j := &batchv1.Job{}
+        if err := testClient.Get(context.Background(),
+                types.NamespacedName{Name: "ldap-ou-delete-ldapretain", Namespace: "platform-kernel"}, j); err == nil {
+                t.Error("ldap-ou-delete-ldapretain must not be created for DeletionPolicy=Retain")
+        }
+}

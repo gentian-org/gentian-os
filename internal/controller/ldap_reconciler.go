@@ -260,39 +260,43 @@ func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gen
 }
 
 // deleteLDAP handles LDAP cleanup on tenant deletion.
-// The tenant admin user is always deleted regardless of DeletionPolicy: it is
-// an operator-managed service account and must not persist across
-// undeploy/redeploy cycles (stale state would cause re-deploy to hit the PATCH
-// path with potentially incorrect property values).
-// DeletionPolicy=Delete additionally removes the tenant OU and all its children.
+//
+// DeletionPolicy=Delete: creates a UDM Job that removes the tenant OU with
+// recursive=1, which cascades deletion of all child entries including the
+// admin user.
+//
+// DeletionPolicy=Retain: keeps tenant data but explicitly deletes the admin
+// user. The admin user is an operator-managed service account and must not
+// persist across undeploy/redeploy cycles (stale state such as isOxUser=OK
+// would cause re-deploy to hit the PATCH path with incorrect property values).
 func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	ouDN := tenantOUDN(tenant)
 
-	// Always delete the admin user, regardless of DeletionPolicy.
+	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
+		// OU recursive delete cascades all children including the admin user.
+		jobName := ouDeleteJobName(tenant.Name)
+		existing := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
+		if err == nil {
+			return nil
+		}
+		if !errors.IsNotFound(err) {
+			return err
+		}
+		return r.Create(ctx, makeOUDeleteJob(tenant, ouDN))
+	}
+
+	// DeletionPolicy=Retain: delete only the admin user, preserve tenant data.
 	adminDelJobName := adminUserDeleteJobName(tenant.Name)
 	adminDelJob := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: adminDelJobName, Namespace: kernelNamespace}, adminDelJob)
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, makeAdminUserDeleteJob(tenant, ouDN))
-	}
-
-	// OU deletion only when DeletionPolicy=Delete.
-	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
-		return nil
-	}
-	jobName := ouDeleteJobName(tenant.Name)
-	existing := &batchv1.Job{}
-	err = r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 	if err == nil {
 		return nil
 	}
 	if !errors.IsNotFound(err) {
 		return err
 	}
-	return r.Create(ctx, makeOUDeleteJob(tenant, ouDN))
+	return r.Create(ctx, makeAdminUserDeleteJob(tenant, ouDN))
 }
 
 // ensureLDAPBase provisions the LDAP OU, admin user, and delegated-admin
