@@ -347,9 +347,17 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// Mark all expected cleanup jobs complete as they appear so the reconciler
+	// can proceed through the sequential deleteIdentity → deleteLDAP → deleteStorage → deleteCache chain.
+	go markJobCompleteWhenReady("keycloak-realm-delete-del-full", "platform-kernel")
+	go markJobCompleteWhenReady("ldap-ou-delete-del-full", "platform-kernel")
+	go markJobCompleteWhenReady("s3-delete-del-full-del-pgapp", "platform-kernel")
+	go markJobCompleteWhenReady("s3-delete-del-full-del-mariaapp", "platform-kernel")
+	go markJobCompleteWhenReady("nc-group-delete-del-full", "platform-kernel")
+	go markJobCompleteWhenReady("redis-acl-delete-del-full-del-pgapp", "platform-kernel")
 
 	// Wait for Tenant CR to be gone (finalizer ran).
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		err := testClient.Get(ctx, types.NamespacedName{Name: "del-full"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})
@@ -468,9 +476,11 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// Retain policy: deleteLDAP creates the admin-user delete job; mark it complete.
+	go markJobCompleteWhenReady("ldap-admin-user-delete-ret-full", "platform-kernel")
 
 	// Wait for Tenant CR to be gone (finalizer completed).
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, 20*time.Second, func() bool {
 		err := testClient.Get(ctx, types.NamespacedName{Name: "ret-full"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})

@@ -303,6 +303,10 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// deleteIdentity and deleteLDAP run before deleteIngress; mark their jobs.
+	go markJobCompleteWhenReady("keycloak-realm-delete-ingress-delete", "platform-kernel")
+	go markJobCompleteWhenReady("ldap-ou-delete-ingress-delete", "platform-kernel")
+	go markJobCompleteWhenReady("nc-group-delete-ingress-delete", "platform-kernel")
 
 	waitFor(t, 15*time.Second, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: ingressName, Namespace: nsName}, &networkingv1.Ingress{})

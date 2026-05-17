@@ -180,6 +180,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		return err
 	}
 
+	pending := false
 	for _, appName := range s3Apps {
 		deleteJobName := s3BucketDeleteJobName(tenant.Name, appName)
 		existing := &batchv1.Job{}
@@ -187,8 +188,11 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 			if err := r.Create(ctx, makeS3BucketDeleteJob(tenant, appName)); err != nil {
 				return fmt.Errorf("create S3 delete Job for %s: %w", appName, err)
 			}
+			pending = true
 		} else if err != nil {
 			return err
+		} else if !jobIsComplete(existing) {
+			pending = true
 		}
 	}
 
@@ -200,10 +204,16 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		if err := r.Create(ctx, makeNextcloudGroupDeleteJob(tenant)); err != nil {
 			return fmt.Errorf("create Nextcloud delete Job: %w", err)
 		}
+		pending = true
 	} else if err != nil {
 		return err
+	} else if !jobIsComplete(existingNC) {
+		pending = true
 	}
 
+	if pending {
+		return errDeleteJobPending
+	}
 	return nil
 }
 

@@ -457,9 +457,11 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// For Retain policy deleteLDAP creates the admin-user delete job.
+	go markJobCompleteWhenReady("ldap-admin-user-delete-retainer", "platform-kernel")
 
 	// Wait for Tenant CR to be gone (finalizer removed)
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 15*time.Second, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: "retainer"}, &gentianov1alpha1.Tenant{})
 		return err != nil // NotFound = gone
 	})
@@ -495,9 +497,13 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// For Delete policy deleteIdentity and deleteLDAP create cleanup jobs.
+	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
+	go markJobCompleteWhenReady("ldap-ou-delete-destroyer", "platform-kernel")
+	go markJobCompleteWhenReady("nc-group-delete-destroyer", "platform-kernel")
 
 	// Wait for Tenant CR to be gone
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 15*time.Second, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: "destroyer"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})

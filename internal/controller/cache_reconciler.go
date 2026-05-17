@@ -201,6 +201,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		return err
 	}
 
+	pending := false
 	for _, appName := range redisApps {
 		jobName := redisACLDeleteJobName(tenant.Name, appName)
 		existing := &batchv1.Job{}
@@ -211,6 +212,9 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 			if err := r.Create(ctx, makeRedisACLDeleteJob(tenant, appName)); err != nil && !errors.IsAlreadyExists(err) {
 				return fmt.Errorf("create Redis ACL delete Job %s: %w", jobName, err)
 			}
+			pending = true
+		} else if !jobIsComplete(existing) {
+			pending = true
 		}
 	}
 
@@ -222,6 +226,9 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Memcached Application CR: %w", err)
 		}
+	}
+	if pending {
+		return errDeleteJobPending
 	}
 	return nil
 }

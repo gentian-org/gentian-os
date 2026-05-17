@@ -245,12 +245,18 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 	if err == nil {
-		return nil // already created
+		if jobIsComplete(existing) {
+			return nil
+		}
+		return errDeleteJobPending
 	}
 	if !errors.IsNotFound(err) {
 		return err
 	}
-	return r.Create(ctx, makeRealmDeleteJob(tenant, realmName))
+	if err := r.Create(ctx, makeRealmDeleteJob(tenant, realmName)); err != nil {
+		return err
+	}
+	return errDeleteJobPending
 }
 
 // --- Job constructors --------------------------------------------------------

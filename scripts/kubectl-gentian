@@ -843,6 +843,11 @@ cmd_tenant_undeploy() {
 
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
+  echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
+  if ! kubectl wait tenant "${tenant_name}" --for=delete --timeout=300s 2>/dev/null; then
+    echo "WARNING: timed out waiting for tenant '${tenant_name}' to be fully deleted." >&2
+  fi
+
   if [[ "${purge}" == "true" ]]; then
     echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
   else

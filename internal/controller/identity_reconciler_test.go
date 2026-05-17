@@ -77,6 +77,31 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 	}
 }
 
+// markJobCompleteWhenReady polls until the named Job appears in namespace,
+// then marks it as Complete. Designed to be called in a goroutine during
+// deletion tests so the reconciler can proceed past errDeleteJobPending.
+// Errors are silently dropped — the outer waitFor will catch the timeout.
+func markJobCompleteWhenReady(jobName, namespace string) {
+	ctx := context.Background()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		job := &batchv1.Job{}
+		if testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: namespace}, job) == nil {
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.CompletionTime = &now
+			job.Status.Succeeded = 1
+			job.Status.Conditions = []batchv1.JobCondition{
+				{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
+				{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
+			}
+			_ = testClient.Status().Update(ctx, job)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // TestIdentity_NoOIDCApps verifies that a Tenant with no apps does not create
 // any identity Jobs and gets IdentityReady=True with reason NoIdentityRequired.
 func TestIdentity_NoOIDCApps(t *testing.T) {

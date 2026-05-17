@@ -349,6 +349,9 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// deleteIdentity and deleteLDAP run before deleteDatabase; mark their jobs.
+	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", "platform-kernel")
+	go markJobCompleteWhenReady("ldap-ou-delete-dbdelete", "platform-kernel")
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, 10*time.Second, func() bool {

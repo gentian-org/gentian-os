@@ -455,6 +455,8 @@ func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// deleteIdentity runs before deleteLDAP; mark its job so the reconciler proceeds.
+	go markJobCompleteWhenReady("keycloak-realm-delete-ldapdelete", "platform-kernel")
 
 	// Expect the OU-deletion cleanup Job.
 	waitFor(t, 10*time.Second, func() bool {

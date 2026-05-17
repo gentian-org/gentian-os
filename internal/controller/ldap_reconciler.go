@@ -278,12 +278,18 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		existing := &batchv1.Job{}
 		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 		if err == nil {
-			return nil
+			if jobIsComplete(existing) {
+				return nil
+			}
+			return errDeleteJobPending
 		}
 		if !errors.IsNotFound(err) {
 			return err
 		}
-		return r.Create(ctx, makeOUDeleteJob(tenant, ouDN))
+		if err := r.Create(ctx, makeOUDeleteJob(tenant, ouDN)); err != nil {
+			return err
+		}
+		return errDeleteJobPending
 	}
 
 	// DeletionPolicy=Retain: delete only the admin user, preserve tenant data.
@@ -291,12 +297,18 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	adminDelJob := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: adminDelJobName, Namespace: kernelNamespace}, adminDelJob)
 	if err == nil {
-		return nil
+		if jobIsComplete(adminDelJob) {
+			return nil
+		}
+		return errDeleteJobPending
 	}
 	if !errors.IsNotFound(err) {
 		return err
 	}
-	return r.Create(ctx, makeAdminUserDeleteJob(tenant, ouDN))
+	if err := r.Create(ctx, makeAdminUserDeleteJob(tenant, ouDN)); err != nil {
+		return err
+	}
+	return errDeleteJobPending
 }
 
 // ensureLDAPBase provisions the LDAP OU, admin user, and delegated-admin

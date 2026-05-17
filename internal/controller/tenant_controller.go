@@ -72,6 +72,12 @@ var (
 	servicesNamespace = envOrDefault("SERVICES_NAMESPACE", "gentian-dev")
 )
 
+// errDeleteJobPending is returned by delete helpers when a cleanup Job has been
+// created but has not yet completed. reconcileDelete treats this as a signal to
+// requeue rather than a hard error, so the finalizer is only removed once all
+// cleanup Jobs have finished.
+var errDeleteJobPending = fmt.Errorf("cleanup job not yet complete")
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -466,14 +472,26 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	logger := log.FromContext(ctx)
 	nsName := tenantNamespaceName(tenant)
 
+	// awaitJob wraps each delete helper: if the helper returns errDeleteJobPending
+	// the reconciler requeues rather than treating it as a hard error.
+	awaitJob := func(err error) (bool, ctrl.Result, error) {
+		if err == nil {
+			return false, ctrl.Result{}, nil
+		}
+		if err == errDeleteJobPending {
+			return true, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+		return true, ctrl.Result{}, err
+	}
+
 	// Clean up identity resources before removing the namespace.
-	if err := r.deleteIdentity(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	if requeue, res, err := awaitJob(r.deleteIdentity(ctx, tenant)); requeue {
+		return res, err
 	}
 
 	// Clean up LDAP resources before removing the namespace.
-	if err := r.deleteLDAP(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	if requeue, res, err := awaitJob(r.deleteLDAP(ctx, tenant)); requeue {
+		return res, err
 	}
 
 	// Clean up database resources before removing the namespace.
@@ -487,13 +505,13 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	}
 
 	// Clean up storage resources before removing the namespace.
-	if err := r.deleteStorage(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	if requeue, res, err := awaitJob(r.deleteStorage(ctx, tenant)); requeue {
+		return res, err
 	}
 
 	// Clean up cache resources before removing the namespace.
-	if err := r.deleteCache(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	if requeue, res, err := awaitJob(r.deleteCache(ctx, tenant)); requeue {
+		return res, err
 	}
 
 	// Clean up app deployment resources (always, regardless of DeletionPolicy).

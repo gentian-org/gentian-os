@@ -331,6 +331,10 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
+	// deleteIdentity and deleteLDAP run before deleteCache; mark their jobs.
+	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", "platform-kernel")
+	go markJobCompleteWhenReady("ldap-ou-delete-cachedelete", "platform-kernel")
+	go markJobCompleteWhenReady("nc-group-delete-cachedelete", "platform-kernel")
 
 	// Redis delete Job should appear.
 	deleteJob := &batchv1.Job{}
