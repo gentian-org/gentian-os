@@ -259,12 +259,15 @@ bootstrap_openbao_for_crossplane() {
     fi
     export VAULT_TOKEN="${BAO_TOKEN}"
 
-    # ── 1. KV v2 mount at 'secret/' ──────────────────────────────────────────
-    if bao secrets list -format=json 2>/dev/null | jq -e '."secret/"' >/dev/null 2>&1; then
-        success "KV v2 mount at 'secret/' already present."
+    # ── 1. KV v2 mount — use KV_MOUNT from install.env (default: secret) ─────
+    # Must match spec.openbao.kvMount in dev-cluster.yaml.tmpl and the
+    # cluster-default Composition, which also uses this env var.
+    local _kv_mount="${KV_MOUNT:-secret}"
+    if bao secrets list -format=json 2>/dev/null | jq -e --arg m "${_kv_mount}/" '.[($m)]' >/dev/null 2>&1; then
+        success "KV v2 mount at '${_kv_mount}/' already present."
     else
-        bao secrets enable -path=secret kv-v2
-        success "KV v2 mount at 'secret/' enabled."
+        bao secrets enable -path="${_kv_mount}" kv-v2
+        success "KV v2 mount at '${_kv_mount}/' enabled."
     fi
 
     # ── 2. Kubernetes auth backend ────────────────────────────────────────────
@@ -280,10 +283,12 @@ bootstrap_openbao_for_crossplane() {
 
     # ── 3. crossplane-write policy (broad — provider-vault needs sys/* access) ─
     # The Cluster XR Policy MR will keep this policy in sync going forward.
-    bao policy write crossplane-write - <<'POLICY'
+    # _kv_mount is substituted into the heredoc via a quoted-less delimiter so
+    # the shell expands the variable before passing the policy to bao.
+    bao policy write crossplane-write - <<POLICY
 # KV operations
-path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
-path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+path "${_kv_mount}/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
+path "${_kv_mount}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
 # Mount management (SecretMount MR)
 path "sys/mounts/*"   { capabilities = ["create","read","update","delete","sudo"] }
 path "sys/mounts"     { capabilities = ["read","list"] }
@@ -304,11 +309,11 @@ POLICY
     # ── 3b. eso-read policy ───────────────────────────────────────────────────
     # ESO reads all kernel + tenant app secrets. Tenant isolation is enforced
     # by Kubernetes RBAC on the resulting Secrets; ESO needs one cluster-wide role.
-    bao policy write eso-read - <<'POLICY'
-path "secret/data/gentian-os/kernel/*"    { capabilities = ["read"] }
-path "secret/metadata/gentian-os/kernel/*" { capabilities = ["list"] }
-path "secret/data/gentian-os/tenants/+/apps/*"  { capabilities = ["read"] }
-path "secret/metadata/gentian-os/tenants/*"       { capabilities = ["list"] }
+    bao policy write eso-read - <<POLICY
+path "${_kv_mount}/data/gentian-os/kernel/*"    { capabilities = ["read"] }
+path "${_kv_mount}/metadata/gentian-os/kernel/*" { capabilities = ["list"] }
+path "${_kv_mount}/data/gentian-os/tenants/+/apps/*"  { capabilities = ["read"] }
+path "${_kv_mount}/metadata/gentian-os/tenants/*"       { capabilities = ["list"] }
 POLICY
     success "eso-read policy written."
 
@@ -537,6 +542,7 @@ apply_cluster_xr() {
     export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
     export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
     export INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-nginx}"
+    export KV_MOUNT="${KV_MOUNT:-secret}"
 
     info "Applying Cluster claim (kernelDomain=${KERNEL_DOMAIN})..."
     envsubst < "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml.tmpl" \

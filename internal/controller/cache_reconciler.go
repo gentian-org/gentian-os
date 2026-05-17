@@ -44,9 +44,14 @@ const (
 	argocdVersion         = "v1alpha1"
 	argocdApplicationKind = "Application"
 	argocdNamespace       = "argocd"
-	memcachedChartRepo    = "https://charts.bitnami.com/bitnami"
-	memcachedChartName    = "memcached"
-	memcachedChartVersion = "7.4.1"
+)
+
+// Memcached chart coordinates — configurable via Helm values / env vars so
+// upgrades don't require an operator image rebuild.
+var (
+	memcachedChartRepo    = envOrDefault("MEMCACHED_CHART_REPO", "https://charts.bitnami.com/bitnami")
+	memcachedChartName    = envOrDefault("MEMCACHED_CHART_NAME", "memcached")
+	memcachedChartVersion = envOrDefault("MEMCACHED_CHART_VERSION", "7.4.1")
 )
 
 var argocdApplicationGVK = schema.GroupVersionKind{

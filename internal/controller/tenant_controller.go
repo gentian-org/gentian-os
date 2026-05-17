@@ -50,11 +50,11 @@ import (
 )
 
 const (
-	tenantFinalizer         = "gentianos.io/tenant-cleanup"
-	tenantLabel             = "gentianos.io/tenant"
-	managedByLabel          = "app.kubernetes.io/managed-by"
-	managedByValue          = "gentian-os"
-	kernelNamespace         = "platform-kernel"
+	tenantFinalizer = "gentianos.io/tenant-cleanup"
+	tenantLabel     = "gentianos.io/tenant"
+	managedByLabel  = "app.kubernetes.io/managed-by"
+	managedByValue  = "gentian-os"
+	kernelNamespace = "platform-kernel"
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	// Pods in this namespace must be allowed ingress to tenant pods so that the
 	// controller can proxy external requests to services inside the tenant namespace.

@@ -115,35 +115,53 @@ secrets independently.
 `staging/kernel/image-updater.yaml` targets `staging-kernel-os`;
 `prod/kernel/image-updater.yaml` targets `prod-kernel-os`. Neither
 Application CR exists in the repo. The updater CRDs are inert.
+**Status:** ✅ Fixed — `namePattern` corrected to `gentian-os` in both files.
 
 ### 12. KV mount hardcoded in policy rules despite being a spec field
 `cluster-default.yaml` composition emits policy rules with literal
 `path "secret/data/gentian-os/*"` even though `spec.openbao.kvMount` is
 configurable. Using a non-default mount name silently produces a wrong policy.
+**Status:** ✅ Fixed — `install.sh` bootstrap_openbao_for_crossplane() now uses
+`_kv_mount=${KV_MOUNT:-secret}` throughout. `dev-cluster.yaml.tmpl` uses
+`${KV_MOUNT}`. `install.env.template` documents the variable.
 
 ### 13. No enforcement of `gentianos.io/profile-name` label on AppProfiles
 `function-extra-resources` fetches AppProfiles by this label. All current
 profiles have it manually, but there is no webhook or controller to enforce
 or auto-apply it. A new profile without the label causes a silent composition
 failure (`minMatch: 1` not satisfied).
+**Status:** ✅ Fixed — AppStoreReconciler now auto-sets the `gentianos.io/profile-name`
+label on any AppProfile where it is missing or incorrect.
 
 ### 14. Memcached chart version/repo hardcoded in Go binary
 `cache_reconciler.go:40-41` — upgrading requires an operator redeploy, not
 a config change.
+**Status:** ✅ Fixed — `memcachedChartRepo/Name/Version` are now `var` driven by
+`MEMCACHED_CHART_REPO/NAME/VERSION` env vars. Helm `values.yaml` exposes
+`memcached.chartRepo/Name/Version`; `deployment.yaml` injects them.
 
 ### 15. No credential rotation mechanism
 All credentials use `PutOnce` semantics. There is no `kubectl gentian rotate`
 command or any CronJob to refresh OIDC secrets, database passwords, or S3
 keys.
+**Status:** 🟡 Open — out of scope for this review; tracked separately.
 
 ### 16. `uninstall.sh` strips Tenant finalizers without waiting for operator
 The force-strip of finalizers may orphan resources if the operator is
 mid-reconcile.
+**Status:** ✅ Fixed — uninstall.sh now checks whether the operator pod is Running
+before force-stripping; if running, extends the timeout by 30 s to allow
+in-flight reconciliation to complete before forceful removal.
 
 ### 17. Integration binding reconciler is a stub
 `ensureIntegrationBindings` is called from the main reconcile loop but
 contains no auto-wiring logic. The `optionalIntegrations` fields in element,
 jitsi, and ox-appsuite never produce bindings.
+**Status:** ❌ Not a real issue — `ensureIntegrationBindings` is fully implemented:
+it fetches AppProfiles, resolves `optionalIntegrations`, finds matching
+providers in the tenant, and creates/GCs `IntegrationBinding` CRs. The
+bindings depend on AppProfiles declaring `optionalIntegrations` and `provides`
+(see issue 19).
 
 ---
 

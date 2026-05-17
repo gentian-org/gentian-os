@@ -149,8 +149,20 @@ else
         local_deadline=$((SECONDS + 60))
         while kubectl get tenant "${tenant_name}" &>/dev/null; do
             if (( SECONDS > local_deadline )); then
-                warn "Tenant ${tenant_name} finalizer not cleared after 60 s — operator not running?"
-                warn "Force-stripping gentianos.io/tenant-cleanup finalizer from ${tenant_name}..."
+                # Check whether the operator pod is running before deciding to
+                # force-strip. If it is running, give it an extra 30 s to
+                # complete an in-flight reconcile before we forcefully remove
+                # the finalizer and risk orphaned resources.
+                local op_running=0
+                kubectl get pods -n gentian-system -l "app.kubernetes.io/name=gentian-os" \
+                    --field-selector=status.phase=Running --no-headers 2>/dev/null \
+                    | grep -q . && op_running=1
+                if [[ "${op_running}" == "1" ]]; then
+                    warn "Operator is running but finalizer not cleared in 60 s — waiting 30 s more..."
+                    sleep 30
+                    kubectl get tenant "${tenant_name}" &>/dev/null || break
+                fi
+                warn "Tenant ${tenant_name} finalizer not cleared — force-stripping..."
                 kubectl patch tenant "${tenant_name}" \
                     --type=json \
                     -p='[{"op":"remove","path":"/metadata/finalizers"}]' \

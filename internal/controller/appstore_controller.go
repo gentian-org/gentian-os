@@ -48,7 +48,7 @@ const (
 //
 // +kubebuilder:rbac:groups=gentianos.io,resources=appcatalogues,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appcatalogues/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch
 type AppStoreReconciler struct {
 	client.Client
@@ -93,6 +93,28 @@ func (r *AppStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.List(ctx, profileList); err != nil {
 		reconcileErrors.WithLabelValues("appstore").Inc()
 		return ctrl.Result{}, err
+	}
+
+	// Ensure every AppProfile carries the gentianos.io/profile-name label.
+	// The Crossplane app Compositions select AppProfiles by this label; without
+	// it the minMatch:1 selector silently fails. We auto-apply it here so
+	// profiles created without the label (e.g. by new contributors) still work.
+	const profileNameLabel = "gentianos.io/profile-name"
+	for i := range profileList.Items {
+		p := &profileList.Items[i]
+		if p.Labels[profileNameLabel] == p.Name {
+			continue
+		}
+		patched := p.DeepCopy()
+		if patched.Labels == nil {
+			patched.Labels = make(map[string]string)
+		}
+		patched.Labels[profileNameLabel] = p.Name
+		if err := r.Patch(ctx, patched, client.MergeFrom(p)); err != nil {
+			logger.Error(err, "failed to set profile-name label", "profile", p.Name)
+		} else {
+			logger.Info("auto-set profile-name label", "profile", p.Name)
+		}
 	}
 
 	// Count how many tenants reference each AppProfile.

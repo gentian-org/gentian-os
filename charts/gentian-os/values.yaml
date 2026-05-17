@@ -80,6 +80,13 @@ argocd:
   namespace: "argocd"
   project: "default"
 
+# Memcached chart coordinates for tenant cache provisioning.
+# Changing these takes effect on the next operator redeploy without rebuilding.
+memcached:
+  chartRepo: "https://charts.bitnami.com/bitnami"
+  chartName: "memcached"
+  chartVersion: "7.4.1"
+
 # Operator defaults
 defaults:
   isolation:

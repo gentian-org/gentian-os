@@ -5,6 +5,7 @@
 #   LETSENCRYPT_EMAIL     (optional) — defaults to admin@${KERNEL_DOMAIN}
 #   OPENBAO_SERVER        (optional) — defaults to in-cluster address
 #   INGRESS_CLASS_NAME    (optional) — defaults to nginx
+#   KV_MOUNT              (optional) — defaults to secret
 #
 # For e2e tests (make e2e-p1), use crossplane/claims/dev-cluster.yaml directly.
 apiVersion: gentianos.io/v1alpha1
@@ -20,7 +21,7 @@ spec:
     namespace: crossplane-system
   openbao:
     server: ${OPENBAO_SERVER}
-    kvMount: secret
+    kvMount: ${KV_MOUNT}
     authMount: kubernetes
     kubernetesHost: https://kubernetes.default.svc
   argocd:
