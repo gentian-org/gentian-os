@@ -16,13 +16,18 @@ IMG ?= ghcr.io/gentian-org/gentian-os:latest
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean
+.PHONY: all build generate manifests test lint docker-build clean install-plugin
 
 all: generate build test
 
 ## Build the module (no binary yet — orchestrator binary added in Increment 2)
 build:
 	go build ./...
+
+## Install the kubectl-gentian plugin to ~/.local/bin
+install-plugin:
+	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
+	@echo "Installed kubectl-gentian to $(HOME)/.local/bin/kubectl-gentian"
 
 ## Run unit tests
 # internal/controller uses envtest whose watch goroutines conflict with -race;
