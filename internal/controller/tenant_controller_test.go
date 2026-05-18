@@ -458,6 +458,7 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// For Retain policy deleteLDAP preserves the admin user (no delete job created).
+	// For Retain policy deleteIdentity is a no-op: retainer has no apps so no realm was provisioned.
 
 	// Wait for Tenant CR to be gone (finalizer removed)
 	waitFor(t, 15*time.Second, func() bool {

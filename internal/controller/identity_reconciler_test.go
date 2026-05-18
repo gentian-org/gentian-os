@@ -450,3 +450,56 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-realm-delete-identdelete", Namespace: "platform-kernel"}, j) == nil
 	})
 }
+
+// TestIdentity_RetainPolicy_DisablesRealm verifies that deleting a Tenant with
+// DeletionPolicy=Retain creates a realm-disable Job (not a delete Job) so users
+// cannot log in but realm configuration is preserved for fast redeploy.
+func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
+	t.Parallel()
+	profile := newOIDCProfile("oidc-app5")
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "identretain"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "Identity Retain Co",
+			Domain:         "identretain.example.com",
+			AdminEmail:     "admin@identretain.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
+			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app5"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	// Wait until the realm Job is created.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-realm-identretain", Namespace: "platform-kernel"}, j) == nil
+	})
+
+	// Delete the tenant.
+	if err := testClient.Delete(context.Background(), tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+	go markJobCompleteWhenReady("keycloak-realm-disable-identretain", "platform-kernel")
+
+	// Expect a realm-disable Job (not a delete Job).
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-realm-disable-identretain", Namespace: "platform-kernel"}, j) == nil
+	})
+
+	// No realm-deletion Job must be created.
+	j := &batchv1.Job{}
+	if testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-realm-delete-identretain", Namespace: "platform-kernel"}, j) == nil {
+		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
+	}
+}

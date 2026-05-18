@@ -477,6 +477,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// Retain policy: deleteLDAP preserves the admin user (no delete job created).
+	// Retain policy: deleteIdentity is a no-op for tenants with no OIDC apps (ret-app has none).
 
 	// Wait for Tenant CR to be gone (finalizer completed).
 	waitFor(t, 20*time.Second, func() bool {

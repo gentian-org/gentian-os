@@ -857,7 +857,9 @@ cmd_tenant_undeploy() {
 
   echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
   if ! kubectl wait tenant "${tenant_name}" --for=delete --timeout=300s 2>/dev/null; then
-    echo "WARNING: timed out waiting for tenant '${tenant_name}' to be fully deleted." >&2
+    echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
+    echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
+    exit 1
   fi
 
   if [[ "${purge}" == "true" ]]; then

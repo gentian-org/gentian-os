@@ -129,8 +129,8 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		// Delete any stale cleanup job so the next undeploy creates a fresh one.
-		r.deleteProvisioningJobs(ctx, realmDeleteJobName(tenant.Name))
+		// Delete any stale cleanup jobs so the next undeploy creates a fresh one.
+		r.deleteProvisioningJobs(ctx, realmDeleteJobName(tenant.Name), realmDisableJobName(tenant.Name))
 		return false, r.Create(ctx, makeRealmJob(tenant, realmName))
 	}
 	if err != nil {
@@ -235,15 +235,35 @@ func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentiano
 }
 
 // deleteIdentity handles identity cleanup on tenant deletion.
-// With DeletionPolicyDelete it creates a Job that removes the Keycloak realm
-// (which cascades all clients and sessions). With DeletionPolicyRetain it is
-// a no-op — the realm and user accounts are preserved.
+// With DeletionPolicyDelete it creates a Job that permanently removes the Keycloak realm
+// (cascading all clients and sessions). With DeletionPolicyRetain it creates a Job that
+// disables the realm — users cannot log in but all configuration is preserved for fast
+// redeploy (the realm provisioning job re-enables it on the next deploy).
+// When no realm was provisioned (no OIDC apps) the function is a no-op in both cases.
 func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
-		return nil
-	}
 	realmName := keycloakRealmName(tenant)
-	jobName := realmDeleteJobName(tenant.Name)
+
+	var jobName string
+	var makeJob func() *batchv1.Job
+	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
+		jobName = realmDeleteJobName(tenant.Name)
+		makeJob = func() *batchv1.Job { return makeRealmDeleteJob(tenant, realmName) }
+	} else {
+		// Retain path: only disable the realm if one was actually provisioned.
+		// If the realm job is absent, no realm exists in Keycloak and there is nothing to disable.
+		rj := &batchv1.Job{}
+		switch err := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: kernelNamespace}, rj); {
+		case err == nil:
+			// Realm was provisioned; proceed to create the disable job.
+		case errors.IsNotFound(err):
+			return nil
+		default:
+			return err
+		}
+		jobName = realmDisableJobName(tenant.Name)
+		makeJob = func() *batchv1.Job { return makeRealmDisableJob(tenant, realmName) }
+	}
+
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 	if err == nil {
@@ -261,7 +281,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	if !errors.IsNotFound(err) {
 		return err
 	}
-	if err := r.Create(ctx, makeRealmDeleteJob(tenant, realmName)); err != nil {
+	if err := r.Create(ctx, makeJob()); err != nil {
 		return err
 	}
 	return errDeleteJobPending
@@ -362,6 +382,31 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 	}
 }
 
+func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      realmDisableJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						keycloakContainer("disable-realm", buildRealmDisableScript(realmName)),
+					},
+				},
+			},
+		},
+	}
+}
+
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
@@ -447,8 +492,13 @@ if [ "${HTTP}" = "404" ]; then
     -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false}'
   echo "realm %s created"
 else
-  echo "realm %s already exists (HTTP ${HTTP})"
-fi`, realmName, realmName, displayName, realmName, realmName)
+  curl -sf \
+    -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"realm":"%s","enabled":true}'
+  echo "realm %s already exists, ensured enabled=true (was HTTP ${HTTP})"
+fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -579,6 +629,28 @@ HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
 echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 }
 
+func buildRealmDisableScript(realmName string) string {
+	return fmt.Sprintf(`set -eu
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/%s")
+if [ "${HTTP}" = "404" ]; then
+  echo "realm %s not found, nothing to disable"
+else
+  curl -sf \
+    -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"realm":"%s","enabled":false}'
+  echo "realm %s disabled (sessions invalidated)"
+fi`, realmName, realmName, realmName, realmName, realmName)
+}
+
 // --- Name helpers ------------------------------------------------------------
 
 // keycloakRealmName returns the Keycloak realm name for a tenant.
@@ -604,6 +676,10 @@ func clientJobName(tenantName, appName string) string {
 
 func realmDeleteJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-realm-delete-%s", tenantName)
+}
+
+func realmDisableJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-realm-disable-%s", tenantName)
 }
 
 func oidcClientID(tenantName, appName string) string {
