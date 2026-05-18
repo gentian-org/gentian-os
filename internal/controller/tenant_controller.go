@@ -78,6 +78,21 @@ var (
 // cleanup Jobs have finished.
 var errDeleteJobPending = fmt.Errorf("cleanup job not yet complete")
 
+// deleteProvisioningJobs removes completed provisioning Jobs by name, ignoring
+// not-found and transient errors. Call this after a cleanup Job completes so
+// that the provisioning Jobs are re-created (and the resource re-provisioned)
+// on the next tenant deploy.
+func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) {
+	prop := metav1.DeletePropagationBackground
+	for _, name := range jobNames {
+		job := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, job); err != nil {
+			continue
+		}
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+	}
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

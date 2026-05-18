@@ -279,6 +279,12 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 		if err == nil {
 			if jobIsComplete(existing) {
+				// Delete provisioning jobs so they are re-created on the next deploy.
+				r.deleteProvisioningJobs(ctx,
+					ouJobName(tenant.Name),
+					adminUserJobName(tenant.Name),
+					adminPolicyJobName(tenant.Name),
+				)
 				return nil
 			}
 			return errDeleteJobPending
@@ -298,6 +304,11 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	err := r.Get(ctx, types.NamespacedName{Name: adminDelJobName, Namespace: kernelNamespace}, adminDelJob)
 	if err == nil {
 		if jobIsComplete(adminDelJob) {
+			// Delete provisioning jobs so they are re-created on the next deploy.
+			r.deleteProvisioningJobs(ctx,
+				adminUserJobName(tenant.Name),
+				adminPolicyJobName(tenant.Name),
+			)
 			return nil
 		}
 		return errDeleteJobPending

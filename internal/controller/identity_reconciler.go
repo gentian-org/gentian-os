@@ -246,6 +246,12 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 	if err == nil {
 		if jobIsComplete(existing) {
+			// Delete provisioning jobs so they are re-created on the next deploy.
+			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name)}
+			for _, app := range tenant.Spec.Apps {
+				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
+			}
+			r.deleteProvisioningJobs(ctx, provNames...)
 			return nil
 		}
 		return errDeleteJobPending
