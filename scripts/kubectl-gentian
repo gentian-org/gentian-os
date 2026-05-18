@@ -838,7 +838,9 @@ cmd_tenant_undeploy() {
       git add "${kustom_file}"
     )
     git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
-      apply_env_kustomization "${env_name}"
+    if ! apply_env_kustomization "${env_name}"; then
+      echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
+    fi
   fi
 
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
