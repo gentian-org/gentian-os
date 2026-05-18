@@ -118,6 +118,12 @@ patch9_nextcloud_sentinel = f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_
 # ldapsearch_dovecot is the bind DN used by Dovecot's LDAP passdb/userdb and
 # must be able to read users in every tenant OU for IMAP authentication to work.
 patch9_dovecot_sentinel = f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break'
+# Sentinel for the svc-portal-server read grant in patch 9 (upgrade detection).
+# svc-portal-server is the UDM REST API bind account used by the Nubus portal
+# server's /api/v1/me endpoint.  Without this grant, UDM returns 404 when the
+# portal server fetches a tenant admin user's data, causing a 500 error in the
+# portal and preventing user-specific portal personalisation.
+patch9_portal_sentinel = f'   by dn="uid=svc-portal-server,cn=users,{ldap_base}" read break'
 # Sentinel for patch 10: mail/domain visibility restriction.
 patch10_sentinel = f'# Gentian patch 10: restrict mail/domain visibility to owning tenant'
 # Sentinel for the Tenant Admins read grant in patch 10 (upgrade detection).
@@ -129,7 +135,7 @@ patch10_tenant_admins_sentinel = f'   by set="user & [cn=Tenant Admins,cn=groups
 # use 'by dn.regex="^.+,ou=$1,..." write' so only same-tenant users get write.
 patch2_new_sentinel = f'   by dn.regex="^.+,ou=$1,{ldap_base}$" write\n'
 
-if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch9_nextcloud_sentinel in content and patch9_dovecot_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
+if already_done >= 8 and patch9_sentinel in content and patch9_keycloak_sentinel in content and patch9_nextcloud_sentinel in content and patch9_dovecot_sentinel in content and patch9_portal_sentinel in content and patch2_new_sentinel in content and patch10_sentinel in content and patch10_tenant_admins_sentinel in content:
     print("slapd.conf already fully patched, skipping.")
     sys.exit(0)
 
@@ -367,6 +373,7 @@ if patch9_sentinel not in content:
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=svc-portal-server,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
         f'# Gentian patch 9b: restrict read on entries inside tenant OUs to same-tenant users\n'
@@ -381,6 +388,7 @@ if patch9_sentinel not in content:
         f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
         f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=svc-portal-server,cn=users,{ldap_base}" read break\n'
         f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
         f'   by * none\n'
     )
@@ -509,8 +517,53 @@ elif patch9_dovecot_sentinel not in content:
         content = content.replace(old_9a_dovecot, new_9a_dovecot, 1)
         content = content.replace(old_9b_dovecot, new_9b_dovecot, 1)
         print("Upgraded tenant OU read restriction to grant ldapsearch_dovecot access (patch 9 dovecot).")
+elif patch9_portal_sentinel not in content:
+    # Upgrade path: patch 9 already has ldapsearch_dovecot but is missing
+    # svc-portal-server. The Nubus portal server uses this UDM REST API bind
+    # account to fetch user data in /api/v1/me. Without tenant-OU read access
+    # the UDM call returns 404 and the portal server returns 500 for all tenant
+    # admin users, breaking portal personalisation.
+    old_9a_portal = (
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    new_9a_portal = (
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=svc-portal-server,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 9b'
+    )
+    old_9b_portal = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 10'
+    )
+    new_9b_portal = (
+        f'   by self read break\n'
+        f'   by dn="uid=ldapsearch_keycloak,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_nextcloud,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=ldapsearch_dovecot,cn=users,{ldap_base}" read break\n'
+        f'   by dn="uid=svc-portal-server,cn=users,{ldap_base}" read break\n'
+        f'   by dn.regex="^.+,ou=$1,{ldap_base}$" read break\n'
+        f'   by * none\n'
+        f'# Gentian patch 10'
+    )
+    if old_9a_portal not in content or old_9b_portal not in content:
+        print("WARNING: could not locate expected patch 9 context for svc-portal-server upgrade; skipping.",
+              file=sys.stderr)
+    else:
+        content = content.replace(old_9a_portal, new_9a_portal, 1)
+        content = content.replace(old_9b_portal, new_9b_portal, 1)
+        print("Upgraded tenant OU read restriction to grant svc-portal-server access (patch 9 portal-server).")
 else:
-    print("Tenant OU read restriction (patch 9) with ldapsearch_dovecot already present.")
+    print("Tenant OU read restriction (patch 9) with svc-portal-server already present.")
 
 # ── Patch 10: mail/domain visibility restriction ──────────────────────────────
 # The mail/domain objects live at cn=<domain>,cn=domain,cn=mail,<ldapbase> —
