@@ -22,6 +22,16 @@
 
 set -euo pipefail
 
+# Print a clear error when any command fails (set -e exits silently otherwise).
+_gentian_err_trap() {
+  local exit_code=$?
+  local line=$1
+  echo "error: kubectl gentian failed (line ${line}, exit code ${exit_code})" >&2
+  echo "  Run with 'bash -x kubectl gentian ...' for full trace." >&2
+  exit "${exit_code}"
+}
+trap '_gentian_err_trap $LINENO' ERR
+
 # ---------------------------------------------------------------------------
 # Config resolution
 # ---------------------------------------------------------------------------

@@ -129,6 +129,8 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
+		// Delete any stale cleanup job so the next undeploy creates a fresh one.
+		r.deleteProvisioningJobs(ctx, realmDeleteJobName(tenant.Name))
 		return false, r.Create(ctx, makeRealmJob(tenant, realmName))
 	}
 	if err != nil {

@@ -211,6 +211,11 @@ func (r *TenantReconciler) ensureAdminUserJob(ctx context.Context, tenant *genti
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
+		// Delete any stale cleanup jobs so the next undeploy creates fresh ones.
+		r.deleteProvisioningJobs(ctx,
+			adminUserDeleteJobName(tenant.Name),
+			ouDeleteJobName(tenant.Name),
+		)
 		return false, r.Create(ctx, makeAdminUserJob(tenant, ouDN, creds))
 	}
 	if err != nil {
