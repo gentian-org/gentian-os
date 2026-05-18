@@ -466,10 +466,12 @@ func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	})
 }
 
-// TestLDAP_RetainPolicy_DeletesAdminUser verifies that deleting a Tenant with
-// DeletionPolicy=Retain creates an admin-user deletion Job (not an OU deletion
-// Job — tenant data is preserved but the admin service account is cleaned up).
-func TestLDAP_RetainPolicy_DeletesAdminUser(t *testing.T) {
+// TestLDAP_RetainPolicy_PreservesAdminUser verifies that deleting a Tenant with
+// DeletionPolicy=Retain does NOT create an admin-user deletion Job. The admin
+// user must be preserved to maintain a stable LDAP entryUUID across
+// undeploy/redeploy cycles (changing the entryUUID breaks the Nextcloud
+// LDAP→OIDC user chain).
+func TestLDAP_RetainPolicy_PreservesAdminUser(t *testing.T) {
 	t.Parallel()
 	profile := newLDAPProfile("ldap-app6")
 	if err := testClient.Create(context.Background(), profile); err != nil {
@@ -503,15 +505,16 @@ func TestLDAP_RetainPolicy_DeletesAdminUser(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 
-	// Expect the admin-user deletion Job (not the OU deletion Job).
-	waitFor(t, 10*time.Second, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-admin-user-delete-ldapretain", Namespace: "platform-kernel"}, j) == nil
-	})
+	// Retain policy must NOT create an admin-user deletion Job (entryUUID must be preserved).
+	// Give the reconciler a moment to act, then assert the job is absent.
+	time.Sleep(2 * time.Second)
+	j := &batchv1.Job{}
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "ldap-admin-user-delete-ldapretain", Namespace: "platform-kernel"}, j); err == nil {
+		t.Error("ldap-admin-user-delete-ldapretain must not be created for DeletionPolicy=Retain")
+	}
 
 	// Must NOT create an OU deletion Job for Retain policy.
-	j := &batchv1.Job{}
 	if err := testClient.Get(context.Background(),
 		types.NamespacedName{Name: "ldap-ou-delete-ldapretain", Namespace: "platform-kernel"}, j); err == nil {
 		t.Error("ldap-ou-delete-ldapretain must not be created for DeletionPolicy=Retain")

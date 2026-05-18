@@ -476,8 +476,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// Retain policy: deleteLDAP creates the admin-user delete job; mark it complete.
-	go markJobCompleteWhenReady("ldap-admin-user-delete-ret-full", "platform-kernel")
+	// Retain policy: deleteLDAP preserves the admin user (no delete job created).
 
 	// Wait for Tenant CR to be gone (finalizer completed).
 	waitFor(t, 20*time.Second, func() bool {

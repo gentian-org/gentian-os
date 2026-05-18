@@ -457,8 +457,7 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// For Retain policy deleteLDAP creates the admin-user delete job.
-	go markJobCompleteWhenReady("ldap-admin-user-delete-retainer", "platform-kernel")
+	// For Retain policy deleteLDAP preserves the admin user (no delete job created).
 
 	// Wait for Tenant CR to be gone (finalizer removed)
 	waitFor(t, 15*time.Second, func() bool {

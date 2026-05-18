@@ -270,10 +270,16 @@ func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gen
 // recursive=1, which cascades deletion of all child entries including the
 // admin user.
 //
-// DeletionPolicy=Retain: keeps tenant data but explicitly deletes the admin
-// user. The admin user is an operator-managed service account and must not
-// persist across undeploy/redeploy cycles (stale state such as isOxUser=OK
-// would cause re-deploy to hit the PATCH path with incorrect property values).
+// DeletionPolicy=Retain: preserves all tenant LDAP data including the admin
+// user. The admin user must not be deleted on Retain undeploy because deletion
+// causes the LDAP server to assign a new entryUUID on recreation. The
+// entryUUID is used as the Nextcloud user ID (via the LDAP username attribute)
+// and as the opendesk_useruuid OIDC claim (via Keycloak's entryUUID mapper).
+// Deleting the admin user therefore breaks the Nextcloud LDAP→OIDC user chain
+// across undeploy/redeploy cycles, causing HTTP 400 errors on OIDC code
+// exchange. Instead, provisioning jobs are deleted so they re-run on the next
+// deploy via the PATCH path, which resets any stale attributes (isOxUser,
+// oxAccess) without changing the entryUUID.
 func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	ouDN := tenantOUDN(tenant)
 
@@ -303,28 +309,14 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		return errDeleteJobPending
 	}
 
-	// DeletionPolicy=Retain: delete only the admin user, preserve tenant data.
-	adminDelJobName := adminUserDeleteJobName(tenant.Name)
-	adminDelJob := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: adminDelJobName, Namespace: kernelNamespace}, adminDelJob)
-	if err == nil {
-		if jobIsComplete(adminDelJob) {
-			// Delete provisioning jobs so they are re-created on the next deploy.
-			r.deleteProvisioningJobs(ctx,
-				adminUserJobName(tenant.Name),
-				adminPolicyJobName(tenant.Name),
-			)
-			return nil
-		}
-		return errDeleteJobPending
-	}
-	if !errors.IsNotFound(err) {
-		return err
-	}
-	if err := r.Create(ctx, makeAdminUserDeleteJob(tenant, ouDN)); err != nil {
-		return err
-	}
-	return errDeleteJobPending
+	// DeletionPolicy=Retain: preserve the admin user and all tenant LDAP data.
+	// Delete provisioning jobs so they re-run on the next deploy via the PATCH
+	// path, resetting any stale attributes without changing the entryUUID.
+	r.deleteProvisioningJobs(ctx,
+		adminUserJobName(tenant.Name),
+		adminPolicyJobName(tenant.Name),
+	)
+	return nil
 }
 
 // ensureLDAPBase provisions the LDAP OU, admin user, and delegated-admin
