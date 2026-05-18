@@ -470,31 +470,6 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 	}
 }
 
-func makeAdminUserDeleteJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
-	ttl := int32(3600)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      adminUserDeleteJobName(tenant.Name),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						udmContainer("delete-admin-user", buildAdminUserDeleteScript(ouDN, tenant.Name)),
-					},
-				},
-			},
-		},
-	}
-}
-
 func makeOUDeleteJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
@@ -976,33 +951,6 @@ fi`,
 		tenantName, tenantName,
 		tenantName, tenantName,
 		tenantName, tenantName)
-}
-
-// buildAdminUserDeleteScript removes the tenant admin user from UDM.
-// The admin username follows the deterministic pattern admin-{tenantName}.
-// Idempotent: a 404 response means the user is already gone.
-func buildAdminUserDeleteScript(ouDN, tenantName string) string {
-	adminUsername := fmt.Sprintf("admin-%s", tenantName)
-	return fmt.Sprintf(`set -eu
-urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
-CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
-BASE_URL="${UDM_URL}/udm"
-# OU_POS: ${UDM_LDAP_BASE} expands at runtime.
-OU_POS="%s"
-ADMIN_DN="uid=%s,${OU_POS}"
-ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
-
-HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
-  -H "Accept: application/json" \
-  "${BASE_URL}/users/user/${ADMIN_DN_ENC}")
-if [ "${HTTP}" = "204" ] || [ "${HTTP}" = "200" ]; then
-  echo "UDM user %s deleted (HTTP ${HTTP})"
-elif [ "${HTTP}" = "404" ]; then
-  echo "UDM user %s not found, nothing to delete"
-else
-  echo "UDM user %s deletion failed (HTTP ${HTTP})" >&2
-  exit 1
-fi`, ouDN, adminUsername, adminUsername, adminUsername, adminUsername)
 }
 
 // buildOUDeleteScript removes the tenant OU and all child entries.
