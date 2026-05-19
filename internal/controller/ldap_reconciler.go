@@ -215,6 +215,7 @@ func (r *TenantReconciler) ensureAdminUserJob(ctx context.Context, tenant *genti
 		r.deleteProvisioningJobs(ctx,
 			adminUserDeleteJobName(tenant.Name),
 			ouDeleteJobName(tenant.Name),
+			ldapLockJobName(tenant.Name),
 		)
 		return false, r.Create(ctx, makeAdminUserJob(tenant, ouDN, creds))
 	}
@@ -309,14 +310,36 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		return errDeleteJobPending
 	}
 
-	// DeletionPolicy=Retain: preserve the admin user and all tenant LDAP data.
-	// Delete provisioning jobs so they re-run on the next deploy via the PATCH
-	// path, resetting any stale attributes without changing the entryUUID.
-	r.deleteProvisioningJobs(ctx,
-		adminUserJobName(tenant.Name),
-		adminPolicyJobName(tenant.Name),
-	)
-	return nil
+	// DeletionPolicy=Retain: lock all users in the tenant OU so they cannot log in.
+	// Guard: only create the lock job if the admin user job is complete (users exist).
+	// Preserves all LDAP data; does NOT delete the admin user (entryUUID must be stable).
+	aj := &batchv1.Job{}
+	switch ajErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, aj); {
+	case errors.IsNotFound(ajErr), ajErr == nil && !jobIsComplete(aj):
+		// Admin user was never fully provisioned; nothing to lock.
+		r.deleteProvisioningJobs(ctx, adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+		return nil
+	case ajErr != nil:
+		return ajErr
+	}
+
+	lockJobName := ldapLockJobName(tenant.Name)
+	lockJob := &batchv1.Job{}
+	lockErr := r.Get(ctx, types.NamespacedName{Name: lockJobName, Namespace: kernelNamespace}, lockJob)
+	if lockErr == nil {
+		if jobIsComplete(lockJob) {
+			r.deleteProvisioningJobs(ctx, adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+			return nil
+		}
+		return errDeleteJobPending
+	}
+	if !errors.IsNotFound(lockErr) {
+		return lockErr
+	}
+	if err := r.Create(ctx, makeLockOUJob(tenant, ouDN)); err != nil {
+		return err
+	}
+	return errDeleteJobPending
 }
 
 // ensureLDAPBase provisions the LDAP OU, admin user, and delegated-admin
@@ -363,6 +386,31 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 }
 
 // --- Job constructors --------------------------------------------------------
+
+func makeLockOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ldapLockJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("lock-users", buildLockOUScript(ouDN)),
+					},
+				},
+			},
+		},
+	}
+}
 
 func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 	ttl := int32(3600)
@@ -714,7 +762,25 @@ else
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
     -d "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}"
   echo "user ${ADMIN_USERNAME} added to admins group"
-fi`, ouDN, adminEmail, tenantName)
+fi
+
+# Unlock all users in the tenant OU (idempotent; reverses Retain lock on redeploy).
+OU_ENC_UNLOCK=$(urlencode "${OU_POS}")
+USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/user/?position=${OU_ENC_UNLOCK}")
+printf '%%s' "${USERS_JSON}" | grep -o '"dn":"[^"]*"' | sed 's/"dn":"//;s/"$//' | while IFS= read -r USER_DN; do
+  if [ -n "${USER_DN}" ]; then
+    USER_ENC=$(urlencode "${USER_DN}")
+    curl -sf --max-time 30 -X PATCH ${CREDS} \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      "${BASE_URL}/users/user/${USER_ENC}" \
+      -d '{"properties":{"disabled":false}}' || true
+    echo "unlocked ${USER_DN}"
+  fi
+done
+echo "unlock sweep complete for ${OU_POS}"`, ouDN, adminEmail, tenantName)
 }
 
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
@@ -953,6 +1019,34 @@ fi`,
 		tenantName, tenantName)
 }
 
+// buildLockOUScript lists all users in the tenant OU via UDM and disables each
+// (sets disabled:true). This blocks all login channels (LDAP federation,
+// Kerberos, Samba) while preserving all user data for fast re-enable on redeploy.
+func buildLockOUScript(ouDN string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+OU_POS="%s"
+OU_ENC=$(urlencode "${OU_POS}")
+echo "locking all users in ${OU_POS}"
+USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/user/?position=${OU_ENC}")
+printf '%%s' "${USERS_JSON}" | grep -o '"dn":"[^"]*"' | sed 's/"dn":"//;s/"$//' | while IFS= read -r USER_DN; do
+  if [ -n "${USER_DN}" ]; then
+    USER_ENC=$(urlencode "${USER_DN}")
+    curl -sf --max-time 30 -X PATCH ${CREDS} \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      "${BASE_URL}/users/user/${USER_ENC}" \
+      -d '{"properties":{"disabled":true}}' || true
+    echo "locked ${USER_DN}"
+  fi
+done
+echo "lock sweep complete for ${OU_POS}"`, ouDN)
+}
+
 // buildOUDeleteScript removes the tenant OU and all child entries.
 func buildOUDeleteScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
@@ -1005,6 +1099,10 @@ func adminUserJobName(tenantName string) string {
 
 func ouDeleteJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-ou-delete-%s", tenantName)
+}
+
+func ldapLockJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-lock-%s", tenantName)
 }
 
 func adminUserDeleteJobName(tenantName string) string {

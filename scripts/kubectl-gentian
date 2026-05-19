@@ -12,7 +12,7 @@
 #   kubectl gentian apps uninstall <app> --tenant <tenant>
 #   kubectl gentian tenants list [--env <env>]
 #   kubectl gentian tenants deploy <instance> [--env <env>]
-#   kubectl gentian tenants undeploy <instance> [--env <env>] [--purge]
+#   kubectl gentian tenants undeploy <instance> [--env <env>] [--purge|-f]
 #
 # Required environment variables (or ~/.gentian/config):
 #   GENTIAN_DEPLOYMENTS_PATH   local path to a gentian-deployments checkout
@@ -66,10 +66,10 @@ Usage:
     kubectl gentian tenants deploy <instance> [--env <env>]
       Deploy a tenant instance by adding it to <env>/tenants/kustomization.yaml.
 
-    kubectl gentian tenants undeploy <instance> [--env <env>] [--purge]
+    kubectl gentian tenants undeploy <instance> [--env <env>] [--purge|-f]
       Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
-      With --purge, set deletionPolicy=Delete before undeploying and delete the
-      live Tenant CR after the GitOps change.
+      With --purge / -f, set deletionPolicy=Delete before undeploying, which
+      permanently deletes all tenant data including LDAP users and databases.
 
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
@@ -82,7 +82,7 @@ Examples:
   kubectl gentian tenants list
   kubectl gentian tenants deploy gtn-demo
   kubectl gentian tenants undeploy gtn-demo
-  kubectl gentian tenants undeploy gtn-demo --purge
+  kubectl gentian tenants undeploy gtn-demo --purge   # or -f
 EOF
 }
 
@@ -1077,7 +1077,7 @@ case "${SUBCOMMAND}" in
               TENANT_ENV="${2:-}"
               shift 2
               ;;
-            --purge)
+            --purge|-f)
               PURGE=true
               shift
               ;;

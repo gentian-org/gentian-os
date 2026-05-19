@@ -520,3 +520,78 @@ func TestLDAP_RetainPolicy_PreservesAdminUser(t *testing.T) {
 		t.Error("ldap-ou-delete-ldapretain must not be created for DeletionPolicy=Retain")
 	}
 }
+
+// TestLDAP_RetainPolicy_LocksUsers verifies that deleting a Tenant with
+// DeletionPolicy=Retain creates an ldap-lock-<tenant> Job once the admin user
+// has been provisioned (admin user job is complete). The lock Job disables all
+// LDAP users in the tenant OU so they cannot log in after undeploy.
+// The admin user delete job and OU delete job must NOT be created.
+func TestLDAP_RetainPolicy_LocksUsers(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "ldaplocktest"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "LDAP Lock Test",
+			Domain:         "ldaplocktest.example.com",
+			AdminEmail:     "admin@ldaplocktest.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// Tenant reaches Ready without LDAP jobs completing (ensureLDAPBase is non-blocking).
+	waitFor(t, 10*time.Second, func() bool {
+		updated := &gentianov1alpha1.Tenant{}
+		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "ldaplocktest"}, updated)
+		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
+	})
+
+	// Complete the LDAP base provisioning chain so the admin user job is marked complete.
+	// The lock job guard requires adminUserJob to be complete before creating ldap-lock-*.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-ou-ldaplocktest", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "ldap-ou-ldaplocktest", "platform-kernel")
+
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-ldaplocktest", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "ldap-admin-user-ldaplocktest", "platform-kernel")
+
+	// Delete the tenant; the lock job should be created since admin user is provisioned.
+	if err := testClient.Delete(context.Background(), tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+	// Complete the lock job in the background so the finalizer can be removed.
+	go markJobCompleteWhenReady("ldap-lock-ldaplocktest", "platform-kernel")
+
+	// Lock job must be created.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-lock-ldaplocktest", Namespace: "platform-kernel"}, j) == nil
+	})
+
+	// Tenant CR must be gone (finalizer removed after lock job completes).
+	waitFor(t, 15*time.Second, func() bool {
+		err := testClient.Get(context.Background(), types.NamespacedName{Name: "ldaplocktest"}, &gentianov1alpha1.Tenant{})
+		return err != nil
+	})
+
+	j := &batchv1.Job{}
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "ldap-admin-user-delete-ldaplocktest", Namespace: "platform-kernel"}, j); err == nil {
+		t.Error("ldap-admin-user-delete-ldaplocktest must not be created for DeletionPolicy=Retain")
+	}
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "ldap-ou-delete-ldaplocktest", Namespace: "platform-kernel"}, j); err == nil {
+		t.Error("ldap-ou-delete-ldaplocktest must not be created for DeletionPolicy=Retain")
+	}
+}
