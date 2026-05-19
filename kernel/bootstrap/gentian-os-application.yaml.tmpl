@@ -1,13 +1,12 @@
 ---
 # Bootstrap Application: manages the gentian-os orchestrator (operator) via ArgoCD.
 #
-# This is a multi-source Application that serves four purposes:
+# This is a multi-source Application that serves three purposes:
 #   Source 1: Syncs the gentian-os Helm chart from the operator repo.
 #             install.sh bootstraps this via a direct `helm upgrade --install`
 #             first; ArgoCD then takes ownership via ServerSideApply.
-#   Source 2: Syncs built-in sample AppProfile CRs from the operator repo.
-#   Source 3: Syncs Tenant CRs from the deployment repo (env-specific).
-#   Source 4: Deploys the per-environment ImageUpdater CR that tells
+#   Source 2: Syncs Tenant CRs from the deployment repo (env-specific).
+#   Source 3: Deploys the per-environment ImageUpdater CR that tells
 #             argocd-image-updater to watch GHCR and patch image.tag when a
 #             new build is published — this is what drives automatic rolling
 #             image updates without manual kubectl rollout restart.
@@ -70,18 +69,13 @@ spec:
     helm:
       valueFiles:
       - $deploy/%ENV%/kernel/values-%ENV%.yaml
-  # ── Source 2: AppProfile CRs from gentian-os (built-in library) ──────────
-  - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: %GENTIAN_OS_BRANCH%
-    path: config/samples
-    directory:
-      include: "appprofile_*.yaml"
-  # ── Source 3: Tenant CRs from the deployment repo ────────────────────────
+  # ── Source 2: Tenant CRs from the deployment repo ────────────────────────
+  # (ref: deploy is the alias used by Source 1’s $deploy valueFile reference)
   - repoURL: %DEPLOYMENTS_REPO%
     targetRevision: %DEPLOYMENTS_BRANCH%
     path: %ENV%/tenants
     ref: deploy
-  # ── Source 4: Environment kernel config (ImageUpdater CR) ─────────────────
+  # ── Source 3: Environment kernel config (ImageUpdater CR) ─────────────────
   # Deploying this CR is the critical step that activates automatic image
   # updates.  Without it, argocd-image-updater reports "no CRs to process"
   # and image rollouts require manual intervention.
