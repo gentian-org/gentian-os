@@ -306,7 +306,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-										keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName, "admin-"+tenant.Name)),
+						keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName, "admin-"+tenant.Name)),
 					},
 				},
 			},
@@ -399,7 +399,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *bat
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-										keycloakContainer("disable-realm", buildRealmDisableScript(realmName, "admin-"+tenant.Name)),
+						keycloakContainer("disable-realm", buildRealmDisableScript(realmName, "admin-"+tenant.Name)),
 					},
 				},
 			},
@@ -474,6 +474,11 @@ func keycloakContainer(name, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
+// buildRealmScript creates or updates a Keycloak realm and ensures it is
+// enabled. On redeploy after a Retain undeploy it also re-enables the tenant
+// admin user in the shared opendesk realm, because Keycloak's LDAP federation
+// uses MAX_LIFESPAN caching and does not re-read shadowExpire automatically
+// when UDM clears it.
 func buildRealmScript(realmName, displayName, adminUsername string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
@@ -643,6 +648,11 @@ HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
 echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 }
 
+// buildRealmDisableScript disables a Keycloak realm on Retain undeploy,
+// invalidating all active sessions. It also explicitly sets enabled:false on
+// the tenant admin user in the shared opendesk realm. This is necessary because
+// Keycloak caches LDAP state (MAX_LIFESPAN policy) and would otherwise continue
+// to authenticate the user even after UDM sets shadowExpire.
 func buildRealmDisableScript(realmName, adminUsername string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
