@@ -2392,6 +2392,56 @@ deploy_kernel_mail_services() {
         -n "${ns}" --for=condition=Ready --timeout=60s \
     || warn "ox-appsuite-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
+    # ── Reconcile mail.<domain> CoreDNS hairpin → Dovecot ClusterIP ──────────
+    # OX App Suite connects to Dovecot via mail.<domain>:143 (STARTTLS). The
+    # wildcard TLS cert (*.<domain>) validates against that hostname, so we
+    # cannot point OX directly at the in-cluster service FQDN. Instead we keep
+    # a CoreDNS hosts override so that mail.<domain> resolves to the current
+    # Dovecot ClusterIP, bypassing the nginx ingress which does not proxy raw
+    # IMAP/TCP on port 143.
+    local mail_domain="mail.${KERNEL_DOMAIN:-}"
+    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        local dovecot_ip
+        dovecot_ip=$(kubectl get svc "dovecot-${env}" -n "${ns}" \
+            -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+        if [[ -n "${dovecot_ip}" ]]; then
+            info "Reconciling CoreDNS hairpin: ${mail_domain} → ${dovecot_ip}"
+            local corefile patched
+            corefile=$(kubectl get configmap coredns -n kube-system \
+                -o jsonpath='{.data.Corefile}' 2>/dev/null || true)
+            if echo "${corefile}" | grep -qF "${mail_domain}"; then
+                # Replace the existing IP for mail.<domain> in the hairpin block.
+                patched=$(echo "${corefile}" | sed \
+                    "s|[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\([[:space:]]*${mail_domain}\)|${dovecot_ip}\1|g")
+            elif echo "${corefile}" | grep -q "# BEGIN gentian-hairpin"; then
+                # Hairpin block exists but lacks a mail entry — add it.
+                patched=$(echo "${corefile}" | sed \
+                    "s|# BEGIN gentian-hairpin|# BEGIN gentian-hairpin\n          ${dovecot_ip} ${mail_domain}|")
+            else
+                warn "CoreDNS Corefile has no gentian-hairpin block; skipping mail DNS update."
+                patched="${corefile}"
+            fi
+            if [[ "${corefile}" != "${patched}" ]]; then
+                local patch_json
+                patch_json=$(printf '%s' "${patched}" | python3 -c \
+                    'import sys,json; print(json.dumps({"data":{"Corefile":sys.stdin.read()}}))')
+                kubectl patch configmap coredns -n kube-system \
+                    --type=merge -p "${patch_json}" >/dev/null
+                # Rolling restart so CoreDNS reloads the updated Corefile.
+                kubectl rollout restart deployment coredns -n kube-system \
+                    >/dev/null 2>&1 || true
+                kubectl rollout status deployment coredns -n kube-system \
+                    --timeout=60s >/dev/null 2>&1 || true
+                success "CoreDNS hairpin updated: ${mail_domain} → ${dovecot_ip}"
+            else
+                info "CoreDNS hairpin for ${mail_domain} already correct (${dovecot_ip})."
+            fi
+        else
+            warn "Dovecot service 'dovecot-${env}' not yet created; CoreDNS hairpin for" \
+                 "${mail_domain} will be set on the next install/update run."
+        fi
+    fi
+
     success "Kernel mail services (postfix + dovecot + ox-appsuite) manifests applied."
     info "provider-helm will reconcile the Release CRs within 5 minutes."
     info "Monitor: kubectl get release.helm.crossplane.io | grep -E 'postfix|dovecot|ox'"
