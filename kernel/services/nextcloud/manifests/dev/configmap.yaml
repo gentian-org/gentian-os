@@ -108,8 +108,10 @@ data:
                 # correct external authorization_endpoint for browser redirects.
                 # The management-init Job sets this via FS_ENV_OIDC_DISCOVERY_URI for
                 # fresh installs; this hook corrects it on existing deployments.
+                _oidc_uri="http://nubus-dev-keycloak-extensions-proxy.gentian-dev.svc.cluster.local:8181"
+                _oidc_uri="${_oidc_uri}/realms/opendesk/.well-known/openid-configuration"
                 php /var/www/html/occ user_oidc:provider opendesk \
-                  --discoveryuri="http://nubus-dev-keycloak-extensions-proxy.gentian-dev.svc.cluster.local:8181/realms/opendesk/.well-known/openid-configuration" \
+                  --discoveryuri="${_oidc_uri}" \
                   2>/dev/null || true
 
       # Override baked FS_ENV_PHP_REDIS_FULL_URI so PHP sessions don't drop.
