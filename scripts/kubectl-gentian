@@ -206,6 +206,23 @@ tenant_instance_patch_file() {
   echo "${first_tenant}"
 }
 
+# Returns the Tenant YAML file that is actually applied to the cluster (i.e.
+# listed under resources: in the instance kustomization.yaml). This is always
+# tenant.yaml when it exists. Falls back to the patch file for legacy instances
+# that only have a single YAML file.
+tenant_instance_resource_file() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local dir
+  dir="$(tenant_instance_dir "${instance}" "${env_name}")"
+  if [[ -f "${dir}/tenant.yaml" ]]; then
+    echo "${dir}/tenant.yaml"
+    return 0
+  fi
+  # Legacy: single-file instance — the patch file IS the applied resource.
+  tenant_instance_patch_file "${instance}" "${env_name}"
+}
+
 tenant_instance_name_from_patch() {
   local file="${1}"
   awk '
@@ -816,22 +833,24 @@ cmd_tenant_undeploy() {
 
   local kustom_file
   local patch
+  local resource_file
   local tenant_name
 
   kustom_file="$(tenant_env_kustomization "${env_name}")"
   ensure_kustomization_seed "${kustom_file}"
   patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
+  resource_file="$(tenant_instance_resource_file "${instance}" "${env_name}")"
   tenant_name="$(tenant_instance_name_from_patch "${patch}")"
   if [[ -z "${tenant_name}" ]]; then
     tenant_name="${instance}"
   fi
 
   if [[ "${purge}" == "true" ]]; then
-    if ! grep -q '^  deletionPolicy: Delete$' "${patch}"; then
-      set_tenant_deletion_policy "${patch}" "Delete"
+    if ! grep -q '^  deletionPolicy: Delete$' "${resource_file}"; then
+      set_tenant_deletion_policy "${resource_file}" "Delete"
       (
         cd "${DEPLOYMENTS_PATH}"
-        git add "${patch}"
+        git add "${resource_file}"
       )
     fi
     # Always patch the live CR; a previous failed run may have committed the
