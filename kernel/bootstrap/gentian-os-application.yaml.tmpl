@@ -1,0 +1,102 @@
+---
+# Bootstrap Application: manages the gentian-os orchestrator (operator) via ArgoCD.
+#
+# This is a multi-source Application that serves four purposes:
+#   Source 1: Syncs the gentian-os Helm chart from the operator repo.
+#             install.sh bootstraps this via a direct `helm upgrade --install`
+#             first; ArgoCD then takes ownership via ServerSideApply.
+#   Source 2: Syncs built-in sample AppProfile CRs from the operator repo.
+#   Source 3: Syncs Tenant CRs from the deployment repo (env-specific).
+#   Source 4: Deploys the per-environment ImageUpdater CR that tells
+#             argocd-image-updater to watch GHCR and patch image.tag when a
+#             new build is published — this is what drives automatic rolling
+#             image updates without manual kubectl rollout restart.
+#
+# Placeholders filled in by install_orchestrator() in scripts/install-lib.sh:
+#   %GENTIAN_OS_BRANCH%   — branch/tag of this repo (e.g. develop, main, v1.2.3)
+#   %DEPLOYMENTS_REPO%   — gentian-deployments repo URL
+#   %DEPLOYMENTS_BRANCH% — gentian-deployments branch
+#   %ENV%                — environment name (dev / staging / prod)
+#
+# Apply:
+#   Rendered and applied automatically by install.sh Step 15.
+#   For day-2 re-apply (e.g. to fix a missing Application):
+#     source install.env && source install.secrets.env
+#     sed -e "s|%GENTIAN_OS_BRANCH%|develop|g" \
+#         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
+#         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
+#         -e "s|%ENV%|dev|g" \
+#         kernel/bootstrap/gentian-os-application.yaml.tmpl | kubectl apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-os
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    # Image updater: follow new builds published for %GENTIAN_OS_BRANCH% and
+    # update image.tag in the Application's Helm parameters so ArgoCD triggers
+    # a Helm upgrade (rolling restart) whenever a new image lands in GHCR.
+    argocd-image-updater.argoproj.io/image-list: gentianos=ghcr.io/gentian-org/gentian-os:%GENTIAN_OS_BRANCH%
+    argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    name: gentian-os-tenant-validator
+    jsonPointers:
+    - /webhooks/0/clientConfig/caBundle
+  - group: apps
+    kind: Deployment
+    name: gentian-os
+    namespace: gentian-system
+    jsonPointers:
+    - /metadata/annotations
+    - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+  sources:
+  # ── Source 1: gentian-os Helm chart (operator) ────────────────────────────
+  # Values come from $deploy (%ENV%/kernel/values-%ENV%.yaml in the
+  # deployments repo).  image.tag is further overridden in-cluster by
+  # argocd-image-updater via the Application's Helm parameters.
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: %GENTIAN_OS_BRANCH%
+    path: charts/gentian-os
+    helm:
+      valueFiles:
+      - $deploy/%ENV%/kernel/values-%ENV%.yaml
+  # ── Source 2: AppProfile CRs from gentian-os (built-in library) ──────────
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: %GENTIAN_OS_BRANCH%
+    path: config/samples
+    directory:
+      include: "appprofile_*.yaml"
+  # ── Source 3: Tenant CRs from the deployment repo ────────────────────────
+  - repoURL: %DEPLOYMENTS_REPO%
+    targetRevision: %DEPLOYMENTS_BRANCH%
+    path: %ENV%/tenants
+    ref: deploy
+  # ── Source 4: Environment kernel config (ImageUpdater CR) ─────────────────
+  # Deploying this CR is the critical step that activates automatic image
+  # updates.  Without it, argocd-image-updater reports "no CRs to process"
+  # and image rollouts require manual intervention.
+  - repoURL: %DEPLOYMENTS_REPO%
+    targetRevision: %DEPLOYMENTS_BRANCH%
+    path: %ENV%/kernel
+    directory:
+      include: "image-updater.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gentian-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

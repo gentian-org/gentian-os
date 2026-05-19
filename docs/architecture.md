@@ -395,18 +395,63 @@ metrics catalogue are in [design/operations.md](design/operations.md).
 
 ## 11. Kernel and App Image Updates
 
-Kernel images (the Crossplane providers, composition functions, and
-static manifests bundled with `gentian-os`) update via **ArgoCD Image
-Updater**. A per-environment `ImageUpdater` CR watches the registry
-and updates the kernel `Application` whenever a new image is published,
-subject to the environment's policy:
+### 11.1 Operator Image (gentian-os controller)
 
-- **dev** — track latest develop builds.
-- **staging** — track release candidates.
-- **prod** — semver-pinned releases only.
+The `gentian-os` operator image is managed by **ArgoCD Image Updater**
+through the `gentian-os` ArgoCD Application registered at install time.
+The update chain is:
 
-App images update through the same mechanism applied per-AppProfile;
-each tenant picks up the new chart version on the next ArgoCD sync.
+1. A CI push to `develop` (or `main` / a version tag) triggers the
+   GitHub Actions `docker` job, which builds and pushes a new image to
+   `ghcr.io/gentian-org/gentian-os:<branch>` (and a short-SHA tag).
+2. `argocd-image-updater` polls GHCR every two minutes. The
+   **`ImageUpdater` CR** deployed as Source 4 of the `gentian-os`
+   Application tells it which Application to watch and which image to
+   track (`newest-build` strategy).
+3. When a new digest is detected, the updater patches the `image.tag`
+   Helm parameter directly on the ArgoCD Application (`write-back-method:
+   argocd`).
+4. ArgoCD detects the parameter change, runs `helm upgrade`, and performs
+   a rolling restart of the operator Deployment — no manual
+   `kubectl rollout restart` needed.
+
+The `ImageUpdater` CR lives in
+`<gentian-deployments>/<env>/kernel/image-updater.yaml`. It is deployed
+into the cluster by ArgoCD as part of the `gentian-os` Application sync,
+**not** by a separate step in `install.sh`. This means it only exists
+once ArgoCD has synced the Application.
+
+Environment policies:
+
+| Environment | Strategy | Tracks |
+|---|---|---|
+| dev | `newest-build` | Latest push to `develop` |
+| staging | `newest-build` | Latest push to `staging` |
+| prod | `semver` | Semver tags `v*` only |
+
+### 11.2 Install-time bootstrap
+
+`install.sh Step 15` uses a **two-phase** approach to avoid a
+chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
+established yet):
+
+- **Phase 1 — direct Helm install**: CRDs are applied and the operator
+  is installed immediately via `helm upgrade --install`. Subsequent
+  install steps that depend on CRDs or the webhook proceed without
+  waiting for ArgoCD.
+- **Phase 2 — ArgoCD handoff**: The `gentian-os` Application is rendered
+  from `kernel/bootstrap/gentian-os-application.yaml.tmpl` (using the
+  active `GENTIAN_DEPLOYMENTS_REPO`/`BRANCH`/`ENV` variables) and
+  applied with `kubectl apply`. ArgoCD adopts the already-running
+  resources via `ServerSideApply` and deploys the `ImageUpdater` CR on
+  the first sync. From this point, all future upgrades — including image
+  rollouts — are git-driven and fully automatic.
+
+### 11.3 App images
+
+App (tenant-facing) images update through the same `newest-build` /
+`semver` mechanism applied per-AppProfile; each tenant picks up the new
+chart version on the next ArgoCD sync triggered by the ImageUpdater.
 
 ---
 

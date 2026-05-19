@@ -2208,19 +2208,38 @@ install_appprofiles_sync() {
 }
 
 # =============================================================================
-# 15. Install gentian-os orchestrator (Helm chart)
+# 15. Install gentian-os orchestrator (Helm chart + ArgoCD Application)
 # =============================================================================
 # The orchestrator chart at charts/gentian-os/ ships:
 #   - CRDs: tenants, appprofiles, integrationbindings, appcatalogues
 #   - Deployment + ServiceAccount + ClusterRole(Binding) for the operator
 #   - ServiceMonitor + Grafana dashboard
-# Once installed, applying a Tenant CR is enough to drive end-to-end provisioning.
+#
+# Two-phase install:
+#   Phase 1 — Direct Helm bootstrap (fast):
+#     CRDs and the operator Deployment are applied immediately so that
+#     subsequent install steps can use them without waiting for ArgoCD.
+#   Phase 2 — ArgoCD Application handoff:
+#     The gentian-os ArgoCD Application (rendered from
+#     kernel/bootstrap/gentian-os-application.yaml.tmpl) is applied.
+#     ArgoCD takes ownership of the resources via ServerSideApply and from
+#     this point drives all future chart upgrades.  Critically, Source 4 of
+#     the Application deploys the ImageUpdater CR into the cluster, which
+#     activates argocd-image-updater's automatic image rollout: whenever a
+#     new image is pushed to GHCR for the tracked branch, argocd-image-updater
+#     patches image.tag in the Application's Helm parameters and ArgoCD
+#     triggers a Helm upgrade (rolling restart) automatically.
+#
+# Without Phase 2, argocd-image-updater reports "no ImageUpdater CRs to
+# process" and image updates require manual kubectl rollout restart.
+# =============================================================================
 install_orchestrator() {
-    banner "Step 15 — gentian-os orchestrator (CRDs + operator)"
+    banner "Step 15 — gentian-os orchestrator (CRDs + operator + ArgoCD handoff)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local crd_dir="${chart_dir}/crds"
     local ns="gentian-system"
+    local env="${ENV:-dev}"
     local required_crds=(
         tenants.gentianos.io
         appprofiles.gentianos.io
@@ -2232,14 +2251,16 @@ install_orchestrator() {
         kubectl create namespace "$ns"
     fi
 
-    info "Applying orchestrator CRDs (hard requirement)..."
+    # ── Phase 1: Direct Helm bootstrap ────────────────────────────────────────
+    info "Applying orchestrator CRDs (hard requirement for subsequent steps)..."
     if [[ ! -d "$crd_dir" ]]; then
         error "CRD directory not found: ${crd_dir}"
         exit 1
     fi
     kubectl apply -f "$crd_dir"
 
-    info "Installing/upgrading gentian-os Helm release in namespace '${ns}'..."
+    info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
+    info "(ArgoCD will take ownership of this release in Phase 2 below.)"
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
         --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
@@ -2255,12 +2276,38 @@ install_orchestrator() {
             exit 1
         }
     done
-    success "All orchestrator CRDs are Established."
+    success "Phase 1 complete: CRDs Established, operator running."
 
-    success "Orchestrator installed; cluster is ready to provision tenants."
-    info "Provision tenants from gentian-deployments (definition/instance model), e.g.:"
-    info "  kubectl gentian tenants list"
-    info "  kubectl gentian tenants deploy gtn-demo"
+    # ── Phase 2: ArgoCD Application handoff ───────────────────────────────────
+    # Render the Application template and apply it.  ArgoCD adopts the
+    # already-running resources via ServerSideApply, adds the ImageUpdater CR
+    # (Source 4), and drives all future upgrades from git.
+    local gentian_os_branch
+    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
+    local rendered
+    rendered="$(mktemp)"
+    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
+        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
+        -e "s|%ENV%|${env}|g" \
+        "$tmpl" >"$rendered"
+
+    info "Registering gentian-os ArgoCD Application..."
+    info "  operator branch:    ${gentian_os_branch}"
+    info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
+    info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
+    info "  environment:        ${env}"
+    kubectl apply -f "$rendered"
+    rm -f "$rendered"
+
+    success "Phase 2 complete: gentian-os Application registered with ArgoCD."
+    success "  Image updates are now fully automatic via argocd-image-updater."
+    info "Monitor sync:     kubectl get application gentian-os -n argocd"
+    info "Monitor updater:  kubectl get imageupdater gentian-os -n argocd"
+    info "Provision tenants: kubectl gentian tenants list"
+    info "                   kubectl gentian tenants deploy gtn-demo"
 }
 
 # =============================================================================
