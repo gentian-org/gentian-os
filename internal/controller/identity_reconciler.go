@@ -306,7 +306,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName)),
+										keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName, "admin-"+tenant.Name)),
 					},
 				},
 			},
@@ -399,7 +399,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *bat
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("disable-realm", buildRealmDisableScript(realmName)),
+										keycloakContainer("disable-realm", buildRealmDisableScript(realmName, "admin-"+tenant.Name)),
 					},
 				},
 			},
@@ -474,7 +474,7 @@ func keycloakContainer(name, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
-func buildRealmScript(realmName, displayName string) string {
+func buildRealmScript(realmName, displayName, adminUsername string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -498,7 +498,21 @@ else
     -H "Content-Type: application/json" \
     -d '{"realm":"%s","enabled":true}'
   echo "realm %s already exists, ensured enabled=true (was HTTP ${HTTP})"
-fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
+fi
+# Re-enable tenant admin in opendesk realm; Keycloak caches LDAP state and
+# won't re-read shadowExpire automatically after unlock.
+USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/opendesk/users?username=%s&exact=true" || echo "")
+if echo "${USER_RESP}" | grep -q '"id"'; then
+  UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/opendesk/users/${UID}" \
+    -d '{"enabled":true}' || true
+  echo "user %s re-enabled in opendesk realm"
+else
+  echo "user %s not found in opendesk realm (first deploy)"
+fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName, adminUsername, adminUsername, adminUsername)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -629,7 +643,7 @@ HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
 echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 }
 
-func buildRealmDisableScript(realmName string) string {
+func buildRealmDisableScript(realmName, adminUsername string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -648,7 +662,21 @@ else
     -H "Content-Type: application/json" \
     -d '{"realm":"%s","enabled":false}'
   echo "realm %s disabled (sessions invalidated)"
-fi`, realmName, realmName, realmName, realmName, realmName)
+fi
+# Also disable tenant admin in opendesk realm; the LDAP federation cache
+# means Keycloak must be told directly rather than relying on shadowExpire.
+USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/opendesk/users?username=%s&exact=true" || echo "")
+if echo "${USER_RESP}" | grep -q '"id"'; then
+  UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/opendesk/users/${UID}" \
+    -d '{"enabled":false}' || true
+  echo "user %s disabled in opendesk realm"
+else
+  echo "user %s not found in opendesk realm"
+fi`, realmName, realmName, realmName, realmName, realmName, adminUsername, adminUsername, adminUsername)
 }
 
 // --- Name helpers ------------------------------------------------------------
