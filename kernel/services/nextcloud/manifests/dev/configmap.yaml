@@ -101,6 +101,16 @@ data:
                   php /var/www/html/occ config:app:set richdocuments public_wopi_url \
                     --value="https://office.desk.gentian.org" || true
                 fi
+                # Ensure the user_oidc OIDC provider uses the in-cluster HTTP URL for
+                # discovery so backend token/JWK calls bypass the external ingress
+                # (avoids 504 timeouts when id.desk.gentian.org is unreachable from
+                # inside the cluster). The discovery document itself advertises the
+                # correct external authorization_endpoint for browser redirects.
+                # The management-init Job sets this via FS_ENV_OIDC_DISCOVERY_URI for
+                # fresh installs; this hook corrects it on existing deployments.
+                php /var/www/html/occ user_oidc:provider opendesk \
+                  --discoveryuri="http://nubus-dev-keycloak-extensions-proxy.gentian-dev.svc.cluster.local:8181/realms/opendesk/.well-known/openid-configuration" \
+                  2>/dev/null || true
 
       # Override baked FS_ENV_PHP_REDIS_FULL_URI so PHP sessions don't drop.
       # Only auth[pass]= (not auth[user]=) to avoid phpredis ACL format.
