@@ -64,6 +64,7 @@ OP_LDAP_ACL=0
 OP_KEYCLOAK_SYNC=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
+OP_PLUGIN=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -101,6 +102,8 @@ Options:
   --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.
+  --plugin                 Reinstall the kubectl-gentian plugin from this
+                           repository (idempotent: skips if already up-to-date).
   --all                    Run all update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -119,7 +122,8 @@ while [[ $# -gt 0 ]]; do
         --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1 ;;
+        --plugin)              OP_PLUGIN=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -128,13 +132,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_PLUGIN}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
     OP_CROSSPLANE=1
     OP_APPPROFILES=1
+    OP_PLUGIN=1
 fi
 
 # =============================================================================
@@ -961,6 +966,7 @@ _init
 [[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
 [[ "${OP_KEYCLOAK_SYNC}"   == "1" ]] && op_keycloak_sync
+[[ "${OP_PLUGIN}"          == "1" ]] && install_app_catalogue
 
 echo ""
 success "update.sh completed."
