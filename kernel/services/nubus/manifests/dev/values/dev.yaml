@@ -151,15 +151,6 @@ nubusStackDataUms:
         enabled: true
       element:
         enabled: true
-    # portaltileGroupGroupware and portaltileGroupLiveCollaboration are intentionally
-    # NOT overridden here. The _base.yaml defaults (managed-by-attribute-Groupware /
-    # managed-by-attribute-Livecollaboration) are the correct production values and
-    # must apply in all environments. Overriding to cn=Domain Users would expose app
-    # tiles to the tenant admin account, violating the admin/user separation of duties
-    # (see docs/design/multi-tenancy.md §8). New users get the openDesk User template
-    # applied by default (UCR: directory/manager/web/modules/users/user/add/default),
-    # which sets univentionOpendeskGroupware=1 etc. and triggers automatic group
-    # membership via the opendesk-a2g-mapper extension.
 
 nubusUdmListener:
   nats:

@@ -745,6 +745,8 @@ install_provider_helm() {
 #   - registry-credentials imagePullSecret (gentian-dev) for pod image pull
 #   - nubus-base-values + nubus-dev-values ConfigMaps (non-sensitive values)
 #   - nubus-dev-udm-listener-nats-patch ConfigMap (NATS subject bug workaround)
+#     These are seeded by install.sh on first boot; ArgoCD (nubus-manifests-dev)
+#     manages them going forward via Kustomize in kernel/services/nubus/manifests/dev/.
 #   - ExternalSecrets: nubus-credentials + nubus-sensitive-values (via ESO)
 #   - provider-helm Release CR (nubus-dev)
 # =============================================================================
@@ -842,14 +844,15 @@ deploy_nubus() {
         --dry-run=client -o yaml | kubectl apply -f -
 
     # ── Non-sensitive values ConfigMaps ───────────────────────────────────────
+    # Seeded here for install sequencing; ArgoCD owns them after first sync.
     info "Creating nubus values ConfigMaps in ${ns}..."
     kubectl create configmap nubus-base-values \
         -n "${ns}" \
-        --from-file=values.yaml="${SCRIPT_DIR}/crossplane/apps/nubus/values/_base.yaml" \
+        --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/_base.yaml" \
         --dry-run=client -o yaml | kubectl apply -f -
     kubectl create configmap nubus-dev-values \
         -n "${ns}" \
-        --from-file=values.yaml="${SCRIPT_DIR}/crossplane/apps/nubus/values/dev.yaml" \
+        --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/dev.yaml" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     # ── NATS subject patch ConfigMap ──────────────────────────────────────────
@@ -858,7 +861,7 @@ deploy_nubus() {
     info "Creating ${release_name}-udm-listener-nats-patch ConfigMap in ${ns}..."
     kubectl create configmap "${release_name}-udm-listener-nats-patch" \
         -n "${ns}" \
-        --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/crossplane/apps/nubus/patches/mq_adapter_nats.py" \
+        --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/mq_adapter_nats.py" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     # ── Multi-tenant LDAP ACL patch ConfigMap ─────────────────────────────────
@@ -867,7 +870,7 @@ deploy_nubus() {
     info "Creating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
     kubectl create configmap "${release_name}-ldap-gentian-acl" \
         -n "${ns}" \
-        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/crossplane/apps/nubus/patches/92-gentian-tenant-acl.sh" \
+        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/92-gentian-tenant-acl.sh" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     # ── Pre-flight: abort if stale data PVCs exist ───────────────────────────
@@ -955,7 +958,7 @@ deploy_nubus() {
 
     # ── provider-helm Release CR ──────────────────────────────────────────────
     info "Applying nubus Release CR (provider-helm)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/release.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/release.yaml"
 
     # If stale NATS was detected and cleared, provider-helm may already report
     # the release as Synced (from a previous reconcile) and will NOT run helm

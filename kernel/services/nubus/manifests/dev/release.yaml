@@ -10,9 +10,9 @@
 #   2. nubus-dev-values   ConfigMap  — env-specific plain overrides (dev.yaml)
 #   3. nubus-sensitive-values Secret — all sensitive fields (ESO-synced)
 #
-# The ConfigMaps are created by install.sh (deploy_nubus step) from the
-# files in crossplane/apps/nubus/values/. The Secret is created by ESO from
-# the ExternalSecrets in externalsecrets.yaml.
+# The ConfigMaps and patch ConfigMaps are managed by ArgoCD (nubus-manifests-dev
+# Application) via Kustomize configMapGenerator from values/ and patches/.
+# The Secret is created by ESO from crossplane/apps/nubus/externalsecrets.yaml.
 # =============================================================================
 apiVersion: helm.crossplane.io/v1beta1
 kind: Release
@@ -21,7 +21,7 @@ metadata:
   annotations:
     # The Helm release name inside the cluster is nubus-dev.
     # The nubusUdmListener extraVolumes reference '{{ .Release.Name }}-udm-listener-nats-patch'
-    # which resolves to nubus-dev-udm-listener-nats-patch — created by deploy_nubus.
+    # which resolves to nubus-dev-udm-listener-nats-patch — managed by ArgoCD.
     crossplane.io/external-name: nubus-dev
 spec:
   forProvider:
