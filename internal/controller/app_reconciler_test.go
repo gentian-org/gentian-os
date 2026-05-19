@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -298,13 +299,21 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	}
 
 	// Remove "remove-app" from the tenant's apps list.
-	updated := &gentianov1alpha1.Tenant{}
-	if err := testClient.Get(context.Background(), types.NamespacedName{Name: "rm-app-tenant"}, updated); err != nil {
-		t.Fatalf("get tenant: %v", err)
-	}
-	updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "keep-app"}}
-	if err := testClient.Update(context.Background(), updated); err != nil {
-		t.Fatalf("update tenant: %v", err)
+	// Retry on conflict: the reconciler may have updated the tenant between our
+	// Get and Update calls, incrementing the resourceVersion.
+	for {
+		updated := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: "rm-app-tenant"}, updated); err != nil {
+			t.Fatalf("get tenant: %v", err)
+		}
+		updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "keep-app"}}
+		if err := testClient.Update(context.Background(), updated); err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			t.Fatalf("update tenant: %v", err)
+		}
+		break
 	}
 
 	// The removed app's claim should be cleaned up.
@@ -375,13 +384,21 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), foreignClaim) })
 
 	// Trigger a reconcile by updating the tenant (no-op change).
-	updated := &gentianov1alpha1.Tenant{}
-	if err := testClient.Get(context.Background(), types.NamespacedName{Name: "skip-noapp"}, updated); err != nil {
-		t.Fatalf("get tenant: %v", err)
-	}
-	updated.Spec.DisplayName = "Skip NoApp Tenant Updated"
-	if err := testClient.Update(context.Background(), updated); err != nil {
-		t.Fatalf("update tenant: %v", err)
+	// Retry on conflict: the reconciler may have updated the tenant between our
+	// Get and Update calls, incrementing the resourceVersion.
+	for {
+		updated := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: "skip-noapp"}, updated); err != nil {
+			t.Fatalf("get tenant: %v", err)
+		}
+		updated.Spec.DisplayName = "Skip NoApp Tenant Updated"
+		if err := testClient.Update(context.Background(), updated); err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			t.Fatalf("update tenant: %v", err)
+		}
+		break
 	}
 
 	// Wait for reconcile to complete (the managed app claim remains).
