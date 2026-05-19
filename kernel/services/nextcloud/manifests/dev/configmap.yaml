@@ -90,6 +90,16 @@ data:
                 done
                 if php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
                   php /var/www/html/occ richdocuments:update-empty-templates || true
+                  # Ensure WOPI backend calls use the in-cluster HTTP URL to avoid
+                  # TLS cert validation failures (e.g. self-signed cert during
+                  # cert-manager issuance / Let's Encrypt rate-limit periods).
+                  # The management-init Job also sets this via internalWopiUrl, but
+                  # that only runs once; this hook keeps the value correct across
+                  # pod restarts and Nextcloud upgrades.
+                  php /var/www/html/occ config:app:set richdocuments wopi_url \
+                    --value="http://collabora.tenant-gtn-demo.svc.cluster.local:9980" || true
+                  php /var/www/html/occ config:app:set richdocuments public_wopi_url \
+                    --value="https://office.desk.gentian.org" || true
                 fi
 
       # Override baked FS_ENV_PHP_REDIS_FULL_URI so PHP sessions don't drop.

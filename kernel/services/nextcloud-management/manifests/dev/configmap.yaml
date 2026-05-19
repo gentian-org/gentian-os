@@ -178,6 +178,12 @@ data:
         # Dev Postfix uses port 25 without TLS
         port: 25
         security: "none"
+      collabora:
+        # Use the in-cluster HTTP URL for backend WOPI calls so Nextcloud never
+        # validates the Collabora TLS certificate (which may be self-signed during
+        # cert-manager issuance or Let's Encrypt rate-limit periods).
+        # The browser-facing public_wopi_url remains the external HTTPS URL.
+        internalWopiUrl: "http://collabora.tenant-gtn-demo.svc.cluster.local:9980"
 
     resources:
       limits:
