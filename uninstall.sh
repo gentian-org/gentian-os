@@ -434,6 +434,17 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
     # package manager is not running (e.g. re-entrant uninstall), it won't GC
     # these, leaving them with an old ownerReference UID that blocks the next
     # install.sh run from establishing the same XRDs.
+    #
+    # Strip finalizers from all CR instances first; a CRD with finalizer-carrying
+    # instances blocks kubectl delete indefinitely once the owning controller is
+    # gone.  Also remove any stale webhook configurations that intercept PATCH
+    # on these types before stripping (the webhook service may be absent).
+    for wh in \
+        gentian-os-tenant-validator; do
+        kubectl delete validatingwebhookconfiguration "${wh}" \
+            --ignore-not-found=true 2>/dev/null || true
+    done
+
     for crd in \
         xapps.gentianos.io \
         apps.gentianos.io \
@@ -442,7 +453,26 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
         xclusters.gentianos.io \
         clusters.gentianos.io
     do
-        kubectl delete crd "${crd}" --ignore-not-found=true 2>/dev/null || true
+        # Strip finalizers from all CR instances before deleting the CRD.
+        kubectl get "${crd}" -A -o name 2>/dev/null \
+            | xargs -r -I{} kubectl patch {} \
+                --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                2>/dev/null || true
+        # Wait up to 30 s for the CRD to be fully removed.  If kubectl
+        # times out, force-strip the CRD's own finalizers and verify.
+        if kubectl delete crd "${crd}" --ignore-not-found=true --timeout=30s 2>/dev/null; then
+            success "  CRD ${crd} removed."
+        else
+            warn "  CRD ${crd} timed out — force-stripping CRD finalizers..."
+            kubectl patch crd "${crd}" \
+                --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                2>/dev/null || true
+            if ! kubectl get crd "${crd}" &>/dev/null; then
+                success "  CRD ${crd} removed (after forced strip)."
+            else
+                warn "  CRD ${crd} could not be removed — check manually."
+            fi
+        fi
     done
     success "  XRD-owned CRDs removed."
 else
