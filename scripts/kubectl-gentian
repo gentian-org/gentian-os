@@ -853,10 +853,19 @@ cmd_tenant_undeploy() {
         git add "${resource_file}"
       )
     fi
-    # Always patch the live CR; a previous failed run may have committed the
-    # file change without applying it to the cluster.
-    kubectl patch tenant "${tenant_name}" --type=merge \
-      -p '{"spec":{"deletionPolicy":"Delete"}}' 2>/dev/null || true
+    # Phase 1 of purge: if the live CR does not yet have deletionPolicy=Delete
+    # AND the instance is still in the kustomization, commit the policy change
+    # alone (keeping the instance deployed) and immediately apply it. This
+    # prevents ArgoCD from reverting the change — once the committed state has
+    # deletionPolicy=Delete, ArgoCD will only ever apply Delete, never Retain.
+    # A plain kubectl-patch races against ArgoCD auto-sync and loses.
+    local live_policy
+    live_policy="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+    if [[ "${live_policy}" != "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
+      git_commit_push "feat(${instance}): set deletionPolicy=Delete before purge in ${env_name}"
+      kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
+    fi
   fi
 
   if ! is_instance_deployed "${instance}" "${env_name}"; then
@@ -869,9 +878,6 @@ cmd_tenant_undeploy() {
       cd "${DEPLOYMENTS_PATH}"
       git add "${kustom_file}"
     )
-    # Commit deletionPolicy change (if any) together with kustomization removal
-    # in a single atomic push so ArgoCD never sees an intermediate state where
-    # the tenant is still deployed but already has deletionPolicy=Delete.
     git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
     if ! apply_env_kustomization "${env_name}"; then
       echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
