@@ -835,7 +835,8 @@ cmd_tenant_undeploy() {
         git add "${patch}"
       )
       git_commit_push "feat(${instance}): enable destructive tenant deletion"
-      kubectl apply -f "${patch}"
+      kubectl patch tenant "${tenant_name}" --type=merge \
+        -p '{"spec":{"deletionPolicy":"Delete"}}' 2>/dev/null || true
     fi
   fi
 
