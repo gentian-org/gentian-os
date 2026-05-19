@@ -123,6 +123,47 @@ Three roles, three scopes:
 | **Tenant admin** | One tenant's apps | Install/uninstall apps for the tenant, edit tenant-level config, view tenant health and reconciliation state | Touch kernel components, modify other tenants, alter cluster-wide policy |
 | **Tenant user** | Day-to-day app use | Use installed apps via SSO, consume integrations | Install/uninstall apps, modify tenant manifest, see admin surfaces |
 
+### 8.1 Admin / User Separation of Duties
+
+Following the openDesk model, the **tenant admin and tenant user are strictly
+separate identities**. It is strongly recommended that a single person does not
+use the same account for both day-to-day app usage and tenant administration.
+
+**Portal tile enforcement:**
+
+The Nubus portal shows tiles based on LDAP group membership, enforced at the
+OIDC claim layer — users without the required group membership will fail SSO
+even if they know the direct app URL.
+
+| Tile category | `allowedGroups` (portal) | Who has this membership |
+|---|---|---|
+| Admin tools (UMC, Keycloak) | `cn=Domain Admins` | Tenant admin account only |
+| User apps (Files, Email, Chat, …) | `cn=managed-by-attribute-<App>` | Regular users with that app enabled |
+
+**How regular users get app access:**
+
+The UCR key `directory/manager/web/modules/users/user/add/default` is set to
+`cn=openDesk User,cn=templates,cn=univention,…` in `_base.yaml`. This makes the
+*openDesk User* template the **default** when the tenant admin creates a new
+user via UMC. The template pre-sets all `univentionOpendesk*` attributes
+(Groupware, Fileshare, Livecollaboration, …) to enabled. The
+`opendesk-a2g-mapper` system extension then automatically synchronises those
+attributes into the corresponding `managed-by-attribute-*` group memberships.
+
+**How the tenant admin is kept out of app tiles:**
+
+The tenant admin UDM user is provisioned with `isOxUser: false`, `oxAccess:
+none`, and **no** `univentionOpendesk*` attributes. It is placed only in
+`cn=admins_<tenant>` (delegated UMC policy group) and, via UDM's default
+primary-group assignment, `cn=Domain Users`. Because the app tile
+`allowedGroups` use `managed-by-attribute-*` — not `cn=Domain Users` — the
+admin account never appears in those groups and the app tiles are not shown.
+
+> **Do not** override `portaltileGroupGroupware` or
+> `portaltileGroupLiveCollaboration` to `cn=Domain Users` in any environment
+> values file. Doing so breaks this separation and exposes all app tiles to the
+> tenant admin account.
+
 **Current operating model:** tenant admins edit Tenant manifests in
 the deployments repo via PR (process-controlled).
 
