@@ -833,7 +833,6 @@ cmd_tenant_undeploy() {
         cd "${DEPLOYMENTS_PATH}"
         git add "${patch}"
       )
-      git_commit_push "feat(${instance}): enable destructive tenant deletion"
     fi
     # Always patch the live CR; a previous failed run may have committed the
     # file change without applying it to the cluster.
@@ -843,12 +842,17 @@ cmd_tenant_undeploy() {
 
   if ! is_instance_deployed "${instance}" "${env_name}"; then
     echo "Tenant instance '${instance}' is not deployed in '${env_name}'."
+    # Commit any staged deletionPolicy change (purge on already-undeployed instance).
+    git_commit_push "feat(${instance}): enable destructive tenant deletion"
   else
     remove_instance_resource "${kustom_file}" "${instance}"
     (
       cd "${DEPLOYMENTS_PATH}"
       git add "${kustom_file}"
     )
+    # Commit deletionPolicy change (if any) together with kustomization removal
+    # in a single atomic push so ArgoCD never sees an intermediate state where
+    # the tenant is still deployed but already has deletionPolicy=Delete.
     git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
     if ! apply_env_kustomization "${env_name}"; then
       echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
