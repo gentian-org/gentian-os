@@ -769,7 +769,7 @@ OU_ENC_UNLOCK=$(urlencode "${OU_POS}")
 USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/users/user/?position=${OU_ENC_UNLOCK}")
-printf '%%s' "${USERS_JSON}" | grep -o '"dn":"[^"]*"' | sed 's/"dn":"//;s/"$//' | while IFS= read -r USER_DN; do
+printf '%%s' "${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
   if [ -n "${USER_DN}" ]; then
     USER_ENC=$(urlencode "${USER_DN}")
     curl -sf --max-time 30 -X PATCH ${CREDS} \
@@ -1033,7 +1033,7 @@ echo "locking all users in ${OU_POS}"
 USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/users/user/?position=${OU_ENC}")
-printf '%%s' "${USERS_JSON}" | grep -o '"dn":"[^"]*"' | sed 's/"dn":"//;s/"$//' | while IFS= read -r USER_DN; do
+printf '%%s' "${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
   if [ -n "${USER_DN}" ]; then
     USER_ENC=$(urlencode "${USER_DN}")
     curl -sf --max-time 30 -X PATCH ${CREDS} \
