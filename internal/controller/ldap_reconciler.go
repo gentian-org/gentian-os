@@ -317,7 +317,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	switch ajErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, aj); {
 	case errors.IsNotFound(ajErr), ajErr == nil && !jobIsComplete(aj):
 		// Admin user was never fully provisioned; nothing to lock.
-		r.deleteProvisioningJobs(ctx, adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+		r.deleteProvisioningJobs(ctx, ouJobName(tenant.Name), adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
 		return nil
 	case ajErr != nil:
 		return ajErr
@@ -328,7 +328,9 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	lockErr := r.Get(ctx, types.NamespacedName{Name: lockJobName, Namespace: kernelNamespace}, lockJob)
 	if lockErr == nil {
 		if jobIsComplete(lockJob) {
-			r.deleteProvisioningJobs(ctx, adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+			// Also remove the OU provision job so a subsequent deploy
+			// re-runs it (ensures the OU is recreated if it was removed).
+			r.deleteProvisioningJobs(ctx, ouJobName(tenant.Name), adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
 			return nil
 		}
 		return errDeleteJobPending
