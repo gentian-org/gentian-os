@@ -449,12 +449,30 @@ fi`, group, group, group, group, group)
 }
 
 func nextcloudDeleteGroupScript(group string) string {
+	// Delete all users that belong to the tenant group before deleting the group
+	// itself. This clears the Nextcloud LDAP user mappings so that a re-deploy
+	// does not hit a UUID conflict when the LDAP OU was purged and its users
+	// were recreated with new entryUUIDs.
 	return fmt.Sprintf(`set -eu
+# Collect users that belong to the tenant group.
+USERS=$(curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
+  "${NEXTCLOUD_URL}/ocs/v1.php/cloud/groups/%s/users" \
+  -H "OCS-APIRequest: true" 2>/dev/null \
+  | grep -o '<element>[^<]*</element>' | sed 's/<[^>]*>//g' || true)
+# Delete each user so that LDAP mappings do not conflict on re-deploy.
+for USERID in ${USERS}; do
+  curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
+    -X DELETE \
+    "${NEXTCLOUD_URL}/ocs/v1.php/cloud/users/${USERID}" \
+    -H "OCS-APIRequest: true" >/dev/null 2>&1 || echo "user ${USERID} already gone"
+  echo "deleted user ${USERID}"
+done
+# Delete the group itself.
 curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
   -X DELETE \
   "${NEXTCLOUD_URL}/ocs/v1.php/cloud/groups/%s" \
   -H "OCS-APIRequest: true" 2>/dev/null || echo "group %s already gone"
-echo "group %s removed"`, group, group, group)
+echo "group %s removed"`, group, group, group, group)
 }
 
 // --- Name and value helpers --------------------------------------------------
