@@ -38,6 +38,7 @@ const (
 	minioProvisionerImage     = "minio/mc:RELEASE.2025-04-03T17-07-56Z"
 	minioAdminSecret          = "minio-admin"
 	nextcloudProvisionerImage = "curlimages/curl:8.7.1"
+	nextcloudPostgresImage    = "postgres:15"
 	nextcloudAdminSecret      = "nextcloud-admin"
 	storageRequeueAfter       = 2 * time.Second
 )
@@ -303,8 +304,14 @@ func makeNextcloudGroupJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
 	}
 }
 
-// makeNextcloudGroupDeleteJob creates a curl Job that removes the tenant's
-// Nextcloud group via the OCS API.
+// makeNextcloudGroupDeleteJob creates a two-container Job that:
+//  1. (init) queries the Nextcloud Postgres DB to find all NC users whose LDAP DN
+//     is under the tenant's OU, writing their IDs to a shared emptyDir volume.
+//  2. (main) deletes each user via the OCS API and then removes the tenant group.
+//
+// Using DB-based lookup avoids relying on per-tenant NC group membership, which
+// is not used for user assignment (users are auto-assigned to the cross-tenant
+// managed-by-attribute-Fileshare group via LDAP attributes instead).
 func makeNextcloudGroupDeleteJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
 	ttl := int32(3600)
 	group := nextcloudGroupName(tenant.Name)
@@ -322,8 +329,17 @@ func makeNextcloudGroupDeleteJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Volumes: []corev1.Volume{
+						{
+							Name:         "shared",
+							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+						},
+					},
+					InitContainers: []corev1.Container{
+						nextcloudUserLookupContainer(tenant.Name),
+					},
 					Containers: []corev1.Container{
-						nextcloudContainer("delete-group", group, nextcloudDeleteGroupScript(group)),
+						nextcloudDeleteContainer(group),
 					},
 				},
 			},
@@ -372,6 +388,69 @@ func minioContainer(name, bucket, script string) corev1.Container {
 			{Name: "BUCKET_NAME", Value: bucket},
 		},
 	}
+}
+
+// nextcloudUserLookupContainer returns a postgres init Container that queries the
+// Nextcloud DB for all users whose LDAP DN is under the tenant OU and writes
+// their NC user IDs (one per line) to /shared/users.txt.
+func nextcloudUserLookupContainer(tenantName string) corev1.Container {
+	return corev1.Container{
+		Name:    "lookup-users",
+		Image:   nextcloudPostgresImage,
+		Command: []string{"/bin/sh", "-c", nextcloudUserLookupScript(tenantName)},
+		Env: []corev1.EnvVar{
+			{
+				Name: "NC_DB_HOST",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: nextcloudAdminSecret},
+						Key:                  "dbhost",
+					},
+				},
+			},
+			{
+				Name: "NC_DB_NAME",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: nextcloudAdminSecret},
+						Key:                  "dbname",
+					},
+				},
+			},
+			{
+				Name: "NC_DB_USER",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: nextcloudAdminSecret},
+						Key:                  "dbuser",
+					},
+				},
+			},
+			{
+				Name: "PGPASSWORD",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: nextcloudAdminSecret},
+						Key:                  "dbpassword",
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "shared", MountPath: "/shared"},
+		},
+	}
+}
+
+// nextcloudDeleteContainer returns a curl Container that reads /shared/users.txt
+// (written by the lookup init container), deletes each NC user via the OCS API,
+// and then removes the tenant group.
+func nextcloudDeleteContainer(group string) corev1.Container {
+	c := nextcloudContainer("delete-group", group, nextcloudDeleteGroupScript(group))
+	c.VolumeMounts = []corev1.VolumeMount{
+		{Name: "shared", MountPath: "/shared"},
+	}
+	return c
 }
 
 // nextcloudContainer returns a Container running curlimages/curl to call the
@@ -448,31 +527,42 @@ else
 fi`, group, group, group, group, group)
 }
 
-func nextcloudDeleteGroupScript(group string) string {
-	// Delete all users that belong to the tenant group before deleting the group
-	// itself. This clears the Nextcloud LDAP user mappings so that a re-deploy
-	// does not hit a UUID conflict when the LDAP OU was purged and its users
-	// were recreated with new entryUUIDs.
+// nextcloudUserLookupScript queries the Nextcloud Postgres DB for all NC user IDs
+// whose LDAP DN is under the tenant OU and writes them (one per line) to /shared/users.txt.
+// The LDAP DN pattern %,ou=<tenant>,% exactly matches the tenant OU without
+// accidentally matching sub-tenants (e.g. ou=gtn-demo won't match ou=gtn-demo-2).
+func nextcloudUserLookupScript(tenantName string) string {
 	return fmt.Sprintf(`set -eu
-# Collect users that belong to the tenant group.
-USERS=$(curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
-  "${NEXTCLOUD_URL}/ocs/v1.php/cloud/groups/%s/users" \
-  -H "OCS-APIRequest: true" 2>/dev/null \
-  | grep -o '<element>[^<]*</element>' | sed 's/<[^>]*>//g' || true)
-# Delete each user so that LDAP mappings do not conflict on re-deploy.
-for USERID in ${USERS}; do
-  curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
-    -X DELETE \
-    "${NEXTCLOUD_URL}/ocs/v1.php/cloud/users/${USERID}" \
-    -H "OCS-APIRequest: true" >/dev/null 2>&1 || echo "user ${USERID} already gone"
-  echo "deleted user ${USERID}"
-done
+psql -h "${NC_DB_HOST}" -U "${NC_DB_USER}" -d "${NC_DB_NAME}" \
+  -t -A \
+  -c "SELECT owncloud_name FROM oc_ldap_user_mapping WHERE ldap_dn LIKE '%%,ou=%s,%%'" \
+  > /shared/users.txt
+echo "found $(wc -l < /shared/users.txt | tr -d ' ') users to delete"`, tenantName)
+}
+
+func nextcloudDeleteGroupScript(group string) string {
+	// Read user IDs written by the lookup init container and delete each user via
+	// the OCS API. This clears the Nextcloud LDAP user mappings so that a re-deploy
+	// does not hit a UUID conflict when the LDAP OU was purged and its users were
+	// recreated with new entryUUIDs.
+	return fmt.Sprintf(`set -eu
+# Delete each user whose LDAP DN was under the tenant OU.
+if [ -f /shared/users.txt ]; then
+  while IFS= read -r USERID; do
+    [ -z "${USERID}" ] && continue
+    curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
+      -X DELETE \
+      "${NEXTCLOUD_URL}/ocs/v1.php/cloud/users/${USERID}" \
+      -H "OCS-APIRequest: true" >/dev/null 2>&1 || echo "user ${USERID} already gone"
+    echo "deleted user ${USERID}"
+  done < /shared/users.txt
+fi
 # Delete the group itself.
 curl -sf -u "${NEXTCLOUD_ADMIN_USER}:${NEXTCLOUD_ADMIN_PASSWORD}" \
   -X DELETE \
   "${NEXTCLOUD_URL}/ocs/v1.php/cloud/groups/%s" \
   -H "OCS-APIRequest: true" 2>/dev/null || echo "group %s already gone"
-echo "group %s removed"`, group, group, group, group)
+echo "group %s removed"`, group, group, group)
 }
 
 // --- Name and value helpers --------------------------------------------------
