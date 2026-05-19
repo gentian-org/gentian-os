@@ -142,6 +142,7 @@ git_commit_push() {
       exit 0
     fi
     git commit -m "${message}"
+    git pull --rebase
     git push
   )
 }
