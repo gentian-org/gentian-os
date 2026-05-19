@@ -145,10 +145,12 @@ nubusStackDataUms:
       - username: ldapsearch_xwiki
         lastname: LDAP-Search-User
     # Enable portal tiles for apps deployed in dev. The _base.yaml defaults these to false
-    # because not all envs run them; dev enables collabora and element explicitly.
+    # because not all envs run them; dev enables element explicitly.
+    # Collabora is intentionally NOT enabled here: it is accessed through the
+    # Nextcloud file picker, not as a standalone portal tile. Enabling it adds a
+    # "+ Create new in Files" button in the Nubus portal that is meaningless for
+    # both regular users and tenant admins.
     apps:
-      collabora:
-        enabled: true
       element:
         enabled: true
 
