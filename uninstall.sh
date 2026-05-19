@@ -86,6 +86,18 @@ fi
 # =============================================================================
 # Step 0 — Undeploy all live tenants
 #
+# Two things must happen for a clean undeploy:
+#  a) GitOps layer  — remove the tenant from the gentian-deployments repo
+#     (kustomization.yaml + set deletionPolicy: Delete when force mode).
+#     This is done by `kubectl gentian tenants undeploy` which commits and
+#     pushes, so ArgoCD does not re-create the tenant on the next install.
+#  b) In-cluster layer — delete the Tenant CR and force-strip its finalizer
+#     if the operator is absent or stuck.
+#
+# We always attempt (a) first.  If the plugin is unavailable or the repo is
+# unreachable the in-cluster cleanup (b) still runs so the install is not
+# blocked by a stale Tenant CR.
+#
 # Tenant CRs are managed by the gentian-os operator (gentian-system), which
 # runs a cleanup finalizer (gentianos.io/tenant-cleanup).  The operator must
 # be present and reachable for a clean deletion; if it is absent or stuck we
@@ -119,6 +131,27 @@ if [[ ${#LIVE_TENANTS[@]} -eq 0 ]]; then
     info "No live tenants found; skipping."
 else
     info "Found ${#LIVE_TENANTS[@]} live tenant(s): ${LIVE_TENANTS[*]}"
+
+    # 0a. GitOps layer: remove each tenant from the gentian-deployments repo.
+    #     In force mode also set deletionPolicy: Delete so ArgoCD does not
+    #     re-create the Tenant on the next install.
+    #     Best-effort: log a warning and continue if the plugin is absent or
+    #     the deployments repo is unreachable.
+    if command -v kubectl-gentian >/dev/null 2>&1; then
+        _undeploy_flags=""
+        [[ "${MODE}" == "force" ]] && _undeploy_flags="--purge"
+        for tenant_name in "${LIVE_TENANTS[@]}"; do
+            info "Removing ${tenant_name} from deployments repo${_undeploy_flags:+ (purge mode)}..."
+            # shellcheck disable=SC2086
+            if kubectl gentian tenants undeploy "${tenant_name}" ${_undeploy_flags} 2>&1; then
+                success "  Tenant ${tenant_name} removed from deployments repo."
+            else
+                warn "  kubectl gentian tenants undeploy failed for ${tenant_name} — continuing with in-cluster cleanup."
+            fi
+        done
+    else
+        warn "kubectl-gentian plugin not found; skipping GitOps undeploy. Tenant files in the deployments repo must be removed manually to prevent ArgoCD from re-creating them on the next install."
+    fi
 
     # 1. Delete App CRs for every tenant (namespaced; iterate over all namespaces)
     for tenant_name in "${LIVE_TENANTS[@]}"; do
