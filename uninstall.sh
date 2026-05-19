@@ -439,11 +439,8 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
     # instances blocks kubectl delete indefinitely once the owning controller is
     # gone.  Also remove any stale webhook configurations that intercept PATCH
     # on these types before stripping (the webhook service may be absent).
-    for wh in \
-        gentian-os-tenant-validator; do
-        kubectl delete validatingwebhookconfiguration "${wh}" \
-            --ignore-not-found=true 2>/dev/null || true
-    done
+    kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator \
+        --ignore-not-found=true 2>/dev/null || true
 
     for crd in \
         xapps.gentianos.io \
