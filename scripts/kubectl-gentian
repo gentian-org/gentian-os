@@ -826,18 +826,18 @@ cmd_tenant_undeploy() {
   fi
 
   if [[ "${purge}" == "true" ]]; then
-    if grep -q '^  deletionPolicy: Delete$' "${patch}"; then
-      echo "Tenant instance '${instance}' already configured with deletionPolicy: Delete."
-    else
+    if ! grep -q '^  deletionPolicy: Delete$' "${patch}"; then
       set_tenant_deletion_policy "${patch}" "Delete"
       (
         cd "${DEPLOYMENTS_PATH}"
         git add "${patch}"
       )
       git_commit_push "feat(${instance}): enable destructive tenant deletion"
-      kubectl patch tenant "${tenant_name}" --type=merge \
-        -p '{"spec":{"deletionPolicy":"Delete"}}' 2>/dev/null || true
     fi
+    # Always patch the live CR; a previous failed run may have committed the
+    # file change without applying it to the cluster.
+    kubectl patch tenant "${tenant_name}" --type=merge \
+      -p '{"spec":{"deletionPolicy":"Delete"}}' 2>/dev/null || true
   fi
 
   if ! is_instance_deployed "${instance}" "${env_name}"; then
