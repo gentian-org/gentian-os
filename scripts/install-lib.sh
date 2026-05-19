@@ -1807,8 +1807,8 @@ install_argocd_image_updater() {
     helm upgrade --install argocd-image-updater argo/argocd-image-updater \
         --namespace argocd-image-updater \
         --create-namespace \
-        --set config.argocdNamespace=argocd \
-        --set "config.watchNamespaces=argocd" \
+        --set "config.argocd\.namespace=argocd" \
+        --set "config.watch\.namespaces=argocd" \
         --wait \
         --timeout 5m
 
