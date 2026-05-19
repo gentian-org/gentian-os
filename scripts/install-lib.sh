@@ -1897,12 +1897,26 @@ bootstrap_argocd_apps() {
     }
 
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        info "Waiting for reloader deployment (up to 5 min)..."
+        # ArgoCD applies the Application and then syncs asynchronously, so the
+        # Deployments do not exist yet when we return from the apply loop above.
+        # Poll until the Deployment appears before calling kubectl wait.
+
+        info "Waiting for reloader deployment to be created by ArgoCD (up to 5 min)..."
+        _deadline=$((SECONDS + 300))
+        until kubectl get deployment reloader-reloader -n stakater-system &>/dev/null; do
+            (( SECONDS < _deadline )) || { error "Timed out waiting for reloader Deployment to appear."; exit 1; }
+            sleep 5
+        done
         kubectl wait --for=condition=available --timeout=300s \
             deployment/reloader-reloader -n stakater-system
         success "Reloader deployment is available."
 
-        info "Waiting for CNPG operator deployment (up to 5 min)..."
+        info "Waiting for CNPG operator deployment to be created by ArgoCD (up to 5 min)..."
+        _deadline=$((SECONDS + 300))
+        until kubectl get deployment cnpg-cloudnative-pg -n cnpg-system &>/dev/null; do
+            (( SECONDS < _deadline )) || { error "Timed out waiting for CNPG Deployment to appear."; exit 1; }
+            sleep 5
+        done
         kubectl wait --for=condition=available --timeout=300s \
             deployment/cnpg-cloudnative-pg -n cnpg-system
         success "CNPG operator deployment is available."
