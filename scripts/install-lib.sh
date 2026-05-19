@@ -2411,10 +2411,12 @@ deploy_kernel_mail_services() {
                 -o jsonpath='{.data.Corefile}' 2>/dev/null || true)
             if echo "${corefile}" | grep -qF "${mail_domain}"; then
                 # Replace the existing IP for mail.<domain> in the hairpin block.
+                # shellcheck disable=SC2001  # regex IP substitution requires sed
                 patched=$(echo "${corefile}" | sed \
                     "s|[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\([[:space:]]*${mail_domain}\)|${dovecot_ip}\1|g")
             elif echo "${corefile}" | grep -q "# BEGIN gentian-hairpin"; then
                 # Hairpin block exists but lacks a mail entry — add it.
+                # shellcheck disable=SC2001  # multiline insert requires sed
                 patched=$(echo "${corefile}" | sed \
                     "s|# BEGIN gentian-hairpin|# BEGIN gentian-hairpin\n          ${dovecot_ip} ${mail_domain}|")
             else
