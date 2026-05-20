@@ -103,10 +103,21 @@ data:
       # Dovecot SASL path — delegates SMTP auth to Dovecot (LDAP/OIDC backend)
       smtpdSASLPath: "inet:dovecot-dev.gentian-dev.svc.cluster.local:3659"
 
-      # No upstream relay — postfix delivers directly to recipient MX.
-      smtpSASLAuthEnable: "no"
+      # Gmail relay for system messages (password reset, notifications).
+      # Set enabled: false to deliver directly to recipient MX (requires static public IP + MX record).
+      # Credentials injected via sensitive-values (Vault: gentian/dev/postfix relay_username / relay_password).
+      smtpSASLAuthEnable: "yes"
       relayHost:
-        enabled: false
+        enabled: true
+        host: smtp.gmail.com
+        port: 587
+        disableMXLookup: true
+        authentication:
+          enabled: true
+          username:
+            value: "placeholder"  # overridden by sensitive-values
+          password:
+            value: "placeholder"  # overridden by sensitive-values
 
       relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
 
