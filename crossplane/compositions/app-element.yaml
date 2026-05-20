@@ -247,6 +247,19 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── Synapse release set[]: exclude appServiceConfigs entries ─── */}}
+            {{- /* The appServiceConfigs[*].as_token entries are element-frontend  */}}
+            {{- /* bridge config. Passing them to synapse alongside the empty      */}}
+            {{- /* appServiceConfigs: [] in values would re-create incomplete app  */}}
+            {{- /* service objects (only as_token), causing Synapse to fail with   */}}
+            {{- /* "Required string field: 'id'". Filter them here.                */}}
+            {{- $synapseRelSet := list }}
+            {{- range $entry := $relSet }}
+            {{- if not (contains "appServiceConfigs" ($entry.name | default "")) }}
+            {{- $synapseRelSet = append $synapseRelSet $entry }}
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Resolve non-sensitive values (domain substitution) ───────── */}}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
             {{- $extraVals := dict }}
@@ -358,9 +371,9 @@ spec:
                 wait: false
                 values:
                   {{ toYaml $synapseVals | nindent 18 }}
-                {{- if gt (len $relSet) 0 }}
+                {{- if gt (len $synapseRelSet) 0 }}
                 set:
-                  {{ toYaml $relSet | nindent 18 }}
+                  {{ toYaml $synapseRelSet | nindent 18 }}
                 {{- end }}
               providerConfigRef:
                 name: kubernetes
