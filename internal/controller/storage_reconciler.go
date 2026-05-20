@@ -531,12 +531,24 @@ fi`, group, group, group, group, group)
 // whose LDAP DN is under the tenant OU and writes them (one per line) to /shared/users.txt.
 // The LDAP DN pattern %,ou=<tenant>,% exactly matches the tenant OU without
 // accidentally matching sub-tenants (e.g. ou=gtn-demo won't match ou=gtn-demo-2).
+//
+// If the oc_ldap_user_mapping table does not exist (Nextcloud was never fully
+// initialized for this environment), the script exits 0 with an empty users.txt
+// so the delete job can still proceed and remove the group.
 func nextcloudUserLookupScript(tenantName string) string {
 	return fmt.Sprintf(`set -eu
-psql -h "${NC_DB_HOST}" -U "${NC_DB_USER}" -d "${NC_DB_NAME}" \
+TABLE_EXISTS=$(psql -h "${NC_DB_HOST}" -U "${NC_DB_USER}" -d "${NC_DB_NAME}" \
   -t -A \
-  -c "SELECT owncloud_name FROM oc_ldap_user_mapping WHERE ldap_dn LIKE '%%,ou=%s,%%'" \
-  > /shared/users.txt
+  -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='oc_ldap_user_mapping'")
+if [ "${TABLE_EXISTS}" = "0" ]; then
+  echo "oc_ldap_user_mapping table not found (Nextcloud not yet initialized) — skipping user lookup"
+  touch /shared/users.txt
+else
+  psql -h "${NC_DB_HOST}" -U "${NC_DB_USER}" -d "${NC_DB_NAME}" \
+    -t -A \
+    -c "SELECT owncloud_name FROM oc_ldap_user_mapping WHERE ldap_dn LIKE '%%,ou=%s,%%'" \
+    > /shared/users.txt
+fi
 echo "found $(wc -l < /shared/users.txt | tr -d ' ') users to delete"`, tenantName)
 }
 
