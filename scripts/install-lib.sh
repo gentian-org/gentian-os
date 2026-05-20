@@ -986,6 +986,33 @@ check_prereqs() {
         success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
     fi
 
+    # ── MicroK8s kubelet max-pods ─────────────────────────────────────────────
+    # Gentian OS runs many pods (100+). The microk8s default of --max-pods=110
+    # is too low and causes silent scheduling failures once the limit is reached.
+    # If this is a microk8s cluster and the limit is below 220, increase it now
+    # and restart microk8s so the new limit takes effect before any workloads
+    # are deployed. This is idempotent.
+    local kubelet_args_file="/var/snap/microk8s/current/args/kubelet"
+    if [[ -f "${kubelet_args_file}" ]]; then
+        local cur_max_pods
+        cur_max_pods=$(grep -E '^--max-pods=' "${kubelet_args_file}" | cut -d= -f2 || true)
+        cur_max_pods=${cur_max_pods:-110}
+        local target_max_pods=220
+        if (( cur_max_pods < target_max_pods )); then
+            info "microk8s kubelet max-pods=${cur_max_pods} is below ${target_max_pods}; updating to ${target_max_pods}..."
+            sudo sed -i '/^--max-pods=/d' "${kubelet_args_file}"
+            echo "--max-pods=${target_max_pods}" | sudo tee -a "${kubelet_args_file}" >/dev/null
+            info "Restarting microk8s to apply new max-pods limit (this takes ~30 s)..."
+            sudo microk8s stop
+            sudo microk8s start
+            kubectl wait node --all --for=condition=Ready --timeout=120s \
+                && success "microk8s max-pods updated to ${target_max_pods} and cluster is Ready." \
+                || warn "Cluster not Ready after 120 s — continuing anyway."
+        else
+            success "microk8s max-pods=${cur_max_pods} (≥ ${target_max_pods}, ok)"
+        fi
+    fi
+
     # ── Required environment variables ───────────────────────────────────────
     for var in MASTER_PASSWORD OD_PRIVATE_REGISTRY_USERNAME OD_PRIVATE_REGISTRY_PASSWORD \
                OD_SMTP_RELAY_USERNAME OD_SMTP_RELAY_PASSWORD; do
@@ -2274,6 +2301,31 @@ install_orchestrator() {
         exit 1
     fi
     kubectl apply -f "$crd_dir"
+
+    # ── Pre-flight: adopt any webhook resources left from a previous run ──────
+    # If ValidatingWebhookConfigurations exist without Helm ownership metadata,
+    # helm upgrade --install will refuse to proceed.  Annotate and label them
+    # so Helm can adopt them (idempotent if annotations are already present).
+    local vwc
+    for vwc in $(kubectl get validatingwebhookconfigurations \
+                     -l "app.kubernetes.io/managed-by=Helm" \
+                     --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+                 | grep -v "^$" || true); do
+        :  # already owned
+    done
+    while IFS= read -r vwc; do
+        [[ -z "$vwc" ]] && continue
+        kubectl annotate validatingwebhookconfiguration "$vwc" \
+            "meta.helm.sh/release-name=gentian-os" \
+            "meta.helm.sh/release-namespace=${ns}" \
+            --overwrite
+        kubectl label validatingwebhookconfiguration "$vwc" \
+            "app.kubernetes.io/managed-by=Helm" \
+            --overwrite
+        info "Adopted pre-existing ValidatingWebhookConfiguration '${vwc}' into Helm release."
+    done < <(kubectl get validatingwebhookconfigurations \
+                 --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+             | grep "^gentian-os-" || true)
 
     info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
     info "(ArgoCD will take ownership of this release in Phase 2 below.)"

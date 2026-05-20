@@ -339,8 +339,7 @@ gentian-deployments/     # Per-cluster state (the only repo specific to a cluste
         └── <tenant>/
             ├── tenant.yaml      # Tenant CR (cluster-admin managed)
             └── apps/
-                ├── nextcloud.yaml   # App claim (tenant-admin managed)
-                └── openproject.yaml
+                └── openproject.yaml # App claim (tenant-admin managed)
 ```
 
 `gentian-os` and `gentian-apps` publish versioned OCI artifacts;
