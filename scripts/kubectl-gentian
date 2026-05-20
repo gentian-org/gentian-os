@@ -862,6 +862,24 @@ cmd_tenant_undeploy() {
       git_commit_push "feat(${instance}): set deletionPolicy=Delete before purge in ${env_name}"
       kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
     fi
+  else
+    # Non-purge undeploy: if a prior --purge run left deletionPolicy=Delete in
+    # the YAML, reset it to Retain first so the controller preserves all tenant
+    # data (LDAP users, databases, mail, etc.) during this undeploy.
+    if grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
+      set_tenant_deletion_policy "${resource_file}" "Retain"
+      (
+        cd "${DEPLOYMENTS_PATH}"
+        git add "${resource_file}"
+      )
+      local live_policy
+      live_policy="$(kubectl get tenant "${tenant_name}" \
+        -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+      if [[ "${live_policy}" == "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
+        git_commit_push "chore(${instance}): reset deletionPolicy to Retain before undeploy in ${env_name}"
+        kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
+      fi
+    fi
   fi
 
   if ! is_instance_deployed "${instance}" "${env_name}"; then
@@ -887,6 +905,19 @@ cmd_tenant_undeploy() {
     echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
     echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
     exit 1
+  fi
+
+  # Always reset deletionPolicy to Retain after cleanup so the tenant YAML is
+  # left in a safe state for future deploys and non-purge undeploys. Without
+  # this, a prior --purge run permanently leaves Delete in the file, causing
+  # the next undeploy (even without -f) to destroy all tenant data.
+  if [[ -f "${resource_file}" ]] && grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
+    set_tenant_deletion_policy "${resource_file}" "Retain"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${resource_file}"
+    )
+    git_commit_push "chore(${instance}): reset deletionPolicy to Retain after undeploy in ${env_name}"
   fi
 
   if [[ "${purge}" == "true" ]]; then
