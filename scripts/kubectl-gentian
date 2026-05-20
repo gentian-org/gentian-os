@@ -777,14 +777,7 @@ cmd_tenant_deploy() {
   kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1 && already_live=true
 
   if [[ "${already_live}" == "true" ]]; then
-    echo "Tenant instance '${instance}' is already live in '${env_name}'."
-    if fetch_tenant_admin_credentials "${tenant_name}" 1; then
-      print_tenant_admin_login_instructions "${tenant_name}" "${realm}" "${domain}" "${TENANT_ADMIN_USERNAME}" "${TENANT_ADMIN_PASSWORD}"
-    else
-      echo "Tenant '${tenant_name}' is live but credentials could not be retrieved automatically." >&2
-      echo "Try: kubectl logs -n platform-kernel job/keycloak-admin-${tenant_name} | grep INITIAL_TENANT_ADMIN" >&2
-    fi
-    exit 0
+    echo "Tenant instance '${instance}' is already live in '${env_name}' — applying spec changes..."
   fi
 
   if [[ "${already_in_kustomization}" == "false" ]]; then
