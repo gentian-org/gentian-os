@@ -67,8 +67,8 @@ data:
       allowRelayNets: true
 
       smtpdSASLAuthEnable: "yes"
-      smtpdSASLType: "cyrus"
-      smtpdSASLPath: "smtpd"
+      smtpdSASLType: "dovecot"
+      # smtpdSASLPath overridden per-env in postfix-dev-values
       smtpdSASLSecurityOptions: "noanonymous"
       smtpSASLSecurityOptions: "noanonymous"
 
@@ -100,20 +100,14 @@ data:
       ldap:
         host: "nubus-dev-ldap-server-primary.gentian-dev.svc.cluster.local"
 
-      # Upstream relay host/port (credentials in postfix-sensitive-values).
-      relayHost:
-        enabled: true
-        host: smtp.gmail.com
-        port: 587
-        disableMXLookup: true
-        authentication:
-          enabled: true
-          username:
-            value: "placeholder"  # overridden by sensitive-values
-          password:
-            value: "placeholder"  # overridden by sensitive-values
+      # Dovecot SASL path — delegates SMTP auth to Dovecot (LDAP/OIDC backend)
+      smtpdSASLPath: "inet:dovecot-dev.gentian-dev.svc.cluster.local:3659"
 
-      smtpSASLAuthEnable: "yes"
+      # No upstream relay — postfix delivers directly to recipient MX.
+      smtpSASLAuthEnable: "no"
+      relayHost:
+        enabled: false
+
       relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
 
     resources:
