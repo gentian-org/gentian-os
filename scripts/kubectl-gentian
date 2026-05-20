@@ -104,6 +104,9 @@ ensure_repo() {
     echo "Cloning ${DEPLOYMENTS_REPO} → ${DEPLOYMENTS_PATH} ..."
     git clone "${DEPLOYMENTS_REPO}" "${DEPLOYMENTS_PATH}"
   fi
+
+  # Always pull latest to keep local clone in sync with remote.
+  (cd "${DEPLOYMENTS_PATH}" && git pull --rebase --autostash)
 }
 
 # ---------------------------------------------------------------------------
