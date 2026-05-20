@@ -36,7 +36,7 @@ spec:
                   properties:
                     name:
                       type: string
-                      description: Name of the AppProfile (e.g. "nextcloud", "collabora").
+                      description: Name of the AppProfile (e.g. "openproject", "element").
                 tenantNamespace:
                   type: string
                   description: >

@@ -289,7 +289,6 @@ gentian-apps/
 │   ├── nextcloud.yaml
 │   ├── ox-appsuite.yaml
 │   ├── element.yaml
-│   ├── collabora.yaml
 │   ├── xwiki.yaml
 │   └── jitsi.yaml
 ├── contracts/

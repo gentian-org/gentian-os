@@ -386,7 +386,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 14b. Nextcloud kernel file-storage service — provision a per-tenant group in
+	// 14b. Office kernel extension (shared Collabora WOPI service).
+	officeResult, err := r.ensureOffice(ctx, tenant)
+	if err != nil {
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
+	// 14c. Nextcloud kernel file-storage service — provision a per-tenant group in
 	// the shared Nextcloud instance for every tenant regardless of installed apps.
 	// Non-blocking: errors are returned so the reconciler retries, but this step
 	// does not affect the provisioning flag or Phase=Ready (same model as mail).
@@ -410,9 +417,9 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
 		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
-	// Note: mailResult is intentionally excluded from the provisioning flag.
-	// Mail is an extension (like app deployment) and does not block Phase=Ready.
-	// Its own MailReady condition tracks mail-specific state independently.
+	// Note: mailResult and officeResult are intentionally excluded from the
+	// provisioning flag. Mail and office are kernel extensions and do not
+	// block Phase=Ready. Their own conditions track state independently.
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -447,13 +454,19 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if mailResult.RequeueAfter > 0 {
 			return mailResult, nil
 		}
+		if officeResult.RequeueAfter > 0 {
+			return officeResult, nil
+		}
 		return appsResult, nil
 	}
-	// Infrastructure is ready. Requeue for mail if it is still converging
-	// (e.g. waiting for an external SMTP source secret to appear).
+	// Infrastructure is ready. Requeue for mail or office if still converging.
 	if mailResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; mail still converging", "tenant", tenant.Name)
 		return mailResult, nil
+	}
+	if officeResult.RequeueAfter > 0 {
+		logger.Info("tenant ready; office still converging", "tenant", tenant.Name)
+		return officeResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil

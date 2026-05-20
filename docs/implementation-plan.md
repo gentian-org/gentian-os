@@ -36,13 +36,13 @@ The orchestrator delegates to existing operators (CloudNativePG, MinIO, ESO, etc
 | 11 | IntegrationBinding reconciler | ✅ Done | Auto-generates bindings when provider + consumer both in tenant app list. 4 envtest tests. 67 total |
 | 12 | OpenBao restructuring | ✅ Done | `gentian-os/kernel/` and `gentian-os/tenants/{name}/apps/{app}/` path hierarchy. 67 total |
 | 13 | Helm chart + observability | ✅ Done | `charts/gentian-os/` with CRDs, Deployment, RBAC, ServiceMonitor, Grafana dashboard. Prometheus metrics. Printer columns. 67 total |
-| 14 | AppProfiles + update reconciler | ✅ Done | 6 AppProfile YAMLs (collabora, element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B. 67 total |
+| 14 | AppProfiles + update reconciler | ✅ Done | 5 AppProfile YAMLs (element, jitsi, openproject, xwiki, ox-appsuite). All Pattern B. 67 total |
 | 15 | Deployment repo (gentian-deployments) | ✅ Done | `gentian-deployments/dev/` — bootstrap, app-of-apps, dev-tenant, values, env vars. 67 total |
 | 16 | Mail kernel extension | ✅ Done | Shared Postfix/Dovecot via kernel ConfigMaps. 4 modes: selfhosted, external, transport-only, disabled. 7 envtest tests. 78 total |
 | 17 | Isolation hardening tests | ✅ Done | Cross-tenant NetworkPolicy, ingress/egress rules, ResourceQuota, LimitRange, end-to-end Delete + Retain. 7 envtest tests. 95 total |
 | 18 | Single-line domain config | ✅ Done | Single `domain` variable. 41 `_base.yaml` → `${domain}` template. Eliminated per-file hostname repetition. 95 total |
 | 19 | App Store controller + catalogue API | ✅ Done | `AppCatalogue` singleton CR + `AppStoreReconciler`. `TenantValidator` webhook (maxApps quota + AppProfile existence). `kubectl-gentian` plugin (list/install/uninstall via Git commit to `gentian-deployments`). 6 envtest tests. 101 total |
-| 20 | Collabora AppProfile in gentian-apps | ✅ Done | `profiles/collabora.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. ArgoCD Source 3 + AppProject sourceRepos. `extraValues` aligned with opendesk defaults. 101 total |
+| 20 | Collabora → kernel service (Nextcloud Office) | ✅ Done | Migrated Collabora from per-tenant AppProfile to shared kernel service in `kernel/services/collabora/`. Single ingress `office.<domain>`. `Tenant.spec.office.enabled` flag replaces `spec.apps: [{profile: collabora}]`. WOPI URL updated to kernel service in-cluster address. 101 total |
 | 21 | Element AppProfile in gentian-apps | ✅ Done | `profiles/element.yaml` in `gentian-apps`. Removed from `gentian-os/config/samples/`. `extraValues` aligned with opendesk `values-element.yaml.gotmpl` + `values-synapse.yaml.gotmpl` (E2EE, OIDC, SMTP, ratelimits, security context). Ingress `chat.<domain>` → element:80. 101 total |
 | 21a | Kernel secret seeder (OpenBao write path) | ✅ Done | Shared `internal/kernel/secrets` package: HKDF-SHA256 deriver, KV v2 client, canonical path builder, seeder. Master password is fetched at operator startup from `secret/gentian-os/kernel/internal/master-password` via the `gentian-os-operator` Kubernetes auth role; when present, every kernel reconciler (identity, ldap, database, mariadb, storage, cache, mail, apps) derives and writes the credentials it provisions into `gentian-os/tenants/{t}/apps/{a}/{category}` and `…/internal/{name}`. Tenant is included in the derivation salt for tenant-scoped secrets but omitted for kernel-shared paths (`gentian-os/kernel/{category}/{name}`) so shared services keep a single value across tenants. Provisioning Jobs (Keycloak, psql, mariadb, mc, redis-cli, UDM) consume the derived password via env var and apply it idempotently (`ALTER ROLE`, `ALTER USER`, `ACL SETUSER`, etc.) so the live backend password always equals the OpenBao value. Bootstrap (`scripts/seed-openbao.sh` + `install.sh`) writes the master password and configures OpenBao auth so a fresh cluster works without manual steps. |
 | 22 | Jitsi AppProfile in gentian-apps | ✅ Done | `profiles/jitsi.yaml` in `gentian-apps` with `extraValues` aligned with `opendesk/helmfile/apps/jitsi/values-jitsi.yaml.gotmpl`. `kernelRequirements: oidc`. `appSecrets`: `jwt_app_secret`, `jicofo_auth_password`, `jicofo_component_secret`, `jvb_auth_password`. Hybrid-matrix-token auth scheme for Prosody. Ingress `meet.<domain>`. Jigasi disabled by default. TURN credentials injected from kernel path at deploy time. Optional Element video-conferencing IntegrationBinding. No sample to remove from `gentian-os` (sample was never added). |
@@ -313,123 +313,61 @@ Each app increment (20–24) moves an app from `gentian-os/config/samples/` to `
 
 ---
 
-#### Inc 20 — Collabora AppProfile (document editing)
+#### Inc 20 — Collabora → Nextcloud Office kernel service
 
-**Goal:** First app in the store — Collabora Online (WOPI document editor). Establish the `gentian-apps` repo structure and ArgoCD wiring.
+**Goal:** Migrate Collabora from a per-tenant AppProfile to a shared kernel service
+("Nextcloud Office"). Collabora is tightly coupled to Nextcloud — it has no OIDC
+client, no database, no S3 bucket — and shares a single Nextcloud instance across all
+tenants. Deploying a separate Collabora pod per tenant creates an ingress hostname
+collision and a global `wopi_url` conflict in Nextcloud.
 
-**AppProfile:**
-- `kernelRequirements`: none (Collabora authenticates through Nextcloud, not directly)
-- `appSecrets`: `admin_password` → `collabora.password`
-- `provides`: `office-editor` (wopi)
-- `chart`: `collabora-online` v1.1.45
-- `deploymentMethod`: `crossplane` (Pattern B)
-- `extraValues`: `autoscaling.enabled: false`, `replicaCount: 1`, security context, `fullnameOverride: collabora` — aligned with opendesk defaults
-
-**Actions:**
-- Write `profiles/collabora.yaml` in `gentian-apps` with `extraValues` matching opendesk `values.yaml.gotmpl`
-- Delete `config/samples/appprofile_collabora.yaml` from `gentian-os` (`git rm`)
-- Add `https://github.com/gentian-org/gentian-apps` to ArgoCD AppProject `sourceRepos`
-- Add Source 3 (`gentian-apps/profiles/`) to `app-of-apps.yaml`
-- Configure Nextcloud kernel service to discover and use the Collabora WOPI endpoint (via IntegrationBinding or kernel config)
+**Architecture change:**
+- Removed `gentian-apps/profiles/collabora.yaml` (AppProfile).
+- Added `gentian-os/kernel/services/collabora/` (shared kernel service).
+- One Collabora pod in `gentian-dev`, single ingress `office.desk.gentian.org`.
+- WOPI URL in Nextcloud management + startup hook set to `http://collabora.gentian-dev.svc.cluster.local:9980`.
+- `TenantSpec.Office.Enabled` replaces `spec.apps: [{profile: collabora}]`.
+- `ensureOffice` reconciler sets `OfficeReady` condition; no per-tenant provisioning needed.
 
 ##### Testing
 
-**Create (Install):**
 ```bash
-kubectl gentian apps install collabora --tenant gtn-demo
-# Wait for pod to be Running (typically 30–60s after ArgoCD sync)
-kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora-online -w
-# Verify: single replica, no HPA
-kubectl get hpa -n tenant-gtn-demo  # should show no collabora HPA
-kubectl get appcatalogue default \
-  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
-# Expected: collabora: 1
-# Verify: App claim exists and is Ready
-kubectl get app collabora -n tenant-gtn-demo
-# Expected: READY=True
-```
+# Verify the kernel Collabora pod is Running in the platform namespace
+kubectl get pods -n gentian-dev -l app.kubernetes.io/name=collabora-online
+# Expected: collabora-<hash> Running
 
-**Read (Verify — CLI):**
-```bash
-# 1. Check WOPI discovery endpoint (must return XML)
-COLLABORA_POD=$(kubectl get pod -n tenant-gtn-demo \
+# Verify single shared ingress at office.<domain>
+kubectl get ingress -n gentian-dev collabora
+# Expected: office.desk.gentian.org → collabora:9980
+
+# Verify WOPI discovery endpoint returns XML
+COLLABORA_POD=$(kubectl get pod -n gentian-dev \
   -l app.kubernetes.io/name=collabora-online -o name | head -1)
-kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
+kubectl exec -n gentian-dev "$COLLABORA_POD" -- \
   curl -sf http://localhost:9980/hosting/discovery | head -5
-# Expected: <wopi-discovery> XML listing supported file types
+# Expected: <wopi-discovery> XML
 
-# 2. Check the ingress exists
-kubectl get ingress -n tenant-gtn-demo | grep collabora
-# Expected: ingress to office.<domain> (e.g. office.desk.gentian.org)
+# Verify Nextcloud wopi_url points to kernel service
+NC_POD=$(kubectl get pod -n gentian-dev -l app=nextcloud-aio -o name | head -1)
+kubectl -n gentian-dev exec "$NC_POD" -- \
+  php /var/www/html/occ config:app:get richdocuments wopi_url
+# Expected: http://collabora.gentian-dev.svc.cluster.local:9980
 
-# 3. Check aliasgroups (Nextcloud as allowed WOPI host)
-kubectl exec -n tenant-gtn-demo "$COLLABORA_POD" -- \
-  curl -sf http://localhost:9980/hosting/capabilities | python3 -m json.tool | grep -A5 "convert-to"
-# Expected: JSON capabilities response
+# Verify Tenant office condition
+kubectl get tenant gtn-demo -o jsonpath='{.status.conditions[?(@.type=="OfficeReady")]}'
+# Expected: {"status":"True","reason":"Enabled",...}
 ```
 
-**Read (Verify — Browser):**
-
-Collabora is accessed **indirectly through Nextcloud** (the `files.<domain>` app), not by
-navigating to Collabora directly. The WOPI flow is:
-Browser → Nextcloud → Collabora → Nextcloud (fetch file) → Browser (render editor).
-
-Prerequisites: Nextcloud must be deployed for the tenant, and the Nextcloud `richdocuments`
-app must be configured with the Collabora WOPI URL (`http://collabora-collabora-online:9980`
-or `https://office.<domain>`).
-
-1. Open **`https://files.<domain>`** (e.g. `https://files.desk.gentian.org`) in a browser
-2. Log in via SSO (Keycloak redirects)
-3. Click the **"+"** button → **New document** → choose "Document (.odt)" or "Spreadsheet (.ods)"
-4. **Expected:** Collabora Online editor loads inside Nextcloud in an iframe — you see a
-   full office UI (toolbar, formatting, page layout). The title bar shows "Collabora Online".
-5. Type some text, wait 2 seconds (autosave), then close the tab
-6. Re-open the file — your text is still there
-
-**Update (Config Change):**
-```bash
-# Change replica count via Tenant CR config override
-kubectl patch tenant gtn-demo --type=merge \
-  -p '{"spec":{"apps":[{"profile":"collabora","config":{"replicas":2}}]}}'
-# Wait for reconciliation
-sleep 30
-kubectl get pods -n tenant-gtn-demo -l app.kubernetes.io/name=collabora-online
-# Expected: 2 pods running
-
-# Revert to 1 replica
-kubectl patch tenant gtn-demo --type=merge \
-  -p '{"spec":{"apps":[{"profile":"collabora","config":{"replicas":1}}]}}'
-```
-
-**Delete (Uninstall):**
-```bash
-kubectl gentian apps uninstall collabora --tenant gtn-demo
-# Wait for reconciliation (orphan cleanup deletes the App claim)
-sleep 30
-# Verify: App claim removed
-kubectl get app collabora -n tenant-gtn-demo
-# Expected: Error from server (NotFound)
-# Verify: no Collabora pods (Crossplane Release CR is deleted)
-kubectl get pods -n tenant-gtn-demo | grep collabora
-# Expected: no results
-# Verify: catalogue shows 0 installs
-kubectl get appcatalogue default \
-  -o jsonpath='{range .status.apps[*]}{.name}: {.installedCount}{"\n"}{end}' | grep collabora
-# Expected: collabora: 0
-```
+**Browser test:** Open `https://files.desk.gentian.org`, log in, click **+** → **New document**,
+choose `.odt`. Collabora Online editor should load inside Nextcloud.
 
 ##### Troubleshooting
 
-- "Failed to read document from storage" → Collabora cannot reach Nextcloud WOPI endpoint.
-  Check `aliasgroups` in Collabora config — it must list `https://files.<domain>`.
-- Document opens in plain-text / download prompt → `richdocuments` app not enabled in Nextcloud.
-  Run: `kubectl exec -n tenant-gtn-demo <nextcloud-pod> -- php occ app:enable richdocuments`
-- No "New document" option → `richdocuments` is not configured. Set the WOPI URL:
-  `kubectl exec -n tenant-gtn-demo <nextcloud-pod> -- php occ config:app:set richdocuments wopi_url --value="https://office.<domain>"`
-- Collabora iframe shows "Unauthorized WOPI host" → the Collabora aliasgroups don't include
-  the Nextcloud host. Check `extraValues.collabora.aliasgroups` in the AppProfile.
-- Uninstall: pod persists after removing from `spec.apps` → orchestrator not running the
-  latest code with orphan cleanup. Rebuild and redeploy the operator image.
+- "Failed to load Nextcloud Office" → verify `wopi_url` points to the kernel service:
+  `kubectl -n gentian-dev exec <nc-pod> -- php /var/www/html/occ config:app:get richdocuments wopi_url`
+- "Unauthorized WOPI host" → `aliasgroups` in `collabora-base-values` ConfigMap must list `https://files.<domain>`.
+- Collabora pod not starting → check `collabora-sensitive-values` Secret exists (ESO must have synced
+  the admin password from OpenBao path `gentian-os/kernel/apps/collabora`).
 
 ---
 
@@ -1087,7 +1025,7 @@ kubectl get appcatalogue default \
 | Inc | Title | Key deliverable | Effort |
 |---|---|---|---|
 | 19 | App Store controller + catalogue API | `AppCatalogue` CR, validation webhook, `kubectl gentian` plugin, runtime install/uninstall | Large |
-| 20 | Collabora AppProfile | `gentian-apps/profiles/collabora.yaml`, ArgoCD Source 3, AppProject fix. Remove from `gentian-os`. | Small |
+| 20 | Collabora → Nextcloud Office kernel service | Shared `kernel/services/collabora/`. `Tenant.spec.office.enabled` flag. Removed per-tenant AppProfile. | Small |
 | 21 | Element AppProfile | `gentian-apps/profiles/element.yaml`, OIDC+PG+SMTP wiring. Remove from `gentian-os`. | Medium |
 | 22 | Jitsi AppProfile | `gentian-apps/profiles/jitsi.yaml`, JWT/OIDC wiring. Remove from `gentian-os`. | Small |
 | 23 | OpenProject AppProfile | `gentian-apps/profiles/openproject.yaml`, 6 kernel reqs + Nextcloud integration. Remove from `gentian-os`. | Medium |

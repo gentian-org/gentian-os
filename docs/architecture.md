@@ -340,13 +340,12 @@ gentian-deployments/     # Per-cluster state (the only repo specific to a cluste
             ├── tenant.yaml      # Tenant CR (cluster-admin managed)
             └── apps/
                 ├── nextcloud.yaml   # App claim (tenant-admin managed)
-                ├── collabora.yaml
                 └── openproject.yaml
 ```
 
 `gentian-os` and `gentian-apps` publish versioned OCI artifacts;
 `gentian-deployments` references them by version. ArgoCD watches all
-three. Adding an app to the catalogue touches `gentian-apps`;
+three. Adding an app to the catalogue touches `gentian-apps}`;
 creating a tenant touches `gentian-deployments/tenants/`; installing
 an app for a tenant adds an `App` claim under that tenant's `apps/`
 directory — no cluster-admin action required after initial tenant
@@ -370,6 +369,27 @@ tenant picks a mode:
 Configuration model, isolation guarantees, blast-radius trade-offs and
 the per-tenant opt-out (dedicated mail stack for high-value tenants)
 are in [design/mail.md](design/mail.md).
+
+---
+
+## 9b. The Office Kernel Extension
+
+Nextcloud Office (powered by Collabora) is **optional** — not every
+tenant needs collaborative document editing. It is modelled as a
+**kernel extension**: one shared Collabora instance serves all tenants
+via the WOPI protocol. The extension is declared per-tenant with a
+single flag:
+
+```yaml
+office:
+  enabled: true
+```
+
+Collabora is deployed as a kernel service in the platform namespace
+(not in per-tenant namespaces), so the ingress hostname
+`office.<domain>` is unique and shared across all tenants. Nextcloud's
+`wopi_url` points to the shared in-cluster service URL and is
+configured once at the platform level.
 
 ---
 

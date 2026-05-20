@@ -283,6 +283,7 @@ for release_name in \
     nextcloud-management-dev \
     opendesk-mariadb-dev \
     opendesk-postgresql-dev \
+    collabora-dev \
     dovecot-dev \
     postfix-dev \
     ox-connector-dev \
@@ -323,6 +324,8 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-management-dev-values \
         nextcloud-notifypush-base-values \
         nextcloud-notifypush-dev-values \
+        collabora-base-values \
+        collabora-dev-values \
         postfix-base-values \
         postfix-dev-values \
         dovecot-base-values \
@@ -344,6 +347,7 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-notifypush-sensitive-values \
         postfix-sensitive-values \
         dovecot-sensitive-values \
+        collabora-sensitive-values \
         ox-appsuite-sensitive-values \
         ox-appsuite-credentials \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
@@ -362,6 +366,7 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-notifypush-sensitive-values \
         postfix-sensitive-values \
         dovecot-sensitive-values \
+        collabora-sensitive-values \
         ox-appsuite-sensitive-values \
         ox-appsuite-credentials \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true

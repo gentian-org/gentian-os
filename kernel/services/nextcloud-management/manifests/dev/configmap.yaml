@@ -183,7 +183,7 @@ data:
         # validates the Collabora TLS certificate (which may be self-signed during
         # cert-manager issuance or Let's Encrypt rate-limit periods).
         # The browser-facing public_wopi_url remains the external HTTPS URL.
-        internalWopiUrl: "http://collabora.tenant-gtn-demo.svc.cluster.local:9980"
+        internalWopiUrl: "http://collabora.gentian-dev.svc.cluster.local:9980"
 
     resources:
       limits:

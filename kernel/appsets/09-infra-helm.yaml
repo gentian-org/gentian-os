@@ -43,6 +43,7 @@ spec:
           - app: nextcloud-management
           - app: nextcloud
           - app: nextcloud-notifypush
+          - app: collabora
           - app: postfix
           - app: dovecot
           - app: ox-appsuite

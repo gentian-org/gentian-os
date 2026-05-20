@@ -48,6 +48,22 @@ type TenantSpec struct {
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// Office configures the Nextcloud Office (Collabora) document editing extension
+	// for this tenant. When enabled, the shared kernel Collabora service provides
+	// WOPI-based document editing inside Nextcloud.
+	// +optional
+	Office *TenantOffice `json:"office,omitempty"`
+}
+
+// TenantOffice configures the Nextcloud Office (Collabora) document editing extension.
+// Collabora is a shared kernel service — one instance serves all tenants.
+type TenantOffice struct {
+	// Enabled activates the Collabora WOPI document editor for this tenant.
+	// Defaults to false.
+	// +optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
 }
 
 // TenantIsolation describes the namespace and identity boundaries.

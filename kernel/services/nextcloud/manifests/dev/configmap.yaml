@@ -94,10 +94,9 @@ data:
                   # TLS cert validation failures (e.g. self-signed cert during
                   # cert-manager issuance / Let's Encrypt rate-limit periods).
                   # The management-init Job also sets this via internalWopiUrl, but
-                  # that only runs once; this hook keeps the value correct across
-                  # pod restarts and Nextcloud upgrades.
+                  # this hook keeps the value correct across pod restarts and upgrades.
                   php /var/www/html/occ config:app:set richdocuments wopi_url \
-                    --value="http://collabora.tenant-gtn-demo.svc.cluster.local:9980" || true
+                    --value="http://collabora.gentian-dev.svc.cluster.local:9980" || true
                   php /var/www/html/occ config:app:set richdocuments public_wopi_url \
                     --value="https://office.desk.gentian.org" || true
                 fi

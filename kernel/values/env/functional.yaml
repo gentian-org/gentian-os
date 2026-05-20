@@ -255,10 +255,12 @@ portal:
     enabled: true
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Web Office (Collabora)
-# Active from Phase 4C onward.
-# Wired into: apps/collabora/values/_base.yaml (to be created in Phase 4C.1)
-# and apps/nubus/values/_base.yaml → templateContext.portalDirectDocsExtension*
+# Web Office (Collabora / Nextcloud Office)
+# Kernel service — deployed once per cluster in kernel/services/collabora/.
+# Wired into: kernel/services/collabora/manifests/<env>/configmap.yaml
+# and kernel/services/nextcloud-management/manifests/<env>/configmap.yaml
+#             (internalWopiUrl + public_wopi_url).
+# Per-tenant opt-in: Tenant.spec.office.enabled = true.
 # ─────────────────────────────────────────────────────────────────────────────
 weboffice:
   # Default format for new documents created from the portal or Nextcloud.

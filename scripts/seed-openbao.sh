@@ -326,6 +326,15 @@ EOF
 #     selfservice_consumer_api_password=<derive_password output>
 # Then force-reconcile the affected Terraform CR.
 
+# --- Collabora (kernel office service) ---
+COLLABORA_ADMIN_PW=$(derive_password "collabora" "admin_password")
+kv_put_once "apps/collabora" "$(cat <<EOF
+{
+  "admin_password": "${COLLABORA_ADMIN_PW}"
+}
+EOF
+)"
+
 # --- Nextcloud ---
 NC_ADMIN_PW=$(derive_password "nextcloud" "admin_password")
 NC_STATUS_PW=$(derive_password "nextcloud" "status_password")

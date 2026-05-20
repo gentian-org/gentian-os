@@ -8,7 +8,6 @@
 # App classification (all per-tenant, deployable via AppProfile):
 #
 #   Pattern A (this ApplicationSet — ArgoCD manages Helm directly):
-#     collabora    — Layer 200, document editing (collabora-online v1.1.45)
 #     openproject  — Layer 220, project management (openproject v10.1.0; verify existingSecret)
 #
 #   Pattern B (managed by provider-helm via Crossplane; no existingSecret support):
@@ -45,13 +44,6 @@ spec:
           elements: []  # add envs: - env: dev / - env: prod  (once at least one app is uncommented)
       - list:
           # ── Pattern A apps — uncomment when ready to deploy ──────────────────────
-          #
-          # Collabora (document editing) — verify existingSecret before enabling:
-          # - app: collabora
-          #   chart: collabora-online
-          #   repoURL: registry.opencode.de/bmi/opendesk/components/supplier/collabora/charts-mirror
-          #   version: "1.1.45"
-          #   wave: "40"
           #
           # OpenProject (project management) — confirm existingSecret support first:
           # - app: openproject
