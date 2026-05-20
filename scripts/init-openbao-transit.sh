@@ -78,6 +78,13 @@ if [[ "$INIT_STATUS" == "true" ]]; then
     info "Transit is sealed — unsealing..."
     if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
       UNSEAL_KEY=$(jq -r '.keys_base64[0]' "${TRANSIT_INIT_FILE}")
+    elif kubectl get secret openbao-transit-unseal -n "${TRANSIT_NS}" >/dev/null 2>&1; then
+      # Init file is gone (e.g. after OS reinstall / /tmp wipe) but the unseal
+      # key was persisted to the openbao-transit-unseal Kubernetes Secret during
+      # first-time init — use it automatically so the install is non-interactive.
+      UNSEAL_KEY=$(kubectl get secret openbao-transit-unseal -n "${TRANSIT_NS}" \
+        -o jsonpath='{.data.unseal-key}' | base64 -d | tr -d '\n')
+      info "Unseal key sourced from openbao-transit-unseal k8s Secret."
     else
       echo "  (key is read silently — characters will not appear as you type)"
       read -rsp "  Enter transit unseal key: " UNSEAL_KEY; echo ""
