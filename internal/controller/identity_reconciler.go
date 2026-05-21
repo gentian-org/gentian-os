@@ -716,44 +716,53 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   BROKER_CLIENT_ID="broker-${REALM_NAME}"
   BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${REALM_NAME}/broker/kernel/endpoint"
 
+  # Refresh the admin token here because the realm + LDAP steps above may have
+  # consumed more than the default token lifetime (60 s).
+  TOKEN=$(curl -sf --max-time 30 \
+    -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+    | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+
   # 1. Ensure broker client exists in the kernel realm.
   #    This client is used by the tenant realm's IdP to authenticate TO kernel.
-  BROKER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+  BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
   if echo "${BROKER_RESP}" | grep -q '"id"'; then
-    BROKER_KC_ID=$(echo "${BROKER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-    curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}" \
+    # Extract the first "id" value (not a nested mapper id) using grep -o
+    BROKER_KC_ID=$(echo "${BROKER_RESP}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
       -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}" >/dev/null
     echo "broker client ${BROKER_CLIENT_ID} updated in ${KERNEL_REALM} realm"
   else
-    curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients" \
+    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
       -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
-    BROKER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+    BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
       "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-    BROKER_KC_ID=$(echo "${BROKER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+    BROKER_KC_ID=$(echo "${BROKER_RESP}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
     echo "broker client ${BROKER_CLIENT_ID} created in ${KERNEL_REALM} realm"
   fi
-  BROKER_SECRET=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+  BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
     | sed 's/.*"value":"\([^"]*\)".*/\1/')
 
   # 2. Register kernel as an OIDC Identity Provider in the tenant realm (idempotent).
   #    hideOnLoginPage:true prevents showing the "Login with Gentian SSO" button
   #    redundantly; the defaultProvider setting (step 3) handles the auto-redirect.
-  IDP_HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
+  IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
   IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"hideOnLoginPage\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\"}}"
   if [ "${IDP_HTTP}" = "200" ]; then
-    curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
+    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
       -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
       -d "${IDP_BODY}" >/dev/null
     echo "IdP kernel updated in realm ${REALM_NAME}"
   else
-    curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances" \
+    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances" \
       -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
       -d "${IDP_BODY}"
     echo "IdP kernel registered in realm ${REALM_NAME}"
@@ -762,7 +771,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   # 3. Set kernel as the default IdP so Keycloak auto-redirects to the kernel
   #    realm login page (where the user likely already has an active session)
   #    without showing the tenant realm login page at all.
-  curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}" \
+  curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{\"attributes\":{\"defaultProvider\":\"kernel\"}}" >/dev/null
