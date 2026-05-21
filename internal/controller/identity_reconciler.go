@@ -807,7 +807,7 @@ if [ -n "${LDAP_SERVER:-}" ]; then
           \"syncRegistrations\":[\"false\"],
           \"fullSyncPeriod\":[\"-1\"],
           \"changedSyncPeriod\":[\"-1\"],
-          \"pagination\":[\"true\"],
+          \"pagination\":[\"false\"],
           \"connectionPooling\":[\"true\"],
           \"batchSizeForSync\":[\"1000\"],
           \"cachePolicy\":[\"MAX_LIFESPAN\"],
