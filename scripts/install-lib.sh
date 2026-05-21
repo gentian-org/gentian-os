@@ -1005,8 +1005,7 @@ check_prereqs() {
             info "Restarting microk8s to apply new max-pods limit (this takes ~30 s)..."
             sudo microk8s stop
             sudo microk8s start
-            kubectl wait node --all --for=condition=Ready --timeout=120s
-            if [[ $? -eq 0 ]]; then
+            if kubectl wait node --all --for=condition=Ready --timeout=120s; then
                 success "microk8s max-pods updated to ${target_max_pods} and cluster is Ready."
             else
                 warn "Cluster not Ready after 120 s — continuing anyway."
