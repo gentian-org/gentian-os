@@ -341,15 +341,16 @@ spec:
             {{- /* Uses the same secret set[] entries as the element release     */}}
             {{- /* (value paths are identical in both charts). Non-sensitive     */}}
             {{- /* config is taken from global.* + configuration.* in extraVals, */}}
-            {{- /* overriding fullnameOverride to "synapse" so the StatefulSet   */}}
-            {{- /* and Service get the correct names for synapse-web to resolve. */}}
+            {{- /* overriding fullnameOverride to "opendesk-synapse" so the       */}}
+            {{- /* headless Service matches the DNS name HAProxy in synapse-web   */}}
+            {{- /* is hardcoded to resolve: opendesk-synapse.<ns>.svc.cluster.local */}}
             {{- $globalVals  := dig "global" dict $extraVals }}
             {{- $confVals    := dig "configuration" dict $extraVals }}
             {{- $imagePull   := dig "imagePullSecrets" list $extraVals }}
             {{- $synapseVals := dict
                 "global"           $globalVals
                 "configuration"    $confVals
-                "fullnameOverride" "synapse"
+                "fullnameOverride" "opendesk-synapse"
                 "imagePullSecrets" $imagePull
                 "replicaCount"     1
                 "federation" (dict "ingress" (dict "enabled" false))
