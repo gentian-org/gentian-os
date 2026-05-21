@@ -60,6 +60,13 @@ type AppProfileSpec struct {
 	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
 
+	// CompositionRef overrides the Crossplane Composition used to deploy this
+	// app. When empty the XRD default (app-default) applies. Set to the name
+	// of a purpose-built composition (e.g. "app-element", "app-ox") for
+	// profiles that require deploying multiple Helm Releases.
+	// +optional
+	CompositionRef string `json:"compositionRef,omitempty"`
+
 	// Ingress declares the HTTP routing configuration for this app.
 	// When set, the orchestrator creates a Kubernetes Ingress resource and a
 	// cert-manager Certificate CR for TLS.

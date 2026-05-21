@@ -78,7 +78,7 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", app.Profile, err)
 		}
 
-		ready, err := r.ensureAppClaim(ctx, tenant, app)
+		ready, err := r.ensureAppClaim(ctx, tenant, app, profile)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure App claim for %s: %w", app.Profile, err)
 		}
@@ -159,6 +159,7 @@ func (r *TenantReconciler) ensureAppClaim(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	app gentianov1alpha1.TenantApp,
+	profile *gentianov1alpha1.AppProfile,
 ) (bool, error) {
 	claimName := app.Profile
 	nsName := tenantNamespaceName(tenant)
@@ -167,7 +168,7 @@ func (r *TenantReconciler) ensureAppClaim(
 	obj.SetGroupVersionKind(appClaimGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: claimName, Namespace: nsName}, obj)
 	if errors.IsNotFound(err) {
-		desired := buildAppClaim(tenant, app, r.KernelDomain)
+		desired := buildAppClaim(tenant, app, r.KernelDomain, profile)
 		return false, r.Create(ctx, desired)
 	}
 	if err != nil {
@@ -184,6 +185,7 @@ func buildAppClaim(
 	tenant *gentianov1alpha1.Tenant,
 	app gentianov1alpha1.TenantApp,
 	kernelDomain string,
+	profile *gentianov1alpha1.AppProfile,
 ) *unstructured.Unstructured {
 	nsName := tenantNamespaceName(tenant)
 
@@ -199,6 +201,10 @@ func buildAppClaim(
 
 	_ = unstructured.SetNestedField(obj.Object, app.Profile, "spec", "profileRef", "name")
 	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "tenantNamespace")
+
+	if profile != nil && profile.Spec.CompositionRef != "" {
+		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
+	}
 
 	if domain := tenant.EffectiveDomain(kernelDomain); domain != "" {
 		_ = unstructured.SetNestedField(obj.Object, domain, "spec", "domain")

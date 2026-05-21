@@ -240,9 +240,10 @@ install_crossplane_providers() {
     info "Applying Composition (cluster-default)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
 
-    info "Applying Compositions (app-default, app-ox)..."
+    info "Applying Compositions (app-default, app-ox, app-element)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-element.yaml"
 
     info "Applying XRD (XTenant / Tenant)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
