@@ -65,7 +65,7 @@ dovecot:
   oidc:
     enabled: true
     introspectionScheme: "http"
-    introspectionPath: "/realms/opendesk/protocol/openid-connect/token/introspect"
+    introspectionPath: "/realms/kernel/protocol/openid-connect/token/introspect"
     usernameAttribute: "opendesk_username"
   migration:
     enabled: false

@@ -65,7 +65,7 @@ authentication:
     # Additional client scopes beyond the defaults
     clientScopes: ~
 
-  # Keycloak 'opendesk' realm settings.
+  # Keycloak 'kernel' realm settings.
   # All numeric "Lifespan" values are in seconds.
   # Ref.: https://www.keycloak.org/docs/latest/server_admin
   realmSettings:

@@ -42,7 +42,7 @@ data:
       - name: FS_ENV_IGNORE_STATE_CONSISTENCY
         value: "1"
       - name: FS_ENV_OIDC_DISCOVERY_URI
-        value: "http://nubus-dev-keycloak-extensions-proxy.gentian-dev.svc.cluster.local:8181/realms/opendesk/.well-known/openid-configuration"
+        value: "http://nubus-dev-keycloak-extensions-proxy.gentian-dev.svc.cluster.local:8181/realms/kernel/.well-known/openid-configuration"
 
     cleanup:
       deletePodsOnSuccess: true

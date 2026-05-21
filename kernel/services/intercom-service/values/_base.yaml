@@ -48,14 +48,14 @@ global:
 
 # ICS core configuration (secrets overridden in {env}/values.yaml)
 ics:
-  issuerBaseUrl: https://id.desk.gentian.org/realms/opendesk
+  issuerBaseUrl: https://id.desk.gentian.org/realms/kernel
   originRegex: desk.gentian.org
   enableSessionCookie: true
   userUniqueMapper: opendesk_username
   usernameClaim: opendesk_username
   logLevel: INFO
   keycloak:
-    realm: opendesk
+    realm: kernel
   default:
     domain: desk.gentian.org
   oidc:
@@ -121,7 +121,7 @@ provisioning:
   config:
     clientBaseUrl: https://ics.desk.gentian.org
     keycloak:
-      realm: opendesk
+      realm: kernel
       connection:
         protocol: http
         # host: env-specific (nubus-{env}-keycloak), defined in values/{env}/values.yaml

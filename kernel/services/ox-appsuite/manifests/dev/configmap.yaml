@@ -18,7 +18,7 @@
 #   SMTP:     postfix-dev.gentian-dev.svc.cluster.local:587
 #   IMAP:     dovecot-dev.gentian-dev.svc.cluster.local:143
 #   LDAP:     nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389
-#   Keycloak: https://id.desk.gentian.org/realms/opendesk
+#   Keycloak: https://id.desk.gentian.org/realms/kernel
 #   MinIO:    http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
 #   Webmail:  https://webmail.desk.gentian.org
 # =============================================================================
@@ -91,7 +91,7 @@ data:
             # Required for OAuth2 API provider (e.g. Nextcloud → OX integration)
             open-xchange-oauth-provider: "enabled"
         properties:
-          # ── OIDC (Keycloak opendesk realm) ───────────────────────────────
+          # ── OIDC (Keycloak kernel realm) ───────────────────────────────
           com.openexchange.oidc.enabled: "true"
           # startDefaultBackend: OX server auto-uses OIDC backend; without this
           # unauthenticated API calls hit OX's own login handler, not Keycloak.
@@ -109,23 +109,23 @@ data:
           com.openexchange.oidc.userLookupNamePart: "full"
           com.openexchange.oidc.enablePasswordGrant: "true"
           com.openexchange.oidc.passwordGrantUserNamePart: "local-part"
-          com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/auth"
-          com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/opendesk"
-          com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
-          com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/logout"
-          com.openexchange.oidc.opTokenEndpoint: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/token"
+          com.openexchange.oidc.opAuthorizationEndpoint: "https://id.desk.gentian.org/realms/kernel/protocol/openid-connect/auth"
+          com.openexchange.oidc.opIssuer: "https://id.desk.gentian.org/realms/kernel"
+          com.openexchange.oidc.opJwkSetEndpoint: "https://id.desk.gentian.org/realms/kernel/protocol/openid-connect/certs"
+          com.openexchange.oidc.opLogoutEndpoint: "https://id.desk.gentian.org/realms/kernel/protocol/openid-connect/logout"
+          com.openexchange.oidc.opTokenEndpoint: "https://id.desk.gentian.org/realms/kernel/protocol/openid-connect/token"
           com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
           com.openexchange.oidc.rpRedirectURILogout: "https://portal.desk.gentian.org"
           com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
           # ── OAuth2 API provider ───────────────────────────────────────────
           com.openexchange.oauth.provider.enabled: "true"
           com.openexchange.oauth.provider.mode: "expect_jwt"
-          com.openexchange.oauth.provider.allowedIssuer: "https://id.desk.gentian.org/realms/opendesk"
+          com.openexchange.oauth.provider.allowedIssuer: "https://id.desk.gentian.org/realms/kernel"
           com.openexchange.oauth.provider.contextLookupClaim: "context"
           com.openexchange.oauth.provider.contextLookupNamePart: "full"
           com.openexchange.oauth.provider.userLookupClaim: "opendesk_username"
           com.openexchange.oauth.provider.userLookupNamePart: "full"
-          com.openexchange.oauth.provider.jwt.jwksUri: "https://id.desk.gentian.org/realms/opendesk/protocol/openid-connect/certs"
+          com.openexchange.oauth.provider.jwt.jwksUri: "https://id.desk.gentian.org/realms/kernel/protocol/openid-connect/certs"
           # ── Mail (kernel Postfix + Dovecot) ──────────────────────────────
           com.openexchange.mail.authType: "xoauth2"
           com.openexchange.mail.loginSource: "name"
