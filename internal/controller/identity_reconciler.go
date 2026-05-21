@@ -100,7 +100,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 
 	allDone := true
 	for _, appName := range oidcApps {
-		done, err := r.ensureClientJob(ctx, tenant, realmName, appName)
+		var done bool
+		var err error
+		if getAppIsolationMode(tenant, appName) == gentianov1alpha1.AppDeploymentModeShared {
+			done, err = r.ensureSharedAppsJob(ctx, tenant, appName)
+		} else {
+			done, err = r.ensureClientJob(ctx, tenant, realmName, appName)
+		}
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Keycloak client Job for app %s: %w", appName, err)
 		}
@@ -169,6 +175,58 @@ func (r *TenantReconciler) collectOIDCApps(ctx context.Context, tenant *gentiano
 		}
 	}
 	return oidcApps, nil
+}
+
+// getAppIsolationMode returns the effective deployment mode for appName in the
+// given tenant. Returns AppDeploymentModeShared only when explicitly set to
+// "shared". All other cases (empty, "dedicated", or app not found) return
+// AppDeploymentModeDedicated so the default code path is unchanged.
+func getAppIsolationMode(tenant *gentianov1alpha1.Tenant, appName string) gentianov1alpha1.AppDeploymentMode {
+	for _, app := range tenant.Spec.Apps {
+		if app.Profile == appName {
+			if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+				return gentianov1alpha1.AppDeploymentModeShared
+			}
+			return gentianov1alpha1.AppDeploymentModeDedicated
+		}
+	}
+	return gentianov1alpha1.AppDeploymentModeDedicated
+}
+
+// ensureSharedAppsJob creates the shared-apps realm provisioning Job for one
+// app if absent. Returns true when the Job has completed successfully.
+// This job sets up the shared-apps Keycloak realm, creates the app OIDC client,
+// and registers the tenant realm as an IdP broker with auto-redirect.
+func (r *TenantReconciler) ensureSharedAppsJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
+	jobName := sharedAppsJobName(tenant.Name, appName)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		clientSecret := ""
+		if r.Seeder != nil {
+			// Seed OIDC credentials for the app in the shared-apps realm.
+			// The issuer is always shared-apps (stable across all tenants using this app).
+			// The clientID is the app name (not tenant-prefixed) because the client
+			// is shared across tenants. All tenants using the same app in shared mode
+			// will have the same OIDC client ID in the shared-apps realm.
+			issuer := fmt.Sprintf("https://id.%s/realms/shared-apps", r.KernelDomain)
+			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, appName)
+			if seedErr != nil {
+				return false, fmt.Errorf("seed shared-apps oidc: %w", seedErr)
+			}
+			clientSecret = creds.ClientSecret
+		}
+		return false, r.Create(ctx, makeSharedAppsJob(tenant, appName, clientSecret, r.KernelDomain))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
 }
 
 // ensureRealmJob creates the Keycloak realm Job if absent.
@@ -351,6 +409,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), kernelAdminEnableJobName(tenant.Name)}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
+				provNames = append(provNames, sharedAppsJobName(tenant.Name, app.Profile))
 			}
 			r.deleteProvisioningJobs(ctx, provNames...)
 			return nil
@@ -449,6 +508,61 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientSe
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{container},
+				},
+			},
+		},
+	}
+}
+
+// makeSharedAppsJob creates a Job that provisions the shared-apps Keycloak realm,
+// creates the app OIDC client in it, and wires the tenant realm as an IdP broker
+// with auto-redirect for transparent SSO.
+func makeSharedAppsJob(tenant *gentianov1alpha1.Tenant, appName, clientSecret, kernelDomain string) *batchv1.Job {
+	ttl := int32(3600)
+
+	// Redirect URI for the shared deployment. Before C.4 (which moves the
+	// deployment to a shared namespace), the Synapse is still in the tenant
+	// namespace so we use the tenant's effective domain as the redirect host.
+	redirectHost := tenant.EffectiveDomain(kernelDomain)
+	if redirectHost == "" {
+		redirectHost = tenant.Spec.Domain
+	}
+	var redirectURI string
+	if appName == "element" {
+		redirectURI = fmt.Sprintf("https://matrix.%s/_synapse/client/oidc/callback", redirectHost)
+	} else {
+		redirectURI = fmt.Sprintf("https://%s/%s/*", redirectHost, appName)
+	}
+
+	kernelExternalURL := fmt.Sprintf("https://id.%s", kernelDomain)
+	tenantRealm := keycloakRealmName(tenant)
+
+	c := keycloakContainer("provision-shared-apps", buildSharedAppsScript())
+	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: kernelExternalURL},
+		corev1.EnvVar{Name: "TENANT_REALM", Value: tenantRealm},
+		corev1.EnvVar{Name: "APP_NAME", Value: appName},
+		corev1.EnvVar{Name: "APP_REDIRECT_URI", Value: redirectURI},
+	)
+	if clientSecret != "" {
+		c.Env = append(c.Env, corev1.EnvVar{Name: "OIDC_CLIENT_SECRET", Value: clientSecret})
+	}
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sharedAppsJobName(tenant.Name, appName),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+				appLabel:       appName,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers:    []corev1.Container{c},
 				},
 			},
 		},
@@ -831,6 +945,155 @@ else
 fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
 }
 
+// buildSharedAppsScript returns the shell script that idempotently provisions:
+//  1. The shared-apps Keycloak realm (created once for the whole platform).
+//  2. The app's OIDC client in shared-apps (one client for all tenants sharing
+//     this app — e.g. "element" for Matrix/Synapse).
+//  3. A broker client "broker-shared-apps" in the tenant realm so shared-apps
+//     can authenticate users via the tenant's IdP.
+//  4. The tenant realm registered as an OIDC IdP in shared-apps.
+//  5. The identity-provider-redirector execution config in shared-apps set to
+//     auto-redirect to the tenant realm IdP (silent SSO, no login prompt).
+//
+// All variable values are injected as environment variables by makeSharedAppsJob:
+//
+//	KERNEL_EXTERNAL_URL  external Keycloak base URL, e.g. https://id.desk.gentian.org
+//	TENANT_REALM         tenant's Keycloak realm name, e.g. gtn-demo
+//	APP_NAME             application type name, e.g. element
+//	APP_REDIRECT_URI     OIDC callback URL for this app's deployment
+//	OIDC_CLIENT_SECRET   (optional) pre-seeded client secret for the app client
+//
+// NOTE: the identity-provider-redirector is set to redirect to TENANT_REALM.
+// When multiple tenants use the same app in shared mode this step becomes a
+// no-op for subsequent tenants (last-write-wins). Multi-tenant shared-mode
+// home-realm discovery is a future concern (requires org-domain hints or a
+// custom authenticator).
+func buildSharedAppsScript() string {
+	return `set -eu
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+
+# 1. Ensure the shared-apps realm exists and is enabled.
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+  -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/shared-apps")
+if [ "${HTTP}" = "404" ]; then
+  curl -sf -X POST "${KEYCLOAK_URL}/admin/realms" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d '{"realm":"shared-apps","enabled":true,"displayName":"Gentian Shared Apps","registrationAllowed":false}'
+  echo "shared-apps realm created"
+else
+  curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/shared-apps" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d '{"realm":"shared-apps","enabled":true}' >/dev/null
+  echo "shared-apps realm already exists (HTTP ${HTTP}), ensured enabled=true"
+fi
+
+# Refresh token — realm creation can consume the initial token's lifetime.
+TOKEN=$(curl -sf --max-time 30 \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+
+# 2. Create/update the app OIDC client in shared-apps.
+#    This is the client the app server uses to obtain tokens from shared-apps.
+SECRET_FIELD=""
+if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
+  SECRET_FIELD=",\"secret\":\"${OIDC_CLIENT_SECRET}\""
+fi
+EXISTING_APP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/clients?clientId=${APP_NAME}")
+if echo "${EXISTING_APP}" | grep -q '"id"'; then
+  APP_CID=$(echo "${EXISTING_APP}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+  curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/shared-apps/clients/${APP_CID}" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"${APP_NAME}\",\"redirectUris\":[\"${APP_REDIRECT_URI}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}" >/dev/null
+  echo "client ${APP_NAME} updated in shared-apps realm"
+else
+  curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/shared-apps/clients" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"${APP_NAME}\",\"redirectUris\":[\"${APP_REDIRECT_URI}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
+  echo "client ${APP_NAME} created in shared-apps realm"
+fi
+
+# 3. Create/update the broker client in the tenant realm.
+#    shared-apps uses this confidential client to authenticate users via the tenant IdP.
+BROKER_CLIENT_ID="broker-shared-apps"
+BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/shared-apps/broker/${TENANT_REALM}/endpoint"
+BROKER_RESP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
+if echo "${BROKER_RESP}" | grep -q '"id"'; then
+  BROKER_KC_ID=$(echo "${BROKER_RESP}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+  curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients/${BROKER_KC_ID}" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}" >/dev/null
+  echo "broker client ${BROKER_CLIENT_ID} updated in ${TENANT_REALM} realm"
+else
+  curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+  BROKER_RESP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
+  BROKER_KC_ID=$(echo "${BROKER_RESP}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+  echo "broker client ${BROKER_CLIENT_ID} created in ${TENANT_REALM} realm"
+fi
+BROKER_SECRET=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients/${BROKER_KC_ID}/client-secret" \
+  | sed 's/.*"value":"\([^"]*\)".*/\1/')
+
+# 4. Register the tenant realm as an OIDC IdP in shared-apps.
+#    hideOnLoginPage:true suppresses the IdP button; the redirector execution
+#    (step 5) handles the auto-redirect so users see no login prompt.
+IDP_ALIAS="${TENANT_REALM}"
+IDP_BODY="{\"alias\":\"${IDP_ALIAS}\",\"displayName\":\"${IDP_ALIAS}\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
+IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/identity-provider/instances/${IDP_ALIAS}")
+if [ "${IDP_HTTP}" = "200" ]; then
+  curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/shared-apps/identity-provider/instances/${IDP_ALIAS}" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" -d "${IDP_BODY}" >/dev/null
+  echo "IdP ${IDP_ALIAS} updated in shared-apps realm"
+else
+  curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/shared-apps/identity-provider/instances" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" -d "${IDP_BODY}"
+  echo "IdP ${IDP_ALIAS} registered in shared-apps realm"
+fi
+
+# 5. Configure identity-provider-redirector in shared-apps browser flow to
+#    auto-redirect to the tenant realm IdP.
+EXEC_ID=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/browser/executions" \
+  | grep -o '"id":"[^"]*"[^}]*"providerId":"identity-provider-redirector"' \
+  | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+if [ -n "${EXEC_ID}" ]; then
+  EXISTING_CFG=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/executions/${EXEC_ID}/config" 2>/dev/null || echo "")
+  if echo "${EXISTING_CFG}" | grep -q '"alias"'; then
+    CFG_ID=$(echo "${EXISTING_CFG}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+    curl -sf --max-time 30 -X PUT \
+      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/config/${CFG_ID}" \
+      -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      -d "{\"alias\":\"${TENANT_REALM}-redirector\",\"config\":{\"defaultProvider\":\"${IDP_ALIAS}\"}}" >/dev/null
+    echo "identity-provider-redirector config updated in shared-apps"
+  else
+    curl -sf --max-time 30 -X POST \
+      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/executions/${EXEC_ID}/config" \
+      -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      -d "{\"alias\":\"${TENANT_REALM}-redirector\",\"config\":{\"defaultProvider\":\"${IDP_ALIAS}\"}}" >/dev/null
+    echo "identity-provider-redirector config created in shared-apps"
+  fi
+fi
+# Belt-and-suspenders: also set the realm-level defaultProvider attribute.
+curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/shared-apps" \
+  -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  -d "{\"attributes\":{\"defaultProvider\":\"${IDP_ALIAS}\"}}" >/dev/null
+echo "default provider set to ${IDP_ALIAS} in shared-apps realm"`
+}
+
 func buildClientScript(realmName, clientID, redirectURI string) string {
 	// The script is idempotent: it creates the client on first run, and on
 	// subsequent runs it always updates redirectUris + secret so config stays
@@ -1018,6 +1281,10 @@ func realmJobName(tenantName string) string {
 
 func clientJobName(tenantName, appName string) string {
 	return fmt.Sprintf("keycloak-client-%s-%s", tenantName, appName)
+}
+
+func sharedAppsJobName(tenantName, appName string) string {
+	return fmt.Sprintf("keycloak-shared-apps-%s-%s", tenantName, appName)
 }
 
 func realmDeleteJobName(tenantName string) string {

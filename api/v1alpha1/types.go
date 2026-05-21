@@ -48,6 +48,20 @@ const (
 	DatabaseEngineMariaDB    DatabaseEngine = "mariadb"
 )
 
+// AppDeploymentMode controls how an application is deployed relative to tenants.
+// "dedicated" provisions a separate deployment per tenant in the tenant namespace.
+// "shared" uses a single shared deployment in the platform-kernel namespace with
+// per-tenant IAM brokering via the shared-apps Keycloak realm.
+// +kubebuilder:validation:Enum=dedicated;shared
+type AppDeploymentMode string
+
+const (
+	// AppDeploymentModeDedicated provisions a separate app instance per tenant.
+	AppDeploymentModeDedicated AppDeploymentMode = "dedicated"
+	// AppDeploymentModeShared uses one shared app instance for all tenants.
+	AppDeploymentModeShared AppDeploymentMode = "shared"
+)
+
 // CacheEngine specifies which caching backend a kernel requirement uses.
 // +kubebuilder:validation:Enum=redis;memcached
 type CacheEngine string
