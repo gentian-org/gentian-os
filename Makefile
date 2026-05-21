@@ -40,9 +40,10 @@ test:
 generate:
 	$(CONTROLLER_GEN) object:headerFile="$(BOILERPLATE)" paths="./api/..."
 
-## Generate CRD manifests
+## Generate CRD manifests and sync them into the Helm chart crds/ directory
 manifests:
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./api/..." output:crd:artifacts:config=config/crd
+	cp config/crd/*.yaml charts/gentian-os/crds/
 
 ## Both generate and manifests in order
 gen-all: generate manifests

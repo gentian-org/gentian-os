@@ -117,6 +117,13 @@ spec:
                 - repository
                 - version
                 type: object
+              compositionRef:
+                description: |-
+                  CompositionRef overrides the Crossplane Composition used to deploy this
+                  app. When empty the XRD default (app-default) applies. Set to the name
+                  of a purpose-built composition (e.g. "app-element", "app-ox") for
+                  profiles that require deploying multiple Helm Releases.
+                type: string
               deploymentMethod:
                 default: crossplane
                 description: |-
