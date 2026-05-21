@@ -354,7 +354,14 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientSe
 	if redirectHost == "" {
 		redirectHost = tenant.Spec.Domain
 	}
-	redirectURI := fmt.Sprintf("https://%s/%s/*", redirectHost, appName)
+	var redirectURI string
+	if appName == "element" {
+		// Synapse handles OIDC on behalf of Element: the callback goes to the
+		// Matrix homeserver endpoint, not the frontend app path.
+		redirectURI = fmt.Sprintf("https://matrix.%s/_synapse/client/oidc/callback", redirectHost)
+	} else {
+		redirectURI = fmt.Sprintf("https://%s/%s/*", redirectHost, appName)
+	}
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if clientSecret != "" {
 		container.Env = append(container.Env, corev1.EnvVar{
@@ -613,11 +620,10 @@ fi`, adminUsername, adminUsername, adminUsername)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
-	// When OIDC_CLIENT_SECRET is set (Inc 21a — Seeder enabled) the script
-	// creates the client with that exact secret, and updates an existing
-	// client to match (PUT /clients/{id}) so the live value always equals
-	// what OpenBao was seeded with. When unset, Keycloak auto-generates a
-	// random secret (legacy behaviour pre-seeder).
+	// The script is idempotent: it creates the client on first run, and on
+	// subsequent runs it always updates redirectUris + secret so config stays
+	// in sync with what the controller generates (redirect URI may change when
+	// the app type determines a different callback pattern, e.g. Synapse).
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -634,14 +640,12 @@ EXISTING=$(curl -sf \
 if echo "${EXISTING}" | grep -q '"id"'; then
   CID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "client %s already exists (id=${CID}) in realm %s"
-  if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
-    curl -sf \
-      -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"%s\",\"secret\":\"${OIDC_CLIENT_SECRET}\"}"
-    echo "client secret updated to OpenBao-seeded value"
-  fi
+  curl -sf \
+    -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
+  echo "client %s updated (redirect URIs + secret)"
 else
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
@@ -649,7 +653,7 @@ else
     -H "Content-Type: application/json" \
     -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
   echo "client %s created in realm %s"
-fi`, realmName, clientID, clientID, realmName, realmName, clientID, realmName, clientID, redirectURI, clientID, realmName)
+fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI, clientID, realmName, clientID, redirectURI, clientID, realmName)
 }
 
 func buildAdminScript(realmName string) string {

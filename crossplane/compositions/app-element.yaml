@@ -267,6 +267,7 @@ spec:
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $raw = $raw | replace "${TENANT_NAME}" $tenant }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
             {{- if and $spec.config $spec.config.extraValues }}
