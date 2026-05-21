@@ -42,7 +42,7 @@ spec:
           Tenant is cluster-scoped and represents a customer organisation. Creating a
           Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
           creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
-          ArgoCD Application CRs for each requested app.
+          ArgoCD Application (or Crossplane App claim) CRs for each requested app.
         properties:
           apiVersion:
             description: |-
@@ -86,6 +86,17 @@ spec:
                           type: integer
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    isolationMode:
+                      description: |-
+                        IsolationMode overrides the AppProfile's default deployment mode for this
+                        tenant. "dedicated" provisions a separate per-tenant deployment;
+                        "shared" uses the shared platform deployment with per-tenant IAM brokering
+                        via the shared-apps Keycloak realm.
+                        Defaults to the AppProfile's isolation.default (which itself defaults to "dedicated").
+                      enum:
+                      - dedicated
+                      - shared
+                      type: string
                     profile:
                       description: Profile is the name of the AppProfile CR to install.
                       minLength: 1
@@ -193,6 +204,19 @@ spec:
                       delivery. Required when mode=external.
                       The Secret must provide keys: host, port, username, password.
                     type: string
+                type: object
+              office:
+                description: |-
+                  Office configures the Nextcloud Office (Collabora) document editing extension
+                  for this tenant. When enabled, the shared kernel Collabora service provides
+                  WOPI-based document editing inside Nextcloud.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled activates the Collabora WOPI document editor for this tenant.
+                      Defaults to false.
+                    type: boolean
                 type: object
               quotas:
                 description: Quotas sets resource limits for this tenant.

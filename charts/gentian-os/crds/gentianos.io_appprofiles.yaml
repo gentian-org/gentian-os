@@ -200,6 +200,36 @@ spec:
                       Defaults to true.
                     type: boolean
                 type: object
+              isolation:
+                description: |-
+                  Isolation declares the deployment modes this app supports.
+                  When unset, only dedicated mode is available.
+                properties:
+                  default:
+                    default: dedicated
+                    description: |-
+                      Default is the deployment mode used when a TenantApp does not specify one.
+                      Defaults to "dedicated".
+                    enum:
+                    - dedicated
+                    - shared
+                    type: string
+                  modes:
+                    description: |-
+                      Modes lists the deployment modes this app supports.
+                      Valid values: "dedicated", "shared".
+                    items:
+                      description: |-
+                        AppDeploymentMode controls how an application is deployed relative to tenants.
+                        "dedicated" provisions a separate deployment per tenant in the tenant namespace.
+                        "shared" uses a single shared deployment in the platform-kernel namespace with
+                        per-tenant IAM brokering via the shared-apps Keycloak realm.
+                      enum:
+                      - dedicated
+                      - shared
+                      type: string
+                    type: array
+                type: object
               kernelRequirements:
                 description: KernelRequirements declares which kernel services this
                   app requires.
