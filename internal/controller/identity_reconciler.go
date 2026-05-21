@@ -51,6 +51,15 @@ type realmLDAPParams struct {
 	usersDN string // users search base, e.g. ou=users,ou=tenant,dc=...
 }
 
+// realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.
+// When nil, no identity brokering is configured for the realm.
+// The broker registers the shared kernel realm as an OIDC Identity Provider in the
+// tenant realm so users logged into the portal don't need a second login for tenant apps.
+type realmBrokerParams struct {
+	kernelRealm       string // Keycloak realm name for the shared SSO realm, e.g. "kernel"
+	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.desk.gentian.org"
+}
+
 // ensureIdentity provisions a Keycloak realm and OIDC clients for the tenant.
 // It creates idempotent Kubernetes Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
@@ -194,7 +203,14 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 				usersDN: "ou=users," + ouDN,
 			}
 		}
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName, ldap))
+		var broker *realmBrokerParams
+		if r.KernelRealm != "" && r.KernelDomain != "" {
+			broker = &realmBrokerParams{
+				kernelRealm:       r.KernelRealm,
+				kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
+			}
+		}
+		return false, r.Create(ctx, makeRealmJob(tenant, realmName, ldap, broker))
 	}
 	if err != nil {
 		return false, err
@@ -352,15 +368,24 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realmLDAPParams) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realmLDAPParams, broker *realmBrokerParams) *batchv1.Job {
 	ttl := int32(3600)
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
+	// Inject realm name as a shell variable so the IdP brokering section can
+	// reference it without additional fmt.Sprintf substitutions.
+	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
 	if ldap != nil {
 		c.Env = append(c.Env,
 			corev1.EnvVar{Name: "LDAP_SERVER", Value: ldap.server},
 			corev1.EnvVar{Name: "LDAP_BIND_DN", Value: ldap.bindDN},
 			corev1.EnvVar{Name: "LDAP_BIND_PASSWORD", Value: ldap.bindPW},
 			corev1.EnvVar{Name: "LDAP_USERS_DN", Value: ldap.usersDN},
+		)
+	}
+	if broker != nil {
+		c.Env = append(c.Env,
+			corev1.EnvVar{Name: "KERNEL_REALM", Value: broker.kernelRealm},
+			corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: broker.kernelExternalURL},
 		)
 	}
 	return &batchv1.Job{
@@ -678,6 +703,70 @@ if [ -n "${LDAP_SERVER:-}" ]; then
       }"
     echo "LDAP federation provider registered in realm %s"
   fi
+fi
+
+# ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
+# Runs only when KERNEL_REALM and KERNEL_EXTERNAL_URL are injected by makeRealmJob
+# (i.e. when r.KernelRealm and r.KernelDomain are configured in the operator).
+# Configures the tenant realm to delegate authentication to the shared kernel realm
+# so users already logged into the portal are not prompted to log in again for
+# tenant-specific apps (e.g. Element/Matrix chat).
+# All steps are idempotent: existing resources are updated rather than recreated.
+if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
+  BROKER_CLIENT_ID="broker-${REALM_NAME}"
+  BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${REALM_NAME}/broker/kernel/endpoint"
+
+  # 1. Ensure broker client exists in the kernel realm.
+  #    This client is used by the tenant realm's IdP to authenticate TO kernel.
+  BROKER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
+  if echo "${BROKER_RESP}" | grep -q '"id"'; then
+    BROKER_KC_ID=$(echo "${BROKER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+    curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}" >/dev/null
+    echo "broker client ${BROKER_CLIENT_ID} updated in ${KERNEL_REALM} realm"
+  else
+    curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+    BROKER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+      "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
+    BROKER_KC_ID=$(echo "${BROKER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+    echo "broker client ${BROKER_CLIENT_ID} created in ${KERNEL_REALM} realm"
+  fi
+  BROKER_SECRET=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
+    | sed 's/.*"value":"\([^"]*\)".*/\1/')
+
+  # 2. Register kernel as an OIDC Identity Provider in the tenant realm (idempotent).
+  #    hideOnLoginPage:true prevents showing the "Login with Gentian SSO" button
+  #    redundantly; the defaultProvider setting (step 3) handles the auto-redirect.
+  IDP_HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
+  IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"hideOnLoginPage\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\"}}"
+  if [ "${IDP_HTTP}" = "200" ]; then
+    curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
+      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+      -d "${IDP_BODY}" >/dev/null
+    echo "IdP kernel updated in realm ${REALM_NAME}"
+  else
+    curl -sf -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances" \
+      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+      -d "${IDP_BODY}"
+    echo "IdP kernel registered in realm ${REALM_NAME}"
+  fi
+
+  # 3. Set kernel as the default IdP so Keycloak auto-redirects to the kernel
+  #    realm login page (where the user likely already has an active session)
+  #    without showing the tenant realm login page at all.
+  curl -sf -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"attributes\":{\"defaultProvider\":\"kernel\"}}" >/dev/null
+  echo "default provider set to kernel in realm ${REALM_NAME}"
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName)
 }
