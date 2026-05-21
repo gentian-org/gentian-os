@@ -42,6 +42,15 @@ const (
 	identityRequeueAfter     = 2 * time.Second
 )
 
+// realmLDAPParams holds LDAP federation parameters for the realm provisioning job.
+// When nil, LDAP federation is not configured for the realm.
+type realmLDAPParams struct {
+	server  string // LDAP connection URL, e.g. ldap://host:389
+	bindDN  string // bind account DN, e.g. uid=app-keycloak,ou=tenant,dc=...
+	bindPW  string // bind account password (from OpenBao seeder)
+	usersDN string // users search base, e.g. ou=users,ou=tenant,dc=...
+}
+
 // ensureIdentity provisions a Keycloak realm and OIDC clients for the tenant.
 // It creates idempotent Kubernetes Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
@@ -162,7 +171,30 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 	if errors.IsNotFound(err) {
 		// Delete any stale cleanup jobs so the next undeploy creates a fresh one.
 		r.deleteProvisioningJobs(ctx, realmDeleteJobName(tenant.Name), realmDisableJobName(tenant.Name))
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName))
+
+		// B.3: Seed the keycloak LDAP bind password and pass it to the realm job
+		// so the realm script can register the LDAP User Storage Provider.
+		// Seeder is deterministic — calling SeedLDAP here and in ensureLDAP yields
+		// the same password, keeping LDAP and Keycloak in sync.
+		var ldap *realmLDAPParams
+		if r.LDAPBase != "" && r.LDAPServer != "" && r.Seeder != nil {
+			ouDN := tenantConcreteOUDN(tenant, r.LDAPBase)
+			bindDN := "uid=app-keycloak," + ouDN
+			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, "keycloak", secrets.LDAPCreds{
+				BindDN: bindDN,
+				BaseDN: ouDN,
+			})
+			if seedErr != nil {
+				return false, fmt.Errorf("seed keycloak ldap: %w", seedErr)
+			}
+			ldap = &realmLDAPParams{
+				server:  r.LDAPServer,
+				bindDN:  bindDN,
+				bindPW:  creds.BindPassword,
+				usersDN: "ou=users," + ouDN,
+			}
+		}
+		return false, r.Create(ctx, makeRealmJob(tenant, realmName, ldap))
 	}
 	if err != nil {
 		return false, err
@@ -320,8 +352,17 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realmLDAPParams) *batchv1.Job {
 	ttl := int32(3600)
+	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
+	if ldap != nil {
+		c.Env = append(c.Env,
+			corev1.EnvVar{Name: "LDAP_SERVER", Value: ldap.server},
+			corev1.EnvVar{Name: "LDAP_BIND_DN", Value: ldap.bindDN},
+			corev1.EnvVar{Name: "LDAP_BIND_PASSWORD", Value: ldap.bindPW},
+			corev1.EnvVar{Name: "LDAP_USERS_DN", Value: ldap.usersDN},
+		)
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmJobName(tenant.Name),
@@ -336,9 +377,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName)),
-					},
+					Containers:    []corev1.Container{c},
 				},
 			},
 		},
@@ -590,7 +629,57 @@ else
     -H "Content-Type: application/json" \
     -d '{"realm":"%s","enabled":true}'
   echo "realm %s already exists, ensured enabled=true (was HTTP ${HTTP})"
-fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
+fi
+
+# Register LDAP User Storage Provider for per-tenant user federation.
+# Only runs when LDAP_SERVER env var is set (injected by makeRealmJob when
+# r.LDAPBase and r.LDAPServer are configured). Idempotent: checks for an
+# existing provider named "ldap" before creating a new one.
+if [ -n "${LDAP_SERVER:-}" ]; then
+  LDAP_COMPONENTS=$(curl -sf \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider")
+  if echo "${LDAP_COMPONENTS}" | grep -q '"name":"ldap"'; then
+    echo "LDAP federation provider already registered in realm %s"
+  else
+    curl -sf \
+      -X POST "${KEYCLOAK_URL}/admin/realms/%s/components" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"name\":\"ldap\",
+        \"providerId\":\"ldap\",
+        \"providerType\":\"org.keycloak.storage.UserStorageProvider\",
+        \"config\":{
+          \"connectionUrl\":[\"${LDAP_SERVER}\"],
+          \"bindDn\":[\"${LDAP_BIND_DN}\"],
+          \"bindCredential\":[\"${LDAP_BIND_PASSWORD}\"],
+          \"usersDn\":[\"${LDAP_USERS_DN}\"],
+          \"searchScope\":[\"1\"],
+          \"authType\":[\"simple\"],
+          \"vendor\":[\"other\"],
+          \"usernameLDAPAttribute\":[\"uid\"],
+          \"rdnLDAPAttribute\":[\"uid\"],
+          \"uuidLDAPAttribute\":[\"entryUUID\"],
+          \"userObjectClasses\":[\"person\"],
+          \"customUserSearchFilter\":[\"(uid=*)\"],
+          \"importEnabled\":[\"true\"],
+          \"editMode\":[\"READ_ONLY\"],
+          \"syncRegistrations\":[\"false\"],
+          \"fullSyncPeriod\":[\"-1\"],
+          \"changedSyncPeriod\":[\"-1\"],
+          \"pagination\":[\"true\"],
+          \"connectionPooling\":[\"true\"],
+          \"batchSizeForSync\":[\"1000\"],
+          \"cachePolicy\":[\"MAX_LIFESPAN\"],
+          \"maxLifespan\":[\"300000\"],
+          \"enabled\":[\"true\"]
+        }
+      }"
+    echo "LDAP federation provider registered in realm %s"
+  fi
+fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
+		realmName, realmName, realmName, realmName)
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared

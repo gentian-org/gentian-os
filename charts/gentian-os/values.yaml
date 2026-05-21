@@ -15,6 +15,16 @@ kernelDomain: ""
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
+# LDAP configuration for per-tenant realm federation.
+# When ldap.server is empty the operator does not configure LDAP federation
+# for tenant Keycloak realms. Set both ldap.server and ldap.base to enable.
+ldap:
+  # LDAP connection URL including scheme and port, e.g.:
+  # ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389
+  server: ""
+  # LDAP base DN, e.g. dc=swp-ldap,dc=internal
+  base: ""
+
 # infraNamespace is the namespace hosting shared infrastructure (MariaDB, Redis,
 # MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
 infraNamespace: "gentian-infra-dev"

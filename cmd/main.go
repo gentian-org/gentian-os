@@ -88,6 +88,8 @@ func main() {
 		Seeder:       buildSeeder(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		LDAPServer:   os.Getenv("LDAP_SERVER"),
+		LDAPBase:     os.Getenv("LDAP_BASE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)

@@ -142,6 +142,15 @@ type TenantReconciler struct {
 	// platform users (synced via Nubus LDAP). Defaults to "kernel".
 	// Sourced from the KERNEL_REALM env var at startup.
 	KernelRealm string
+	// LDAPServer is the LDAP connection URL including scheme and port
+	// (e.g. ldap://nubus-ldap.gentian-dev.svc.cluster.local:389).
+	// When empty, LDAP federation is not configured for tenant Keycloak realms.
+	// Sourced from the LDAP_SERVER env var at startup.
+	LDAPServer string
+	// LDAPBase is the LDAP base DN (e.g. dc=swp-ldap,dc=internal).
+	// Used to construct per-tenant bind DNs and users DNs for LDAP federation.
+	// Sourced from the LDAP_BASE env var at startup.
+	LDAPBase string
 }
 
 // SetupWithManager registers the controller with the controller-manager.

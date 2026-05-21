@@ -66,6 +66,14 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// B.1: Always provision a Keycloak LDAP bind account when LDAP federation
+	// is configured (r.LDAPBase != ""). This account is used by the tenant realm's
+	// LDAP User Storage Provider regardless of which apps the tenant has enabled.
+	if r.LDAPBase != "" {
+		ldapApps = append(ldapApps, "keycloak")
+	}
+
 	if len(ldapApps) == 0 {
 		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
 			"NoLDAPRequired", "No apps require LDAP provisioning")
@@ -650,6 +658,29 @@ elif [ "${STATUS}" = "200" ]; then
 else
   echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
   exit 1
+fi
+
+# Create ou=users sub-container for LDAP federation scope.
+# The Keycloak LDAP User Storage Provider's usersDn points here so that
+# uid=admin-{tenant} at the OU root is NOT imported by federation — it must
+# stay a Keycloak-local user (provisioned by the admin job) to avoid duplicate
+# or conflicting account entries.
+USERS_OU_ENC=$(urlencode "ou=users,${OU_POS}")
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/container/ou/${USERS_OU_ENC}")
+if [ "${STATUS}" = "404" ]; then
+  curl -s -o /dev/null -X POST ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/container/ou/" \
+    -d "{\"properties\":{\"name\":\"users\",\"description\":\"Regular users\"},\"position\":\"${OU_POS}\"}"
+  echo "ou=users sub-container created"
+elif [ "${STATUS}" = "200" ]; then
+  echo "ou=users sub-container already exists"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
 fi`,
 		ouDN, tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName,
@@ -1081,6 +1112,13 @@ func tenantOUDN(tenant *gentianov1alpha1.Tenant) string {
 		return ou
 	}
 	return fmt.Sprintf("ou=%s,${UDM_LDAP_BASE}", tenant.Name)
+}
+
+// tenantConcreteOUDN returns the concrete LDAP DN for a tenant's OU by substituting
+// ldapBase for the ${UDM_LDAP_BASE} shell-interpolation placeholder.
+// Used where a real DN (not a shell expression) is needed — e.g. Keycloak job env vars.
+func tenantConcreteOUDN(tenant *gentianov1alpha1.Tenant, ldapBase string) string {
+	return strings.ReplaceAll(tenantOUDN(tenant), "${UDM_LDAP_BASE}", ldapBase)
 }
 
 func ouJobName(tenantName string) string {

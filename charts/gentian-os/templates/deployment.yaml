@@ -62,6 +62,10 @@ spec:
               value: {{ .Values.kernelDomain | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
+            - name: LDAP_SERVER
+              value: {{ .Values.ldap.server | default "" | quote }}
+            - name: LDAP_BASE
+              value: {{ .Values.ldap.base | default "" | quote }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
