@@ -75,8 +75,8 @@ postfix:
 
   # SASL auth for incoming connections (always on)
   smtpdSASLAuthEnable: "yes"
-  smtpdSASLType: "dovecot"
-  # smtpdSASLPath must be overridden per-env: inet:<dovecot-svc-fqdn>:3659
+  smtpdSASLType: "cyrus"
+  smtpdSASLPath: "smtpd"
   smtpdSASLSecurityOptions: "noanonymous"
   # noanonymous only — noplaintext would block PLAIN/LOGIN even over TLS.
   # TLS is enforced via smtpTLSSecurityLevel=encrypt so PLAIN is safe here.

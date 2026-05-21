@@ -16,9 +16,6 @@ postfix:
   ldap:
     host: "nubus-dev-ldap-server-primary.gentian-dev.svc.cluster.local"
 
-  # Dovecot SASL path — delegates SMTP auth to Dovecot (LDAP/OIDC backend)
-  smtpdSASLPath: "inet:dovecot-dev.gentian-dev.svc.cluster.local:3659"
-
   # Gmail relay for system messages (password reset, notifications).
   # Set enabled: false to deliver directly to recipient MX (requires static public IP + MX record).
   # Credentials injected via sensitive-values (Vault: gentian/dev/postfix relay_username / relay_password).

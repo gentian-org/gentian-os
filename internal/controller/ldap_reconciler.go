@@ -779,11 +779,7 @@ curl -sf --max-time 30 -X PATCH ${CREDS} \
 	-H "Content-Type: application/json" \
 	-H "Accept: application/json" \
 	"${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
-	-d "{\"properties\":{\"disabled\":false,\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\"}}"
-echo "user ${ADMIN_USERNAME} enabled and pwdChangeNextLogin cleared"
-
-# Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
-ADMINS_BODY=$(curl -s --max-time 30 ${CREDS} \
+	-d "{\"properties\":{\"disabled\":false,\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\",\"opendeskFileshareEnabled\":false,\"opendeskLivecollaborationEnabled\":false}}"
   -H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
 if echo "${ADMINS_BODY}" | grep -q "\"${ADMIN_DN}\""; then
