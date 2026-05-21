@@ -30,7 +30,7 @@ spec:
   forProvider:
     clientId: opendesk-intercom
     name: opendesk Intercom
-    realmId: opendesk
+    realmId: kernel
     accessType: CONFIDENTIAL
     standardFlowEnabled: true
     directAccessGrantsEnabled: false
@@ -66,7 +66,7 @@ spec:
   forProvider:
     clientId: opendesk-nextcloud
     name: Nextcloud
-    realmId: opendesk
+    realmId: kernel
     accessType: CONFIDENTIAL
     standardFlowEnabled: true
     directAccessGrantsEnabled: false
@@ -102,7 +102,7 @@ spec:
   forProvider:
     clientId: opendesk-oxappsuite
     name: OX App Suite
-    realmId: opendesk
+    realmId: kernel
     accessType: CONFIDENTIAL
     standardFlowEnabled: true
     directAccessGrantsEnabled: true
@@ -137,7 +137,7 @@ spec:
   forProvider:
     clientId: opendesk-dovecot
     name: Dovecot IMAP
-    realmId: opendesk
+    realmId: kernel
     accessType: CONFIDENTIAL
     standardFlowEnabled: false
     directAccessGrantsEnabled: false

@@ -87,6 +87,7 @@ func main() {
 		Scheme:       mgr.GetScheme(),
 		Seeder:       buildSeeder(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
@@ -120,6 +121,14 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// kernelRealmOrDefault returns realm if non-empty, otherwise "kernel".
+func kernelRealmOrDefault(realm string) string {
+	if realm == "" {
+		return "kernel"
+	}
+	return realm
 }
 
 // buildSeeder constructs a secrets.Seeder backed by an OpenBao KV v2 client

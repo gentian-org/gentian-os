@@ -24,7 +24,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-dovecot
     name: opendesk_useruuid
@@ -53,7 +53,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-dovecot
     name: opendesk_username
@@ -80,7 +80,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-intercom
     name: opendesk_useruuid
@@ -107,7 +107,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-intercom
     name: opendesk_username
@@ -136,7 +136,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-intercom
     name: opendesk-intercom-audience
@@ -161,7 +161,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-nextcloud
     name: opendesk_useruuid
@@ -188,7 +188,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-oxappsuite
     name: opendesk_useruuid
@@ -217,7 +217,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-oxappsuite
     name: opendesk_username
@@ -246,7 +246,7 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
-    realmId: opendesk
+    realmId: kernel
     clientIdRef:
       name: opendesk-oxappsuite
     name: context

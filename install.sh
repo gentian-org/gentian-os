@@ -569,6 +569,7 @@ apply_cluster_xr() {
     export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
     export INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-nginx}"
     export KV_MOUNT="${KV_MOUNT:-secret}"
+    export KERNEL_REALM="${KERNEL_REALM:-kernel}"
 
     info "Applying Cluster claim (kernelDomain=${KERNEL_DOMAIN})..."
     envsubst < "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml.tmpl" \
@@ -1166,6 +1167,7 @@ print_summary_cp() {
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
+    echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
     echo -e "${GREEN}  Nubus Release  : nubus-dev (Synced=${nubus_synced})${NC}"
     echo ""

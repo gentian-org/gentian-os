@@ -304,9 +304,9 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	waitFor(t, 10*time.Second, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-opendesk-enable-allready", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-kernel-enable-allready", Namespace: "platform-kernel"}, j) == nil
 	})
-	markJobComplete(t, "keycloak-opendesk-enable-allready", "platform-kernel")
+	markJobComplete(t, "keycloak-kernel-enable-allready", "platform-kernel")
 
 	// Wait for IdentityReady=True and Phase=Ready.
 	updated := &gentianov1alpha1.Tenant{}

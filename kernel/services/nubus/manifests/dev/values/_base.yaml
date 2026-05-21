@@ -24,7 +24,7 @@ global:
   # imagePullSecrets from values/env/{env}.yaml via global.imagePullSecrets
   certManagerClusterIssuer: letsencrypt-prod
   keycloak:
-    realm: opendesk
+    realm: kernel
   subDomains:
     portal: portal
     keycloak: id

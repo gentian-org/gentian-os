@@ -60,6 +60,8 @@ spec:
               value: {{ .Values.openbao.role | quote }}
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
+            - name: KERNEL_REALM
+              value: {{ .Values.kernelRealm | default "kernel" | quote }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE

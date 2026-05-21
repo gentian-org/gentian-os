@@ -92,7 +92,7 @@ Options:
                            the LDAP primary pod to apply the latest ACL patches.
                            Also triggers a Keycloak LDAP full sync so users are
                            re-imported with the correct enabled state.
-  --keycloak-sync          Trigger a full Keycloak LDAP sync in the opendesk realm
+  --keycloak-sync          Trigger a full Keycloak LDAP sync in the kernel realm
                            to re-import all users with up-to-date LDAP attributes.
                            Run this after provisioning new tenants so their admin
                            accounts are immediately visible in the portal.
@@ -604,7 +604,7 @@ op_reconcile_releases() {
 _trigger_keycloak_ldap_sync() {
     local release_name="nubus-dev"
     local ns="${KERNEL_NAMESPACE}"
-    local kc_realm="opendesk"
+    local kc_realm="${KERNEL_REALM:-kernel}"
 
     info "Triggering Keycloak LDAP full sync for realm '${kc_realm}'..."
 
@@ -677,7 +677,7 @@ for p in json.load(sys.stdin):
 # op_keycloak_sync — standalone wrapper around _trigger_keycloak_ldap_sync
 # =============================================================================
 op_keycloak_sync() {
-    banner "Keycloak LDAP sync (realm: opendesk)"
+    banner "Keycloak LDAP sync (realm: ${KERNEL_REALM:-kernel})"
     _trigger_keycloak_ldap_sync
 }
 

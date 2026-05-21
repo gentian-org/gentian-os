@@ -138,6 +138,10 @@ type TenantReconciler struct {
 	// are served. Sourced from the KERNEL_DOMAIN env var at startup.
 	// See docs/architecture.md §2.5.
 	KernelDomain string
+	// KernelRealm is the name of the shared Keycloak realm that holds all
+	// platform users (synced via Nubus LDAP). Defaults to "kernel".
+	// Sourced from the KERNEL_REALM env var at startup.
+	KernelRealm string
 }
 
 // SetupWithManager registers the controller with the controller-manager.

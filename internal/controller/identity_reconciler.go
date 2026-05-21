@@ -96,7 +96,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
-	// Gate the opendesk realm user re-enable on LDAP admin-user job completion.
+	// Gate the kernel realm user re-enable on LDAP admin-user job completion.
 	// Both the realm job and the LDAP admin-user job start in the same reconcile
 	// iteration. The realm job finishes quickly; the LDAP job may still be
 	// running. If we re-enable the Keycloak user before UDM clears shadowExpire,
@@ -113,13 +113,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{}, ldapJobErr
 	case !jobIsComplete(adminLDAPJob):
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-			"WaitingLDAPAdminUnlock", "Waiting for LDAP admin-user job to complete before re-enabling opendesk realm user")
+			"WaitingLDAPAdminUnlock", "Waiting for LDAP admin-user job to complete before re-enabling kernel realm user")
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
 	opendeskEnableDone, err := r.ensureOpendeskAdminEnableJob(ctx, tenant, "admin-"+tenant.Name)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure opendesk admin re-enable Job: %w", err)
+		return ctrl.Result{}, fmt.Errorf("ensure kernel admin re-enable Job: %w", err)
 	}
 	if !opendeskEnableDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
@@ -292,7 +292,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			return err
 		}
 		jobName = realmDisableJobName(tenant.Name)
-		makeJob = func() *batchv1.Job { return makeRealmDisableJob(tenant, realmName) }
+		makeJob = func() *batchv1.Job { return makeRealmDisableJob(tenant, realmName, r.KernelRealm) }
 	}
 
 	existing := &batchv1.Job{}
@@ -300,7 +300,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	if err == nil {
 		if jobIsComplete(existing) {
 			// Delete provisioning jobs so they are re-created on the next deploy.
-			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), opendeskAdminEnableJobName(tenant.Name)}
+			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), kernelAdminEnableJobName(tenant.Name)}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
 			}
@@ -420,7 +420,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 	}
 }
 
-func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -437,7 +437,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *bat
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("disable-realm", buildRealmDisableScript(realmName, "admin-"+tenant.Name)),
+						keycloakContainer("disable-realm", buildRealmDisableScript(realmName, "admin-"+tenant.Name, kernelRealm)),
 					},
 				},
 			},
@@ -470,11 +470,11 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 	}
 }
 
-func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername string) *batchv1.Job {
+func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername, kernelRealm string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      opendeskAdminEnableJobName(tenant.Name),
+			Name:      kernelAdminEnableJobName(tenant.Name),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
@@ -487,7 +487,7 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername s
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("re-enable-opendesk-admin", buildOpendeskAdminEnableScript(adminUsername)),
+						keycloakContainer("re-enable-kernel-admin", buildOpendeskAdminEnableScript(adminUsername, kernelRealm)),
 					},
 				},
 			},
@@ -496,16 +496,16 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername s
 }
 
 // ensureOpendeskAdminEnableJob creates the job that re-enables the tenant admin
-// in the shared opendesk Keycloak realm. It is called only after the LDAP
+// in the shared kernel Keycloak realm. It is called only after the LDAP
 // admin-user job has completed so shadowExpire is already cleared in LDAP,
 // making the Keycloak re-enable durable against subsequent LDAP federation
 // imports.
 func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminUsername string) (bool, error) {
-	jobName := opendeskAdminEnableJobName(tenant.Name)
+	jobName := kernelAdminEnableJobName(tenant.Name)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeOpendeskAdminEnableJob(tenant, adminUsername))
+		return false, r.Create(ctx, makeOpendeskAdminEnableJob(tenant, adminUsername, r.KernelRealm))
 	}
 	if err != nil {
 		return false, err
@@ -561,7 +561,7 @@ func keycloakContainer(name, script string) corev1.Container {
 // --- Shell scripts -----------------------------------------------------------
 
 // buildRealmScript creates or updates a Keycloak realm and ensures it is enabled.
-// It does NOT re-enable the tenant admin user in the opendesk realm here because
+// It does NOT re-enable the tenant admin user in the kernel realm here because
 // this job runs concurrently with the LDAP admin-user unlock job. Re-enabling
 // Keycloak before LDAP clears shadowExpire triggers a re-import that re-disables
 // the user. The dedicated ensureOpendeskAdminEnableJob handles the re-enable
@@ -594,11 +594,11 @@ fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmNa
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
-// opendesk Keycloak realm. This job is intentionally separate from
+// kernel Keycloak realm. This job is intentionally separate from
 // buildRealmScript so it only runs after the LDAP admin-user job has cleared
 // shadowExpire, preventing Keycloak's next LDAP import from overriding the
 // re-enable with the previously-locked LDAP state.
-func buildOpendeskAdminEnableScript(adminUsername string) string {
+func buildOpendeskAdminEnableScript(adminUsername, kernelRealm string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -606,17 +606,17 @@ TOKEN=$(curl -sf \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/opendesk/users?username=%s&exact=true" || echo "")
+  "${KEYCLOAK_URL}/admin/realms/%s/users?username=%s&exact=true" || echo "")
 if echo "${USER_RESP}" | grep -q '"id"'; then
   UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/opendesk/users/${UID}" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
     -d '{"enabled":true}'
-  echo "admin %s re-enabled in opendesk realm (LDAP shadowExpire already cleared)"
+  echo "admin %s re-enabled in %s realm (LDAP shadowExpire already cleared)"
 else
-  echo "admin %s not found in opendesk realm (first deploy, no action needed)"
-fi`, adminUsername, adminUsername, adminUsername)
+  echo "admin %s not found in %s realm (first deploy, no action needed)"
+fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -746,10 +746,10 @@ echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 
 // buildRealmDisableScript disables a Keycloak realm on Retain undeploy,
 // invalidating all active sessions. It also explicitly sets enabled:false on
-// the tenant admin user in the shared opendesk realm. This is necessary because
+// the tenant admin user in the shared kernel realm. This is necessary because
 // Keycloak caches LDAP state (MAX_LIFESPAN policy) and would otherwise continue
 // to authenticate the user even after UDM sets shadowExpire.
-func buildRealmDisableScript(realmName, adminUsername string) string {
+func buildRealmDisableScript(realmName, adminUsername, kernelRealm string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -769,20 +769,20 @@ else
     -d '{"realm":"%s","enabled":false}'
   echo "realm %s disabled (sessions invalidated)"
 fi
-# Also disable tenant admin in opendesk realm; the LDAP federation cache
+# Also disable tenant admin in kernel realm; the LDAP federation cache
 # means Keycloak must be told directly rather than relying on shadowExpire.
 USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/opendesk/users?username=%s&exact=true" || echo "")
+  "${KEYCLOAK_URL}/admin/realms/%s/users?username=%s&exact=true" || echo "")
 if echo "${USER_RESP}" | grep -q '"id"'; then
   UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/opendesk/users/${UID}" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
     -d '{"enabled":false}' || true
-  echo "user %s disabled in opendesk realm"
+  echo "user %s disabled in %s realm"
 else
-  echo "user %s not found in opendesk realm"
-fi`, realmName, realmName, realmName, realmName, realmName, adminUsername, adminUsername, adminUsername)
+  echo "user %s not found in %s realm"
+fi`, realmName, realmName, realmName, realmName, realmName, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
 }
 
 // --- Name helpers ------------------------------------------------------------
@@ -816,11 +816,11 @@ func realmDisableJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-realm-disable-%s", tenantName)
 }
 
-// opendeskAdminEnableJobName returns the name of the post-LDAP Keycloak
+// kernelAdminEnableJobName returns the name of the post-LDAP Keycloak
 // re-enable job. This job runs after the LDAP admin-user job clears
 // shadowExpire so the re-enable is durable against Keycloak LDAP re-imports.
-func opendeskAdminEnableJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-opendesk-enable-%s", tenantName)
+func kernelAdminEnableJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-kernel-enable-%s", tenantName)
 }
 
 func oidcClientID(tenantName, appName string) string {

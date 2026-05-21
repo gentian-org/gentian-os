@@ -10,6 +10,11 @@ replicaCount: 1
 # env var. See docs/architecture.md §2.5.
 kernelDomain: ""
 
+# kernelRealm is the name of the shared Keycloak realm that holds all platform
+# users (synced via Nubus LDAP). Defaults to "kernel" when empty.
+# Plumbed into the operator as the KERNEL_REALM env var.
+kernelRealm: ""
+
 # infraNamespace is the namespace hosting shared infrastructure (MariaDB, Redis,
 # MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
 infraNamespace: "gentian-infra-dev"
