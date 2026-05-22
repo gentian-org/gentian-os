@@ -1,0 +1,64 @@
+# =============================================================================
+# gentian-ui portal-frontend — base values (all environments)
+#
+# Replaces nubusPortalFrontend from the nubus umbrella chart.  The portal-
+# server and portal-consumer sub-charts remain inside the nubus umbrella.
+#
+# Key wiring:
+#   fullnameOverride    → matches the old nubus sub-chart service name so that
+#                         any in-cluster consumers using nubus-dev-portal-frontend
+#                         continue to resolve correctly.
+#   ingress             → same host, TLS secret, and redirect paths as the
+#                         disabled nubusPortalFrontend ingress.
+#   extraIngresses      → base-domain-redirect preserved from nubusPortalFrontend.
+# =============================================================================
+
+global:
+  imageRegistry: "artifacts.software-univention.de"
+  imagePullSecrets:
+    - registry-credentials
+  # globalIngressClass is picked up by common.ingress helpers
+  ingressClass: "nginx"
+
+# Keep the service/deployment name identical to the old nubus sub-chart
+# so any in-cluster references (e.g. central-navigation, tests) keep working.
+fullnameOverride: "nubus-dev-portal-frontend"
+
+portalFrontend:
+  environment: "production"
+  logLevel: "WARNING"
+
+ingress:
+  enabled: true
+  host: "portal.desk.gentian.org"
+  ingressClassName: "nginx"
+  certManager:
+    enabled: false
+  tls:
+    enabled: true
+    secretName: "wildcard-tls"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "128k"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "64k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+    nginx.ingress.kubernetes.io/proxy-busy-buffers-size: "128k"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+# Preserve the base-domain-redirect that was in nubusPortalFrontend.extraIngresses.
+# Required by test_base_domain_redirect (e2e test).
+extraIngresses:
+  - name: base-domain-redirect
+    host: "desk.gentian.org"
+    paths:
+      - pathType: ImplementationSpecific
+        path: /
+    ingressClassName: "public"
+    annotations:
+      nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.desk.gentian.org/univention/portal/"
+      nginx.ingress.kubernetes.io/use-regex: "true"
+    tls:
+      enabled: true
+      secretName: "wildcard-tls"
+
+podAnnotations:
+  reloader.stakater.com/auto: "true"

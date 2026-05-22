@@ -655,6 +655,7 @@ seed_secrets_remaining() {
 #   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
 #   - 20-iam:              keycloak-bootstrap job
 #   - 21-nubus:            (reserved, currently deployed via provider-helm)
+#   - 22-gentian-portal:   portal-frontend from gentian-ui (replaces nubusPortalFrontend)
 #   - 30-kernel-services:  mariadb, postgresql, nextcloud, etc.
 #   - 40-apps:             tenant-facing applications
 #

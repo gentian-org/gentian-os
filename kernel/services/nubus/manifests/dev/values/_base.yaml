@@ -597,8 +597,11 @@ nubusUdmRestApi:
     enabled: true
     suspend: false
 
-# Redirect bare base domain → portal (required by test_base_domain_redirect)
+# Portal frontend disabled — replaced by the gentian-ui portal-frontend chart
+# deployed via AppSet 22-gentian-portal.yaml. The base-domain-redirect extra
+# ingress is reproduced in kernel/services/gentian-portal/values/portal-frontend/_base.yaml.
 nubusPortalFrontend:
+  enabled: false
   ingress:
     certManager:
       enabled: false
