@@ -158,10 +158,11 @@ type TenantApp struct {
 	Profile string `json:"profile"`
 
 	// IsolationMode overrides the AppProfile's default deployment mode for this
-	// tenant. "dedicated" provisions a separate per-tenant deployment;
-	// "primary" hosts the shared deployment in this tenant's namespace and
-	// enables cross-tenant IAM brokering via the shared-apps Keycloak realm;
-	// "shared" consumes the primary tenant's deployment with IAM brokering only.
+	// tenant. "dedicated" provisions a separate per-tenant deployment in the
+	// tenant namespace. "shared" provisions a single shared deployment in the
+	// platform-kernel namespace; all tenants with the same profile and "shared"
+	// mode share one Helm release and OIDC client, with per-tenant IAM brokering
+	// via the shared-apps Keycloak realm.
 	// Defaults to the AppProfile's isolation.default (which itself defaults to "dedicated").
 	// +optional
 	IsolationMode AppDeploymentMode `json:"isolationMode,omitempty"`

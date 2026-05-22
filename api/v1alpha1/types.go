@@ -50,21 +50,21 @@ const (
 
 // AppDeploymentMode controls how an application is deployed relative to tenants.
 // "dedicated" provisions a separate deployment per tenant in the tenant namespace.
-// "primary" hosts the shared deployment in the tenant namespace and provisions
-// per-tenant shared-apps IAM brokering so other tenants can federate into it.
-// "shared" consumes the primary tenant's deployment; only shared-apps IAM
-// brokering is provisioned — no Helm release or App claim is created.
-// +kubebuilder:validation:Enum=dedicated;primary;shared
+// "shared" provisions a single shared deployment in the platform-kernel namespace
+// with per-tenant IAM brokering via the shared-apps Keycloak realm. All tenants
+// using "shared" for the same app profile share the same Helm release and OIDC
+// client. Only one App claim is created (in platform-kernel); it is not cleaned
+// up on individual tenant removal.
+// +kubebuilder:validation:Enum=dedicated;shared
 type AppDeploymentMode string
 
 const (
 	// AppDeploymentModeDedicated provisions a separate app instance per tenant.
 	AppDeploymentModeDedicated AppDeploymentMode = "dedicated"
-	// AppDeploymentModePrimary hosts the shared app instance and sets up
-	// shared-apps IAM brokering. An App claim is created for the owning tenant.
-	AppDeploymentModePrimary AppDeploymentMode = "primary"
-	// AppDeploymentModeShared consumes the primary tenant's app instance.
-	// Only shared-apps IAM brokering is provisioned; no App claim is created.
+	// AppDeploymentModeShared provisions a single shared app instance in the
+	// platform-kernel namespace. All tenants using this mode share the same
+	// deployment and OIDC client; per-tenant IAM brokering is set up via the
+	// shared-apps Keycloak realm.
 	AppDeploymentModeShared AppDeploymentMode = "shared"
 )
 

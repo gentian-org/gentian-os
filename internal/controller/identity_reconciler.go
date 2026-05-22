@@ -103,7 +103,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		var done bool
 		var err error
 		mode := getAppIsolationMode(tenant, appName)
-		if mode == gentianov1alpha1.AppDeploymentModeShared || mode == gentianov1alpha1.AppDeploymentModePrimary {
+		if mode == gentianov1alpha1.AppDeploymentModeShared {
 			done, err = r.ensureSharedAppsJob(ctx, tenant, appName)
 		} else {
 			done, err = r.ensureClientJob(ctx, tenant, realmName, appName)
@@ -199,23 +199,24 @@ func getAppIsolationMode(tenant *gentianov1alpha1.Tenant, appName string) gentia
 // This job sets up the shared-apps Keycloak realm, creates the app OIDC client,
 // and registers the tenant realm as an IdP broker with auto-redirect.
 //
-// Only the primary tenant (AppDeploymentModePrimary) seeds and sets the OIDC
-// client secret — it owns the app server (e.g. Synapse). Secondary (shared-mode)
-// tenants do not provide a secret: the client already exists from the primary's
-// job, and passing a different secret would cause an unauthorized_client mismatch.
+// The OIDC client secret is seeded to the platform-kernel path so all tenants
+// converge on the same stable secret. The seeder's PutOnce semantics guarantee
+// the first writer wins and all subsequent calls return the same value — no
+// race condition across tenants.
 func (r *TenantReconciler) ensureSharedAppsJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
 	jobName := sharedAppsJobName(tenant.Name, appName)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		clientSecret := ""
-		if r.Seeder != nil && getAppIsolationMode(tenant, appName) == gentianov1alpha1.AppDeploymentModePrimary {
-			// Only the primary tenant seeds and owns the OIDC client secret.
-			// The issuer is always shared-apps (stable across all tenants using this app).
-			// The clientID is the app name (not tenant-prefixed) because the client
-			// is shared across tenants.
+		if r.Seeder != nil {
+			// Seed the shared OIDC client secret at the platform-kernel path.
+			// Using kernelNamespace as the tenant gives a stable, tenant-agnostic
+			// path (gentian-os/tenants/platform-kernel/apps/<app>/oidc) that all
+			// tenants share. The composition's ExternalSecret reads from this same
+			// path because spec.tenantNamespace = platform-kernel for shared claims.
 			issuer := fmt.Sprintf("https://id.%s/realms/shared-apps", r.KernelDomain)
-			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, appName)
+			creds, seedErr := r.Seeder.SeedOIDC(ctx, kernelNamespace, appName, issuer, appName)
 			if seedErr != nil {
 				return false, fmt.Errorf("seed shared-apps oidc: %w", seedErr)
 			}

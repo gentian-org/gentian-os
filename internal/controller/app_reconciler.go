@@ -48,12 +48,16 @@ var appClaimGVK = schema.GroupVersionKind{
 // ensureAppDeployment creates or reconciles one App claim per app declared in
 // tenant.Spec.Apps, and cleans up claims for apps removed from the spec.
 //
+// For "dedicated" apps, one App claim is created per tenant in the tenant
+// namespace. For "shared" apps, a single App claim is created in the
+// platform-kernel namespace (shared across all tenants using this profile). The
+// shared App claim is not subject to per-tenant orphan cleanup.
+//
 // Returns a non-zero RequeueAfter when any claim is not yet Ready.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	// desiredApps tracks the set of App claims that should exist. Shared-mode
-	// apps (consumers of the primary tenant's deployment) are excluded because
-	// they use no tenant-side deployment. Primary-mode apps (the hosting tenant)
-	// DO create an App claim and are included.
+	// desiredApps tracks the set of per-tenant App claims (dedicated mode only).
+	// Shared-mode App claims live in platform-kernel and are excluded from the
+	// per-tenant orphan cleanup that uses this map.
 	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		if app.IsolationMode != gentianov1alpha1.AppDeploymentModeShared {
@@ -78,11 +82,23 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 
-		// Shared-mode apps (consumers of the primary tenant's deployment) use
-		// no tenant-side Helm release. The identity reconciler handles shared-apps
-		// IAM brokering; the primary tenant (AppDeploymentModePrimary) owns the
-		// actual deployment and continues through to ensureAppClaim below.
+		// Shared-mode: a single App claim lives in platform-kernel (not the
+		// tenant namespace). All tenants with the same profile and "shared" mode
+		// converge on that one claim. The identity reconciler handles per-tenant
+		// IAM brokering via the shared-apps Keycloak realm.
 		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			// Seed app-internal secrets to the shared (platform-kernel) path so
+			// the composition's ExternalSecret can read them.
+			if err := r.seedSharedAppSecrets(ctx, app.Profile, profile); err != nil {
+				return ctrl.Result{}, fmt.Errorf("seed shared app-secrets for %s: %w", app.Profile, err)
+			}
+			ready, err := r.ensureSharedAppClaim(ctx, app, profile)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("ensure shared App claim for %s: %w", app.Profile, err)
+			}
+			if !ready {
+				allReady = false
+			}
 			continue
 		}
 
@@ -191,6 +207,50 @@ func (r *TenantReconciler) ensureAppClaim(
 	return appClaimIsReady(obj), nil
 }
 
+// ensureSharedAppClaim creates (or checks readiness of) the single shared App
+// claim for a profile. The claim is placed in platform-kernel so all tenants
+// using "shared" mode for the same profile share one Helm release and OIDC
+// client. If two tenants reconcile simultaneously and both attempt to create,
+// the AlreadyExists error is tolerated. Returns true when the claim is Ready.
+func (r *TenantReconciler) ensureSharedAppClaim(
+	ctx context.Context,
+	app gentianov1alpha1.TenantApp,
+	profile *gentianov1alpha1.AppProfile,
+) (bool, error) {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(appClaimGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: app.Profile, Namespace: kernelNamespace}, obj)
+	if errors.IsNotFound(err) {
+		desired := buildSharedAppClaim(app, profile, r.KernelDomain)
+		if createErr := r.Create(ctx, desired); createErr != nil && !errors.IsAlreadyExists(createErr) {
+			return false, createErr
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return appClaimIsReady(obj), nil
+}
+
+// seedSharedAppSecrets seeds app-internal secrets for a shared app using the
+// platform-kernel tenant path. The composition's ExternalSecret (which runs in
+// platform-kernel) reads from this path.
+func (r *TenantReconciler) seedSharedAppSecrets(ctx context.Context, appName string, profile *gentianov1alpha1.AppProfile) error {
+	if r.Seeder == nil || len(profile.Spec.AppSecrets) == 0 {
+		return nil
+	}
+	for _, s := range profile.Spec.AppSecrets {
+		if s.Name == "" {
+			continue
+		}
+		if _, err := r.Seeder.SeedAppSecret(ctx, kernelNamespace, appName, s.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // buildAppClaim constructs the App claim for a tenant app. The claim is placed
 // in the tenant namespace so tenant-admin RBAC applies. Crossplane reconciles
 // the claim through the App Composition which creates an ExternalSecret and a
@@ -228,6 +288,40 @@ func buildAppClaim(
 		if app.Config.Replicas != nil {
 			_ = unstructured.SetNestedField(obj.Object, int64(*app.Config.Replicas), "spec", "config", "replicas")
 		}
+	}
+
+	return obj
+}
+
+// buildSharedAppClaim constructs the single shared App claim placed in the
+// platform-kernel namespace. The claim's tenantNamespace is also platform-kernel
+// so Crossplane deploys the Helm release (e.g. Synapse + Element) there.
+// The kernel domain is used as the app domain since the deployment is not
+// tenant-scoped. No per-tenant labels are set; cleanupOrphanedAppCRs only
+// scans the tenant namespace and will never delete this claim.
+func buildSharedAppClaim(
+	app gentianov1alpha1.TenantApp,
+	profile *gentianov1alpha1.AppProfile,
+	kernelDomain string,
+) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(appClaimGVK)
+	obj.SetName(app.Profile)
+	obj.SetNamespace(kernelNamespace)
+	obj.SetLabels(map[string]string{
+		appLabel:       app.Profile,
+		managedByLabel: managedByValue,
+	})
+
+	_ = unstructured.SetNestedField(obj.Object, app.Profile, "spec", "profileRef", "name")
+	_ = unstructured.SetNestedField(obj.Object, kernelNamespace, "spec", "tenantNamespace")
+
+	if profile != nil && profile.Spec.CompositionRef != "" {
+		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
+	}
+
+	if kernelDomain != "" {
+		_ = unstructured.SetNestedField(obj.Object, kernelDomain, "spec", "domain")
 	}
 
 	return obj

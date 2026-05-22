@@ -212,7 +212,6 @@ spec:
                       Defaults to "dedicated".
                     enum:
                     - dedicated
-                    - primary
                     - shared
                     type: string
                   modes:
@@ -223,13 +222,13 @@ spec:
                       description: |-
                         AppDeploymentMode controls how an application is deployed relative to tenants.
                         "dedicated" provisions a separate deployment per tenant in the tenant namespace.
-                        "primary" hosts the shared deployment in the tenant namespace and provisions
-                        per-tenant shared-apps IAM brokering so other tenants can federate into it.
-                        "shared" consumes the primary tenant's deployment; only shared-apps IAM
-                        brokering is provisioned — no Helm release or App claim is created.
+                        "shared" provisions a single shared deployment in the platform-kernel namespace
+                        with per-tenant IAM brokering via the shared-apps Keycloak realm. All tenants
+                        using "shared" for the same app profile share the same Helm release and OIDC
+                        client. Only one App claim is created (in platform-kernel); it is not cleaned
+                        up on individual tenant removal.
                       enum:
                       - dedicated
-                      - primary
                       - shared
                       type: string
                     type: array
