@@ -2364,7 +2364,7 @@ install_orchestrator() {
         -e "s|%ENV%|${env}|g" \
         "$tmpl" >"$rendered"
 
-    info "Registering gentian-os ArgoCD Application..."
+    info "Registering gentian-os + gentian-tenants ArgoCD Applications..."
     info "  operator branch:    ${gentian_os_branch}"
     info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
     info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
@@ -2372,10 +2372,11 @@ install_orchestrator() {
     kubectl apply -f "$rendered"
     rm -f "$rendered"
 
-    success "Phase 2 complete: gentian-os Application registered with ArgoCD."
+    success "Phase 2 complete: gentian-os and gentian-tenants Applications registered with ArgoCD."
     success "  Image updates are now fully automatic via argocd-image-updater."
-    info "Monitor sync:     kubectl get application gentian-os -n argocd"
-    info "Monitor updater:  kubectl get imageupdater gentian-os -n argocd"
+    info "Monitor operator:  kubectl get application gentian-os -n argocd"
+    info "Monitor tenants:   kubectl get application gentian-tenants -n argocd"
+    info "Monitor updater:   kubectl get imageupdater gentian-os -n argocd"
     info "Provision tenants: kubectl gentian tenants list"
     info "                   kubectl gentian tenants deploy gtn-demo"
 }
