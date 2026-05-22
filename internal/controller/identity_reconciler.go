@@ -246,7 +246,7 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 		var ldap *realmLDAPParams
 		if r.LDAPBase != "" && r.LDAPServer != "" && r.Seeder != nil {
 			ouDN := tenantConcreteOUDN(tenant, r.LDAPBase)
-			bindDN := "uid=app-keycloak," + ouDN
+			bindDN := fmt.Sprintf("uid=app-keycloak-%s,%s", tenant.Name, ouDN)
 			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, "keycloak", secrets.LDAPCreds{
 				BindDN: bindDN,
 				BaseDN: ouDN,

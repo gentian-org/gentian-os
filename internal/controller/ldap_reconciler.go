@@ -252,7 +252,7 @@ func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gen
 		bindPassword := ""
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, appName, secrets.LDAPCreds{
-				BindDN: fmt.Sprintf("uid=app-%s,%s", appName, ouDN),
+				BindDN: fmt.Sprintf("uid=app-%s-%s,%s", appName, tenant.Name, ouDN),
 				BaseDN: ouDN,
 			})
 			if seedErr != nil {
@@ -449,7 +449,7 @@ func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 
 func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPassword string) *batchv1.Job {
 	ttl := int32(3600)
-	c := udmContainer("provision-bind-account", buildBindAccountScript(ouDN, appName))
+	c := udmContainer("provision-bind-account", buildBindAccountScript(ouDN, appName, tenant.Name))
 	if bindPassword != "" {
 		c.Env = append(c.Env, corev1.EnvVar{Name: "BIND_PW", Value: bindPassword})
 	}
@@ -689,14 +689,16 @@ fi`,
 
 // buildBindAccountScript creates a service-account user that apps use as the LDAP bind DN.
 // Uses users/ldap object type which only requires username and password.
-func buildBindAccountScript(ouDN, appName string) string {
+// The username is scoped to the tenant (app-<appName>-<tenantName>) to avoid
+// UDM's global username uniqueness constraint when multiple tenants host the same app.
+func buildBindAccountScript(ouDN, appName, tenantName string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 # OU_POS and BIND_DN: ${UDM_LDAP_BASE} expands at runtime via shell.
 OU_POS="%s"
-BIND_DN="uid=app-%s,${OU_POS}"
+BIND_DN="uid=app-%s-%s,${OU_POS}"
 BIND_DN_ENC=$(urlencode "${BIND_DN}")
 
 STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
@@ -706,18 +708,22 @@ if [ "${STATUS}" = "404" ]; then
   if [ -z "${BIND_PW:-}" ]; then
     BIND_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
   fi
-  curl -s -o /dev/null -X POST ${CREDS} \
+  POST_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" -X POST ${CREDS} \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/users/ldap/" \
-    -d "{\"properties\":{\"username\":\"app-%s\",\"password\":\"${BIND_PW}\"},\"position\":\"${OU_POS}\"}"
-  echo "bind account app-%s created in ${OU_POS}"
+    -d "{\"properties\":{\"username\":\"app-%s-%s\",\"password\":\"${BIND_PW}\"},\"position\":\"${OU_POS}\"}")
+  if [ "${POST_STATUS}" != "201" ]; then
+    echo "failed to create bind account app-%s-%s (HTTP ${POST_STATUS})" >&2
+    exit 1
+  fi
+  echo "bind account app-%s-%s created in ${OU_POS}"
 elif [ "${STATUS}" = "200" ]; then
-  echo "bind account app-%s already exists (HTTP ${STATUS})"
+  echo "bind account app-%s-%s already exists (HTTP ${STATUS})"
 else
-  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  echo "unexpected UDM status (HTTP ${STATUS}); will retry" >&2
   exit 1
-fi`, ouDN, appName, appName, appName, appName)
+fi`, ouDN, appName, tenantName, appName, tenantName, appName, tenantName, appName, tenantName, appName, tenantName)
 }
 
 // buildAdminUserScript creates the tenant admin as a users/user in the tenant
