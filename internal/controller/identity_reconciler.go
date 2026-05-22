@@ -954,6 +954,10 @@ fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminU
 //  4. The tenant realm registered as an OIDC IdP in shared-apps.
 //  5. The identity-provider-redirector execution config in shared-apps set to
 //     auto-redirect to the tenant realm IdP (silent SSO, no login prompt).
+//  6. A custom first-broker-login flow (gentian-first-broker-login) that
+//     auto-links returning users by email without prompting. This handles
+//     the undeploy/re-deploy case where the tenant realm is recreated and
+//     the user's subject ID changes but their email is stable.
 //
 // All variable values are injected as environment variables by makeSharedAppsJob:
 //
@@ -1054,8 +1058,10 @@ BROKER_SECRET=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
 # 4. Register the tenant realm as an OIDC IdP in shared-apps.
 #    hideOnLoginPage:true suppresses the IdP button; the redirector execution
 #    (step 5) handles the auto-redirect so users see no login prompt.
+#    firstBrokerLoginFlowAlias points to our custom flow (step 6) that
+#    auto-links returning users by email without prompting.
 IDP_ALIAS="${TENANT_REALM}"
-IDP_BODY="{\"alias\":\"${IDP_ALIAS}\",\"displayName\":\"${IDP_ALIAS}\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
+IDP_BODY="{\"alias\":\"${IDP_ALIAS}\",\"displayName\":\"${IDP_ALIAS}\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"gentian-first-broker-login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
 IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/shared-apps/identity-provider/instances/${IDP_ALIAS}")
 if [ "${IDP_HTTP}" = "200" ]; then
@@ -1096,7 +1102,51 @@ fi
 curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/shared-apps" \
   -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "{\"attributes\":{\"defaultProvider\":\"${IDP_ALIAS}\"}}" >/dev/null
-echo "default provider set to ${IDP_ALIAS} in shared-apps realm"`
+echo "default provider set to ${IDP_ALIAS} in shared-apps realm"
+
+# 6. Ensure a custom first-broker-login flow exists in shared-apps that
+#    automatically links returning users by email (idp-auto-link) without
+#    prompting. This handles undeploy/re-deploy: when the tenant realm is
+#    recreated the user's sub changes but their email is stable, so the
+#    standard "Confirm link existing account" step would otherwise prompt.
+#    idp-create-user-if-unique creates the account on first login;
+#    idp-auto-link silently links it on subsequent logins.
+GENTIAN_FLOW="gentian-first-broker-login"
+FLOW_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}")
+if [ "${FLOW_HTTP}" != "200" ]; then
+  curl -sf --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d "{\"alias\":\"${GENTIAN_FLOW}\",\"providerId\":\"basic-flow\",\"description\":\"Auto-link existing users by email; no confirmation prompt\",\"topLevel\":true,\"builtIn\":false}" >/dev/null
+  # Add idp-create-user-if-unique as ALTERNATIVE (new users)
+  curl -sf --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions/execution" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d '{"provider":"idp-create-user-if-unique"}' >/dev/null
+  # Add idp-auto-link as ALTERNATIVE (returning users whose sub changed)
+  curl -sf --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions/execution" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d '{"provider":"idp-auto-link"}' >/dev/null
+  echo "flow ${GENTIAN_FLOW} created with auto-link executions"
+else
+  echo "flow ${GENTIAN_FLOW} already exists"
+fi
+# Set both executions to ALTERNATIVE (idempotent update)
+GENTIAN_EXECS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions")
+for PROV in idp-create-user-if-unique idp-auto-link; do
+  EID=$(echo "${GENTIAN_EXECS}" | grep -o '"id":"[^"]*"[^}]*"providerId":"'"${PROV}"'"' \
+    | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+  if [ -n "${EID}" ]; then
+    curl -sf --max-time 30 -X PUT \
+      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions" \
+      -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      -d "{\"id\":\"${EID}\",\"requirement\":\"ALTERNATIVE\"}" >/dev/null
+    echo "execution ${PROV} set to ALTERNATIVE in ${GENTIAN_FLOW}"
+  fi
+done`
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
