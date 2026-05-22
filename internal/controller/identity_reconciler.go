@@ -1119,21 +1119,32 @@ echo "default provider set to ${IDP_ALIAS} in shared-apps realm"
 #    idp-create-user-if-unique creates the account on first login;
 #    idp-auto-link silently links it on subsequent logins.
 GENTIAN_FLOW="gentian-first-broker-login"
-FLOW_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}")
-if [ "${FLOW_HTTP}" != "200" ]; then
+# The /authentication/flows/{id} endpoint requires a UUID, not the alias.
+# List all flows and extract the UUID by matching the alias.
+ALL_FLOWS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows")
+GENTIAN_FLOW_ID=$(echo "${ALL_FLOWS}" \
+  | grep -o '"id":"[^"]*"[^}]*"alias":"'"${GENTIAN_FLOW}"'"' \
+  | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
+if [ -z "${GENTIAN_FLOW_ID}" ]; then
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d "{\"alias\":\"${GENTIAN_FLOW}\",\"providerId\":\"basic-flow\",\"description\":\"Auto-link existing users by email; no confirmation prompt\",\"topLevel\":true,\"builtIn\":false}" >/dev/null
+  # Re-fetch UUID after creation (POST response has no body for flows endpoint)
+  ALL_FLOWS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows")
+  GENTIAN_FLOW_ID=$(echo "${ALL_FLOWS}" \
+    | grep -o '"id":"[^"]*"[^}]*"alias":"'"${GENTIAN_FLOW}"'"' \
+    | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
   # Add idp-create-user-if-unique as ALTERNATIVE (new users)
   curl -sf --max-time 30 -X POST \
-    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions/execution" \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions/execution" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d '{"provider":"idp-create-user-if-unique"}' >/dev/null
   # Add idp-auto-link as ALTERNATIVE (returning users whose sub changed)
   curl -sf --max-time 30 -X POST \
-    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions/execution" \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions/execution" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d '{"provider":"idp-auto-link"}' >/dev/null
   echo "flow ${GENTIAN_FLOW} created with auto-link executions"
@@ -1142,13 +1153,13 @@ else
 fi
 # Set both executions to ALTERNATIVE (idempotent update)
 GENTIAN_EXECS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions")
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions")
 for PROV in idp-create-user-if-unique idp-auto-link; do
   EID=$(echo "${GENTIAN_EXECS}" | grep -o '"id":"[^"]*"[^}]*"providerId":"'"${PROV}"'"' \
     | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
   if [ -n "${EID}" ]; then
     curl -sf --max-time 30 -X PUT \
-      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions" \
+      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions" \
       -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       -d "{\"id\":\"${EID}\",\"requirement\":\"ALTERNATIVE\"}" >/dev/null
     echo "execution ${PROV} set to ALTERNATIVE in ${GENTIAN_FLOW}"
