@@ -159,8 +159,9 @@ type TenantApp struct {
 
 	// IsolationMode overrides the AppProfile's default deployment mode for this
 	// tenant. "dedicated" provisions a separate per-tenant deployment;
-	// "shared" uses the shared platform deployment with per-tenant IAM brokering
-	// via the shared-apps Keycloak realm.
+	// "primary" hosts the shared deployment in this tenant's namespace and
+	// enables cross-tenant IAM brokering via the shared-apps Keycloak realm;
+	// "shared" consumes the primary tenant's deployment with IAM brokering only.
 	// Defaults to the AppProfile's isolation.default (which itself defaults to "dedicated").
 	// +optional
 	IsolationMode AppDeploymentMode `json:"isolationMode,omitempty"`

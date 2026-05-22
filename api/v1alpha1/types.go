@@ -50,15 +50,21 @@ const (
 
 // AppDeploymentMode controls how an application is deployed relative to tenants.
 // "dedicated" provisions a separate deployment per tenant in the tenant namespace.
-// "shared" uses a single shared deployment in the platform-kernel namespace with
-// per-tenant IAM brokering via the shared-apps Keycloak realm.
-// +kubebuilder:validation:Enum=dedicated;shared
+// "primary" hosts the shared deployment in the tenant namespace and provisions
+// per-tenant shared-apps IAM brokering so other tenants can federate into it.
+// "shared" consumes the primary tenant's deployment; only shared-apps IAM
+// brokering is provisioned — no Helm release or App claim is created.
+// +kubebuilder:validation:Enum=dedicated;primary;shared
 type AppDeploymentMode string
 
 const (
 	// AppDeploymentModeDedicated provisions a separate app instance per tenant.
 	AppDeploymentModeDedicated AppDeploymentMode = "dedicated"
-	// AppDeploymentModeShared uses one shared app instance for all tenants.
+	// AppDeploymentModePrimary hosts the shared app instance and sets up
+	// shared-apps IAM brokering. An App claim is created for the owning tenant.
+	AppDeploymentModePrimary AppDeploymentMode = "primary"
+	// AppDeploymentModeShared consumes the primary tenant's app instance.
+	// Only shared-apps IAM brokering is provisioned; no App claim is created.
 	AppDeploymentModeShared AppDeploymentMode = "shared"
 )
 

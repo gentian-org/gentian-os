@@ -51,7 +51,9 @@ var appClaimGVK = schema.GroupVersionKind{
 // Returns a non-zero RequeueAfter when any claim is not yet Ready.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	// desiredApps tracks the set of App claims that should exist. Shared-mode
-	// apps are excluded because they use no tenant-side deployment.
+	// apps (consumers of the primary tenant's deployment) are excluded because
+	// they use no tenant-side deployment. Primary-mode apps (the hosting tenant)
+	// DO create an App claim and are included.
 	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		if app.IsolationMode != gentianov1alpha1.AppDeploymentModeShared {
@@ -76,10 +78,10 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 
-		// Shared-mode apps use a single platform-level deployment with per-tenant
-		// IAM brokering via the shared-apps Keycloak realm. The identity
-		// reconciler handles the Keycloak wiring; no tenant-side App claim or
-		// Helm release is created.
+		// Shared-mode apps (consumers of the primary tenant's deployment) use
+		// no tenant-side Helm release. The identity reconciler handles shared-apps
+		// IAM brokering; the primary tenant (AppDeploymentModePrimary) owns the
+		// actual deployment and continues through to ensureAppClaim below.
 		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
 			continue
 		}

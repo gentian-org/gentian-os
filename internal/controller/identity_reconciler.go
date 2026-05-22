@@ -102,7 +102,8 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	for _, appName := range oidcApps {
 		var done bool
 		var err error
-		if getAppIsolationMode(tenant, appName) == gentianov1alpha1.AppDeploymentModeShared {
+		mode := getAppIsolationMode(tenant, appName)
+		if mode == gentianov1alpha1.AppDeploymentModeShared || mode == gentianov1alpha1.AppDeploymentModePrimary {
 			done, err = r.ensureSharedAppsJob(ctx, tenant, appName)
 		} else {
 			done, err = r.ensureClientJob(ctx, tenant, realmName, appName)
@@ -197,18 +198,22 @@ func getAppIsolationMode(tenant *gentianov1alpha1.Tenant, appName string) gentia
 // app if absent. Returns true when the Job has completed successfully.
 // This job sets up the shared-apps Keycloak realm, creates the app OIDC client,
 // and registers the tenant realm as an IdP broker with auto-redirect.
+//
+// Only the primary tenant (AppDeploymentModePrimary) seeds and sets the OIDC
+// client secret — it owns the app server (e.g. Synapse). Secondary (shared-mode)
+// tenants do not provide a secret: the client already exists from the primary's
+// job, and passing a different secret would cause an unauthorized_client mismatch.
 func (r *TenantReconciler) ensureSharedAppsJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
 	jobName := sharedAppsJobName(tenant.Name, appName)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		clientSecret := ""
-		if r.Seeder != nil {
-			// Seed OIDC credentials for the app in the shared-apps realm.
+		if r.Seeder != nil && getAppIsolationMode(tenant, appName) == gentianov1alpha1.AppDeploymentModePrimary {
+			// Only the primary tenant seeds and owns the OIDC client secret.
 			// The issuer is always shared-apps (stable across all tenants using this app).
 			// The clientID is the app name (not tenant-prefixed) because the client
-			// is shared across tenants. All tenants using the same app in shared mode
-			// will have the same OIDC client ID in the shared-apps realm.
+			// is shared across tenants.
 			issuer := fmt.Sprintf("https://id.%s/realms/shared-apps", r.KernelDomain)
 			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, appName)
 			if seedErr != nil {
