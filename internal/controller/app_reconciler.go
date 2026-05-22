@@ -97,6 +97,21 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			if err := r.seedSharedAppSecrets(ctx, app.Profile, profile); err != nil {
 				return ctrl.Result{}, fmt.Errorf("seed shared app-secrets for %s: %w", app.Profile, err)
 			}
+			// If the profile requires PostgreSQL, ensure the shared database is
+			// provisioned (role Job + CNPG Database CR) and credentials are seeded
+			// to the shared-apps OpenBao path before the composition can read them.
+			if profile.Spec.KernelRequirements != nil &&
+				profile.Spec.KernelRequirements.Database != nil &&
+				profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
+				dbReady, err := r.ensureSharedDatabase(ctx, app.Profile)
+				if err != nil {
+					return ctrl.Result{}, fmt.Errorf("ensure shared database for %s: %w", app.Profile, err)
+				}
+				if !dbReady {
+					allReady = false
+					continue
+				}
+			}
 			ready, err := r.ensureSharedAppClaim(ctx, app, profile)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("ensure shared App claim for %s: %w", app.Profile, err)

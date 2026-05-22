@@ -99,10 +99,15 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 	return ctrl.Result{}, nil
 }
 
-// collectPostgresApps returns profile names of apps that require a PostgreSQL database.
+// collectPostgresApps returns profile names of apps that require a per-tenant
+// PostgreSQL database. Shared-mode apps are excluded — they use a single shared
+// database provisioned by ensureSharedDatabase via the app reconciler.
 func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
 	var pgApps []string
 	for _, app := range tenant.Spec.Apps {
+		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			continue // shared-mode apps use a single shared database; see ensureSharedDatabase
+		}
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
@@ -117,6 +122,109 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 		}
 	}
 	return pgApps, nil
+}
+
+// ensureSharedDatabase provisions the single shared PostgreSQL database for a
+// shared-mode app. It creates a role Job and CNPG Database CR using
+// sharedAppsNamespace ("shared-apps") as the logical tenant, and seeds the
+// connection credentials to the shared-apps OpenBao path so the composition's
+// ExternalSecret can read them.
+//
+// Returns true when the database is fully provisioned (role job done AND CNPG
+// Database CR reports applied=true).
+func (r *TenantReconciler) ensureSharedDatabase(ctx context.Context, appName string) (bool, error) {
+	tenantName := sharedAppsNamespace
+	// Derive names — same logic as the per-tenant helpers but with the shared tenant.
+	safeReplace := func(s string) string {
+		result := make([]byte, len(s))
+		for i := range s {
+			if s[i] == '-' {
+				result[i] = '_'
+			} else {
+				result[i] = s[i]
+			}
+		}
+		return string(result)
+	}
+	dbName := safeReplace(tenantName) + "_" + safeReplace(appName)
+	jobName := roleJobName(tenantName, appName) // pg-role-shared-apps-{app}
+
+	// Step 1 — role Job.
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		rolePassword := ""
+		if r.Seeder != nil {
+			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenantName, appName, secrets.DatabaseCreds{
+				Host:     fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+				Port:     "5432",
+				Name:     dbName,
+				User:     roleUserName(tenantName, appName),
+				Password: "",
+			})
+			if seedErr != nil {
+				return false, fmt.Errorf("seed shared database(%s): %w", appName, seedErr)
+			}
+			rolePassword = creds.Password
+		}
+		ttl := int32(3600)
+		roleName := roleUserName(tenantName, appName)
+		container := psqlContainer("provision-role", buildRoleScript(dbName, roleName), tenantName)
+		if rolePassword != "" {
+			container.Env = append(container.Env, corev1.EnvVar{Name: "ROLE_PW", Value: rolePassword})
+		}
+		sharedJob := &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      jobName,
+				Namespace: kernelNamespace,
+				Labels: map[string]string{
+					tenantLabel:    tenantName,
+					managedByLabel: managedByValue,
+					appLabel:       appName,
+				},
+			},
+			Spec: batchv1.JobSpec{
+				TTLSecondsAfterFinished: &ttl,
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyOnFailure, Containers: []corev1.Container{container}},
+				},
+			},
+		}
+		return false, r.Create(ctx, sharedJob)
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	if !jobIsComplete(job) {
+		return false, nil
+	}
+
+	// Step 2 — CNPG Database CR.
+	crName := databaseCRName(tenantName, appName) // db-shared-apps-{app}
+	roleName := roleUserName(tenantName, appName)
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind})
+	existing := obj.DeepCopy()
+	getErr := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: kernelNamespace}, existing)
+	if errors.IsNotFound(getErr) {
+		obj.SetName(crName)
+		obj.SetNamespace(kernelNamespace)
+		obj.SetLabels(map[string]string{tenantLabel: tenantName, managedByLabel: managedByValue, appLabel: appName})
+		_ = unstructured.SetNestedField(obj.Object, cnpgClusterName, "spec", "cluster", "name")
+		_ = unstructured.SetNestedField(obj.Object, dbName, "spec", "name")
+		_ = unstructured.SetNestedField(obj.Object, roleName, "spec", "owner")
+		_ = unstructured.SetNestedField(obj.Object, "present", "spec", "ensure")
+		return false, r.Create(ctx, obj)
+	}
+	if getErr != nil {
+		return false, getErr
+	}
+	return cnpgDatabaseIsReady(existing), nil
 }
 
 // ensureDatabaseCR creates (or confirms the existence of) a CloudNativePG Database CR
