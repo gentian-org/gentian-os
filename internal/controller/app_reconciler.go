@@ -56,11 +56,16 @@ var appClaimGVK = schema.GroupVersionKind{
 // Returns a non-zero RequeueAfter when any claim is not yet Ready.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	// desiredApps tracks the set of per-tenant App claims (dedicated mode only).
-	// Shared-mode App claims live in platform-kernel and are excluded from the
+	// Shared-mode App claims live in shared-apps and are excluded from the
 	// per-tenant orphan cleanup that uses this map.
 	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
+	// desiredSharedApps tracks which profiles this tenant wants in shared mode
+	// so we can GC shared App claims when no active tenant needs them.
+	desiredSharedApps := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
-		if app.IsolationMode != gentianov1alpha1.AppDeploymentModeShared {
+		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			desiredSharedApps[app.Profile] = struct{}{}
+		} else {
 			desiredApps[app.Profile] = struct{}{}
 		}
 	}
@@ -121,6 +126,11 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("cleanup orphaned App claims: %w", err)
 	}
 
+	// GC shared App claims that no active Tenant references any more.
+	if err := r.cleanupOrphanedSharedAppCRs(ctx, desiredSharedApps); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned shared App claims: %w", err)
+	}
+
 	if len(tenant.Spec.Apps) > 0 && !allReady {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", "Waiting for App claims to become Ready")
 		return ctrl.Result{}, nil
@@ -177,6 +187,61 @@ func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *ge
 		if _, desired := desiredApps[appName]; !desired {
 			if err := r.Delete(ctx, &claimList.Items[i]); client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("delete orphaned App claim %s: %w", claimList.Items[i].GetName(), err)
+			}
+		}
+	}
+	return nil
+}
+
+// cleanupOrphanedSharedAppCRs deletes shared App claims (in shared-apps
+// namespace) for any profile that no active Tenant currently requests in
+// shared mode. It lists all Tenants cluster-wide and only deletes a shared
+// claim when zero Tenants have that profile with isolationMode=shared.
+func (r *TenantReconciler) cleanupOrphanedSharedAppCRs(ctx context.Context, currentDesiredShared map[string]struct{}) error {
+	// List all App claims in shared-apps managed by this operator.
+	claimList := &unstructured.UnstructuredList{}
+	claimList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   appClaimGVK.Group,
+		Version: appClaimGVK.Version,
+		Kind:    appClaimGVK.Kind + "List",
+	})
+	if err := r.List(ctx, claimList,
+		client.InNamespace(sharedAppsNamespace),
+		client.MatchingLabels{managedByLabel: managedByValue},
+	); err != nil {
+		return fmt.Errorf("list shared App claims: %w", err)
+	}
+	if len(claimList.Items) == 0 {
+		return nil
+	}
+
+	// Build a set of profiles still wanted by ANY active Tenant in shared mode.
+	tenantList := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenantList); err != nil {
+		return fmt.Errorf("list Tenants: %w", err)
+	}
+	globalShared := make(map[string]struct{})
+	for _, t := range tenantList.Items {
+		for _, app := range t.Spec.Apps {
+			if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+				globalShared[app.Profile] = struct{}{}
+			}
+		}
+	}
+	// Also keep profiles that the current (reconciling) tenant still wants —
+	// the Tenant CR update may not be visible in the list yet.
+	for p := range currentDesiredShared {
+		globalShared[p] = struct{}{}
+	}
+
+	for i := range claimList.Items {
+		appName := claimList.Items[i].GetLabels()[appLabel]
+		if appName == "" {
+			continue
+		}
+		if _, wanted := globalShared[appName]; !wanted {
+			if err := r.Delete(ctx, &claimList.Items[i]); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("delete orphaned shared App claim %s: %w", appName, err)
 			}
 		}
 	}
