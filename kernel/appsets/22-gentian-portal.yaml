@@ -50,7 +50,7 @@ spec:
           ref: values
         # Source 2: Helm chart from gentian-ui
         - repoURL: https://github.com/gentian-org/gentian-ui
-          targetRevision: main
+          targetRevision: develop
           path: "helm/{{.chart}}"
           helm:
             valueFiles:
