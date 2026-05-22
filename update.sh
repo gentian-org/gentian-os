@@ -64,7 +64,6 @@ OP_LDAP_ACL=0
 OP_KEYCLOAK_SYNC=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
-OP_PORTAL=0
 OP_PLUGIN=0
 FORCE_RECONCILE=0
 
@@ -100,11 +99,6 @@ Options:
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository. Run after committing composition changes
                            so the cluster picks them up without a full reinstall.
-  --portal                 Bootstrap the gentian-portal ApplicationSet: trigger
-                           an immediate ArgoCD refresh of gentian-appsets to pick
-                           up 22-gentian-portal.yaml, then force-reconcile the
-                           nubus Release CR so nubusPortalFrontend.enabled=false
-                           takes effect without waiting for provider-helm's poll.
   --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.
@@ -128,9 +122,8 @@ while [[ $# -gt 0 ]]; do
         --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
-        --portal)              OP_PORTAL=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_PORTAL=1; OP_PLUGIN=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -139,14 +132,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_PORTAL}" == "0" && "${OP_PLUGIN}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_PLUGIN}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
     OP_CROSSPLANE=1
     OP_APPPROFILES=1
-    OP_PORTAL=1
     OP_PLUGIN=1
 fi
 
@@ -789,119 +781,6 @@ op_crossplane_update() {
 }
 
 # =============================================================================
-# op_portal_bootstrap — bootstrap the gentian-portal ApplicationSet
-#
-# The gentian-portal ApplicationSet (kernel/appsets/22-gentian-portal.yaml)
-# deploys the gentian-ui portal-frontend chart as a replacement for the
-# nubusPortalFrontend sub-chart that was disabled in the nubus umbrella.
-#
-# This function:
-#   1. Hard-refreshes the gentian-appsets Application so ArgoCD immediately
-#      detects the new 22-gentian-portal.yaml file (avoids the ~3 min poll).
-#   2. Waits up to 3 minutes for the ApplicationSet and the derived
-#      gentian-portal-portal-frontend-dev Application to appear.
-#   3. Force-reconciles the nubus Crossplane Release CR so the
-#      nubusPortalFrontend.enabled=false value takes effect immediately rather
-#      than waiting for provider-helm's next poll cycle (up to 5 min).
-# =============================================================================
-op_portal_bootstrap() {
-    local ns="${KERNEL_NAMESPACE}"
-    local portal_app="gentian-portal-portal-frontend-dev"
-    local appsets_app="gentian-appsets"
-
-    banner "Gentian portal bootstrap (gentian-ui portal-frontend)"
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] Would:"
-        info "  1. Hard-refresh ArgoCD Application '${appsets_app}'"
-        info "  2. Wait for ApplicationSet 'gentian-portal' and App '${portal_app}'"
-        info "  3. Force-reconcile nubus Release CR to apply nubusPortalFrontend.enabled=false"
-        return 0
-    fi
-
-    # ── 1. Hard-refresh gentian-appsets to detect 22-gentian-portal.yaml ─────
-    if kubectl get application "${appsets_app}" -n argocd >/dev/null 2>&1; then
-        info "Triggering hard refresh of '${appsets_app}'..."
-        kubectl annotate application "${appsets_app}" -n argocd \
-            "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null
-        sleep 3
-    fi
-
-    # ── 2. Apply the ApplicationSet directly ─────────────────────────────────
-    # gentian-appsets is the app-of-apps that manages kernel/appsets/; it may be
-    # on a slow poll cycle and not yet aware of the new commit.  Applying the
-    # manifest directly is idempotent: if gentian-appsets later syncs, ArgoCD
-    # will see the resource as already matching and take ownership.
-    local appset_file="${SCRIPT_DIR}/kernel/appsets/22-gentian-portal.yaml"
-    if [[ ! -f "${appset_file}" ]]; then
-        warn "ApplicationSet file not found: ${appset_file}"
-        return 1
-    fi
-    info "Applying ApplicationSet from ${appset_file}..."
-    kubectl apply -f "${appset_file}" -n argocd >/dev/null
-    success "ApplicationSet 'gentian-portal' applied."
-
-    # ── 3. Wait for the derived Application to appear and sync ────────────────
-
-    # ── 4. Wait for the derived Application to appear and sync ────────────────
-    info "Waiting for Application '${portal_app}' to be Synced (up to 5m)..."
-    local i=0
-    until kubectl get application "${portal_app}" -n argocd \
-            -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; do
-        echo -n "."; sleep 5; i=$((i + 5))
-        if [[ $i -ge 300 ]]; then
-            warn "Application '${portal_app}' not yet Synced after 5m — continuing."
-            echo ""
-            break
-        fi
-    done
-    echo ""
-
-    local sync_status
-    sync_status=$(kubectl get application "${portal_app}" -n argocd \
-        -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-    local health_status
-    health_status=$(kubectl get application "${portal_app}" -n argocd \
-        -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    info "  ${portal_app}: Sync=${sync_status} Health=${health_status}"
-    [[ "${sync_status}" == "Synced" ]] && success "Application '${portal_app}' is Synced."
-    # nubusPortalFrontend.enabled=false is a values change propagated via the
-    # nubus ConfigMaps.  provider-helm does not watch ConfigMaps, so we delete
-    # and recreate the Release CR to pick up the change immediately.
-    info "Force-reconciling nubus Release CR to apply nubusPortalFrontend.enabled=false..."
-    local nubus_release="nubus-dev"
-    if kubectl get release.helm.crossplane.io/"${nubus_release}" >/dev/null 2>&1; then
-        local nubus_manifest_dir
-        nubus_manifest_dir="${SCRIPT_DIR}/kernel/services/nubus/manifests/${ns#gentian-}"
-        # Re-apply ConfigMaps first so they are current before the Release is recreated.
-        # Exclude kustomization.yaml — kubectl apply -f dir/ fails on it.
-        while IFS= read -r -d '' f; do
-            kubectl apply -f "${f}" >/dev/null 2>&1 || true
-        done < <(find "${nubus_manifest_dir}" -maxdepth 1 -name '*.yaml' \
-            ! -name 'kustomization.yaml' -print0 | sort -z)
-        kubectl delete release.helm.crossplane.io/"${nubus_release}" --ignore-not-found >/dev/null
-        # Wait up to 60 s for deletion.
-        local j=0
-        while kubectl get release.helm.crossplane.io/"${nubus_release}" >/dev/null 2>&1; do
-            sleep 2; j=$((j + 2))
-            [[ $j -lt 60 ]] || { warn "  Timed out waiting for nubus Release deletion."; break; }
-        done
-        while IFS= read -r -d '' f; do
-            kubectl apply -f "${f}" >/dev/null 2>&1 || true
-        done < <(find "${nubus_manifest_dir}" -maxdepth 1 -name '*.yaml' \
-            ! -name 'kustomization.yaml' -print0 | sort -z)
-        success "nubus Release CR re-created — nubusPortalFrontend will be disabled on next reconcile."
-    else
-        info "nubus Release CR '${nubus_release}' not found — skipping (not yet deployed)."
-    fi
-
-    echo ""
-    info "Monitor portal deployment:"
-    info "  kubectl get pods -n ${ns} -l app.kubernetes.io/name=portal-frontend"
-    info "  kubectl get application ${portal_app} -n argocd"
-}
-
-# =============================================================================
 # op_appprofiles_bootstrap — ensure the gentian-appprofiles ArgoCD Application
 #                            exists so AppProfile CRs are kept in sync from the
 #                            gentian-apps repository.
@@ -1088,7 +967,6 @@ _init
 [[ "${OP_SECRETS}"         == "1" ]] && op_secrets
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
-[[ "${OP_PORTAL}"          == "1" ]] && op_portal_bootstrap
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
