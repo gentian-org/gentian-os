@@ -1181,6 +1181,13 @@ func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstruc
 
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
+		// Shared-mode apps are managed directly by the operator (App claim in
+		// shared-apps namespace). Do not include them in the XTenant spec or the
+		// Crossplane composition will also create an App claim in the tenant
+		// namespace, resulting in a duplicate deployment.
+		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			continue
+		}
 		entry := map[string]interface{}{"profile": app.Profile}
 		if app.Config != nil {
 			cfg := map[string]interface{}{}
