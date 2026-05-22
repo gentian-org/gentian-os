@@ -55,6 +55,11 @@ const (
 	managedByLabel  = "app.kubernetes.io/managed-by"
 	managedByValue  = "gentian-os"
 	kernelNamespace = "platform-kernel"
+	// sharedAppsNamespace is the namespace where shared App claims and their
+	// Helm releases (e.g. Synapse + Element) are deployed. It mirrors the
+	// shared-apps Keycloak realm: one deployment serves all tenants with
+	// isolationMode: shared for the same app profile.
+	sharedAppsNamespace = "shared-apps"
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	// Pods in this namespace must be allowed ingress to tenant pods so that the
 	// controller can proxy external requests to services inside the tenant namespace.

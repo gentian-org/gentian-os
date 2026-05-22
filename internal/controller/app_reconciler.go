@@ -219,7 +219,7 @@ func (r *TenantReconciler) ensureSharedAppClaim(
 ) (bool, error) {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: app.Profile, Namespace: kernelNamespace}, obj)
+	err := r.Get(ctx, types.NamespacedName{Name: app.Profile, Namespace: sharedAppsNamespace}, obj)
 	if errors.IsNotFound(err) {
 		desired := buildSharedAppClaim(app, profile, r.KernelDomain)
 		if createErr := r.Create(ctx, desired); createErr != nil && !errors.IsAlreadyExists(createErr) {
@@ -234,8 +234,8 @@ func (r *TenantReconciler) ensureSharedAppClaim(
 }
 
 // seedSharedAppSecrets seeds app-internal secrets for a shared app using the
-// platform-kernel tenant path. The composition's ExternalSecret (which runs in
-// platform-kernel) reads from this path.
+// shared-apps tenant path. The composition's ExternalSecret (which runs in
+// shared-apps) reads from this path.
 func (r *TenantReconciler) seedSharedAppSecrets(ctx context.Context, appName string, profile *gentianov1alpha1.AppProfile) error {
 	if r.Seeder == nil || len(profile.Spec.AppSecrets) == 0 {
 		return nil
@@ -244,7 +244,7 @@ func (r *TenantReconciler) seedSharedAppSecrets(ctx context.Context, appName str
 		if s.Name == "" {
 			continue
 		}
-		if _, err := r.Seeder.SeedAppSecret(ctx, kernelNamespace, appName, s.Name); err != nil {
+		if _, err := r.Seeder.SeedAppSecret(ctx, sharedAppsNamespace, appName, s.Name); err != nil {
 			return err
 		}
 	}
@@ -294,11 +294,11 @@ func buildAppClaim(
 }
 
 // buildSharedAppClaim constructs the single shared App claim placed in the
-// platform-kernel namespace. The claim's tenantNamespace is also platform-kernel
-// so Crossplane deploys the Helm release (e.g. Synapse + Element) there.
-// The kernel domain is used as the app domain since the deployment is not
-// tenant-scoped. No per-tenant labels are set; cleanupOrphanedAppCRs only
-// scans the tenant namespace and will never delete this claim.
+// shared-apps namespace (mirroring the shared-apps Keycloak realm). The
+// claim's tenantNamespace is also shared-apps so Crossplane deploys the Helm
+// release (e.g. Synapse + Element) there. No per-tenant labels are set;
+// cleanupOrphanedAppCRs only scans the tenant namespace and will never touch
+// this claim.
 func buildSharedAppClaim(
 	app gentianov1alpha1.TenantApp,
 	profile *gentianov1alpha1.AppProfile,
@@ -307,14 +307,14 @@ func buildSharedAppClaim(
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimGVK)
 	obj.SetName(app.Profile)
-	obj.SetNamespace(kernelNamespace)
+	obj.SetNamespace(sharedAppsNamespace)
 	obj.SetLabels(map[string]string{
 		appLabel:       app.Profile,
 		managedByLabel: managedByValue,
 	})
 
 	_ = unstructured.SetNestedField(obj.Object, app.Profile, "spec", "profileRef", "name")
-	_ = unstructured.SetNestedField(obj.Object, kernelNamespace, "spec", "tenantNamespace")
+	_ = unstructured.SetNestedField(obj.Object, sharedAppsNamespace, "spec", "tenantNamespace")
 
 	if profile != nil && profile.Spec.CompositionRef != "" {
 		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
