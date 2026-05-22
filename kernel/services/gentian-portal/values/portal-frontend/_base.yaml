@@ -62,3 +62,10 @@ extraIngresses:
 
 podAnnotations:
   reloader.stakater.com/auto: "true"
+
+# Use the upstream Univention portal-frontend image (same as nubus umbrella chart).
+# The gentian branding is injected via the branding ConfigMap, not the image.
+image:
+  registry: ""
+  repository: "nubus/images/portal-frontend"
+  tag: "0.88.2"
