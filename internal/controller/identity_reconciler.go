@@ -1127,47 +1127,42 @@ TOKEN=$(curl -sf --max-time 30 \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-# The /authentication/flows/{id} endpoint requires a UUID, not the alias.
-# List all flows and extract the UUID by matching the alias.
+# Check if the flow already exists by matching its alias.
+# NOTE: Keycloak's /authentication/flows/{id}/executions endpoint uses the flow
+# alias as the path segment, not the UUID — despite what the API docs suggest.
 ALL_FLOWS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows")
-GENTIAN_FLOW_ID=$(echo "${ALL_FLOWS}" \
-  | grep -o '"id":"[^"]*"[^}]*"alias":"'"${GENTIAN_FLOW}"'"' \
-  | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
-if [ -z "${GENTIAN_FLOW_ID}" ]; then
+GENTIAN_FLOW_EXISTS=$(echo "${ALL_FLOWS}" | grep -o '"alias":"'"${GENTIAN_FLOW}"'"' | head -1)
+if [ -z "${GENTIAN_FLOW_EXISTS}" ]; then
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d "{\"alias\":\"${GENTIAN_FLOW}\",\"providerId\":\"basic-flow\",\"description\":\"Auto-link existing users by email; no confirmation prompt\",\"topLevel\":true,\"builtIn\":false}" >/dev/null
-  # Re-fetch UUID after creation (POST response has no body for flows endpoint)
-  ALL_FLOWS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows")
-  GENTIAN_FLOW_ID=$(echo "${ALL_FLOWS}" \
-    | grep -o '"id":"[^"]*"[^}]*"alias":"'"${GENTIAN_FLOW}"'"' \
-    | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
-  # Add idp-create-user-if-unique as ALTERNATIVE (new users)
+  # Add idp-create-user-if-unique as ALTERNATIVE (new users).
+  # The executions endpoint uses the flow alias, not the UUID.
   curl -sf --max-time 30 -X POST \
-    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions/execution" \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions/execution" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d '{"provider":"idp-create-user-if-unique"}' >/dev/null
   # Add idp-auto-link as ALTERNATIVE (returning users whose sub changed)
   curl -sf --max-time 30 -X POST \
-    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions/execution" \
+    "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions/execution" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d '{"provider":"idp-auto-link"}' >/dev/null
   echo "flow ${GENTIAN_FLOW} created with auto-link executions"
 else
   echo "flow ${GENTIAN_FLOW} already exists"
 fi
-# Set both executions to ALTERNATIVE (idempotent update)
+# Set both executions to ALTERNATIVE (idempotent update).
+# The /flows/{alias}/executions endpoint uses the flow alias, not the UUID.
 GENTIAN_EXECS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions")
+  "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions")
 for PROV in idp-create-user-if-unique idp-auto-link; do
   EID=$(echo "${GENTIAN_EXECS}" | grep -o '"id":"[^"]*"[^}]*"providerId":"'"${PROV}"'"' \
     | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
   if [ -n "${EID}" ]; then
     curl -sf --max-time 30 -X PUT \
-      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW_ID}/executions" \
+      "${KEYCLOAK_URL}/admin/realms/shared-apps/authentication/flows/${GENTIAN_FLOW}/executions" \
       -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       -d "{\"id\":\"${EID}\",\"requirement\":\"ALTERNATIVE\"}" >/dev/null
     echo "execution ${PROV} set to ALTERNATIVE in ${GENTIAN_FLOW}"
