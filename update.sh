@@ -559,7 +559,12 @@ op_reconcile_releases() {
 
             # Apply manifest dir first so ConfigMaps/ExternalSecrets are current.
             info "  Applying manifest directory (ConfigMaps / ExternalSecrets)..."
-            kubectl apply -f "${manifest_dir}/" >/dev/null
+            # Exclude kustomization.yaml — kubectl apply -f dir/ would try to
+            # process it as a plain resource, failing with "no matches for kind".
+            while IFS= read -r -d '' f; do
+                kubectl apply -f "${f}" >/dev/null
+            done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
+                ! -name 'kustomization.yaml' -print0 | sort -z)
 
             info "  Deleting ${name}..."
             kubectl delete release.helm.crossplane.io/"${name}" \
@@ -819,54 +824,47 @@ op_portal_bootstrap() {
         info "Triggering hard refresh of '${appsets_app}'..."
         kubectl annotate application "${appsets_app}" -n argocd \
             "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null
-        # Brief pause so ArgoCD processes the annotation before we poll.
         sleep 3
-    else
-        warn "ArgoCD Application '${appsets_app}' not found — is ArgoCD deployed?"
-        warn "  Skipping appsets refresh; the ApplicationSet will appear on next ArgoCD poll."
     fi
 
-    # ── 2. Wait for the ApplicationSet and derived Application to appear ──────
-    info "Waiting for ApplicationSet 'gentian-portal' to appear (up to 3m)..."
-    local deadline=$((SECONDS + 180))
-    until kubectl get applicationset gentian-portal -n argocd >/dev/null 2>&1; do
-        if (( SECONDS > deadline )); then
-            warn "Timed out waiting for ApplicationSet 'gentian-portal'."
-            warn "  Check: kubectl get applicationsets -n argocd"
-            warn "  Logs:  kubectl logs -n argocd -l app.kubernetes.io/name=argocd-applicationset-controller --tail=30"
+    # ── 2. Apply the ApplicationSet directly ─────────────────────────────────
+    # gentian-appsets is the app-of-apps that manages kernel/appsets/; it may be
+    # on a slow poll cycle and not yet aware of the new commit.  Applying the
+    # manifest directly is idempotent: if gentian-appsets later syncs, ArgoCD
+    # will see the resource as already matching and take ownership.
+    local appset_file="${SCRIPT_DIR}/kernel/appsets/22-gentian-portal.yaml"
+    if [[ ! -f "${appset_file}" ]]; then
+        warn "ApplicationSet file not found: ${appset_file}"
+        return 1
+    fi
+    info "Applying ApplicationSet from ${appset_file}..."
+    kubectl apply -f "${appset_file}" -n argocd >/dev/null
+    success "ApplicationSet 'gentian-portal' applied."
+
+    # ── 3. Wait for the derived Application to appear and sync ────────────────
+
+    # ── 4. Wait for the derived Application to appear and sync ────────────────
+    info "Waiting for Application '${portal_app}' to be Synced (up to 5m)..."
+    local i=0
+    until kubectl get application "${portal_app}" -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; do
+        echo -n "."; sleep 5; i=$((i + 5))
+        if [[ $i -ge 300 ]]; then
+            warn "Application '${portal_app}' not yet Synced after 5m — continuing."
+            echo ""
             break
         fi
-        echo -n "."; sleep 5
     done
     echo ""
 
-    if kubectl get applicationset gentian-portal -n argocd >/dev/null 2>&1; then
-        success "ApplicationSet 'gentian-portal' exists."
-
-        info "Waiting for Application '${portal_app}' to be Synced (up to 5m)..."
-        local i=0
-        until kubectl get application "${portal_app}" -n argocd \
-                -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; do
-            echo -n "."; sleep 5; i=$((i + 5))
-            if [[ $i -ge 300 ]]; then
-                warn "Application '${portal_app}' not yet Synced after 5m — continuing."
-                echo ""
-                break
-            fi
-        done
-        echo ""
-
-        local sync_status
-        sync_status=$(kubectl get application "${portal_app}" -n argocd \
-            -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-        local health_status
-        health_status=$(kubectl get application "${portal_app}" -n argocd \
-            -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-        info "  ${portal_app}: Sync=${sync_status} Health=${health_status}"
-        [[ "${sync_status}" == "Synced" ]] && success "Application '${portal_app}' is Synced."
-    fi
-
-    # ── 3. Force-reconcile nubus Release CR ───────────────────────────────────
+    local sync_status
+    sync_status=$(kubectl get application "${portal_app}" -n argocd \
+        -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+    local health_status
+    health_status=$(kubectl get application "${portal_app}" -n argocd \
+        -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+    info "  ${portal_app}: Sync=${sync_status} Health=${health_status}"
+    [[ "${sync_status}" == "Synced" ]] && success "Application '${portal_app}' is Synced."
     # nubusPortalFrontend.enabled=false is a values change propagated via the
     # nubus ConfigMaps.  provider-helm does not watch ConfigMaps, so we delete
     # and recreate the Release CR to pick up the change immediately.
@@ -876,7 +874,11 @@ op_portal_bootstrap() {
         local nubus_manifest_dir
         nubus_manifest_dir="${SCRIPT_DIR}/kernel/services/nubus/manifests/${ns#gentian-}"
         # Re-apply ConfigMaps first so they are current before the Release is recreated.
-        kubectl apply -f "${nubus_manifest_dir}/" >/dev/null 2>&1 || true
+        # Exclude kustomization.yaml — kubectl apply -f dir/ fails on it.
+        while IFS= read -r -d '' f; do
+            kubectl apply -f "${f}" >/dev/null 2>&1 || true
+        done < <(find "${nubus_manifest_dir}" -maxdepth 1 -name '*.yaml' \
+            ! -name 'kustomization.yaml' -print0 | sort -z)
         kubectl delete release.helm.crossplane.io/"${nubus_release}" --ignore-not-found >/dev/null
         # Wait up to 60 s for deletion.
         local j=0
@@ -884,7 +886,10 @@ op_portal_bootstrap() {
             sleep 2; j=$((j + 2))
             [[ $j -lt 60 ]] || { warn "  Timed out waiting for nubus Release deletion."; break; }
         done
-        kubectl apply -f "${nubus_manifest_dir}/" >/dev/null 2>&1 || true
+        while IFS= read -r -d '' f; do
+            kubectl apply -f "${f}" >/dev/null 2>&1 || true
+        done < <(find "${nubus_manifest_dir}" -maxdepth 1 -name '*.yaml' \
+            ! -name 'kustomization.yaml' -print0 | sort -z)
         success "nubus Release CR re-created — nubusPortalFrontend will be disabled on next reconcile."
     else
         info "nubus Release CR '${nubus_release}' not found — skipping (not yet deployed)."
