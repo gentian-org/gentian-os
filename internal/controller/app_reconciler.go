@@ -50,9 +50,13 @@ var appClaimGVK = schema.GroupVersionKind{
 //
 // Returns a non-zero RequeueAfter when any claim is not yet Ready.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	// desiredApps tracks the set of App claims that should exist. Shared-mode
+	// apps are excluded because they use no tenant-side deployment.
 	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
-		desiredApps[app.Profile] = struct{}{}
+		if app.IsolationMode != gentianov1alpha1.AppDeploymentModeShared {
+			desiredApps[app.Profile] = struct{}{}
+		}
 	}
 
 	if len(tenant.Spec.Apps) == 0 {
@@ -70,6 +74,14 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 				return ctrl.Result{}, nil
 			}
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+
+		// Shared-mode apps use a single platform-level deployment with per-tenant
+		// IAM brokering via the shared-apps Keycloak realm. The identity
+		// reconciler handles the Keycloak wiring; no tenant-side App claim or
+		// Helm release is created.
+		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			continue
 		}
 
 		// Seed app-internal secrets into OpenBao before the Composition reads
