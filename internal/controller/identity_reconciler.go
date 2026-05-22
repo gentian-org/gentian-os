@@ -1119,6 +1119,14 @@ echo "default provider set to ${IDP_ALIAS} in shared-apps realm"
 #    idp-create-user-if-unique creates the account on first login;
 #    idp-auto-link silently links it on subsequent logins.
 GENTIAN_FLOW="gentian-first-broker-login"
+# Refresh token before flow operations — multiple prior steps may have consumed
+# much of the admin-cli token's lifetime (default 60s in Keycloak).
+TOKEN=$(curl -sf --max-time 30 \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 # The /authentication/flows/{id} endpoint requires a UUID, not the alias.
 # List all flows and extract the UUID by matching the alias.
 ALL_FLOWS=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
