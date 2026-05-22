@@ -898,6 +898,14 @@ cmd_tenant_undeploy() {
     fi
   fi
 
+  # Capture the tenant namespace name from status before we delete the CR.
+  local ns_name
+  ns_name="$(kubectl get tenant "${tenant_name}" \
+    -o jsonpath='{.status.namespace}' 2>/dev/null || true)"
+  if [[ -z "${ns_name}" ]]; then
+    ns_name="tenant-${tenant_name}"
+  fi
+
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
   echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
@@ -905,6 +913,20 @@ cmd_tenant_undeploy() {
     echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
     echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
     exit 1
+  fi
+
+  # Wait for the tenant namespace to be fully gone. After the tenant CR is
+  # deleted the namespace may still be Terminating (Crossplane cascades deletion
+  # of XTenant-managed resources including the namespace). A subsequent deploy
+  # would fail with confusing errors if we return before it is fully gone.
+  if kubectl get namespace "${ns_name}" &>/dev/null; then
+    echo "Waiting for namespace '${ns_name}' to finish terminating..."
+    if ! kubectl wait namespace "${ns_name}" --for=delete --timeout=120s 2>/dev/null; then
+      echo "ERROR: namespace '${ns_name}' is still terminating after 120s." >&2
+      echo "  This may indicate stuck finalizers. Inspect with:" >&2
+      echo "    kubectl get namespace ${ns_name} -o yaml" >&2
+      exit 1
+    fi
   fi
 
   # Always reset deletionPolicy to Retain after cleanup so the tenant YAML is

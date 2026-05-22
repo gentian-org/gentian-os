@@ -650,6 +650,15 @@ func (r *TenantReconciler) ensureNamespace(ctx context.Context, tenant *gentiano
 		return err
 	}
 
+	// If the namespace is still being terminated (e.g. from a prior undeploy via
+	// Crossplane cascade), block until it is fully gone. Returning an error here
+	// causes the reconciler to requeue, which is preferable to the opaque
+	// "unable to create new content in namespace … because it is being terminated"
+	// errors that surface later when we try to create Secrets inside it.
+	if existing.DeletionTimestamp != nil {
+		return fmt.Errorf("namespace %q is still terminating; will retry", nsName)
+	}
+
 	// Ensure the tenant label is present (idempotent patch)
 	if existing.Labels[tenantLabel] != tenant.Name {
 		patch := client.MergeFrom(existing.DeepCopy())
