@@ -165,12 +165,8 @@ test-unit: test-unit-render test-unit-functions test-unit-schema
 install-tools:
 	@which crossplane >/dev/null 2>&1 || { \
 		echo "Installing crossplane CLI..."; \
-		CROSSPLANE_VERSION=v2.2.1; \
-		OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
-		ARCH=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
-		curl -sL "https://github.com/crossplane/crossplane/releases/download/$${CROSSPLANE_VERSION}/crossplane_$${OS}_$${ARCH}" -o /tmp/crossplane; \
-		chmod +x /tmp/crossplane; \
-		sudo mv /tmp/crossplane /usr/local/bin/crossplane; \
+		curl -sL "https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh" | XP_VERSION=v2.2.1 sh; \
+		sudo mv crossplane /usr/local/bin/crossplane; \
 	}
 	@which kubeconform >/dev/null 2>&1 || { \
 		echo "Installing kubeconform..."; \
