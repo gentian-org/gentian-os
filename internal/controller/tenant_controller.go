@@ -516,7 +516,6 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 // reconcileDelete handles Tenant deletion based on deletionPolicy.
 func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	nsName := tenantNamespaceName(tenant)
 
 	// awaitJob wraps each delete helper: if the helper returns errDeleteJobPending
 	// the reconciler requeues rather than treating it as a hard error.
@@ -595,20 +594,17 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
-		logger.Info("deletionPolicy=Delete: removing tenant namespace", "namespace", nsName)
-		ns := &corev1.Namespace{}
-		if err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); err == nil {
-			if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		// DeletionPolicyRetain: keep namespace, only remove orchestrator-owned sub-resources
-		logger.Info("deletionPolicy=Retain: preserving tenant namespace", "namespace", nsName)
-		if err := r.deleteOwnedResourcesInNamespace(ctx, nsName); err != nil {
-			return ctrl.Result{}, err
-		}
+	// Wait for Crossplane to fully process the XTenant deletion (and cascade-delete
+	// the tenant namespace, NetworkPolicy, etc.) before removing the Tenant finalizer.
+	// This guarantees the namespace is gone before the Tenant CR disappears, so
+	// undeploy never leaves a dangling namespace regardless of deletionPolicy.
+	xr := &unstructured.Unstructured{}
+	xr.SetGroupVersionKind(xTenantGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, xr); err == nil {
+		logger.Info("waiting for XTenant deletion to complete", "tenant", tenant.Name)
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	} else if client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, err
 	}
 
 	controllerutil.RemoveFinalizer(tenant, tenantFinalizer)
@@ -1132,10 +1128,28 @@ func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov
 // deleteXTenant deletes the XTenant composite. Crossplane cascades deletion to
 // all composed resources (Namespace, NetworkPolicy, OpenBao policy, App claims).
 // "Not found" is treated as already deleted (idempotent).
+// The function removes the crossplane.io/paused annotation before issuing the
+// DELETE so that a stale pause can never block the Crossplane finalizer handler.
 func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	xr := &unstructured.Unstructured{}
 	xr.SetGroupVersionKind(xTenantGVK)
 	xr.SetName(tenant.Name)
+
+	if err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, xr); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	// Remove the paused annotation if present so Crossplane is free to run its
+	// finalizer handler and cascade-delete the composed managed resources.
+	annotations := xr.GetAnnotations()
+	if _, paused := annotations["crossplane.io/paused"]; paused {
+		delete(annotations, "crossplane.io/paused")
+		xr.SetAnnotations(annotations)
+		if err := r.Update(ctx, xr); err != nil {
+			return fmt.Errorf("unpause XTenant %s: %w", tenant.Name, err)
+		}
+	}
+
 	return client.IgnoreNotFound(r.Delete(ctx, xr))
 }
 
