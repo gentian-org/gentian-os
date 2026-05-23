@@ -440,6 +440,14 @@ nubusStackDataUms:
         enabled: false
       openproject:
         enabled: false
+      # MUST remain false. The upstream template 32-ox-connector-opendesk_on.yaml
+      # (opendesk-nubus image) sends `globaladdressbookdisabled: True` (Python boolean)
+      # to the UDM REST API, which returns 422 — blocking the entire stack-data-ums job
+      # and preventing all subsequent steps (including 72-portal-config.yaml, which sets
+      # the portal title) from running. See kernel/services/ox-appsuite/manifests/dev/
+      # ox-connector-fix-jobs.yaml for the workaround applied after OX is live.
+      # Portal tiles (swp.groupware_*) are seeded with activated: false and must be
+      # activated via UDM when OX is deployed per-tenant.
       oxAppSuite:
         enabled: false
       xwiki:
