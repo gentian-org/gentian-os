@@ -152,6 +152,21 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
+	// Trigger a full Keycloak LDAP sync after all LDAP provisioning is stable.
+	// This re-imports all users with their current LDAP attributes, clearing any
+	// cached enabled=false state caused by the brief UDM shadowExpire race during
+	// user creation (the univention-ldap-mapper sets isEnabled()=false while
+	// shadowExpire=1 is set, and the cached state persists until a sync refreshes it).
+	kcLDAPSyncDone, err := r.ensureKCLDAPSyncJob(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure Keycloak LDAP sync Job: %w", err)
+	}
+	if !kcLDAPSyncDone {
+		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+			"SyncingKCLDAP", "Waiting for Keycloak LDAP sync Job to complete")
+		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+	}
+
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
 		"Provisioned", "Keycloak realm and OIDC clients are ready")
 	return ctrl.Result{}, nil
@@ -413,7 +428,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	if err == nil {
 		if jobIsComplete(existing) {
 			// Delete provisioning jobs so they are re-created on the next deploy.
-			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), kernelAdminEnableJobName(tenant.Name)}
+			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), kernelAdminEnableJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name)}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
 				provNames = append(provNames, sharedAppsJobName(tenant.Name, app.Profile))
@@ -952,6 +967,79 @@ else
 fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
 }
 
+// buildKCLDAPSyncScript returns a shell script that triggers a full Keycloak
+// LDAP user-storage sync for the kernel realm. Running this after all LDAP
+// provisioning jobs have completed ensures that any users cached with
+// enabled=false (due to the brief UDM shadowExpire race during user creation)
+// are re-imported from LDAP with the correct enabled state.
+func buildKCLDAPSyncScript(kernelRealm string) string {
+	return fmt.Sprintf(`set -eu
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+PROVIDER_ID=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider" \
+  | sed 's/.*"id":"\([^"]*\)".*/\1/')
+if [ -z "${PROVIDER_ID}" ]; then
+  echo "LDAP provider not found in %s realm — skipping sync"
+  exit 0
+fi
+RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
+echo "Keycloak LDAP full sync complete for realm %s: ${RESULT}"`, kernelRealm, kernelRealm, kernelRealm, kernelRealm)
+}
+
+// makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP full sync.
+func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, kernelRealm string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      kcLDAPSyncJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						keycloakContainer("kc-ldap-sync", buildKCLDAPSyncScript(kernelRealm)),
+					},
+				},
+			},
+		},
+	}
+}
+
+// ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and
+// returns true when it has completed. Called after the admin-enable job so
+// all LDAP changes (including shadowExpire clearance) are stable in LDAP
+// before the sync re-imports users into Keycloak.
+func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	jobName := kcLDAPSyncJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makeKCLDAPSyncJob(tenant, r.KernelRealm))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
 // buildSharedAppsScript returns the shell script that idempotently provisions:
 //  1. The shared-apps Keycloak realm (created once for the whole platform).
 //  2. The app's OIDC client in shared-apps (one client for all tenants sharing
@@ -1376,6 +1464,14 @@ func realmDisableJobName(tenantName string) string {
 // shadowExpire so the re-enable is durable against Keycloak LDAP re-imports.
 func kernelAdminEnableJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-kernel-enable-%s", tenantName)
+}
+
+// kcLDAPSyncJobName returns the name of the Keycloak LDAP full-sync job.
+// This job runs after the admin-enable job so all LDAP users (not just the
+// admin) are re-imported with their correct enabled state, clearing any cached
+// disabled entries caused by the brief UDM shadowExpire race during provisioning.
+func kcLDAPSyncJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-ldap-sync-%s", tenantName)
 }
 
 func oidcClientID(tenantName, appName string) string {
