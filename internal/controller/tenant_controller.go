@@ -565,6 +565,14 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
+	// Clean up shared App claims (in shared-apps) that no other active Tenant
+	// needs any more. Passing an empty desired set ensures the GC considers
+	// only surviving tenants — if this is the last tenant that referenced a
+	// shared app, the claim (and its composed Releases/pods) will be deleted.
+	if err := r.cleanupOrphanedSharedAppCRs(ctx, make(map[string]struct{})); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned shared App claims on delete: %w", err)
+	}
+
 	// Clean up Ingress and Certificate resources (ephemeral routing; always deleted).
 	if err := r.deleteIngress(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
