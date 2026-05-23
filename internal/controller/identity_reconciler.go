@@ -1013,24 +1013,24 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 # 2. Create/update the app OIDC client in shared-apps.
 #    This is the client the app server uses to obtain tokens from shared-apps.
-#    When the client already exists we intentionally do NOT update the secret:
-#    multiple tenants may share one app client (e.g. element in shared mode),
-#    each seeding their own oidc_client_secret.  Overwriting the secret on every
-#    run causes a last-writer-wins race — the app server (e.g. Synapse) was
-#    deployed by the first tenant and always uses the first tenant's secret.
+#    The OIDC_CLIENT_SECRET is seeded by the operator via SeedOIDC (PutOnce +
+#    deterministic generation) before this job is created, so all tenants sharing
+#    the same app always converge on the same stable secret.  We include it on
+#    both CREATE and UPDATE so a client that was initially created without a
+#    pre-seeded secret (e.g. from an old code path) is healed on the next run.
+SECRET_FIELD=""
+if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
+  SECRET_FIELD=",\"secret\":\"${OIDC_CLIENT_SECRET}\""
+fi
 EXISTING_APP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/shared-apps/clients?clientId=${APP_NAME}")
 if echo "${EXISTING_APP}" | grep -q '"id"'; then
   APP_CID=$(echo "${EXISTING_APP}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
   curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/shared-apps/clients/${APP_CID}" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"${APP_NAME}\",\"redirectUris\":[\"${APP_REDIRECT_URI}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false}" >/dev/null
-  echo "client ${APP_NAME} updated in shared-apps realm (secret unchanged)"
+    -d "{\"clientId\":\"${APP_NAME}\",\"redirectUris\":[\"${APP_REDIRECT_URI}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}" >/dev/null
+  echo "client ${APP_NAME} updated in shared-apps realm"
 else
-  SECRET_FIELD=""
-  if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
-    SECRET_FIELD=",\"secret\":\"${OIDC_CLIENT_SECRET}\""
-  fi
   curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/shared-apps/clients" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d "{\"clientId\":\"${APP_NAME}\",\"redirectUris\":[\"${APP_REDIRECT_URI}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
