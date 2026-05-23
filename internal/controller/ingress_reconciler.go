@@ -117,6 +117,19 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		}
 	}
 
+	// If any app is in shared mode, the Crossplane-managed ingresses in
+	// shared-apps reference a secret named "wildcard-tls". Ensure it exists
+	// there (copied from wildcard-kernel-tls in cert-manager) so TLS works
+	// for matrix.* and other shared hostnames. This is idempotent and cheap.
+	for _, ia := range ingressApps {
+		if ia.isolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			if err := r.ensureSharedAppsWildcardTLS(ctx); err != nil {
+				return ctrl.Result{}, fmt.Errorf("ensure wildcard-tls in shared-apps: %w", err)
+			}
+			break
+		}
+	}
+
 	for _, ia := range ingressApps {
 		// For shared apps the service lives in shared-apps, not in the tenant
 		// namespace. nginx ingress resolves backends by namespace, so we
@@ -421,6 +434,56 @@ func buildAppIngress(
 		}
 	}
 	return obj
+}
+
+// ensureSharedAppsWildcardTLS replicates wildcard-kernel-tls (cert-manager
+// namespace) into shared-apps under the name "wildcard-tls". The Crossplane
+// app compositions (opendesk-synapse-web et al.) hardcode secretName:
+// wildcard-tls for their ingresses; without this secret nginx falls back to
+// its self-signed default cert and browsers reject the connection.
+//
+// Called on every reconcile of a tenant that has at least one shared-mode app
+// with ingress. Soft-fails if the source secret is not yet present (LE cert
+// still pending) — the reconciler retries on the next cycle.
+func (r *TenantReconciler) ensureSharedAppsWildcardTLS(ctx context.Context) error {
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      kernelWildcardSourceSecret,
+		Namespace: kernelWildcardSourceNamespace,
+	}, source); err != nil {
+		if errors.IsNotFound(err) {
+			return nil // cert not yet issued; will be retried on next reconcile
+		}
+		return fmt.Errorf("read kernel wildcard secret %s/%s: %w",
+			kernelWildcardSourceNamespace, kernelWildcardSourceSecret, err)
+	}
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "wildcard-tls",
+			Namespace: sharedAppsNamespace,
+			Labels: map[string]string{
+				managedByLabel: managedByValue,
+			},
+		},
+		Type: source.Type,
+		Data: source.Data,
+	}
+
+	existing := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "wildcard-tls", Namespace: sharedAppsNamespace}, existing); err != nil {
+		if errors.IsNotFound(err) {
+			return r.Create(ctx, desired)
+		}
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Type = desired.Type
+		existing.Data = desired.Data
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
 }
 
 // ensureSharedAppProxySvc creates or updates an ExternalName Service in the
