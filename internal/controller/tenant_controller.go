@@ -594,10 +594,29 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// Wait for Crossplane to fully process the XTenant deletion (and cascade-delete
-	// the tenant namespace, NetworkPolicy, etc.) before removing the Tenant finalizer.
-	// This guarantees the namespace is gone before the Tenant CR disappears, so
-	// undeploy never leaves a dangling namespace regardless of deletionPolicy.
+	// Phase 4: Apply per-DeletionPolicy cleanup in addition to the Crossplane cascade.
+	// This is necessary both as a direct/fallback mechanism (e.g. in environments
+	// without Crossplane) and to satisfy the controller's own ownership invariants.
+	nsName := tenantNamespaceName(tenant)
+	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
+		logger.Info("deletionPolicy=Delete: removing tenant namespace", "namespace", nsName)
+		ns := &corev1.Namespace{}
+		if err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); err == nil {
+			if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		// DeletionPolicyRetain: keep namespace, only remove orchestrator-owned sub-resources.
+		logger.Info("deletionPolicy=Retain: preserving tenant namespace", "namespace", nsName)
+		if err := r.deleteOwnedResourcesInNamespace(ctx, nsName); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Wait for Crossplane to fully process the XTenant deletion before removing
+	// the Tenant finalizer. This guarantees the cascade has completed on clusters
+	// where Crossplane is running, so undeploy never leaves a dangling XTenant.
 	xr := &unstructured.Unstructured{}
 	xr.SetGroupVersionKind(xTenantGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, xr); err == nil {
