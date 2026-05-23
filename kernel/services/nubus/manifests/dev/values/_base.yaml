@@ -441,7 +441,7 @@ nubusStackDataUms:
       openproject:
         enabled: false
       oxAppSuite:
-        enabled: true
+        enabled: false
       xwiki:
         enabled: false
     portaltileGroupGroupware:
