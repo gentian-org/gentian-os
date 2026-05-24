@@ -1752,13 +1752,49 @@ install_argocd() {
     # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
     # into a redirect loop when doing TLS termination at the ingress.
-    info "Configuring ArgoCD server for HTTP (insecure) mode behind ingress..."
+    #
+    # reposerver.repo.cache.expiration: how long the repo-server caches both
+    # the branch→SHA resolution and the rendered manifest for a (repo, path,
+    # revision) tuple.  The default is 24h, which means new commits to a
+    # branch are not picked up for up to 24 hours without a webhook push
+    # notification.  Setting this to 3m (same as timeout.reconciliation) means
+    # every app-controller reconcile cycle triggers a fresh git fetch so new
+    # commits are visible within one reconciliation window (~3 minutes).
+    # GitHub webhooks further reduce this to near-zero for push events.
+    info "Configuring ArgoCD server params (insecure + short repo cache)..."
     kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge \
-        -p '{"data":{"server.insecure":"true"}}'
+        -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m"}}'
     kubectl rollout restart deployment argocd-server -n argocd
+    kubectl rollout restart deployment argocd-repo-server -n argocd
     kubectl rollout status deployment argocd-server -n argocd --timeout=90s \
         2>/dev/null || true
-    success "ArgoCD server running in HTTP mode."
+    kubectl rollout status deployment argocd-repo-server -n argocd --timeout=90s \
+        2>/dev/null || true
+    success "ArgoCD server running in HTTP mode with 3-minute repo cache."
+
+    # Configure GitHub webhook secret so ArgoCD accepts push notifications from
+    # the gentian-org GitHub organisation.  The actual webhook must be registered
+    # in GitHub (Settings → Webhooks, or via the GitHub CLI):
+    #
+    #   URL:     https://argocd.${KERNEL_DOMAIN}/api/webhook
+    #   Content-Type: application/json
+    #   Secret:  <value from OpenBao: identity/argocd/webhook-github-secret>
+    #   Events:  push
+    #
+    # Without a GitHub webhook ArgoCD still detects new commits within
+    # ~3 minutes (via the reduced cache expiry above), but with a webhook
+    # syncs happen within seconds of a push.
+    local github_webhook_secret="${ARGOCD_GITHUB_WEBHOOK_SECRET:-}"
+    if [[ -z "$github_webhook_secret" ]]; then
+        warn "ARGOCD_GITHUB_WEBHOOK_SECRET not set — generating a random secret."
+        warn "Store it in OpenBao (identity/argocd/webhook-github-secret) and"
+        warn "register it as a webhook on the gentian-org GitHub organisation."
+        github_webhook_secret=$(openssl rand -hex 20)
+    fi
+    kubectl patch secret argocd-secret -n argocd --type merge \
+        -p "{\"stringData\":{\"webhook.github.secret\":\"${github_webhook_secret}\"}}"
+    success "ArgoCD GitHub webhook secret configured."
+    info "Register webhook at: https://argocd.${KERNEL_DOMAIN:-<KERNEL_DOMAIN>}/api/webhook"
 
     # Create Ingress for argocd.${KERNEL_DOMAIN} if KERNEL_DOMAIN is set.
     # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
