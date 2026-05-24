@@ -484,6 +484,9 @@ nubusPortalServer:
       secretName: "wildcard-tls"
   podAnnotations:
     reloader.stakater.com/auto: "true"
+  portalServer:
+    featureToggles:
+      windows_enabled: true
   objectStorage:
     auth:
       existingSecret:
