@@ -467,6 +467,7 @@ spec:
               name: {{ $xrName }}-release
             spec:
               forProvider:
+                releaseName: {{ $app }}
                 chart:
                   repository: {{ $chart.repository }}
                   name: {{ $chart.name }}
