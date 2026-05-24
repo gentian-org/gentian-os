@@ -63,9 +63,15 @@ extraIngresses:
 podAnnotations:
   reloader.stakater.com/auto: "true"
 
-# Use the upstream Univention portal-frontend image (same as nubus umbrella chart).
-# The gentian branding is injected via the branding ConfigMap, not the image.
+# Custom gentian-ui portal-frontend image built from github.com/gentian-org/gentian-ui.
+# Built by: frontend/Dockerfile.cluster (public base images — no Univention internal registry needed)
+# Registry:  ghcr.io/gentian-org/portal-frontend
+# Automated: .github/workflows/portal-frontend.yaml builds on push to develop/main
+#            and auto-patches this file with the new SHA tag.
+# Update:    docker build -f frontend/Dockerfile.cluster -t ghcr.io/gentian-org/portal-frontend:<sha> ./frontend
+#            docker push ghcr.io/gentian-org/portal-frontend:<sha>
+#            then update tag: below.
 image:
-  registry: ""
-  repository: "nubus/images/portal-frontend"
-  tag: "0.88.2"
+  registry: "ghcr.io"
+  repository: "gentian-org/portal-frontend"
+  tag: "26522eb8"
