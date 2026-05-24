@@ -119,3 +119,58 @@ spec:
                 secretKeyRef:
                   name: nubus-dev-ldap-server-admin
                   key: password
+---
+# Job 3: Activate the four groupware portal tiles in LDAP.
+# Root cause: nubusStackDataUms.templateContext.apps.oxAppSuite.enabled must stay
+# false (true triggers a UDM 422 that aborts the stack-data-ums job before the
+# portal config step). This means stack-data-ums always seeds swp.groupware_*
+# portal entries with univentionNewPortalEntryActivate: FALSE. Since OX IS
+# deployed on this cluster, activate the tiles explicitly via LDAP instead.
+# This job is idempotent and re-runs on every ArgoCD sync to keep them active.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ox-activate-portal-tiles
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ldapmodify
+          image: docker.io/alpine:3.19
+          command:
+            - /bin/sh
+            - -c
+            - |
+              apk add --no-cache openldap-clients 2>/dev/null
+              BASE="cn=entry,cn=portals,cn=univention,dc=swp-ldap,dc=internal"
+              LDAP_URL="ldap://nubus-dev-ldap-server:389"
+              BIND_DN="cn=admin,dc=swp-ldap,dc=internal"
+              for TILE in swp.groupware_mail swp.groupware_calendar swp.groupware_contacts swp.groupware_tasks; do
+                CURRENT=$(ldapsearch -x -H "$LDAP_URL" -D "$BIND_DN" -w "${LDAP_ADMIN_PW}" \
+                  -b "cn=${TILE},${BASE}" "(cn=${TILE})" univentionNewPortalEntryActivate 2>/dev/null \
+                  | grep "^univentionNewPortalEntryActivate:" | awk '{print $2}')
+                if [ "$CURRENT" = "TRUE" ]; then
+                  echo "${TILE}: already TRUE — skipping"
+                else
+                  printf '%s\n' \
+                    "dn: cn=${TILE},${BASE}" \
+                    "changetype: modify" \
+                    "replace: univentionNewPortalEntryActivate" \
+                    "univentionNewPortalEntryActivate: TRUE" \
+                    | ldapmodify -x -H "$LDAP_URL" -D "$BIND_DN" -w "${LDAP_ADMIN_PW}"
+                  echo "${TILE}: activated"
+                fi
+              done
+          env:
+            - name: LDAP_ADMIN_PW
+              valueFrom:
+                secretKeyRef:
+                  name: nubus-dev-ldap-server-admin
+                  key: password
