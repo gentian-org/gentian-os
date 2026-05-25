@@ -1,0 +1,20 @@
+{{- if or .Values.kernelServices.s3Endpoint .Values.kernelServices.mysqlHost .Values.kernelServices.redisHost }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-kernel-services
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    gentianos.io/config-type: kernel-services
+data:
+  {{- with .Values.kernelServices.s3Endpoint }}
+  S3_ENDPOINT: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.kernelServices.mysqlHost }}
+  MYSQL_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.kernelServices.redisHost }}
+  REDIS_HOST: {{ . | quote }}
+  {{- end }}
+{{- end }}

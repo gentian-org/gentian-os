@@ -33,6 +33,18 @@ infraNamespace: "gentian-infra-dev"
 # tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
 servicesNamespace: "gentian-dev"
 
+# kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
+# Compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
+# and fetched by app-default.yaml via function-extra-resources.
+# Template variables substituted in AppProfile extraValues:
+#   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
+#   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
+#   ${REDIS_HOST}   — Redis primary hostname (no port)
+kernelServices:
+  s3Endpoint: ""
+  mysqlHost: ""
+  redisHost: ""
+
 image:
   repository: ghcr.io/gentian-org/gentian-os
   pullPolicy: Always

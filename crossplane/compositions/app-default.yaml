@@ -35,6 +35,30 @@ spec:
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
 
+    # ── Step 1b: Fetch kernel service endpoints ────────────────────────────────
+    # Reads the gentian-kernel-services ConfigMap from gentian-system to make
+    # cluster-specific infrastructure endpoints available for extraValues
+    # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
+    # The ConfigMap is published by the gentian-os Helm chart via kernelServices values.
+    - step: fetch-kernel-services
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ConfigMap
+              into: kernelServices
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: kernel-services
+
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
     #   • kubernetes.crossplane.io/v1alpha2 Object wrapping an ESO ExternalSecret
@@ -124,10 +148,10 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "s3-bucket"     "remoteRef" (dict "key" $s3Path "property" "bucket")) }}
             {{- end }}
             {{- if $vm.s3.accessKeyKey }}
-            {{- $esData = append $esData (dict "secretKey" "s3-access-key" "remoteRef" (dict "key" $s3Path "property" "access_key")) }}
+            {{- $esData = append $esData (dict "secretKey" "s3-access-key" "remoteRef" (dict "key" $s3Path "property" "access-key")) }}
             {{- end }}
             {{- if $vm.s3.secretKeyKey }}
-            {{- $esData = append $esData (dict "secretKey" "s3-secret-key" "remoteRef" (dict "key" $s3Path "property" "secret_key")) }}
+            {{- $esData = append $esData (dict "secretKey" "s3-secret-key" "remoteRef" (dict "key" $s3Path "property" "secret-key")) }}
             {{- end }}
             {{- if $vm.s3.regionKey }}
             {{- $esData = append $esData (dict "secretKey" "s3-region"     "remoteRef" (dict "key" $s3Path "property" "region")) }}
@@ -408,14 +432,31 @@ spec:
 
             {{- /* ── Render inline non-sensitive values ───────────────────────── */}}
             {{- /* Profile-level extraValues are merged with per-tenant config     */}}
-            {{- /* overrides. Template variables ${TENANT_DOMAIN} and              */}}
-            {{- /* ${TENANT_NAMESPACE} are substituted before marshalling.         */}}
+            {{- /* overrides. Template variables are substituted before marshalling */}}
+            {{- /* Substitutions:                                                   */}}
+            {{- /*   ${TENANT_DOMAIN}    — effective tenant domain                 */}}
+            {{- /*   ${TENANT_NAMESPACE} — tenant k8s namespace                    */}}
+            {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
+            {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
+            {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
+            {{- /*   ${REDIS_HOST}       — Redis primary hostname (from kernel CM) */}}
             {{- $extraVals := dict }}
             {{- if $pSpec.extraValues }}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+            {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
+            {{- $ksRes := dig "kernelServices" list $extraRes }}
+            {{- $ksCM  := default dict (index $ksRes 0) }}
+            {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
+            {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
+            {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
             {{- $raw := $pSpec.extraValues | toJson }}
-            {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
+            {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
+            {{- if $s3Endpoint }}{{ $raw = $raw | replace "${S3_ENDPOINT}" $s3Endpoint }}{{ end }}
+            {{- if $mysqlHost  }}{{ $raw = $raw | replace "${MYSQL_HOST}"  $mysqlHost  }}{{ end }}
+            {{- if $redisHost  }}{{ $raw = $raw | replace "${REDIS_HOST}"  $redisHost  }}{{ end }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
             {{- if and $spec.config $spec.config.extraValues }}
@@ -493,6 +534,7 @@ spec:
             {{- $stableSvcName  := dig "serviceName" "" $ingressSpec }}
             {{- if $stableSvcName }}
             {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
+            {{- $svcPort   := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -514,8 +556,8 @@ spec:
                       app.kubernetes.io/component: {{ $component }}
                     ports:
                     - name: http
-                      port: 80
-                      targetPort: 80
+                      port: {{ $svcPort }}
+                      targetPort: {{ $svcPort }}
                       protocol: TCP
               providerConfigRef:
                 name: kubernetes
