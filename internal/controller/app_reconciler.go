@@ -285,6 +285,22 @@ func (r *TenantReconciler) ensureAppClaim(
 	if err != nil {
 		return false, err
 	}
+
+	// Propagate domain changes: if the tenant's effective domain differs from
+	// what the claim has, patch it so TENANT_DOMAIN substitutions stay correct.
+	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+	currentDomain, _, _ := unstructured.NestedString(obj.Object, "spec", "domain")
+	if effectiveDomain != "" && currentDomain != effectiveDomain {
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(appClaimGVK)
+		patch.SetName(claimName)
+		patch.SetNamespace(nsName)
+		_ = unstructured.SetNestedField(patch.Object, effectiveDomain, "spec", "domain")
+		if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
+			return false, fmt.Errorf("patch App claim %s domain: %w", claimName, err)
+		}
+	}
+
 	return appClaimIsReady(obj), nil
 }
 
