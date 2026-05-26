@@ -28,7 +28,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 			},
 			KernelRequirements: &v1alpha1.KernelRequirements{
 				Identity: &v1alpha1.IdentityRequirement{
-					OIDC: true,
+					OIDC: &v1alpha1.OIDCClientSpec{},
 					LDAP: &v1alpha1.LDAPRequirement{Sync: true, Interval: "1h"},
 				},
 				Database: &v1alpha1.DatabaseRequirement{

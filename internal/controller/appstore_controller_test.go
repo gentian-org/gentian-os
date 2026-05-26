@@ -109,7 +109,7 @@ func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
 
 	p := makeProfileWithKernel("cat-with-kernel", &gentianov1alpha1.KernelRequirements{
 		Identity: &gentianov1alpha1.IdentityRequirement{
-			OIDC: true,
+			OIDC: &gentianov1alpha1.OIDCClientSpec{},
 			LDAP: &gentianov1alpha1.LDAPRequirement{Sync: true},
 		},
 		Database: &gentianov1alpha1.DatabaseRequirement{
