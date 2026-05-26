@@ -301,6 +301,24 @@ func (r *TenantReconciler) ensureAppClaim(
 		}
 	}
 
+	// Propagate compositionRef changes: if the AppProfile's compositionRef has
+	// changed since the claim was created, update the claim so Crossplane uses
+	// the correct composition. This covers the case where an AppProfile is
+	// updated after the initial claim creation.
+	if profile != nil && profile.Spec.CompositionRef != "" {
+		currentRef, _, _ := unstructured.NestedString(obj.Object, "spec", "compositionRef", "name")
+		if currentRef != profile.Spec.CompositionRef {
+			patch := &unstructured.Unstructured{}
+			patch.SetGroupVersionKind(appClaimGVK)
+			patch.SetName(claimName)
+			patch.SetNamespace(nsName)
+			_ = unstructured.SetNestedField(patch.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
+			if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
+				return false, fmt.Errorf("patch App claim %s compositionRef: %w", claimName, err)
+			}
+		}
+	}
+
 	return appClaimIsReady(obj), nil
 }
 

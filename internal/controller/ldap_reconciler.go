@@ -139,6 +139,23 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		}
 	}
 
+	// Step 4 — per-tenant portal entries for dedicated apps with central-navigation:nubus.
+	// Creates a per-tenant UDM portal tile that points to the tenant-specific URL so
+	// users land on the correct dedicated instance instead of the shared kernel tile.
+	portalApps, err := r.collectDedicatedPortalApps(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("collect dedicated portal apps: %w", err)
+	}
+	for _, pa := range portalApps {
+		done, err := r.ensurePortalEntryJob(ctx, tenant, ouDN, pa)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure portal entry Job for app %s: %w", pa.AppName, err)
+		}
+		if !done {
+			allDone = false
+		}
+	}
+
 	if !allDone {
 		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
 			"ProvisioningBindAccounts", "Waiting for UDM bind account Jobs to complete")
@@ -146,7 +163,7 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	}
 
 	r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
-		"Provisioned", "LDAP OU, admin user/policy, and bind accounts are ready")
+		"Provisioned", "LDAP OU, admin user/policy, bind accounts, and portal entries are ready")
 	return ctrl.Result{}, nil
 }
 
@@ -169,6 +186,74 @@ func (r *TenantReconciler) collectLDAPApps(ctx context.Context, tenant *gentiano
 		}
 	}
 	return ldapApps, nil
+}
+
+// dedicatedPortalApp holds information about a dedicated app that needs a
+// per-tenant UDM portal entry to direct users to the correct per-tenant URL.
+type dedicatedPortalApp struct {
+	AppName    string
+	SubDomain  string
+	PortalName string
+}
+
+// collectDedicatedPortalApps returns the dedicated apps in a tenant that declare
+// a central-navigation integration with provider nubus and expose an ingress
+// subDomain. These apps need a per-tenant UDM portal entry so users land on the
+// correct per-tenant URL rather than the shared kernel portal tile.
+func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]dedicatedPortalApp, error) {
+	var result []dedicatedPortalApp
+	for _, app := range tenant.Spec.Apps {
+		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
+			continue
+		}
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+		if profile.Spec.Ingress == nil || profile.Spec.Ingress.SubDomain == "" {
+			continue
+		}
+		hasCentralNav := false
+		for _, integration := range profile.Spec.OptionalIntegrations {
+			if integration.Contract == "central-navigation" && integration.Provider == "nubus" {
+				hasCentralNav = true
+				break
+			}
+		}
+		if !hasCentralNav {
+			continue
+		}
+		result = append(result, dedicatedPortalApp{
+			AppName:    app.Profile,
+			SubDomain:  profile.Spec.Ingress.SubDomain,
+			PortalName: profile.Spec.DisplayName,
+		})
+	}
+	return result, nil
+}
+
+// ensurePortalEntryJob creates the per-tenant portal entry UDM Job for one app.
+// Returns true when the Job has completed successfully.
+func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicatedPortalApp) (bool, error) {
+	jobName := portalEntryJobName(tenant.Name, pa.AppName)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		tenantDomain := tenant.EffectiveDomain(r.KernelDomain)
+		return false, r.Create(ctx, makePortalEntryJob(tenant, ouDN, pa.AppName, pa.SubDomain, tenantDomain, pa.PortalName))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
 }
 
 // ensureOUJob creates the UDM OU + groups Job if absent.
@@ -292,6 +377,21 @@ func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gen
 func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	ouDN := tenantOUDN(tenant)
 
+	// Start portal entry delete Jobs for all dedicated portal apps regardless of
+	// deletion policy — the app service will be unavailable after this undeploy.
+	// UDM handles cascading removal from portal categories when an entry is deleted.
+	// This is fire-and-forget; we do not block the main deletion flow on it.
+	portalApps, _ := r.collectDedicatedPortalApps(ctx, tenant)
+	var portalJobNames []string
+	for _, pa := range portalApps {
+		jobName := portalEntryDeleteJobName(tenant.Name, pa.AppName)
+		existing := &batchv1.Job{}
+		if getErr := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing); errors.IsNotFound(getErr) {
+			_ = r.Create(ctx, makePortalEntryDeleteJob(tenant, pa.AppName))
+		}
+		portalJobNames = append(portalJobNames, portalEntryJobName(tenant.Name, pa.AppName), jobName)
+	}
+
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
 		// OU recursive delete cascades all children including the admin user.
 		jobName := ouDeleteJobName(tenant.Name)
@@ -305,6 +405,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 					adminUserJobName(tenant.Name),
 					adminPolicyJobName(tenant.Name),
 				)
+				r.deleteProvisioningJobs(ctx, portalJobNames...)
 				return nil
 			}
 			return errDeleteJobPending
@@ -326,6 +427,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	case errors.IsNotFound(ajErr), ajErr == nil && !jobIsComplete(aj):
 		// Admin user was never fully provisioned; nothing to lock.
 		r.deleteProvisioningJobs(ctx, ouJobName(tenant.Name), adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+		r.deleteProvisioningJobs(ctx, portalJobNames...)
 		return nil
 	case ajErr != nil:
 		return ajErr
@@ -339,6 +441,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 			// Also remove the OU provision job so a subsequent deploy
 			// re-runs it (ensures the OU is recreated if it was removed).
 			r.deleteProvisioningJobs(ctx, ouJobName(tenant.Name), adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+			r.deleteProvisioningJobs(ctx, portalJobNames...)
 			return nil
 		}
 		return errDeleteJobPending
@@ -391,8 +494,22 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 		return err
 	}
 
-	_, err = r.ensureAdminPolicyJob(ctx, tenant, ouDN)
-	return err
+	policyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
+	if err != nil || !policyDone {
+		return err
+	}
+
+	// Also provision per-tenant portal entries for dedicated apps with central-navigation:nubus.
+	portalApps, err := r.collectDedicatedPortalApps(ctx, tenant)
+	if err != nil {
+		return fmt.Errorf("collect dedicated portal apps: %w", err)
+	}
+	for _, pa := range portalApps {
+		if _, err := r.ensurePortalEntryJob(ctx, tenant, ouDN, pa); err != nil {
+			return fmt.Errorf("ensure portal entry Job for app %s: %w", pa.AppName, err)
+		}
+	}
+	return nil
 }
 
 // --- Job constructors --------------------------------------------------------
@@ -521,6 +638,58 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
 						udmContainer("provision-admin-policy", buildAdminPolicyScript(ouDN, tenant.Name)),
+					},
+				},
+			},
+		},
+	}
+}
+
+func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomain, tenantDomain, portalName string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      portalEntryJobName(tenant.Name, appName),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+				appLabel:       appName,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("provision-portal-entry", buildPortalEntryScript(ouDN, tenant.Name, appName, subDomain, tenantDomain, portalName, portalEntryIcon(appName))),
+					},
+				},
+			},
+		},
+	}
+}
+
+func makePortalEntryDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      portalEntryDeleteJobName(tenant.Name, appName),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+				appLabel:       appName,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("delete-portal-entry", buildPortalEntryDeleteScript(tenant.Name, appName)),
 					},
 				},
 			},
@@ -1153,4 +1322,126 @@ func ldapLockJobName(tenantName string) string {
 
 func adminUserDeleteJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-admin-user-delete-%s", tenantName)
+}
+
+func portalEntryJobName(tenantName, appName string) string {
+	return fmt.Sprintf("ldap-portal-entry-%s-%s", tenantName, appName)
+}
+
+func portalEntryDeleteJobName(tenantName, appName string) string {
+	return fmt.Sprintf("ldap-portal-entry-delete-%s-%s", tenantName, appName)
+}
+
+// --- Portal entry scripts ----------------------------------------------------
+
+// realtimeCollaborationSVGIcon is the base64-encoded SVG icon for chat / Element
+// portal tiles. Sourced from the nubus Helm values (portal.icons.realtimeCollaboration).
+const realtimeCollaborationSVGIcon = "PHN2ZyB3aWR0aD0iMTExIiBoZWlnaHQ9IjExMSIgdmlld0JveD0iMCAwIDExMSAxMTEiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHg9IjAuNSIgeT0iMC41IiB3aWR0aD0iMTEwIiBoZWlnaHQ9IjExMCIgcng9IjIwIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNNTguNjExNSA0Ny43NTIxQzYyLjkxMDUgNDcuNzUyMSA2Ni40MDY5IDQ0LjI2NjcgNjYuNDA2OSAzOS45NTY4VjMyLjE2MTRDNjYuNDA2OSAyNy44NjI0IDYyLjkyMTUgMjQuMzY2MSA1OC42MTE1IDI0LjM2NjFIMjcuNDQxMkMyMy4xNDIyIDI0LjM2NjEgMTkuNjQ1OSAyNy44NTE0IDE5LjY0NTkgMzIuMTYxNFY2My4zMzE3TDM1LjIyNTUgNDcuNzUyMUg1OC42MDA1SDU4LjYxMTVaIiBmaWxsPSIjMzQxMjkxIi8+CjxwYXRoIGQ9Ik04My41NDc4IDU1LjU0NzZINTIuMzc3NUM0OC4wNzg1IDU1LjU0NzYgNDQuNTgyMiA1OS4wMzMgNDQuNTgyMiA2My4zNDI5VjcxLjEzODNDNDQuNTgyMiA3NS40MzcyIDQ4LjA2NzUgNzguOTMzNiA1Mi4zNzc1IDc4LjkzMzZINzUuNzUyNUw5MS4zMzIxIDk0LjUxMzNWNjMuMzQyOUM5MS4zMzIxIDU5LjA0NCA4Ny44NDY4IDU1LjU0NzYgODMuNTM2OCA1NS41NDc2SDgzLjU0NzhaIiBmaWxsPSIjNTcxRUZBIi8+Cjwvc3ZnPgo="
+
+// portalEntryIcon returns the base64-encoded SVG icon for a portal tile.
+// Known app icons are returned directly; unrecognised apps return an empty string
+// which causes UDM to display a placeholder icon.
+func portalEntryIcon(appName string) string {
+	if appName == "element" {
+		return realtimeCollaborationSVGIcon
+	}
+	return ""
+}
+
+// buildPortalEntryScript returns a shell script that idempotently creates (or
+// reconciles) a per-tenant UDM portal entry and adds it to the od.applications
+// portal category. The entry gives dedicated-app tenants a portal tile that
+// points to their own URL instead of the shared kernel portal tile.
+//
+// Parameters (in fmt.Sprintf order):
+//  1. ouDN         — tenant OU DN (shell-interpolatable, e.g. "ou=gtn-demo-2,${UDM_LDAP_BASE}")
+//  2. tenantName   — literal tenant name
+//  3. appName      — literal app/profile name
+//  4. subDomain    — ingress subdomain (e.g. "chat")
+//  5. tenantDomain — full tenant domain (e.g. "gtn-demo-2.desk.gentian.org")
+//  6. portalName   — display name for the portal tile (de_DE and en_US)
+//  7. portalName   — repeated for the second language entry
+//  8. icon         — base64-encoded SVG icon (may be empty)
+func buildPortalEntryScript(ouDN, tenantName, appName, subDomain, tenantDomain, portalName, icon string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+OU_POS="%s"
+TENANT_NAME="%s"
+APP_NAME="%s"
+ENTRY_CN="swp.${APP_NAME}_${TENANT_NAME}"
+ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
+ENTRY_ENC=$(urlencode "${ENTRY_DN}")
+LINK="https://%s.%s"
+USERS_GRP_DN="cn=users_${TENANT_NAME},${OU_POS}"
+CAT_DN="cn=od.applications,cn=category,cn=portals,cn=univention,${UDM_LDAP_BASE}"
+CAT_ENC=$(urlencode "${CAT_DN}")
+
+# Create or reconcile the per-tenant portal entry.
+STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/portals/entry/${ENTRY_ENC}")
+if [ "${STATUS}" = "404" ]; then
+	curl -sf --max-time 30 -X POST ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/portals/entry/" \
+		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":[[\"de_DE\",\"%s\"],[\"en_US\",\"%s\"]],\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"%s\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
+	echo "portal entry ${ENTRY_CN} created"
+elif [ "${STATUS}" = "200" ]; then
+	curl -sf --max-time 30 -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
+		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"]}}"
+	echo "portal entry ${ENTRY_CN} link reconciled to ${LINK}"
+else
+	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+	exit 1
+fi
+
+# Add the entry to the od.applications category (idempotent).
+CAT_BODY=$(curl -s --max-time 30 ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/portals/category/${CAT_ENC}" | tr -d '\n')
+CURRENT_ENTRIES=$(printf '%%s' "${CAT_BODY}" | sed -n 's/.*"entries":[[:space:]]*\[\([^]]*\)\].*/\1/p')
+if printf '%%s' "${CURRENT_ENTRIES}" | grep -qF "\"${ENTRY_DN}\""; then
+	echo "category od.applications: ${ENTRY_DN} already in entries"
+else
+	if [ -z "${CURRENT_ENTRIES}" ]; then
+		NEW_ENTRIES="[\"${ENTRY_DN}\"]"
+	else
+		NEW_ENTRIES="[${CURRENT_ENTRIES},\"${ENTRY_DN}\"]"
+	fi
+	curl -sf --max-time 30 -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${BASE_URL}/portals/category/${CAT_ENC}" \
+		-d "{\"properties\":{\"entries\":${NEW_ENTRIES}}}"
+	echo "category od.applications: added ${ENTRY_DN}"
+fi`,
+		ouDN, tenantName, appName, subDomain, tenantDomain, portalName, portalName, icon)
+}
+
+// buildPortalEntryDeleteScript returns a shell script that removes a per-tenant
+// UDM portal entry. UDM handles cascading removal from portal categories when
+// an entry is deleted.
+//
+// Parameters (in fmt.Sprintf order):
+//  1. tenantName — literal tenant name
+//  2. appName    — literal app/profile name
+func buildPortalEntryDeleteScript(tenantName, appName string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+ENTRY_CN="swp.%s_%s"
+ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
+ENTRY_ENC=$(urlencode "${ENTRY_DN}")
+HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/portals/entry/${ENTRY_ENC}")
+echo "portal entry ${ENTRY_CN} deletion (HTTP ${HTTP})"`,
+		appName, tenantName)
 }
