@@ -110,7 +110,12 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client-id")) }}
             {{- end }}
             {{- if $vm.oidc.clientSecretKey }}
-            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $oidcPath "property" "client-secret")) }}
+            {{- /* Use the explicit path/property when the OIDC client is in the
+                 kernel realm (not per-tenant). Default to the standard per-tenant
+                 path so existing apps need no changes. */}}
+            {{- $csPath := default $oidcPath $vm.oidc.clientSecretOpenbaoPath }}
+            {{- $csProp := default "client-secret" $vm.oidc.clientSecretOpenbaoProperty }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $csPath "property" $csProp)) }}
             {{- end }}
             {{- end }}
 

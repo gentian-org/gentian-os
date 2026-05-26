@@ -407,6 +407,18 @@ type OIDCValueMapping struct {
 	// ClientSecretKey is the Helm value key for the OIDC client secret.
 	// +optional
 	ClientSecretKey string `json:"clientSecretKey,omitempty"`
+	// ClientSecretOpenbaoPath overrides the default per-tenant OpenBao secret
+	// path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC
+	// client secret. Use this for apps that share a kernel-realm OIDC client
+	// whose secret is stored at a fixed, non-per-tenant location.
+	// Example: "gentian-os/kernel/apps/ox"
+	// +optional
+	ClientSecretOpenbaoPath string `json:"clientSecretOpenbaoPath,omitempty"`
+	// ClientSecretOpenbaoProperty overrides the property name within the
+	// OpenBao secret (default: "client-secret"). Only used together with
+	// ClientSecretOpenbaoPath.
+	// +optional
+	ClientSecretOpenbaoProperty string `json:"clientSecretOpenbaoProperty,omitempty"`
 }
 
 // DatabaseValueMapping maps database connection values to Helm chart keys.

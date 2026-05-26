@@ -564,6 +564,20 @@ spec:
                         description: ClientSecretKey is the Helm value key for the
                           OIDC client secret.
                         type: string
+                      clientSecretOpenbaoPath:
+                        description: |-
+                          ClientSecretOpenbaoPath overrides the default per-tenant OpenBao secret
+                          path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC
+                          client secret. Use this for apps that share a kernel-realm OIDC client
+                          whose secret is stored at a fixed, non-per-tenant location.
+                          Example: "gentian-os/kernel/apps/ox"
+                        type: string
+                      clientSecretOpenbaoProperty:
+                        description: |-
+                          ClientSecretOpenbaoProperty overrides the property name within the
+                          OpenBao secret (default: "client-secret"). Only used together with
+                          ClientSecretOpenbaoPath.
+                        type: string
                       issuerKey:
                         description: IssuerKey is the Helm value key for the OIDC
                           issuer URL.
