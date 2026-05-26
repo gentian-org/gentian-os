@@ -285,9 +285,60 @@ spec:
                             type: boolean
                         type: object
                       oidc:
-                        description: OIDC requests an OIDC client registration in
-                          the tenant's Keycloak realm.
-                        type: boolean
+                        description: |-
+                          OIDC describes the OIDC client to register in the tenant's Keycloak realm.
+                          When set, the composition emits a Client CR so every newly deployed tenant
+                          automatically gets the correct Keycloak client without manual setup.
+                          Leave unset for apps whose Keycloak client is managed externally
+                          (e.g. kernel-realm clients managed via keycloak-config).
+                        properties:
+                          accessType:
+                            default: PUBLIC
+                            description: |-
+                              AccessType controls whether the client requires a shared secret
+                              (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
+                              (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
+                            enum:
+                            - PUBLIC
+                            - CONFIDENTIAL
+                            type: string
+                          backchannelLogoutUrl:
+                            description: |-
+                              BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
+                              notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                            type: string
+                          clientId:
+                            description: ClientID is the OIDC client identifier registered
+                              in Keycloak.
+                            minLength: 1
+                            type: string
+                          directAccessGrantsEnabled:
+                            description: |-
+                              DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
+                              grant (legacy / CLI apps). Defaults to false.
+                            type: boolean
+                          name:
+                            description: |-
+                              Name is the human-readable display name shown in the Keycloak admin UI.
+                              Defaults to ClientID when empty.
+                            type: string
+                          postLogoutRedirectUris:
+                            description: |-
+                              PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
+                              Supports ${TENANT_DOMAIN} substitution.
+                            items:
+                              type: string
+                            type: array
+                          redirectUris:
+                            description: |-
+                              RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
+                              code flow. Supports ${TENANT_DOMAIN} substitution.
+                            items:
+                              type: string
+                            type: array
+                        required:
+                        - clientId
+                        type: object
                     type: object
                   mail:
                     description: Mail specifies SMTP and/or IMAP requirements.

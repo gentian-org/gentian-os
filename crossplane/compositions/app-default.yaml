@@ -77,6 +77,10 @@ spec:
             {{- $ns     := $spec.tenantNamespace }}
             {{- /* Derive tenant name from namespace convention "tenant-{name}". */}}
             {{- $tenant := trimPrefix "tenant-" $ns }}
+            {{- /* Tenant domain — used for substitution in extraValues AND in
+                 Keycloak client redirect URIs. Computed once at top level so
+                 both blocks share the same value. */}}
+            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
 
             {{- /* ── Load AppProfile from pipeline context ────────────────────── */}}
             {{- $extraRes  := index .context "apiextensions.crossplane.io/extra-resources" }}
@@ -434,7 +438,6 @@ spec:
             {{- /*   ${REDIS_HOST}       — Redis primary hostname (from kernel CM) */}}
             {{- $extraVals := dict }}
             {{- if $pSpec.extraValues }}
-            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
@@ -456,6 +459,64 @@ spec:
             {{- end }}
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
+            {{- end }}
+
+            {{- /* ── Emit Keycloak Client CR ──────────────────────────────────── */}}
+            {{- /* When kernelRequirements.identity.oidc is set, the composition   */}}
+            {{- /* registers the app as an OIDC client in the tenant's own realm.  */}}
+            {{- /* New apps only need to declare their oidc block in the AppProfile */}}
+            {{- /* to get automatic per-tenant Keycloak client registration.        */}}
+            {{- $kr       := default dict $pSpec.kernelRequirements }}
+            {{- $identity := default dict $kr.identity }}
+            {{- $oidcCl   := default dict $identity.oidc }}
+            {{- if $oidcCl.clientId }}
+            {{- $redirects  := list }}
+            {{- range $uri := (default list $oidcCl.redirectUris) }}
+            {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $postLogout := list }}
+            {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
+            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-client
+              name: {{ $tenant }}-{{ $app }}-keycloak-client
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                clientId: {{ $oidcCl.clientId | quote }}
+                name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
+                realmId: {{ $tenant }}
+                accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
+                serviceAccountsEnabled: false
+                {{- if $redirects }}
+                validRedirectUris:
+                  {{ toYaml $redirects | nindent 18 }}
+                {{- end }}
+                webOrigins:
+                  - "+"
+                {{- if $postLogout }}
+                validPostLogoutRedirectUris:
+                  {{ toYaml $postLogout | nindent 18 }}
+                {{- end }}
+                {{- if and $oidcCl.backchannelLogoutUrl (ne $oidcCl.backchannelLogoutUrl "") }}
+                backchannelLogoutUrl: {{ $oidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
+                backchannelLogoutSessionRequired: true
+                {{- end }}
+                {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
+                clientSecretSecretRef:
+                  name: {{ $xrName }}-oidc-client-creds
+                  namespace: crossplane-system
+                  key: client-secret
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
             {{- end }}
 
             {{- /* ── Emit ExternalSecret (only when there are secrets to sync) ── */}}

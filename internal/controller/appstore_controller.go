@@ -200,7 +200,7 @@ func kernelRequirementLabels(kr *gentianov1alpha1.KernelRequirements) []string {
 	}
 	set := make(map[string]struct{})
 	if kr.Identity != nil {
-		if kr.Identity.OIDC {
+		if kr.Identity.OIDC != nil {
 			set["oidc"] = struct{}{}
 		}
 		if kr.Identity.LDAP != nil {

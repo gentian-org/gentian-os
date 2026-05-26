@@ -186,7 +186,7 @@ func (r *TenantReconciler) collectOIDCApps(ctx context.Context, tenant *gentiano
 		}
 		if profile.Spec.KernelRequirements != nil &&
 			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.OIDC {
+			profile.Spec.KernelRequirements.Identity.OIDC != nil {
 			oidcApps = append(oidcApps, app.Profile)
 		}
 	}

@@ -168,13 +168,61 @@ type KernelRequirements struct {
 
 // IdentityRequirement specifies OIDC and/or LDAP needs.
 type IdentityRequirement struct {
-	// OIDC requests an OIDC client registration in the tenant's Keycloak realm.
+	// OIDC describes the OIDC client to register in the tenant's Keycloak realm.
+	// When set, the composition emits a Client CR so every newly deployed tenant
+	// automatically gets the correct Keycloak client without manual setup.
+	// Leave unset for apps whose Keycloak client is managed externally
+	// (e.g. kernel-realm clients managed via keycloak-config).
 	// +optional
-	OIDC bool `json:"oidc,omitempty"`
+	OIDC *OIDCClientSpec `json:"oidc,omitempty"`
 
 	// LDAP requests a per-tenant LDAP bind account in the UCS LDAP directory.
 	// +optional
 	LDAP *LDAPRequirement `json:"ldap,omitempty"`
+}
+
+// OIDCClientSpec describes an OIDC client to be registered in the tenant's
+// Keycloak realm by the Crossplane composition. Adding this block to an
+// AppProfile is all that is needed to get automatic client registration for
+// any new app — no manual Keycloak setup required per tenant.
+type OIDCClientSpec struct {
+	// ClientID is the OIDC client identifier registered in Keycloak.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ClientID string `json:"clientId"`
+
+	// Name is the human-readable display name shown in the Keycloak admin UI.
+	// Defaults to ClientID when empty.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// AccessType controls whether the client requires a shared secret
+	// (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
+	// (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
+	// +optional
+	// +kubebuilder:validation:Enum=PUBLIC;CONFIDENTIAL
+	// +kubebuilder:default=PUBLIC
+	AccessType string `json:"accessType,omitempty"`
+
+	// RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
+	// code flow. Supports ${TENANT_DOMAIN} substitution.
+	// +optional
+	RedirectURIs []string `json:"redirectUris,omitempty"`
+
+	// PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
+	// Supports ${TENANT_DOMAIN} substitution.
+	// +optional
+	PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris,omitempty"`
+
+	// BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
+	// notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+	// +optional
+	BackchannelLogoutURL string `json:"backchannelLogoutUrl,omitempty"`
+
+	// DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
+	// grant (legacy / CLI apps). Defaults to false.
+	// +optional
+	DirectAccessGrantsEnabled bool `json:"directAccessGrantsEnabled,omitempty"`
 }
 
 // LDAPRequirement describes per-tenant LDAP needs.
