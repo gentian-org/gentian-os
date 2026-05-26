@@ -1749,6 +1749,28 @@ install_argocd() {
 }'
     success "ArgoCD PVC health override configured."
 
+    # Prevent the ArgoCD application controller from entering a tight
+    # reconciliation loop when Crossplane providers continuously update
+    # .status on managed Keycloak resources.  Without this, the controller
+    # re-enqueues keycloak-config-dev on every Crossplane status write (~20ms),
+    # starving all other applications of reconciliation time.
+    # resource.ignoreResourceUpdatesEnabled (ArgoCD ≥ 2.10) tells the
+    # controller to skip re-queuing an app when only the listed JSON pointers
+    # change on the affected resource.
+    info "Patching argocd-cm with Crossplane Keycloak resource-update suppression..."
+    kubectl patch configmap argocd-cm -n argocd --type merge -p '{
+  "data": {
+    "resource.ignoreResourceUpdatesEnabled": "true",
+    "resource.customizations.ignoreResourceUpdates.client.keycloak.crossplane.io_ProtocolMapper": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
+    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_Client": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
+    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_ClientDefaultScopes": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
+    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_ClientOptionalScopes": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
+    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_ClientScope": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
+    "resource.customizations.ignoreResourceUpdates.keycloak.crossplane.io_ProviderConfig": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n"
+  }
+}'
+    success "ArgoCD Crossplane Keycloak resource-update suppression configured."
+
     # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
     # into a redirect loop when doing TLS termination at the ingress.
