@@ -41,7 +41,7 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 				Version:    "1.0.0",
 			},
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
-				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{}},
+				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: name}},
 			},
 		},
 	}
