@@ -1,33 +1,316 @@
----
-# Minimal XTenant CRD stub for envtest.
-# The real schema is defined by the Crossplane XRD (crossplane/xrds/tenant.yaml);
-# this stub exists only so that the envtest environment can load the CRD and the
-# TenantReconciler can create/watch XTenant composites during unit tests.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: xtenants.gentianos.io
 spec:
+  conversion:
+    strategy: None
   group: gentianos.io
   names:
+    categories:
+    - composite
     kind: XTenant
     listKind: XTenantList
     plural: xtenants
     singular: xtenant
   scope: Cluster
   versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              x-kubernetes-preserve-unknown-fields: true
-            status:
-              type: object
-              x-kubernetes-preserve-unknown-fields: true
-      subresources:
-        status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='Synced')].status
+      name: SYNCED
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: READY
+      type: string
+    - jsonPath: .spec.compositionRef.name
+      name: COMPOSITION
+      type: string
+    - jsonPath: .spec.compositionRevisionRef.name
+      name: COMPOSITIONREVISION
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            properties:
+              name:
+                maxLength: 63
+                type: string
+            type: object
+          spec:
+            properties:
+              adminEmail:
+                description: Contact address for platform notifications.
+                type: string
+              apps:
+                description: Applications to install for this tenant.
+                items:
+                  properties:
+                    config:
+                      description: Per-tenant overrides for this app.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    profile:
+                      description: Name of the AppProfile CR to install.
+                      type: string
+                    variant:
+                      description: 'Optional Composition variant selector.  When set,
+                        the generated App claim uses spec.compositionRef.name: app-{variant}
+                        instead of the cluster default Composition.  Example: "ox"
+                        selects the app-ox Composition for OX App Suite.
+
+                        '
+                      type: string
+                  required:
+                  - profile
+                  type: object
+                type: array
+              claimRef:
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - namespace
+                - name
+                type: object
+              compositionRef:
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              compositionRevisionRef:
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              compositionRevisionSelector:
+                properties:
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    type: object
+                required:
+                - matchLabels
+                type: object
+              compositionSelector:
+                properties:
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    type: object
+                required:
+                - matchLabels
+                type: object
+              compositionUpdatePolicy:
+                default: Automatic
+                enum:
+                - Automatic
+                - Manual
+                type: string
+              deletionPolicy:
+                default: Retain
+                description: 'Controls behaviour on XTenant deletion. "Retain" keeps
+                  persistent data; "Delete" removes everything.
+
+                  '
+                enum:
+                - Retain
+                - Delete
+                type: string
+              displayName:
+                description: 'Human-readable name for this tenant / organisation.
+
+                  '
+                type: string
+              domain:
+                description: 'Optional vanity domain (e.g. "acme.com"). When omitted
+                  the tenant is served under "<name>.<kernelDomain>".
+
+                  '
+                type: string
+              isolation:
+                description: Workload isolation boundaries for this tenant.
+                properties:
+                  databasePrefix:
+                    description: 'Prefix for all database names (e.g. "acme_"). Defaults
+                      to "{name}_".
+
+                      '
+                    type: string
+                  keycloakRealm:
+                    description: Keycloak realm name. Defaults to the tenant name.
+                    type: string
+                  ldapOU:
+                    description: LDAP OU path for this tenant's users and groups.
+                    type: string
+                  mode:
+                    default: namespace
+                    description: Isolation strategy. Defaults to "namespace".
+                    type: string
+                  namespace:
+                    description: 'Override the target namespace name. Defaults to
+                      "tenant-{name}" when omitted.
+
+                      '
+                    type: string
+                  s3Prefix:
+                    description: 'Prefix for all S3 bucket names (e.g. "acme-"). Defaults
+                      to "{name}-".
+
+                      '
+                    type: string
+                type: object
+              kernelDomain:
+                description: 'Cluster-wide platform DNS suffix (e.g. "desk.gentian.org").
+                  Injected by the TenantReconciler from its KernelDomain field.
+
+                  '
+                type: string
+              mail:
+                description: Mail stack configuration.
+                properties:
+                  domain:
+                    description: Mail domain. Defaults to spec.domain.
+                    type: string
+                  mode:
+                    default: selfhosted
+                    description: Mail delivery strategy. Defaults to "selfhosted".
+                    type: string
+                  quotaPerUser:
+                    description: Per-user mailbox storage quota (e.g. "5Gi").
+                    type: string
+                  rateLimit:
+                    description: Outbound email rate limit (e.g. "100/h").
+                    type: string
+                  smtpCredentialsSecret:
+                    description: 'Name of a Secret in the kernel namespace containing
+                      SMTP relay credentials. Required when mode=external.
+
+                      '
+                    type: string
+                type: object
+              quotas:
+                description: Resource consumption limits for this tenant.
+                properties:
+                  cpu:
+                    description: Total CPU request limit (e.g. "8").
+                    type: string
+                  maxApps:
+                    description: Maximum number of apps this tenant may install.
+                    type: integer
+                  memory:
+                    description: Total memory request limit (e.g. "16Gi").
+                    type: string
+                  storage:
+                    description: Total storage quota (e.g. "200Gi").
+                    type: string
+                type: object
+              resourceRefs:
+                items:
+                  properties:
+                    apiVersion:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              writeConnectionSecretToRef:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+            required:
+            - displayName
+            - adminEmail
+            - kernelDomain
+            type: object
+          status:
+            properties:
+              claimConditionTypes:
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              conditions:
+                description: Conditions of the resource.
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      type: integer
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              connectionDetails:
+                properties:
+                  lastPublishedTime:
+                    format: date-time
+                    type: string
+                type: object
+              namespace:
+                description: Resolved tenant namespace name.
+                type: string
+              phase:
+                description: Overall lifecycle phase (Provisioning, Ready, Degraded).
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+
