@@ -1,0 +1,56 @@
+---
+# Crossplane platform resources: XRDs and Compositions.
+#
+# These are cluster-scoped resources deployed directly from the gentian-os
+# repository (no Helm, no environment matrix — they are environment-agnostic).
+# Previously applied manually via install.sh; now managed by ArgoCD so that
+# changes committed to develop are automatically deployed to the cluster.
+#
+# Wave 1: after Crossplane control plane (wave 0) and before tenant
+# reconciliation (wave 2).  Providers and ProviderConfigs are NOT included
+# here because they require a bootstrap token written by install.sh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane-xrds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: crossplane/xrds
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crossplane-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane-compositions
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: crossplane/compositions
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crossplane-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
