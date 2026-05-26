@@ -58,6 +58,11 @@ data:
         host: "files.desk.gentian.org"
         tls:
           secretName: "wildcard-tls"
+        annotations:
+          nginx.ingress.kubernetes.io/configuration-snippet: |
+            more_clear_headers "X-Frame-Options";
+            more_clear_headers "Content-Security-Policy";
+            more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.desk.gentian.org";
 
       debug:
         loglevel: "2"
