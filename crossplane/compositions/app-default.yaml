@@ -11,11 +11,13 @@ spec:
   mode: Pipeline
   pipeline:
 
-    # ── Step 1: Fetch the AppProfile referenced by spec.profileRef.name ──────
-    # function-extra-resources loads the cluster-scoped AppProfile into the
-    # pipeline context so step 2 can read chart refs and valueMapping without
-    # a second API call.
-    - step: fetch-profile
+    # ── Step 1: Fetch the AppProfile + kernel service ConfigMap ──────────────
+    # Both resources are fetched in a single function-extra-resources call so
+    # that they share the same context key
+    # (apiextensions.crossplane.io/extra-resources). Splitting into two
+    # function-extra-resources steps would cause the second call to overwrite
+    # the context key set by the first, losing the fetched AppProfile.
+    - step: fetch-extra-resources
       functionRef:
         name: function-extra-resources
       input:
@@ -34,20 +36,10 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
-
-    # ── Step 1b: Fetch kernel service endpoints ────────────────────────────────
-    # Reads the gentian-kernel-services ConfigMap from gentian-system to make
-    # cluster-specific infrastructure endpoints available for extraValues
-    # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
-    # The ConfigMap is published by the gentian-os Helm chart via kernelServices values.
-    - step: fetch-kernel-services
-      functionRef:
-        name: function-extra-resources
-      input:
-        apiVersion: extra-resources.fn.crossplane.io/v1beta1
-        kind: Input
-        spec:
-          extraResources:
+            # Reads the gentian-kernel-services ConfigMap from gentian-system to make
+            # cluster-specific infrastructure endpoints available for extraValues
+            # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
+            # The ConfigMap is published by the gentian-os Helm chart via kernelServices values.
             - kind: ConfigMap
               into: kernelServices
               apiVersion: v1
