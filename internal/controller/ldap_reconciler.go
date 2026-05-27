@@ -1387,7 +1387,7 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/" \
-		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":[[\"de_DE\",\"%s\"],[\"en_US\",\"%s\"]],\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"%s\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"%s\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
 	echo "portal entry ${ENTRY_CN} created"
 elif [ "${STATUS}" = "200" ]; then
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
