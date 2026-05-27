@@ -1364,7 +1364,7 @@ ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 ENTRY_ENC=$(urlencode "${ENTRY_DN}")
 LINK="https://%s.%s"
 LOGO="%s"
-USERS_GRP_DN="cn=users_${TENANT_NAME},${OU_POS}"
+USERS_GRP_DN="cn=Domain Users,cn=groups,${UDM_LDAP_BASE}"
 CAT_DN="cn=od.applications,cn=category,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 CAT_ENC=$(urlencode "${CAT_DN}")
 
