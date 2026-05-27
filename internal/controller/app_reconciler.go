@@ -295,6 +295,7 @@ func (r *TenantReconciler) ensureAppClaim(
 		patch.SetGroupVersionKind(appClaimGVK)
 		patch.SetName(claimName)
 		patch.SetNamespace(nsName)
+		patch.SetResourceVersion(obj.GetResourceVersion())
 		_ = unstructured.SetNestedField(patch.Object, effectiveDomain, "spec", "domain")
 		if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
 			return false, fmt.Errorf("patch App claim %s domain: %w", claimName, err)
@@ -312,6 +313,7 @@ func (r *TenantReconciler) ensureAppClaim(
 			patch.SetGroupVersionKind(appClaimGVK)
 			patch.SetName(claimName)
 			patch.SetNamespace(nsName)
+			patch.SetResourceVersion(obj.GetResourceVersion())
 			_ = unstructured.SetNestedField(patch.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
 			if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
 				return false, fmt.Errorf("patch App claim %s compositionRef: %w", claimName, err)

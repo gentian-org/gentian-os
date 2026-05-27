@@ -91,7 +91,9 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client-id")) }}
             {{- end }}
             {{- if $vm.oidc.clientSecretKey }}
-            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $oidcPath "property" "client-secret")) }}
+            {{- $csPath := default $oidcPath $vm.oidc.clientSecretOpenbaoPath }}
+            {{- $csProp := default "client-secret" $vm.oidc.clientSecretOpenbaoProperty }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $csPath "property" $csProp)) }}
             {{- end }}
             {{- end }}
 
@@ -123,10 +125,10 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "s3-bucket"     "remoteRef" (dict "key" $s3Path "property" "bucket")) }}
             {{- end }}
             {{- if $vm.s3.accessKeyKey }}
-            {{- $esData = append $esData (dict "secretKey" "s3-access-key" "remoteRef" (dict "key" $s3Path "property" "access_key")) }}
+            {{- $esData = append $esData (dict "secretKey" "s3-access-key" "remoteRef" (dict "key" $s3Path "property" "access-key")) }}
             {{- end }}
             {{- if $vm.s3.secretKeyKey }}
-            {{- $esData = append $esData (dict "secretKey" "s3-secret-key" "remoteRef" (dict "key" $s3Path "property" "secret_key")) }}
+            {{- $esData = append $esData (dict "secretKey" "s3-secret-key" "remoteRef" (dict "key" $s3Path "property" "secret-key")) }}
             {{- end }}
             {{- if $vm.s3.regionKey }}
             {{- $esData = append $esData (dict "secretKey" "s3-region"     "remoteRef" (dict "key" $s3Path "property" "region")) }}
@@ -158,13 +160,13 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "ldap-port"          "remoteRef" (dict "key" $ldapPath "property" "port")) }}
             {{- end }}
             {{- if $vm.ldap.baseDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base_dn")) }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base-dn")) }}
             {{- end }}
             {{- if $vm.ldap.bindDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind_dn")) }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind-dn")) }}
             {{- end }}
             {{- if $vm.ldap.bindPasswordKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind_password")) }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind-password")) }}
             {{- end }}
             {{- end }}
 
