@@ -209,6 +209,13 @@ keycloak:
   startupProbe:
     failureThreshold: 30
     periodSeconds: 30
+  theme:
+    colors:
+      primary: "#262696"
+      primary15: "#ECECF7"
+    texts:
+      productName: "Gentian"
+    univentionCustomTheme: "https://portal.desk.gentian.org/css/keycloak-theme.css"
   keycloak:
     features:
       enabled:
