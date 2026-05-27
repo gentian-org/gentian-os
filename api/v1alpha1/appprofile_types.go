@@ -85,6 +85,72 @@ type AppProfileSpec struct {
 	// When unset, only dedicated mode is available.
 	// +optional
 	Isolation *AppIsolation `json:"isolation,omitempty"`
+
+	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
+	// portal when deployed for a tenant in dedicated mode. Each tile creates a
+	// UDM portal entry under swp.{tile.name}_{tenantName}.
+	// Requires ingress.subDomain to be set (used as the tile base URL).
+	// When empty no per-tenant portal entries are created.
+	// +optional
+	PortalTiles []PortalTileSpec `json:"portalTiles,omitempty"`
+}
+
+// PortalLinkTarget controls how the portal opens a tile link.
+// +kubebuilder:validation:Enum=newwindow;samewindow;embedded
+type PortalLinkTarget string
+
+const (
+	// PortalLinkTargetNewWindow opens the link in a new browser tab (default).
+	PortalLinkTargetNewWindow PortalLinkTarget = "newwindow"
+	// PortalLinkTargetSameWindow replaces the current page with the link target.
+	PortalLinkTargetSameWindow PortalLinkTarget = "samewindow"
+	// PortalLinkTargetEmbedded opens the link inside the gentian-ui window manager.
+	PortalLinkTargetEmbedded PortalLinkTarget = "embedded"
+)
+
+// PortalTileSpec defines a single tile this app contributes to the portal when
+// deployed for a tenant in dedicated mode.
+type PortalTileSpec struct {
+	// Name is the unique tile identifier, forming the portal entry CN:
+	// swp.{name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
+	Name string `json:"name"`
+
+	// DisplayName is the localized label shown in the portal.
+	// Locale keys follow the UDM convention (e.g., "de_DE", "en_US").
+	// At least one entry is required.
+	// +kubebuilder:validation:Required
+	DisplayName map[string]string `json:"displayName"`
+
+	// LinkSuffix is appended to the app's base URL
+	// (https://{ingress.subDomain}.{tenantDomain}) to deep-link into a sub-app.
+	// Example: "#app=io.ox/mail". Defaults to empty (root URL).
+	// +optional
+	LinkSuffix string `json:"linkSuffix,omitempty"`
+
+	// LinkTarget controls how the portal opens the tile.
+	// newwindow opens in a new browser tab (default).
+	// embedded opens inside the gentian-ui window manager (iframe).
+	// +optional
+	// +kubebuilder:default=newwindow
+	// +kubebuilder:validation:Enum=newwindow;samewindow;embedded
+	LinkTarget PortalLinkTarget `json:"linkTarget,omitempty"`
+
+	// AllowedGroup is the LDAP CN of the group whose members can see this tile.
+	// Defaults to "Domain Users" (all authenticated portal users).
+	// Use managed-by-attribute-{Capability} groups (e.g., "managed-by-attribute-Groupware")
+	// to restrict to users with a specific provisioned capability.
+	// +optional
+	// +kubebuilder:default="Domain Users"
+	AllowedGroup string `json:"allowedGroup,omitempty"`
+
+	// Logo is an optional per-tile icon override. Must be a data URI
+	// (data:image/svg+xml;base64,...). Falls back to the AppProfile logo.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	Logo string `json:"logo,omitempty"`
 }
 
 // AppIsolation declares the deployment mode capabilities for an application.

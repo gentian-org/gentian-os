@@ -188,19 +188,26 @@ func (r *TenantReconciler) collectLDAPApps(ctx context.Context, tenant *gentiano
 	return ldapApps, nil
 }
 
-// dedicatedPortalApp holds information about a dedicated app that needs a
-// per-tenant UDM portal entry to direct users to the correct per-tenant URL.
+// dedicatedPortalApp holds the resolved parameters for a single portal tile
+// that a dedicated-mode app contributes to the tenant's Nubus/gentian-ui portal.
+// Each PortalTileSpec in an AppProfile produces one dedicatedPortalApp.
 type dedicatedPortalApp struct {
-	AppName    string
-	SubDomain  string
-	PortalName string
-	Logo       string
+	// AppName is the tile name (= portal entry CN suffix: swp.{AppName}_{tenant}).
+	AppName string
+	// ProfileName is the AppProfile name; used as the appLabel on the Job.
+	ProfileName string
+	SubDomain      string
+	LinkSuffix     string
+	DisplayNameDE  string
+	DisplayNameEN  string
+	LinkTarget     string
+	AllowedGroupCN string // LDAP CN resolved to full DN in the shell script
+	Logo           string // base64-encoded SVG without the data URI prefix
 }
 
-// collectDedicatedPortalApps returns the dedicated apps in a tenant that declare
-// a central-navigation integration with provider nubus and expose an ingress
-// subDomain. These apps need a per-tenant UDM portal entry so users land on the
-// correct per-tenant URL rather than the shared kernel portal tile.
+// collectDedicatedPortalApps returns one dedicatedPortalApp per PortalTileSpec
+// across all dedicated-mode apps in the tenant that declare portal tiles and
+// have an ingress.subDomain (needed to form the tile base URL).
 func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]dedicatedPortalApp, error) {
 	var result []dedicatedPortalApp
 	for _, app := range tenant.Spec.Apps {
@@ -214,30 +221,50 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 			}
 			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
+		if len(profile.Spec.PortalTiles) == 0 {
+			continue
+		}
 		if profile.Spec.Ingress == nil || profile.Spec.Ingress.SubDomain == "" {
 			continue
 		}
-		hasCentralNav := false
-		for _, integration := range profile.Spec.OptionalIntegrations {
-			if integration.Contract == "central-navigation" && integration.Provider == "nubus" {
-				hasCentralNav = true
-				break
+		for _, tile := range profile.Spec.PortalTiles {
+			allowedGroupCN := tile.AllowedGroup
+			if allowedGroupCN == "" {
+				allowedGroupCN = "Domain Users"
 			}
+			linkTarget := string(tile.LinkTarget)
+			if linkTarget == "" {
+				linkTarget = "newwindow"
+			}
+			deDE := tile.DisplayName["de_DE"]
+			enUS := tile.DisplayName["en_US"]
+			if enUS == "" {
+				enUS = deDE
+			}
+			if deDE == "" {
+				deDE = enUS
+			}
+			tileLogo := tile.Logo
+			if tileLogo == "" {
+				tileLogo = profile.Spec.Logo
+			}
+			result = append(result, dedicatedPortalApp{
+				AppName:        tile.Name,
+				ProfileName:    app.Profile,
+				SubDomain:      profile.Spec.Ingress.SubDomain,
+				LinkSuffix:     tile.LinkSuffix,
+				DisplayNameDE:  deDE,
+				DisplayNameEN:  enUS,
+				LinkTarget:     linkTarget,
+				AllowedGroupCN: allowedGroupCN,
+				Logo:           strings.TrimPrefix(tileLogo, "data:image/svg+xml;base64,"),
+			})
 		}
-		if !hasCentralNav {
-			continue
-		}
-		result = append(result, dedicatedPortalApp{
-			AppName:    app.Profile,
-			SubDomain:  profile.Spec.Ingress.SubDomain,
-			PortalName: profile.Spec.DisplayName,
-			Logo:       profile.Spec.Logo,
-		})
 	}
 	return result, nil
 }
 
-// ensurePortalEntryJob creates the per-tenant portal entry UDM Job for one app.
+// ensurePortalEntryJob creates the per-tenant portal entry UDM Job for one tile.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicatedPortalApp) (bool, error) {
 	jobName := portalEntryJobName(tenant.Name, pa.AppName)
@@ -245,7 +272,7 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		tenantDomain := tenant.EffectiveDomain(r.KernelDomain)
-		return false, r.Create(ctx, makePortalEntryJob(tenant, ouDN, pa.AppName, pa.SubDomain, tenantDomain, pa.PortalName, pa.Logo))
+		return false, r.Create(ctx, makePortalEntryJob(tenant, ouDN, pa, tenantDomain))
 	}
 	if err != nil {
 		return false, err
@@ -647,16 +674,16 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 	}
 }
 
-func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomain, tenantDomain, portalName, logo string) *batchv1.Job {
+func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicatedPortalApp, tenantDomain string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      portalEntryJobName(tenant.Name, appName),
+			Name:      portalEntryJobName(tenant.Name, pa.AppName),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
-				appLabel:       appName,
+				appLabel:       pa.ProfileName,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -665,7 +692,11 @@ func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomai
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						udmContainer("provision-portal-entry", buildPortalEntryScript(ouDN, tenant.Name, appName, subDomain, tenantDomain, portalName, strings.TrimPrefix(logo, "data:image/svg+xml;base64,"))),
+						udmContainer("provision-portal-entry", buildPortalEntryScript(
+							ouDN, tenant.Name, pa.AppName, pa.SubDomain, tenantDomain,
+							pa.DisplayNameDE, pa.DisplayNameEN,
+							pa.LinkSuffix, pa.LinkTarget, pa.AllowedGroupCN, pa.Logo,
+						)),
 					},
 				},
 			},
@@ -1338,33 +1369,37 @@ func portalEntryDeleteJobName(tenantName, appName string) string {
 
 // buildPortalEntryScript returns a shell script that idempotently creates (or
 // reconciles) a per-tenant UDM portal entry and adds it to the od.applications
-// portal category. The entry gives dedicated-app tenants a portal tile that
-// points to their own URL instead of the shared kernel portal tile.
+// portal category. Each AppProfile PortalTileSpec produces one entry.
 //
 // Parameters (in fmt.Sprintf order):
-//  1. ouDN         — tenant OU DN (shell-interpolatable, e.g. "ou=gtn-demo-2,${UDM_LDAP_BASE}")
+//  1. ouDN         — tenant OU DN (shell-interpolatable)
 //  2. tenantName   — literal tenant name
-//  3. appName      — literal app/profile name
-//  4. subDomain    — ingress subdomain (e.g. "chat")
-//  5. tenantDomain — full tenant domain (e.g. "gtn-demo-2.desk.gentian.org")
-//  6. portalName   — display name for the portal tile (de_DE and en_US)
-//  7. portalName   — repeated for the second language entry
-//  8. logo         — raw base64 string (data URI prefix stripped) from AppProfile.spec.logo;
-//     written to the UDM icon field; may be empty (portal renders a placeholder)
-func buildPortalEntryScript(ouDN, tenantName, appName, subDomain, tenantDomain, portalName, logo string) string {
+//  3. tileName     — tile name; forms entry CN: swp.{tileName}_{tenantName}
+//  4. subDomain    — ingress subdomain (e.g. "webmail")
+//  5. tenantDomain — full tenant domain (e.g. "gtn-demo.desk.gentian.org")
+//  6. displayNameDE — de_DE display label
+//  7. displayNameEN — en_US display label
+//  8. linkSuffix   — appended to base URL for deep-linking (e.g. "#app=io.ox/mail")
+//  9. linkTarget   — UDM linkTarget value: newwindow|samewindow|embedded
+// 10. allowedGroupCN — LDAP CN of the group (e.g. "Domain Users",
+//     "managed-by-attribute-Groupware"); full DN resolved at runtime via UDM_LDAP_BASE
+// 11. logo         — raw base64 string (data URI prefix stripped); may be empty
+func buildPortalEntryScript(ouDN, tenantName, tileName, subDomain, tenantDomain, displayNameDE, displayNameEN, linkSuffix, linkTarget, allowedGroupCN, logo string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
 TENANT_NAME="%s"
-APP_NAME="%s"
-ENTRY_CN="swp.${APP_NAME}_${TENANT_NAME}"
+TILE_NAME="%s"
+ENTRY_CN="swp.${TILE_NAME}_${TENANT_NAME}"
 ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 ENTRY_ENC=$(urlencode "${ENTRY_DN}")
-LINK="https://%s.%s"
+LINK="https://%s.%s%s"
+LINK_TARGET="%s"
+USERS_GRP_CN="%s"
+USERS_GRP_DN="cn=${USERS_GRP_CN},cn=groups,${UDM_LDAP_BASE}"
 LOGO="%s"
-USERS_GRP_DN="cn=Domain Users,cn=groups,${UDM_LDAP_BASE}"
 CAT_DN="cn=od.applications,cn=category,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 CAT_ENC=$(urlencode "${CAT_DN}")
 
@@ -1377,15 +1412,15 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/" \
-		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"description\":{\"de_DE\":\"\",\"en_US\":\"\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"description\":{\"de_DE\":\"\",\"en_US\":\"\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"linkTarget\":\"${LINK_TARGET}\",\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
 	echo "portal entry ${ENTRY_CN} created"
 elif [ "${STATUS}" = "200" ]; then
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
-		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"icon\":\"${LOGO}\"}}"
-	echo "portal entry ${ENTRY_CN} link and logo reconciled"
+		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"linkTarget\":\"${LINK_TARGET}\",\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"icon\":\"${LOGO}\"}}"
+	echo "portal entry ${ENTRY_CN} link, linkTarget and allowedGroups reconciled"
 else
 	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
 	exit 1
@@ -1411,7 +1446,9 @@ else
 		-d "{\"properties\":{\"entries\":${NEW_ENTRIES}}}"
 	echo "category od.applications: added ${ENTRY_DN}"
 fi`,
-		ouDN, tenantName, appName, subDomain, tenantDomain, logo, portalName, portalName)
+		ouDN, tenantName, tileName, subDomain, tenantDomain, linkSuffix,
+		linkTarget, allowedGroupCN, logo,
+		displayNameDE, displayNameEN)
 }
 
 // buildPortalEntryDeleteScript returns a shell script that removes a per-tenant
