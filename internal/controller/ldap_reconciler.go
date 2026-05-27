@@ -194,6 +194,7 @@ type dedicatedPortalApp struct {
 	AppName    string
 	SubDomain  string
 	PortalName string
+	Logo       string
 }
 
 // collectDedicatedPortalApps returns the dedicated apps in a tenant that declare
@@ -230,6 +231,7 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 			AppName:    app.Profile,
 			SubDomain:  profile.Spec.Ingress.SubDomain,
 			PortalName: profile.Spec.DisplayName,
+			Logo:       profile.Spec.Logo,
 		})
 	}
 	return result, nil
@@ -243,7 +245,7 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		tenantDomain := tenant.EffectiveDomain(r.KernelDomain)
-		return false, r.Create(ctx, makePortalEntryJob(tenant, ouDN, pa.AppName, pa.SubDomain, tenantDomain, pa.PortalName))
+		return false, r.Create(ctx, makePortalEntryJob(tenant, ouDN, pa.AppName, pa.SubDomain, tenantDomain, pa.PortalName, pa.Logo))
 	}
 	if err != nil {
 		return false, err
@@ -645,7 +647,7 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 	}
 }
 
-func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomain, tenantDomain, portalName string) *batchv1.Job {
+func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomain, tenantDomain, portalName, logo string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -663,7 +665,7 @@ func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomai
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						udmContainer("provision-portal-entry", buildPortalEntryScript(ouDN, tenant.Name, appName, subDomain, tenantDomain, portalName, portalEntryIcon(appName))),
+						udmContainer("provision-portal-entry", buildPortalEntryScript(ouDN, tenant.Name, appName, subDomain, tenantDomain, portalName, logo)),
 					},
 				},
 			},
@@ -1334,20 +1336,6 @@ func portalEntryDeleteJobName(tenantName, appName string) string {
 
 // --- Portal entry scripts ----------------------------------------------------
 
-// realtimeCollaborationSVGIcon is the base64-encoded SVG icon for chat / Element
-// portal tiles. Sourced from the nubus Helm values (portal.icons.realtimeCollaboration).
-const realtimeCollaborationSVGIcon = "PHN2ZyB3aWR0aD0iMTExIiBoZWlnaHQ9IjExMSIgdmlld0JveD0iMCAwIDExMSAxMTEiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHg9IjAuNSIgeT0iMC41IiB3aWR0aD0iMTEwIiBoZWlnaHQ9IjExMCIgcng9IjIwIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNNTguNjExNSA0Ny43NTIxQzYyLjkxMDUgNDcuNzUyMSA2Ni40MDY5IDQ0LjI2NjcgNjYuNDA2OSAzOS45NTY4VjMyLjE2MTRDNjYuNDA2OSAyNy44NjI0IDYyLjkyMTUgMjQuMzY2MSA1OC42MTE1IDI0LjM2NjFIMjcuNDQxMkMyMy4xNDIyIDI0LjM2NjEgMTkuNjQ1OSAyNy44NTE0IDE5LjY0NTkgMzIuMTYxNFY2My4zMzE3TDM1LjIyNTUgNDcuNzUyMUg1OC42MDA1SDU4LjYxMTVaIiBmaWxsPSIjMzQxMjkxIi8+CjxwYXRoIGQ9Ik04My41NDc4IDU1LjU0NzZINTIuMzc3NUM0OC4wNzg1IDU1LjU0NzYgNDQuNTgyMiA1OS4wMzMgNDQuNTgyMiA2My4zNDI5VjcxLjEzODNDNDQuNTgyMiA3NS40MzcyIDQ4LjA2NzUgNzguOTMzNiA1Mi4zNzc1IDc4LjkzMzZINzUuNzUyNUw5MS4zMzIxIDk0LjUxMzNWNjMuMzQyOUM5MS4zMzIxIDU5LjA0NCA4Ny44NDY4IDU1LjU0NzYgODMuNTM2OCA1NS41NDc2SDgzLjU0NzhaIiBmaWxsPSIjNTcxRUZBIi8+Cjwvc3ZnPgo="
-
-// portalEntryIcon returns the base64-encoded SVG icon for a portal tile.
-// Known app icons are returned directly; unrecognised apps return an empty string
-// which causes UDM to display a placeholder icon.
-func portalEntryIcon(appName string) string {
-	if appName == "element" {
-		return realtimeCollaborationSVGIcon
-	}
-	return ""
-}
-
 // buildPortalEntryScript returns a shell script that idempotently creates (or
 // reconciles) a per-tenant UDM portal entry and adds it to the od.applications
 // portal category. The entry gives dedicated-app tenants a portal tile that
@@ -1361,8 +1349,9 @@ func portalEntryIcon(appName string) string {
 //  5. tenantDomain — full tenant domain (e.g. "gtn-demo-2.desk.gentian.org")
 //  6. portalName   — display name for the portal tile (de_DE and en_US)
 //  7. portalName   — repeated for the second language entry
-//  8. icon         — base64-encoded SVG icon (may be empty)
-func buildPortalEntryScript(ouDN, tenantName, appName, subDomain, tenantDomain, portalName, icon string) string {
+//  8. logo         — data URI (data:image/svg+xml;base64,...) from AppProfile.spec.logo
+//                    written to pathToLogo; may be empty (portal renders a placeholder)
+func buildPortalEntryScript(ouDN, tenantName, appName, subDomain, tenantDomain, portalName, logo string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
@@ -1374,6 +1363,7 @@ ENTRY_CN="swp.${APP_NAME}_${TENANT_NAME}"
 ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 ENTRY_ENC=$(urlencode "${ENTRY_DN}")
 LINK="https://%s.%s"
+LOGO="%s"
 USERS_GRP_DN="cn=users_${TENANT_NAME},${OU_POS}"
 CAT_DN="cn=od.applications,cn=category,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 CAT_ENC=$(urlencode "${CAT_DN}")
@@ -1387,15 +1377,15 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/" \
-		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"%s\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"pathToLogo\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
 	echo "portal entry ${ENTRY_CN} created"
 elif [ "${STATUS}" = "200" ]; then
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
-		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"]}}"
-	echo "portal entry ${ENTRY_CN} link reconciled to ${LINK}"
+		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"pathToLogo\":\"${LOGO}\"}}"
+	echo "portal entry ${ENTRY_CN} link and logo reconciled"
 else
 	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
 	exit 1
@@ -1421,7 +1411,7 @@ else
 		-d "{\"properties\":{\"entries\":${NEW_ENTRIES}}}"
 	echo "category od.applications: added ${ENTRY_DN}"
 fi`,
-		ouDN, tenantName, appName, subDomain, tenantDomain, portalName, portalName, icon)
+		ouDN, tenantName, appName, subDomain, tenantDomain, logo, portalName, portalName)
 }
 
 // buildPortalEntryDeleteScript returns a shell script that removes a per-tenant

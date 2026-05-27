@@ -17,6 +17,14 @@ type AppProfileSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
+	// Logo is the application icon used in the Gentian portal. It must be a
+	// data URI (data:image/svg+xml;base64,...) containing a base64-encoded SVG.
+	// The LDAP reconciler writes this value to the portal entry's pathToLogo
+	// attribute so the portal frontend can render it directly as an <img src>.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	Logo string `json:"logo,omitempty"`
+
 	// KernelRequirements declares which kernel services this app requires.
 	// +optional
 	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
