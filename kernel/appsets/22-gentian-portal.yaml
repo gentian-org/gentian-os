@@ -36,6 +36,8 @@ spec:
           - list:
               elements:
                 - chart: portal-frontend
+                - chart: base-router
+                - chart: gentian-login
   template:
     metadata:
       name: "gentian-portal-{{.chart}}-{{.env}}"

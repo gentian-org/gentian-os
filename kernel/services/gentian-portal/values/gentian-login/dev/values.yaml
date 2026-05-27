@@ -1,0 +1,5 @@
+# =============================================================================
+# gentian-ui gentian-login — dev environment overrides
+# =============================================================================
+# No dev-specific overrides needed at this time.
+# The login page is stateless; all env-specific settings live in _base.yaml.
