@@ -195,7 +195,7 @@ type dedicatedPortalApp struct {
 	// AppName is the tile name (= portal entry CN suffix: swp.{AppName}_{tenant}).
 	AppName string
 	// ProfileName is the AppProfile name; used as the appLabel on the Job.
-	ProfileName string
+	ProfileName    string
 	SubDomain      string
 	LinkSuffix     string
 	DisplayNameDE  string
@@ -1381,9 +1381,9 @@ func portalEntryDeleteJobName(tenantName, appName string) string {
 //  7. displayNameEN — en_US display label
 //  8. linkSuffix   — appended to base URL for deep-linking (e.g. "#app=io.ox/mail")
 //  9. linkTarget   — UDM linkTarget value: newwindow|samewindow|embedded
-// 10. allowedGroupCN — LDAP CN of the group (e.g. "Domain Users",
+//  10. allowedGroupCN — LDAP CN of the group (e.g. "Domain Users",
 //     "managed-by-attribute-Groupware"); full DN resolved at runtime via UDM_LDAP_BASE
-// 11. logo         — raw base64 string (data URI prefix stripped); may be empty
+//  11. logo         — raw base64 string (data URI prefix stripped); may be empty
 func buildPortalEntryScript(ouDN, tenantName, tileName, subDomain, tenantDomain, displayNameDE, displayNameEN, linkSuffix, linkTarget, allowedGroupCN, logo string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }

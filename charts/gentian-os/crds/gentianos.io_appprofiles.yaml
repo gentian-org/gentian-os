@@ -462,6 +462,74 @@ spec:
                   - contract
                   type: object
                 type: array
+              portalTiles:
+                description: |-
+                  PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
+                  portal when deployed for a tenant in dedicated mode. Each tile creates a
+                  UDM portal entry under swp.{tile.name}_{tenantName}.
+                  Requires ingress.subDomain to be set (used as the tile base URL).
+                  When empty no per-tenant portal entries are created.
+                items:
+                  description: |-
+                    PortalTileSpec defines a single tile this app contributes to the portal when
+                    deployed for a tenant in dedicated mode.
+                  properties:
+                    allowedGroup:
+                      default: Domain Users
+                      description: |-
+                        AllowedGroup is the LDAP CN of the group whose members can see this tile.
+                        Defaults to "Domain Users" (all authenticated portal users).
+                        Use managed-by-attribute-{Capability} groups (e.g., "managed-by-attribute-Groupware")
+                        to restrict to users with a specific provisioned capability.
+                      type: string
+                    displayName:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        DisplayName is the localized label shown in the portal.
+                        Locale keys follow the UDM convention (e.g., "de_DE", "en_US").
+                        At least one entry is required.
+                      type: object
+                    linkSuffix:
+                      description: |-
+                        LinkSuffix is appended to the app's base URL
+                        (https://{ingress.subDomain}.{tenantDomain}) to deep-link into a sub-app.
+                        Example: "#app=io.ox/mail". Defaults to empty (root URL).
+                      type: string
+                    linkTarget:
+                      allOf:
+                      - enum:
+                        - newwindow
+                        - samewindow
+                        - embedded
+                      - enum:
+                        - newwindow
+                        - samewindow
+                        - embedded
+                      default: newwindow
+                      description: |-
+                        LinkTarget controls how the portal opens the tile.
+                        newwindow opens in a new browser tab (default).
+                        embedded opens inside the gentian-ui window manager (iframe).
+                      type: string
+                    logo:
+                      description: |-
+                        Logo is an optional per-tile icon override. Must be a data URI
+                        (data:image/svg+xml;base64,...). Falls back to the AppProfile logo.
+                      pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                      type: string
+                    name:
+                      description: |-
+                        Name is the unique tile identifier, forming the portal entry CN:
+                        swp.{name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
+                      minLength: 1
+                      pattern: ^[a-z0-9-]+$
+                      type: string
+                  required:
+                  - displayName
+                  - name
+                  type: object
+                type: array
               provides:
                 description: Provides lists the integration contracts this app can
                   act as a provider for.
