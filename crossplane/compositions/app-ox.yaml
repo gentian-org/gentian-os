@@ -147,6 +147,23 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Cache — OX connects as the shared default Redis user (not a
+            per-tenant ACL user) because OX does not prefix its Redis keys with
+            a tenant-scoped namespace. The auth password therefore comes from
+            the kernel Redis admin path, not the per-tenant cache path. */}}
+            {{- if $vm.cache }}
+            {{- $cachePath := printf "gentian-os/tenants/%s/apps/%s/cache" $tenant $app }}
+            {{- if $vm.cache.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "cache-host"     "remoteRef" (dict "key" $cachePath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.cache.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "cache-port"     "remoteRef" (dict "key" $cachePath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.cache.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "cache-password" "remoteRef" (dict "key" "gentian-os/kernel/cache/redis" "property" "auth_password")) }}
+            {{- end }}
+            {{- end }}
+
             {{- if $vm.smtp }}
             {{- $smtpPath := printf "gentian-os/tenants/%s/apps/%s/smtp" $tenant $app }}
             {{- if $vm.smtp.hostKey }}
@@ -284,6 +301,21 @@ spec:
             {{- if $vm.database.passwordKey }}
             {{- $relSet = append $relSet (dict "name" $vm.database.passwordKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.cache }}
+            {{- if $vm.cache.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-host"))) }}
+            {{- end }}
+            {{- if $vm.cache.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-port"))) }}
+            {{- end }}
+            {{- if $vm.cache.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-password"))) }}
             {{- end }}
             {{- end }}
 
