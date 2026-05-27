@@ -506,9 +506,19 @@ type DatabaseValueMapping struct {
 	// NameKey is the Helm value key for the database name.
 	// +optional
 	NameKey string `json:"nameKey,omitempty"`
+	// ReadNameKey is the Helm value key for the read-replica database name.
+	// Useful for charts that expose separate read and write connection endpoints
+	// (e.g. OX App Suite's global.mysql.readDatabase).
+	// +optional
+	ReadNameKey string `json:"readNameKey,omitempty"`
 	// UserKey is the Helm value key for the database user.
 	// +optional
 	UserKey string `json:"userKey,omitempty"`
+	// ReadUserKey is the Helm value key for the read-replica database user.
+	// Useful for charts that expose separate read and write connection endpoints
+	// (e.g. OX App Suite's global.mysql.auth.readUser).
+	// +optional
+	ReadUserKey string `json:"readUserKey,omitempty"`
 	// PasswordKey is the Helm value key for the database password.
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`

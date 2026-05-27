@@ -213,8 +213,16 @@ spec:
             {{- $relSet = append $relSet (dict "name" $vm.database.nameKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
             {{- end }}
+            {{- if $vm.database.readNameKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.readNameKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
+            {{- end }}
             {{- if $vm.database.userKey }}
             {{- $relSet = append $relSet (dict "name" $vm.database.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
+            {{- end }}
+            {{- if $vm.database.readUserKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.readUserKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
             {{- end }}
             {{- if $vm.database.passwordKey }}

@@ -590,6 +590,18 @@ spec:
                         description: PortKey is the Helm value key for the database
                           port.
                         type: string
+                      readNameKey:
+                        description: |-
+                          ReadNameKey is the Helm value key for the read-replica database name.
+                          Useful for charts that expose separate read and write connection endpoints
+                          (e.g. OX App Suite's global.mysql.readDatabase).
+                        type: string
+                      readUserKey:
+                        description: |-
+                          ReadUserKey is the Helm value key for the read-replica database user.
+                          Useful for charts that expose separate read and write connection endpoints
+                          (e.g. OX App Suite's global.mysql.auth.readUser).
+                        type: string
                       userKey:
                         description: UserKey is the Helm value key for the database
                           user.
