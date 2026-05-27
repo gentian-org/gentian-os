@@ -1426,14 +1426,19 @@ else
 	exit 1
 fi
 
-# Add the entry to the od.applications category (idempotent).
-CAT_BODY=$(curl -s --max-time 30 ${CREDS} \
-	-H "Accept: application/json" \
-	"${BASE_URL}/portals/category/${CAT_ENC}" | tr -d '\n')
-CURRENT_ENTRIES=$(printf '%%s' "${CAT_BODY}" | sed -n 's/.*"entries":[[:space:]]*\[\([^]]*\)\].*/\1/p')
-if printf '%%s' "${CURRENT_ENTRIES}" | grep -qF "\"${ENTRY_DN}\""; then
-	echo "category od.applications: ${ENTRY_DN} already in entries"
-else
+# Add the entry to the od.applications category (idempotent, with retry-and-verify
+# to guard against concurrent jobs racing on the same category PATCH).
+MAX_RETRIES=10
+i=0
+while [ $i -lt $MAX_RETRIES ]; do
+	CAT_BODY=$(curl -s --max-time 30 ${CREDS} \
+		-H "Accept: application/json" \
+		"${BASE_URL}/portals/category/${CAT_ENC}" | tr -d '\n')
+	CURRENT_ENTRIES=$(printf '%%s' "${CAT_BODY}" | sed -n 's/.*"entries":[[:space:]]*\[\([^]]*\)\].*/\1/p')
+	if printf '%%s' "${CURRENT_ENTRIES}" | grep -qF "\"${ENTRY_DN}\""; then
+		echo "category od.applications: ${ENTRY_DN} already in entries"
+		break
+	fi
 	if [ -z "${CURRENT_ENTRIES}" ]; then
 		NEW_ENTRIES="[\"${ENTRY_DN}\"]"
 	else
@@ -1444,7 +1449,22 @@ else
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/category/${CAT_ENC}" \
 		-d "{\"properties\":{\"entries\":${NEW_ENTRIES}}}"
-	echo "category od.applications: added ${ENTRY_DN}"
+	# Verify our entry is now present (another concurrent job may have overwritten).
+	sleep 2
+	VERIFY=$(curl -s --max-time 30 ${CREDS} \
+		-H "Accept: application/json" \
+		"${BASE_URL}/portals/category/${CAT_ENC}" | tr -d '\n')
+	if printf '%%s' "${VERIFY}" | grep -qF "\"${ENTRY_DN}\""; then
+		echo "category od.applications: added ${ENTRY_DN}"
+		break
+	fi
+	echo "category od.applications: PATCH race detected, retrying (attempt $((i+1)))..." >&2
+	i=$((i+1))
+	sleep $i
+done
+if [ $i -eq $MAX_RETRIES ]; then
+	echo "category od.applications: failed to add ${ENTRY_DN} after ${MAX_RETRIES} retries" >&2
+	exit 1
 fi`,
 		ouDN, tenantName, tileName, subDomain, tenantDomain, linkSuffix,
 		linkTarget, allowedGroupCN, logo,
