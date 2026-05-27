@@ -1350,7 +1350,7 @@ func portalEntryDeleteJobName(tenantName, appName string) string {
 //  6. portalName   — display name for the portal tile (de_DE and en_US)
 //  7. portalName   — repeated for the second language entry
 //  8. logo         — raw base64 string (data URI prefix stripped) from AppProfile.spec.logo;
-//                    written to the UDM icon field; may be empty (portal renders a placeholder)
+//     written to the UDM icon field; may be empty (portal renders a placeholder)
 func buildPortalEntryScript(ouDN, tenantName, appName, subDomain, tenantDomain, portalName, logo string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
@@ -1377,7 +1377,7 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/" \
-		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"description\":{\"de_DE\":\"\",\"en_US\":\"\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
 	echo "portal entry ${ENTRY_CN} created"
 elif [ "${STATUS}" = "200" ]; then
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
