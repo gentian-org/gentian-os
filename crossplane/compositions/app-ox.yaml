@@ -384,18 +384,18 @@ spec:
                           appsuite.properties: |
                             {{- if $vm.oidc }}
                             {{- if $vm.oidc.issuerKey }}
-                            {{ $vm.oidc.issuerKey }}={{ "{{ .oidc_issuer }}" }}
+                            {{ $vm.oidc.issuerKey }}={{ "{{ index . \"oidc-issuer\" }}" }}
                             {{- end }}
                             {{- if $vm.oidc.clientIdKey }}
-                            {{ $vm.oidc.clientIdKey }}={{ "{{ .oidc_client_id }}" }}
+                            {{ $vm.oidc.clientIdKey }}={{ "{{ index . \"oidc-client-id\" }}" }}
                             {{- end }}
                             {{- if $vm.oidc.clientSecretKey }}
-                            {{ $vm.oidc.clientSecretKey }}={{ "{{ .oidc_client_secret }}" }}
+                            {{ $vm.oidc.clientSecretKey }}={{ "{{ index . \"oidc-client-secret\" }}" }}
                             {{- end }}
                             {{- end }}
                             {{- range $s := $appSecrets }}
                             {{- if and $s.name $s.valuePath }}
-                            {{ $s.valuePath }}={{ printf "{{ .internal_%s }}" ($s.name | replace "-" "_") }}
+                            {{ $s.valuePath }}={{ printf "{{ index . \"internal-%s\" }}" $s.name }}
                             {{- end }}
                             {{- end }}
                     data:
