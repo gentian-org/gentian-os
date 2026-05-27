@@ -211,13 +211,13 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "ldap-port"          "remoteRef" (dict "key" $ldapPath "property" "port")) }}
             {{- end }}
             {{- if $vm.ldap.baseDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base_dn")) }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base-dn")) }}
             {{- end }}
             {{- if $vm.ldap.bindDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind_dn")) }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind-dn")) }}
             {{- end }}
             {{- if $vm.ldap.bindPasswordKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind_password")) }}
+            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind-password")) }}
             {{- end }}
             {{- end }}
 
