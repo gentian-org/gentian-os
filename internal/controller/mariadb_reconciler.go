@@ -309,16 +309,19 @@ var mariadbSetupScript = "" +
 	"if ! echo \"${DB_USER}\" | grep -qE '^[a-zA-Z0-9_]+$'; then\n" +
 	"  echo \"ERROR: invalid DB_USER '${DB_USER}'\" >&2; exit 1\n" +
 	"fi\n" +
+	"if [ -z \"${DB_PASS:-}\" ]; then\n" +
+	"  echo \"ERROR: DB_PASS must not be empty\" >&2; exit 1\n" +
+	"fi\n" +
 	"MARIADB=\"mariadb -h${MYSQL_HOST} -P${MYSQL_TCP_PORT} -u${MYSQL_ADMIN_USER}\"\n" +
 	"$MARIADB -e \"CREATE DATABASE IF NOT EXISTS ${DB_NAME};\"\n" +
 	"echo \"database ${DB_NAME} ensured\"\n" +
 	"USER_EXISTS=$($MARIADB -N -s -e \"SELECT COUNT(*) FROM mysql.user WHERE User='${DB_USER}' AND Host='%';\")\n" +
 	"if [ \"${USER_EXISTS}\" = \"0\" ]; then\n" +
-	"  DB_PASS=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)\n" +
-	"  $MARIADB -e \"CREATE USER IF NOT EXISTS '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';\"\n" +
+	"  $MARIADB -e \"CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';\"\n" +
 	"  echo \"user ${DB_USER} created\"\n" +
 	"else\n" +
-	"  echo \"user ${DB_USER} already exists\"\n" +
+	"  $MARIADB -e \"ALTER USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';\"\n" +
+	"  echo \"user ${DB_USER} password synced\"\n" +
 	"fi\n" +
 	"$MARIADB -e \"GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;\"\n" +
 	"echo \"privileges granted - done\"\n"
