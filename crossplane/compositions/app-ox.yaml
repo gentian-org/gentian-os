@@ -46,6 +46,18 @@ spec:
                   - key: app.kubernetes.io/managed-by
                     type: Value
                     value: gentian-os-install
+            # gentian-kernel-services carries cluster infrastructure endpoints
+            # (S3_ENDPOINT, MYSQL_HOST, REDIS_HOST) for extraValues substitution.
+            - kind: ConfigMap
+              into: kernelServices
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: kernel-services
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # OX App Suite variant: emits the standard ExternalSecret + Release from
@@ -316,9 +328,20 @@ spec:
             {{- $extraVals := dict }}
             {{- if $pSpec.extraValues }}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+            {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
+            {{- $ksRes := dig "kernelServices" list $extraRes }}
+            {{- $ksCM  := default dict (index $ksRes 0) }}
+            {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
+            {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
+            {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}" $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $raw = $raw | replace "${TENANT_ID}" $tenant }}
+            {{- if $s3Endpoint }}{{ $raw = $raw | replace "${S3_ENDPOINT}" $s3Endpoint }}{{ end }}
+            {{- if $mysqlHost  }}{{ $raw = $raw | replace "${MYSQL_HOST}"  $mysqlHost  }}{{ end }}
+            {{- if $redisHost  }}{{ $raw = $raw | replace "${REDIS_HOST}"  $redisHost  }}{{ end }}
             {{- /* Substitute LDAP connection details from gentian-cluster-config ConfigMap. */}}
             {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
             {{- $ldapServer  := "nubus-dev-ldap-server.gentian-dev.svc.cluster.local" }}
