@@ -665,7 +665,7 @@ func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, subDomai
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						udmContainer("provision-portal-entry", buildPortalEntryScript(ouDN, tenant.Name, appName, subDomain, tenantDomain, portalName, logo)),
+						udmContainer("provision-portal-entry", buildPortalEntryScript(ouDN, tenant.Name, appName, subDomain, tenantDomain, portalName, strings.TrimPrefix(logo, "data:image/svg+xml;base64,"))),
 					},
 				},
 			},
@@ -1349,8 +1349,8 @@ func portalEntryDeleteJobName(tenantName, appName string) string {
 //  5. tenantDomain — full tenant domain (e.g. "gtn-demo-2.desk.gentian.org")
 //  6. portalName   — display name for the portal tile (de_DE and en_US)
 //  7. portalName   — repeated for the second language entry
-//  8. logo         — data URI (data:image/svg+xml;base64,...) from AppProfile.spec.logo
-//                    written to pathToLogo; may be empty (portal renders a placeholder)
+//  8. logo         — raw base64 string (data URI prefix stripped) from AppProfile.spec.logo;
+//                    written to the UDM icon field; may be empty (portal renders a placeholder)
 func buildPortalEntryScript(ouDN, tenantName, appName, subDomain, tenantDomain, portalName, logo string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
@@ -1377,14 +1377,14 @@ if [ "${STATUS}" = "404" ]; then
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/" \
-		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"pathToLogo\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
+		-d "{\"properties\":{\"name\":\"${ENTRY_CN}\",\"displayName\":{\"de_DE\":\"%s\",\"en_US\":\"%s\"},\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"activated\":true,\"anonymous\":false,\"icon\":\"${LOGO}\"},\"position\":\"cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}\"}"
 	echo "portal entry ${ENTRY_CN} created"
 elif [ "${STATUS}" = "200" ]; then
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/portals/entry/${ENTRY_ENC}" \
-		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"pathToLogo\":\"${LOGO}\"}}"
+		-d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]],\"allowedGroups\":[\"${USERS_GRP_DN}\"],\"icon\":\"${LOGO}\"}}"
 	echo "portal entry ${ENTRY_CN} link and logo reconciled"
 else
 	echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
