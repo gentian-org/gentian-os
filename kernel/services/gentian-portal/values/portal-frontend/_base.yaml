@@ -70,8 +70,8 @@ podAnnotations:
 #            and auto-patches this file with the new SHA tag.
 # Update:    docker build -f frontend/Dockerfile.cluster -t ghcr.io/gentian-org/portal-frontend:<sha> ./frontend
 #            docker push ghcr.io/gentian-org/portal-frontend:<sha>
-#            then update tag: "dad4bee9"
+#            then update tag: "f7fd1171"
 image:
   registry: "ghcr.io"
   repository: "gentian-org/portal-frontend"
-  tag: "dad4bee9"
+  tag: "f7fd1171"
