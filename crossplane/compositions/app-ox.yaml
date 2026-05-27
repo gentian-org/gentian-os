@@ -241,11 +241,8 @@ spec:
             {{- $relSet = append $relSet (dict "name" $vm.oidc.clientIdKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
             {{- end }}
-            {{- if $vm.oidc.clientSecretKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientSecretKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
             {{- end }}
-            {{- end }}
+            {{- /* oidc.clientSecretKey uses com\.openexchange\. escaped-dot path – handled via valuesFrom YAML, not set[] */}}
 
             {{- if $vm.database }}
             {{- if $vm.database.hostKey }}
@@ -306,11 +303,8 @@ spec:
             {{- $relSet = append $relSet (dict "name" $vm.ldap.bindDnKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-dn"))) }}
             {{- end }}
-            {{- if $vm.ldap.bindPasswordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindPasswordKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-password"))) }}
             {{- end }}
-            {{- end }}
+            {{- /* ldap.bindPasswordKey uses propertiesFiles[path] bracket notation – handled via valuesFrom YAML, not set[] */}}
 
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
@@ -382,22 +376,23 @@ spec:
                         engineVersion: v2
                         data:
                           appsuite.properties: |
-                            {{- if $vm.oidc }}
-                            {{- if $vm.oidc.issuerKey }}
-                            {{ $vm.oidc.issuerKey }}={{ "{{ index . \"oidc-issuer\" }}" }}
-                            {{- end }}
-                            {{- if $vm.oidc.clientIdKey }}
-                            {{ $vm.oidc.clientIdKey }}={{ "{{ index . \"oidc-client-id\" }}" }}
-                            {{- end }}
-                            {{- if $vm.oidc.clientSecretKey }}
-                            {{ $vm.oidc.clientSecretKey }}={{ "{{ index . \"oidc-client-secret\" }}" }}
-                            {{- end }}
-                            {{- end }}
-                            {{- range $s := $appSecrets }}
-                            {{- if and $s.name $s.valuePath }}
-                            {{ $s.valuePath }}={{ printf "{{ index . \"internal-%s\" }}" $s.name }}
-                            {{- end }}
-                            {{- end }}
+                            appsuite:
+                              core-mw:
+                                {{- if $vm.oidc.clientSecretKey }}
+                                properties:
+                                  com.openexchange.oidc.clientSecret: {{ "{{ index . \"oidc-client-secret\" }}" }}
+                                {{- end }}
+                                {{- if or $vm.ldap.bindPasswordKey $vm.s3.secretKeyKey }}
+                                propertiesFiles:
+                                  {{- if $vm.ldap.bindPasswordKey }}
+                                  /opt/open-xchange/etc/ldapauth.properties:
+                                    bindDNPassword: {{ "{{ index . \"ldap-bind-password\" }}" }}
+                                  {{- end }}
+                                  {{- if $vm.s3.secretKeyKey }}
+                                  /opt/open-xchange/etc/filestore-s3.properties:
+                                    com.openexchange.filestore.s3.ox-filestore-s3.secretKey: {{ "{{ index . \"s3-secret-key\" }}" }}
+                                  {{- end }}
+                                {{- end }}
                     data:
                       {{ toYaml $esData | nindent 22 }}
               providerConfigRef:
