@@ -38,10 +38,14 @@ spec:
             - kind: ConfigMap
               into: clusterConfig
               apiVersion: v1
-              type: Reference
-              ref:
-                name: gentian-cluster-config
-                namespace: crossplane-system
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 1
+                matchLabels:
+                  - key: app.kubernetes.io/managed-by
+                    type: Value
+                    value: gentian-os-install
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # OX App Suite variant: emits the standard ExternalSecret + Release from
