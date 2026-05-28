@@ -1,0 +1,137 @@
+---
+# =============================================================================
+# ldap-federation-patch.yaml — Kernel LDAP federation PostSync hook
+# =============================================================================
+#
+# An ArgoCD PostSync hook Job that idempotently patches the kernel realm's
+# LDAP user federation to use SUBTREE scope with mailPrimaryAddress as the
+# username attribute.
+#
+# WHY A HOOK INSTEAD OF A CROSSPLANE RESOURCE:
+#   The nubus-keycloak-bootstrap creates the ldap-provider federation with a
+#   random UUID on every fresh install.  A Crossplane UserFederation import
+#   requires that UUID in crossplane.io/external-name, which breaks on
+#   reinstall.  This hook discovers the federation by name at runtime, making
+#   the approach fully installation-independent.
+#
+# WHAT IT DOES:
+#   1. Authenticates against Keycloak using the existing keycloak-provider-creds
+#      secret (already in crossplane-system, managed by ESO from OpenBao).
+#   2. Finds ldap-provider in the kernel realm by name (not UUID).
+#   3. Checks if the four target fields already match; exits 0 if so (idempotent).
+#   4. Issues a PUT to update the federation component.
+#
+# TARGET SETTINGS:
+#   usersDn                 dc=swp-ldap,dc=internal     (was cn=users,...)
+#   searchScope             2  (SUBTREE)                (was 1 ONE_LEVEL)
+#   usernameLDAPAttribute   mailPrimaryAddress           (was uid)
+#   customUserSearchFilter  (mailPrimaryAddress=*)       (was (uid=*))
+#
+# EFFECT:
+#   Tenant users in ou=users,ou={tenant},dc=swp-ldap,dc=internal become
+#   visible in the kernel realm, allowing them to authenticate at the shared
+#   portal (portal.desk.gentian.org) using their email address.
+#   Per-tenant UMC is unaffected (uses the tenant realm directly).
+#
+# PERSISTENCE:
+#   - Runs on every ArgoCD sync of keycloak-config-dev.
+#   - Survives Nubus reinstall: the bootstrap recreates the federation with a
+#     new UUID; this hook patches it back to the correct settings automatically.
+#   - BeforeHookCreation policy ensures a fresh Job on each sync.
+# =============================================================================
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kernel-ldap-federation-patch
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: patch
+          image: python:3.12-alpine
+          env:
+            - name: KC_CREDS
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-provider-creds
+                  key: credentials
+          command:
+            - python3
+            - -c
+            - |
+              import json, urllib.request, urllib.parse, os, sys
+
+              creds = json.loads(os.environ["KC_CREDS"])
+              base = creds["url"].rstrip("/")
+
+              # ── Authenticate ──────────────────────────────────────────────
+              data = urllib.parse.urlencode({
+                  "client_id": creds["client_id"],
+                  "grant_type": "password",
+                  "username":   creds["username"],
+                  "password":   creds["password"],
+              }).encode()
+              req = urllib.request.Request(
+                  f"{base}/realms/master/protocol/openid-connect/token", data=data
+              )
+              with urllib.request.urlopen(req) as r:
+                  token = json.load(r)["access_token"]
+
+              auth = {"Authorization": f"Bearer {token}"}
+
+              # ── Find federation by name ────────────────────────────────────
+              req = urllib.request.Request(
+                  f"{base}/admin/realms/kernel/components"
+                  "?type=org.keycloak.storage.UserStorageProvider",
+                  headers=auth,
+              )
+              with urllib.request.urlopen(req) as r:
+                  components = json.load(r)
+
+              federation = next(
+                  (c for c in components if c["name"] == "ldap-provider"), None
+              )
+              if not federation:
+                  print("ERROR: ldap-provider not found in kernel realm", file=sys.stderr)
+                  sys.exit(1)
+
+              cfg = federation["config"]
+              fid = federation["id"]
+
+              # ── Check if already correct (idempotent) ─────────────────────
+              desired = {
+                  "usersDn":               ["dc=swp-ldap,dc=internal"],
+                  "searchScope":           ["2"],
+                  "usernameLDAPAttribute": ["mailPrimaryAddress"],
+                  "customUserSearchFilter":["(mailPrimaryAddress=*)"],
+              }
+              if all(cfg.get(k) == v for k, v in desired.items()):
+                  print(f"ldap-provider ({fid}) already configured correctly, nothing to do.")
+                  sys.exit(0)
+
+              # ── Patch ──────────────────────────────────────────────────────
+              cfg.update(desired)
+              payload = json.dumps(federation).encode()
+              req = urllib.request.Request(
+                  f"{base}/admin/realms/kernel/components/{fid}",
+                  data=payload,
+                  headers={**auth, "Content-Type": "application/json"},
+                  method="PUT",
+              )
+              with urllib.request.urlopen(req):
+                  pass  # 204 No Content
+
+              print(
+                  f"Patched ldap-provider ({fid}): "
+                  "SUBTREE scope, usersDn=dc=swp-ldap,dc=internal, "
+                  "usernameLDAPAttribute=mailPrimaryAddress"
+              )
