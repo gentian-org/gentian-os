@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +39,11 @@ const (
 	conditionLDAPReady  = "LDAPReady"
 	udmProvisionerImage = "curlimages/curl:8.7.1"
 	udmAdminSecret      = "udm-admin"
+
+	// annotationProvisionedPortalTiles tracks which portal tile names have been
+	// provisioned in LDAP for a tenant. Used to detect and clean up stale entries
+	// when apps are removed from a tenant's profile.
+	annotationProvisionedPortalTiles = "gentian.org/provisioned-portal-tiles"
 	ldapRequeueAfter    = 2 * time.Second
 )
 
@@ -146,12 +152,28 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("collect dedicated portal apps: %w", err)
 	}
+	expectedTiles := make(map[string]struct{}, len(portalApps))
+	for _, pa := range portalApps {
+		expectedTiles[pa.AppName] = struct{}{}
+	}
+	// Remove portal entries that were provisioned previously but are no longer expected.
+	staleDone, err := r.deleteStalePortalEntriesForTenant(ctx, tenant, expectedTiles)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("delete stale portal entries: %w", err)
+	}
+	if !staleDone {
+		allDone = false
+	}
 	for _, pa := range portalApps {
 		done, err := r.ensurePortalEntryJob(ctx, tenant, ouDN, pa)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure portal entry Job for app %s: %w", pa.AppName, err)
 		}
-		if !done {
+		if done {
+			if trackErr := r.addProvisionedPortalTile(ctx, tenant, pa.AppName); trackErr != nil {
+				return ctrl.Result{}, trackErr
+			}
+		} else {
 			allDone = false
 		}
 	}
@@ -530,12 +552,122 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 	if err != nil {
 		return fmt.Errorf("collect dedicated portal apps: %w", err)
 	}
+	expectedTiles := make(map[string]struct{}, len(portalApps))
 	for _, pa := range portalApps {
-		if _, err := r.ensurePortalEntryJob(ctx, tenant, ouDN, pa); err != nil {
+		expectedTiles[pa.AppName] = struct{}{}
+	}
+	// Remove portal entries that were provisioned previously but are no longer expected.
+	if _, err := r.deleteStalePortalEntriesForTenant(ctx, tenant, expectedTiles); err != nil {
+		return fmt.Errorf("delete stale portal entries: %w", err)
+	}
+	for _, pa := range portalApps {
+		done, err := r.ensurePortalEntryJob(ctx, tenant, ouDN, pa)
+		if err != nil {
 			return fmt.Errorf("ensure portal entry Job for app %s: %w", pa.AppName, err)
+		}
+		if done {
+			if trackErr := r.addProvisionedPortalTile(ctx, tenant, pa.AppName); trackErr != nil {
+				return trackErr
+			}
 		}
 	}
 	return nil
+}
+
+// --- Portal tile annotation helpers -----------------------------------------
+
+// getProvisionedPortalTiles reads the comma-separated tile names from the
+// gentian.org/provisioned-portal-tiles annotation.
+func getProvisionedPortalTiles(tenant *gentianov1alpha1.Tenant) map[string]struct{} {
+	result := make(map[string]struct{})
+	if tenant.Annotations == nil {
+		return result
+	}
+	for _, name := range strings.Split(tenant.Annotations[annotationProvisionedPortalTiles], ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			result[name] = struct{}{}
+		}
+	}
+	return result
+}
+
+// patchProvisionedPortalTiles persists the updated tile set as a tenant annotation.
+func (r *TenantReconciler) patchProvisionedPortalTiles(ctx context.Context, tenant *gentianov1alpha1.Tenant, tiles map[string]struct{}) error {
+	patch := client.MergeFrom(tenant.DeepCopy())
+	if tenant.Annotations == nil {
+		tenant.Annotations = make(map[string]string)
+	}
+	names := make([]string, 0, len(tiles))
+	for n := range tiles {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		delete(tenant.Annotations, annotationProvisionedPortalTiles)
+	} else {
+		tenant.Annotations[annotationProvisionedPortalTiles] = strings.Join(names, ",")
+	}
+	return client.IgnoreNotFound(r.Patch(ctx, tenant, patch))
+}
+
+// addProvisionedPortalTile marks a tile as provisioned in the tenant annotation.
+// No-op if the tile is already tracked.
+func (r *TenantReconciler) addProvisionedPortalTile(ctx context.Context, tenant *gentianov1alpha1.Tenant, tileName string) error {
+	tiles := getProvisionedPortalTiles(tenant)
+	if _, exists := tiles[tileName]; exists {
+		return nil
+	}
+	tiles[tileName] = struct{}{}
+	return r.patchProvisionedPortalTiles(ctx, tenant, tiles)
+}
+
+// deleteStalePortalEntriesForTenant creates UDM delete Jobs for portal tiles
+// that are tracked in the tenant annotation but are no longer in expectedTiles.
+// Returns true when all stale entries have been cleaned up (delete Jobs
+// completed and the annotation updated). Fire-and-forget for new delete Jobs;
+// returns false to trigger a re-queue until cleanup is complete.
+func (r *TenantReconciler) deleteStalePortalEntriesForTenant(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	expectedTiles map[string]struct{},
+) (bool, error) {
+	provisioned := getProvisionedPortalTiles(tenant)
+	allDone := true
+	for tileName := range provisioned {
+		if _, wanted := expectedTiles[tileName]; wanted {
+			continue
+		}
+		deleteJobName := portalEntryDeleteJobName(tenant.Name, tileName)
+		deleteJob := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, deleteJob)
+		if errors.IsNotFound(err) {
+			_ = r.Create(ctx, makePortalEntryDeleteJob(tenant, tileName))
+			allDone = false
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if jobIsFailed(deleteJob) {
+			prop := metav1.DeletePropagationBackground
+			_ = r.Delete(ctx, deleteJob, &client.DeleteOptions{PropagationPolicy: &prop})
+			allDone = false
+			continue
+		}
+		if !jobIsComplete(deleteJob) {
+			allDone = false
+			continue
+		}
+		// Delete job completed: remove tile from annotation.
+		tiles := getProvisionedPortalTiles(tenant)
+		delete(tiles, tileName)
+		if err := r.patchProvisionedPortalTiles(ctx, tenant, tiles); err != nil {
+			return false, err
+		}
+		ctrl.LoggerFrom(ctx).Info("removed stale portal entry", "tile", tileName, "tenant", tenant.Name)
+	}
+	return allDone, nil
 }
 
 // --- Job constructors --------------------------------------------------------
