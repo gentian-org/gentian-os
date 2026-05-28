@@ -44,7 +44,7 @@ const (
 	// provisioned in LDAP for a tenant. Used to detect and clean up stale entries
 	// when apps are removed from a tenant's profile.
 	annotationProvisionedPortalTiles = "gentian.org/provisioned-portal-tiles"
-	ldapRequeueAfter    = 2 * time.Second
+	ldapRequeueAfter                 = 2 * time.Second
 )
 
 // ensureLDAP provisions per-tenant LDAP organisational units, default groups,
