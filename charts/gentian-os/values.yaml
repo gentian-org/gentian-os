@@ -94,12 +94,12 @@ cloudflare:
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
   apiTokenSecretRef:
     # Name of the Secret containing the API token. Leave empty to disable.
-    # Mirror the cert-manager secret into gentian-system:
-    #   kubectl get secret cloudflare-api-token -n cert-manager -o yaml |
-    #     sed 's/namespace: cert-manager/namespace: gentian-system/' | kubectl apply -f -
     name: ""
     # Key inside the Secret (default: api-token).
     key: "api-token"
+    # If set, an ExternalSecret is created to sync the token from OpenBao at this KV path.
+    # e.g. "gentian-os/kernel/dns/cloudflare"
+    openbaoPath: ""
   # Cloudflare zone ID for the kernel domain.
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
