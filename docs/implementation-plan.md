@@ -999,7 +999,38 @@ kubectl get appcatalogue default \
 
 ---
 
-#### Inc 25 — Contract definitions + App Store CI
+#### Inc 25 — CryptPad AppProfile (collaborative document editing)
+
+**Goal:** Create the `gentian-apps` AppProfile for CryptPad, the end-to-end encrypted real-time collaborative editor.
+
+**Kernel requirements:** Ingress only — CryptPad has no SSO/OIDC, no database, no S3, no LDAP, no SMTP. User accounts are self-contained within the app (encrypted on the client side).
+
+**Actions:**
+- Create `gentian-apps/profiles/cryptpad.yaml`:
+  - Chart: `cryptpad v0.0.21` from `oci://registry.opencode.de/bmi/opendesk/components/supplier/xwiki/charts-mirror`
+  - Image: `registry.opencode.de/bmi/opendesk/components/supplier/xwiki/images-mirror/cryptpad:version-2025.9.0`
+  - `spec.ingress.subDomain: "pad"`, `servicePort: 3000`
+  - `restrictRegistration: true` — closed registration (no public sign-up)
+  - `enableEmbedding: true` — allows embedding in the portal
+  - `fullnameOverride: "cryptpad"` for predictable Service name
+  - `persistence.enabled: false` (client-side encryption; server files are opaque blobs)
+  - Ingress annotation: `nginx.org/websocket-services: "cryptpad"` (required for real-time sync)
+  - CSP `frame-ancestors 'self'` annotation for portal embedding
+  - `reloader.stakater.com/auto: "true"` in podAnnotations
+  - Chart-managed ingress disabled (`ingress.enabled: false` in extraValues)
+  - No `valueMapping` entries (no kernel-provisioned secrets needed)
+- Delete `gentian-os/config/samples/appprofile_cryptpad.yaml` if present
+
+**Test:** `kubectl apply --dry-run=server -f profiles/cryptpad.yaml` passes. CryptPad pod starts; registration page is inaccessible (`restrictRegistration: true`).
+
+**Troubleshooting:**
+- Real-time sync broken → WebSocket not reaching pod. Verify `nginx.org/websocket-services` annotation and that the Ingress controller supports it.
+- Embedding fails in portal → Check CSP `frame-ancestors` annotation on the Ingress.
+- Pod CrashLoopBackOff → Check `fsGroup: 4001` / `runAsUser: 4001` in `podSecurityContext`.
+
+---
+
+#### Inc 26 — Contract definitions + App Store CI
 
 **Goal:** Define the contract schemas that apps reference and set up CI for the `gentian-apps` repo.
 
@@ -1030,9 +1061,10 @@ kubectl get appcatalogue default \
 | 22 | Jitsi AppProfile | `gentian-apps/profiles/jitsi.yaml`, JWT/OIDC wiring. Remove from `gentian-os`. | Small |
 | 23 | OpenProject AppProfile | `gentian-apps/profiles/openproject.yaml`, 6 kernel reqs + Nextcloud integration. Remove from `gentian-os`. | Medium |
 | 24 | XWiki AppProfile | `gentian-apps/profiles/xwiki.yaml`, OIDC+PG+SMTP+LDAP wiring. Remove from `gentian-os`. | Medium |
-| 25 | Contract definitions + CI | `gentian-apps` repo CI, contract schemas, profile validation | Small |
+| 25 | CryptPad AppProfile | `gentian-apps/profiles/cryptpad.yaml`, ingress-only (no SSO/DB/LDAP/SMTP). | Small |
+| 26 | Contract definitions + CI | `gentian-apps` repo CI, contract schemas, profile validation | Small |
 
-Inc 19 (App Store controller) is the foundation — it must be built first. Incs 20–24 (individual app profiles) can be built in parallel after Inc 19. Inc 25 (contracts + CI) can start anytime after Inc 1 (CRDs exist). Each app profile is an independent PR in the `gentian-apps` repo. After Inc 24, `gentian-os/config/samples/` should contain only `integrationbinding_filepicker.yaml` and `tenant_gtn-demo.yaml` — no AppProfile YAMLs.
+Inc 19 (App Store controller) is the foundation — it must be built first. Incs 20–25 (individual app profiles) can be built in parallel after Inc 19. Inc 26 (contracts + CI) can start anytime after Inc 1 (CRDs exist). Each app profile is an independent PR in the `gentian-apps` repo. After Inc 25, `gentian-os/config/samples/` should contain only `integrationbinding_filepicker.yaml` and `tenant_gtn-demo.yaml` — no AppProfile YAMLs.
 
 ---
 
