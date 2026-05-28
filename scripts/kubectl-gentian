@@ -696,6 +696,11 @@ argocd_refresh_await_prune() {
     "argocd.argoproj.io/refresh=normal" --overwrite &>/dev/null || true
 
   # Wait up to 60 s for ArgoCD to sync (prune) or for the tenant to vanish.
+  # We must verify the tenant is gone before treating "Synced" as success:
+  # in the --purge path two commits are pushed (policy change, then undeploy),
+  # so ArgoCD may already be in Synced state from the first commit while still
+  # having the tenant in its desired state.  Exiting on Synced alone would let
+  # the subsequent kubectl-delete trigger a selfHeal re-create.
   local i=0
   while [[ ${i} -lt 60 ]]; do
     if ! kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
@@ -705,7 +710,12 @@ argocd_refresh_await_prune() {
     sync_status="$(kubectl get "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
       -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")"
     if [[ "${sync_status}" == "Synced" ]]; then
-      break  # ArgoCD finished syncing (prune issued).
+      # Only exit early when the tenant is already absent — a Synced status
+      # from a prior commit (e.g. the deletionPolicy=Delete commit in --purge)
+      # still has the tenant in desired state and must not be treated as done.
+      if ! kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
+        break
+      fi
     fi
     sleep 2
     (( i += 2 ))
