@@ -904,39 +904,13 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
 
-  # 3. Configure the Identity Provider Redirector execution in the browser flow
-  #    to automatically redirect to the kernel IdP. The realm-level
-  #    defaultProvider attribute alone is not honoured by all Keycloak versions;
-  #    setting it directly on the execution config is the reliable approach.
-  EXEC_ID=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/authentication/flows/browser/executions" \
-    | grep -o '"id":"[^"]*"[^}]*"providerId":"identity-provider-redirector"' \
-    | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
-  if [ -n "${EXEC_ID}" ]; then
-    # Check if a config already exists on this execution
-    EXISTING_CFG=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/authentication/executions/${EXEC_ID}/config" 2>/dev/null || echo "")
-    if echo "${EXISTING_CFG}" | grep -q '"alias"'; then
-      CFG_ID=$(echo "${EXISTING_CFG}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
-      curl -sf --max-time 30 -X PUT \
-        "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/authentication/config/${CFG_ID}" \
-        -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-        -d "{\"alias\":\"kernel-redirector\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null
-      echo "identity-provider-redirector config updated in realm ${REALM_NAME}"
-    else
-      curl -sf --max-time 30 -X POST \
-        "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/authentication/executions/${EXEC_ID}/config" \
-        -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-        -d "{\"alias\":\"kernel-redirector\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null
-      echo "identity-provider-redirector config created in realm ${REALM_NAME}"
-    fi
-  fi
-  # Also set the realm-level defaultProvider attribute as a belt-and-suspenders fallback.
-  curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{\"attributes\":{\"defaultProvider\":\"kernel\"}}" >/dev/null
-  echo "default provider set to kernel in realm ${REALM_NAME}"
+  # (No defaultProvider is set on the identity-provider-redirector execution.
+  #  Per the Phase B LDAP restructuring design, tenant users including tenant
+  #  admins authenticate via the tenant realm's own LDAP federation directly.
+  #  The kernel LDAP scope is ONE_LEVEL on cn=users,... and does not cover
+  #  tenant user OUs, so setting defaultProvider=kernel would break all tenant
+  #  realm logins. The kernel IdP registered above (step 2) remains available
+  #  for explicit kc_idp_hint=kernel flows but is not the browser flow default.)
 fi
 
 # ── Register UMC portal OIDC client in tenant realm ──────────────────────────
