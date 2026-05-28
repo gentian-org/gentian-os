@@ -26,9 +26,20 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gentian-system   # AppProfile is cluster-scoped; namespace is nominal
+  ignoreDifferences:
+  # ArgoCD adds its own tracking annotation to managed resources after apply.
+  # This annotation is absent from the source YAMLs, which causes a perpetual
+  # OutOfSync loop when client-side apply is used (3-way merge removes it).
+  # Ignoring it here breaks the loop; ServerSideApply=true below avoids it
+  # for resources managed purely via SSA (no last-applied-configuration).
+  - group: gentianos.io
+    kind: AppProfile
+    jsonPointers:
+    - /metadata/annotations/argocd.argoproj.io~1tracking-id
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
     - CreateNamespace=false
+    - ServerSideApply=true
