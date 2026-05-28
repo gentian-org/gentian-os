@@ -32,6 +32,11 @@ metadata:
     crossplane.io/external-name: "kernel/4yXN52HhS76zcV4zCbaquA"
 spec:
   deletionPolicy: Orphan
+  # deleteDefaultMappers is ForceNew in the TF provider.  Setting it here in
+  # initProvider means it is only applied at resource creation time and won't
+  # cause a ForceNew diff when Crossplane imports the pre-existing federation.
+  initProvider:
+    deleteDefaultMappers: false
   forProvider:
     realmId: kernel
     name: ldap-provider
