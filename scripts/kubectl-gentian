@@ -269,18 +269,26 @@ print_tenant_admin_login_instructions() {
     id_base="https://id.<KERNEL_DOMAIN>"
   fi
 
+  local portal_base
+  if [[ -n "${domain}" ]]; then
+    portal_base="https://portal.${domain}"
+  else
+    portal_base="https://portal.<TENANT_DOMAIN>"
+  fi
+
   echo ""
-  echo "─── Tenant Admin Credentials ────────────────────────────────────────────────"
+  echo "─── Tenant Portal Admin (Nubus UMC) ─────────────────────────────────────────"
+  echo "  This LDAP-backed user can log into the Nubus portal and provision / manage"
+  echo "  end users for the '${tenant_name}' tenant via the UMC user/group tiles."
+  echo "  Portal / UMC : ${portal_base}/univention/management/"
+  echo "  Username     : ${username}"
+  echo "  Password     : ${password}"
+  echo ""
+  echo "─── Tenant Keycloak Realm Admin (secondary) ─────────────────────────────────"
+  echo "  Same user manages OIDC clients and realm settings in Keycloak."
+  echo "  Keycloak Admin Console: ${id_base}/admin/${realm}/console"
   echo "  Username : ${username}"
-  echo "  Password : ${password}"
-  echo ""
-  echo "─── UMC Admin Console ───────────────────────────────────────────────────────"
-  echo "  Manage users, groups, and settings for tenant '${tenant_name}'."
-  echo "  URL: https://${tenant_name}.${domain}/univention/management/"
-  echo ""
-  echo "─── Keycloak Realm Admin Console ────────────────────────────────────────────"
-  echo "  Manage OIDC clients, realm settings, and users for '${tenant_name}'."
-  echo "  URL: ${id_base}/admin/${realm}/console"
+  echo "  Password : ${password}  (same credentials)"
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 
