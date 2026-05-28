@@ -126,6 +126,18 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		if err := r.ensureTenantWildcardCertificate(ctx, tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure tenant wildcard certificate: %w", err)
 		}
+		// Add a single proxied wildcard CNAME *.{effectiveDomain} so Cloudflare
+		// Total TLS can issue a wildcard edge cert covering all app subdomains.
+		// A wildcard record is preferred over per-app records because Total TLS
+		// issues one wildcard cert rather than many individual certs.
+		if r.CloudflareDNS != nil {
+			wildcard := "*." + effectiveDomain
+			if err := r.CloudflareDNS.ensureCNAME(ctx, wildcard, r.CloudflareDNS.tunnelCNAME); err != nil {
+				// Non-fatal: DNS record creation failure should not block ingress
+				// provisioning. Total TLS provisioning will retry on next reconcile.
+				ctrl.LoggerFrom(ctx).Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
+			}
+		}
 	}
 
 	for _, ia := range ingressApps {
@@ -246,6 +258,7 @@ func (r *TenantReconciler) ensureAppIngress(
 func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 
+	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
@@ -277,6 +290,15 @@ func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1
 	wildcardCert.SetNamespace(nsName)
 	if err := r.Delete(ctx, wildcardCert); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
+	}
+
+	// Delete the Cloudflare wildcard CNAME *.{effectiveDomain} that was
+	// created during provisioning.
+	if tenant.HasVanityDomain() && r.CloudflareDNS != nil {
+		wildcard := "*." + effectiveDomain
+		if err := r.CloudflareDNS.deleteCNAME(ctx, wildcard); err != nil {
+			ctrl.LoggerFrom(ctx).Error(err, "delete Cloudflare wildcard DNS CNAME", "host", wildcard)
+		}
 	}
 
 	wildcardSecret := &corev1.Secret{

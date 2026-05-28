@@ -83,13 +83,14 @@ func main() {
 	}
 
 	if err := (&controller.TenantReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Seeder:       buildSeeder(),
-		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		LDAPServer:   os.Getenv("LDAP_SERVER"),
-		LDAPBase:     os.Getenv("LDAP_BASE"),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Seeder:        buildSeeder(),
+		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:   kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		LDAPServer:    os.Getenv("LDAP_SERVER"),
+		LDAPBase:      os.Getenv("LDAP_BASE"),
+		CloudflareDNS: buildCloudflareDNSClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
@@ -183,4 +184,21 @@ func buildSeeder() *secrets.Seeder {
 	setupLog.Info("secret seeder enabled",
 		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil)
 	return secrets.NewSeeder(kv, deriver)
+}
+// buildCloudflareDNSClient constructs a cloudflareDNSClient from environment
+// variables. Returns nil (feature disabled) if any required variable is absent.
+//
+//   CLOUDFLARE_API_TOKEN  – Cloudflare API token (DNS:Edit scope)
+//   CLOUDFLARE_ZONE_ID    – Cloudflare zone ID for the kernel domain
+//   CLOUDFLARE_TUNNEL_CNAME – tunnel target, e.g. <uuid>.cfargotunnel.com
+func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
+        token := os.Getenv("CLOUDFLARE_API_TOKEN")
+        zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
+        tunnelCNAME := os.Getenv("CLOUDFLARE_TUNNEL_CNAME")
+        if token == "" || zoneID == "" || tunnelCNAME == "" {
+                setupLog.Info("Cloudflare DNS management disabled (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID/CLOUDFLARE_TUNNEL_CNAME not set)")
+                return nil
+        }
+        setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME)
+        return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME)
 }

@@ -151,6 +151,13 @@ type TenantReconciler struct {
 	// Used to construct per-tenant bind DNs and users DNs for LDAP federation.
 	// Sourced from the LDAP_BASE env var at startup.
 	LDAPBase string
+	// CloudflareDNS manages per-tenant app-hostname CNAME records in Cloudflare
+	// so that Cloudflare Total TLS can provision edge certificates for multi-level
+	// subdomains (e.g. chat.gtn-demo-2.desk.gentian.org). Nil when
+	// CLOUDFLARE_ZONE_ID or CLOUDFLARE_TUNNEL_CNAME are not set — in that case
+	// DNS record management is skipped and the operator relies on a manually
+	// created wildcard or per-hostname DNS record.
+	CloudflareDNS *CloudflareDNSClient
 }
 
 // SetupWithManager registers the controller with the controller-manager.

@@ -83,6 +83,28 @@ logLevel: info
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
 
+# Cloudflare DNS management for per-tenant app-hostname CNAME records.
+# When all three fields are set, the operator automatically creates proxied
+# CNAME records for each app subdomain of a vanity-domain tenant, enabling
+# Cloudflare Total TLS to provision edge certificates for multi-level
+# subdomains not covered by Universal SSL (e.g. chat.gtn-demo-2.desk.gentian.org).
+# Leave empty to disable (operator skips DNS record management).
+cloudflare:
+  # Cloudflare API token with DNS:Edit permission for the zone.
+  # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
+  apiTokenSecretRef:
+    # Name of the Secret containing the API token. Leave empty to disable.
+    # Mirror the cert-manager secret into gentian-system:
+    #   kubectl get secret cloudflare-api-token -n cert-manager -o yaml |
+    #     sed 's/namespace: cert-manager/namespace: gentian-system/' | kubectl apply -f -
+    name: ""
+    # Key inside the Secret (default: api-token).
+    key: "api-token"
+  # Cloudflare zone ID for the kernel domain.
+  zoneID: ""
+  # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
+  tunnelCNAME: ""
+
 # OpenBao / Vault integration
 openbao:
   address: "http://openbao.openbao.svc.cluster.local:8200"

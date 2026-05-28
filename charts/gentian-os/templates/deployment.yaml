@@ -66,6 +66,17 @@ spec:
               value: {{ .Values.ldap.server | default "" | quote }}
             - name: LDAP_BASE
               value: {{ .Values.ldap.base | default "" | quote }}
+            - name: CLOUDFLARE_ZONE_ID
+              value: {{ .Values.cloudflare.zoneID | default "" | quote }}
+            - name: CLOUDFLARE_TUNNEL_CNAME
+              value: {{ .Values.cloudflare.tunnelCNAME | default "" | quote }}
+            {{- if .Values.cloudflare.apiTokenSecretRef.name }}
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: {{ .Values.cloudflare.apiTokenSecretRef.key | default "api-token" | quote }}
+            {{- end }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
