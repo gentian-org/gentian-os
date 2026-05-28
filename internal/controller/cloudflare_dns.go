@@ -101,7 +101,7 @@ func (c *CloudflareDNSClient) deleteCNAME(ctx context.Context, hostname string) 
 		if err != nil {
 			return err
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 			return fmt.Errorf("delete DNS record %s: HTTP %d", r.ID, resp.StatusCode)
 		}
@@ -122,14 +122,14 @@ func (c *CloudflareDNSClient) listRecords(ctx context.Context, name string) ([]c
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var result cfListResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("parse Cloudflare list response: %w", err)
 	}
 	if !result.Success {
-		return nil, fmt.Errorf("Cloudflare list DNS records: %v", result.Errors)
+		return nil, fmt.Errorf("cloudflare list DNS records: %v", result.Errors)
 	}
 	return result.Result, nil
 }
@@ -151,14 +151,14 @@ func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var result cfCreateResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return fmt.Errorf("parse Cloudflare create response: %w", err)
 	}
 	if !result.Success {
-		return fmt.Errorf("Cloudflare create DNS record: %v", result.Errors)
+		return fmt.Errorf("cloudflare create DNS record: %v", result.Errors)
 	}
 	return nil
 }

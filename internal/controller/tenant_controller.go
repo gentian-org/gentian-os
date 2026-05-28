@@ -878,9 +878,18 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 	// packet reaches the Calico filter chain the destination is already the
 	// endpoint IP:port, not the ClusterIP:443. We need rules for both so the
 	// policy works regardless of where in the iptables pipeline Calico hooks.
+	//
+	// The EndpointSlice is created by kube-controller-manager and may be absent
+	// in environments that don't run it (e.g. envtest, edge clusters). When not
+	// found, skip the post-DNAT rules — the ClusterIP rule above is sufficient
+	// for CNIs that evaluate NetworkPolicy before kube-proxy DNAT.
 	kubeAPIEndpts := &discoveryv1.EndpointSlice{}
 	if err := r.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, kubeAPIEndpts); err != nil {
-		return fmt.Errorf("failed to look up kubernetes endpoints: %w", err)
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to look up kubernetes endpoints: %w", err)
+		}
+		// EndpointSlice absent — proceed without post-DNAT rules.
+		kubeAPIEndpts = nil
 	}
 
 	// Start with the static egress rules.
@@ -961,24 +970,27 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 	// Calico in iptables mode evaluates egress policy after kube-proxy DNAT, so
 	// the destination seen by Calico is the real endpoint IP:port, not the ClusterIP.
 	// EndpointSlice ports are at the slice level (shared by all endpoints).
-	for _, ep := range kubeAPIEndpts.Endpoints {
-		for _, addr := range ep.Addresses {
-			for _, port := range kubeAPIEndpts.Ports {
-				if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP {
-					continue
+	// kubeAPIEndpts is nil when the EndpointSlice was not found (see above).
+	if kubeAPIEndpts != nil {
+		for _, ep := range kubeAPIEndpts.Endpoints {
+			for _, addr := range ep.Addresses {
+				for _, port := range kubeAPIEndpts.Ports {
+					if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP {
+						continue
+					}
+					if port.Port == nil {
+						continue
+					}
+					endpointPort := intstr.FromInt32(*port.Port)
+					egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+						To: []networkingv1.NetworkPolicyPeer{
+							{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
+						},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{Protocol: &protocolTCP, Port: &endpointPort},
+						},
+					})
 				}
-				if port.Port == nil {
-					continue
-				}
-				endpointPort := intstr.FromInt32(*port.Port)
-				egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
-					To: []networkingv1.NetworkPolicyPeer{
-						{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
-					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{Protocol: &protocolTCP, Port: &endpointPort},
-					},
-				})
 			}
 		}
 	}
