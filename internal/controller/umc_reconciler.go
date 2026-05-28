@@ -52,12 +52,12 @@ const (
 	umcDBSelfServicePasswordKey = "pg-selfservice-password"
 
 	// Per-tenant resource names (created in the tenant namespace).
-	umcLDAPSecretName            = "umc-ldap-admin"
-	umcDBSecretName              = "umc-db-credentials"
-	umcDBSelfServiceSecretName   = "umc-db-selfservice"
-	umcSMTPSecretName            = "umc-smtp"
-	umcOIDCSecretName            = "umc-oidc-client"
-	umcUCRConfigMapName          = "umc-ucr"
+	umcLDAPSecretName          = "umc-ldap-admin"
+	umcDBSecretName            = "umc-db-credentials"
+	umcDBSelfServiceSecretName = "umc-db-selfservice"
+	umcSMTPSecretName          = "umc-smtp"
+	umcOIDCSecretName          = "umc-oidc-client"
+	umcUCRConfigMapName        = "umc-ucr"
 )
 
 // helmReleaseGVK is the GVK for the Crossplane provider-helm Release CR.
@@ -414,7 +414,10 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 				managedByLabel: managedByValue,
 			},
 		},
-		Data: map[string]string{"base.conf": baseForcedConf},
+		Data: map[string]string{
+			"base.conf":          baseForcedConf,
+			"base-defaults.conf": "",
+		},
 	}
 
 	existing := &corev1.ConfigMap{}
