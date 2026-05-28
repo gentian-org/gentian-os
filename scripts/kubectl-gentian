@@ -262,13 +262,11 @@ print_tenant_admin_login_instructions() {
   local username="${4}"
   local password="${5}"
 
-  local id_base portal_base
+  local id_base
   if [[ -n "${domain}" ]]; then
     id_base="https://id.${domain}"
-    portal_base="https://portal.${domain}"
   else
     id_base="https://id.<KERNEL_DOMAIN>"
-    portal_base="https://portal.<KERNEL_DOMAIN>"
   fi
 
   echo ""
@@ -276,13 +274,13 @@ print_tenant_admin_login_instructions() {
   echo "  Username : ${username}"
   echo "  Password : ${password}"
   echo ""
+  echo "─── UMC Admin Console ───────────────────────────────────────────────────────"
+  echo "  Manage users, groups, and settings for tenant '${tenant_name}'."
+  echo "  URL: https://${tenant_name}.${domain}/univention/management/"
+  echo ""
   echo "─── Keycloak Realm Admin Console ────────────────────────────────────────────"
   echo "  Manage OIDC clients, realm settings, and users for '${tenant_name}'."
   echo "  URL: ${id_base}/admin/${realm}/console"
-  echo ""
-  echo "  NOTE: The shared Nubus portal (${portal_base}/univention/management/)"
-  echo "  uses the kernel Keycloak realm and cannot authenticate tenant admins."
-  echo "  Per-tenant UMC access requires a per-tenant portal (Phase B TODO)."
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 

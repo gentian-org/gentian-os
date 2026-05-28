@@ -422,6 +422,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(err, "ensure LDAP base (non-blocking, will retry)")
 	}
 
+	// 14d. Per-tenant UMC — deploy a nubusUmcServer instance scoped to the
+	// tenant's Keycloak realm and LDAP OU so tenant admins can manage their
+	// users at https://<tenant>.<domain>/univention/management/. Non-blocking:
+	// errors are logged and retried without blocking Phase=Ready.
+	if err := r.ensureUMC(ctx, tenant); err != nil {
+		logger.Error(err, "ensure per-tenant UMC (non-blocking, will retry)")
+	}
+
 	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
@@ -576,6 +584,12 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up mail resources (Application CRs always; Secrets under DeletionPolicy=Delete).
 	if err := r.deleteMail(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Clean up per-tenant UMC Application CR (DeletionPolicy=Delete only;
+	// in-namespace Secrets/ConfigMaps are removed with the namespace).
+	if err := r.deleteUMC(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
