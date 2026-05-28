@@ -148,7 +148,7 @@ func TestIngress_CreatesIngressResource(t *testing.T) {
 	if len(ing.Spec.TLS) != 1 {
 		t.Fatalf("expected 1 TLS entry, got %d", len(ing.Spec.TLS))
 	}
-	wantSecret := fmt.Sprintf("app-%s-%s-tls", tenantName, profileName)
+	wantSecret := fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 	if ing.Spec.TLS[0].SecretName != wantSecret {
 		t.Errorf("expected TLS secret %q, got %q", wantSecret, ing.Spec.TLS[0].SecretName)
 	}
@@ -186,7 +186,8 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	nsName := fmt.Sprintf("tenant-%s", tenantName)
-	certName := fmt.Sprintf("app-%s-%s", tenantName, profileName)
+	// Operator issues ONE wildcard cert per tenant (not per-app).
+	certName := fmt.Sprintf("tenant-%s-wildcard", tenantName)
 
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certManagerCertGVKTest)
@@ -196,20 +197,20 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 	})
 
 	dnsNames, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
-	wantHost := "app." + domain
-	if len(dnsNames) != 1 || dnsNames[0] != wantHost {
-		t.Errorf("expected dnsNames=[%q], got %v", wantHost, dnsNames)
+	wantWildcard := "*." + domain
+	if len(dnsNames) != 2 || dnsNames[0] != wantWildcard || dnsNames[1] != domain {
+		t.Errorf("expected dnsNames=[%q, %q], got %v", wantWildcard, domain, dnsNames)
 	}
 
 	secretName, _, _ := unstructured.NestedString(cert.Object, "spec", "secretName")
-	wantCertSecret := fmt.Sprintf("app-%s-%s-tls", tenantName, profileName)
+	wantCertSecret := fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 	if secretName != wantCertSecret {
 		t.Errorf("expected secretName %q, got %q", wantCertSecret, secretName)
 	}
 
 	issuerName, _, _ := unstructured.NestedString(cert.Object, "spec", "issuerRef", "name")
-	if issuerName != "my-issuer" {
-		t.Errorf("expected issuerRef.name my-issuer, got %q", issuerName)
+	if issuerName != "letsencrypt-dns01-cloudflare" {
+		t.Errorf("expected issuerRef.name letsencrypt-dns01-cloudflare, got %q", issuerName)
 	}
 	issuerKind, _, _ := unstructured.NestedString(cert.Object, "spec", "issuerRef", "kind")
 	if issuerKind != "ClusterIssuer" {
@@ -250,20 +251,23 @@ func TestIngress_MultipleApps(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	nsName := fmt.Sprintf("tenant-%s", tenantName)
+
+	// Two apps => two Ingress resources.
 	for _, appName := range profiles {
 		ingName := fmt.Sprintf("ingress-%s-%s", tenantName, appName)
 		ing := &networkingv1.Ingress{}
 		waitFor(t, 15*time.Second, func() bool {
 			return testClient.Get(context.Background(), types.NamespacedName{Name: ingName, Namespace: nsName}, ing) == nil
 		})
-
-		certName := fmt.Sprintf("app-%s-%s", tenantName, appName)
-		cert := &unstructured.Unstructured{}
-		cert.SetGroupVersionKind(certManagerCertGVKTest)
-		waitFor(t, 15*time.Second, func() bool {
-			return testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, cert) == nil
-		})
 	}
+
+	// But only ONE wildcard Certificate for the whole tenant.
+	wildcardCertName := fmt.Sprintf("tenant-%s-wildcard", tenantName)
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certManagerCertGVKTest)
+	waitFor(t, 15*time.Second, func() bool {
+		return testClient.Get(context.Background(), types.NamespacedName{Name: wildcardCertName, Namespace: nsName}, cert) == nil
+	})
 }
 
 // TestIngress_DeleteRemovesIngressAndCert: deleting a Tenant removes Ingress and Certificate.
@@ -293,7 +297,7 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 
 	nsName := fmt.Sprintf("tenant-%s", tenantName)
 	ingressName := fmt.Sprintf("ingress-%s-%s", tenantName, profileName)
-	certName := fmt.Sprintf("app-%s-%s", tenantName, profileName)
+	wildcardCertName := fmt.Sprintf("tenant-%s-wildcard", tenantName)
 
 	ing := &networkingv1.Ingress{}
 	waitFor(t, 15*time.Second, func() bool {
@@ -316,7 +320,7 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 	certObj := &unstructured.Unstructured{}
 	certObj.SetGroupVersionKind(certManagerCertGVKTest)
 	waitFor(t, 15*time.Second, func() bool {
-		err := testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, certObj)
+		err := testClient.Get(context.Background(), types.NamespacedName{Name: wildcardCertName, Namespace: nsName}, certObj)
 		return err != nil
 	})
 }

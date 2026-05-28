@@ -26,12 +26,12 @@ const (
 	certManagerVersion    = "v1"
 	certManagerCertKind   = "Certificate"
 
-	// defaultHTTP01ClusterIssuer is used for per-host HTTP-01 certs issued
-	// for tenants that have an explicit vanity domain. DNS-01 (and the
-	// platform-wide Cloudflare token) is reserved for the kernel wildcard
-	// and is never made available to tenant namespaces.
-	// See docs/architecture.md §2.5.
-	defaultHTTP01ClusterIssuer = "letsencrypt-http01"
+	// defaultDNS01ClusterIssuer is used to issue a single per-tenant wildcard
+	// Certificate (*.<effectiveDomain>) that covers all app subdomains. Using
+	// DNS-01 avoids HTTP-01 per-host rate limits and handles multi-level
+	// subdomains (e.g. *.gtn-demo-2.desk.gentian.org) that are not covered by
+	// Cloudflare's Universal SSL single-level wildcard.
+	defaultDNS01ClusterIssuer = "letsencrypt-dns01-cloudflare"
 
 	defaultServicePort  = int32(80)
 	defaultIngressClass = "nginx"
@@ -61,10 +61,11 @@ var certManagerCertGVK = schema.GroupVersionKind{
 //     each app Ingress references it.
 //
 //  2. Vanity mode (Tenant.spec.domain set): hosts are
-//     "<sub>.<vanity_domain>". The operator creates one per-host
-//     cert-manager Certificate CR per app, using an HTTP-01 ClusterIssuer.
-//     The customer is responsible for the DNS records pointing at the
-//     cluster ingress IP.
+//     "<sub>.<vanity_domain>". The operator creates a single wildcard
+//     cert-manager Certificate CR for *.<vanity_domain> using DNS-01
+//     (Cloudflare). This single cert covers all per-tenant app subdomains,
+//     avoids HTTP-01 per-host rate limits, and works with multi-level
+//     subdomains not covered by Cloudflare Universal SSL.
 //
 // IngressReady=True is reported once all required Ingress + Certificate
 // resources have been applied. Cert-manager-side issuance status is
@@ -115,20 +116,20 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		}
 	}
 
+	tlsSecret := kernelWildcardTenantSecret
+	if vanity {
+		// Issue one wildcard cert for *.<effectiveDomain> that covers all app
+		// subdomains. DNS-01 supports multi-level wildcards and does not exhaust
+		// per-identifier HTTP-01 rate limits.
+		wildcardCertName := tenantWildcardCertName(tenant.Name)
+		tlsSecret = tenantWildcardSecretName(tenant.Name)
+		if err := r.ensureTenantWildcardCertificate(ctx, tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure tenant wildcard certificate: %w", err)
+		}
+	}
+
 	for _, ia := range ingressApps {
 		host := ingressHost(ia.appProfile, ia.ingress, effectiveDomain)
-		tlsSecret := kernelWildcardTenantSecret
-		if vanity {
-			certName := perHostCertName(tenant.Name, ia.appProfile)
-			tlsSecret = perHostCertSecretName(tenant.Name, ia.appProfile)
-			issuer := ia.ingress.ClusterIssuer
-			if issuer == "" {
-				issuer = defaultHTTP01ClusterIssuer
-			}
-			if err := r.ensurePerHostCertificate(ctx, tenant, nsName, certName, tlsSecret, host, issuer); err != nil {
-				return ctrl.Result{}, fmt.Errorf("ensure Certificate for app %s: %w", ia.appProfile, err)
-			}
-		}
 		if err := r.ensureAppIngress(ctx, tenant, nsName, ia.appProfile, ia.ingress, host, tlsSecret); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Ingress for app %s: %w", ia.appProfile, err)
 		}
@@ -196,14 +197,13 @@ func (r *TenantReconciler) ensureKernelWildcardSecret(ctx context.Context, tenan
 	return nil
 }
 
-// ensurePerHostCertificate creates a single-host cert-manager Certificate CR
-// in the tenant namespace, using HTTP-01 via a ClusterIssuer. Idempotent:
-// existence is taken as up-to-date; updates are not driven from the
-// operator.
-func (r *TenantReconciler) ensurePerHostCertificate(
+// ensureTenantWildcardCertificate creates a wildcard cert-manager Certificate
+// CR for *.<domain> (and <domain>) in the tenant namespace, using DNS-01 via
+// the Cloudflare ClusterIssuer. Idempotent: existence is taken as up-to-date.
+func (r *TenantReconciler) ensureTenantWildcardCertificate(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
-	nsName, certName, secretName, host, clusterIssuer string,
+	nsName, certName, secretName, domain string,
 ) error {
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(certManagerCertGVK)
@@ -211,7 +211,7 @@ func (r *TenantReconciler) ensurePerHostCertificate(
 		if !errors.IsNotFound(err) {
 			return err
 		}
-		desired := buildPerHostCertificate(tenant, nsName, certName, secretName, host, clusterIssuer)
+		desired := buildTenantWildcardCertificate(tenant, nsName, certName, secretName, domain)
 		return r.Create(ctx, desired)
 	}
 	return nil
@@ -266,17 +266,17 @@ func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1
 		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Ingress for app %s: %w", app.Profile, err)
 		}
+	}
 
-		// Per-host Certificate (vanity-domain mode). Safe to issue Delete
-		// unconditionally; in fallback mode the resource simply does not
-		// exist and IgnoreNotFound swallows the 404.
-		cert := &unstructured.Unstructured{}
-		cert.SetGroupVersionKind(certManagerCertGVK)
-		cert.SetName(perHostCertName(tenant.Name, app.Profile))
-		cert.SetNamespace(nsName)
-		if err := r.Delete(ctx, cert); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Certificate for app %s: %w", app.Profile, err)
-		}
+	// Tenant wildcard Certificate (vanity-domain mode). Safe to issue Delete
+	// unconditionally; in fallback mode the resource does not exist and
+	// IgnoreNotFound swallows the 404.
+	wildcardCert := &unstructured.Unstructured{}
+	wildcardCert.SetGroupVersionKind(certManagerCertGVK)
+	wildcardCert.SetName(tenantWildcardCertName(tenant.Name))
+	wildcardCert.SetNamespace(nsName)
+	if err := r.Delete(ctx, wildcardCert); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
 
 	wildcardSecret := &corev1.Secret{
@@ -291,9 +291,9 @@ func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1
 	return nil
 }
 
-func buildPerHostCertificate(
+func buildTenantWildcardCertificate(
 	tenant *gentianov1alpha1.Tenant,
-	nsName, certName, secretName, host, clusterIssuer string,
+	nsName, certName, secretName, domain string,
 ) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(certManagerCertGVK)
@@ -303,10 +303,10 @@ func buildPerHostCertificate(
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
 	})
-	_ = unstructured.SetNestedStringSlice(obj.Object, []string{host}, "spec", "dnsNames")
+	_ = unstructured.SetNestedStringSlice(obj.Object, []string{"*." + domain, domain}, "spec", "dnsNames")
 	_ = unstructured.SetNestedField(obj.Object, secretName, "spec", "secretName")
 	_ = unstructured.SetNestedField(obj.Object, map[string]interface{}{
-		"name": clusterIssuer,
+		"name": defaultDNS01ClusterIssuer,
 		"kind": "ClusterIssuer",
 	}, "spec", "issuerRef")
 	return obj
@@ -386,12 +386,12 @@ func buildAppIngress(
 	return obj
 }
 
-func perHostCertName(tenantName, appProfile string) string {
-	return fmt.Sprintf("app-%s-%s", tenantName, appProfile)
+func tenantWildcardCertName(tenantName string) string {
+	return fmt.Sprintf("tenant-%s-wildcard", tenantName)
 }
 
-func perHostCertSecretName(tenantName, appProfile string) string {
-	return fmt.Sprintf("app-%s-%s-tls", tenantName, appProfile)
+func tenantWildcardSecretName(tenantName string) string {
+	return fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 }
 
 func appIngressName(tenantName, appProfile string) string {
