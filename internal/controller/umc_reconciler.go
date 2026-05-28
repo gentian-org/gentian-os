@@ -88,8 +88,10 @@ var (
 	umcDBName = envOrDefault("UMC_DB_NAME", "nubus_authsession")
 	umcDBUser = envOrDefault("UMC_DB_USER", "authsession_user")
 
-	// Internal (in-cluster) Keycloak base URL.
-	umcKeycloakInternalBase = envOrDefault("UMC_KEYCLOAK_INTERNAL_BASE", "http://nubus-dev-keycloak:8080")
+	// Internal (in-cluster) Keycloak base URL. Default uses the FQDN derived
+	// from servicesNamespace so UMC pods in tenant namespaces can reach it.
+	umcKeycloakInternalBase = envOrDefault("UMC_KEYCLOAK_INTERNAL_BASE",
+		fmt.Sprintf("http://nubus-dev-keycloak.%s.svc.cluster.local:8080", servicesNamespace))
 )
 
 // ensureUMC deploys a per-tenant nubusUmcServer instance that allows the
