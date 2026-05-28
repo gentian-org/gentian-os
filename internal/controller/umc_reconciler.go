@@ -433,6 +433,11 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 		fmt.Sprintf("umc/oidc/issuer-internal: %s", keycloakInternal),
 		fmt.Sprintf("umc/oidc/nubus/issuer: %s", keycloakExternal),
 		fmt.Sprintf("umc/oidc/nubus/client-id: %s", oidcClientID),
+		// UMC's Tornado HTTP server defaults to binding on 127.0.0.1. The
+		// Kubernetes liveness/readiness probes connect to the pod IP, so UMC
+		// must bind on all interfaces for the probes (and the Traefik proxy
+		// pod) to reach it.
+		"umc/http/interface: 0.0.0.0",
 	}, smtpLines...), "\n") + "\n"
 
 	desired := &corev1.ConfigMap{
