@@ -749,21 +749,37 @@ _fix_kernel_ldap_scope() {
     fi
 
     # Find the LDAP User Storage Provider in the kernel realm.
-    local provider_json provider_id
-    provider_json=$(curl -sf --max-time 30 \
-        -H "Authorization: Bearer ${kc_token}" \
-        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components?type=org.keycloak.storage.UserStorageProvider" \
-        | python3 -c "
+    # Retry: keycloak-bootstrap creates the federation component asynchronously
+    # and may still be running when install.sh calls this function. Wait up to
+    # 5 minutes (10 × 30 s) for the provider to appear.
+    local provider_json provider_id _attempt
+    _attempt=0
+    while true; do
+        provider_json=$(curl -sf --max-time 30 \
+            -H "Authorization: Bearer ${kc_token}" \
+            "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components?type=org.keycloak.storage.UserStorageProvider" \
+            | python3 -c "
 import sys, json
 for p in json.load(sys.stdin):
     if p.get('providerId') == 'ldap':
         print(json.dumps(p))
         break
 " 2>/dev/null || true)
-    if [[ -z "${provider_json}" ]]; then
-        warn "LDAP provider not found in Keycloak '${kc_realm}' realm — skipping"
-        return 0
-    fi
+        [[ -n "${provider_json}" ]] && break
+        _attempt=$(( _attempt + 1 ))
+        if (( _attempt >= 10 )); then
+            warn "LDAP provider not found in realm '${kc_realm}' after 5m — skipping"
+            return 0
+        fi
+        info "  LDAP provider not yet in realm '${kc_realm}' (attempt ${_attempt}/10) — keycloak-bootstrap still running; retry in 30s..."
+        sleep 30
+        # Refresh the admin token; it may expire during a long wait.
+        kc_token=$(curl -sf --max-time 30 \
+            "http://${kc_pod_ip}:8080/realms/master/protocol/openid-connect/token" \
+            -d "grant_type=password&client_id=admin-cli&username=Administrator&password=${kc_admin_pass}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
+        [[ -n "${kc_token}" ]] || { warn "Lost Keycloak admin token during wait — skipping"; return 0; }
+    done
     provider_id=$(echo "${provider_json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 
     # Check current usersDn — skip if already scoped correctly.

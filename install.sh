@@ -1269,6 +1269,7 @@ main_cp() {
     # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
+    "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — scope kernel realm LDAP to cn=users (one-level)
     deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
     bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
