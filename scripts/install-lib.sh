@@ -2391,19 +2391,17 @@ install_orchestrator() {
     # The chart owns the shared-apps namespace. After an uninstall the namespace
     # may still exist (terminating finalizers, manual creation, etc.) without
     # Helm ownership annotations, causing helm upgrade --install to abort.
-    local chart_ns
-    for chart_ns in shared-apps; do
-        if kubectl get namespace "${chart_ns}" >/dev/null 2>&1; then
-            kubectl annotate namespace "${chart_ns}" \
-                "meta.helm.sh/release-name=gentian-os" \
-                "meta.helm.sh/release-namespace=${ns}" \
-                --overwrite
-            kubectl label namespace "${chart_ns}" \
-                "app.kubernetes.io/managed-by=Helm" \
-                --overwrite
-            info "Adopted pre-existing namespace '${chart_ns}' into Helm release."
-        fi
-    done
+    local chart_ns="shared-apps"
+    if kubectl get namespace "${chart_ns}" >/dev/null 2>&1; then
+        kubectl annotate namespace "${chart_ns}" \
+            "meta.helm.sh/release-name=gentian-os" \
+            "meta.helm.sh/release-namespace=${ns}" \
+            --overwrite
+        kubectl label namespace "${chart_ns}" \
+            "app.kubernetes.io/managed-by=Helm" \
+            --overwrite
+        info "Adopted pre-existing namespace '${chart_ns}' into Helm release."
+    fi
 
     info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
     info "(ArgoCD will take ownership of this release in Phase 2 below.)"

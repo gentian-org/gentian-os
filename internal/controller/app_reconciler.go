@@ -291,11 +291,7 @@ func (r *TenantReconciler) ensureAppClaim(
 	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
 	currentDomain, _, _ := unstructured.NestedString(obj.Object, "spec", "domain")
 	if effectiveDomain != "" && currentDomain != effectiveDomain {
-		patch := &unstructured.Unstructured{}
-		patch.SetGroupVersionKind(appClaimGVK)
-		patch.SetName(claimName)
-		patch.SetNamespace(nsName)
-		patch.SetResourceVersion(obj.GetResourceVersion())
+		patch := obj.DeepCopy()
 		_ = unstructured.SetNestedField(patch.Object, effectiveDomain, "spec", "domain")
 		if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
 			return false, fmt.Errorf("patch App claim %s domain: %w", claimName, err)
@@ -309,11 +305,7 @@ func (r *TenantReconciler) ensureAppClaim(
 	if profile != nil && profile.Spec.CompositionRef != "" {
 		currentRef, _, _ := unstructured.NestedString(obj.Object, "spec", "compositionRef", "name")
 		if currentRef != profile.Spec.CompositionRef {
-			patch := &unstructured.Unstructured{}
-			patch.SetGroupVersionKind(appClaimGVK)
-			patch.SetName(claimName)
-			patch.SetNamespace(nsName)
-			patch.SetResourceVersion(obj.GetResourceVersion())
+			patch := obj.DeepCopy()
 			_ = unstructured.SetNestedField(patch.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
 			if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
 				return false, fmt.Errorf("patch App claim %s compositionRef: %w", claimName, err)
