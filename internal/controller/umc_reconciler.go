@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -51,9 +52,22 @@ const (
 	umcUCRConfigMapName = "umc-ucr"
 )
 
+// helmReleaseGVK is the GVK for the Crossplane provider-helm Release CR.
+// The operator creates one Release per tenant to deploy the nubusUmcServer
+// chart directly from the OCI registry (provider-helm uses the Go Helm SDK
+// which supports anonymous OCI pulls without a prior registry login, unlike
+// the ArgoCD repo-server).
+var helmReleaseGVK = schema.GroupVersionKind{
+	Group:   "helm.crossplane.io",
+	Version: "v1beta1",
+	Kind:    "Release",
+}
+
 var (
 	// Chart coordinates — overridable via operator env vars so upgrades do not
 	// require an operator image rebuild.
+	// umcChartRepo is the full OCI repository URL for the umc-server chart,
+	// including the chart name (provider-helm Release format).
 	umcChartRepo    = envOrDefault("UMC_CHART_REPO", "oci://artifacts.software-univention.de/nubus/charts")
 	umcChartName    = envOrDefault("UMC_CHART_NAME", "umc-server")
 	umcChartVersion = envOrDefault("UMC_CHART_VERSION", "0.54.2")
@@ -94,8 +108,8 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	if err := r.ensureUMCConfigMap(ctx, tenant, nsName, effectiveDomain); err != nil {
 		return fmt.Errorf("ensure UMC UCR ConfigMap: %w", err)
 	}
-	if err := r.ensureUMCApplication(ctx, tenant, nsName, effectiveDomain); err != nil {
-		return fmt.Errorf("ensure UMC ArgoCD Application: %w", err)
+	if err := r.ensureUMCRelease(ctx, tenant, nsName, effectiveDomain); err != nil {
+		return fmt.Errorf("ensure UMC Helm Release: %w", err)
 	}
 	return nil
 }
@@ -243,110 +257,120 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 	return nil
 }
 
-// ensureUMCApplication creates (or checks) the ArgoCD Application CR that
-// deploys the nubusUmcServer Helm chart into the tenant namespace. The
-// Application is idempotent: if it already exists the function returns without
-// modification (ArgoCD self-heals any drift).
-func (r *TenantReconciler) ensureUMCApplication(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
-	appName := umcApplicationName(tenant.Name)
+// ensureUMCRelease creates (or checks) the Crossplane provider-helm Release CR
+// that deploys the nubusUmcServer Helm chart into the tenant namespace.
+// provider-helm uses the Go Helm SDK which supports anonymous OCI pulls from
+// artifacts.software-univention.de without a prior registry login, avoiding
+// the ArgoCD repo-server OCI credential matching quirk.
+func (r *TenantReconciler) ensureUMCRelease(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	relName := umcReleaseName(tenant.Name)
 	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(argocdApplicationGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: appName, Namespace: argocdNamespace}, obj)
+	obj.SetGroupVersionKind(helmReleaseGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: relName}, obj)
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, buildUMCApplication(tenant, nsName, effectiveDomain))
+		return r.Create(ctx, buildUMCRelease(tenant, nsName, effectiveDomain))
 	}
 	return err
 }
 
-// deleteUMC removes the ArgoCD Application CR for the per-tenant UMC on
-// DeletionPolicy=Delete. ArgoCD prunes all resources it owns. The operator-
-// managed Secrets and ConfigMap are cleaned up by the namespace deletion.
+// deleteUMC removes the Crossplane Release CR for the per-tenant UMC on
+// DeletionPolicy=Delete. provider-helm prunes all resources it owns. The
+// operator-managed Secrets and ConfigMap are cleaned up by the namespace
+// deletion.
 func (r *TenantReconciler) deleteUMC(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	appCR := &unstructured.Unstructured{}
-	appCR.SetGroupVersionKind(argocdApplicationGVK)
-	appCR.SetName(umcApplicationName(tenant.Name))
-	appCR.SetNamespace(argocdNamespace)
-	if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete UMC Application CR: %w", err)
+	relCR := &unstructured.Unstructured{}
+	relCR.SetGroupVersionKind(helmReleaseGVK)
+	relCR.SetName(umcReleaseName(tenant.Name))
+	if err := r.Delete(ctx, relCR); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete UMC Release CR: %w", err)
 	}
 	return nil
 }
 
-// buildUMCApplication constructs the ArgoCD Application CR that deploys the
-// nubusUmcServer Helm chart in the tenant namespace.
-func buildUMCApplication(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) *unstructured.Unstructured {
+// buildUMCRelease constructs the Crossplane provider-helm Release CR that
+// deploys the nubusUmcServer Helm chart in the tenant namespace.
+// The Release is cluster-scoped; spec.forProvider.namespace targets the tenant
+// namespace.
+func buildUMCRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(argocdApplicationGVK)
-	obj.SetName(umcApplicationName(tenant.Name))
-	obj.SetNamespace(argocdNamespace)
+	obj.SetGroupVersionKind(helmReleaseGVK)
+	obj.SetName(umcReleaseName(tenant.Name))
 	obj.SetLabels(map[string]string{
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
 	})
-	_ = unstructured.SetNestedField(obj.Object, "default", "spec", "project")
-	_ = unstructured.SetNestedField(obj.Object, umcChartRepo, "spec", "source", "repoURL")
-	_ = unstructured.SetNestedField(obj.Object, umcChartName, "spec", "source", "chart")
-	_ = unstructured.SetNestedField(obj.Object, umcChartVersion, "spec", "source", "targetRevision")
-	_ = unstructured.SetNestedField(obj.Object, buildUMCHelmValues(effectiveDomain), "spec", "source", "helm", "values")
-	_ = unstructured.SetNestedField(obj.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
-	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "destination", "namespace")
-	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "prune")
-	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "selfHeal")
+	// chart.repository for provider-helm is the full OCI path including chart
+	// name, e.g. oci://artifacts.software-univention.de/nubus/charts/umc-server
+	chartRepository := umcChartRepo + "/" + umcChartName
+	_ = unstructured.SetNestedField(obj.Object, chartRepository, "spec", "forProvider", "chart", "repository")
+	_ = unstructured.SetNestedField(obj.Object, umcChartName, "spec", "forProvider", "chart", "name")
+	_ = unstructured.SetNestedField(obj.Object, umcChartVersion, "spec", "forProvider", "chart", "version")
+	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "forProvider", "namespace")
+	_ = unstructured.SetNestedField(obj.Object, false, "spec", "forProvider", "wait")
+	_ = unstructured.SetNestedMap(obj.Object, buildUMCHelmValues(effectiveDomain), "spec", "forProvider", "values")
+	_ = unstructured.SetNestedField(obj.Object, "kubernetes", "spec", "providerConfigRef", "name")
 	return obj
 }
 
-// buildUMCHelmValues returns the YAML Helm values string for the per-tenant
-// nubusUmcServer deployment.
-func buildUMCHelmValues(effectiveDomain string) string {
-	return fmt.Sprintf(`global:
-  configMapUcr: %s
-selfService:
-  enabled: false
-ldap:
-  auth:
-    existingSecret:
-      name: %s
-      keyMapping:
-        password: password
-postgresql:
-  authSession:
-    connection:
-      host: %s
-      port: "%s"
-    auth:
-      database: %s
-      username: %s
-      existingSecret:
-        name: %s
-        keyMapping:
-          password: password
-ingress:
-  enabled: true
-  host: %s
-  ingressClassName: nginx
-  certManager:
-    enabled: false
-  tls:
-    enabled: true
-    secretName: %s
-`,
-		umcUCRConfigMapName,
-		umcLDAPSecretName,
-		umcDBHost,
-		umcDBPort,
-		umcDBName,
-		umcDBUser,
-		umcDBSecretName,
-		effectiveDomain,
-		kernelWildcardTenantSecret,
-	)
+// buildUMCHelmValues returns the Helm values map for the per-tenant
+// nubusUmcServer deployment, structured as a map[string]interface{} for
+// provider-helm Release spec.forProvider.values (JSON object type).
+func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
+	return map[string]interface{}{
+		"global": map[string]interface{}{
+			"configMapUcr": umcUCRConfigMapName,
+		},
+		"selfService": map[string]interface{}{
+			"enabled": false,
+		},
+		"ldap": map[string]interface{}{
+			"auth": map[string]interface{}{
+				"existingSecret": map[string]interface{}{
+					"name": umcLDAPSecretName,
+					"keyMapping": map[string]interface{}{
+						"password": "password",
+					},
+				},
+			},
+		},
+		"postgresql": map[string]interface{}{
+			"authSession": map[string]interface{}{
+				"connection": map[string]interface{}{
+					"host": umcDBHost,
+					"port": umcDBPort,
+				},
+				"auth": map[string]interface{}{
+					"database": umcDBName,
+					"username": umcDBUser,
+					"existingSecret": map[string]interface{}{
+						"name": umcDBSecretName,
+						"keyMapping": map[string]interface{}{
+							"password": "password",
+						},
+					},
+				},
+			},
+		},
+		"ingress": map[string]interface{}{
+			"enabled":          true,
+			"host":             effectiveDomain,
+			"ingressClassName": "nginx",
+			"certManager": map[string]interface{}{
+				"enabled": false,
+			},
+			"tls": map[string]interface{}{
+				"enabled":    true,
+				"secretName": kernelWildcardTenantSecret,
+			},
+		},
+	}
 }
 
-// umcApplicationName returns the ArgoCD Application CR name for a tenant's
+// umcReleaseName returns the Crossplane Release CR name for a tenant's
 // per-tenant UMC instance.
-func umcApplicationName(tenantName string) string {
+func umcReleaseName(tenantName string) string {
 	return fmt.Sprintf("umc-%s", tenantName)
 }
