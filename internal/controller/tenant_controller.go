@@ -55,11 +55,6 @@ const (
 	managedByLabel  = "app.kubernetes.io/managed-by"
 	managedByValue  = "gentian-os"
 	kernelNamespace = "platform-kernel"
-	// sharedAppsNamespace is the namespace where shared App claims and their
-	// Helm releases (e.g. Synapse + Element) are deployed. It mirrors the
-	// shared-apps Keycloak realm: one deployment serves all tenants with
-	// isolationMode: shared for the same app profile.
-	sharedAppsNamespace = "shared-apps"
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	// Pods in this namespace must be allowed ingress to tenant pods so that the
 	// controller can proxy external requests to services inside the tenant namespace.
@@ -567,14 +562,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// Clean up app deployment resources (always, regardless of DeletionPolicy).
 	if err := r.deleteAppDeployment(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	// Clean up shared App claims (in shared-apps) that no other active Tenant
-	// needs any more. Passing an empty desired set ensures the GC considers
-	// only surviving tenants — if this is the last tenant that referenced a
-	// shared app, the claim (and its composed Releases/pods) will be deleted.
-	if err := r.cleanupOrphanedSharedAppCRs(ctx, make(map[string]struct{})); err != nil {
-		return ctrl.Result{}, fmt.Errorf("cleanup orphaned shared App claims on delete: %w", err)
 	}
 
 	// Clean up Ingress and Certificate resources (ephemeral routing; always deleted).
@@ -1227,13 +1214,6 @@ func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstruc
 
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
-		// Shared-mode apps are managed directly by the operator (App claim in
-		// shared-apps namespace). Do not include them in the XTenant spec or the
-		// Crossplane composition will also create an App claim in the tenant
-		// namespace, resulting in a duplicate deployment.
-		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			continue
-		}
 		entry := map[string]interface{}{"profile": app.Profile}
 		if app.Config != nil {
 			cfg := map[string]interface{}{}

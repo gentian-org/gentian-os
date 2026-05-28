@@ -20,7 +20,6 @@ gtn-demo        ← LDAP federation: ou=users,ou=gtn-demo (correct path, but EMP
                   clients: gtn-demo-element, gtn-demo-jitsi, gtn-demo-ox-appsuite
 gtn-demo-2      ← LDAP federation: ou=users,ou=gtn-demo-2 (correct path, but EMPTY) ❌
                   clients: gtn-demo-2-element
-shared-apps     ← no LDAP federation; clients: element, opendesk-synapse
 ```
 
 Two critical bugs remain:
@@ -54,36 +53,6 @@ kernel          ← kernel services only
                   users: all tenant users (admin + regular)
                   OIDC clients: <tenant>-<app> for every installed app
                   UMC client registered here so tenant admins see only their own realm
-shared-apps     ← no LDAP federation; shared app instances only
-```
-
-### 2.1 Dedicated vs. shared deployment mode
-
-Apps can be deployed in one of two isolation modes, declared **per tenant per app**:
-
-| Mode | Description | IAM topology |
-|---|---|---|
-| `dedicated` (default) | One deployment per tenant in its own namespace | OIDC client lives in tenant realm; no broker needed |
-| `shared` | One shared deployment serving all tenants | OIDC client lives in the `shared-apps` realm; tenant realm brokers into it |
-
-This flag is declared on the AppInstance in the Tenant CR:
-
-```yaml
-spec:
-  apps:
-    - profile: element
-      isolationMode: dedicated   # optional; overrides AppProfile default
-    - profile: nextcloud
-      isolationMode: shared      # free tier
-```
-
-AppProfile declares which modes are supported and what the default is:
-
-```yaml
-spec:
-  isolation:
-    modes: [shared, dedicated]
-    default: dedicated
 ```
 
 ---
@@ -222,56 +191,14 @@ This is deferred to a follow-up PR after Phase 2 is verified in production.
 
 ---
 
-### Phase C — Shared app instance support
+### Phase C — ~~Shared app instance support~~ (dropped)
 
-Phase C adds the `isolationMode` field and proves out shared deployment with a real app.
-Element/Synapse is the natural first candidate: Matrix natively supports multiple
-homeservers and federation, so a shared Synapse with per-tenant namespacing is a
-well-understood deployment pattern.
+Phase C was planned to add a `shared` deployment mode where multiple tenants would share
+a single Helm release via a shared Keycloak realm (`shared-apps`) with OIDC brokering.
 
-**C.1 `AppProfile` API extension**
-
-Add `spec.isolation.modes []string` and `spec.isolation.default string` fields to
-`AppProfile`. This is a purely additive CRD change — existing profiles gain the field
-with a default of `[dedicated]` and are unaffected.
-
-**C.2 `Tenant.spec.apps` API extension**
-
-Add `isolationMode string` field to `AppInstance` (valid values: `dedicated`, `shared`).
-Omitting the field inherits the `AppProfile` default.
-
-**C.3 Identity reconciler — shared realm provisioning**
-
-When `isolationMode == shared`, the reconciler:
-1. Provisions the platform-level `shared-apps` realm if absent (idempotent, one realm
-   for all shared app types).
-2. Registers an OIDC client named after the app type (e.g. `element`) in `shared-apps`
-   instead of in the tenant realm.
-3. Registers an identity broker in the tenant realm pointing to `shared-apps`, so users
-   authenticate via their tenant realm and the token is issued by `shared-apps`.
-
-Client IDs within `shared-apps` are unique by construction (app type names are unique).
-Adding a second shared app type adds a client to the same realm, not a new realm.
-
-**C.4 Composition — conditional chart deployment**
-
-The Crossplane composition for each app checks `isolationMode`:
-- `dedicated`: deploys as today, one Helm release per tenant namespace.
-- `shared`: deploys a single platform-level Helm release (idempotent across tenants).
-  Per-tenant config (quota, display name) is injected via a separate values overlay
-  rather than a new release.
-
-**C.5 Shared Element trial**
-
-Before wiring the full composition abstraction, validate the shared path manually:
-1. Deploy a single `opendesk-synapse` release in the `platform-kernel` namespace.
-2. Register an `element` OIDC client in the `shared-apps` realm.
-3. Configure identity broker in `gtn-demo` realm → `shared-apps`.
-4. Point `gentian-apps/profiles/element.yaml` at the shared issuer.
-5. Verify that `gtn-demo` users can authenticate into the shared Element instance
-   without a second login prompt.
-
-This validates the IAM topology before investing in the composition scaffolding.
+This approach was abandoned. All app deployments are now **dedicated per tenant**: each
+tenant has its own Helm release in its own namespace, with its own Keycloak OIDC client
+in its own realm. Kernel services are the only shared services.
 
 ---
 
@@ -292,11 +219,8 @@ This validates the IAM topology before investing in the composition scaffolding.
 | `docs/implementation-plan.md` | A | Update realm name references in identity sections |
 | `internal/controller/identity_reconciler.go` | B | Extend `buildRealmScript` with LDAP federation call; wire new env vars into Job spec |
 | `internal/controller/ldap_reconciler.go` | B | Add `keycloak` as bind account consumer; add `ou=users` sub-OU creation to `buildOUScript` |
-| `api/v1alpha1/appprofile_types.go` | C | Add `Isolation` field |
-| `api/v1alpha1/tenant_types.go` | C | Add `IsolationMode` to `AppInstance` |
-| `internal/controller/identity_reconciler.go` | C | Shared realm (`shared-apps`) provisioning path |
-| `crossplane/compositions/app-*.yaml` | C | Conditional dedicated/shared deployment |
-| `gentian-apps/profiles/element.yaml` | C | Trial shared Element: point at `shared-apps` issuer |
+| `api/v1alpha1/appprofile_types.go` | B | Add `PortalTiles` field for portal entry provisioning |
+| `api/v1alpha1/tenant_types.go` | B | Extended tenant app config |
 
 ---
 

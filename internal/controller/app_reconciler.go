@@ -47,28 +47,16 @@ var appClaimGVK = schema.GroupVersionKind{
 }
 
 // ensureAppDeployment creates or reconciles one App claim per app declared in
+// ensureAppDeployment reconciles the App claims for all apps declared in
 // tenant.Spec.Apps, and cleans up claims for apps removed from the spec.
 //
-// For "dedicated" apps, one App claim is created per tenant in the tenant
-// namespace. For "shared" apps, a single App claim is created in the
-// platform-kernel namespace (shared across all tenants using this profile). The
-// shared App claim is not subject to per-tenant orphan cleanup.
+// One App claim is created per tenant in the tenant namespace.
 //
 // Returns a non-zero RequeueAfter when any claim is not yet Ready.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	// desiredApps tracks the set of per-tenant App claims (dedicated mode only).
-	// Shared-mode App claims live in shared-apps and are excluded from the
-	// per-tenant orphan cleanup that uses this map.
 	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
-	// desiredSharedApps tracks which profiles this tenant wants in shared mode
-	// so we can GC shared App claims when no active tenant needs them.
-	desiredSharedApps := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
-		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			desiredSharedApps[app.Profile] = struct{}{}
-		} else {
-			desiredApps[app.Profile] = struct{}{}
-		}
+		desiredApps[app.Profile] = struct{}{}
 	}
 
 	if len(tenant.Spec.Apps) == 0 {
@@ -86,41 +74,6 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 				return ctrl.Result{}, nil
 			}
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-
-		// Shared-mode: a single App claim lives in platform-kernel (not the
-		// tenant namespace). All tenants with the same profile and "shared" mode
-		// converge on that one claim. The identity reconciler handles per-tenant
-		// IAM brokering via the shared-apps Keycloak realm.
-		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			// Seed app-internal secrets to the shared (platform-kernel) path so
-			// the composition's ExternalSecret can read them.
-			if err := r.seedSharedAppSecrets(ctx, app.Profile, profile); err != nil {
-				return ctrl.Result{}, fmt.Errorf("seed shared app-secrets for %s: %w", app.Profile, err)
-			}
-			// If the profile requires PostgreSQL, ensure the shared database is
-			// provisioned (role Job + CNPG Database CR) and credentials are seeded
-			// to the shared-apps OpenBao path before the composition can read them.
-			if profile.Spec.KernelRequirements != nil &&
-				profile.Spec.KernelRequirements.Database != nil &&
-				profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
-				dbReady, err := r.ensureSharedDatabase(ctx, app.Profile)
-				if err != nil {
-					return ctrl.Result{}, fmt.Errorf("ensure shared database for %s: %w", app.Profile, err)
-				}
-				if !dbReady {
-					allReady = false
-					continue
-				}
-			}
-			ready, err := r.ensureSharedAppClaim(ctx, app, profile)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("ensure shared App claim for %s: %w", app.Profile, err)
-			}
-			if !ready {
-				allReady = false
-			}
-			continue
 		}
 
 		// Seed app-internal secrets into OpenBao before the Composition reads
@@ -142,11 +95,6 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("cleanup orphaned App claims: %w", err)
 	}
 
-	// GC shared App claims that no active Tenant references any more.
-	if err := r.cleanupOrphanedSharedAppCRs(ctx, desiredSharedApps); err != nil {
-		return ctrl.Result{}, fmt.Errorf("cleanup orphaned shared App claims: %w", err)
-	}
-
 	if len(tenant.Spec.Apps) > 0 && !allReady {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", "Waiting for App claims to become Ready")
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
@@ -157,7 +105,6 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 	}
 	return ctrl.Result{}, nil
 }
-
 // seedAppSecrets writes each AppProfile.spec.appSecrets entry into OpenBao at
 // …/internal/{name} with key "value". No-op when Seeder is nil or the profile
 // declares no app-secrets. Repeated calls are idempotent.
@@ -203,61 +150,6 @@ func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *ge
 		if _, desired := desiredApps[appName]; !desired {
 			if err := r.Delete(ctx, &claimList.Items[i]); client.IgnoreNotFound(err) != nil {
 				return fmt.Errorf("delete orphaned App claim %s: %w", claimList.Items[i].GetName(), err)
-			}
-		}
-	}
-	return nil
-}
-
-// cleanupOrphanedSharedAppCRs deletes shared App claims (in shared-apps
-// namespace) for any profile that no active Tenant currently requests in
-// shared mode. It lists all Tenants cluster-wide and only deletes a shared
-// claim when zero Tenants have that profile with isolationMode=shared.
-func (r *TenantReconciler) cleanupOrphanedSharedAppCRs(ctx context.Context, currentDesiredShared map[string]struct{}) error {
-	// List all App claims in shared-apps managed by this operator.
-	claimList := &unstructured.UnstructuredList{}
-	claimList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   appClaimGVK.Group,
-		Version: appClaimGVK.Version,
-		Kind:    appClaimGVK.Kind + "List",
-	})
-	if err := r.List(ctx, claimList,
-		client.InNamespace(sharedAppsNamespace),
-		client.MatchingLabels{managedByLabel: managedByValue},
-	); err != nil {
-		return fmt.Errorf("list shared App claims: %w", err)
-	}
-	if len(claimList.Items) == 0 {
-		return nil
-	}
-
-	// Build a set of profiles still wanted by ANY active Tenant in shared mode.
-	tenantList := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenantList); err != nil {
-		return fmt.Errorf("list Tenants: %w", err)
-	}
-	globalShared := make(map[string]struct{})
-	for _, t := range tenantList.Items {
-		for _, app := range t.Spec.Apps {
-			if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-				globalShared[app.Profile] = struct{}{}
-			}
-		}
-	}
-	// Also keep profiles that the current (reconciling) tenant still wants —
-	// the Tenant CR update may not be visible in the list yet.
-	for p := range currentDesiredShared {
-		globalShared[p] = struct{}{}
-	}
-
-	for i := range claimList.Items {
-		appName := claimList.Items[i].GetLabels()[appLabel]
-		if appName == "" {
-			continue
-		}
-		if _, wanted := globalShared[appName]; !wanted {
-			if err := r.Delete(ctx, &claimList.Items[i]); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("delete orphaned shared App claim %s: %w", appName, err)
 			}
 		}
 	}
@@ -316,50 +208,6 @@ func (r *TenantReconciler) ensureAppClaim(
 	return appClaimIsReady(obj), nil
 }
 
-// ensureSharedAppClaim creates (or checks readiness of) the single shared App
-// claim for a profile. The claim is placed in platform-kernel so all tenants
-// using "shared" mode for the same profile share one Helm release and OIDC
-// client. If two tenants reconcile simultaneously and both attempt to create,
-// the AlreadyExists error is tolerated. Returns true when the claim is Ready.
-func (r *TenantReconciler) ensureSharedAppClaim(
-	ctx context.Context,
-	app gentianov1alpha1.TenantApp,
-	profile *gentianov1alpha1.AppProfile,
-) (bool, error) {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(appClaimGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: app.Profile, Namespace: sharedAppsNamespace}, obj)
-	if errors.IsNotFound(err) {
-		desired := buildSharedAppClaim(app, profile, r.KernelDomain)
-		if createErr := r.Create(ctx, desired); createErr != nil && !errors.IsAlreadyExists(createErr) {
-			return false, createErr
-		}
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return appClaimIsReady(obj), nil
-}
-
-// seedSharedAppSecrets seeds app-internal secrets for a shared app using the
-// shared-apps tenant path. The composition's ExternalSecret (which runs in
-// shared-apps) reads from this path.
-func (r *TenantReconciler) seedSharedAppSecrets(ctx context.Context, appName string, profile *gentianov1alpha1.AppProfile) error {
-	if r.Seeder == nil || len(profile.Spec.AppSecrets) == 0 {
-		return nil
-	}
-	for _, s := range profile.Spec.AppSecrets {
-		if s.Name == "" {
-			continue
-		}
-		if _, err := r.Seeder.SeedAppSecret(ctx, sharedAppsNamespace, appName, s.Name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // buildAppClaim constructs the App claim for a tenant app. The claim is placed
 // in the tenant namespace so tenant-admin RBAC applies. Crossplane reconciles
 // the claim through the App Composition which creates an ExternalSecret and a
@@ -397,40 +245,6 @@ func buildAppClaim(
 		if app.Config.Replicas != nil {
 			_ = unstructured.SetNestedField(obj.Object, int64(*app.Config.Replicas), "spec", "config", "replicas")
 		}
-	}
-
-	return obj
-}
-
-// buildSharedAppClaim constructs the single shared App claim placed in the
-// shared-apps namespace (mirroring the shared-apps Keycloak realm). The
-// claim's tenantNamespace is also shared-apps so Crossplane deploys the Helm
-// release (e.g. Synapse + Element) there. No per-tenant labels are set;
-// cleanupOrphanedAppCRs only scans the tenant namespace and will never touch
-// this claim.
-func buildSharedAppClaim(
-	app gentianov1alpha1.TenantApp,
-	profile *gentianov1alpha1.AppProfile,
-	kernelDomain string,
-) *unstructured.Unstructured {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(appClaimGVK)
-	obj.SetName(app.Profile)
-	obj.SetNamespace(sharedAppsNamespace)
-	obj.SetLabels(map[string]string{
-		appLabel:       app.Profile,
-		managedByLabel: managedByValue,
-	})
-
-	_ = unstructured.SetNestedField(obj.Object, app.Profile, "spec", "profileRef", "name")
-	_ = unstructured.SetNestedField(obj.Object, sharedAppsNamespace, "spec", "tenantNamespace")
-
-	if profile != nil && profile.Spec.CompositionRef != "" {
-		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
-	}
-
-	if kernelDomain != "" {
-		_ = unstructured.SetNestedField(obj.Object, kernelDomain, "spec", "domain")
 	}
 
 	return obj

@@ -157,16 +157,6 @@ type TenantApp struct {
 	// +kubebuilder:validation:MinLength=1
 	Profile string `json:"profile"`
 
-	// IsolationMode overrides the AppProfile's default deployment mode for this
-	// tenant. "dedicated" provisions a separate per-tenant deployment in the
-	// tenant namespace. "shared" provisions a single shared deployment in the
-	// platform-kernel namespace; all tenants with the same profile and "shared"
-	// mode share one Helm release and OIDC client, with per-tenant IAM brokering
-	// via the shared-apps Keycloak realm.
-	// Defaults to the AppProfile's isolation.default (which itself defaults to "dedicated").
-	// +optional
-	IsolationMode AppDeploymentMode `json:"isolationMode,omitempty"`
-
 	// Config provides per-tenant overrides for this app installation.
 	// Values here are merged over the AppProfile's extraValues.
 	// +optional

@@ -86,19 +86,6 @@ spec:
                           type: integer
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
-                    isolationMode:
-                      description: |-
-                        IsolationMode overrides the AppProfile's default deployment mode for this
-                        tenant. "dedicated" provisions a separate per-tenant deployment in the
-                        tenant namespace. "shared" provisions a single shared deployment in the
-                        platform-kernel namespace; all tenants with the same profile and "shared"
-                        mode share one Helm release and OIDC client, with per-tenant IAM brokering
-                        via the shared-apps Keycloak realm.
-                        Defaults to the AppProfile's isolation.default (which itself defaults to "dedicated").
-                      enum:
-                      - dedicated
-                      - shared
-                      type: string
                     profile:
                       description: Profile is the name of the AppProfile CR to install.
                       minLength: 1

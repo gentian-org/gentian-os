@@ -129,7 +129,6 @@ the current state, all defects found, and the step-by-step implementation plan.
 | `master` | None | Keycloak admin CLI only |
 | `kernel` | `cn=users,dc=swp-ldap,dc=internal` (one-level) | Kernel service accounts only — **no human users** |
 | `<tenant>` | `ou=users,ou=<tenant>,...` (one-level) | All tenant users; UMC access for tenant admins |
-| `shared-apps` | None | Shared app instances (e.g. shared Element) |
 
 The kernel realm's LDAP scope is intentionally restricted to the service-accounts
 container only. This means a tenant admin authenticated via their tenant realm

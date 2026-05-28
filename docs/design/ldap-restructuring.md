@@ -79,16 +79,14 @@ dc=swp-ldap,dc=internal                          ← global base DN
 | `kernel` | `dc=swp-ldap,dc=internal` | `2` (subtree) | **WRONG** — sees ALL users from ALL tenant OUs |
 | `gtn-demo` | `ou=users,ou=gtn-demo,dc=swp-ldap,dc=internal` | `1` | Correct scope, but `ou=users` is **empty** |
 | `gtn-demo-2` | `ou=users,ou=gtn-demo-2,dc=swp-ldap,dc=internal` | `1` | Same — empty |
-| `shared-apps` | — | — | No federation (correct for shared apps) |
 
 ### 1.3 Keycloak OIDC clients (actual)
 
 | Realm | Clients |
-|---|---|
+|---|
 | `kernel` | `portal`, `opendesk-dovecot`, `opendesk-intercom`, `opendesk-nextcloud`, `opendesk-oxappsuite`, `twofa-helpdesk` |
 | `gtn-demo` | `gtn-demo-element`, `gtn-demo-jitsi`, `gtn-demo-ox-appsuite`, `opendesk-jitsi` |
 | `gtn-demo-2` | `gtn-demo-2-element`, `opendesk-synapse` |
-| `shared-apps` | `element`, `opendesk-synapse` |
 
 ### 1.4 Defects found
 
@@ -170,7 +168,6 @@ dc=swp-ldap,dc=internal
 | `master` | — | — | Admin CLI only |
 | `kernel` | `cn=users,dc=swp-ldap,dc=internal` | `1` (one-level) | `portal`, `opendesk-dovecot`, `opendesk-intercom`, `opendesk-nextcloud`, `opendesk-oxappsuite` |
 | `<tenant>` | `ou=users,ou=<tenant>,dc=swp-ldap,dc=internal` | `1` | `<tenant>-<app>` per installed app |
-| `shared-apps` | — | — | `element`, shared apps only |
 
 The kernel realm now sees only service accounts in `cn=users`. Tenant admins
 and regular users are **not** in the kernel realm at all. They are authenticated

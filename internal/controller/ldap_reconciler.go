@@ -211,9 +211,6 @@ type dedicatedPortalApp struct {
 func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]dedicatedPortalApp, error) {
 	var result []dedicatedPortalApp
 	for _, app := range tenant.Spec.Apps {
-		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			continue
-		}
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {

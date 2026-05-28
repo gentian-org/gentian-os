@@ -73,9 +73,8 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 	nsName := tenantNamespaceName(tenant)
 
 	type appIngress struct {
-		appProfile    string
-		ingress       *gentianov1alpha1.IngressSpec
-		isolationMode gentianov1alpha1.AppDeploymentMode
+		appProfile string
+		ingress    *gentianov1alpha1.IngressSpec
 	}
 	var ingressApps []appIngress
 
@@ -89,9 +88,8 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		}
 		if profile.Spec.Ingress != nil {
 			ingressApps = append(ingressApps, appIngress{
-				appProfile:    app.Profile,
-				ingress:       profile.Spec.Ingress,
-				isolationMode: app.IsolationMode,
+				appProfile: app.Profile,
+				ingress:    profile.Spec.Ingress,
 			})
 		}
 	}
@@ -117,38 +115,7 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		}
 	}
 
-	// If any app is in shared mode, the Crossplane-managed ingresses in
-	// shared-apps reference a secret named "wildcard-tls". Ensure it exists
-	// there (copied from wildcard-kernel-tls in cert-manager) so TLS works
-	// for matrix.* and other shared hostnames. This is idempotent and cheap.
 	for _, ia := range ingressApps {
-		if ia.isolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			if err := r.ensureSharedAppsWildcardTLS(ctx); err != nil {
-				return ctrl.Result{}, fmt.Errorf("ensure wildcard-tls in shared-apps: %w", err)
-			}
-			break
-		}
-	}
-
-	for _, ia := range ingressApps {
-		// For shared apps the service lives in shared-apps, not in the tenant
-		// namespace. nginx ingress resolves backends by namespace, so we
-		// create an ExternalName service in the tenant namespace that
-		// forwards to the real service in shared-apps.
-		if ia.isolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			svcName := ia.ingress.ServiceName
-			if svcName == "" {
-				svcName = ia.appProfile
-			}
-			svcPort := ia.ingress.ServicePort
-			if svcPort == 0 {
-				svcPort = defaultServicePort
-			}
-			if err := r.ensureSharedAppProxySvc(ctx, tenant, nsName, svcName, svcPort); err != nil {
-				return ctrl.Result{}, fmt.Errorf("ensure proxy service for shared app %s: %w", ia.appProfile, err)
-			}
-		}
-
 		host := ingressHost(ia.appProfile, ia.ingress, effectiveDomain)
 		tlsSecret := kernelWildcardTenantSecret
 		if vanity {
@@ -310,23 +277,6 @@ func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1
 		if err := r.Delete(ctx, cert); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Certificate for app %s: %w", app.Profile, err)
 		}
-
-		// ExternalName proxy service created for shared apps.
-		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			svcName := profile.Spec.Ingress.ServiceName
-			if svcName == "" {
-				svcName = app.Profile
-			}
-			proxySvc := &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      svcName,
-					Namespace: nsName,
-				},
-			}
-			if err := r.Delete(ctx, proxySvc); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("delete proxy service for shared app %s: %w", app.Profile, err)
-			}
-		}
 	}
 
 	wildcardSecret := &corev1.Secret{
@@ -434,105 +384,6 @@ func buildAppIngress(
 		}
 	}
 	return obj
-}
-
-// ensureSharedAppsWildcardTLS replicates wildcard-kernel-tls (cert-manager
-// namespace) into shared-apps under the name "wildcard-tls". The Crossplane
-// app compositions (opendesk-synapse-web et al.) hardcode secretName:
-// wildcard-tls for their ingresses; without this secret nginx falls back to
-// its self-signed default cert and browsers reject the connection.
-//
-// Called on every reconcile of a tenant that has at least one shared-mode app
-// with ingress. Soft-fails if the source secret is not yet present (LE cert
-// still pending) — the reconciler retries on the next cycle.
-func (r *TenantReconciler) ensureSharedAppsWildcardTLS(ctx context.Context) error {
-	source := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      kernelWildcardSourceSecret,
-		Namespace: kernelWildcardSourceNamespace,
-	}, source); err != nil {
-		if errors.IsNotFound(err) {
-			return nil // cert not yet issued; will be retried on next reconcile
-		}
-		return fmt.Errorf("read kernel wildcard secret %s/%s: %w",
-			kernelWildcardSourceNamespace, kernelWildcardSourceSecret, err)
-	}
-
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "wildcard-tls",
-			Namespace: sharedAppsNamespace,
-			Labels: map[string]string{
-				managedByLabel: managedByValue,
-			},
-		},
-		Type: source.Type,
-		Data: source.Data,
-	}
-
-	existing := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "wildcard-tls", Namespace: sharedAppsNamespace}, existing); err != nil {
-		if errors.IsNotFound(err) {
-			return r.Create(ctx, desired)
-		}
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Type = desired.Type
-		existing.Data = desired.Data
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
-// ensureSharedAppProxySvc creates or updates an ExternalName Service in the
-// tenant namespace that forwards to the real service in shared-apps. This
-// lets the per-tenant Ingress (which is scoped to the tenant namespace) route
-// to a backend that lives in a different namespace — nginx ingress resolves
-// service backends by namespace, so without this proxy the upstream is missing
-// and returns 503.
-func (r *TenantReconciler) ensureSharedAppProxySvc(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName, svcName string,
-	svcPort int32,
-) error {
-	externalName := fmt.Sprintf("%s.%s.svc.cluster.local", svcName, sharedAppsNamespace)
-	desired := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      svcName,
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Type:         corev1.ServiceTypeExternalName,
-			ExternalName: externalName,
-			Ports: []corev1.ServicePort{
-				{Port: svcPort},
-			},
-		},
-	}
-
-	existing := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Name: svcName, Namespace: nsName}, existing); err != nil {
-		if errors.IsNotFound(err) {
-			return r.Create(ctx, desired)
-		}
-		return err
-	}
-	if existing.Spec.ExternalName != externalName || existing.Spec.Type != corev1.ServiceTypeExternalName {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec.Type = corev1.ServiceTypeExternalName
-		existing.Spec.ExternalName = externalName
-		existing.Spec.Ports = desired.Spec.Ports
-		existing.Spec.ClusterIP = ""
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
 }
 
 func perHostCertName(tenantName, appProfile string) string {

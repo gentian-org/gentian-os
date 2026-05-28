@@ -81,11 +81,6 @@ type AppProfileSpec struct {
 	// +optional
 	Ingress *IngressSpec `json:"ingress,omitempty"`
 
-	// Isolation declares the deployment modes this app supports.
-	// When unset, only dedicated mode is available.
-	// +optional
-	Isolation *AppIsolation `json:"isolation,omitempty"`
-
 	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
 	// UDM portal entry under swp.{tile.name}_{tenantName}.
@@ -151,20 +146,6 @@ type PortalTileSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
-}
-
-// AppIsolation declares the deployment mode capabilities for an application.
-type AppIsolation struct {
-	// Modes lists the deployment modes this app supports.
-	// Valid values: "dedicated", "shared".
-	// +optional
-	Modes []AppDeploymentMode `json:"modes,omitempty"`
-
-	// Default is the deployment mode used when a TenantApp does not specify one.
-	// Defaults to "dedicated".
-	// +optional
-	// +kubebuilder:default=dedicated
-	Default AppDeploymentMode `json:"default,omitempty"`
 }
 
 // IngressSpec declares how the orchestrator should expose this app via HTTP(S).

@@ -135,9 +135,3 @@ grafana:
     enabled: false
     # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
     namespace: ""
-
-# Shared apps namespace — created by the chart so the operator can place
-# shared-mode App claims here without hitting "namespace not found".
-sharedAppsNamespace:
-  create: true
-  name: shared-apps

@@ -406,23 +406,9 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 		Password: string(src.Data["password"]),
 	}
 
-	// Build a set of shared-mode app profiles for this tenant so we can seed
-	// their credentials to the shared-apps OpenBao path instead of per-tenant.
-	sharedApps := map[string]bool{}
-	for _, app := range tenant.Spec.Apps {
-		if app.IsolationMode == gentianov1alpha1.AppDeploymentModeShared {
-			sharedApps[app.Profile] = true
-		}
-	}
-
 	for appName, n := range needs {
-		// Shared-mode apps share one deployment in shared-apps namespace; their
-		// SMTP credentials must be seeded to the shared-apps OpenBao path so the
-		// composition's ExternalSecret can read them (PutOnce — first tenant wins).
+		// Seed SMTP credentials into OpenBao.
 		effectiveTenant := tenant.Name
-		if sharedApps[appName] {
-			effectiveTenant = sharedAppsNamespace
-		}
 		if n.smtp {
 			if _, err := r.Seeder.SeedSMTP(ctx, effectiveTenant, appName, smtp); err != nil {
 				return fmt.Errorf("seed smtp for %s: %w", appName, err)

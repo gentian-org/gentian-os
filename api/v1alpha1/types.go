@@ -48,26 +48,6 @@ const (
 	DatabaseEngineMariaDB    DatabaseEngine = "mariadb"
 )
 
-// AppDeploymentMode controls how an application is deployed relative to tenants.
-// "dedicated" provisions a separate deployment per tenant in the tenant namespace.
-// "shared" provisions a single shared deployment in the platform-kernel namespace
-// with per-tenant IAM brokering via the shared-apps Keycloak realm. All tenants
-// using "shared" for the same app profile share the same Helm release and OIDC
-// client. Only one App claim is created (in platform-kernel); it is not cleaned
-// up on individual tenant removal.
-// +kubebuilder:validation:Enum=dedicated;shared
-type AppDeploymentMode string
-
-const (
-	// AppDeploymentModeDedicated provisions a separate app instance per tenant.
-	AppDeploymentModeDedicated AppDeploymentMode = "dedicated"
-	// AppDeploymentModeShared provisions a single shared app instance in the
-	// platform-kernel namespace. All tenants using this mode share the same
-	// deployment and OIDC client; per-tenant IAM brokering is set up via the
-	// shared-apps Keycloak realm.
-	AppDeploymentModeShared AppDeploymentMode = "shared"
-)
-
 // CacheEngine specifies which caching backend a kernel requirement uses.
 // +kubebuilder:validation:Enum=redis;memcached
 type CacheEngine string
