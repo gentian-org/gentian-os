@@ -617,6 +617,12 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 				"enabled":    true,
 				"secretName": kernelWildcardTenantSecret,
 			},
+			"paths": []map[string]interface{}{
+				{
+					"path":     `/(univention)/(auth|logout|oidc|get|set|command|upload|management)(.*)$`,
+					"pathType": "ImplementationSpecific",
+				},
+			},
 		},
 	}
 }
