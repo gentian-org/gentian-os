@@ -27,6 +27,8 @@ fullnameOverride: "nubus-dev-portal-frontend"
 portalFrontend:
   environment: "production"
   logLevel: "WARNING"
+  objectStorage:
+    iconsProxyUrl: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000/ums/portal-assets/icons/"
 
 ingress:
   enabled: true
