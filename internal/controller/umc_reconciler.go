@@ -302,10 +302,9 @@ func buildUMCRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain st
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
 	})
-	// chart.repository for provider-helm is the full OCI path including chart
-	// name, e.g. oci://artifacts.software-univention.de/nubus/charts/umc-server
-	chartRepository := umcChartRepo + "/" + umcChartName
-	_ = unstructured.SetNestedField(obj.Object, chartRepository, "spec", "forProvider", "chart", "repository")
+	// chart.repository for provider-helm is the OCI registry path without the
+	// chart name; provider-helm appends chart.name to form the full OCI ref.
+	_ = unstructured.SetNestedField(obj.Object, umcChartRepo, "spec", "forProvider", "chart", "repository")
 	_ = unstructured.SetNestedField(obj.Object, umcChartName, "spec", "forProvider", "chart", "name")
 	_ = unstructured.SetNestedField(obj.Object, umcChartVersion, "spec", "forProvider", "chart", "version")
 	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "forProvider", "namespace")
