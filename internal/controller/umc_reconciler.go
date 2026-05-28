@@ -49,6 +49,7 @@ const (
 	// Per-tenant resource names (created in the tenant namespace).
 	umcLDAPSecretName   = "umc-ldap-admin"
 	umcDBSecretName     = "umc-db-credentials"
+	umcSMTPSecretName   = "umc-smtp"
 	umcUCRConfigMapName = "umc-ucr"
 )
 
@@ -104,6 +105,9 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	}
 	if err := r.ensureUMCDBSecret(ctx, tenant, nsName); err != nil {
 		return fmt.Errorf("ensure UMC DB secret: %w", err)
+	}
+	if err := r.ensureUMCSMTPSecret(ctx, tenant, nsName); err != nil {
+		return fmt.Errorf("ensure UMC SMTP secret: %w", err)
 	}
 	if err := r.ensureUMCConfigMap(ctx, tenant, nsName, effectiveDomain); err != nil {
 		return fmt.Errorf("ensure UMC UCR ConfigMap: %w", err)
@@ -203,6 +207,50 @@ func (r *TenantReconciler) ensureUMCDBSecret(ctx context.Context, tenant *gentia
 	return nil
 }
 
+// ensureUMCSMTPSecret copies the per-tenant SMTP password into a dedicated
+// Secret in the tenant namespace for use by the nubusUmcServer chart.
+// Soft-fails when the source smtp-credentials Secret is not yet present.
+func (r *TenantReconciler) ensureUMCSMTPSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      smtpCredentialsSecretName(tenant.Name),
+		Namespace: nsName,
+	}, source); err != nil {
+		if errors.IsNotFound(err) {
+			return nil // not yet created; retry on next reconcile
+		}
+		return fmt.Errorf("read SMTP credentials secret: %w", err)
+	}
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      umcSMTPSecretName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"password": source.Data["password"]},
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: umcSMTPSecretName, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Data = desired.Data
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
 // ensureUMCConfigMap creates or updates the UCR override ConfigMap in the
 // tenant namespace. The base-forced.conf values scope the per-tenant UMC to
 // the correct Keycloak realm and LDAP OU.
@@ -216,7 +264,31 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 	// Per-tenant LDAP base — scopes all directory operations to the tenant OU.
 	tenantLDAPBase := fmt.Sprintf("ou=%s,%s", tenant.Name, r.LDAPBase)
 
-	baseForcedConf := strings.Join([]string{
+	// Read per-tenant SMTP credentials to populate the UCR mail server keys.
+	// Soft-fail: if the secret is not yet present the SMTP UCR keys are omitted
+	// (UMC will use defaults) and the reconcile retries on the next cycle.
+	smtpHost, smtpPort, smtpUser := "", "", ""
+	smtpSec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      smtpCredentialsSecretName(tenant.Name),
+		Namespace: nsName,
+	}, smtpSec); err == nil {
+		smtpHost = string(smtpSec.Data["host"])
+		smtpPort = string(smtpSec.Data["port"])
+		smtpUser = string(smtpSec.Data["username"])
+	}
+
+	smtpLines := []string{}
+	if smtpHost != "" {
+		smtpLines = []string{
+			fmt.Sprintf("umc/self-service/passwordreset/email/server: %s", smtpHost),
+			fmt.Sprintf("umc/self-service/passwordreset/email/server/port: %s", smtpPort),
+			"umc/self-service/passwordreset/email/server/starttls: false",
+			fmt.Sprintf("umc/self-service/passwordreset/email/server/user: %s", smtpUser),
+		}
+	}
+
+	baseForcedConf := strings.Join(append([]string{
 		"server/role: memberserver",
 		fmt.Sprintf("ldap/master: %s", r.LDAPServer),
 		"ldap/master/port: 389",
@@ -227,7 +299,7 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 		fmt.Sprintf("umc/oidc/issuer-internal: %s", keycloakInternal),
 		fmt.Sprintf("umc/oidc/nubus/issuer: %s", keycloakExternal),
 		fmt.Sprintf("umc/oidc/nubus/client-id: %s", oidcClientID),
-	}, "\n") + "\n"
+	}, smtpLines...), "\n") + "\n"
 
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -263,14 +335,21 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 // artifacts.software-univention.de without a prior registry login, avoiding
 // the ArgoCD repo-server OCI credential matching quirk.
 func (r *TenantReconciler) ensureUMCRelease(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
-	relName := umcReleaseName(tenant.Name)
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(helmReleaseGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: relName}, obj)
+	desired := buildUMCRelease(tenant, nsName, effectiveDomain)
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(helmReleaseGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: desired.GetName()}, existing)
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, buildUMCRelease(tenant, nsName, effectiveDomain))
+		return r.Create(ctx, desired)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// Patch spec to keep chart version and values current.
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Object["spec"] = desired.Object["spec"]
+	return r.Patch(ctx, existing, patch)
 }
 
 // deleteUMC removes the Crossplane Release CR for the per-tenant UMC on
@@ -349,6 +428,16 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 						"keyMapping": map[string]interface{}{
 							"password": "password",
 						},
+					},
+				},
+			},
+		},
+		"smtp": map[string]interface{}{
+			"auth": map[string]interface{}{
+				"existingSecret": map[string]interface{}{
+					"name": umcSMTPSecretName,
+					"keyMapping": map[string]interface{}{
+						"password": "password",
 					},
 				},
 			},
