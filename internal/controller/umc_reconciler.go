@@ -92,6 +92,12 @@ var (
 	// from servicesNamespace so UMC pods in tenant namespaces can reach it.
 	umcKeycloakInternalBase = envOrDefault("UMC_KEYCLOAK_INTERNAL_BASE",
 		fmt.Sprintf("http://nubus-dev-keycloak.%s.svc.cluster.local:8080", servicesNamespace))
+
+	// LDAP server hostname (without scheme/port) for the UCR ldap/server/name
+	// key consumed by SSSD's getLDAPURIs() helper. Must be the plain hostname,
+	// not a URL — SSSD builds ldap://<host>:<port> itself.
+	umcLDAPServerName = envOrDefault("UMC_LDAP_SERVER_NAME",
+		fmt.Sprintf("nubus-dev-ldap-server.%s.svc.cluster.local", servicesNamespace))
 )
 
 // ensureUMC deploys a per-tenant nubusUmcServer instance that allows the
@@ -394,13 +400,35 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 		}
 	}
 
+	// SAML IdP descriptor URLs — the external URL is stored in the UCR key
+	// (consumed by UMC's sp.py) while the internal URL is used only at
+	// container startup to download the metadata without hairpin NAT.
+	samlIDPExternal := fmt.Sprintf("https://id.%s/realms/%s/protocol/saml/descriptor", r.KernelDomain, tenant.Name)
+	samlIDPInternal := fmt.Sprintf("%s/protocol/saml/descriptor", keycloakInternal)
+
 	baseForcedConf := strings.Join(append([]string{
 		"server/role: memberserver",
+		// hostname + domainname are required by SSSD's UCR template (sssd.conf
+		// domain section) and by UMC's saml/sp.py which builds the cert path as
+		// /etc/univention/ssl/<hostname>.<domainname>/cert.pem.
+		fmt.Sprintf("hostname: %s", tenant.Name),
+		fmt.Sprintf("domainname: %s", r.KernelDomain),
 		fmt.Sprintf("ldap/master: %s", r.LDAPServer),
 		"ldap/master/port: 389",
+		// ldap/server/name is the plain hostname (no scheme/port) consumed by
+		// SSSD's getLDAPURIs() helper to build ldap_uri in sssd.conf.
+		fmt.Sprintf("ldap/server/name: %s", umcLDAPServerName),
+		"ldap/server/port: 389",
 		fmt.Sprintf("ldap/hostdn: cn=admin,%s", r.LDAPBase),
 		fmt.Sprintf("ldap/base: %s", tenantLDAPBase),
 		"directory/manager/starttls: 0",
+		// SAML SP: the entrypoint script (50-entrypoint.sh) reads these to
+		// download the IdP metadata and to create the cert symlink at
+		// /etc/univention/ssl/<sp-server>/cert.pem.  sp-server must equal
+		// <hostname>.<domainname> so that saml/sp.py finds the symlinked cert.
+		fmt.Sprintf("umc/saml/sp-server: %s", effectiveDomain),
+		fmt.Sprintf("umc/saml/idp-server: %s", samlIDPExternal),
+		fmt.Sprintf("umc/saml/idp-server-internal: %s", samlIDPInternal),
 		fmt.Sprintf("umc/oidc/issuer: %s", keycloakExternal),
 		fmt.Sprintf("umc/oidc/issuer-internal: %s", keycloakInternal),
 		fmt.Sprintf("umc/oidc/nubus/issuer: %s", keycloakExternal),
