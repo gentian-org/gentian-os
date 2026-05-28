@@ -434,11 +434,11 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
-		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0 ||
-		appsResult.RequeueAfter > 0
-	// Note: mailResult and officeResult are intentionally excluded from the
-	// provisioning flag. Mail and office are kernel extensions and do not
-	// block Phase=Ready. Their own conditions track state independently.
+		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
+	// Note: mailResult, officeResult, and appsResult are intentionally excluded
+	// from the provisioning flag. Apps are converged asynchronously (like mail
+	// and office) and do not block Phase=Ready. AppsReady tracks state
+	// independently and the reconciler requeues until all App claims are Ready.
 	if provisioning {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
@@ -478,7 +478,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 		return appsResult, nil
 	}
-	// Infrastructure is ready. Requeue for mail or office if still converging.
+	// Infrastructure is ready. Requeue for mail, office, or apps if still converging.
 	if mailResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; mail still converging", "tenant", tenant.Name)
 		return mailResult, nil
@@ -486,6 +486,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if officeResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; office still converging", "tenant", tenant.Name)
 		return officeResult, nil
+	}
+	if appsResult.RequeueAfter > 0 {
+		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
+		return appsResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
