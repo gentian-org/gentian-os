@@ -96,6 +96,10 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 	}
 
 	if len(ingressApps) == 0 {
+		// Still clean up any stale ingresses from previously removed apps.
+		if err := r.deleteStaleIngressesForTenant(ctx, tenant, nsName, nil); err != nil {
+			return ctrl.Result{}, err
+		}
 		r.setCondition(tenant, conditionIngressReady, metav1.ConditionTrue,
 			"NoIngressConfigured", "No apps require ingress provisioning")
 		return ctrl.Result{}, nil
@@ -140,11 +144,23 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		}
 	}
 
+	// Build the set of expected ingress names for the current spec.apps.
+	expectedIngresses := make(map[string]struct{}, len(ingressApps))
+	for _, ia := range ingressApps {
+		expectedIngresses[appIngressName(tenant.Name, ia.appProfile)] = struct{}{}
+	}
+
 	for _, ia := range ingressApps {
 		host := ingressHost(ia.appProfile, ia.ingress, effectiveDomain)
 		if err := r.ensureAppIngress(ctx, tenant, nsName, ia.appProfile, ia.ingress, host, tlsSecret); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Ingress for app %s: %w", ia.appProfile, err)
 		}
+	}
+
+	// Delete any ingresses that were created by this operator for this tenant
+	// but whose app is no longer in spec.apps (stale after an app removal).
+	if err := r.deleteStaleIngressesForTenant(ctx, tenant, nsName, expectedIngresses); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	mode := "vanity"
@@ -155,6 +171,38 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		"Provisioned",
 		fmt.Sprintf("Ingress provisioned for %d app(s) on %q (%s)", len(ingressApps), effectiveDomain, mode))
 	return ctrl.Result{}, nil
+}
+
+// deleteStaleIngressesForTenant removes any operator-managed ingresses in the
+// tenant namespace whose names are NOT in the expectedIngresses set.  Pass nil
+// for expectedIngresses to delete ALL operator-managed ingresses (used during
+// full app removal).
+func (r *TenantReconciler) deleteStaleIngressesForTenant(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	expectedIngresses map[string]struct{},
+) error {
+	list := &networkingv1.IngressList{}
+	if err := r.List(ctx, list,
+		client.InNamespace(nsName),
+		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name},
+	); err != nil {
+		return fmt.Errorf("list tenant ingresses for stale cleanup: %w", err)
+	}
+	for i := range list.Items {
+		name := list.Items[i].Name
+		if expectedIngresses != nil {
+			if _, wanted := expectedIngresses[name]; wanted {
+				continue
+			}
+		}
+		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete stale ingress %s: %w", name, err)
+		}
+		ctrl.LoggerFrom(ctx).Info("deleted stale tenant ingress", "ingress", name, "tenant", tenant.Name)
+	}
+	return nil
 }
 
 // ensureKernelWildcardSecret replicates the kernel wildcard TLS Secret into

@@ -440,7 +440,7 @@ nubusStackDataUms:
       element:
         enabled: false
       jitsi:
-        enabled: true
+        enabled: false  # Jitsi kernel service not yet deployed; no meet.desk.gentian.org backend
       nextcloud:
         enabled: true
       notes:

@@ -145,14 +145,15 @@ nubusStackDataUms:
       - username: ldapsearch_xwiki
         lastname: LDAP-Search-User
     # Enable portal tiles for apps deployed in dev. The _base.yaml defaults these to false
-    # because not all envs run them; dev enables element explicitly.
+    # because not all envs run them.
+    # Element tiles are per-tenant only (the AppProfile portalTiles section creates them
+    # at chat.<tenant-domain>). A kernel-level element tile would point to the non-existent
+    # chat.desk.gentian.org, so element is kept disabled here.
     # Collabora is intentionally NOT enabled here: it is accessed through the
     # Nextcloud file picker, not as a standalone portal tile. Enabling it adds a
     # "+ Create new in Files" button in the Nubus portal that is meaningless for
     # both regular users and tenant admins.
-    apps:
-      element:
-        enabled: true
+    apps: {}
 
 nubusUdmListener:
   nats:
