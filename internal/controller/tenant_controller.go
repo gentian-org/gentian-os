@@ -434,7 +434,8 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
-		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
+		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0 ||
+		appsResult.RequeueAfter > 0
 	// Note: mailResult and officeResult are intentionally excluded from the
 	// provisioning flag. Mail and office are kernel extensions and do not
 	// block Phase=Ready. Their own conditions track state independently.
