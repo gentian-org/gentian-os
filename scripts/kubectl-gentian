@@ -662,6 +662,56 @@ EOF
   fi
 }
 
+# argocd_refresh_await_prune ENV_NAME TENANT_NAME
+#
+# Finds the ArgoCD Application managing ENV_NAME's tenants (by matching
+# spec.source.path == "ENV_NAME/tenants"), triggers an immediate git refresh,
+# and waits up to 60 s for ArgoCD to prune the tenant (i.e. until the Tenant CR
+# is gone or ArgoCD reaches Synced). Falls back silently when no matching app is
+# found (so the direct kubectl-delete path still works).
+argocd_refresh_await_prune() {
+  local env_name="${1}"
+  local tenant_name="${2}"
+  local want_path="${env_name}/tenants"
+
+  # Find "namespace/app-name" for the app tracking this env's tenants.
+  local app_ns_name
+  app_ns_name="$(kubectl get application.argoproj.io -A \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.source.path}{"\n"}{end}' \
+    2>/dev/null \
+    | awk -F'\t' -v p="${want_path}" '$2 == p {print $1; exit}')"
+
+  if [[ -z "${app_ns_name}" ]]; then
+    return 0  # No ArgoCD app found — fall back to direct delete.
+  fi
+
+  local argocd_ns="${app_ns_name%%/*}"
+  local argocd_app="${app_ns_name##*/}"
+
+  # Trigger an immediate git refresh so ArgoCD picks up the new desired state
+  # (tenant removed from kustomization) before its normal 3-minute poll cycle.
+  # This prevents selfHeal from re-creating the tenant between the direct
+  # kubectl-delete and ArgoCD realising it should be gone.
+  kubectl annotate "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
+    "argocd.argoproj.io/refresh=normal" --overwrite &>/dev/null || true
+
+  # Wait up to 60 s for ArgoCD to sync (prune) or for the tenant to vanish.
+  local i=0
+  while [[ ${i} -lt 60 ]]; do
+    if ! kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
+      break  # ArgoCD already pruned it.
+    fi
+    local sync_status
+    sync_status="$(kubectl get "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
+      -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")"
+    if [[ "${sync_status}" == "Synced" ]]; then
+      break  # ArgoCD finished syncing (prune issued).
+    fi
+    sleep 2
+    (( i += 2 ))
+  done
+}
+
 apply_env_kustomization() {
   local env_name="${1}"
   local output
@@ -896,6 +946,11 @@ cmd_tenant_undeploy() {
     if ! apply_env_kustomization "${env_name}"; then
       echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
     fi
+    # Trigger an immediate ArgoCD refresh so it picks up the new desired state
+    # (tenant removed) before its next polling cycle. Without this, ArgoCD's
+    # selfHeal re-creates the tenant CR between the git push and ArgoCD noticing
+    # the git change, leaving the tenant "live" after undeploy.
+    argocd_refresh_await_prune "${env_name}" "${tenant_name}"
   fi
 
   # Capture the tenant namespace name from status before we delete the CR.
