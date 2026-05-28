@@ -272,18 +272,17 @@ print_tenant_admin_login_instructions() {
   fi
 
   echo ""
-  echo "─── Tenant Portal Admin (Nubus UMC) ─────────────────────────────────────────"
-  echo "  This LDAP-backed user can log into the Nubus portal and provision / manage"
-  echo "  end users for the '${tenant_name}' tenant via the UMC user/group tiles."
-  echo "  Portal / UMC : ${portal_base}/univention/management/"
-  echo "  Username     : ${username}"
-  echo "  Password     : ${password}"
-  echo ""
-  echo "─── Tenant Keycloak Realm Admin (secondary) ─────────────────────────────────"
-  echo "  Same user manages OIDC clients and realm settings in Keycloak."
-  echo "  Keycloak Admin Console: ${id_base}/admin/${realm}/console"
+  echo "─── Tenant Admin Credentials ────────────────────────────────────────────────"
   echo "  Username : ${username}"
-  echo "  Password : ${password}  (same credentials)"
+  echo "  Password : ${password}"
+  echo ""
+  echo "─── Keycloak Realm Admin Console ────────────────────────────────────────────"
+  echo "  Manage OIDC clients, realm settings, and users for '${tenant_name}'."
+  echo "  URL: ${id_base}/admin/${realm}/console"
+  echo ""
+  echo "  NOTE: The shared Nubus portal (${portal_base}/univention/management/)"
+  echo "  uses the kernel Keycloak realm and cannot authenticate tenant admins."
+  echo "  Per-tenant UMC access requires a per-tenant portal (Phase B TODO)."
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 
