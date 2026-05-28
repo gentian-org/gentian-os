@@ -117,23 +117,23 @@ spec:
                        -e "SHOW TABLES;" 2>/dev/null | wc -l')
               echo "Table count in configdb (incl. header): ${TABLE_COUNT}"
 
-              if [ "${TABLE_COUNT:-0}" -ge 5 ]; then
-                echo "ConfigDB already initialised — nothing to do."
-                exit 0
+              if [ "${TABLE_COUNT:-0}" -lt 5 ]; then
+                echo "ConfigDB not initialised. Running initconfigdb -i ..."
+
+                # ── 4. Initialise configdb tables ──────────────────────────────
+                kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
+                  -- bash -c \
+                  '/opt/open-xchange/sbin/initconfigdb -i \
+                   --mysql-args "--skip-ssl-verify-server-cert" \
+                   --configdb-user "${MYSQL_USER}" \
+                   --configdb-pass "${MYSQL_PASSWORD}" \
+                   --configdb-host "${MYSQL_HOST}" \
+                   --mysql-root-passwd "${MYSQL_PASSWORD}" \
+                   --configdb-dbname "${MYSQL_DATABASE}"'
+              else
+                echo "ConfigDB tables present (${TABLE_COUNT}). Skipping initconfigdb."
+                echo "Still running filestore/server/database registration (idempotent)."
               fi
-
-              echo "ConfigDB not initialised. Running initconfigdb -i ..."
-
-              # ── 4. Initialise configdb tables ────────────────────────────────
-              kubectl exec -n "${NAMESPACE}" "${pod}" -c core-mw \
-                -- bash -c \
-                '/opt/open-xchange/sbin/initconfigdb -i \
-                 --mysql-args "--skip-ssl-verify-server-cert" \
-                 --configdb-user "${MYSQL_USER}" \
-                 --configdb-pass "${MYSQL_PASSWORD}" \
-                 --configdb-host "${MYSQL_HOST}" \
-                 --mysql-root-passwd "${MYSQL_PASSWORD}" \
-                 --configdb-dbname "${MYSQL_DATABASE}"'
 
               # ── 5. Wait for OX admin API (port 8009) ─────────────────────────
               echo "Waiting for OX admin port 8009..."
