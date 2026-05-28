@@ -225,7 +225,21 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 				kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
 			}
 		}
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName, ldap, broker))
+		// Seed the UMC OIDC client secret so the realm script can apply it to
+		// Keycloak (deterministic derivation; same value used in ensureUMCOIDCSecret
+		// to populate the tenant-namespace K8s secret consumed by the UMC chart).
+		umcClientSecret := ""
+		if r.Seeder != nil && r.KernelDomain != "" {
+			effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+			umcClientID := fmt.Sprintf("https://%s/univention/oidc/", effectiveDomain)
+			umcIssuer := fmt.Sprintf("https://id.%s/realms/%s", r.KernelDomain, realmName)
+			umcCreds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, "umc", umcIssuer, umcClientID)
+			if seedErr != nil {
+				return false, fmt.Errorf("seed UMC OIDC client: %w", seedErr)
+			}
+			umcClientSecret = umcCreds.ClientSecret
+		}
+		return false, r.Create(ctx, makeRealmJob(tenant, realmName, ldap, broker, umcClientSecret))
 	}
 	if err != nil {
 		return false, err
@@ -383,7 +397,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realmLDAPParams, broker *realmBrokerParams) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realmLDAPParams, broker *realmBrokerParams, umcClientSecret string) *batchv1.Job {
 	ttl := int32(3600)
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
@@ -402,6 +416,9 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realm
 			corev1.EnvVar{Name: "KERNEL_REALM", Value: broker.kernelRealm},
 			corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: broker.kernelExternalURL},
 		)
+	}
+	if umcClientSecret != "" {
+		c.Env = append(c.Env, corev1.EnvVar{Name: "UMC_OIDC_CLIENT_SECRET", Value: umcClientSecret})
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -805,6 +822,11 @@ if [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   UMC_CLIENT_ID="${UMC_BASE}/univention/oidc/"
   # URL-encode for use as a query parameter value.
   UMC_CLIENT_ID_ENC=$(printf '%%s' "${UMC_CLIENT_ID}" | sed 's|:|%%3A|g; s|/|%%2F|g')
+  # Build optional secret field for Keycloak client payload.
+  UMC_SECRET_FIELD=""
+  if [ -n "${UMC_OIDC_CLIENT_SECRET:-}" ]; then
+    UMC_SECRET_FIELD=",\"secret\":\"${UMC_OIDC_CLIENT_SECRET}\""
+  fi
   # Refresh token — the IdP brokering section above can exhaust the token lifetime.
   TOKEN=$(curl -sf --max-time 30 \
     -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -815,12 +837,17 @@ if [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${UMC_CLIENT_ID_ENC}" 2>/dev/null || echo "")
   if echo "${UMC_CHECK}" | grep -q '"id"'; then
-    echo "UMC portal client already registered in realm ${REALM_NAME}"
+    UMC_CID=$(echo "${UMC_CHECK}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+    echo "UMC portal client already registered in realm ${REALM_NAME} (id=${UMC_CID}), updating"
+    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${UMC_CID}" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"${UMC_CLIENT_ID}\",\"protocol\":\"openid-connect\",\"redirectUris\":[\"${UMC_BASE}/univention/oidc/*\"],\"publicClient\":false,\"standardFlowEnabled\":true,\"enabled\":true${UMC_SECRET_FIELD}}"
   else
     curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${UMC_CLIENT_ID}\",\"protocol\":\"openid-connect\",\"redirectUris\":[\"${UMC_BASE}/univention/oidc/*\"],\"publicClient\":false,\"standardFlowEnabled\":true,\"enabled\":true}"
+      -d "{\"clientId\":\"${UMC_CLIENT_ID}\",\"protocol\":\"openid-connect\",\"redirectUris\":[\"${UMC_BASE}/univention/oidc/*\"],\"publicClient\":false,\"standardFlowEnabled\":true,\"enabled\":true${UMC_SECRET_FIELD}}"
     echo "UMC portal client registered in realm ${REALM_NAME}"
   fi
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,

@@ -34,23 +34,30 @@ import (
 )
 
 const (
-	// kernelLDAPAdminSecret is the name of the LDAP admin secret in kernelNamespace.
-	// The nubusUmcServer chart uses this to bind to the shared LDAP directory.
+	// kernelLDAPAdminSecret is the name of the LDAP admin secret in
+	// servicesNamespace. The nubusUmcServer chart uses this to bind to the
+	// shared LDAP directory.
 	kernelLDAPAdminSecret = "nubus-dev-ldap-server-admin"
 
 	// kernelNubusCredentials holds per-service DB passwords managed by the Nubus
-	// Helm release (key: pg-authsession-password).
+	// Helm release (keys: pg-authsession-password, pg-selfservice-password, …).
 	kernelNubusCredentials = "nubus-credentials"
 
 	// umcDBPasswordKey is the key inside kernelNubusCredentials for the
 	// authSession PostgreSQL password.
 	umcDBPasswordKey = "pg-authsession-password"
 
+	// umcDBSelfServicePasswordKey is the key inside kernelNubusCredentials for
+	// the selfservice PostgreSQL password.
+	umcDBSelfServicePasswordKey = "pg-selfservice-password"
+
 	// Per-tenant resource names (created in the tenant namespace).
-	umcLDAPSecretName   = "umc-ldap-admin"
-	umcDBSecretName     = "umc-db-credentials"
-	umcSMTPSecretName   = "umc-smtp"
-	umcUCRConfigMapName = "umc-ucr"
+	umcLDAPSecretName            = "umc-ldap-admin"
+	umcDBSecretName              = "umc-db-credentials"
+	umcDBSelfServiceSecretName   = "umc-db-selfservice"
+	umcSMTPSecretName            = "umc-smtp"
+	umcOIDCSecretName            = "umc-oidc-client"
+	umcUCRConfigMapName          = "umc-ucr"
 )
 
 // helmReleaseGVK is the GVK for the Crossplane provider-helm Release CR.
@@ -106,6 +113,12 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	if err := r.ensureUMCDBSecret(ctx, tenant, nsName); err != nil {
 		return fmt.Errorf("ensure UMC DB secret: %w", err)
 	}
+	if err := r.ensureUMCPostgresSelfServiceSecret(ctx, tenant, nsName); err != nil {
+		return fmt.Errorf("ensure UMC selfservice DB secret: %w", err)
+	}
+	if err := r.ensureUMCOIDCSecret(ctx, tenant, nsName, effectiveDomain); err != nil {
+		return fmt.Errorf("ensure UMC OIDC secret: %w", err)
+	}
 	if err := r.ensureUMCSMTPSecret(ctx, tenant, nsName); err != nil {
 		return fmt.Errorf("ensure UMC SMTP secret: %w", err)
 	}
@@ -126,12 +139,12 @@ func (r *TenantReconciler) ensureUMCLDAPSecret(ctx context.Context, tenant *gent
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{
 		Name:      kernelLDAPAdminSecret,
-		Namespace: kernelNamespace,
+		Namespace: servicesNamespace,
 	}, source); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("read LDAP admin secret from %s: %w", kernelNamespace, err)
+		return fmt.Errorf("read LDAP admin secret from %s: %w", servicesNamespace, err)
 	}
 
 	desired := &corev1.Secret{
@@ -170,12 +183,12 @@ func (r *TenantReconciler) ensureUMCDBSecret(ctx context.Context, tenant *gentia
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{
 		Name:      kernelNubusCredentials,
-		Namespace: kernelNamespace,
+		Namespace: servicesNamespace,
 	}, source); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("read nubus-credentials from %s: %w", kernelNamespace, err)
+		return fmt.Errorf("read nubus-credentials from %s: %w", servicesNamespace, err)
 	}
 
 	desired := &corev1.Secret{
@@ -193,6 +206,97 @@ func (r *TenantReconciler) ensureUMCDBSecret(ctx context.Context, tenant *gentia
 
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: umcDBSecretName, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Data = desired.Data
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+// ensureUMCPostgresSelfServiceSecret copies the PostgreSQL selfservice password
+// from the shared nubus-credentials Secret into the tenant namespace. The
+// nubusUmcServer chart requires this even when selfService is disabled because
+// the secret template has a hard required() guard.
+func (r *TenantReconciler) ensureUMCPostgresSelfServiceSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      kernelNubusCredentials,
+		Namespace: servicesNamespace,
+	}, source); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("read nubus-credentials from %s: %w", servicesNamespace, err)
+	}
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      umcDBSelfServiceSecretName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"password": source.Data[umcDBSelfServicePasswordKey]},
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: umcDBSelfServiceSecretName, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Data = desired.Data
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+// ensureUMCOIDCSecret derives the per-tenant UMC OIDC client secret via the
+// Seeder (same deterministic derivation used by the realm job) and stores it
+// in the tenant namespace for use by the nubusUmcServer chart.
+// Soft-fails when Seeder is unavailable (envtest / staged rollout).
+func (r *TenantReconciler) ensureUMCOIDCSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	if r.Seeder == nil {
+		// Without a Seeder we cannot derive the OIDC client secret. UMC will
+		// not work until a secret is created manually or Seeder is configured.
+		return nil
+	}
+	oidcClientIDValue := fmt.Sprintf("https://%s/univention/oidc/", effectiveDomain)
+	issuer := fmt.Sprintf("https://id.%s/realms/%s", r.KernelDomain, tenant.Name)
+	creds, err := r.Seeder.SeedOIDC(ctx, tenant.Name, "umc", issuer, oidcClientIDValue)
+	if err != nil {
+		return fmt.Errorf("seed UMC OIDC client secret: %w", err)
+	}
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      umcOIDCSecretName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"password": []byte(creds.ClientSecret)},
+	}
+
+	existing := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: umcOIDCSecretName, Namespace: nsName}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
@@ -431,6 +535,16 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 					},
 				},
 			},
+			"selfservice": map[string]interface{}{
+				"auth": map[string]interface{}{
+					"existingSecret": map[string]interface{}{
+						"name": umcDBSelfServiceSecretName,
+						"keyMapping": map[string]interface{}{
+							"password": "password",
+						},
+					},
+				},
+			},
 		},
 		"smtp": map[string]interface{}{
 			"auth": map[string]interface{}{
@@ -438,6 +552,18 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 					"name": umcSMTPSecretName,
 					"keyMapping": map[string]interface{}{
 						"password": "password",
+					},
+				},
+			},
+		},
+		"umcServer": map[string]interface{}{
+			"oidcClient": map[string]interface{}{
+				"auth": map[string]interface{}{
+					"existingSecret": map[string]interface{}{
+						"name": umcOIDCSecretName,
+						"keyMapping": map[string]interface{}{
+							"password": "password",
+						},
 					},
 				},
 			},
