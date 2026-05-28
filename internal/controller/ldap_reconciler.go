@@ -883,7 +883,30 @@ elif [ "${STATUS}" = "200" ]; then
 else
   echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
   exit 1
-fi`,
+fi
+
+# Create per-tenant managed-by-attribute-* groups inside the tenant OU.
+# These replace the global cn=groups managed-by-attribute-* groups so that
+# app access control stays scoped to the tenant (one OU = one realm = one tenant).
+for MBA_GROUP in Groupware Fileshare FileshareAdmin Videoconference Livecollaboration LivecollaborationAdmin; do
+  MBA_GRP_ENC=$(urlencode "cn=managed-by-attribute-${MBA_GROUP},${OU_POS}")
+  STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/groups/group/${MBA_GRP_ENC}")
+  if [ "${STATUS}" = "404" ]; then
+    curl -s -o /dev/null -X POST ${CREDS} \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      "${BASE_URL}/groups/group/" \
+      -d "{\"properties\":{\"name\":\"managed-by-attribute-${MBA_GROUP}\"},\"position\":\"${OU_POS}\"}"
+    echo "group managed-by-attribute-${MBA_GROUP} created in ${OU_POS}"
+  elif [ "${STATUS}" = "200" ]; then
+    echo "group managed-by-attribute-${MBA_GROUP} already exists in ${OU_POS}"
+  else
+    echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+    exit 1
+  fi
+done`,
 		ouDN, tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName)
@@ -933,16 +956,22 @@ fi`, ouDN, appName, tenantName, appName, tenantName, appName, tenantName, appNam
 // injected as environment variables by the Job constructor. The call is
 // idempotent: it ensures the mail domain exists, creates the user if missing,
 // and then ensures group membership.
+//
+// The admin user is placed inside ou=users,<tenantOU> so that the Keycloak
+// tenant-realm LDAP federation (which targets ou=users,<tenantOU>) picks them
+// up. Service accounts and groups remain at the tenant OU root and are
+// therefore NOT imported by the federation.
 func buildAdminUserScript(ouDN, tenantName, adminEmail string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
+USERS_OU_POS="ou=users,${OU_POS}"
 ADMIN_EMAIL="%s"
 MAIL_DOMAIN="${ADMIN_EMAIL##*@}"
 MAIL_DOMAIN_CONTAINER="cn=domain,cn=mail,${UDM_LDAP_BASE}"
-ADMIN_DN="uid=${ADMIN_USERNAME},${OU_POS}"
+ADMIN_DN="uid=${ADMIN_USERNAME},${USERS_OU_POS}"
 ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
 ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 ADMINS_GRP_ENC=$(urlencode "${ADMINS_GRP_DN}")
@@ -971,8 +1000,8 @@ if [ "${STATUS}" = "404" ]; then
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     "${BASE_URL}/users/user/" \
-		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\"},\"position\":\"${OU_POS}\"}"
-  echo "UDM user ${ADMIN_USERNAME} created in ${OU_POS}"
+		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\"},\"position\":\"${USERS_OU_POS}\"}"
+  echo "UDM user ${ADMIN_USERNAME} created in ${USERS_OU_POS}"
 elif [ "${STATUS}" = "200" ]; then
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
 else
@@ -1006,7 +1035,7 @@ else
 fi
 
 # Unlock all users in the tenant OU (idempotent; reverses Retain lock on redeploy).
-OU_ENC_UNLOCK=$(urlencode "${OU_POS}")
+OU_ENC_UNLOCK=$(urlencode "${USERS_OU_POS}")
 USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/users/user/?position=${OU_ENC_UNLOCK}")
@@ -1021,7 +1050,7 @@ printf '%%s' "${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$
     echo "unlocked ${USER_DN}"
   fi
 done
-echo "unlock sweep complete for ${OU_POS}"`, ouDN, adminEmail, tenantName)
+echo "unlock sweep complete for ${USERS_OU_POS}"`, ouDN, adminEmail, tenantName)
 }
 
 // buildAdminPolicyScript configures UMC/UDM delegated admin policy for one
@@ -1227,30 +1256,32 @@ else
 	echo "Tenant Admins: added ${ADMINS_GRP_DN} as nested member"
 fi
 
-# Add the tenant OU to the global settings/directory 'users' default-container
-# list so UMC shows a Container dropdown (rather than silently using cn=users).
-# Without this the "openDesk User" wizard has no Container field and always
-# places new users in cn=users, which tenant admins cannot write to.
+# Add the tenant OU's users sub-container to the global settings/directory
+# 'users' default-container list. This ensures that the "openDesk User" wizard
+# places new users in ou=users,<tenantOU> (the Keycloak federation target) rather
+# than the OU root. Users at the OU root would not be picked up by the tenant
+# realm's LDAP federation and would be invisible to tenant-realm OIDC clients.
+USERS_OU_POS="ou=users,${OU_POS}"
 SETTINGS_DN="cn=default containers,cn=univention,${UDM_LDAP_BASE}"
 SETTINGS_ENC=$(urlencode "${SETTINGS_DN}")
 SETTINGS_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/directory/${SETTINGS_ENC}" | tr -d '\n')
 CURRENT_USERS=$(printf '%%s' "${SETTINGS_BODY}" | sed -n 's/.*"users":[[:space:]]*\[\([^]]*\)\].*/\1/p')
-if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${OU_POS}\""; then
-	echo "settings/directory: ${OU_POS} already in users default containers"
+if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${USERS_OU_POS}\""; then
+	echo "settings/directory: ${USERS_OU_POS} already in users default containers"
 else
 	if [ -z "${CURRENT_USERS}" ]; then
-		NEW_USERS="[\"${OU_POS}\"]"
+		NEW_USERS="[\"${USERS_OU_POS}\"]"
 	else
-		NEW_USERS="[${CURRENT_USERS},\"${OU_POS}\"]"
+		NEW_USERS="[${CURRENT_USERS},\"${USERS_OU_POS}\"]"
 	fi
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/settings/directory/${SETTINGS_ENC}" \
 		-d "{\"properties\":{\"users\":${NEW_USERS}}}"
-	echo "settings/directory: added ${OU_POS} to users default containers"
+	echo "settings/directory: added ${USERS_OU_POS} to users default containers"
 fi`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName,
@@ -1263,14 +1294,17 @@ fi`,
 // buildLockOUScript lists all users in the tenant OU via UDM and disables each
 // (sets disabled:true). This blocks all login channels (LDAP federation,
 // Kerberos, Samba) while preserving all user data for fast re-enable on redeploy.
+// Users are searched under ou=users,<tenantOU> (the sub-container where all
+// human users are placed by the new LDAP structure).
 func buildLockOUScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
-OU_ENC=$(urlencode "${OU_POS}")
-echo "locking all users in ${OU_POS}"
+USERS_OU_POS="ou=users,${OU_POS}"
+OU_ENC=$(urlencode "${USERS_OU_POS}")
+echo "locking all users in ${USERS_OU_POS}"
 USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
   -H "Accept: application/json" \
   "${BASE_URL}/users/user/?position=${OU_ENC}")
@@ -1285,7 +1319,7 @@ printf '%%s' "${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$
     echo "locked ${USER_DN}"
   fi
 done
-echo "lock sweep complete for ${OU_POS}"`, ouDN)
+echo "lock sweep complete for ${USERS_OU_POS}"`, ouDN)
 }
 
 // buildOUDeleteScript removes the tenant OU and all child entries.
@@ -1398,7 +1432,13 @@ ENTRY_ENC=$(urlencode "${ENTRY_DN}")
 LINK="https://%s.%s%s"
 LINK_TARGET="%s"
 USERS_GRP_CN="%s"
-USERS_GRP_DN="cn=${USERS_GRP_CN},cn=groups,${UDM_LDAP_BASE}"
+# For per-tenant app access groups (managed-by-attribute-*) the group lives inside
+# the tenant OU (not global cn=groups) for tenant isolation.
+if printf '%%s' "${USERS_GRP_CN}" | grep -q '^managed-by-attribute-'; then
+  USERS_GRP_DN="cn=${USERS_GRP_CN},${OU_POS}"
+else
+  USERS_GRP_DN="cn=${USERS_GRP_CN},cn=groups,${UDM_LDAP_BASE}"
+fi
 LOGO="%s"
 CAT_DN="cn=od.applications,cn=category,cn=portals,cn=univention,${UDM_LDAP_BASE}"
 CAT_ENC=$(urlencode "${CAT_DN}")

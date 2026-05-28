@@ -1,33 +1,39 @@
 # IAM Restructure — Tenant-Realm-First Architecture
 
-## Status: Draft — awaiting review before implementation
+## Status: Phase A complete. Phase B is the active work item (blocking re-install).
+
+See [design/ldap-restructuring.md](design/ldap-restructuring.md) for the full
+LDAP audit, defect list, and step-by-step implementation plan.
 
 ---
 
 ## 1. Current state and its problem
 
-Today Gentian OS has three Keycloak realms with an awkward responsibility split:
+**Phase A (realm rename opendesk→kernel) is done.** The current cluster has:
 
 ```
-master          ← admin only (unchanged)
-opendesk        ← all users (Nubus LDAP sync target); kernel apps + tenant admin users
-<tenant>        ← OIDC clients for tenant apps, but zero users
+master          ← admin only
+kernel          ← renamed from opendesk; LDAP federation: dc=swp-ldap,dc=internal SUBTREE ❌
+                  clients: portal, opendesk-dovecot, opendesk-nextcloud, opendesk-oxappsuite
+                  users: ALL users from ALL tenants imported here (federation bug)
+gtn-demo        ← LDAP federation: ou=users,ou=gtn-demo (correct path, but EMPTY) ❌
+                  clients: gtn-demo-element, gtn-demo-jitsi, gtn-demo-ox-appsuite
+gtn-demo-2      ← LDAP federation: ou=users,ou=gtn-demo-2 (correct path, but EMPTY) ❌
+                  clients: gtn-demo-2-element
+shared-apps     ← no LDAP federation; clients: element, opendesk-synapse
 ```
 
-The `opendesk` realm is a Nubus artefact: `KEYCLOAK_REALM=opendesk` is hardcoded in the
-Nubus configmap, so Nubus's LDAP→Keycloak sync lands all users there regardless of which
-tenant they belong to. Tenant realms are structurally empty (just an OIDC client) and have
-no way to issue tokens for tenant users without a broker to `opendesk`.
-
-This has two concrete consequences:
-1. A user logged into the Nubus portal (`opendesk` session) gets a new login prompt when
-   opening a tenant app, because the tenant app's realm is different.
-2. The current design makes adding LDAP-federation-per-tenant realm necessary in order to
-   fix this — but that is not implemented, so SSO is currently broken for all tenant apps.
+Two critical bugs remain:
+1. **kernel realm imports all tenant users** (LDAP scope is the full tree). UMC runs in the
+   kernel realm, so tenant admins see every user from every tenant and can select any tenant's
+   container in the user-creation wizard.
+2. **Tenant realm federation is empty** — users are placed at `ou=<tenant>` root by the
+   reconciler, but federation points to `ou=users,ou=<tenant>` which has no objects. SSO for
+   all tenant-realm OIDC clients is therefore broken.
 
 ---
 
-## 2. New philosophy
+## 2. Philosophy (unchanged)
 
 **User identity and application registrations belong in the same realm.**
 
@@ -35,21 +41,20 @@ Each tenant has exactly one Keycloak realm. That realm is both:
 - the **identity namespace** (users, AI agents, service accounts)
 - the **application namespace** (OIDC clients for every app the tenant has installed)
 
-The `opendesk` realm is renamed `kernel`. Its scope is narrowed to kernel services only:
-Nubus portal, OX App Suite, Nextcloud, Dovecot, Intercom. It no longer houses tenant users
-or tenant OIDC clients.
+The kernel realm is scoped to kernel service accounts only — no human users belong there.
 
 ```
 master          ← admin only (unchanged)
-kernel          ← kernel services only (renamed from opendesk)
+kernel          ← kernel services only
+                  LDAP: cn=users,dc=swp-ldap,dc=internal (one-level, service accounts only)
                   clients: portal, opendesk-nextcloud, opendesk-dovecot, opendesk-oxappsuite
-                  users: kernel admins only
+                  users: none (kernel service accounts are not imported as human users)
 <tenant>        ← one per tenant (e.g. gtn-demo)
-                  users: all tenant users (LDAP federation scoped to ou=<tenant>)
-                  AI agents: LDAP service accounts under ou=agents,ou=<tenant>
-                  OIDC clients: gtn-demo-element, gtn-demo-nextcloud, …
-shared-apps     ← one realm for all shared app instances (optional, only when shared mode is used)
-                  clients: element, nextcloud, … (one per app type)
+                  LDAP: ou=users,ou=<tenant>,dc=swp-ldap,dc=internal (one-level)
+                  users: all tenant users (admin + regular)
+                  OIDC clients: <tenant>-<app> for every installed app
+                  UMC client registered here so tenant admins see only their own realm
+shared-apps     ← no LDAP federation; shared app instances only
 ```
 
 ### 2.1 Dedicated vs. shared deployment mode
@@ -85,31 +90,33 @@ spec:
 
 ## 3. Target architecture
 
-### 3.1 LDAP structure (minor extension)
+### 3.1 LDAP structure (target — per [design/ldap-restructuring.md](design/ldap-restructuring.md))
 
-The LDAP tree is already per-tenant-OU:
+The LDAP tree must follow the **one OU = one realm = one namespace** rule. All human users
+for a tenant belong inside the `ou=users` sub-container of the tenant OU. Service accounts
+and UDM groups stay at the tenant OU root.
 
 ```
 dc=swp-ldap,dc=internal
-├── ou=gtn-demo                  ← tenant OU (provisioned by ldap_reconciler.go)
-│   ├── cn=users_gtn-demo
-│   ├── cn=admins_gtn-demo
-│   ├── uid=admin-gtn-demo       ← tenant admin
-│   ├── uid=gtn-demo-test        ← regular user (created via UDM)
-│   └── ou=agents                ← new: AI agent service accounts
-│       └── uid=agent-xyz
-└── ou=gtn-demo-2
-    └── …
+├── cn=users                     ← kernel service accounts only
+├── cn=groups                    ← kernel-level groups only (no cross-tenant user membership)
+│
+└── ou=<tenant>                  ← one per tenant
+    ├── ou=users                 ← ALL human users (admin + regular users)
+    │   ├── uid=admin-<tenant>   ← tenant admin (previously at OU root — must be moved)
+    │   └── uid=<username>       ← regular users
+    ├── uid=app-keycloak-<tenant>  ← Keycloak LDAP federation bind account
+    ├── uid=app-<app>-<tenant>     ← per-app service bind accounts
+    ├── cn=users_<tenant>          ← UDM group: all tenant users
+    ├── cn=admins_<tenant>         ← UDM group: tenant admins
+    └── cn=managed-by-attribute-*  ← per-tenant app access groups
 ```
 
-AI agents are principals like any other. They belong in LDAP under an `ou=agents`
-sub-container of the tenant OU, provisioned as `users/ldap` service account objects via
-UDM (the same object class used for per-app bind accounts today). This keeps the LDAP
-tree the single authoritative source of all principals for a tenant, and lets the
-Keycloak LDAP federation import agents alongside human users.
-
-The future nice-to-have `ou=tenants` parent container is a separate, longer-term concern
-and is not part of this plan.
+Key changes from current state:
+- `uid=admin-<tenant>` moves from `ou=<tenant>` root into `ou=users,ou=<tenant>`
+- Regular users created via UMC now land in `ou=users,ou=<tenant>` (fixed via `settings/directory` default container)
+- `cn=Domain Users` (cross-tenant) is removed; `cn=users_<tenant>` per tenant replaces it
+- `managed-by-attribute-*` groups move inside `ou=<tenant>` (per-tenant isolation)
 
 ### 3.2 Keycloak realm per tenant — with LDAP federation
 
@@ -166,120 +173,45 @@ of this plan.
 
 ## 4. Implementation plan
 
-### Phase A — Rename `opendesk` → `kernel` (no behaviour change)
+### Phase A — Rename `opendesk` → `kernel` ✅ COMPLETE
 
-All changes in this phase are pure renames. Existing tenants continue to work.
-
-**A.1 `identity_reconciler.go`**
-
-- Add `KernelRealm string` field to `TenantReconciler` struct (alongside `KernelDomain`),
-  defaulting to `"kernel"`.
-- Replace the two hardcoded `"opendesk"` strings in `buildOpendeskAdminEnableScript`
-  (lines 609, 614, 616, 618) with `%s` format args supplied by `r.KernelRealm`.
-- Replace the two hardcoded `"opendesk"` strings in `buildRealmDisableScript`
-  (lines 775, 780, 782, 784) with `%s` format args supplied by `r.KernelRealm`.
-- Rename `opendeskAdminEnableJobName()` → `kernelAdminEnableJobName()` and update its
-  return value from `"keycloak-opendesk-enable-%s"` → `"keycloak-kernel-enable-%s"`.
-- Update all call sites and comments that reference `opendesk realm`.
-
-**A.2 `cmd/main.go`**
-
-- Add `KernelRealm: os.Getenv("KERNEL_REALM")` to the `TenantReconciler` initialiser,
-  with a fallback to `"kernel"` when the env var is empty.
-
-**A.3 `charts/gentian-os/templates/deployment.yaml`**
-
-- Add env var `KERNEL_REALM` sourced from `{{ .Values.kernelRealm | default "kernel" | quote }}`.
-
-**A.4 `charts/gentian-os/values.yaml`**
-
-- Add `kernelRealm: ""` (empty = use default `"kernel"`).
-
-**A.5 `install.env.template`**
-
-- Add commented-out `# KERNEL_REALM=kernel` entry in the Core cluster/domain section.
-
-**A.6 `install.sh`**
-
-- In `apply_cluster_xr`: pass `KERNEL_REALM=${KERNEL_REALM:-kernel}` as an additional
-  `envsubst` variable (alongside the existing domain/DN variables).
-- Update the comment on line 1083–1088 (stale `opendesk_standard` profile) — these
-  references are to UDM attribute names, not the realm, so add a clarifying comment
-  only; do not change the logic or the LDAP path.
-- Update the summary banner to print `Kernel realm  : ${KERNEL_REALM:-kernel}`.
-
-**A.7 `update.sh`**
-
-- In `_trigger_keycloak_ldap_sync`: change `local kc_realm="opendesk"` →
-  `local kc_realm="${KERNEL_REALM:-kernel}"`.
-- Update the `--keycloak-sync` help text and the `op_keycloak_sync` banner.
-
-**A.8 Nubus configmap**
-
-- In the `gentian-os` Helm chart (or the Crossplane composition that manages Nubus
-  bootstrap config), update `KEYCLOAK_REALM: opendesk` → `KEYCLOAK_REALM: kernel`.
-  Locate the exact resource: `nubus-dev-keycloak-bootstrap` ConfigMap in the kernel
-  namespace. The configmap is either:
-  - templated in `charts/gentian-os/templates/` → update the template value, or
-  - generated by a Crossplane composition → update the composition.
-
-**A.9 `identity_reconciler_test.go`**
-
-- Update the two test job name assertions that expect `"keycloak-opendesk-enable-*"` →
-  `"keycloak-kernel-enable-*"`.
-
-**A.10 `docs/`**
-
-- `docs/design/multi-tenancy.md`: update any realm name references.
-- `docs/implementation-plan.md`: update "opendesk realm" references in identity sections.
-- `docs/commands.md`: no realm references (existing `opendesk` references are to chart/OCI
-  image names, not realm names — add a clarifying note only).
+Realm is named `kernel` in the live cluster. All code references have been updated.
 
 ---
 
-### Phase B — Per-tenant LDAP federation in tenant realm
+### Phase B — Fix LDAP structure + per-tenant federation (blocking re-install)
 
-This phase wires users into the tenant realm so SSO works without a broker.
+See [design/ldap-restructuring.md](design/ldap-restructuring.md) for the full
+step-by-step plan. Summary:
 
-**B.1 New LDAP bind account for Keycloak**
+**B.1 — Fix user placement (ldap_reconciler.go)**
+- `buildAdminUserScript`: place admin user in `ou=users,ou=<tenant>` (currently at OU root)
+- `buildTenantOUScript`: change `settings/directory` default container to `ou=users,ou=<tenant>`
+  so UMC places new users in the correct sub-container
+- Remove stale `uid=app-keycloak` (no tenant suffix) creation
 
-Add a `kernelRequirements.identity.ldap` consumer entry named `keycloak` to the internal
-kernel manifest. This causes `ldap_reconciler.go` to call `buildBindAccountScript` and
-create `uid=sys-keycloak-{tenant},…` in LDAP, seeding the password into OpenBao at
-`gentian-os/tenants/{tenant}/apps/keycloak/ldap-bind-password`.
+**B.2 — Fix kernel realm LDAP scope (identity_reconciler.go or Nubus values)**
+- Change kernel realm LDAP federation `usersDn` from `dc=swp-ldap,dc=internal` to
+  `cn=users,dc=swp-ldap,dc=internal` with `searchScope=1` (one-level)
+- This prevents tenant users from appearing in the kernel realm and fixes the
+  cross-tenant visibility bug in UMC
 
-**B.2 Extend `buildRealmScript` with LDAP federation registration**
+**B.3 — Register UMC OIDC client in each tenant realm (identity_reconciler.go)**
+- After creating the tenant realm, register the UMC OIDC client
+  (`https://portal.<domain>/univention/oidc/`) so tenant admins can authenticate
+  to UMC through their tenant realm instead of the kernel realm
 
-After the realm `POST`/`PUT`, append a curl call to register the LDAP User Storage
-Provider in the tenant realm (see §3.2). The script must:
-- Read the LDAP bind password from the env var `LDAP_BIND_PASSWORD` (injected from the
-  OpenBao-backed ExternalSecret, same pattern as other job env vars).
-- Set `usersDn` to the tenant OU DN (passed via env var `TENANT_OU_DN`, already
-  available in the job via `tenantOUDN(tenant)`).
-- Be idempotent: check if a provider named `ldap` already exists in the realm before
-  creating a new one.
+**B.4 — Add per-tenant managed-by-attribute groups (ldap_reconciler.go)**
+- Create six `cn=managed-by-attribute-*` groups inside `ou=<tenant>` rather than
+  the global `cn=groups` container
 
-**B.3 Wire new env vars into `ensureRealmJob`**
+**B.5 — Fix OX connector LDAP scope (gentian-apps/profiles/ox-appsuite.yaml)**
+- Set `connector.ldap.uri` to `ou=users,ou=<tenant>,dc=swp-ldap,dc=internal`
+  per-tenant deployment to prevent OX contacts from leaking across tenants
 
-The Job spec for the realm provisioning job must be extended with two additional env vars:
-- `LDAP_BIND_PASSWORD` — from the ExternalSecret for the Keycloak bind account.
-- `TENANT_OU_DN` — literal string from `tenantOUDN(tenant)` with `${UDM_LDAP_BASE}`
-  replaced by the actual base DN (passed from `r.LDAPBase` or similar new field).
-
-**B.4 Admin user duplicate risk — LDAP federation scope**
-
-`buildAdminScript` creates `admin-{tenant}` as a **Keycloak-local user** directly in the
-tenant realm via REST API and grants it `realm-management/realm-admin`. When LDAP
-federation is added and Keycloak imports `ou=gtn-demo`, it will also find `uid=admin-gtn-demo`
-in LDAP and attempt to import it, potentially creating a duplicate or conflict with the
-existing local account.
-
-This must be resolved by configuring the LDAP federation with a `usersDn` that points
-to a sub-OU containing only regular users (e.g. `ou=users,ou=gtn-demo`) rather than
-the tenant OU root. The admin LDAP entry and the `ou=agents` sub-OU would then be
-outside the federation search base and not imported. `buildOUScript` must be extended
-to create the `ou=users,ou={tenant}` sub-container, and UDM user provisioning must
-place regular users under it.
+**B.6 — Tenant admin enable job re-target (identity_reconciler.go)**
+Once B.1–B.3 are in place, tenant admins live in the tenant realm. The
+`ensureOpendeskAdminEnableJob` must target the tenant realm instead of the kernel realm.
 
 **B.5 Remove `ensureOpendeskAdminEnableJob` (follow-up)**
 

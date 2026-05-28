@@ -62,6 +62,7 @@ OP_RECONCILE=0
 OP_NUBUS_RECOVER=0
 OP_LDAP_ACL=0
 OP_KEYCLOAK_SYNC=0
+OP_FIX_KERNEL_LDAP_SCOPE=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
 OP_PLUGIN=0
@@ -96,6 +97,10 @@ Options:
                            to re-import all users with up-to-date LDAP attributes.
                            Run this after provisioning new tenants so their admin
                            accounts are immediately visible in the portal.
+  --fix-kernel-ldap-scope  Patch the kernel realm's LDAP federation scope so it
+                           targets only cn=users (service accounts) instead of
+                           the full tree. Run once after cluster install to fix
+                           the Nubus keycloak-bootstrap default. Idempotent.
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository. Run after committing composition changes
                            so the cluster picks them up without a full reinstall.
@@ -120,6 +125,7 @@ while [[ $# -gt 0 ]]; do
         --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
         --ldap-acl)            OP_LDAP_ACL=1 ;;
         --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
+        --fix-kernel-ldap-scope) OP_FIX_KERNEL_LDAP_SCOPE=1 ;;
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
@@ -132,7 +138,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_PLUGIN}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_PLUGIN}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
@@ -687,6 +693,124 @@ op_keycloak_sync() {
 }
 
 # =============================================================================
+# op_fix_kernel_ldap_scope — patch the kernel realm's LDAP User Storage
+#                             Provider so it targets only the service accounts
+#                             container (cn=users) rather than the full tree.
+#
+# Background: Nubus keycloak-bootstrap seeds the kernel realm's LDAP federation
+# with usersDn=dc=swp-ldap,dc=internal (full tree, searchScope=2). This causes
+# all tenant users to appear in the kernel realm, making UMC expose all tenants
+# to every authenticated user. The fix scopes the kernel LDAP federation to
+# cn=users,dc=swp-ldap,dc=internal (one-level, searchScope=1) so only kernel
+# service accounts are imported — no human tenant users.
+#
+# Run once after cluster install / reinstall before provisioning tenants.
+# =============================================================================
+_fix_kernel_ldap_scope() {
+    local release_name="nubus-dev"
+    local ns="${KERNEL_NAMESPACE}"
+    local kc_realm="${KERNEL_REALM:-kernel}"
+    local target_users_dn="cn=users,${LDAP_BASE:-dc=swp-ldap,dc=internal}"
+
+    info "Patching kernel realm LDAP federation scope to ${target_users_dn} (searchScope=1)..."
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would patch kernel realm LDAP federation usersDn=${target_users_dn} searchScope=1"
+        return 0
+    fi
+
+    # Get Keycloak pod IP.
+    local kc_pod_ip
+    kc_pod_ip=$(kubectl get pod "${release_name}-keycloak-0" -n "${ns}" \
+        -o jsonpath='{.status.podIP}' 2>/dev/null || true)
+    if [[ -z "${kc_pod_ip}" ]]; then
+        warn "Keycloak pod not found in ${ns} — skipping kernel LDAP scope fix"
+        return 0
+    fi
+
+    # Get Keycloak admin password from the UMS administrator secret (reliable source).
+    local kc_admin_pass
+    kc_admin_pass=$(kubectl get secret "${release_name}-stack-data-ums-administrator" \
+        -n "${ns}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+    if [[ -z "${kc_admin_pass}" ]]; then
+        warn "UMS administrator secret not found — skipping kernel LDAP scope fix"
+        return 0
+    fi
+
+    # Obtain an admin CLI token using the Administrator account (matches buildKCLDAPSyncScript).
+    local kc_token
+    kc_token=$(curl -sf --max-time 30 \
+        "http://${kc_pod_ip}:8080/realms/master/protocol/openid-connect/token" \
+        -d "grant_type=password&client_id=admin-cli&username=Administrator&password=${kc_admin_pass}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
+    if [[ -z "${kc_token}" ]]; then
+        warn "Could not obtain Keycloak admin token — skipping kernel LDAP scope fix"
+        return 0
+    fi
+
+    # Find the LDAP User Storage Provider in the kernel realm.
+    local provider_json provider_id
+    provider_json=$(curl -sf --max-time 30 \
+        -H "Authorization: Bearer ${kc_token}" \
+        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components?type=org.keycloak.storage.UserStorageProvider" \
+        | python3 -c "
+import sys, json
+for p in json.load(sys.stdin):
+    if p.get('providerId') == 'ldap':
+        print(json.dumps(p))
+        break
+" 2>/dev/null || true)
+    if [[ -z "${provider_json}" ]]; then
+        warn "LDAP provider not found in Keycloak '${kc_realm}' realm — skipping"
+        return 0
+    fi
+    provider_id=$(echo "${provider_json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+
+    # Check current usersDn — skip if already scoped correctly.
+    local current_dn
+    current_dn=$(echo "${provider_json}" | python3 -c "
+import sys, json
+p = json.load(sys.stdin)
+print(p.get('config', {}).get('usersDn', [''])[0])
+" 2>/dev/null || true)
+    if [[ "${current_dn}" == "${target_users_dn}" ]]; then
+        success "Kernel LDAP scope already correct (${target_users_dn}) — nothing to do"
+        return 0
+    fi
+    info "Current kernel LDAP usersDn: ${current_dn} → patching to ${target_users_dn}"
+
+    # Build the patched component JSON by updating only the relevant config fields.
+    local patched_json
+    patched_json=$(echo "${provider_json}" | python3 -c "
+import sys, json
+p = json.load(sys.stdin)
+p['config']['usersDn'] = ['${target_users_dn}']
+p['config']['searchScope'] = ['1']
+print(json.dumps(p))
+")
+
+    # PUT the updated component back.
+    local http_status
+    http_status=$(curl -sf --max-time 30 -o /dev/null -w "%{http_code}" \
+        -X PUT \
+        -H "Authorization: Bearer ${kc_token}" \
+        -H "Content-Type: application/json" \
+        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components/${provider_id}" \
+        -d "${patched_json}" 2>/dev/null || echo "ERR")
+    if [[ "${http_status}" == "204" ]]; then
+        success "Kernel LDAP scope patched: usersDn=${target_users_dn}, searchScope=1"
+    else
+        warn "Unexpected HTTP ${http_status} when patching kernel LDAP provider — check Keycloak logs"
+        return 1
+    fi
+}
+
+op_fix_kernel_ldap_scope() {
+    banner "Fix kernel realm LDAP scope"
+    _fix_kernel_ldap_scope
+}
+
+# =============================================================================
 # op_ldap_acl_upgrade — refresh the LDAP ACL configmap and restart the LDAP
 #                        primary pod so the latest ACL patches are applied.
 #
@@ -970,8 +1094,9 @@ _init
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
-[[ "${OP_KEYCLOAK_SYNC}"   == "1" ]] && op_keycloak_sync
-[[ "${OP_PLUGIN}"          == "1" ]] && install_app_catalogue
+[[ "${OP_KEYCLOAK_SYNC}"        == "1" ]] && op_keycloak_sync
+[[ "${OP_FIX_KERNEL_LDAP_SCOPE}" == "1" ]] && op_fix_kernel_ldap_scope
+[[ "${OP_PLUGIN}"               == "1" ]] && install_app_catalogue
 
 echo ""
 success "update.sh completed."

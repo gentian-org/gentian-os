@@ -937,6 +937,36 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     -H "Content-Type: application/json" \
     -d "{\"attributes\":{\"defaultProvider\":\"kernel\"}}" >/dev/null
   echo "default provider set to kernel in realm ${REALM_NAME}"
+fi
+
+# ── Register UMC portal OIDC client in tenant realm ──────────────────────────
+# Tenant admins authenticate to UMC via their own realm, restricting the LDAP
+# search scope to ou=users,ou=<tenant>. Without this client the UMC OIDC
+# redirect fails with "invalid client" in the tenant realm.
+# Requires KERNEL_EXTERNAL_URL (https://id.<domain>) to be set.
+if [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
+  PORTAL_BASE=$(printf '%%s' "${KERNEL_EXTERNAL_URL}" | sed 's|https://id\.|https://portal.|')
+  UMC_CLIENT_ID="${PORTAL_BASE}/univention/oidc/"
+  # URL-encode for use as a query parameter value.
+  UMC_CLIENT_ID_ENC=$(printf '%%s' "${UMC_CLIENT_ID}" | sed 's|:|%%3A|g; s|/|%%2F|g')
+  # Refresh token — the IdP brokering section above can exhaust the token lifetime.
+  TOKEN=$(curl -sf --max-time 30 \
+    -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+    | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+  UMC_CHECK=$(curl -sf --max-time 30 \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${UMC_CLIENT_ID_ENC}" 2>/dev/null || echo "")
+  if echo "${UMC_CHECK}" | grep -q '"id"'; then
+    echo "UMC portal client already registered in realm ${REALM_NAME}"
+  else
+    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"${UMC_CLIENT_ID}\",\"protocol\":\"openid-connect\",\"redirectUris\":[\"${PORTAL_BASE}/univention/oidc/*\"],\"publicClient\":false,\"standardFlowEnabled\":true,\"enabled\":true}"
+    echo "UMC portal client registered in realm ${REALM_NAME}"
+  fi
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName)
 }

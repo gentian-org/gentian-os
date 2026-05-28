@@ -89,6 +89,52 @@ receives a scoped token usable against app B. The
 `IntegrationBinding` configures which exchanges are permitted; the
 binding's status surfaces credential validity and last rotation time.
 
+### 5.1 One OU · One realm · One namespace — the canonical isolation rule
+
+Every tenant is identified by a triple that must be kept in 1:1 correspondence:
+
+```
+ou=<tenant>,dc=swp-ldap,dc=internal   ↔   Keycloak realm <tenant>   ↔   namespace tenant-<tenant>
+```
+
+Breaking this correspondence — e.g. having a user in one OU authenticate
+via another tenant's realm — is a configuration error and must never occur.
+
+### 5.2 LDAP topology (target)
+
+```
+dc=swp-ldap,dc=internal
+├── cn=users                   ← kernel service accounts ONLY (ldapsearch_*, svc-portal-server, …)
+├── cn=groups                  ← kernel-level groups only (Tenant Admins, Domain Service Users, …)
+│                                 cn=Domain Users is ABSENT — replaced by per-tenant cn=users_<t>
+│
+└── ou=<tenant>                ← one per tenant
+    ├── ou=users               ← ALL human users (admin + regular users land here)
+    │   ├── uid=admin-<tenant>
+    │   └── uid=<username>
+    ├── uid=app-keycloak-<tenant>         ← Keycloak LDAP federation bind account
+    ├── uid=app-<app>-<tenant>            ← per-app service bind accounts
+    ├── cn=users_<tenant>                 ← UDM group: all tenant users (primary group)
+    ├── cn=admins_<tenant>               ← UDM group: tenant admins
+    └── cn=managed-by-attribute-*        ← per-tenant app access groups (six groups)
+```
+
+See [ldap-restructuring.md](ldap-restructuring.md) for the full audit of
+the current state, all defects found, and the step-by-step implementation plan.
+
+### 5.3 Keycloak realm topology (target)
+
+| Realm | LDAP federation scope | Who authenticates here |
+|---|---|---|
+| `master` | None | Keycloak admin CLI only |
+| `kernel` | `cn=users,dc=swp-ldap,dc=internal` (one-level) | Kernel service accounts only — **no human users** |
+| `<tenant>` | `ou=users,ou=<tenant>,...` (one-level) | All tenant users; UMC access for tenant admins |
+| `shared-apps` | None | Shared app instances (e.g. shared Element) |
+
+The kernel realm's LDAP scope is intentionally restricted to the service-accounts
+container only. This means a tenant admin authenticated via their tenant realm
+can only see their own users in UMC — no cross-tenant visibility is possible.
+
 ## 6. Database Isolation
 
 Each app within each tenant gets a database named
