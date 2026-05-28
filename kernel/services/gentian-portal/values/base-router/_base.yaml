@@ -34,8 +34,8 @@ ingress:
 #            and auto-patches this file with the new SHA tag.
 # Update:    docker build -t ghcr.io/gentian-org/base-router:<sha> backend/base-router
 #            docker push ghcr.io/gentian-org/base-router:<sha>
-#            then update tag: "36fbe687"
+#            then update tag: "bd024a75"
 image:
   registry: "ghcr.io"
   repository: "gentian-org/base-router"
-  tag: "36fbe687"
+  tag: "bd024a75"
