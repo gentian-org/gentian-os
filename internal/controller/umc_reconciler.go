@@ -414,7 +414,7 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 				managedByLabel: managedByValue,
 			},
 		},
-		Data: map[string]string{"base-forced.conf": baseForcedConf},
+		Data: map[string]string{"base.conf": baseForcedConf},
 	}
 
 	existing := &corev1.ConfigMap{}
