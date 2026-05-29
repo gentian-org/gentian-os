@@ -598,9 +598,13 @@ spec:
             {{- /* the chart creates services named <xrName>-release-<component>.   */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}
+            {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
+            {{- /* creates a Service with the correct name, so emitting our own      */}}
+            {{- /* Object with the same name would conflict with Helm ownership.     */}}
             {{- $ingressSpec    := default dict $pSpec.ingress }}
             {{- $stableSvcName  := dig "serviceName" "" $ingressSpec }}
-            {{- if $stableSvcName }}
+            {{- $fullnameOverride := dig "fullnameOverride" "" $extraVals }}
+            {{- if and $stableSvcName (ne $stableSvcName $fullnameOverride) }}
             {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
             {{- $svcPort   := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
             ---
