@@ -106,6 +106,18 @@ nubusKeycloakExtensions:
       starttls: false
     auth:
       enabled: true
+  proxy:
+    ingress:
+      # Allow the Gentian portal to embed Keycloak pages (e.g. OIDC login and
+      # check_session_iframe) in an iframe.  Keycloak's default headers are
+      # X-Frame-Options: SAMEORIGIN and CSP frame-ancestors 'self', both of
+      # which block cross-origin framing.  Strip them and set a permissive
+      # frame-ancestors that includes the portal origin.
+      annotations:
+        nginx.ingress.kubernetes.io/configuration-snippet: |
+          more_clear_headers "X-Frame-Options";
+          more_clear_headers "Content-Security-Policy";
+          more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.desk.gentian.org";
 
 nubusStackDataUms:
   postgresql:
