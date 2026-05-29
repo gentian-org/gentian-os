@@ -343,6 +343,73 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+
+            {{- /* ── Keycloak browser flow: auto-redirect to kernel IDP ────────── */}}
+            {{- /* Creates a minimal browser flow with identity-provider-redirector */}}
+            {{- /* configured to automatically redirect to the kernel IDP, so that  */}}
+            {{- /* tenant users are never shown a username/password login form.      */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-browser-flow
+              name: {{ $tenant }}-{{ $app }}-browser-flow
+            spec:
+              forProvider:
+                alias: "browser-kernel-idp"
+                description: "Browser flow with automatic kernel IDP redirect"
+                providerId: "basic-flow"
+                realmId: {{ $tenant | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-idp-redirector
+              name: {{ $tenant }}-{{ $app }}-idp-redirector
+            spec:
+              forProvider:
+                authenticator: "identity-provider-redirector"
+                parentFlowAliasRef:
+                  name: {{ $tenant }}-{{ $app }}-browser-flow
+                requirement: "REQUIRED"
+                realmId: {{ $tenant | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: ExecutionConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-idp-redirector-config
+              name: {{ $tenant }}-{{ $app }}-idp-redirector-config
+            spec:
+              forProvider:
+                alias: "autoredirect-kernel"
+                config:
+                  defaultProvider: "kernel"
+                executionIdRef:
+                  name: {{ $tenant }}-{{ $app }}-idp-redirector
+                realmId: {{ $tenant | quote }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Binding
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-browser-flow-binding
+              name: {{ $tenant }}-{{ $app }}-browser-flow-binding
+            spec:
+              forProvider:
+                browserFlowRef:
+                  name: {{ $tenant }}-{{ $app }}-browser-flow
+                realmId: {{ $tenant | quote }}
+              providerConfigRef:
+                name: keycloak
             {{- end }}
 
             {{- /* ── Emit ExternalSecret ──────────────────────────────────────── */}}
