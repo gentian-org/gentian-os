@@ -455,6 +455,7 @@ spec:
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
             {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
             {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
             {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
@@ -462,9 +463,10 @@ spec:
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
             {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
-            {{- if $s3Endpoint }}{{ $raw = $raw | replace "${S3_ENDPOINT}" $s3Endpoint }}{{ end }}
-            {{- if $mysqlHost  }}{{ $raw = $raw | replace "${MYSQL_HOST}"  $mysqlHost  }}{{ end }}
-            {{- if $redisHost  }}{{ $raw = $raw | replace "${REDIS_HOST}"  $redisHost  }}{{ end }}
+            {{- if $kernelDomain }}{{ $raw = $raw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
+            {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
+            {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
+            {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
             {{- if and $spec.config $spec.config.extraValues }}
