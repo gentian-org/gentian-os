@@ -398,7 +398,7 @@ spec:
                 name: keycloak
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: Binding
+            kind: Bindings
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-browser-flow-binding
