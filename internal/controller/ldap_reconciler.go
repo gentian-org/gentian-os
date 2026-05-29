@@ -1023,12 +1023,19 @@ for MBA_GROUP in Groupware Fileshare FileshareAdmin Videoconference Livecollabor
     -H "Accept: application/json" \
     "${BASE_URL}/groups/group/${MBA_GRP_ENC}")
   if [ "${STATUS}" = "404" ]; then
-    curl -s -o /dev/null -X POST ${CREDS} \
+    POST_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" -X POST ${CREDS} \
       -H "Content-Type: application/json" \
       -H "Accept: application/json" \
       "${BASE_URL}/groups/group/" \
-      -d "{\"properties\":{\"name\":\"managed-by-attribute-${MBA_GROUP}\"},\"position\":\"${OU_POS}\"}"
-    echo "group managed-by-attribute-${MBA_GROUP} created in ${OU_POS}"
+      -d "{\"properties\":{\"name\":\"managed-by-attribute-${MBA_GROUP}\"},\"position\":\"${OU_POS}\"}")
+    if [ "${POST_STATUS}" = "201" ] || [ "${POST_STATUS}" = "200" ]; then
+      echo "group managed-by-attribute-${MBA_GROUP} created in ${OU_POS}"
+    elif [ "${POST_STATUS}" = "422" ]; then
+      echo "group managed-by-attribute-${MBA_GROUP} name conflict (global group exists); skipped"
+    else
+      echo "failed to create group managed-by-attribute-${MBA_GROUP} (HTTP ${POST_STATUS})" >&2
+      exit 1
+    fi
   elif [ "${STATUS}" = "200" ]; then
     echo "group managed-by-attribute-${MBA_GROUP} already exists in ${OU_POS}"
   else
@@ -1561,10 +1568,21 @@ ENTRY_ENC=$(urlencode "${ENTRY_DN}")
 LINK="https://%s.%s%s"
 LINK_TARGET="%s"
 USERS_GRP_CN="%s"
-# For per-tenant app access groups (managed-by-attribute-*) the group lives inside
-# the tenant OU (not global cn=groups) for tenant isolation.
+# For per-tenant app access groups (managed-by-attribute-*) prefer the tenant-scoped
+# group (created by the ldap-ou job). If the tenant-scoped group does not exist
+# (e.g. UDM rejected creation due to a pre-existing global group with the same CN),
+# fall back to the global cn=groups group so the tile remains accessible.
 if printf '%%s' "${USERS_GRP_CN}" | grep -q '^managed-by-attribute-'; then
-  USERS_GRP_DN="cn=${USERS_GRP_CN},${OU_POS}"
+  TENANT_GRP_DN="cn=${USERS_GRP_CN},${OU_POS}"
+  GLOBAL_GRP_DN="cn=${USERS_GRP_CN},cn=groups,${UDM_LDAP_BASE}"
+  TENANT_GRP_STATUS=$(curl -s --max-time 10 -o /dev/null -w "%%{http_code}" ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/groups/group/$(urlencode "${TENANT_GRP_DN}")")
+  if [ "${TENANT_GRP_STATUS}" = "200" ]; then
+    USERS_GRP_DN="${TENANT_GRP_DN}"
+  else
+    USERS_GRP_DN="${GLOBAL_GRP_DN}"
+  fi
 else
   USERS_GRP_DN="cn=${USERS_GRP_CN},cn=groups,${UDM_LDAP_BASE}"
 fi

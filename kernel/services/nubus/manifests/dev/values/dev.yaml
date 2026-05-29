@@ -57,7 +57,7 @@ keycloak:
       memory: 512Mi
     limits:
       cpu: 1000m
-      memory: 1Gi
+      memory: 2Gi
 
 nubusGuardian:
   postgresql:
@@ -99,6 +99,11 @@ nubusKeycloakExtensions:
         keyMapping:
           password: pg-keycloak-extensions-password
   smtp:
+    connection:
+      host: postfix-dev.gentian-dev.svc.cluster.local
+      port: "25"
+      ssl: false
+      starttls: false
     auth:
       enabled: true
 
