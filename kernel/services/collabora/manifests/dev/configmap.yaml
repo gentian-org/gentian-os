@@ -60,6 +60,8 @@ data:
       runAsNonRoot: true
       runAsUser: 1001
       runAsGroup: 1001
+      appArmorProfile:
+        type: "Unconfined"
       seccompProfile:
         type: "RuntimeDefault"
       capabilities:
