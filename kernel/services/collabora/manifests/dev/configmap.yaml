@@ -50,6 +50,12 @@ data:
     ingress:
       enabled: false
 
+    podAnnotations:
+      # Disable AppArmor so coolmount (cap_sys_admin file-cap) can perform
+      # bind-mounts for jail setup. Without this, cri-containerd.apparmor.d
+      # blocks mount() even for processes with CAP_SYS_ADMIN.
+      container.apparmor.security.beta.kubernetes.io/collabora-online: "unconfined"
+
     podSecurityContext:
       fsGroup: 1001
 
@@ -60,8 +66,6 @@ data:
       runAsNonRoot: true
       runAsUser: 1001
       runAsGroup: 1001
-      appArmorProfile:
-        type: "Unconfined"
       seccompProfile:
         type: "RuntimeDefault"
       capabilities:
