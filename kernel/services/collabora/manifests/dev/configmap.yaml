@@ -40,6 +40,7 @@ data:
         --o:fetch_update_check=0
         --o:remote_font_config.url=https://files.desk.gentian.org/apps/richdocuments/settings/fonts.json
         --o:net.connection_timeout_secs=3600
+        --o:mount_jail_tree=false
         --o:security.enable_macros_execution=false
         --o:security.macro_security_level=1
         --o:logging.disable_server_audit=true
@@ -51,9 +52,10 @@ data:
       enabled: false
 
     podAnnotations:
-      # Disable AppArmor so coolmount (cap_sys_admin file-cap) can perform
-      # bind-mounts for jail setup. Without this, cri-containerd.apparmor.d
-      # blocks mount() even for processes with CAP_SYS_ADMIN.
+      # Disable AppArmor for the Collabora container. The default
+      # cri-containerd.apparmor.d profile blocks mount() syscalls used
+      # by coolmount; keeping it unconfined avoids future breakage if
+      # capabilities are ever elevated to enable bind-mount jailing.
       container.apparmor.security.beta.kubernetes.io/collabora-online: "unconfined"
 
     podSecurityContext:
