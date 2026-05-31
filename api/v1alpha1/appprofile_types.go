@@ -81,6 +81,17 @@ type AppProfileSpec struct {
 	// +optional
 	Ingress *IngressSpec `json:"ingress,omitempty"`
 
+	// AdditionalIngresses declares extra Ingress resources to create alongside
+	// the primary Ingress. Use this when an app requires a second hostname
+	// routed to the same (or a different) Service — for example, CryptPad
+	// requires a separate sandbox subdomain for its client-side iframe
+	// isolation model (httpSafeOrigin must differ from httpUnsafeOrigin).
+	// Each entry is treated identically to Ingress: the orchestrator creates
+	// one Kubernetes Ingress per entry with its own host, TLS secret reference,
+	// and lifecycle management (stale entries are deleted on app removal).
+	// +optional
+	AdditionalIngresses []IngressSpec `json:"additionalIngresses,omitempty"`
+
 	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
 	// UDM portal entry under swp.{tile.name}_{tenantName}.

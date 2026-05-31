@@ -93,6 +93,12 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 				ingress:    profile.Spec.Ingress,
 			})
 		}
+		for i := range profile.Spec.AdditionalIngresses {
+			ingressApps = append(ingressApps, appIngress{
+				appProfile: additionalIngressProfile(app.Profile, i),
+				ingress:    &profile.Spec.AdditionalIngresses[i],
+			})
+		}
 	}
 
 	if len(ingressApps) == 0 {
@@ -466,6 +472,13 @@ func tenantWildcardSecretName(tenantName string) string {
 
 func appIngressName(tenantName, appProfile string) string {
 	return fmt.Sprintf("ingress-%s-%s", tenantName, appProfile)
+}
+
+// additionalIngressProfile returns a synthetic profile key used as the ingress
+// name component for AdditionalIngresses entries. The index suffix ensures
+// each additional ingress has a unique, stable name.
+func additionalIngressProfile(appProfile string, index int) string {
+	return fmt.Sprintf("%s-extra%d", appProfile, index)
 }
 
 func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effectiveDomain string) string {
