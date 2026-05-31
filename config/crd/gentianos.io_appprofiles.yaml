@@ -64,6 +64,66 @@ spec:
           spec:
             description: AppProfileSpec defines the desired state of AppProfile.
             properties:
+              additionalIngresses:
+                description: |-
+                  AdditionalIngresses declares extra Ingress resources to create alongside
+                  the primary Ingress. Use this when an app requires a second hostname
+                  routed to the same (or a different) Service — for example, CryptPad
+                  requires a separate sandbox subdomain for its client-side iframe
+                  isolation model (httpSafeOrigin must differ from httpUnsafeOrigin).
+                  Each entry is treated identically to Ingress: the orchestrator creates
+                  one Kubernetes Ingress per entry with its own host, TLS secret reference,
+                  and lifecycle management (stale entries are deleted on app removal).
+                items:
+                  description: IngressSpec declares how the orchestrator should expose
+                    this app via HTTP(S).
+                  properties:
+                    annotations:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Annotations are merged into the Ingress object metadata.
+                        Use to set ingress class, NGINX configuration snippets, etc.
+                      type: object
+                    clusterIssuer:
+                      default: letsencrypt-http01
+                      description: |-
+                        ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
+                        Defaults to "letsencrypt-http01" (HTTP-01 per-host) when not set.
+                        See docs/architecture.md §2.5 for the kernel-vs-vanity domain
+                        model and the wildcard fallback.
+                      type: string
+                    ingressClassName:
+                      default: nginx
+                      description: |-
+                        IngressClassName is the Kubernetes IngressClass to use.
+                        Defaults to "nginx" when not set.
+                      type: string
+                    serviceName:
+                      description: |-
+                        ServiceName is the Kubernetes Service name that the Helm chart creates.
+                        Defaults to the AppProfile name (chart name) when not set.
+                      type: string
+                    servicePort:
+                      default: 80
+                      description: ServicePort is the port on the Service to route
+                        traffic to.
+                      format: int32
+                      type: integer
+                    subDomain:
+                      description: |-
+                        SubDomain is the subdomain prefix prepended to the tenant domain to form the
+                        Ingress host, e.g. "files" yields "files.{tenant-domain}".
+                        Defaults to the app profile name (chart name) when not set.
+                      type: string
+                    tlsEnabled:
+                      default: true
+                      description: |-
+                        TLSEnabled enables TLS via a cert-manager Certificate CR.
+                        Defaults to true.
+                      type: boolean
+                  type: object
+                type: array
               appSecrets:
                 description: |-
                   AppSecrets declares app-internal secrets (admin passwords, session keys,

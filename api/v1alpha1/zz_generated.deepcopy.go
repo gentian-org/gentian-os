@@ -239,6 +239,13 @@ func (in *AppProfileSpec) DeepCopyInto(out *AppProfileSpec) {
 		*out = new(IngressSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.AdditionalIngresses != nil {
+		in, out := &in.AdditionalIngresses, &out.AdditionalIngresses
+		*out = make([]IngressSpec, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.PortalTiles != nil {
 		in, out := &in.PortalTiles, &out.PortalTiles
 		*out = make([]PortalTileSpec, len(*in))
