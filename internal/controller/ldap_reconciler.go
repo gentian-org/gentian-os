@@ -659,7 +659,16 @@ func (r *TenantReconciler) deleteStalePortalEntriesForTenant(
 			allDone = false
 			continue
 		}
-		// Delete job completed: remove tile from annotation.
+		// Delete job completed: remove the create Job so reinstalling the same app
+		// triggers a fresh ensurePortalEntryJob run instead of treating the
+		// completed create Job as proof that the tile is already provisioned.
+		createJob := &batchv1.Job{}
+		createJobName := portalEntryJobName(tenant.Name, tileName)
+		if getErr := r.Get(ctx, types.NamespacedName{Name: createJobName, Namespace: kernelNamespace}, createJob); getErr == nil {
+			prop := metav1.DeletePropagationBackground
+			_ = r.Delete(ctx, createJob, &client.DeleteOptions{PropagationPolicy: &prop})
+		}
+		// Remove tile from annotation.
 		tiles := getProvisionedPortalTiles(tenant)
 		delete(tiles, tileName)
 		if err := r.patchProvisionedPortalTiles(ctx, tenant, tiles); err != nil {
