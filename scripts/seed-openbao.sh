@@ -154,11 +154,7 @@ PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
 LDAP_SEARCH_KEYCLOAK=$(derive_password "nubus" "ldapsearch_keycloak")
 LDAP_SEARCH_NEXTCLOUD=$(derive_password "nubus" "ldapsearch_nextcloud")
 LDAP_SEARCH_DOVECOT=$(derive_password "nubus" "ldapsearch_dovecot")
-LDAP_SEARCH_ELEMENT=$(derive_password "nubus" "ldapsearch_element")
-LDAP_SEARCH_OX=$(derive_password "nubus" "ldapsearch_ox")
 LDAP_SEARCH_POSTFIX=$(derive_password "nubus" "ldapsearch_postfix")
-LDAP_SEARCH_OPENPROJECT=$(derive_password "nubus" "ldapsearch_openproject")
-LDAP_SEARCH_XWIKI=$(derive_password "nubus" "ldapsearch_xwiki")
 
 # --- Provisioning consumer API passwords (stable — injected via set_sensitive) ---
 # These are passed to the portal-consumer and selfservice-consumer sub-charts so
@@ -314,11 +310,7 @@ kv_put_once "identity/nubus" "$(cat <<EOF
   "ldapsearch_keycloak":        "${LDAP_SEARCH_KEYCLOAK}",
   "ldapsearch_nextcloud":       "${LDAP_SEARCH_NEXTCLOUD}",
   "ldapsearch_dovecot":         "${LDAP_SEARCH_DOVECOT}",
-  "ldapsearch_element":         "${LDAP_SEARCH_ELEMENT}",
-  "ldapsearch_ox":              "${LDAP_SEARCH_OX}",
   "ldapsearch_postfix":         "${LDAP_SEARCH_POSTFIX}",
-  "ldapsearch_openproject":     "${LDAP_SEARCH_OPENPROJECT}",
-  "ldapsearch_xwiki":           "${LDAP_SEARCH_XWIKI}",
   "portal_shared_secret":             "${PORTAL_SHARED_SECRET}",
   "portal_consumer_api_password":     "${PORTAL_CONSUMER_API_PW}",
   "selfservice_consumer_api_password": "${SELFSERVICE_CONSUMER_API_PW}"

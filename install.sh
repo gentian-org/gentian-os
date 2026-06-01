@@ -344,6 +344,22 @@ path "${_kv_mount}/metadata/gentian-os/tenants/*"       { capabilities = ["list"
 POLICY
     success "eso-read policy written."
 
+    # ── 3c. app-init policy ───────────────────────────────────────────────────
+    # App init Jobs (Crossplane Compositions) authenticate via K8s SA JWT and
+    # use this policy to provision per-tenant/app credentials in OpenBao on
+    # first app install (ldap, s3, database).
+    bao policy write app-init - <<POLICY
+path "${_kv_mount}/data/gentian-os/kernel/master-password"           { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/identity/nubus"            { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/ldap"            { capabilities = ["create", "read", "update"] }
+path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/ldap"        { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/s3"              { capabilities = ["create", "read", "update"] }
+path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/s3"          { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/database"        { capabilities = ["create", "read", "update"] }
+path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/database"    { capabilities = ["read"] }
+POLICY
+    success "app-init policy written."
+
     # ── 4. Kubernetes auth roles ──────────────────────────────────────────────
     # crossplane-provider: kept for future dynamic-token use (not used by
     # provider-vault ProviderConfig which reads a static token Secret).
@@ -361,6 +377,16 @@ POLICY
         token_policies=eso-read \
         token_ttl=3600
     success "eso K8s auth role created."
+
+    # app-init: short-lived tokens for Composition init Jobs running in tenant
+    # namespaces. Wildcard namespace binding allows Jobs in any tenant namespace.
+    bao write auth/kubernetes/role/app-init \
+        bound_service_account_names=app-init \
+        bound_service_account_namespaces="*" \
+        token_policies=app-init \
+        token_ttl=300 \
+        token_max_ttl=600
+    success "app-init K8s auth role created."
 
     # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
     # provider-vault v3.x (upjet/Terraform-based) does not support
@@ -429,7 +455,7 @@ create_crossplane_secrets() {
     banner "Step 11 — Create derived-credential Secrets for Cluster XR"
 
     # Same derivation as seed-openbao.sh and crossplane/functions/derive-secrets/derive.py
-    _derive() { echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" -binary | sha1sum | awk '{print $1}'; }
+    _derive() { echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'; }
     _nats()   { echo "n$(_derive "$1" "$2")"; }
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key
@@ -512,16 +538,12 @@ create_crossplane_secrets() {
             --arg q  "$(_derive nubus ldapsearch_keycloak)" \
             --arg r  "$(_derive nubus ldapsearch_nextcloud)" \
             --arg s  "$(_derive nubus ldapsearch_dovecot)" \
-            --arg t  "$(_derive nubus ldapsearch_element)" \
-            --arg u  "$(_derive nubus ldapsearch_ox)" \
             --arg v  "$(_derive nubus ldapsearch_postfix)" \
-            --arg w  "$(_derive nubus ldapsearch_openproject)" \
-            --arg x  "$(_derive nubus ldapsearch_xwiki)" \
             --arg y  "$(_derive centralnavigation api_key)" \
             --arg z  "$(_derive portal-consumer provisioning-api)" \
             --arg z2 "$(_derive selfservice-consumer provisioning-api)" \
             --arg z3 "$(_derive smtp password)" \
-            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,ox_system_user_password:$d,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_nextcloud:$r,ldapsearch_dovecot:$s,ldapsearch_element:$t,ldapsearch_ox:$u,ldapsearch_postfix:$v,ldapsearch_openproject:$w,ldapsearch_xwiki:$x,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
+            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,ox_system_user_password:$d,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_nextcloud:$r,ldapsearch_dovecot:$s,ldapsearch_postfix:$v,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
 
     # ── identity/keycloak-bootstrap ───────────────────────────────────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
@@ -610,11 +632,10 @@ apply_cluster_xr() {
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     info "  ${mr_count} managed resource(s) reconciled."
 
-    # Upsert a cluster-config ConfigMap consumed by Crossplane app-ox Composition
-    # to inject env-specific LDAP connection details into OX App Suite values.
-    # The bind DN is derived from the base DN (standard nubus LDAP convention).
+    # Upsert a cluster-config ConfigMap providing cluster-specific LDAP and UDM
+    # endpoints consumed by Crossplane Compositions and app init Jobs.
     local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
-    local _ldap_bind_dn="uid=ldapsearch_ox,cn=users,${LDAP_BASE_DN}"
+    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
     info "Upserting gentian-cluster-config ConfigMap (ldap.server=${_ldap_server})..."
     kubectl apply -f - <<EOF
 apiVersion: v1
@@ -624,10 +645,12 @@ metadata:
   namespace: crossplane-system
   labels:
     app.kubernetes.io/managed-by: gentian-os-install
+    gentianos.io/config-type: cluster-config
 data:
   ldap.server: "${_ldap_server}"
   ldap.baseDn: "${LDAP_BASE_DN}"
-  ldap.bindDn: "${_ldap_bind_dn}"
+  udm.url: "${_udm_url}"
+  secretMode: "${SECRET_MODE:-derived}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
 }

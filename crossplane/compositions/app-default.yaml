@@ -50,6 +50,19 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: kernel-services
+            # Reads the gentian-cluster-config ConfigMap (crossplane-system) to supply
+            # cluster-specific LDAP base DN, UDM URL, and secret generation mode to
+            # app init Jobs emitted by this Composition.
+            - kind: ConfigMap
+              into: clusterConfig
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: cluster-config
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -93,6 +106,16 @@ spec:
             {{- $vm        := default dict $pSpec.valueMapping }}
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
+
+            {{- /* ── Load cluster-config ConfigMap for app init Jobs ────────────── */}}
+            {{- /* Provides ldap.baseDn, udm.url, and secretMode injected as env    */}}
+            {{- /* vars into ldap-search-init Jobs (and future s3/db init Jobs).    */}}
+            {{- $ccRes      := dig "clusterConfig" list $extraRes }}
+            {{- $ccCM       := default dict (index $ccRes 0) }}
+            {{- $ccData     := dig "data" dict $ccCM }}
+            {{- $ldapBaseDn := dig "ldap.baseDn" "" $ccData }}
+            {{- $udmUrl     := dig "udm.url"     "" $ccData }}
+            {{- $secretMode := dig "secretMode"  "derived" $ccData }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
@@ -631,6 +654,162 @@ spec:
                       port: {{ $svcPort }}
                       targetPort: {{ $svcPort }}
                       protocol: TCP
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
+            {{- /* Provisions a per-tenant LDAP search user in UDM and writes its          */}}
+            {{- /* credential to OpenBao. Runs once; idempotent on retries.                */}}
+            {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}
+            {{- if and $ldapReqs.search $ldapBaseDn $udmUrl }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-sa
+              name: {{ $xrName }}-ldap-init-sa
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ServiceAccount
+                  metadata:
+                    name: app-init
+                    namespace: {{ $ns }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-cm
+              name: {{ $xrName }}-ldap-init-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-ldap-init
+                    namespace: {{ $ns }}
+                  data:
+                    init.sh: |
+                      #!/bin/sh
+                      set -eu
+                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
+                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
+                        | jq -r '.auth.client_token')
+                      EXISTING=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap" \
+                        2>/dev/null || echo '{}')
+                      if echo "${EXISTING}" | jq -e '.data.data."bind-password"' >/dev/null 2>&1; then
+                        echo "[ldap-init] credential already present for ${TENANT}/${APP} — skipping"
+                        exit 0
+                      fi
+                      if [ "${SECRET_MODE}" = "random" ]; then
+                        PASSWORD=$(openssl rand -hex 32)
+                      else
+                        MASTER=$(curl -sf \
+                          -H "X-Vault-Token: ${BAO_TOKEN}" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          | jq -r '.data.data.value')
+                        PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
+                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                      fi
+                      NUBUS=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/identity/nubus")
+                      ADMIN_PW=$(echo "${NUBUS}" | jq -r '.data.data.admin_password')
+                      USERNAME="ldapsearch-${TENANT}-${APP}"
+                      BIND_DN="uid=${USERNAME},cn=users,${LDAP_BASE_DN}"
+                      DN_ENC=$(printf '%s' "${BIND_DN}" | jq -Rr @uri)
+                      HTTP_CREATE=$(curl -sf -o /tmp/resp -w '%{http_code}' \
+                        "${UDM_URL}/univention/udm/users/user/" \
+                        -u "Administrator:${ADMIN_PW}" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"properties\":{\"username\":\"${USERNAME}\",\"lastname\":\"LDAP-Search\",\"password\":\"${PASSWORD}\",\"primaryGroup\":\"cn=Domain Service Users,cn=groups,${LDAP_BASE_DN}\"},\"position\":\"cn=users,${LDAP_BASE_DN}\"}" \
+                        2>/dev/null || echo '000')
+                      case "${HTTP_CREATE}" in
+                        201) echo "[ldap-init] UDM user ${USERNAME} created" ;;
+                        422|409)
+                          echo "[ldap-init] UDM user ${USERNAME} already exists — updating password"
+                          curl -sf \
+                            "${UDM_URL}/univention/udm/users/user/${DN_ENC}" \
+                            -u "Administrator:${ADMIN_PW}" \
+                            -X PATCH \
+                            -H 'Content-Type: application/json' \
+                            -d "{\"properties\":{\"password\":\"${PASSWORD}\"}}" >/dev/null ;;
+                        *) echo "[ldap-init] ERROR: UDM create HTTP ${HTTP_CREATE}"; cat /tmp/resp; exit 1 ;;
+                      esac
+                      curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        -H 'Content-Type: application/json' \
+                        -X POST \
+                        -d "{\"data\":{\"bind-dn\":\"${BIND_DN}\",\"bind-password\":\"${PASSWORD}\",\"base-dn\":\"${LDAP_BASE_DN}\"}}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap"
+                      echo "[ldap-init] OpenBao credential written for ${TENANT}/${APP}"
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-job
+              name: {{ $xrName }}-ldap-init-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-ldap-init
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 3600
+                    backoffLimit: 10
+                    template:
+                      spec:
+                        serviceAccountName: app-init
+                        restartPolicy: OnFailure
+                        volumes:
+                          - name: scripts
+                            configMap:
+                              name: {{ $app }}-ldap-init
+                        containers:
+                          - name: ldap-search-init
+                            image: alpine:3.20
+                            command:
+                              - /bin/sh
+                              - -c
+                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                            volumeMounts:
+                              - name: scripts
+                                mountPath: /scripts
+                            env:
+                              - name: TENANT
+                                value: {{ $tenant }}
+                              - name: APP
+                                value: {{ $app }}
+                              - name: BAO_ADDR
+                                value: "http://openbao.openbao.svc.cluster.local:8200"
+                              - name: UDM_URL
+                                value: {{ $udmUrl | quote }}
+                              - name: LDAP_BASE_DN
+                                value: {{ $ldapBaseDn | quote }}
+                              - name: SECRET_MODE
+                                value: {{ $secretMode | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
