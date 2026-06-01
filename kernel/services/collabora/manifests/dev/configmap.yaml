@@ -40,6 +40,7 @@ data:
         --o:fetch_update_check=0
         --o:remote_font_config.url=https://files.desk.gentian.org/apps/richdocuments/settings/fonts.json
         --o:net.connection_timeout_secs=3600
+        --o:net.frame_ancestors=https://files.desk.gentian.org
         --o:mount_jail_tree=false
         --o:security.enable_macros_execution=false
         --o:security.macro_security_level=1
