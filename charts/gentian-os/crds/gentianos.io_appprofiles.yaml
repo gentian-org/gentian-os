@@ -260,6 +260,57 @@ spec:
                       Defaults to true.
                     type: boolean
                 type: object
+              browserProxy:
+                description: |-
+                  BrowserProxy declares HTTP routes the shell backend should transparently
+                  proxy on behalf of browser clients. Each route is exposed at
+                  /api/apps/{appName}/{route.path} on the shell server and forwarded to
+                  the app's cluster-internal service. Use this to give the shell CORS-safe
+                  access to an app's API without embedding app credentials in the browser.
+                  Supports {name} (app profile name) and {namespace} (tenant namespace)
+                  as runtime template variables in the target field.
+                items:
+                  description: BrowserProxyRoute declares a single proxy route the
+                    shell exposes for this app.
+                  properties:
+                    authMode:
+                      default: forward-bearer
+                      description: |-
+                        AuthMode controls how the forwarded request is authenticated.
+                        forward-bearer: the requesting user's bearer token is forwarded
+                        to the upstream (default). none: unauthenticated passthrough
+                        for public endpoints.
+                      enum:
+                      - forward-bearer
+                      - none
+                      type: string
+                    path:
+                      description: |-
+                        Path is the route suffix exposed on the shell proxy, e.g. "api"
+                        yields /api/apps/{appName}/api. Must not contain leading or
+                        trailing slashes. Use kebab-case for multi-segment suffixes.
+                      minLength: 1
+                      pattern: ^[a-z0-9][a-z0-9/-]*[a-z0-9]$|^[a-z0-9]$
+                      type: string
+                    stripPrefix:
+                      default: true
+                      description: |-
+                        StripPrefix removes the /api/apps/{appName}/{path} prefix before
+                        forwarding to the upstream target. Defaults to true.
+                      type: boolean
+                    target:
+                      description: |-
+                        Target is the upstream base URL to forward requests to.
+                        Supports {name} (app profile name) and {namespace} (tenant
+                        namespace) as runtime template variables.
+                        Example: "http://{name}.{namespace}.svc/api/v3/"
+                      minLength: 1
+                      type: string
+                  required:
+                  - path
+                  - target
+                  type: object
+                type: array
               kernelRequirements:
                 description: KernelRequirements declares which kernel services this
                   app requires.

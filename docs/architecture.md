@@ -226,6 +226,49 @@ chain, mail security (DKIM/SPF/DMARC), the domain model and TLS
 issuance flow — are in
 [design/multi-tenancy.md](design/multi-tenancy.md).
 
+### 6.1 TLS certificate provisioning
+
+Every `AppProfile` with `spec.ingress.tlsEnabled: true` (the default) causes the
+**gentian-os controller** to create two resources per tenant app deployment:
+
+1. A Kubernetes `Ingress` pointing `{subDomain}.{tenantDomain}` → the app's
+   `Service:{servicePort}`.
+2. A cert-manager `Certificate` CR requesting a TLS certificate from the
+   `spec.ingress.clusterIssuer` (default: `letsencrypt-http01`).
+
+cert-manager's **HTTP-01 solver** then satisfies the ACME challenge via the same
+NGINX Ingress and stores the issued certificate as a Kubernetes `Secret` in the
+tenant namespace. The Ingress TLS stanza references this secret so every app
+automatically gets its own signed certificate without any manual intervention.
+
+The cluster wildcard cert (`*.<kernelDomain>`, issued via DNS-01 against the
+Cloudflare token stored in OpenBao) covers platform-layer hostnames only.
+Per-tenant vanity-domain hostnames always use HTTP-01 so no DNS credentials
+need to be shared.
+
+### 6.2 CORS and iframe embedding
+
+Gentian OS sidesteps most browser CORS restrictions by design:
+
+- **Apps run in iframes** inside the gentian shell, all served from the same
+  effective origin (`*.<tenantDomain>`). Iframes do not trigger CORS preflight.
+- **OIDC token exchange is server-side.** The browser never calls the identity
+  provider directly from an app's origin — the OIDC redirect flow terminates at
+  the app's server, not at a JS `fetch()`.
+- **Cross-origin API calls** that the shell must make on behalf of the browser
+  (e.g. a REST call to an app's API) are declared in `spec.browserProxy`. The
+  gentian-server proxies those paths under `/api/apps/{name}/…`, which is
+  same-origin from the browser's perspective and forwards the user's bearer
+  token to the upstream service.
+
+The remaining app-side requirement is the **`frame-ancestors` CSP header**:
+by default browsers block iframe embedding unless the embedded page explicitly
+permits it. The gentian-os controller injects this header as an NGINX
+`configuration-snippet` annotation on every `Ingress` it creates, clearing any
+`X-Frame-Options` the app itself sets and replacing the `Content-Security-Policy`
+header with one that allows only `'self'` and the portal origin. Apps that omit
+the CSP annotation open in a new browser tab instead of the portal window.
+
 ---
 
 ## 7. Secrets and Credentials
