@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -158,7 +159,7 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 
 	for _, ia := range ingressApps {
 		host := ingressHost(ia.appProfile, ia.ingress, effectiveDomain)
-		if err := r.ensureAppIngress(ctx, tenant, nsName, ia.appProfile, ia.ingress, host, tlsSecret); err != nil {
+		if err := r.ensureAppIngress(ctx, tenant, nsName, ia.appProfile, ia.ingress, host, tlsSecret, effectiveDomain); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Ingress for app %s: %w", ia.appProfile, err)
 		}
 	}
@@ -289,8 +290,9 @@ func (r *TenantReconciler) ensureAppIngress(
 	nsName, appProfile string,
 	ingress *gentianov1alpha1.IngressSpec,
 	host, tlsSecret string,
+	effectiveDomain string,
 ) error {
-	desired := buildAppIngress(tenant, nsName, appProfile, ingress, host, tlsSecret)
+	desired := buildAppIngress(tenant, nsName, appProfile, ingress, host, tlsSecret, effectiveDomain)
 	name := appIngressName(tenant.Name, appProfile)
 
 	existing := &networkingv1.Ingress{}
@@ -393,6 +395,7 @@ func buildAppIngress(
 	nsName, appProfile string,
 	ingress *gentianov1alpha1.IngressSpec,
 	host, tlsSecret string,
+	effectiveDomain string,
 ) *networkingv1.Ingress {
 	svcName := ingress.ServiceName
 	if svcName == "" {
@@ -406,7 +409,7 @@ func buildAppIngress(
 		managedByLabel: managedByValue,
 	}
 	for k, v := range ingress.Annotations {
-		annotations[k] = v
+		annotations[k] = strings.ReplaceAll(v, "${TENANT_DOMAIN}", effectiveDomain)
 	}
 	ingressClass := ingress.IngressClassName
 	if ingressClass == "" {
