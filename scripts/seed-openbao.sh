@@ -70,12 +70,18 @@ echo "  Path prefix: secret/gentian-os/kernel/"
 echo "=========================================="
 
 # =============================================================================
-# Password derivation (mirrors generate-passwords.sh)
+# Password derivation
+# Uses HMAC-SHA256 hex output directly. The previous implementation piped
+# through sha1sum, which weakened the construction: an attacker with one known
+# derived credential could run an offline dictionary attack against the master
+# password at SHA-1 speed. The corrected version uses the 64-char HMAC-SHA256
+# hex output directly. NOTE: this change is backward-incompatible — all derived
+# passwords change. It must be applied together with a full cluster re-seed.
 # =============================================================================
 derive_password() {
     local context="$1"
     local purpose="$2"
-    echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" -binary | sha1sum | awk '{print $1}'
+    echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
 derive_nats_password() {
