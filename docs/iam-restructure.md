@@ -1,6 +1,6 @@
 # IAM Restructure — Tenant-Realm-First Architecture
 
-## Status: Phase A ✅ complete — Phase B ✅ complete — Phase C (dynamic app rights) is the active design
+## Status: Phase A ✅ complete — Phase B ✅ complete — Phase C ✅ complete
 
 See [design/ldap-restructuring.md](design/ldap-restructuring.md) for the full
 LDAP audit, defect list, and step-by-step implementation plan.
@@ -336,12 +336,12 @@ The change is fully backward-compatible for existing apps:
 
 | File | Change |
 | --- | --- |
-| `gentian-os/scripts/seed-openbao.sh` | Remove per-app `ldapsearch_*`, `minio_*`, `pg_*` entries; keep kernel-only credentials |
-| `gentian-os/install.sh` | Remove per-app `_derive` args from the nubus secret JSON block (see §7.7 below) |
-| `gentian-os/crossplane/apps/nubus/externalsecrets.yaml` | Remove app-specific `ldapSearchUsers` entries; keep `ldapsearch_keycloak` and mail services |
-| `gentian-os/crossplane/compositions/app-default.yaml` | Add `ldap-search-init`, `s3-init`, `database-init` Job templates gated on profile flags |
-| `gentian-apps/profiles/*.yaml` | Replace `kernelRequirements.ldap.sync` with typed `ldap.search` / `ldap.sync` flags per profile |
-| `gentian-os/install.env.template` | Add `SECRET_MODE=derived` with a comment explaining the options |
+| `gentian-os/scripts/seed-openbao.sh` | Remove per-app `ldapsearch_*`, `minio_*`, `pg_*` entries; keep kernel-only credentials ✅ |
+| `gentian-os/install.sh` | Remove per-app `_derive` args from the nubus secret JSON block (see §7.7 below) ✅ |
+| `gentian-os/crossplane/apps/nubus/externalsecrets.yaml` | Remove app-specific `ldapSearchUsers` entries; keep `ldapsearch_keycloak` and mail services ✅ |
+| `gentian-os/crossplane/compositions/app-default.yaml` | Add `ldap-search-init`, `s3-init`, `database-init` Job templates gated on profile flags ✅ |
+| `gentian-apps/profiles/*.yaml` | Replace `kernelRequirements.ldap.sync` with typed `ldap.search` / `ldap.sync` flags per profile ✅ |
+| `gentian-os/install.env.template` | Add `SECRET_MODE=derived` with a comment explaining the options ✅ |
 
 ---
 

@@ -101,8 +101,6 @@ PG_SELFSERVICE_PW=$(derive_password "postgres" "selfservice_user")
 PG_AUTHSESSION_PW=$(derive_password "postgres" "authsession_user")
 PG_GUARDIAN_PW=$(derive_password "postgres" "guardianmanagementapi_user")
 PG_NOTIFICATIONS_PW=$(derive_password "postgres" "notificationsapi_user")
-PG_NEXTCLOUD_PW=$(derive_password "postgres" "nextcloud_user")
-
 # --- MariaDB ---
 MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 MARIA_OX_PW=$(derive_password "mariadb" "openxchange_user")
@@ -113,10 +111,6 @@ REDIS_PW=$(derive_password "redis" "password")
 # --- MinIO ---
 MINIO_ROOT_PW=$(derive_password "minio" "root_password")
 MINIO_UMS_PW=$(derive_password "minio" "ums_user")
-MINIO_NEXTCLOUD_PW=$(derive_password "minio" "nextcloud_user")
-MINIO_OX_PW=$(derive_password "minio" "openxchange_user")
-MINIO_OPENPROJECT_PW=$(derive_password "minio" "openproject_user")
-MINIO_NOTES_PW=$(derive_password "minio" "notes_user")
 MINIO_MIGRATIONS_PW=$(derive_password "minio" "migrations_user")
 MINIO_DOVECOT_PW=$(derive_password "minio" "dovecot_user")
 
@@ -150,9 +144,8 @@ ICS_SYNAPSE_AS_TOKEN=$(derive_password "intercom" "as_token")
 ICS_PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
 PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
 
-# --- LDAP search users ---
+# --- LDAP search users (kernel services only; per-app users created by app init Jobs) ---
 LDAP_SEARCH_KEYCLOAK=$(derive_password "nubus" "ldapsearch_keycloak")
-LDAP_SEARCH_NEXTCLOUD=$(derive_password "nubus" "ldapsearch_nextcloud")
 LDAP_SEARCH_DOVECOT=$(derive_password "nubus" "ldapsearch_dovecot")
 LDAP_SEARCH_POSTFIX=$(derive_password "nubus" "ldapsearch_postfix")
 
@@ -247,8 +240,7 @@ kv_put_once "database/postgresql" "$(cat <<EOF
   "selfservice_user_password":      "${PG_SELFSERVICE_PW}",
   "authsession_user_password":      "${PG_AUTHSESSION_PW}",
   "guardianmanagementapi_user_password": "${PG_GUARDIAN_PW}",
-  "notificationsapi_user_password": "${PG_NOTIFICATIONS_PW}",
-  "nextcloud_user_password":         "${PG_NEXTCLOUD_PW}"
+  "notificationsapi_user_password": "${PG_NOTIFICATIONS_PW}"
 }
 EOF
 )"
@@ -276,10 +268,6 @@ kv_put_once "storage/minio" "$(cat <<EOF
   "root_user":             "minio",
   "root_password":         "${MINIO_ROOT_PW}",
   "ums_password":          "${MINIO_UMS_PW}",
-  "nextcloud_password":    "${MINIO_NEXTCLOUD_PW}",
-  "openxchange_password":  "${MINIO_OX_PW}",
-  "openproject_password":  "${MINIO_OPENPROJECT_PW}",
-  "notes_password":        "${MINIO_NOTES_PW}",
   "migrations_password":   "${MINIO_MIGRATIONS_PW}",
   "dovecot_password":      "${MINIO_DOVECOT_PW}"
 }
@@ -308,7 +296,6 @@ kv_put_once "identity/nubus" "$(cat <<EOF
   "pg_guardian_password":       "${PG_GUARDIAN_PW}",
   "pg_notifications_password":  "${PG_NOTIFICATIONS_PW}",
   "ldapsearch_keycloak":        "${LDAP_SEARCH_KEYCLOAK}",
-  "ldapsearch_nextcloud":       "${LDAP_SEARCH_NEXTCLOUD}",
   "ldapsearch_dovecot":         "${LDAP_SEARCH_DOVECOT}",
   "ldapsearch_postfix":         "${LDAP_SEARCH_POSTFIX}",
   "portal_shared_secret":             "${PORTAL_SHARED_SECRET}",

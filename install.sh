@@ -240,9 +240,8 @@ install_crossplane_providers() {
     info "Applying Composition (cluster-default)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
 
-    info "Applying Compositions (app-default, app-ox, app-element)..."
+    info "Applying Compositions (app-default, app-element)..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml"
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-element.yaml"
 
     info "Applying XRD (XTenant / Tenant)..."
@@ -507,13 +506,9 @@ create_crossplane_secrets() {
             --arg a "minio" \
             --arg b "$(_derive minio root_password)" \
             --arg c "$(_derive minio ums_user)" \
-            --arg d "$(_derive minio nextcloud_user)" \
-            --arg e "$(_derive minio openxchange_user)" \
-            --arg f "$(_derive minio openproject_user)" \
-            --arg g "$(_derive minio notes_user)" \
             --arg h "$(_derive minio migrations_user)" \
             --arg i "$(_derive minio dovecot_user)" \
-            '{root_user:$a,root_password:$b,ums_password:$c,nextcloud_password:$d,openxchange_password:$e,openproject_password:$f,notes_password:$g,migrations_password:$h,dovecot_password:$i}')"
+            '{root_user:$a,root_password:$b,ums_password:$c,migrations_password:$h,dovecot_password:$i}')"
 
     # ── identity/nubus ────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-identity-nubus" \
@@ -536,14 +531,13 @@ create_crossplane_secrets() {
             --arg o  "$(_derive postgres guardianmanagementapi_user)" \
             --arg p  "$(_derive postgres notificationsapi_user)" \
             --arg q  "$(_derive nubus ldapsearch_keycloak)" \
-            --arg r  "$(_derive nubus ldapsearch_nextcloud)" \
             --arg s  "$(_derive nubus ldapsearch_dovecot)" \
             --arg v  "$(_derive nubus ldapsearch_postfix)" \
             --arg y  "$(_derive centralnavigation api_key)" \
             --arg z  "$(_derive portal-consumer provisioning-api)" \
             --arg z2 "$(_derive selfservice-consumer provisioning-api)" \
             --arg z3 "$(_derive smtp password)" \
-            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,ox_system_user_password:$d,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_nextcloud:$r,ldapsearch_dovecot:$s,ldapsearch_postfix:$v,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
+            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,ox_system_user_password:$d,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_dovecot:$s,ldapsearch_postfix:$v,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
 
     # ── identity/keycloak-bootstrap ───────────────────────────────────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
@@ -636,6 +630,8 @@ apply_cluster_xr() {
     # endpoints consumed by Crossplane Compositions and app init Jobs.
     local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
     local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
+    local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
+    local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
     info "Upserting gentian-cluster-config ConfigMap (ldap.server=${_ldap_server})..."
     kubectl apply -f - <<EOF
 apiVersion: v1
@@ -650,6 +646,8 @@ data:
   ldap.server: "${_ldap_server}"
   ldap.baseDn: "${LDAP_BASE_DN}"
   udm.url: "${_udm_url}"
+  minio.endpoint: "${_minio_endpoint}"
+  cnpg.host: "${_cnpg_host}"
   secretMode: "${SECRET_MODE:-derived}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
