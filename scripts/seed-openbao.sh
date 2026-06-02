@@ -326,13 +326,20 @@ NC_STATUS_PW=$(derive_password "nextcloud" "status_password")
 NC_OIDC_SECRET=$(derive_password "nextcloud" "oidc_client_secret")
 NC_INTEGRATION_PW=$(derive_password "nextcloud" "integration_password")
 NC_METRICS_TOKEN=$(derive_password "nextcloud" "metrics_token")
+NC_MINIO_PW=$(derive_password "nextcloud" "minio_password")
+# Derivation contexts kept identical to original so existing installs stay compatible
+NC_LDAP_PW=$(derive_password "nubus" "ldapsearch_nextcloud")
+NC_DB_PW=$(derive_password "postgres" "nextcloud_user")
 kv_put_once "apps/nextcloud" "$(cat <<EOF
 {
   "admin_password":       "${NC_ADMIN_PW}",
   "status_password":      "${NC_STATUS_PW}",
   "oidc_client_secret":   "${NC_OIDC_SECRET}",
   "integration_password": "${NC_INTEGRATION_PW}",
-  "metrics_token":        "${NC_METRICS_TOKEN}"
+  "metrics_token":        "${NC_METRICS_TOKEN}",
+  "minio_password":       "${NC_MINIO_PW}",
+  "ldapsearch_password":  "${NC_LDAP_PW}",
+  "db_password":          "${NC_DB_PW}"
 }
 EOF
 )"
