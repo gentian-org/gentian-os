@@ -117,9 +117,6 @@ provisioning:
     - name: openproject
       versioning: Suspended
       withLock: false
-    - name: openxchange
-      versioning: Suspended
-      withLock: false
     - name: ums
       versioning: Suspended
       withLock: false
@@ -155,14 +152,6 @@ provisioning:
           effect: Allow
           actions: [s3:*]
         - resources: [arn:aws:s3:::openproject/*]
-          effect: Allow
-          actions: [s3:*]
-    - name: openxchange-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::openxchange]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::openxchange/*]
           effect: Allow
           actions: [s3:*]
     - name: ums-bucket-policy

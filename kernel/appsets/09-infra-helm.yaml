@@ -46,7 +46,6 @@ spec:
           - app: collabora
           - app: postfix
           - app: dovecot
-          - app: ox-appsuite
   template:
     metadata:
       name: '{{.app}}-{{.env}}'

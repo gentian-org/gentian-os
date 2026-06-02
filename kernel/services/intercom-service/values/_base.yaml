@@ -40,7 +40,6 @@ global:
     intercomService: ics
     synapse: matrix
     matrixNeoDateFixBot: matrix-neodatefix-bot
-    openxchange: webmail
     xwiki: wiki
     nextcloud: files
     nubus: portal
@@ -72,10 +71,6 @@ ics:
   redis:
     port: 6379
     # host (env DNS) and auth.password overridden in {env}/values.yaml
-  openxchange:
-    oci: true
-    url: https://webmail.desk.gentian.org
-    audience: opendesk-oxappsuite
   xwiki:
     subdomain: wiki
     audience: opendesk-xwiki
