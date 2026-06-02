@@ -357,6 +357,11 @@ spec:
                               Defaults to "1h" when sync is true.
                             pattern: ^[0-9]+(s|m|h|d)$
                             type: string
+                          search:
+                            description: Search provisions a per-tenant LDAP search
+                              account via the app init Job on first install. Credentials
+                              are written to OpenBao and injected via valueMapping.ldap.
+                            type: boolean
                           sync:
                             description: Sync enables periodic user/group sync from
                               LDAP into the app's own store.
