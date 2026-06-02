@@ -285,8 +285,8 @@ for release_name in \
     opendesk-postgresql-dev \
     collabora-dev \
     dovecot-dev \
-    postfix-dev \
-
+    postfix-dev
+do
     if kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
         info "Deleting provider-helm Release ${release_name}..."
         kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
@@ -328,7 +328,6 @@ for ns in gentian-dev gentian-infra-dev; do
         postfix-dev-values \
         dovecot-base-values \
         dovecot-dev-values \
-
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete externalsecret \
         nubus-credentials \
@@ -343,7 +342,6 @@ for ns in gentian-dev gentian-infra-dev; do
         postfix-sensitive-values \
         dovecot-sensitive-values \
         collabora-sensitive-values \
-
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secretstore nubus-static \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
@@ -361,7 +359,6 @@ for ns in gentian-dev gentian-infra-dev; do
         postfix-sensitive-values \
         dovecot-sensitive-values \
         collabora-sensitive-values \
-
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secret registry-credentials \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true

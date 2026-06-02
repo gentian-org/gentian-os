@@ -511,13 +511,13 @@ create_crossplane_secrets() {
             '{root_user:$a,root_password:$b,ums_password:$c,migrations_password:$h,dovecot_password:$i}')"
 
     # ── identity/nubus ────────────────────────────────────────────────────────
+    # shellcheck disable=SC2016
     _kv_secret "gentian-os-kernel-identity-nubus" \
         "$(jq -nc \
             --arg mp "${MASTER_PASSWORD}" \
             --arg a  "$(_derive nubus Administrator)" \
             --arg b  "$(_derive "cn=admin" ldap)" \
             --arg c  "$(_derive keycloak adminPassword)" \
-
             --arg e  "$(_nats api nats)" \
             --arg f  "$(_nats dispatcher nats)" \
             --arg g  "$(_nats prefill nats)" \
