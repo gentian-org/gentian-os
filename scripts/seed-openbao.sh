@@ -367,6 +367,7 @@ OX_COOKIE_SALT=$(derive_password "ox_appsuite" "cookie_hash_salt")
 OX_SHARE_KEY=$(derive_password "ox_appsuite" "share_crypt_key")
 OX_SESSIOND_KEY=$(derive_password "ox_appsuite" "sessiond_encryption_key")
 OX_LDAP_SEARCH_PW=$(derive_password "ox_appsuite" "ldap_search_password")
+OX_MINIO_PW=$(derive_password "ox_appsuite" "minio_password")
 
 _OX_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/apps/ox" 2>/dev/null || true)
@@ -388,7 +389,8 @@ else
   "sessiond_encryption_key":           "${OX_SESSIOND_KEY}",
   "oidc_client_secret":                "${OX_OIDC_SECRET}",
   "connector_provisioning_api_password": "${OX_CONNECTOR_PW}",
-  "ldap_search_password":              "${OX_LDAP_SEARCH_PW}"
+  "ldap_search_password":              "${OX_LDAP_SEARCH_PW}",
+  "minio_password":                    "${OX_MINIO_PW}"
 }
 EOF
 )"
