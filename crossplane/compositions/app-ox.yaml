@@ -405,6 +405,64 @@ spec:
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
 
+            {{- /* ── Emit Keycloak Client CR ──────────────────────────────────── */}}
+            {{- /* When kernelRequirements.identity.oidc is set, the composition   */}}
+            {{- /* registers the app as an OIDC client in the tenant's own realm.  */}}
+            {{- /* New apps only need to declare their oidc block in the AppProfile */}}
+            {{- /* to get automatic per-tenant Keycloak client registration.        */}}
+            {{- $kr       := default dict $pSpec.kernelRequirements }}
+            {{- $identity := default dict $kr.identity }}
+            {{- $oidcCl   := default dict $identity.oidc }}
+            {{- if $oidcCl.clientId }}
+            {{- $redirects  := list }}
+            {{- range $uri := (default list $oidcCl.redirectUris) }}
+            {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $postLogout := list }}
+            {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
+            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-client
+              name: {{ $tenant }}-{{ $app }}-keycloak-client
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                clientId: {{ $oidcCl.clientId | quote }}
+                name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
+                realmId: {{ $tenant }}
+                accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
+                serviceAccountsEnabled: false
+                {{- if $redirects }}
+                validRedirectUris:
+                  {{ toYaml $redirects | nindent 18 }}
+                {{- end }}
+                webOrigins:
+                  - "+"
+                {{- if $postLogout }}
+                validPostLogoutRedirectUris:
+                  {{ toYaml $postLogout | nindent 18 }}
+                {{- end }}
+                {{- if and $oidcCl.backchannelLogoutUrl (ne $oidcCl.backchannelLogoutUrl "") }}
+                backchannelLogoutUrl: {{ $oidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
+                backchannelLogoutSessionRequired: true
+                {{- end }}
+                {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
+                clientSecretSecretRef:
+                  name: {{ $xrName }}-oidc-client-creds
+                  namespace: crossplane-system
+                  key: client-secret
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── OX appsuite.properties ExternalSecret ──────────────────── */}}
             {{- /* Fetches the same OpenBao paths as the standard ES but renders  */}}
             {{- /* them into a Java .properties file format. The Release mounts    */}}
@@ -528,6 +586,466 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: kubernetes
+
+            {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
+            {{- $ccData        := dict }}
+            {{- if gt (len $clusterCfgs) 0 }}
+            {{- $ccData = dig "data" dict (index $clusterCfgs 0) }}
+            {{- end }}
+            {{- $udmUrl        := dig "udm.url"        "" $ccData }}
+            {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
+            {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
+            {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
+            {{- $kr            := default dict $pSpec.kernelRequirements }}
+            {{- $identity      := default dict $kr.identity }}
+            {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}
+            {{- if and $ldapReqs.search $ldapBaseDn $udmUrl }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-sa
+              name: {{ $xrName }}-ldap-init-sa
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ServiceAccount
+                  metadata:
+                    name: app-init
+                    namespace: {{ $ns }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-cm
+              name: {{ $xrName }}-ldap-init-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-ldap-init
+                    namespace: {{ $ns }}
+                  data:
+                    init.sh: |
+                      #!/bin/sh
+                      set -eu
+                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
+                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
+                        | jq -r '.auth.client_token')
+                      EXISTING=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap" \
+                        2>/dev/null || echo '{}')
+                      if echo "${EXISTING}" | jq -e '.data.data."bind-password"' >/dev/null 2>&1; then
+                        echo "[ldap-init] credential already present for ${TENANT}/${APP} — skipping"
+                        exit 0
+                      fi
+                      if [ "${SECRET_MODE}" = "random" ]; then
+                        PASSWORD=$(openssl rand -hex 32)
+                      else
+                        MASTER=$(curl -sf \
+                          -H "X-Vault-Token: ${BAO_TOKEN}" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          | jq -r '.data.data.value')
+                        PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
+                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                      fi
+                      NUBUS=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/identity/nubus")
+                      ADMIN_PW=$(echo "${NUBUS}" | jq -r '.data.data.admin_password')
+                      USERNAME="ldapsearch-${TENANT}-${APP}"
+                      BIND_DN="uid=${USERNAME},cn=users,${LDAP_BASE_DN}"
+                      DN_ENC=$(printf '%s' "${BIND_DN}" | jq -Rr @uri)
+                      HTTP_CREATE=$(curl -sf -o /tmp/resp -w '%{http_code}' \
+                        "${UDM_URL}/univention/udm/users/user/" \
+                        -u "Administrator:${ADMIN_PW}" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"properties\":{\"username\":\"${USERNAME}\",\"lastname\":\"LDAP-Search\",\"password\":\"${PASSWORD}\",\"primaryGroup\":\"cn=Domain Service Users,cn=groups,${LDAP_BASE_DN}\"},\"position\":\"cn=users,${LDAP_BASE_DN}\"}" \
+                        2>/dev/null || echo '000')
+                      case "${HTTP_CREATE}" in
+                        201) echo "[ldap-init] UDM user ${USERNAME} created" ;;
+                        422|409)
+                          echo "[ldap-init] UDM user ${USERNAME} already exists — updating password"
+                          curl -sf \
+                            "${UDM_URL}/univention/udm/users/user/${DN_ENC}" \
+                            -u "Administrator:${ADMIN_PW}" \
+                            -X PATCH \
+                            -H 'Content-Type: application/json' \
+                            -d "{\"properties\":{\"password\":\"${PASSWORD}\"}}" >/dev/null ;;
+                        *) echo "[ldap-init] ERROR: UDM create HTTP ${HTTP_CREATE}"; cat /tmp/resp; exit 1 ;;
+                      esac
+                      curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        -H 'Content-Type: application/json' \
+                        -X POST \
+                        -d "{\"data\":{\"bind-dn\":\"${BIND_DN}\",\"bind-password\":\"${PASSWORD}\",\"base-dn\":\"${LDAP_BASE_DN}\"}}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap"
+                      echo "[ldap-init] OpenBao credential written for ${TENANT}/${APP}"
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-job
+              name: {{ $xrName }}-ldap-init-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-ldap-init
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 3600
+                    backoffLimit: 10
+                    template:
+                      spec:
+                        serviceAccountName: app-init
+                        restartPolicy: OnFailure
+                        volumes:
+                          - name: scripts
+                            configMap:
+                              name: {{ $app }}-ldap-init
+                        containers:
+                          - name: ldap-search-init
+                            image: alpine:3.20
+                            command:
+                              - /bin/sh
+                              - -c
+                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                            volumeMounts:
+                              - name: scripts
+                                mountPath: /scripts
+                            env:
+                              - name: TENANT
+                                value: {{ $tenant }}
+                              - name: APP
+                                value: {{ $app }}
+                              - name: BAO_ADDR
+                                value: "http://openbao.openbao.svc.cluster.local:8200"
+                              - name: UDM_URL
+                                value: {{ $udmUrl | quote }}
+                              - name: LDAP_BASE_DN
+                                value: {{ $ldapBaseDn | quote }}
+                              - name: SECRET_MODE
+                                value: {{ $secretMode | quote }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Emit S3-init resources (when AppProfile requires storage.s3.bucketPerTenant) */}}
+            {{- $storageReqs := default dict $kr.storage }}
+            {{- $s3Reqs      := default dict $storageReqs.s3 }}
+            {{- if and $s3Reqs.bucketPerTenant $minioEndpoint }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-s3-init-sa
+              name: {{ $xrName }}-s3-init-sa
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ServiceAccount
+                  metadata:
+                    name: app-init
+                    namespace: {{ $ns }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-s3-init-cm
+              name: {{ $xrName }}-s3-init-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-s3-init
+                    namespace: {{ $ns }}
+                  data:
+                    init.sh: |
+                      #!/bin/sh
+                      set -eu
+                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
+                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
+                        | jq -r '.auth.client_token')
+                      EXISTING=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
+                        2>/dev/null || echo '{}')
+                      if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
+                        echo "[s3-init] credential already present for ${TENANT}/${APP} — skipping"
+                        exit 0
+                      fi
+                      MINIO=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/storage/minio")
+                      ROOT_USER=$(echo "${MINIO}" | jq -r '.data.data.root_user')
+                      ROOT_PASS=$(echo "${MINIO}" | jq -r '.data.data.root_password')
+                      if [ "${SECRET_MODE}" = "random" ]; then
+                        SECRET_KEY=$(openssl rand -hex 32)
+                      else
+                        MASTER=$(curl -sf \
+                          -H "X-Vault-Token: ${BAO_TOKEN}" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          | jq -r '.data.data.value')
+                        SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
+                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                      fi
+                      ACCESS_KEY="${TENANT}-${APP}"
+                      BUCKET="${TENANT}-${APP}"
+                      mc alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
+                      mc mb --ignore-existing "minio/${BUCKET}"
+                      echo "[s3-init] bucket ${BUCKET} ensured"
+                      mc admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"
+                      echo "[s3-init] MinIO user ${ACCESS_KEY} created"
+                      printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/%s"]},"Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' \
+                        "${ACCESS_KEY}" "${BUCKET}" "${BUCKET}" > /tmp/policy.json
+                      mc admin policy create minio "${ACCESS_KEY}-policy" /tmp/policy.json
+                      mc admin policy attach minio "${ACCESS_KEY}-policy" --user "${ACCESS_KEY}"
+                      echo "[s3-init] bucket policy attached"
+                      curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        -H 'Content-Type: application/json' \
+                        -X POST \
+                        -d "{\"data\":{\"endpoint\":\"${MINIO_ENDPOINT}\",\"bucket\":\"${BUCKET}\",\"access-key\":\"${ACCESS_KEY}\",\"secret-key\":\"${SECRET_KEY}\",\"region\":\"us-east-1\"}}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3"
+                      echo "[s3-init] OpenBao credential written for ${TENANT}/${APP}"
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-s3-init-job
+              name: {{ $xrName }}-s3-init-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-s3-init
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 3600
+                    backoffLimit: 10
+                    template:
+                      spec:
+                        serviceAccountName: app-init
+                        restartPolicy: OnFailure
+                        volumes:
+                          - name: scripts
+                            configMap:
+                              name: {{ $app }}-s3-init
+                        containers:
+                          - name: s3-init
+                            image: minio/mc:latest
+                            command:
+                              - /bin/sh
+                              - -c
+                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                            volumeMounts:
+                              - name: scripts
+                                mountPath: /scripts
+                            env:
+                              - name: TENANT
+                                value: {{ $tenant }}
+                              - name: APP
+                                value: {{ $app }}
+                              - name: BAO_ADDR
+                                value: "http://openbao.openbao.svc.cluster.local:8200"
+                              - name: MINIO_ENDPOINT
+                                value: {{ $minioEndpoint | quote }}
+                              - name: SECRET_MODE
+                                value: {{ $secretMode | quote }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Emit database-init resources (when AppProfile requires database.databasePerTenant */}}
+            {{- $dbRequirements := default dict $kr.database }}
+            {{- if and $dbRequirements.databasePerTenant (eq (default "" $dbRequirements.engine) "postgresql") $cnpgHost }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-sa
+              name: {{ $xrName }}-db-init-sa
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ServiceAccount
+                  metadata:
+                    name: app-init
+                    namespace: {{ $ns }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-cm
+              name: {{ $xrName }}-db-init-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-db-init
+                    namespace: {{ $ns }}
+                  data:
+                    init.sh: |
+                      #!/bin/sh
+                      set -eu
+                      apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null
+                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
+                        | jq -r '.auth.client_token')
+                      EXISTING=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database" \
+                        2>/dev/null || echo '{}')
+                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
+                        echo "[db-init] credential already present for ${TENANT}/${APP} — skipping"
+                        exit 0
+                      fi
+                      CNPG=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/database/cnpg")
+                      SU_USER=$(echo "${CNPG}" | jq -r '.data.data.superuser_username')
+                      SU_PASS=$(echo "${CNPG}" | jq -r '.data.data.superuser_password')
+                      if [ "${SECRET_MODE}" = "random" ]; then
+                        PASSWORD=$(openssl rand -hex 32)
+                      else
+                        MASTER=$(curl -sf \
+                          -H "X-Vault-Token: ${BAO_TOKEN}" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          | jq -r '.data.data.value')
+                        PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
+                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                      fi
+                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
+                      DBNAME="${ROLE}"
+                      export PGPASSWORD="${SU_PASS}"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 <<SQL
+                      DO \$\$
+                      BEGIN
+                        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
+                          CREATE ROLE "${ROLE}" WITH LOGIN PASSWORD '${PASSWORD}';
+                        ELSE
+                          ALTER ROLE "${ROLE}" WITH PASSWORD '${PASSWORD}';
+                        END IF;
+                      END \$\$;
+                      SQL
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
+                        -c "SELECT 'CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DBNAME}')" \
+                        | grep -q 'CREATE DATABASE' \
+                        && psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres \
+                             -c "CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"" || true
+                      echo "[db-init] role ${ROLE} and database ${DBNAME} ensured"
+                      curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        -H 'Content-Type: application/json' \
+                        -X POST \
+                        -d "{\"data\":{\"host\":\"${CNPG_HOST}\",\"port\":\"5432\",\"name\":\"${DBNAME}\",\"user\":\"${ROLE}\",\"password\":\"${PASSWORD}\"}}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database"
+                      echo "[db-init] OpenBao credential written for ${TENANT}/${APP}"
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-job
+              name: {{ $xrName }}-db-init-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-db-init
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 3600
+                    backoffLimit: 10
+                    template:
+                      spec:
+                        serviceAccountName: app-init
+                        restartPolicy: OnFailure
+                        volumes:
+                          - name: scripts
+                            configMap:
+                              name: {{ $app }}-db-init
+                        containers:
+                          - name: database-init
+                            image: alpine:3.20
+                            command:
+                              - /bin/sh
+                              - -c
+                              - apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null && exec /bin/sh /scripts/init.sh
+                            volumeMounts:
+                              - name: scripts
+                                mountPath: /scripts
+                            env:
+                              - name: TENANT
+                                value: {{ $tenant }}
+                              - name: APP
+                                value: {{ $app }}
+                              - name: BAO_ADDR
+                                value: "http://openbao.openbao.svc.cluster.local:8200"
+                              - name: CNPG_HOST
+                                value: {{ $cnpgHost | quote }}
+                              - name: SECRET_MODE
+                                value: {{ $secretMode | quote }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
 
     # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────
     - step: automatically-detect-ready-composed-resources
