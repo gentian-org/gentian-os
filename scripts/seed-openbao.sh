@@ -29,7 +29,6 @@ set -euo pipefail
 #   identity/keycloak-bootstrap
 #   identity/intercom
 #   apps/nextcloud
-#   apps/ox
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
 #   storage/registry              (optional, requires args 2+3)
@@ -364,44 +363,6 @@ kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 }
 EOF
 )"
-
-# --- OX App Suite ---
-OX_ADMIN_PW=$(derive_password "ox_appsuite" "admin_password")
-OX_HZ_GROUP_PW=$(derive_password "ox_appsuite" "hz_group_password")
-OX_BASIC_AUTH_PW=$(derive_password "ox_appsuite" "basic_auth_password")
-OX_JOLOKIA_PW=$(derive_password "ox_appsuite" "jolokia_password")
-OX_COOKIE_SALT=$(derive_password "ox_appsuite" "cookie_hash_salt")
-OX_SHARE_KEY=$(derive_password "ox_appsuite" "share_crypt_key")
-OX_SESSIOND_KEY=$(derive_password "ox_appsuite" "sessiond_encryption_key")
-OX_LDAP_SEARCH_PW=$(derive_password "ox_appsuite" "ldap_search_password")
-OX_MINIO_PW=$(derive_password "ox_appsuite" "minio_password")
-
-_OX_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
-  "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/apps/ox" 2>/dev/null || true)
-if echo "${_OX_EXISTING}" | grep -q '"data":{'; then
-  echo "  Skipping gentian-os/kernel/apps/ox (already exists — use 'bao kv patch' to update)"
-else
-  # oidc_client_secret and connector_provisioning_api_password are random (not HMAC-derived)
-  # so they can only be set on first creation; use 'bao kv patch' to rotate manually
-  OX_OIDC_SECRET=$(openssl rand -hex 20)
-  OX_CONNECTOR_PW=$(openssl rand -hex 20)
-  kv_put "apps/ox" "$(cat <<EOF
-{
-  "admin_password":                    "${OX_ADMIN_PW}",
-  "hz_group_password":                 "${OX_HZ_GROUP_PW}",
-  "basic_auth_password":               "${OX_BASIC_AUTH_PW}",
-  "jolokia_password":                  "${OX_JOLOKIA_PW}",
-  "cookie_hash_salt":                  "${OX_COOKIE_SALT}",
-  "share_crypt_key":                   "${OX_SHARE_KEY}",
-  "sessiond_encryption_key":           "${OX_SESSIOND_KEY}",
-  "oidc_client_secret":                "${OX_OIDC_SECRET}",
-  "connector_provisioning_api_password": "${OX_CONNECTOR_PW}",
-  "ldap_search_password":              "${OX_LDAP_SEARCH_PW}",
-  "minio_password":                    "${OX_MINIO_PW}"
-}
-EOF
-)"
-fi
 
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
