@@ -25,6 +25,16 @@ type AppProfileSpec struct {
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
 
+	// BrowserProxy declares HTTP routes the shell backend should transparently
+	// proxy on behalf of browser clients. Each route is exposed at
+	// /api/apps/{appName}/{route.path} on the shell server and forwarded to
+	// the app's cluster-internal service. Use this to give the shell CORS-safe
+	// access to an app's API without embedding app credentials in the browser.
+	// Supports {name} (app profile name) and {namespace} (tenant namespace)
+	// as runtime template variables in the target field.
+	// +optional
+	BrowserProxy []BrowserProxyRoute `json:"browserProxy,omitempty"`
+
 	// KernelRequirements declares which kernel services this app requires.
 	// +optional
 	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
@@ -157,6 +167,40 @@ type PortalTileSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
+}
+
+// BrowserProxyRoute declares a single proxy route the shell exposes for this app.
+type BrowserProxyRoute struct {
+	// Path is the route suffix exposed on the shell proxy, e.g. "api"
+	// yields /api/apps/{appName}/api. Must not contain leading or
+	// trailing slashes. Use kebab-case for multi-segment suffixes.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9/-]*[a-z0-9]$|^[a-z0-9]$`
+	Path string `json:"path"`
+
+	// Target is the upstream base URL to forward requests to.
+	// Supports {name} (app profile name) and {namespace} (tenant
+	// namespace) as runtime template variables.
+	// Example: "http://{name}.{namespace}.svc/api/v3/"
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Target string `json:"target"`
+
+	// AuthMode controls how the forwarded request is authenticated.
+	// forward-bearer: the requesting user's bearer token is forwarded
+	// to the upstream (default). none: unauthenticated passthrough
+	// for public endpoints.
+	// +optional
+	// +kubebuilder:validation:Enum=forward-bearer;none
+	// +kubebuilder:default=forward-bearer
+	AuthMode string `json:"authMode,omitempty"`
+
+	// StripPrefix removes the /api/apps/{appName}/{path} prefix before
+	// forwarding to the upstream target. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	StripPrefix bool `json:"stripPrefix"`
 }
 
 // IngressSpec declares how the orchestrator should expose this app via HTTP(S).
@@ -293,6 +337,11 @@ type OIDCClientSpec struct {
 
 // LDAPRequirement describes per-tenant LDAP needs.
 type LDAPRequirement struct {
+	// Search provisions a per-tenant LDAP search account via the app init Job on first install.
+	// Credentials are written to OpenBao and injected via valueMapping.ldap.
+	// +optional
+	Search bool `json:"search,omitempty"`
+
 	// Sync enables periodic user/group sync from LDAP into the app's own store.
 	// +optional
 	Sync bool `json:"sync,omitempty"`
