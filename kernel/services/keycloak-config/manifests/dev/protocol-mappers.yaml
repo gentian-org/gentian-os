@@ -177,4 +177,3 @@ spec:
       multivalued: "false"
   providerConfigRef:
     name: keycloak
-

@@ -88,6 +88,7 @@ spec:
   providerConfigRef:
     name: keycloak
 
+---
 # ── opendesk-dovecot ──────────────────────────────────────────────────────────
 # Dovecot IMAP OIDC client.  No standard flow — Dovecot only introspects
 # tokens issued by other clients; it never redirects users.
