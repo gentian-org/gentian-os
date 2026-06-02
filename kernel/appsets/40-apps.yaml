@@ -11,8 +11,6 @@
 #     openproject  — Layer 220, project management (openproject v10.1.0; verify existingSecret)
 #
 #   Pattern B (managed by provider-helm via Crossplane; no existingSecret support):
-#     ox-appsuite  — Layer 200, email + PIM  (appsuite-public-sector v2.26.32)
-#                    3 releases: appsuite-public-sector + opendesk-open-xchange-bootstrap + ox-connector
 #     element      — Layer 210, chat / Matrix (opendesk-element v6.1.9)
 #                    2 releases: opendesk-element + opendesk-well-known
 #     jitsi        — Layer 210, video conf.  (opendesk-jitsi v3.5.1)
@@ -54,11 +52,6 @@ spec:
           #
           # ── Pattern B apps — listed here for reference only ──────────────────────
           # These will move to active entries above once existingSecret is available.
-          #
-          # OX App Suite (email + PIM) — Pattern B
-          #   appsuite-public-sector v2.26.32 @ registry.opencode.de/bmi/opendesk/components/supplier/open-xchange/charts-mirror
-          #   opendesk-open-xchange-bootstrap v4.0.2 @ registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-open-xchange-bootstrap
-          #   ox-connector v0.34.0 @ registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
           #
           # Element (chat / Matrix) — Pattern B
           #   opendesk-element v6.1.9 + opendesk-well-known v6.1.9

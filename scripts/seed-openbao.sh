@@ -122,7 +122,7 @@ LDAP_ADMIN_PW=$(derive_password "cn=admin" "ldap")
 
 # --- Nubus system ---
 ADMIN_PW=$(derive_password "nubus" "Administrator")
-OX_SYSTEM_PW=$(derive_password "nubus" "ox_system_user")
+
 
 # --- NATS ---
 NATS_API_PW=$(derive_nats_password "api" "nats")
@@ -280,7 +280,7 @@ kv_put_once "identity/nubus" "$(cat <<EOF
   "admin_password":             "${ADMIN_PW}",
   "ldap_admin_password":        "${LDAP_ADMIN_PW}",
   "keycloak_admin_password":    "${KC_ADMIN_PW}",
-  "ox_system_user_password":    "${OX_SYSTEM_PW}",
+
   "smtp_password":              "${SMTP_PW}",
   "nats_api_password":          "${NATS_API_PW}",
   "nats_dispatcher_password":   "${NATS_DISPATCHER_PW}",

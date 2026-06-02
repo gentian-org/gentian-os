@@ -87,42 +87,7 @@ spec:
       key: nextcloud_client_secret
   providerConfigRef:
     name: keycloak
----
-# ── opendesk-oxappsuite ───────────────────────────────────────────────────────
-# OX App Suite OIDC client.  direct_access_grants enabled for the OX login
-# form and mobile app password grant.
-apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-kind: Client
-metadata:
-  name: opendesk-oxappsuite
-  annotations:
-    argocd.argoproj.io/sync-wave: "10"
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    clientId: opendesk-oxappsuite
-    name: OX App Suite
-    realmId: kernel
-    accessType: CONFIDENTIAL
-    standardFlowEnabled: true
-    directAccessGrantsEnabled: true
-    serviceAccountsEnabled: false
-    validRedirectUris:
-      - "https://webmail.desk.gentian.org/appsuite/api/oidc/auth"
-    webOrigins:
-      - "+"
-    backchannelLogoutUrl: "https://webmail.desk.gentian.org/appsuite/api/oidc/logout"
-    backchannelLogoutSessionRequired: true
-    validPostLogoutRedirectUris:
-      - "https://webmail.desk.gentian.org/*"
-      - "https://portal.desk.gentian.org/*"
-    clientSecretSecretRef:
-      name: keycloak-client-secrets
-      namespace: crossplane-system
-      key: ox_client_secret
-  providerConfigRef:
-    name: keycloak
----
+
 # ── opendesk-dovecot ──────────────────────────────────────────────────────────
 # Dovecot IMAP OIDC client.  No standard flow — Dovecot only introspects
 # tokens issued by other clients; it never redirects users.

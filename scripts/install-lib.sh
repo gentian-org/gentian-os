@@ -2512,14 +2512,6 @@ deploy_kernel_mail_services() {
         -n "${ns}" --for=condition=Ready --timeout=60s \
     || warn "dovecot-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
-    # ── OX App Suite manifests ────────────────────────────────────────────────
-    info "Applying ox-appsuite manifests (ConfigMaps, ExternalSecret, Release CRs)..."
-    kubectl apply -f "${SCRIPT_DIR}/kernel/services/ox-appsuite/manifests/${env}/"
-
-    info "Waiting for ox-appsuite-sensitive-values ExternalSecret to sync (up to 60s)..."
-    kubectl wait externalsecret/ox-appsuite-sensitive-values \
-        -n "${ns}" --for=condition=Ready --timeout=60s \
-    || warn "ox-appsuite-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
     # ── Reconcile mail.<domain> CoreDNS hairpin → Dovecot ClusterIP ──────────
     # OX App Suite connects to Dovecot via mail.<domain>:143 (STARTTLS). The
@@ -2573,9 +2565,9 @@ deploy_kernel_mail_services() {
         fi
     fi
 
-    success "Kernel mail services (postfix + dovecot + ox-appsuite) manifests applied."
+    success "Kernel mail services (postfix + dovecot) manifests applied."
     info "provider-helm will reconcile the Release CRs within 5 minutes."
-    info "Monitor: kubectl get release.helm.crossplane.io | grep -E 'postfix|dovecot|ox'"
+    info "Monitor: kubectl get release.helm.crossplane.io | grep -E 'postfix|dovecot'"
     info "         argocd app sync gentian-infra-helm-${env}"
 }
 

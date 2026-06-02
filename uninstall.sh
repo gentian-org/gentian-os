@@ -286,9 +286,7 @@ for release_name in \
     collabora-dev \
     dovecot-dev \
     postfix-dev \
-    ox-connector-dev \
-    ox-appsuite-dev \
-    ox-bootstrap-dev; do
+
     if kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
         info "Deleting provider-helm Release ${release_name}..."
         kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
@@ -330,10 +328,7 @@ for ns in gentian-dev gentian-infra-dev; do
         postfix-dev-values \
         dovecot-base-values \
         dovecot-dev-values \
-        ox-appsuite-base-values \
-        ox-appsuite-dev-values \
-        ox-bootstrap-base-values \
-        ox-connector-base-values \
+
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete externalsecret \
         nubus-credentials \
@@ -348,8 +343,7 @@ for ns in gentian-dev gentian-infra-dev; do
         postfix-sensitive-values \
         dovecot-sensitive-values \
         collabora-sensitive-values \
-        ox-appsuite-sensitive-values \
-        ox-appsuite-credentials \
+
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secretstore nubus-static \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
@@ -367,8 +361,7 @@ for ns in gentian-dev gentian-infra-dev; do
         postfix-sensitive-values \
         dovecot-sensitive-values \
         collabora-sensitive-values \
-        ox-appsuite-sensitive-values \
-        ox-appsuite-credentials \
+
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secret registry-credentials \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true

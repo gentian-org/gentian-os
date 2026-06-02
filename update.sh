@@ -914,7 +914,7 @@ op_crossplane_update() {
     info "Applying Compositions..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml"
+
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
 
     success "Crossplane XRDs and Compositions updated."

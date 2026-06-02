@@ -14,7 +14,7 @@ LDAP audit, defect list, and step-by-step implementation plan.
 ```
 master          ← admin only
 kernel          ← renamed from opendesk; LDAP federation: dc=swp-ldap,dc=internal SUBTREE ❌
-                  clients: portal, opendesk-dovecot, opendesk-nextcloud, opendesk-oxappsuite
+                  clients: portal, opendesk-dovecot, opendesk-nextcloud
                   users: ALL users from ALL tenants imported here (federation bug)
 gtn-demo        ← LDAP federation: ou=users,ou=gtn-demo (correct path, but EMPTY) ❌
                   clients: gtn-demo-element, gtn-demo-jitsi, gtn-demo-ox-appsuite
@@ -46,7 +46,7 @@ The kernel realm is scoped to kernel service accounts only — no human users be
 master          ← admin only (unchanged)
 kernel          ← kernel services only
                   LDAP: cn=users,dc=swp-ldap,dc=internal (one-level, service accounts only)
-                  clients: portal, opendesk-nextcloud, opendesk-dovecot, opendesk-oxappsuite
+                  clients: portal, opendesk-nextcloud, opendesk-dovecot
                   users: none (kernel service accounts are not imported as human users)
 <tenant>        ← one per tenant (e.g. gtn-demo)
                   LDAP: ou=users,ou=<tenant>,dc=swp-ldap,dc=internal (one-level)

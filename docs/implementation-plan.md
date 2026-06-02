@@ -270,11 +270,8 @@ These services are deployed cluster-wide by Layer 100–150 ApplicationSets. The
 |---|---|---|
 | **Nubus** (Keycloak + UCS LDAP + Portal) | 110 — Identity | Identity provider, single trust anchor for all tenants |
 | **Nextcloud** | 130 — Storage | Kernel filesystem service (WebDAV), provisioned via OCS API Jobs |
-| **OX App Suite** | 130 — Groupware | Kernel groupware service — tightly coupled with mail kernel extension (SMTP/IMAP), Keycloak, and LDAP. Uses MariaDB, Redis, S3, LDAP bind accounts — all kernel-level shared resources. Deployed once, tenant-scoped via Keycloak realm + LDAP OU + dedicated database |
 | **Intercom Service** | 150 — Notifications | Kernel notification gateway |
 | **Postfix / Dovecot / Rspamd** | 100e — Mail | Kernel mail extension, shared infrastructure with tenant-scoped config |
-
-**Why OX App Suite is kernel-level:** OX App Suite is the primary mail client, calendar, and contacts interface. It depends on every kernel function (identity, LDAP, MariaDB, Redis, S3, mail). Like Nextcloud, it is deployed once per cluster and serves all tenants through the kernel's isolation mechanisms (Keycloak realms, LDAP OUs, per-tenant databases, per-tenant S3 buckets). It follows the same deployment pattern as all other kernel services — Layer 100 ApplicationSet, Pattern B secret injection, tenant-scoped wiring via API Jobs. Making it tenant-installable would add complexity without a real use case (every openDesk tenant needs groupware).
 
 ### App Store increments
 

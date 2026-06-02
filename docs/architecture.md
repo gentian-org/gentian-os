@@ -297,7 +297,7 @@ by the same ESO → K8s Secret pipeline:
 
 | Pattern | Mechanism | When to use |
 |---|---|---|
-| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **all current kernel apps**: Nubus, Nextcloud, OX App Suite, PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO. |
+| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **all current kernel apps**: Nubus, Nextcloud, PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO. |
 | **Pattern B** | ESO syncs OpenBao → K8s Secret; `provider-helm` `spec.valuesFrom` maps individual keys to Helm value paths | Charts that accept secrets as plain values but have no structured `existingSecret` field. |
 
 In both patterns:

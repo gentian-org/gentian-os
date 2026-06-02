@@ -315,6 +315,13 @@ type DatabaseRequirement struct {
 	// +optional
 	// +kubebuilder:default=true
 	DatabasePerTenant bool `json:"databasePerTenant"`
+
+	// AllowDynamicDatabaseCreation grants the app user privileges to create new databases
+	// dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
+	// Only supported by the mariadb engine.
+	// +optional
+	// +kubebuilder:default=false
+	AllowDynamicDatabaseCreation bool `json:"allowDynamicDatabaseCreation,omitempty"`
 }
 
 // StorageRequirement specifies object storage and/or filesystem needs.

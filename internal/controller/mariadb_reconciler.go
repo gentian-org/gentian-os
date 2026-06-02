@@ -106,6 +106,15 @@ func (r *TenantReconciler) ensureMariaDBSetupJob(ctx context.Context, tenant *ge
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
+			return false, fmt.Errorf("get AppProfile %s: %w", appName, err)
+		}
+		allowDynamic := false
+		if profile.Spec.KernelRequirements != nil && profile.Spec.KernelRequirements.Database != nil {
+			allowDynamic = profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
+		}
+
 		// Inc 21a: derive the per-app database password and persist it under
 		// the canonical OpenBao path before creating the SQL Job. The Job
 		// receives the same value via DB_PASS so live MariaDB and OpenBao stay
@@ -123,7 +132,7 @@ func (r *TenantReconciler) ensureMariaDBSetupJob(ctx context.Context, tenant *ge
 			}
 			dbPassword = creds.Password
 		}
-		return false, r.Create(ctx, makeMariaDBSetupJob(tenant, appName, dbPassword))
+		return false, r.Create(ctx, makeMariaDBSetupJob(tenant, appName, dbPassword, allowDynamic))
 	}
 	if err != nil {
 		return false, err
@@ -176,13 +185,16 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // Credentials are injected from the mariadb-admin Secret in the kernel namespace.
 // The database name and username are passed as explicit env vars to avoid shell
 // quoting issues.
-func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string) *batchv1.Job {
+func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string, allowDynamic bool) *batchv1.Job {
 	ttl := int32(3600)
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	c := mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser)
 	if dbPassword != "" {
 		c.Env = append(c.Env, corev1.EnvVar{Name: "DB_PASS", Value: dbPassword})
+	}
+	if allowDynamic {
+		c.Env = append(c.Env, corev1.EnvVar{Name: "ALLOW_DYNAMIC", Value: "true"})
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -323,8 +335,13 @@ var mariadbSetupScript = "" +
 	"  $MARIADB -e \"ALTER USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';\"\n" +
 	"  echo \"user ${DB_USER} password synced\"\n" +
 	"fi\n" +
-	"$MARIADB -e \"GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;\"\n" +
-	"echo \"privileges granted - done\"\n"
+	"if [ \"${ALLOW_DYNAMIC:-}\" = \"true\" ]; then\n" +
+	"  $MARIADB -e \"GRANT ALL PRIVILEGES ON *.* TO '${DB_USER}'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;\"\n" +
+	"  echo \"global privileges granted - done\"\n" +
+	"else\n" +
+	"  $MARIADB -e \"GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'%'; FLUSH PRIVILEGES;\"\n" +
+	"  echo \"privileges granted - done\"\n" +
+	"fi\n"
 
 // mariadbDeleteScript drops the database and user idempotently.
 var mariadbDeleteScript = "" +

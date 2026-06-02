@@ -28,7 +28,6 @@ dc=swp-ldap,dc=internal                          ← global base DN
 │   ├── uid=ldapsearch_xwiki
 │   ├── uid=ldapsearch_openproject
 │   ├── uid=svc-portal-server
-│   └── uid=oxSystemUser
 │
 ├── cn=groups                                     ← FLAT, SHARED — ALL TENANTS MIXED ❌
 │   ├── cn=Domain Users                          ← members: admin-gtn-demo, gtn-demo-test,
@@ -121,7 +120,6 @@ dc=swp-ldap,dc=internal
 │
 ├── cn=users                                      ← kernel service accounts ONLY (unchanged names)
 │   ├── uid=ldapsearch_keycloak                  ← kernel realm LDAP bind
-│   ├── uid=ldapsearch_ox                        ← OX connector global bind (read-only, base-DN scoped)
 │   ├── uid=svc-portal-server
 │   └── ... (other kernel service accounts)
 │
@@ -304,25 +302,6 @@ Until the reconciler is updated, keep the global `managed-by-attribute-*` groups
 as a temporary fallback (app tile visibility still works, just without
 per-tenant scoping). Mark as TODO in _base.yaml.
 
-### Step 6 — Fix OX connector LDAP scope (per-tenant ox-connector)
-
-**File:** `gentian-apps/profiles/ox-appsuite.yaml` and
-`kernel/services/ox-appsuite/manifests/dev/configmap.yaml`
-
-The ox-connector's `java.naming.provider.url` must point to the tenant's LDAP
-subtree, not the global base DN:
-
-```yaml
-# ox-connector per-tenant AppProfile valueMapping:
-connector:
-  ldap:
-    uri: "ldap://nubus-ldap.gentian-dev.svc.cluster.local:389/ou=users,ou={{ .TenantName }},dc=swp-ldap,dc=internal"
-```
-
-The ox-appsuite and ox-bootstrap Helm releases remain as shared kernel services.
-Only ox-connector is deployed per tenant (via AppProfile). See
-[ox-as-optional-kernel-extension.md](../../memories/repo/ox-as-optional-kernel-extension.md)
-for the OX architectural decision.
 
 ### Step 7 — Clean up stale objects (on reinstall)
 
@@ -386,5 +365,3 @@ for each tenant OU. This is a **Phase 2b** item (after the structural fixes abov
 | `internal/controller/ldap_reconciler.go` | Steps 1, 4 |
 | `internal/controller/identity_reconciler.go` | Steps 2, 3 |
 | `kernel/services/nubus/manifests/dev/values/_base.yaml` | Step 5 |
-| `gentian-apps/profiles/ox-appsuite.yaml` | Step 6 |
-| `kernel/services/ox-appsuite/manifests/dev/configmap.yaml` | Step 6 |

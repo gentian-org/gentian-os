@@ -286,35 +286,7 @@ spec:
       multivalued: "false"
   providerConfigRef:
     name: keycloak
----
-# ── Nextcloud scope — context ─────────────────────────────────────────────────
-# Maps the LDAP oxContextIDNum attribute to the context claim.
-# Used by OX App Suite and the ox-connector to identify the user's OX context.
-apiVersion: client.keycloak.crossplane.io/v1alpha1
-kind: ProtocolMapper
-metadata:
-  name: nextcloud-scope-context
-  annotations:
-    argocd.argoproj.io/sync-wave: "11"
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    realmId: kernel
-    clientScopeIdRef:
-      name: opendesk-nextcloud-scope
-    name: context
-    protocol: openid-connect
-    protocolMapper: oidc-usermodel-attribute-mapper
-    config:
-      user.attribute: oxContextIDNum
-      claim.name: context
-      jsonType.label: String
-      id.token.claim: "true"
-      access.token.claim: "true"
-      userinfo.token.claim: "true"
-      multivalued: "false"
-  providerConfigRef:
-    name: keycloak
+
 ---
 # ── opendesk-nextcloud — default scopes ──────────────────────────────────────
 # Authoritatively sets the default scopes for opendesk-nextcloud.
