@@ -286,6 +286,22 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 // ensurePortalEntryJob creates the per-tenant portal entry UDM Job for one tile.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicatedPortalApp) (bool, error) {
+	// First, clean up any stale delete job for this tile.
+	deleteJobName := portalEntryDeleteJobName(tenant.Name, pa.AppName)
+	deleteJob := &batchv1.Job{}
+	if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, deleteJob); err == nil {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, deleteJob, &client.DeleteOptions{PropagationPolicy: &prop})
+		// A delete job existed, which means the app was uninstalled recently.
+		// Any existing create job is stale and must be recreated to ensure the portal entry is actually created.
+		createJobName := portalEntryJobName(tenant.Name, pa.AppName)
+		createJob := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{Name: createJobName, Namespace: kernelNamespace}, createJob); err == nil {
+			_ = r.Delete(ctx, createJob, &client.DeleteOptions{PropagationPolicy: &prop})
+		}
+		return false, nil
+	}
+
 	jobName := portalEntryJobName(tenant.Name, pa.AppName)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
@@ -1381,10 +1397,22 @@ fi
 
 # Add the tenant admins group as a nested member of cn=Tenant Admins (idempotent).
 # UDM uses 'nestedGroup' for nested groups, which writes to uniqueMember in LDAP.
+# We ALSO add the admin user as a direct member (in 'users') because UMC portal
+# evaluates allowedGroups without expanding nested groups.
 NESTED_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" | tr -d '\n')
 CURRENT_NESTED=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"nestedGroup":[[:space:]]*\[\([^]]*\)\].*/\1/p')
+CURRENT_USERS=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"users":[[:space:]]*\[\([^]]*\)\].*/\1/p')
+
+TENANT_NAME=${ADMINS_GRP_DN#cn=admins_}
+TENANT_NAME=${TENANT_NAME%%,*}
+ADMIN_DN="uid=admin-${TENANT_NAME},ou=users,${OU_POS}"
+
+NEEDS_PATCH=0
+NEW_NESTED="${CURRENT_NESTED}"
+NEW_USERS="${CURRENT_USERS}"
+
 if printf '%%s' "${CURRENT_NESTED}" | grep -qF "\"${ADMINS_GRP_DN}\""; then
 	echo "Tenant Admins: ${ADMINS_GRP_DN} already a nested member"
 else
@@ -1393,12 +1421,27 @@ else
 	else
 		NEW_NESTED="[${CURRENT_NESTED},\"${ADMINS_GRP_DN}\"]"
 	fi
+	NEEDS_PATCH=1
+fi
+
+if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${ADMIN_DN}\""; then
+	echo "Tenant Admins: ${ADMIN_DN} already a direct member"
+else
+	if [ -z "${CURRENT_USERS}" ]; then
+		NEW_USERS="[\"${ADMIN_DN}\"]"
+	else
+		NEW_USERS="[${CURRENT_USERS},\"${ADMIN_DN}\"]"
+	fi
+	NEEDS_PATCH=1
+fi
+
+if [ "${NEEDS_PATCH}" = "1" ]; then
 	curl -sf --max-time 30 -X PATCH ${CREDS} \
 		-H "Content-Type: application/json" \
 		-H "Accept: application/json" \
 		"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
-		-d "{\"properties\":{\"nestedGroup\":${NEW_NESTED}}}"
-	echo "Tenant Admins: added ${ADMINS_GRP_DN} as nested member"
+		-d "{\"properties\":{\"nestedGroup\":${NEW_NESTED},\"users\":${NEW_USERS}}}"
+	echo "Tenant Admins: added ${ADMINS_GRP_DN} as nested member and ${ADMIN_DN} as user"
 fi
 
 # Add the tenant OU's users sub-container to the global settings/directory
