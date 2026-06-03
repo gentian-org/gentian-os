@@ -570,27 +570,11 @@ kernel_domain() {
     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KERNEL_DOMAIN")].value}' 2>/dev/null || true
 }
 
-tenant_effective_domain() {
-  local tenant_name="${1}"
-  local vanity_domain="${2}"
-  local kernel_domain_name
-
-  if [[ -n "${vanity_domain}" ]]; then
-    echo "${vanity_domain}"
-    return 0
-  fi
-  kernel_domain_name="$(kernel_domain)"
-  if [[ -n "${kernel_domain_name}" ]]; then
-    echo "${tenant_name}.${kernel_domain_name}"
-  fi
-}
-
 print_tenant_admin_login_instructions() {
   local tenant_name="${1}"
   local realm="${2}"
-  local domain="${3}"
-  local username="${4}"
-  local password="${5}"
+  local username="${3}"
+  local password="${4}"
 
   local login_email
   login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.adminEmail}' 2>/dev/null || true)"
@@ -600,8 +584,6 @@ print_tenant_admin_login_instructions() {
 
   local kernel_domain_name
   kernel_domain_name="$(kernel_domain)"
-  local effective_domain
-  effective_domain="$(tenant_effective_domain "${tenant_name}" "${domain}")"
 
   local id_base
   if [[ -n "${kernel_domain_name}" ]]; then
@@ -1164,14 +1146,12 @@ cmd_tenant_deploy() {
   local patch
   local tenant_name
   local realm
-  local domain
 
   kustom_file="$(tenant_env_kustomization "${env_name}")"
   ensure_kustomization_seed "${kustom_file}"
   patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
   tenant_name="$(tenant_instance_name_from_patch "${patch}")"
   realm="$(tenant_realm_from_patch "${patch}")"
-  domain="$(tenant_domain_from_patch "${patch}")"
 
   if [[ -z "${tenant_name}" ]]; then
     tenant_name="${instance}"
@@ -1216,7 +1196,7 @@ cmd_tenant_deploy() {
   fi
 
   echo "Done. Tenant instance '${instance}' deployed in '${env_name}'."
-  print_tenant_admin_login_instructions "${tenant_name}" "${realm}" "${domain}" "${TENANT_ADMIN_USERNAME}" "${TENANT_ADMIN_PASSWORD}"
+  print_tenant_admin_login_instructions "${tenant_name}" "${realm}" "${TENANT_ADMIN_USERNAME}" "${TENANT_ADMIN_PASSWORD}"
 }
 
 cmd_tenant_undeploy() {
