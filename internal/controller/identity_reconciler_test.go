@@ -23,6 +23,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -50,34 +51,42 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 // markJobComplete patches a Job's status to Complete so the reconciler sees it as done.
 func markJobComplete(t *testing.T, jobName, namespace string) {
 	t.Helper()
-	job := &batchv1.Job{}
-	if err := testClient.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: namespace}, job); err != nil {
-		t.Fatalf("get Job %s: %v", jobName, err)
-	}
-	if job.Status.Succeeded > 0 {
+	for attempt := 0; attempt < 5; attempt++ {
+		job := &batchv1.Job{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: namespace}, job); err != nil {
+			t.Fatalf("get Job %s: %v", jobName, err)
+		}
+		if job.Status.Succeeded > 0 {
+			return
+		}
+		now := metav1.Now()
+		job.Status.StartTime = &now
+		job.Status.CompletionTime = &now
+		job.Status.Succeeded = 1
+		job.Status.Conditions = []batchv1.JobCondition{
+			{
+				Type:               batchv1.JobSuccessCriteriaMet,
+				Status:             corev1.ConditionTrue,
+				LastProbeTime:      now,
+				LastTransitionTime: now,
+			},
+			{
+				Type:               batchv1.JobComplete,
+				Status:             corev1.ConditionTrue,
+				LastProbeTime:      now,
+				LastTransitionTime: now,
+			},
+		}
+		if err := testClient.Status().Update(context.Background(), job); err != nil {
+			if k8serrors.IsConflict(err) {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("update Job %s status: %v", jobName, err)
+		}
 		return
 	}
-	now := metav1.Now()
-	job.Status.StartTime = &now
-	job.Status.CompletionTime = &now
-	job.Status.Succeeded = 1
-	job.Status.Conditions = []batchv1.JobCondition{
-		{
-			Type:               batchv1.JobSuccessCriteriaMet,
-			Status:             corev1.ConditionTrue,
-			LastProbeTime:      now,
-			LastTransitionTime: now,
-		},
-		{
-			Type:               batchv1.JobComplete,
-			Status:             corev1.ConditionTrue,
-			LastProbeTime:      now,
-			LastTransitionTime: now,
-		},
-	}
-	if err := testClient.Status().Update(context.Background(), job); err != nil {
-		t.Fatalf("update Job %s status: %v", jobName, err)
-	}
+	t.Fatalf("update Job %s status: too many conflicts", jobName)
 }
 
 // markJobCompleteWhenReady polls until the named Job appears in namespace,

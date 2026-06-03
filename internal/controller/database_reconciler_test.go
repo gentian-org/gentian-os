@@ -392,9 +392,9 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	orphan.SetName("db-dborphan-legacy-app")
 	orphan.SetNamespace("platform-kernel")
 	orphan.SetLabels(map[string]string{
-		"gentianos.io/tenant":                 "dborphan",
-		"app.kubernetes.io/managed-by":        "gentian-os",
-		"gentianos.io/app":                    "legacy-app",
+		"gentianos.io/tenant":          "dborphan",
+		"app.kubernetes.io/managed-by": "gentian-os",
+		"gentianos.io/app":             "legacy-app",
 	})
 	if err := unstructured.SetNestedField(orphan.Object, "postgres", "spec", "cluster", "name"); err != nil {
 		t.Fatalf("set cluster name: %v", err)
@@ -404,6 +404,19 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	if err := testClient.Create(context.Background(), orphan); err != nil {
 		t.Fatalf("create orphaned Database CR: %v", err)
 	}
+
+	waitFor(t, 10*time.Second, func() bool {
+		updated := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: "dborphan"}, updated); err != nil {
+			return false
+		}
+		for _, finalizer := range updated.Finalizers {
+			if finalizer == "gentianos.io/tenant-cleanup" {
+				return true
+			}
+		}
+		return false
+	})
 
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)

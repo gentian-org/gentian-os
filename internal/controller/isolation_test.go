@@ -24,6 +24,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -348,9 +349,10 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// Mark all expected cleanup jobs complete as they appear so the reconciler
-	// can proceed through the sequential deleteIdentity → deleteLDAP → deleteStorage → deleteCache chain.
+	// can proceed through the sequential deleteIdentity → deleteLDAP → deleteMariaDB → deleteStorage → deleteCache chain.
 	go markJobCompleteWhenReady("keycloak-realm-delete-del-full", "platform-kernel")
 	go markJobCompleteWhenReady("ldap-ou-delete-del-full", "platform-kernel")
+	go markJobCompleteWhenReady("mariadb-delete-del-full-del-mariaapp", "platform-kernel")
 	go markJobCompleteWhenReady("s3-delete-del-full-del-pgapp", "platform-kernel")
 	go markJobCompleteWhenReady("s3-delete-del-full-del-mariaapp", "platform-kernel")
 	go markJobCompleteWhenReady("nc-group-delete-del-full", "platform-kernel")
@@ -362,45 +364,23 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		return err != nil
 	})
 
-	// Identity: Keycloak realm deletion Job.
-	waitFor(t, 5*time.Second, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{
-			Name: "keycloak-realm-delete-del-full", Namespace: "platform-kernel",
-		}, &batchv1.Job{}) == nil
-	})
-
-	// LDAP: OU deletion Job.
-	waitFor(t, 5*time.Second, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{
-			Name: "ldap-ou-delete-del-full", Namespace: "platform-kernel",
-		}, &batchv1.Job{}) == nil
-	})
-
-	// MariaDB: DROP DATABASE Job.
-	waitFor(t, 5*time.Second, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{
-			Name: "mariadb-delete-del-full-del-mariaapp", Namespace: "platform-kernel",
-		}, &batchv1.Job{}) == nil
-	})
-
-	// S3: bucket deletion Jobs (both profiles have S3).
-	waitFor(t, 5*time.Second, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{
-			Name: "s3-delete-del-full-del-pgapp", Namespace: "platform-kernel",
-		}, &batchv1.Job{}) == nil
-	})
-	waitFor(t, 5*time.Second, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{
-			Name: "s3-delete-del-full-del-mariaapp", Namespace: "platform-kernel",
-		}, &batchv1.Job{}) == nil
-	})
-
-	// Redis: ACL deletion Job (del-pgapp has Redis).
-	waitFor(t, 5*time.Second, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{
-			Name: "redis-acl-delete-del-full-del-pgapp", Namespace: "platform-kernel",
-		}, &batchv1.Job{}) == nil
-	})
+	// Completed cleanup Jobs should be purged as final destructive cleanup.
+	for _, jobName := range []string{
+		"keycloak-realm-delete-del-full",
+		"ldap-ou-delete-del-full",
+		"mariadb-delete-del-full-del-mariaapp",
+		"s3-delete-del-full-del-pgapp",
+		"s3-delete-del-full-del-mariaapp",
+		"redis-acl-delete-del-full-del-pgapp",
+	} {
+		t.Run("purges "+jobName, func(t *testing.T) {
+			waitFor(t, 5*time.Second, func() bool {
+				job := &batchv1.Job{}
+				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
+				return k8serrors.IsNotFound(err)
+			})
+		})
+	}
 
 	// DKIM secret should be deleted.
 	err := testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, &corev1.Secret{})
