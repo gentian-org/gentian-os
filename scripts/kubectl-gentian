@@ -537,15 +537,6 @@ tenant_instance_name_from_patch() {
   ' "${file}"
 }
 
-tenant_domain_from_patch() {
-  local file="${1}"
-  awk '
-    /^spec:/ { in_spec=1; next }
-    in_spec == 1 && /^[^[:space:]]/ { in_spec=0 }
-    in_spec == 1 && $1 == "domain:" { print $2; exit }
-  ' "${file}"
-}
-
 tenant_realm_from_patch() {
   local file="${1}"
   awk '
