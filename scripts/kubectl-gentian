@@ -164,15 +164,22 @@ set_tenant_deletion_policy() {
   fi
 }
 
+KERNEL_NAMESPACE="${KERNEL_NAMESPACE:-platform-kernel}"
+
 wait_for_tenant_deletion_policy() {
   local tenant_name="${1}"
   local desired_policy="${2}"
   local timeout="${3:-120}"
+  local allow_missing="${4:-false}"
   local elapsed=0
 
   while (( elapsed < timeout )); do
     if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
-      return 0
+      if [[ "${allow_missing}" == "true" ]]; then
+        return 0
+      fi
+      echo "ERROR: tenant '${tenant_name}' disappeared before deletionPolicy=${desired_policy} was confirmed." >&2
+      return 1
     fi
     local live_policy
     live_policy="$(kubectl get tenant "${tenant_name}" \
@@ -203,31 +210,257 @@ ensure_tenant_deletion_policy_live() {
     kubectl patch tenant "${tenant_name}" --type=merge \
       -p "{\"spec\":{\"deletionPolicy\":\"${policy}\"}}" >/dev/null
   fi
-  wait_for_tenant_deletion_policy "${tenant_name}" "${policy}" 120
+  wait_for_tenant_deletion_policy "${tenant_name}" "${policy}" 120 false
+}
+
+# Wait until deletionPolicy is stable on the live CR, re-patching if ArgoCD selfHeal
+# reverts it. Used before purge deletes the Tenant CR so the controller runs Delete
+# cleanup (LDAP OU delete, etc.) instead of Retain (lock/disable only).
+assert_live_tenant_deletion_policy() {
+  local tenant_name="${1}"
+  local policy="${2}"
+  local timeout="${3:-180}"
+  local elapsed=0
+  local stable_checks=0
+
+  echo "Waiting for live tenant '${tenant_name}' deletionPolicy=${policy}..."
+  while (( elapsed < timeout )); do
+    if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
+      echo "ERROR: tenant '${tenant_name}' disappeared before deletionPolicy=${policy} was confirmed." >&2
+      return 1
+    fi
+
+    ensure_tenant_deletion_policy_live "${tenant_name}" "${policy}" || true
+
+    local live_policy
+    live_policy="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+    if [[ "${live_policy}" == "${policy}" ]]; then
+      stable_checks=$((stable_checks + 1))
+      if (( stable_checks >= 3 )); then
+        return 0
+      fi
+    else
+      stable_checks=0
+    fi
+
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  echo "ERROR: timed out waiting for stable deletionPolicy=${policy} on tenant '${tenant_name}'." >&2
+  return 1
+}
+
+tenant_ldap_ou_pos() {
+  local resource_file="${1}"
+  local tenant_name="${2}"
+  local ou=""
+
+  if [[ -f "${resource_file}" ]]; then
+    ou="$(grep -E '^[[:space:]]*ldapOU:' "${resource_file}" 2>/dev/null \
+      | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
+  fi
+  if [[ -z "${ou}" ]]; then
+    ou="ou=${tenant_name}"
+  fi
+  if [[ "${ou}" != *","* ]]; then
+    ou="${ou},\${UDM_LDAP_BASE}"
+  fi
+  echo "${ou}"
+}
+
+run_ldap_ou_delete_fallback() {
+  local tenant_name="${1}"
+  local resource_file="${2}"
+  local ou_pos
+  local job_name="ldap-ou-delete-${tenant_name}"
+
+  ou_pos="$(tenant_ldap_ou_pos "${resource_file}" "${tenant_name}")"
+  echo "Running LDAP OU delete fallback for tenant '${tenant_name}' (${ou_pos})..."
+
+  if kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+      --for=condition=complete --timeout=300s
+    return $?
+  fi
+
+  kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
+
+  kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant_name}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: delete-ou
+        image: curlimages/curl:8.7.1
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eu
+          urlencode() { printf '%s' "\$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
+          CREDS="-u Administrator:\${UDM_ADMIN_PASSWORD}"
+          BASE_URL="\${UDM_URL}/udm"
+          OU_POS="${ou_pos}"
+          OU_ENC=\$(urlencode "\${OU_POS}")
+          HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
+            -H "Accept: application/json" \\
+            "\${BASE_URL}/container/ou/\${OU_ENC}?cleanup=1&recursive=1")
+          echo "OU \${OU_POS} deletion requested (HTTP \${HTTP})"
+        env:
+        - name: UDM_URL
+          valueFrom:
+            secretKeyRef:
+              name: udm-admin
+              key: url
+        - name: UDM_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: udm-admin
+              key: password
+        - name: UDM_LDAP_BASE
+          valueFrom:
+            secretKeyRef:
+              name: udm-admin
+              key: ldap-base
+EOF
+
+  kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+    --for=condition=complete --timeout=300s
+}
+
+wait_for_purge_controller_cleanup() {
+  local tenant_name="${1}"
+  local resource_file="${2}"
+  local ou_job="ldap-ou-delete-${tenant_name}"
+  local lock_job="ldap-lock-${tenant_name}"
+
+  if kubectl get job "${ou_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    echo "Waiting for controller LDAP OU delete job '${ou_job}'..."
+    kubectl wait job "${ou_job}" -n "${KERNEL_NAMESPACE}" \
+      --for=condition=complete --timeout=300s
+    return $?
+  fi
+
+  if kubectl get job "${lock_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    echo "WARNING: Retain LDAP cleanup detected (job '${lock_job}'); running OU delete fallback." >&2
+    run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}"
+    return $?
+  fi
+
+  return 0
+}
+
+delete_labeled_resources() {
+  local resource="${1}"
+  local namespace="${2:-}"
+  local label_selector="${3}"
+  local kubectl_args=()
+
+  if [[ -n "${namespace}" ]]; then
+    kubectl_args=(-n "${namespace}")
+  fi
+
+  local names
+  names="$(kubectl get "${resource}" "${kubectl_args[@]}" \
+    -l "${label_selector}" -o name 2>/dev/null || true)"
+  if [[ -z "${names}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r name; do
+    [[ -z "${name}" ]] && continue
+    kubectl delete "${name}" "${kubectl_args[@]}" --ignore-not-found=true --wait=false
+  done <<< "${names}"
 }
 
 purge_tenant_cluster_artifacts() {
   local tenant_name="${1}"
+  local ns_name="${2:-tenant-${tenant_name}}"
+  local label_selector="gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os"
 
   echo "Purging remaining cluster artifacts for tenant '${tenant_name}'..."
 
-  kubectl get databases.postgresql.cnpg.io -n platform-kernel \
-    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
-    -o name 2>/dev/null \
-    | xargs -r kubectl delete --ignore-not-found=true --wait=false
+  delete_labeled_resources "databases.postgresql.cnpg.io" "${KERNEL_NAMESPACE}" "${label_selector}"
 
-  kubectl get release.helm.crossplane.io \
-    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
-    -o name 2>/dev/null \
-    | xargs -r kubectl delete --ignore-not-found=true --wait=false
+  delete_labeled_resources "release.helm.crossplane.io" "" "${label_selector}"
 
-  kubectl delete secrets -n platform-kernel \
-    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
-    --ignore-not-found=true
+  kubectl delete secrets -n "${KERNEL_NAMESPACE}" \
+    -l "${label_selector}" --ignore-not-found=true
 
-  kubectl delete jobs -n platform-kernel \
-    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
-    --ignore-not-found=true
+  if kubectl get namespace "${ns_name}" &>/dev/null; then
+    echo "Deleting tenant namespace '${ns_name}'..."
+    kubectl delete namespace "${ns_name}" --ignore-not-found=true --wait=false
+    kubectl wait namespace "${ns_name}" --for=delete --timeout=180s 2>/dev/null || \
+      echo "WARNING: namespace '${ns_name}' is still terminating after purge." >&2
+  fi
+
+  # Purge jobs last so controller cleanup jobs can finish before we remove them.
+  delete_labeled_resources "jobs" "${KERNEL_NAMESPACE}" "${label_selector}"
+}
+
+wait_for_tenant_delete() {
+  local tenant_name="${1}"
+  local ns_name="${2}"
+  local purge="${3:-false}"
+  local resource_file="${4:-}"
+
+  echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
+  if ! kubectl wait tenant "${tenant_name}" --for=delete --timeout=300s 2>/dev/null; then
+    echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
+    echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
+    return 1
+  fi
+
+  if [[ "${purge}" == "true" ]]; then
+    if ! wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}"; then
+      echo "ERROR: purge LDAP cleanup did not complete for tenant '${tenant_name}'." >&2
+      return 1
+    fi
+  fi
+
+  if kubectl get namespace "${ns_name}" &>/dev/null; then
+    echo "Waiting for namespace '${ns_name}' to finish terminating..."
+    if ! kubectl wait namespace "${ns_name}" --for=delete --timeout=180s 2>/dev/null; then
+      echo "ERROR: namespace '${ns_name}' is still terminating after 180s." >&2
+      echo "  This may indicate stuck finalizers. Inspect with:" >&2
+      echo "    kubectl get namespace ${ns_name} -o yaml" >&2
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+tenant_undeploy_remove_from_git() {
+  local instance="${1}"
+  local env_name="${2}"
+  local kustom_file="${3}"
+  local await_prune="${4:-true}"
+  local tenant_name="${5:-}"
+
+  remove_instance_resource "${kustom_file}" "${instance}"
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "${kustom_file}"
+  )
+  git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
+  if ! apply_env_kustomization "${env_name}"; then
+    echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
+  fi
+  if [[ "${await_prune}" == "true" && -n "${tenant_name}" ]]; then
+    argocd_refresh_await_prune "${env_name}" "${tenant_name}"
+  fi
 }
 
 tenant_env_root() {
@@ -963,6 +1196,7 @@ cmd_tenant_undeploy() {
   local patch
   local resource_file
   local tenant_name
+  local ns_name
 
   kustom_file="$(tenant_env_kustomization "${env_name}")"
   ensure_kustomization_seed "${kustom_file}"
@@ -972,115 +1206,50 @@ cmd_tenant_undeploy() {
   if [[ -z "${tenant_name}" ]]; then
     tenant_name="${instance}"
   fi
+  ns_name="tenant-${tenant_name}"
 
   if [[ "${purge}" == "true" ]]; then
-    if ! grep -q '^  deletionPolicy: Delete$' "${resource_file}"; then
-      set_tenant_deletion_policy "${resource_file}" "Delete"
-      (
-        cd "${DEPLOYMENTS_PATH}"
-        git add "${resource_file}"
-      )
-    fi
-    # Phase 1 of purge: commit deletionPolicy=Delete while the instance is still
-    # deployed, apply it, and wait until the live Tenant CR reflects Delete.
-    # A plain kubectl patch races against ArgoCD auto-sync and loses.
+    cmd_tenant_undeploy_purge "${instance}" "${env_name}" "${tenant_name}" \
+      "${kustom_file}" "${resource_file}"
+    return $?
+  fi
+
+  # Non-purge undeploy: if a prior --purge run left deletionPolicy=Delete in the YAML,
+  # reset it to Retain first so the controller preserves tenant data.
+  if grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
+    set_tenant_deletion_policy "${resource_file}" "Retain"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${resource_file}"
+    )
     local live_policy
     live_policy="$(kubectl get tenant "${tenant_name}" \
       -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
-    if [[ "${live_policy}" != "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
-      git_commit_push "feat(${instance}): set deletionPolicy=Delete before purge in ${env_name}"
+    if [[ "${live_policy}" == "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
+      git_commit_push "chore(${instance}): reset deletionPolicy to Retain before undeploy in ${env_name}"
       kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
-      ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
-    elif kubectl get tenant "${tenant_name}" &>/dev/null; then
-      ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
-    fi
-  else
-    # Non-purge undeploy: if a prior --purge run left deletionPolicy=Delete in
-    # the YAML, reset it to Retain first so the controller preserves all tenant
-    # data (LDAP users, databases, mail, etc.) during this undeploy.
-    if grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
-      set_tenant_deletion_policy "${resource_file}" "Retain"
-      (
-        cd "${DEPLOYMENTS_PATH}"
-        git add "${resource_file}"
-      )
-      local live_policy
-      live_policy="$(kubectl get tenant "${tenant_name}" \
-        -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
-      if [[ "${live_policy}" == "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
-        git_commit_push "chore(${instance}): reset deletionPolicy to Retain before undeploy in ${env_name}"
-        kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
-      fi
     fi
   fi
 
   if ! is_instance_deployed "${instance}" "${env_name}"; then
     echo "Tenant instance '${instance}' is not deployed in '${env_name}'."
-    # Commit any staged deletionPolicy change (purge on already-undeployed instance).
-    git_commit_push "feat(${instance}): enable destructive tenant deletion"
+    git_commit_push "chore(${instance}): finalize tenant undeploy in ${env_name}"
   else
-    if [[ "${purge}" == "true" ]]; then
-      ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
-    fi
-    remove_instance_resource "${kustom_file}" "${instance}"
-    (
-      cd "${DEPLOYMENTS_PATH}"
-      git add "${kustom_file}"
-    )
-    git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
-    if ! apply_env_kustomization "${env_name}"; then
-      echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
-    fi
-    # Trigger an immediate ArgoCD refresh so it picks up the new desired state
-    # (tenant removed) before its next polling cycle. Without this, ArgoCD's
-    # selfHeal re-creates the tenant CR between the git push and ArgoCD noticing
-    # the git change, leaving the tenant "live" after undeploy.
-    argocd_refresh_await_prune "${env_name}" "${tenant_name}"
+    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "${kustom_file}" true "${tenant_name}"
   fi
 
-  # Capture the tenant namespace name from status before we delete the CR.
-  local ns_name
   ns_name="$(kubectl get tenant "${tenant_name}" \
     -o jsonpath='{.status.namespace}' 2>/dev/null || true)"
   if [[ -z "${ns_name}" ]]; then
     ns_name="tenant-${tenant_name}"
   fi
 
-  if [[ "${purge}" == "true" ]] && kubectl get tenant "${tenant_name}" &>/dev/null; then
-    ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
-  fi
-
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
-  echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
-  if ! kubectl wait tenant "${tenant_name}" --for=delete --timeout=300s 2>/dev/null; then
-    echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
-    echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
+  if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false; then
     exit 1
   fi
 
-  # Wait for the tenant namespace to be fully gone. After the tenant CR is
-  # deleted the namespace may still be Terminating (Crossplane cascades deletion
-  # of XTenant-managed resources including the namespace). A subsequent deploy
-  # would fail with confusing errors if we return before it is fully gone.
-  if kubectl get namespace "${ns_name}" &>/dev/null; then
-    echo "Waiting for namespace '${ns_name}' to finish terminating..."
-    if ! kubectl wait namespace "${ns_name}" --for=delete --timeout=120s 2>/dev/null; then
-      echo "ERROR: namespace '${ns_name}' is still terminating after 120s." >&2
-      echo "  This may indicate stuck finalizers. Inspect with:" >&2
-      echo "    kubectl get namespace ${ns_name} -o yaml" >&2
-      exit 1
-    fi
-  fi
-
-  if [[ "${purge}" == "true" ]]; then
-    purge_tenant_cluster_artifacts "${tenant_name}"
-  fi
-
-  # Always reset deletionPolicy to Retain after cleanup so the tenant YAML is
-  # left in a safe state for future deploys and non-purge undeploys. Without
-  # this, a prior --purge run permanently leaves Delete in the file, causing
-  # the next undeploy (even without -f) to destroy all tenant data.
   if [[ -f "${resource_file}" ]] && grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
     set_tenant_deletion_policy "${resource_file}" "Retain"
     (
@@ -1090,11 +1259,98 @@ cmd_tenant_undeploy() {
     git_commit_push "chore(${instance}): reset deletionPolicy to Retain after undeploy in ${env_name}"
   fi
 
-  if [[ "${purge}" == "true" ]]; then
-    echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
-  else
-    echo "Done. Tenant instance '${instance}' undeployed in '${env_name}'."
+  echo "Done. Tenant instance '${instance}' undeployed in '${env_name}'."
+}
+
+cmd_tenant_undeploy_purge() {
+  local instance="${1}"
+  local env_name="${2}"
+  local tenant_name="${3}"
+  local kustom_file="${4}"
+  local resource_file="${5}"
+  local ns_name="tenant-${tenant_name}"
+  local tenant_exists=false
+
+  if ! grep -q '^  deletionPolicy: Delete$' "${resource_file}"; then
+    set_tenant_deletion_policy "${resource_file}" "Delete"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${resource_file}"
+    )
   fi
+
+  if kubectl get tenant "${tenant_name}" &>/dev/null; then
+    tenant_exists=true
+    ns_name="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.status.namespace}' 2>/dev/null || true)"
+    if [[ -z "${ns_name}" ]]; then
+      ns_name="tenant-${tenant_name}"
+    fi
+  fi
+
+  if [[ "${tenant_exists}" == "true" ]]; then
+    # Commit deletionPolicy=Delete while the instance is still in GitOps desired state.
+    # Deleting the Tenant CR must happen before removing it from kustomization; otherwise
+    # ArgoCD prune races and can delete the CR with deletionPolicy=Retain still set.
+    if is_instance_deployed "${instance}" "${env_name}"; then
+      (
+        cd "${DEPLOYMENTS_PATH}"
+        git add "${resource_file}"
+        if ! git diff --cached --quiet 2>/dev/null; then
+          git_commit_push "feat(${instance}): set deletionPolicy=Delete before purge in ${env_name}"
+        fi
+      )
+      echo "Applying deletionPolicy=Delete for '${tenant_name}'..."
+      if ! apply_env_kustomization "${env_name}"; then
+        echo "WARNING: failed to apply kustomization for '${env_name}' before purge." >&2
+      fi
+      if ! assert_live_tenant_deletion_policy "${tenant_name}" "Delete" 180; then
+        exit 1
+      fi
+    else
+      if ! assert_live_tenant_deletion_policy "${tenant_name}" "Delete" 180; then
+        exit 1
+      fi
+    fi
+
+    echo "Deleting tenant '${tenant_name}' with deletionPolicy=Delete..."
+    kubectl delete tenant "${tenant_name}" --ignore-not-found=true
+
+    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" true "${resource_file}"; then
+      exit 1
+    fi
+
+    purge_tenant_cluster_artifacts "${tenant_name}" "${ns_name}"
+  else
+    echo "Tenant CR '${tenant_name}' is not present; purging orphaned cluster artifacts..."
+    purge_tenant_cluster_artifacts "${tenant_name}" "${ns_name}"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      if ! git diff --cached --quiet 2>/dev/null; then
+        git_commit_push "feat(${instance}): enable destructive tenant deletion in ${env_name}"
+      fi
+    )
+  fi
+
+  # Update GitOps after cluster cleanup so ArgoCD cannot prune the CR early.
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "${kustom_file}" false "${tenant_name}"
+  fi
+
+  if [[ -f "${resource_file}" ]] && grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
+    set_tenant_deletion_policy "${resource_file}" "Retain"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${resource_file}"
+    )
+    git_commit_push "chore(${instance}): reset deletionPolicy to Retain after purge in ${env_name}"
+  fi
+
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    argocd_refresh_await_prune "${env_name}" "${tenant_name}"
+  fi
+
+  echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
 }
 
 # ---------------------------------------------------------------------------
