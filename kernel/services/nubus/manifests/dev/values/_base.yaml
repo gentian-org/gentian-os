@@ -431,9 +431,11 @@ nubusStackDataUms:
     portaltileGroupUserAdmin:
       - cn=Domain Admins,cn=groups,dc=swp-ldap,dc=internal
       - cn=Support,cn=groups,dc=swp-ldap,dc=internal
+      - cn=Tenant Admins,cn=groups,dc=swp-ldap,dc=internal
     portaltileGroupUserAll:
       - cn=Domain Admins,cn=groups,dc=swp-ldap,dc=internal
       - cn=Domain Users,cn=groups,dc=swp-ldap,dc=internal
+      - cn=Tenant Admins,cn=groups,dc=swp-ldap,dc=internal
     apps:
       collabora:
         enabled: false
