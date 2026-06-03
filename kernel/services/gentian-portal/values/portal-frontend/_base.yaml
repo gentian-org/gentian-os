@@ -45,10 +45,62 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
     nginx.ingress.kubernetes.io/proxy-busy-buffers-size: "128k"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+  items:
+    - name: rewrites
+      paths:
+        - path: /univention/(portal|selfservice)/$
+          pathType: ImplementationSpecific
+        - path: /univention/(portal|selfservice)/index.html$
+          pathType: ImplementationSpecific
+        - path: /univention/(portal|selfservice)/(css|fonts|i18n|media|js|oidc|custom)(/.*)$
+          pathType: ImplementationSpecific
+        - path: /univention/(portal)/(icons)(/.*)$
+          pathType: ImplementationSpecific
+        - path: /univention/(portal|selfservice)/(sse-worker.js)$
+          pathType: ImplementationSpecific
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: "/$2$3"
+        nginx.ingress.kubernetes.io/use-regex: "true"
+        nginx.ingress.kubernetes.io/affinity: "none"
+    - name: redirects
+      paths:
+        - pathType: ImplementationSpecific
+          path: /univention/portal$
+        - pathType: ImplementationSpecific
+          path: /univention/selfservice$
+      annotations:
+        nginx.ingress.kubernetes.io/permanent-redirect: "/univention/portal/"
 
-# Preserve the base-domain-redirect that was in nubusPortalFrontend.extraIngresses.
-# Required by test_base_domain_redirect (e2e test).
+# Canonical login at /login/ (gentian-login). Root and legacy Nubus login paths
+# redirect here; the portal SPA remains at /univention/portal/ after authentication.
 extraIngresses:
+  - name: entry-to-login
+    host: "portal.desk.gentian.org"
+    paths:
+      - pathType: ImplementationSpecific
+        path: /$
+      - pathType: ImplementationSpecific
+        path: /univention$
+      - pathType: ImplementationSpecific
+        path: /univention/$
+    ingressClassName: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/permanent-redirect: "/login/"
+      nginx.ingress.kubernetes.io/use-regex: "true"
+    tls:
+      enabled: true
+      secretName: "wildcard-tls"
+  - name: legacy-login-redirect
+    host: "portal.desk.gentian.org"
+    paths:
+      - pathType: Prefix
+        path: /univention/login
+    ingressClassName: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/permanent-redirect: "/login/"
+    tls:
+      enabled: true
+      secretName: "wildcard-tls"
   - name: base-domain-redirect
     host: "desk.gentian.org"
     paths:
@@ -56,7 +108,7 @@ extraIngresses:
         path: /
     ingressClassName: "public"
     annotations:
-      nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.desk.gentian.org/univention/portal/"
+      nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.desk.gentian.org/login/"
       nginx.ingress.kubernetes.io/use-regex: "true"
     tls:
       enabled: true

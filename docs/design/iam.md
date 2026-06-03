@@ -43,8 +43,9 @@ dc=swp-ldap,dc=internal
 
 The kernel realm imports tenant users from their OUs via SUBTREE LDAP federation
 (see `kernel/services/keycloak-config/manifests/dev/ldap-federation-patch.yaml`).
-Users sign in at the **single shared portal** with their email address. Tenant
-realms remain for per-app OIDC; they do not host a separate portal or UMC stack.
+Users sign in at the **single shared portal** with their email address at
+`https://portal.<kernel-domain>/login/`. Tenant realms remain for per-app OIDC;
+they do not host a separate portal or UMC stack.
 
 ## 2. Roles and User Templates
 

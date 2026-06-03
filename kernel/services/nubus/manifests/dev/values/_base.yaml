@@ -491,6 +491,8 @@ nubusPortalServer:
   podAnnotations:
     reloader.stakater.com/auto: "true"
   portalServer:
+    # OIDC-only: unauthenticated portal visitors are sent to /login/ (gentian-login).
+    authMode: oidc
     featureToggles:
       windows_enabled: true
   objectStorage:
@@ -593,10 +595,10 @@ nubusLdapServer:
       mountPath: /entrypoint.d/92-gentian-tenant-acl.sh
       subPath: 92-gentian-tenant-acl.sh
 
-# UMC Gateway — shared kernel portal login UI (/univention/login/, management shell)
+# UMC Gateway — management shell only; human login is /login/ (gentian-login).
 nubusUmcGateway:
   ingress:
-    enableLoginPath: true
+    enableLoginPath: false
     certManager:
       enabled: false
     tls:
@@ -633,7 +635,7 @@ nubusPortalFrontend:
           path: /
       ingressClassName: "public"
       annotations:
-        nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.desk.gentian.org/univention/portal/"
+        nginx.ingress.kubernetes.io/permanent-redirect: "https://portal.desk.gentian.org/login/"
         nginx.ingress.kubernetes.io/use-regex: "true"
       tls:
         enabled: true

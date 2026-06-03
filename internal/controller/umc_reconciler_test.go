@@ -20,7 +20,7 @@ import "testing"
 
 func TestKernelPortalURL(t *testing.T) {
 	got := kernelPortalURL("desk.gentian.org")
-	want := "https://portal.desk.gentian.org/univention/portal/"
+	want := "https://portal.desk.gentian.org/login/"
 	if got != want {
 		t.Fatalf("kernelPortalURL = %q, want %q", got, want)
 	}

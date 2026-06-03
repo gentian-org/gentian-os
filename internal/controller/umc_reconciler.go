@@ -49,9 +49,9 @@ const (
 	umcUCRConfigMapName        = "umc-ucr"
 )
 
-// ensureUMC converges tenants onto the shared kernel portal at
-// portal.<kernel-domain>. Per-tenant UMC stacks and login surfaces are removed;
-// tenant effective domains redirect / to the shared portal.
+// ensureUMC converges tenants onto the shared kernel portal login at
+// portal.<kernel-domain>/login/. Per-tenant UMC stacks are removed; tenant
+// effective domains redirect / to the shared login page.
 func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if err := r.removePerTenantUMCStack(ctx, tenant); err != nil {
 		return err
@@ -80,7 +80,7 @@ func kernelPortalHost(kernelDomain string) string {
 }
 
 func kernelPortalURL(kernelDomain string) string {
-	return fmt.Sprintf("https://%s/univention/portal/", kernelPortalHost(kernelDomain))
+	return fmt.Sprintf("https://%s/login/", kernelPortalHost(kernelDomain))
 }
 
 func umcReleaseName(tenantName string) string {
