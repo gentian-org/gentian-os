@@ -68,8 +68,21 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	// Phase=Ready must be reached without marking any LDAP Jobs complete
-	// (ensureLDAPBase is non-blocking, ensureLDAP early-exits).
+	// Wait for and complete the base LDAP jobs (OU and admin user)
+	// which are created via ensureLDAPBase and required by identity_reconciler.
+	job := &batchv1.Job{}
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-ou-noldap", Namespace: "platform-kernel"}, job) == nil
+	})
+	markJobComplete(t, "ldap-ou-noldap", "platform-kernel")
+
+	waitFor(t, 5*time.Second, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-admin-user-noldap", Namespace: "platform-kernel"}, job) == nil
+	})
+	markJobComplete(t, "ldap-admin-user-noldap", "platform-kernel")
+
 	updated := &gentianov1alpha1.Tenant{}
 	waitFor(t, 10*time.Second, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "noldap"}, updated)
@@ -94,7 +107,6 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	}
 
 	// ensureLDAPBase must have fired the OU Job even though no LDAP apps are installed.
-	job := &batchv1.Job{}
 	waitFor(t, 5*time.Second, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-noldap", Namespace: "platform-kernel"}, job) == nil
@@ -340,17 +352,8 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	updated := &gentianov1alpha1.Tenant{}
 	waitFor(t, 15*time.Second, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "ldapready"}, updated)
-		for _, c := range updated.Status.Conditions {
-			if c.Type == "LDAPReady" && c.Status == metav1.ConditionTrue {
-				return true
-			}
-		}
-		return false
+		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
-
-	if updated.Status.Phase != gentianov1alpha1.TenantPhaseReady {
-		t.Errorf("expected Phase=Ready, got %v", updated.Status.Phase)
-	}
 	var ldapCond *metav1.Condition
 	for i := range updated.Status.Conditions {
 		if updated.Status.Conditions[i].Type == "LDAPReady" {

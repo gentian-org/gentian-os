@@ -123,7 +123,15 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	adminLDAPJob := &batchv1.Job{}
 	switch ldapJobErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, adminLDAPJob); {
 	case errors.IsNotFound(ldapJobErr):
-		// LDAP admin-user job not yet created; proceed without waiting.
+		// If LDAP federation is enabled globally, we must wait for the LDAP reconciler
+		// to create and complete the admin-user job. Otherwise we race against Keycloak
+		// federation syncs.
+		if r.LDAPBase != "" {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"WaitingLDAPAdminUnlock", "Waiting for LDAP admin-user job to be created")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+		// Proceed without waiting only if LDAP is completely disabled.
 	case ldapJobErr != nil:
 		return ctrl.Result{}, ldapJobErr
 	case !jobIsComplete(adminLDAPJob):

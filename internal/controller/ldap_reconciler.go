@@ -666,8 +666,10 @@ func (r *TenantReconciler) deleteStalePortalEntriesForTenant(
 			return false, err
 		}
 		if jobIsFailed(deleteJob) {
-			prop := metav1.DeletePropagationBackground
-			_ = r.Delete(ctx, deleteJob, &client.DeleteOptions{PropagationPolicy: &prop})
+			if deleteJob.DeletionTimestamp.IsZero() {
+				prop := metav1.DeletePropagationBackground
+				_ = r.Delete(ctx, deleteJob, &client.DeleteOptions{PropagationPolicy: &prop})
+			}
 			allDone = false
 			continue
 		}
@@ -681,8 +683,10 @@ func (r *TenantReconciler) deleteStalePortalEntriesForTenant(
 		createJob := &batchv1.Job{}
 		createJobName := portalEntryJobName(tenant.Name, tileName)
 		if getErr := r.Get(ctx, types.NamespacedName{Name: createJobName, Namespace: kernelNamespace}, createJob); getErr == nil {
-			prop := metav1.DeletePropagationBackground
-			_ = r.Delete(ctx, createJob, &client.DeleteOptions{PropagationPolicy: &prop})
+			if createJob.DeletionTimestamp.IsZero() {
+				prop := metav1.DeletePropagationBackground
+				_ = r.Delete(ctx, createJob, &client.DeleteOptions{PropagationPolicy: &prop})
+			}
 		}
 		// Remove tile from annotation.
 		tiles := getProvisionedPortalTiles(tenant)
@@ -1728,6 +1732,11 @@ ENTRY_ENC=$(urlencode "${ENTRY_DN}")
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/portals/entry/${ENTRY_ENC}")
-echo "portal entry ${ENTRY_CN} deletion (HTTP ${HTTP})"`,
+if [ "${HTTP}" = "204" ] || [ "${HTTP}" = "404" ] || [ "${HTTP}" = "200" ]; then
+	echo "portal entry ${ENTRY_CN} deletion (HTTP ${HTTP})"
+else
+	echo "failed to delete portal entry ${ENTRY_CN} (HTTP ${HTTP})" >&2
+	exit 1
+fi`,
 		appName, tenantName)
 }

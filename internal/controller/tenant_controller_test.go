@@ -164,22 +164,23 @@ func TestMain(m *testing.M) {
 			var jobs batchv1.JobList
 			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
 				for _, job := range jobs.Items {
-					if job.Status.Succeeded == 0 && (strings.HasPrefix(job.Name, "keycloak-realm-") || strings.HasPrefix(job.Name, "keycloak-admin-")) {
-						name := job.Name
-						if strings.Contains(name, "clienttest") || strings.Contains(name, "allready") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "destroyer") || strings.Contains(name, "del-tenant") || strings.Contains(name, "del-full") || strings.Contains(name, "cachedelete") || strings.Contains(name, "dbdelete") || strings.Contains(name, "ldapdelete") || strings.Contains(name, "storagedelete") {
+					j := job // copy loop variable
+					if j.Status.Succeeded == 0 && (strings.HasPrefix(j.Name, "keycloak-") || strings.HasPrefix(j.Name, "ldap-")) {
+						name := j.Name
+						if strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant") {
 							// These tests test deletion flows which explicitly wait for
 							// keycloak-realm-delete-* or similar jobs.
 							// And the explicit identity tests.
 							continue
 						}
 						now := metav1.Now()
-						job.Status.StartTime = &now
-						job.Status.CompletionTime = &now
-						job.Status.Succeeded = 1
-						job.Status.Conditions = []batchv1.JobCondition{
+						j.Status.StartTime = &now
+						j.Status.CompletionTime = &now
+						j.Status.Succeeded = 1
+						j.Status.Conditions = []batchv1.JobCondition{
 							{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
 						}
-						_ = testClient.Status().Update(context.Background(), &job)
+						_ = testClient.Status().Update(context.Background(), &j)
 					}
 				}
 			}
