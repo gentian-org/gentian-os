@@ -252,7 +252,7 @@ assert_live_tenant_deletion_policy() {
   return 1
 }
 
-tenant_ldap_ou_pos() {
+tenant_ldap_ou_from_resource() {
   local resource_file="${1}"
   local tenant_name="${2}"
   local ou=""
@@ -264,20 +264,18 @@ tenant_ldap_ou_pos() {
   if [[ -z "${ou}" ]]; then
     ou="ou=${tenant_name}"
   fi
-  if [[ "${ou}" != *","* ]]; then
-    ou="${ou},\${UDM_LDAP_BASE}"
-  fi
   echo "${ou}"
 }
 
 run_ldap_ou_delete_fallback() {
   local tenant_name="${1}"
   local resource_file="${2}"
-  local ou_pos
+  local ou_spec
   local job_name="ldap-ou-delete-${tenant_name}"
 
-  ou_pos="$(tenant_ldap_ou_pos "${resource_file}" "${tenant_name}")"
-  echo "Running LDAP OU delete fallback for tenant '${tenant_name}' (${ou_pos})..."
+  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
+  ou_spec="${ou_spec//\"/\\\"}"
+  echo "Running LDAP OU delete fallback for tenant '${tenant_name}' (${ou_spec})..."
 
   if kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
     kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
@@ -311,7 +309,11 @@ spec:
           urlencode() { printf '%s' "\$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
           CREDS="-u Administrator:\${UDM_ADMIN_PASSWORD}"
           BASE_URL="\${UDM_URL}/udm"
-          OU_POS="${ou_pos}"
+          OU_SPEC="${ou_spec}"
+          case "\${OU_SPEC}" in
+            *,*) OU_POS="\${OU_SPEC}" ;;
+            *) OU_POS="\${OU_SPEC},\${UDM_LDAP_BASE}" ;;
+          esac
           OU_ENC=\$(urlencode "\${OU_POS}")
           HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
             -H "Accept: application/json" \\
