@@ -999,13 +999,13 @@ deploy_nubus() {
             -n "${ns}" -o jsonpath='{.data.sensitive-values\.yaml}' \
             2>/dev/null | base64 -d 2>/dev/null || true)
         _reg_cfg=$(
-            _u=$(kubectl get secret registry-credentials-helm \
+            if _u=$(kubectl get secret registry-credentials-helm \
                 -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d) && \
-            _p=$(kubectl get secret registry-credentials-helm \
-                -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) && \
-            _auth=$(printf '%s:%s' "${_u}" "${_p}" | base64 -w0) && \
-            printf '{"auths":{"registry.opencode.de":{"auth":"%s"}}}' "${_auth}" \
-            || true
+                _p=$(kubectl get secret registry-credentials-helm \
+                    -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) && \
+                _auth=$(printf '%s:%s' "${_u}" "${_p}" | base64 -w0); then
+                printf '{"auths":{"registry.opencode.de":{"auth":"%s"}}}' "${_auth}"
+            fi
         )
         local _nubus_chart_repo _nubus_chart_ver
         _nubus_chart_repo=$(kubectl get release.helm.crossplane.io "${release_name}" \

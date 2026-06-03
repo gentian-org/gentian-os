@@ -40,7 +40,9 @@ GENTIAN_MANAGED_CERT_MANAGER="${GENTIAN_MANAGED_CERT_MANAGER:-0}"
 
 # Load install state to know if cert-manager is Gentian-managed.
 # shellcheck source=/dev/null
-[[ -r "${INSTALL_STATE_FILE}" ]] && source "${INSTALL_STATE_FILE}" || true
+if [[ -r "${INSTALL_STATE_FILE}" ]]; then
+    source "${INSTALL_STATE_FILE}"
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
