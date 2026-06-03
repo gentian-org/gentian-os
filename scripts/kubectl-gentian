@@ -926,6 +926,7 @@ cmd_tenant_undeploy() {
     if [[ "${live_policy}" != "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
       git_commit_push "feat(${instance}): set deletionPolicy=Delete before purge in ${env_name}"
       kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
+      sleep 2 # Prevent race condition with the controller cache before deletion
     fi
   else
     # Non-purge undeploy: if a prior --purge run left deletionPolicy=Delete in

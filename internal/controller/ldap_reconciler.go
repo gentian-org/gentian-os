@@ -289,14 +289,14 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 	// First, clean up any stale delete job for this tile.
 	deleteJobName := portalEntryDeleteJobName(tenant.Name, pa.AppName)
 	deleteJob := &batchv1.Job{}
-	if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, deleteJob); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, deleteJob); err == nil && deleteJob.DeletionTimestamp.IsZero() {
 		prop := metav1.DeletePropagationBackground
 		_ = r.Delete(ctx, deleteJob, &client.DeleteOptions{PropagationPolicy: &prop})
 		// A delete job existed, which means the app was uninstalled recently.
 		// Any existing create job is stale and must be recreated to ensure the portal entry is actually created.
 		createJobName := portalEntryJobName(tenant.Name, pa.AppName)
 		createJob := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: createJobName, Namespace: kernelNamespace}, createJob); err == nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: createJobName, Namespace: kernelNamespace}, createJob); err == nil && createJob.DeletionTimestamp.IsZero() {
 			_ = r.Delete(ctx, createJob, &client.DeleteOptions{PropagationPolicy: &prop})
 		}
 		return false, nil
