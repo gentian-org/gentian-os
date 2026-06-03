@@ -334,7 +334,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: udm-admin
-              key: ldap-base
+              key: ldapBase
 EOF
 
   kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
