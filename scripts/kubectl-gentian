@@ -592,6 +592,12 @@ print_tenant_admin_login_instructions() {
   local username="${4}"
   local password="${5}"
 
+  local login_email
+  login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.adminEmail}' 2>/dev/null || true)"
+  if [[ -z "${login_email}" ]]; then
+    login_email="${username}@gentian.org"
+  fi
+
   local kernel_domain_name
   kernel_domain_name="$(kernel_domain)"
   local effective_domain
@@ -604,21 +610,19 @@ print_tenant_admin_login_instructions() {
     id_base="https://id.<KERNEL_DOMAIN>"
   fi
 
-  local umc_base
-  if [[ -n "${effective_domain}" ]]; then
-    umc_base="https://${effective_domain}"
+  local portal_base
+  if [[ -n "${kernel_domain_name}" ]]; then
+    portal_base="https://portal.${kernel_domain_name}"
   else
-    umc_base="https://<TENANT>.<KERNEL_DOMAIN>"
+    portal_base="https://portal.<KERNEL_DOMAIN>"
   fi
 
   echo ""
-  echo "─── Tenant Portal Admin (Nubus UMC) ─────────────────────────────────────────"
-  echo "  This LDAP-backed user can log into the tenant UMC and provision / manage"
-  echo "  end users for the '${tenant_name}' tenant via the user/group tiles."
-  echo "  Nubus login  : ${umc_base}/univention/login/?location=/univention/management/"
-  echo "  Tenant UMC   : ${umc_base}/univention/management/"
-  echo "  (not the kernel portal at portal.${kernel_domain_name:-<KERNEL_DOMAIN>})"
-  echo "  Username     : ${username}"
+  echo "─── Shared Gentian Portal (all users) ───────────────────────────────────────"
+  echo "  Sign in at the shared kernel portal with your email address."
+  echo "  Portal       : ${portal_base}/univention/portal/"
+  echo "  UMC (admins) : ${portal_base}/univention/management/"
+  echo "  Login email  : ${login_email}"
   echo "  Password     : ${password}"
   echo ""
   echo "─── Tenant Keycloak Realm Admin (secondary) ─────────────────────────────────"

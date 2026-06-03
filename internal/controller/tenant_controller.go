@@ -54,9 +54,8 @@ const (
 	tenantLabel     = "gentianos.io/tenant"
 	managedByLabel  = "app.kubernetes.io/managed-by"
 	managedByValue  = "gentian-os"
-	// umcFrontendComponentLabel marks Ingress objects owned by the per-tenant UMC
-	// stack (Nubus login redirects, umc-gateway paths). They must not be deleted by the app
-	// ingress stale cleanup in ensureIngress.
+	// umcFrontendComponentLabel marks Ingress objects owned by tenant portal redirect
+	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
 	umcFrontendComponentLabel = "gentianos.io/component"
 	umcFrontendComponentValue = "umc-frontend"
 	kernelNamespace = "platform-kernel"
@@ -434,12 +433,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(err, "ensure LDAP base (non-blocking, will retry)")
 	}
 
-	// 14d. Per-tenant UMC — deploy a nubusUmcServer instance scoped to the
-	// tenant's Keycloak realm and LDAP OU so tenant admins can manage their
-	// users at https://<tenant>.<domain>/univention/management/. Non-blocking:
-	// errors are logged and retried without blocking Phase=Ready.
+	// 14d. Shared kernel portal — remove superseded per-tenant UMC stacks and
+	// redirect tenant domains to portal.<kernel-domain>. Non-blocking.
 	if err := r.ensureUMC(ctx, tenant); err != nil {
-		logger.Error(err, "ensure per-tenant UMC (non-blocking, will retry)")
+		logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
 	}
 
 	// 15. Update status
@@ -599,8 +596,8 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// Clean up per-tenant UMC Application CR (DeletionPolicy=Delete only;
-	// in-namespace Secrets/ConfigMaps are removed with the namespace).
+	// Clean up portal redirect ingress and any remaining UMC stack artifacts
+	// (DeletionPolicy=Delete only; in-namespace Secrets/ConfigMaps go with the namespace).
 	if err := r.deleteUMC(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

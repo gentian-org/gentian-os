@@ -38,10 +38,13 @@ dc=swp-ldap,dc=internal
 | Realm | LDAP federation scope | Who authenticates here |
 |---|---|---|
 | `master` | None | Keycloak admin CLI only |
-| `kernel` | `cn=users,dc=swp-ldap,dc=internal` (one-level) | Kernel service accounts only — **no human users** |
-| `<tenant>` | `ou=users,ou=<tenant>,...` (one-level) | All tenant users; UMC access for tenant admins |
+| `kernel` | `dc=swp-ldap,dc=internal` (SUBTREE; login username = `mailPrimaryAddress`) | **All humans** at the shared portal (`portal.<kernel-domain>`) — platform admin and every tenant user/admin |
+| `<tenant>` | `ou=users,ou=<tenant>,...` (one-level) | Tenant-scoped app OIDC (Jitsi, …); kernel IdP broker avoids a second login when the user already has a portal session |
 
-The kernel realm's LDAP scope is intentionally restricted to the service-accounts container only. This means a tenant admin authenticated via their tenant realm can only see their own users in UMC — no cross-tenant visibility is possible.
+The kernel realm imports tenant users from their OUs via SUBTREE LDAP federation
+(see `kernel/services/keycloak-config/manifests/dev/ldap-federation-patch.yaml`).
+Users sign in at the **single shared portal** with their email address. Tenant
+realms remain for per-app OIDC; they do not host a separate portal or UMC stack.
 
 ## 2. Roles and User Templates
 

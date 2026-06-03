@@ -593,9 +593,10 @@ nubusLdapServer:
       mountPath: /entrypoint.d/92-gentian-tenant-acl.sh
       subPath: 92-gentian-tenant-acl.sh
 
-# UMC Gateway
+# UMC Gateway — shared kernel portal login UI (/univention/login/, management shell)
 nubusUmcGateway:
   ingress:
+    enableLoginPath: true
     certManager:
       enabled: false
     tls:

@@ -31,7 +31,7 @@
 #   Tenant users in ou=users,ou={tenant},dc=swp-ldap,dc=internal become
 #   visible in the kernel realm, allowing them to authenticate at the shared
 #   portal (portal.desk.gentian.org) using their email address.
-#   Per-tenant UMC is unaffected (uses the tenant realm directly).
+#   Tenant realms remain for per-app OIDC only; there is no per-tenant portal.
 #
 # PERSISTENCE:
 #   - Runs on every ArgoCD sync of keycloak-config-dev.

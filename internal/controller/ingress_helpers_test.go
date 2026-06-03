@@ -26,7 +26,7 @@ import (
 func TestIsUMCFrontendIngress(t *testing.T) {
 	umc := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "umc-demo-root-redirect",
+			Name: "tenant-demo-portal-redirect",
 			Labels: map[string]string{
 				managedByLabel:            managedByValue,
 				tenantLabel:               "demo",

@@ -71,8 +71,8 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{}, err
 	}
 
-	// We must always provision the Keycloak realm because the tenant UMC server
-	// relies on it for SAML authentication, even if no apps currently require OIDC.
+	// We must always provision the tenant Keycloak realm for app OIDC and the
+	// kernel IdP broker, even when no apps currently require OIDC clients.
 
 	realmDone, err := r.ensureRealmJob(ctx, tenant, realmName)
 	if err != nil {
@@ -236,21 +236,7 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 				kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
 			}
 		}
-		// Seed the UMC OIDC client secret so the realm script can apply it to
-		// Keycloak (deterministic derivation; same value used in ensureUMCOIDCSecret
-		// to populate the tenant-namespace K8s secret consumed by the UMC chart).
-		umcClientSecret := ""
-		if r.Seeder != nil && r.KernelDomain != "" {
-			effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
-			umcClientID := fmt.Sprintf("https://%s/univention/oidc/", effectiveDomain)
-			umcIssuer := fmt.Sprintf("https://id.%s/realms/%s", r.KernelDomain, realmName)
-			umcCreds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, "umc", umcIssuer, umcClientID)
-			if seedErr != nil {
-				return false, fmt.Errorf("seed UMC OIDC client: %w", seedErr)
-			}
-			umcClientSecret = umcCreds.ClientSecret
-		}
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName, r.KernelDomain, ldap, broker, umcClientSecret))
+		return false, r.Create(ctx, makeRealmJob(tenant, realmName, r.KernelDomain, ldap, broker))
 	}
 	if err != nil {
 		return false, err
@@ -415,18 +401,12 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, ldap *realmLDAPParams, broker *realmBrokerParams, umcClientSecret string) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, ldap *realmLDAPParams, broker *realmBrokerParams) *batchv1.Job {
 	ttl := int32(3600)
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
 	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
-	if effectiveDomain := tenant.EffectiveDomain(kernelDomain); effectiveDomain != "" {
-		c.Env = append(c.Env, corev1.EnvVar{
-			Name:  "TENANT_UMC_BASE",
-			Value: "https://" + effectiveDomain,
-		})
-	}
 	if ldap != nil {
 		c.Env = append(c.Env,
 			corev1.EnvVar{Name: "LDAP_SERVER", Value: ldap.server},
@@ -440,9 +420,6 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 			corev1.EnvVar{Name: "KERNEL_REALM", Value: broker.kernelRealm},
 			corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: broker.kernelExternalURL},
 		)
-	}
-	if umcClientSecret != "" {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "UMC_OIDC_CLIENT_SECRET", Value: umcClientSecret})
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -825,60 +802,9 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   fi
 
   # (No defaultProvider is set on the identity-provider-redirector execution.
-  #  Per the Phase B LDAP restructuring design, tenant users including tenant
-  #  admins authenticate via the tenant realm's own LDAP federation directly.
-  #  The kernel LDAP scope is ONE_LEVEL on cn=users,... and does not cover
-  #  tenant user OUs, so setting defaultProvider=kernel would break all tenant
-  #  realm logins. The kernel IdP registered above (step 2) remains available
-  #  for explicit kc_idp_hint=kernel flows but is not the browser flow default.)
-fi
-
-# ── Register UMC portal OIDC client in tenant realm ──────────────────────────
-# Tenant admins authenticate to UMC via their own realm, restricting the LDAP
-# search scope to ou=users,ou=<tenant>. Without this client the UMC OIDC
-# redirect fails with "invalid client" in the tenant realm.
-# Requires KERNEL_EXTERNAL_URL (https://id.<domain>) to be set.
-if [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
-  # Per-tenant UMC is served at the tenant effective domain (vanity spec.domain
-  # when set, otherwise https://<realm>.<kernel_domain>). TENANT_UMC_BASE is
-  # injected by makeRealmJob to stay aligned with umc_reconciler OIDC settings.
-  if [ -n "${TENANT_UMC_BASE:-}" ]; then
-    UMC_BASE="${TENANT_UMC_BASE}"
-  else
-    KERNEL_DOMAIN=$(printf '%%s' "${KERNEL_EXTERNAL_URL}" | sed 's|https://id\.||')
-    UMC_BASE="https://${REALM_NAME}.${KERNEL_DOMAIN}"
-  fi
-  UMC_CLIENT_ID="${UMC_BASE}/univention/oidc/"
-  # URL-encode for use as a query parameter value.
-  UMC_CLIENT_ID_ENC=$(printf '%%s' "${UMC_CLIENT_ID}" | sed 's|:|%%3A|g; s|/|%%2F|g')
-  # Build optional secret field for Keycloak client payload.
-  UMC_SECRET_FIELD=""
-  if [ -n "${UMC_OIDC_CLIENT_SECRET:-}" ]; then
-    UMC_SECRET_FIELD=",\"secret\":\"${UMC_OIDC_CLIENT_SECRET}\""
-  fi
-  # Refresh token — the IdP brokering section above can exhaust the token lifetime.
-  TOKEN=$(curl -sf --max-time 30 \
-    -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-    | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-  UMC_CHECK=$(curl -sf --max-time 30 \
-    -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${UMC_CLIENT_ID_ENC}" 2>/dev/null || echo "")
-  if echo "${UMC_CHECK}" | grep -q '"id"'; then
-    UMC_CID=$(echo "${UMC_CHECK}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-    echo "UMC portal client already registered in realm ${REALM_NAME} (id=${UMC_CID}), updating"
-    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${UMC_CID}" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${UMC_CLIENT_ID}\",\"protocol\":\"openid-connect\",\"redirectUris\":[\"${UMC_BASE}/univention/oidc/*\"],\"publicClient\":false,\"standardFlowEnabled\":true,\"enabled\":true${UMC_SECRET_FIELD}}"
-  else
-    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "{\"clientId\":\"${UMC_CLIENT_ID}\",\"protocol\":\"openid-connect\",\"redirectUris\":[\"${UMC_BASE}/univention/oidc/*\"],\"publicClient\":false,\"standardFlowEnabled\":true,\"enabled\":true${UMC_SECRET_FIELD}}"
-    echo "UMC portal client registered in realm ${REALM_NAME}"
-  fi
+  #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
+  #  on mailPrimaryAddress). The kernel IdP registered above remains available
+  #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName)
 }
