@@ -166,7 +166,7 @@ func TestMain(m *testing.M) {
 			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
 				for _, job := range jobs.Items {
 					j := job // copy loop variable
-					if j.Status.Succeeded == 0 && (strings.HasPrefix(j.Name, "keycloak-") || strings.HasPrefix(j.Name, "ldap-")) {
+					if j.Status.Succeeded == 0 && strings.HasPrefix(j.Name, "keycloak-") {
 						name := j.Name
 						if strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant") {
 							// These tests test deletion flows which explicitly wait for
