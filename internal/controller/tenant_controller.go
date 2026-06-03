@@ -560,8 +560,8 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	}
 
 	// Clean up MariaDB resources before removing the namespace.
-	if err := r.deleteMariaDB(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	if requeue, res, err := awaitJob(r.deleteMariaDB(ctx, tenant)); requeue {
+		return res, err
 	}
 
 	// Clean up storage resources before removing the namespace.
@@ -636,6 +636,10 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		logger.Info("waiting for XTenant deletion to complete", "tenant", tenant.Name)
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	} else if client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.purgeTenantKernelResources(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

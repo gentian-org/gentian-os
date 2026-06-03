@@ -140,29 +140,35 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
-	opendeskEnableDone, err := r.ensureOpendeskAdminEnableJob(ctx, tenant, "admin-"+tenant.Name)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure kernel admin re-enable Job: %w", err)
-	}
-	if !opendeskEnableDone {
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-			"ProvisioningOpendeskEnable", "Waiting for opendesk admin enable Job to complete")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-	}
+	// Re-enable the kernel realm user and trigger an LDAP sync only when a
+	// kernel Keycloak realm is configured. When KernelRealm is empty (test
+	// environments, or deployments without Keycloak) there is no kernel realm
+	// user to re-enable and no LDAP provider to sync, so skip these steps.
+	if r.KernelRealm != "" {
+		opendeskEnableDone, err := r.ensureOpendeskAdminEnableJob(ctx, tenant, "admin-"+tenant.Name)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure kernel admin re-enable Job: %w", err)
+		}
+		if !opendeskEnableDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningOpendeskEnable", "Waiting for opendesk admin enable Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 
-	// Trigger a full Keycloak LDAP sync after all LDAP provisioning is stable.
-	// This re-imports all users with their current LDAP attributes, clearing any
-	// cached enabled=false state caused by the brief UDM shadowExpire race during
-	// user creation (the univention-ldap-mapper sets isEnabled()=false while
-	// shadowExpire=1 is set, and the cached state persists until a sync refreshes it).
-	kcLDAPSyncDone, err := r.ensureKCLDAPSyncJob(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure Keycloak LDAP sync Job: %w", err)
-	}
-	if !kcLDAPSyncDone {
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-			"SyncingKCLDAP", "Waiting for Keycloak LDAP sync Job to complete")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		// Trigger a full Keycloak LDAP sync after all LDAP provisioning is stable.
+		// This re-imports all users with their current LDAP attributes, clearing any
+		// cached enabled=false state caused by the brief UDM shadowExpire race during
+		// user creation (the univention-ldap-mapper sets isEnabled()=false while
+		// shadowExpire=1 is set, and the cached state persists until a sync refreshes it).
+		kcLDAPSyncDone, err := r.ensureKCLDAPSyncJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak LDAP sync Job: %w", err)
+		}
+		if !kcLDAPSyncDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"SyncingKCLDAP", "Waiting for Keycloak LDAP sync Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
@@ -385,6 +391,13 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), kernelAdminEnableJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name)}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
+			}
+			if clientApps, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, clientJobName(tenant.Name, "")); err != nil {
+				return err
+			} else {
+				for _, app := range clientApps {
+					provNames = appendUniqueStrings(provNames, clientJobName(tenant.Name, app))
+				}
 			}
 			r.deleteProvisioningJobs(ctx, provNames...)
 			return nil

@@ -97,11 +97,19 @@ Undeploy a tenant instance:
 kubectl gentian tenants undeploy gtn-demo
 ```
 
-For destructive cleanup, use:
+For destructive cleanup that removes all orchestrator-owned artifacts (LDAP
+users, databases, mail secrets, UMC releases, and labeled kernel Jobs), use:
 
 ```bash
 kubectl gentian tenants undeploy gtn-demo --purge
+# or
+kubectl gentian tenants undeploy gtn-demo -f
 ```
+
+The purge flag sets `deletionPolicy=Delete` on the live Tenant CR before
+undeploy, waits for the controller to reconcile, then removes the instance from
+Git. After the Tenant CR is gone it also deletes any remaining kernel artifacts
+labeled `gentianos.io/tenant=<name>`.
 
 The undeploy command removes the instance from
 `gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, applies

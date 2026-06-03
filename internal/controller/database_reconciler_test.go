@@ -362,3 +362,60 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 		return err != nil // gone
 	})
 }
+
+// TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR verifies that Database CRs
+// from previously uninstalled apps are removed when DeletionPolicy=Delete.
+func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
+	t.Parallel()
+	profile := newPostgresProfile("pg-app5")
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "dborphan"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "DB Orphan Co",
+			Domain:         "dborphan.example.com",
+			AdminEmail:     "admin@dborphan.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
+			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app5"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	orphan := &unstructured.Unstructured{}
+	orphan.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
+	orphan.SetName("db-dborphan-legacy-app")
+	orphan.SetNamespace("platform-kernel")
+	orphan.SetLabels(map[string]string{
+		"gentianos.io/tenant":                 "dborphan",
+		"app.kubernetes.io/managed-by":        "gentian-os",
+		"gentianos.io/app":                    "legacy-app",
+	})
+	if err := unstructured.SetNestedField(orphan.Object, "postgres", "spec", "cluster", "name"); err != nil {
+		t.Fatalf("set cluster name: %v", err)
+	}
+	_ = unstructured.SetNestedField(orphan.Object, "dborphan_legacy", "spec", "name")
+	_ = unstructured.SetNestedField(orphan.Object, "dborphan_legacy", "spec", "owner")
+	if err := testClient.Create(context.Background(), orphan); err != nil {
+		t.Fatalf("create orphaned Database CR: %v", err)
+	}
+
+	if err := testClient.Delete(context.Background(), tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", "platform-kernel")
+	go markJobCompleteWhenReady("ldap-ou-delete-dborphan", "platform-kernel")
+
+	waitFor(t, 10*time.Second, func() bool {
+		db := &unstructured.Unstructured{}
+		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "db-dborphan-legacy-app", Namespace: "platform-kernel"}, db)
+		return err != nil
+	})
+}

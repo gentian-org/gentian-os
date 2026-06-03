@@ -176,7 +176,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		return nil
 	}
 
-	s3Apps, err := r.collectStorageApps(ctx, tenant)
+	s3Apps, err := r.collectStorageAppsForDelete(ctx, tenant)
 	if err != nil {
 		return err
 	}

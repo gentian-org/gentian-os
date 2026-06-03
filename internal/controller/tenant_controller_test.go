@@ -179,6 +179,7 @@ func TestMain(m *testing.M) {
 						j.Status.Succeeded = 1
 						j.Status.Conditions = []batchv1.JobCondition{
 							{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
+							{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
 						}
 						_ = testClient.Status().Update(context.Background(), &j)
 					}

@@ -196,7 +196,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant)
+	redisApps, memcachedApps, err := r.collectCacheAppsForDelete(ctx, tenant)
 	if err != nil {
 		return err
 	}
@@ -225,6 +225,18 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		appCR.SetNamespace(argocdNamespace)
 		if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Memcached Application CR: %w", err)
+		}
+	} else {
+		appCR := &unstructured.Unstructured{}
+		appCR.SetGroupVersionKind(argocdApplicationGVK)
+		appCR.SetName(memcachedApplicationName(tenant.Name))
+		appCR.SetNamespace(argocdNamespace)
+		if err := r.Get(ctx, types.NamespacedName{Name: appCR.GetName(), Namespace: appCR.GetNamespace()}, appCR); err == nil {
+			if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("delete Memcached Application CR: %w", err)
+			}
+		} else if !errors.IsNotFound(err) {
+			return fmt.Errorf("get Memcached Application CR: %w", err)
 		}
 	}
 	if pending {

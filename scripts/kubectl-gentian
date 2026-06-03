@@ -69,7 +69,8 @@ Usage:
     kubectl gentian tenants undeploy <instance> [--env <env>] [--purge|-f]
       Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
       With --purge / -f, set deletionPolicy=Delete before undeploying, which
-      permanently deletes all tenant data including LDAP users and databases.
+      permanently deletes all tenant data including LDAP users, databases,
+      mail secrets, UMC releases, and other orchestrator-owned artifacts.
 
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
@@ -161,6 +162,72 @@ set_tenant_deletion_policy() {
   else
     printf '\n  deletionPolicy: %s\n' "${policy}" >> "${file}"
   fi
+}
+
+wait_for_tenant_deletion_policy() {
+  local tenant_name="${1}"
+  local desired_policy="${2}"
+  local timeout="${3:-120}"
+  local elapsed=0
+
+  while (( elapsed < timeout )); do
+    if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
+      return 0
+    fi
+    local live_policy
+    live_policy="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+    if [[ "${live_policy}" == "${desired_policy}" ]]; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  echo "ERROR: timed out waiting for tenant '${tenant_name}' deletionPolicy=${desired_policy}." >&2
+  return 1
+}
+
+ensure_tenant_deletion_policy_live() {
+  local tenant_name="${1}"
+  local policy="${2}"
+
+  if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
+    return 0
+  fi
+
+  local live_policy
+  live_policy="$(kubectl get tenant "${tenant_name}" \
+    -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+  if [[ "${live_policy}" != "${policy}" ]]; then
+    kubectl patch tenant "${tenant_name}" --type=merge \
+      -p "{\"spec\":{\"deletionPolicy\":\"${policy}\"}}" >/dev/null
+  fi
+  wait_for_tenant_deletion_policy "${tenant_name}" "${policy}" 120
+}
+
+purge_tenant_cluster_artifacts() {
+  local tenant_name="${1}"
+
+  echo "Purging remaining cluster artifacts for tenant '${tenant_name}'..."
+
+  kubectl get databases.postgresql.cnpg.io -n platform-kernel \
+    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
+    -o name 2>/dev/null \
+    | xargs -r kubectl delete --ignore-not-found=true --wait=false
+
+  kubectl get release.helm.crossplane.io \
+    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
+    -o name 2>/dev/null \
+    | xargs -r kubectl delete --ignore-not-found=true --wait=false
+
+  kubectl delete secrets -n platform-kernel \
+    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
+    --ignore-not-found=true
+
+  kubectl delete jobs -n platform-kernel \
+    -l "gentianos.io/tenant=${tenant_name},app.kubernetes.io/managed-by=gentian-os" \
+    --ignore-not-found=true
 }
 
 tenant_env_root() {
@@ -914,19 +981,18 @@ cmd_tenant_undeploy() {
         git add "${resource_file}"
       )
     fi
-    # Phase 1 of purge: if the live CR does not yet have deletionPolicy=Delete
-    # AND the instance is still in the kustomization, commit the policy change
-    # alone (keeping the instance deployed) and immediately apply it. This
-    # prevents ArgoCD from reverting the change — once the committed state has
-    # deletionPolicy=Delete, ArgoCD will only ever apply Delete, never Retain.
-    # A plain kubectl-patch races against ArgoCD auto-sync and loses.
+    # Phase 1 of purge: commit deletionPolicy=Delete while the instance is still
+    # deployed, apply it, and wait until the live Tenant CR reflects Delete.
+    # A plain kubectl patch races against ArgoCD auto-sync and loses.
     local live_policy
     live_policy="$(kubectl get tenant "${tenant_name}" \
       -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
     if [[ "${live_policy}" != "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
       git_commit_push "feat(${instance}): set deletionPolicy=Delete before purge in ${env_name}"
       kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
-      sleep 2 # Prevent race condition with the controller cache before deletion
+      ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
+    elif kubectl get tenant "${tenant_name}" &>/dev/null; then
+      ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
     fi
   else
     # Non-purge undeploy: if a prior --purge run left deletionPolicy=Delete in
@@ -953,6 +1019,9 @@ cmd_tenant_undeploy() {
     # Commit any staged deletionPolicy change (purge on already-undeployed instance).
     git_commit_push "feat(${instance}): enable destructive tenant deletion"
   else
+    if [[ "${purge}" == "true" ]]; then
+      ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
+    fi
     remove_instance_resource "${kustom_file}" "${instance}"
     (
       cd "${DEPLOYMENTS_PATH}"
@@ -977,6 +1046,10 @@ cmd_tenant_undeploy() {
     ns_name="tenant-${tenant_name}"
   fi
 
+  if [[ "${purge}" == "true" ]] && kubectl get tenant "${tenant_name}" &>/dev/null; then
+    ensure_tenant_deletion_policy_live "${tenant_name}" "Delete"
+  fi
+
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
   echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
@@ -998,6 +1071,10 @@ cmd_tenant_undeploy() {
       echo "    kubectl get namespace ${ns_name} -o yaml" >&2
       exit 1
     fi
+  fi
+
+  if [[ "${purge}" == "true" ]]; then
+    purge_tenant_cluster_artifacts "${tenant_name}"
   fi
 
   # Always reset deletionPolicy to Retain after cleanup so the tenant YAML is

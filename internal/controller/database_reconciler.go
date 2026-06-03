@@ -179,39 +179,14 @@ func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1
 }
 
 // deleteDatabase handles database cleanup on tenant deletion.
-// DeletionPolicy=Delete: deletes the CloudNativePG Database CRs (operator drops the databases).
+// DeletionPolicy=Delete: deletes all tenant-labeled CloudNativePG Database CRs
+// (including databases from previously uninstalled apps).
 // DeletionPolicy=Retain: no-op — databases and data are preserved.
 func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return err
-		}
-		if profile.Spec.KernelRequirements == nil ||
-			profile.Spec.KernelRequirements.Database == nil ||
-			profile.Spec.KernelRequirements.Database.Engine != gentianov1alpha1.DatabaseEnginePostgreSQL {
-			continue
-		}
-		crName := databaseCRName(tenant.Name, app.Profile)
-		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   cnpgGroup,
-			Version: cnpgVersion,
-			Kind:    cnpgDatabaseKind,
-		})
-		obj.SetName(crName)
-		obj.SetNamespace(kernelNamespace) // Database CRs live in the kernel namespace with the CNPG Cluster
-		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Database CR %s: %w", crName, err)
-		}
-	}
-	return nil
+	return r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name)
 }
 
 // --- CR constructors ---------------------------------------------------------

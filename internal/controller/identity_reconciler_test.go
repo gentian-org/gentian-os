@@ -54,6 +54,9 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 	if err := testClient.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: namespace}, job); err != nil {
 		t.Fatalf("get Job %s: %v", jobName, err)
 	}
+	if job.Status.Succeeded > 0 {
+		return
+	}
 	now := metav1.Now()
 	job.Status.StartTime = &now
 	job.Status.CompletionTime = &now

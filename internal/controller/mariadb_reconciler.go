@@ -146,35 +146,35 @@ func (r *TenantReconciler) ensureMariaDBSetupJob(ctx context.Context, tenant *ge
 }
 
 // deleteMariaDB handles MariaDB cleanup on tenant deletion.
-// DeletionPolicy=Delete: creates a Job that drops the databases and users.
+// DeletionPolicy=Delete: creates Jobs that drop databases and users for every
+// MariaDB app ever provisioned for the tenant.
 // DeletionPolicy=Retain: no-op — data is preserved.
 func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return err
-		}
-		if profile.Spec.KernelRequirements == nil ||
-			profile.Spec.KernelRequirements.Database == nil ||
-			profile.Spec.KernelRequirements.Database.Engine != gentianov1alpha1.DatabaseEngineMariaDB {
-			continue
-		}
-		deleteJobName := mariadbDeleteJobName(tenant.Name, app.Profile)
+	apps, err := r.collectMariaDBAppsForDelete(ctx, tenant)
+	if err != nil {
+		return err
+	}
+
+	pending := false
+	for _, appName := range apps {
+		deleteJobName := mariadbDeleteJobName(tenant.Name, appName)
 		existing := &batchv1.Job{}
-		err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, existing)
-		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, makeMariaDBDeleteJob(tenant, app.Profile)); err != nil {
-				return fmt.Errorf("create MariaDB delete Job for %s: %w", app.Profile, err)
+		if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, existing); errors.IsNotFound(err) {
+			if err := r.Create(ctx, makeMariaDBDeleteJob(tenant, appName)); err != nil {
+				return fmt.Errorf("create MariaDB delete Job for %s: %w", appName, err)
 			}
+			pending = true
 		} else if err != nil {
 			return err
+		} else if !jobIsComplete(existing) {
+			pending = true
 		}
+	}
+	if pending {
+		return errDeleteJobPending
 	}
 	return nil
 }
