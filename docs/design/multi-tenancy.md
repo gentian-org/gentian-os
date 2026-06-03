@@ -1,6 +1,8 @@
 # Multi-Tenancy, Domains and Security
 
-**Companion to:** [architecture.md](../architecture.md)
+**Companion to:**
+- [architecture.md](../architecture.md)
+- [iam.md](iam.md) (for detailed Identity and Access Management and role separation rules)
 
 ---
 
@@ -100,39 +102,9 @@ ou=<tenant>,dc=swp-ldap,dc=internal   ↔   Keycloak realm <tenant>   ↔   name
 Breaking this correspondence — e.g. having a user in one OU authenticate
 via another tenant's realm — is a configuration error and must never occur.
 
-### 5.2 LDAP topology (target)
+### 5.2 Identity and Access Management (IAM)
 
-```
-dc=swp-ldap,dc=internal
-├── cn=users                   ← kernel service accounts ONLY (ldapsearch_*, svc-portal-server, …)
-├── cn=groups                  ← kernel-level groups only (Tenant Admins, Domain Service Users, …)
-│                                 cn=Domain Users is ABSENT — replaced by per-tenant cn=users_<t>
-│
-└── ou=<tenant>                ← one per tenant
-    ├── ou=users               ← ALL human users (admin + regular users land here)
-    │   ├── uid=admin-<tenant>
-    │   └── uid=<username>
-    ├── uid=app-keycloak-<tenant>         ← Keycloak LDAP federation bind account
-    ├── uid=app-<app>-<tenant>            ← per-app service bind accounts
-    ├── cn=users_<tenant>                 ← UDM group: all tenant users (primary group)
-    ├── cn=admins_<tenant>               ← UDM group: tenant admins
-    └── cn=managed-by-attribute-*        ← per-tenant app access groups (six groups)
-```
-
-See [ldap-restructuring.md](ldap-restructuring.md) for the full audit of
-the current state, all defects found, and the step-by-step implementation plan.
-
-### 5.3 Keycloak realm topology (target)
-
-| Realm | LDAP federation scope | Who authenticates here |
-|---|---|---|
-| `master` | None | Keycloak admin CLI only |
-| `kernel` | `cn=users,dc=swp-ldap,dc=internal` (one-level) | Kernel service accounts only — **no human users** |
-| `<tenant>` | `ou=users,ou=<tenant>,...` (one-level) | All tenant users; UMC access for tenant admins |
-
-The kernel realm's LDAP scope is intentionally restricted to the service-accounts
-container only. This means a tenant admin authenticated via their tenant realm
-can only see their own users in UMC — no cross-tenant visibility is possible.
+For details on the exact LDAP topology, Keycloak realm structure, and how roles (Tenant Admin vs App User) are separated and enforced, see the dedicated [Identity and Access Management (IAM) Document](iam.md).
 
 ## 6. Database Isolation
 
@@ -174,40 +146,10 @@ Following the openDesk model, the **tenant admin and tenant user are strictly
 separate identities**. It is strongly recommended that a single person does not
 use the same account for both day-to-day app usage and tenant administration.
 
-**Portal tile enforcement:**
+**Portal Tile Enforcement & Templates:**
+Access to apps is strictly controlled through LDAP group memberships and OIDC claims. Gentian OS leverages UMC templates (`Admin User` and `App User`) to provision mutually exclusive roles. This ensures tenant admins do not consume application licenses or inadvertently gain access to user application tiles.
 
-The Nubus portal shows tiles based on LDAP group membership, enforced at the
-OIDC claim layer — users without the required group membership will fail SSO
-even if they know the direct app URL.
-
-| Tile category | `allowedGroups` (portal) | Who has this membership |
-|---|---|---|
-| Admin tools (UMC, Keycloak) | `cn=Domain Admins` | Tenant admin account only |
-| User apps (Files, Email, Chat, …) | `cn=managed-by-attribute-<App>` | Regular users with that app enabled |
-
-**How regular users get app access:**
-
-The UCR key `directory/manager/web/modules/users/user/add/default` is set to
-`cn=openDesk User,cn=templates,cn=univention,…` in `_base.yaml`. This makes the
-*openDesk User* template the **default** when the tenant admin creates a new
-user via UMC. The template pre-sets all `univentionOpendesk*` attributes
-(Groupware, Fileshare, Livecollaboration, …) to enabled. The
-`opendesk-a2g-mapper` system extension then automatically synchronises those
-attributes into the corresponding `managed-by-attribute-*` group memberships.
-
-**How the tenant admin is kept out of app tiles:**
-
-The tenant admin UDM user is provisioned with `isOxUser: false`, `oxAccess:
-none`, and **no** `univentionOpendesk*` attributes. It is placed only in
-`cn=admins_<tenant>` (delegated UMC policy group) and, via UDM's default
-primary-group assignment, `cn=Domain Users`. Because the app tile
-`allowedGroups` use `managed-by-attribute-*` — not `cn=Domain Users` — the
-admin account never appears in those groups and the app tiles are not shown.
-
-> **Do not** override `portaltileGroupGroupware` or
-> `portaltileGroupLiveCollaboration` to `cn=Domain Users` in any environment
-> values file. Doing so breaks this separation and exposes all app tiles to the
-> tenant admin account.
+For a comprehensive explanation of how these templates function, and how the "App Users" group isolates roles, see the [Identity and Access Management (IAM) Document](iam.md).
 
 **Current operating model:** tenant admins edit Tenant manifests in
 the deployments repo via PR (process-controlled).

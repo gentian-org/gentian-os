@@ -2,6 +2,8 @@
 
 This document describes the IAM architecture in Gentian OS. It outlines the role-based and attribute-based access controls used across the platform and how tenant isolation is achieved while maintaining compatibility with the upstream openDesk ecosystem.
 
+**Companion to:** [multi-tenancy.md](multi-tenancy.md) (for network, database, and namespace isolation details).
+
 ## 1. Multi-Tenant LDAP Architecture
 
 Gentian OS relies on Univention Corporate Server (UCS) / Nubus for its core directory services. To support strict multi-tenancy inside a single shared OpenLDAP tree, the directory is segmented by Organizational Units (OUs).
@@ -11,6 +13,35 @@ Gentian OS relies on Univention Corporate Server (UCS) / Nubus for its core dire
 
 Tenant admins are assigned an administrative UMC policy scoped exclusively to their own OU.
 At the OpenLDAP layer, ACLs (via `slapd.conf` patches) strictly prevent users from reading objects inside another tenant's OU.
+
+### 1.1 LDAP Topology (Target)
+
+```
+dc=swp-ldap,dc=internal
+├── cn=users                   ← kernel service accounts ONLY (ldapsearch_*, svc-portal-server, …)
+├── cn=groups                  ← kernel-level groups only (Tenant Admins, Domain Service Users, App Users, …)
+│                                 cn=Domain Users is ABSENT — replaced by per-tenant cn=users_<t>
+│
+└── ou=<tenant>                ← one per tenant
+    ├── ou=users               ← ALL human users (admin + regular users land here)
+    │   ├── uid=admin-<tenant>
+    │   └── uid=<username>
+    ├── uid=app-keycloak-<tenant>         ← Keycloak LDAP federation bind account
+    ├── uid=app-<app>-<tenant>            ← per-app service bind accounts
+    ├── cn=users_<tenant>                 ← UDM group: all tenant users (primary group)
+    ├── cn=admins_<tenant>               ← UDM group: tenant admins
+    └── cn=managed-by-attribute-*        ← per-tenant app access groups (six groups)
+```
+
+### 1.2 Keycloak Realm Topology
+
+| Realm | LDAP federation scope | Who authenticates here |
+|---|---|---|
+| `master` | None | Keycloak admin CLI only |
+| `kernel` | `cn=users,dc=swp-ldap,dc=internal` (one-level) | Kernel service accounts only — **no human users** |
+| `<tenant>` | `ou=users,ou=<tenant>,...` (one-level) | All tenant users; UMC access for tenant admins |
+
+The kernel realm's LDAP scope is intentionally restricted to the service-accounts container only. This means a tenant admin authenticated via their tenant realm can only see their own users in UMC — no cross-tenant visibility is possible.
 
 ## 2. Roles and User Templates
 
@@ -46,6 +77,16 @@ Apps belonging to the core openDesk suite (like Nextcloud or OpenXchange) rely o
 ### Custom Apps (Group-Based)
 For third-party or custom apps deployed via generic `AppProfile` manifests (like CryptPad), Gentian OS defaults the `allowedGroup` to `App Users`.
 * Because `App Users` encompasses all standard users but excludes Tenant Admins, the portal tiles for these custom apps seamlessly mirror the visibility rules of the core openDesk apps.
+
+### Portal Tile Enforcement Summary
+
+The Nubus portal shows tiles based on LDAP group membership, enforced at the OIDC claim layer — users without the required group membership will fail SSO even if they know the direct app URL.
+
+| Tile category | `allowedGroups` (portal) | Who has this membership |
+|---|---|---|
+| Admin tools (UMC, Keycloak) | `cn=Domain Admins` | Tenant admin account only |
+| User apps (Files, Email, Chat, …) | `cn=managed-by-attribute-<App>` | Regular users with that app enabled |
+| Custom AppProfile apps | `cn=App Users` (Default) | Regular users (via `App User` template) |
 
 ## 4. Upstream Compatibility
 
