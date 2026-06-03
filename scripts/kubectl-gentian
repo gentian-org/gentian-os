@@ -615,6 +615,7 @@ print_tenant_admin_login_instructions() {
   echo "─── Tenant Portal Admin (Nubus UMC) ─────────────────────────────────────────"
   echo "  This LDAP-backed user can log into the tenant UMC and provision / manage"
   echo "  end users for the '${tenant_name}' tenant via the user/group tiles."
+  echo "  Gentian login: ${umc_base}/login/  (gentian-ui branded shell)"
   echo "  Tenant UMC   : ${umc_base}/univention/management/"
   echo "  (not the kernel portal at portal.${kernel_domain_name:-<KERNEL_DOMAIN>})"
   echo "  Username     : ${username}"

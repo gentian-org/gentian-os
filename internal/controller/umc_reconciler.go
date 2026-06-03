@@ -18,16 +18,21 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -79,6 +84,14 @@ var (
 	umcChartRepo    = envOrDefault("UMC_CHART_REPO", "oci://artifacts.software-univention.de/nubus/charts")
 	umcChartName    = envOrDefault("UMC_CHART_NAME", "umc-server")
 	umcChartVersion = envOrDefault("UMC_CHART_VERSION", "0.54.2")
+	umcGatewayChartName = envOrDefault("UMC_GATEWAY_CHART_NAME", "umc-gateway")
+
+	// gentian-ui portal-frontend image (same image as kernel gentian-login /
+	// portal-frontend). Serves the branded Gentian login shell on each tenant
+	// domain at /login.
+	gentianPortalFrontendRegistry = envOrDefault("GENTIAN_PORTAL_FRONTEND_REGISTRY", "ghcr.io")
+	gentianPortalFrontendRepo       = envOrDefault("GENTIAN_PORTAL_FRONTEND_REPO", "gentian-org/portal-frontend")
+	gentianPortalFrontendTag        = envOrDefault("GENTIAN_PORTAL_FRONTEND_TAG", "0855185a")
 
 	// Shared PostgreSQL connection — authSession database used by all per-tenant
 	// UMC instances. UMC sessions are keyed by user DN (which includes the
@@ -100,17 +113,14 @@ var (
 		fmt.Sprintf("nubus-dev-ldap-server.%s.svc.cluster.local", servicesNamespace))
 )
 
-// ensureUMC deploys a per-tenant nubusUmcServer instance that allows the
-// tenant admin to manage their users at:
+// ensureUMC deploys per-tenant UMC stack on the tenant effective domain:
 //
-//	https://<tenant>.<domain>/univention/management/
+//   /login/                          → gentian-ui portal-frontend (branded login)
+//   /univention/management/, /js/    → nubus umc-gateway (dojo UMC shell)
+//   /univention/(auth|oidc|get|…)/   → nubus umc-server (API)
 //
-// This is necessary because the shared Nubus portal is hardwired to the kernel
-// Keycloak realm and cannot authenticate users from tenant-scoped LDAP OUs
-// (Phase B LDAP restructuring). Each tenant gets their own UMC instance with
-// UCR overrides pointing to their Keycloak realm and LDAP OU.
-//
-// Non-blocking: errors are logged and retried without blocking Phase=Ready.
+// The shared kernel portal (portal.<kernel-domain>) uses the kernel Keycloak
+// realm and cannot authenticate tenant-scoped LDAP users.
 func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
@@ -135,6 +145,12 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	}
 	if err := r.ensureUMCRelease(ctx, tenant, nsName, effectiveDomain); err != nil {
 		return fmt.Errorf("ensure UMC Helm Release: %w", err)
+	}
+	if err := r.ensureUMCGatewayRelease(ctx, tenant, nsName, effectiveDomain); err != nil {
+		return fmt.Errorf("ensure UMC gateway Release: %w", err)
+	}
+	if err := r.ensureUMCGentianLogin(ctx, tenant, nsName, effectiveDomain); err != nil {
+		return fmt.Errorf("ensure gentian-ui login frontend: %w", err)
 	}
 	return nil
 }
@@ -477,7 +493,7 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 // artifacts.software-univention.de without a prior registry login, avoiding
 // the ArgoCD repo-server OCI credential matching quirk.
 func (r *TenantReconciler) ensureUMCRelease(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
-	desired := buildUMCRelease(tenant, nsName, effectiveDomain)
+	desired := buildUMCRelease(tenant, nsName, effectiveDomain, r.KernelDomain)
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(helmReleaseGVK)
@@ -508,14 +524,38 @@ func (r *TenantReconciler) deleteUMC(ctx context.Context, tenant *gentianov1alph
 	if err := r.Delete(ctx, relCR); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete UMC Release CR: %w", err)
 	}
+	gwCR := &unstructured.Unstructured{}
+	gwCR.SetGroupVersionKind(helmReleaseGVK)
+	gwCR.SetName(umcGatewayReleaseName(tenant.Name))
+	if err := r.Delete(ctx, gwCR); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete UMC gateway Release CR: %w", err)
+	}
+	if err := r.deleteUMCGentianLogin(ctx, tenant, tenantNamespaceName(tenant)); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (r *TenantReconciler) ensureUMCGatewayRelease(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	desired := buildUMCGatewayRelease(tenant, nsName, effectiveDomain, r.KernelDomain)
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(helmReleaseGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: desired.GetName()}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Object["spec"] = desired.Object["spec"]
+	return r.Patch(ctx, existing, patch)
 }
 
 // buildUMCRelease constructs the Crossplane provider-helm Release CR that
 // deploys the nubusUmcServer Helm chart in the tenant namespace.
-// The Release is cluster-scoped; spec.forProvider.namespace targets the tenant
-// namespace.
-func buildUMCRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) *unstructured.Unstructured {
+func buildUMCRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(helmReleaseGVK)
 	obj.SetName(umcReleaseName(tenant.Name))
@@ -530,7 +570,7 @@ func buildUMCRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain st
 	_ = unstructured.SetNestedField(obj.Object, umcChartVersion, "spec", "forProvider", "chart", "version")
 	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "forProvider", "namespace")
 	_ = unstructured.SetNestedField(obj.Object, false, "spec", "forProvider", "wait")
-	_ = unstructured.SetNestedMap(obj.Object, buildUMCHelmValues(effectiveDomain), "spec", "forProvider", "values")
+	_ = unstructured.SetNestedMap(obj.Object, buildUMCHelmValues(effectiveDomain, kernelDomain), "spec", "forProvider", "values")
 	_ = unstructured.SetNestedField(obj.Object, "kubernetes", "spec", "providerConfigRef", "name")
 	return obj
 }
@@ -538,7 +578,7 @@ func buildUMCRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain st
 // buildUMCHelmValues returns the Helm values map for the per-tenant
 // nubusUmcServer deployment, structured as a map[string]interface{} for
 // provider-helm Release spec.forProvider.values (JSON object type).
-func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
+func buildUMCHelmValues(effectiveDomain, kernelDomain string) map[string]interface{} {
 	return map[string]interface{}{
 		"global": map[string]interface{}{
 			"configMapUcr": umcUCRConfigMapName,
@@ -617,20 +657,82 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 				"enabled":    true,
 				"secretName": kernelWildcardTenantSecret,
 			},
-			// Match kernel nubusUmcServer wiring. ssl-redirect must stay off so
-			// Cloudflare (HTTP to origin) does not loop 308 → https when the
-			// client is already on HTTPS.
-			"annotations": map[string]interface{}{
-				"nginx.ingress.kubernetes.io/use-regex":         "true",
-				"nginx.ingress.kubernetes.io/ssl-redirect":        "false",
-				"nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
-			},
+			"annotations": umcIngressAnnotations(effectiveDomain, kernelDomain),
 			"paths": []interface{}{
 				map[string]interface{}{
-					"path":     `/(univention)/(auth|logout|oidc|get|set|command|upload|management)(.*)$`,
+					// API paths only — static UMC shell (HTML/JS/CSS) is served by
+					// umc-gateway; gentian-ui portal-frontend covers /login branding.
+					"path":     `/(univention)/(auth|logout|oidc|get|set|command|upload)(.*)$`,
 					"pathType": "ImplementationSpecific",
 				},
 			},
+		},
+	}
+}
+
+func umcIngressAnnotations(effectiveDomain, kernelDomain string) map[string]interface{} {
+	corsOrigin := fmt.Sprintf("https://%s, https://id.%s", effectiveDomain, kernelDomain)
+	return map[string]interface{}{
+		"nginx.ingress.kubernetes.io/use-regex":          "true",
+		"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
+		"nginx.ingress.kubernetes.io/force-ssl-redirect":   "false",
+		"nginx.ingress.kubernetes.io/enable-cors":        "true",
+		"nginx.ingress.kubernetes.io/cors-allow-origin":  corsOrigin,
+	}
+}
+
+func umcIngressAnnotationStrings(effectiveDomain, kernelDomain string) map[string]string {
+	raw := umcIngressAnnotations(effectiveDomain, kernelDomain)
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		out[k] = fmt.Sprint(v)
+	}
+	return out
+}
+
+func buildUMCGatewayRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(helmReleaseGVK)
+	obj.SetName(umcGatewayReleaseName(tenant.Name))
+	obj.SetLabels(map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	})
+	_ = unstructured.SetNestedField(obj.Object, umcChartRepo, "spec", "forProvider", "chart", "repository")
+	_ = unstructured.SetNestedField(obj.Object, umcGatewayChartName, "spec", "forProvider", "chart", "name")
+	_ = unstructured.SetNestedField(obj.Object, umcChartVersion, "spec", "forProvider", "chart", "version")
+	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "forProvider", "namespace")
+	_ = unstructured.SetNestedField(obj.Object, false, "spec", "forProvider", "wait")
+	_ = unstructured.SetNestedMap(obj.Object, buildUMCGatewayHelmValues(effectiveDomain, kernelDomain), "spec", "forProvider", "values")
+	_ = unstructured.SetNestedField(obj.Object, "kubernetes", "spec", "providerConfigRef", "name")
+	return obj
+}
+
+func buildUMCGatewayHelmValues(effectiveDomain, kernelDomain string) map[string]interface{} {
+	portalSub, domain := umcChartPortalDomain(effectiveDomain, kernelDomain)
+	return map[string]interface{}{
+		"global": map[string]interface{}{
+			"configMapUcr": umcUCRConfigMapName,
+			// umc-gateway hardcodes ingress CORS as
+			// https://<subDomains.portal>.<domain>, https://id.<domain>.
+			"domain": domain,
+			"subDomains": map[string]interface{}{
+				"portal":   portalSub,
+				"keycloak": "id",
+			},
+		},
+		"ingress": map[string]interface{}{
+			"enabled":          true,
+			"host":             effectiveDomain,
+			"ingressClassName": "public",
+			"certManager": map[string]interface{}{
+				"enabled": false,
+			},
+			"tls": map[string]interface{}{
+				"enabled":    true,
+				"secretName": kernelWildcardTenantSecret,
+			},
+			"annotations": umcIngressAnnotations(effectiveDomain, kernelDomain),
 		},
 	}
 }
@@ -639,4 +741,286 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 // per-tenant UMC instance.
 func umcReleaseName(tenantName string) string {
 	return fmt.Sprintf("umc-%s", tenantName)
+}
+
+func umcGatewayReleaseName(tenantName string) string {
+	return fmt.Sprintf("umc-gateway-%s", tenantName)
+}
+
+// umcChartPortalDomain derives global.domain and global.subDomains.portal for
+// nubus umc-gateway Helm charts. The chart template hardcodes CORS as
+// https://<portal>.<domain>, https://id.<domain> — user-supplied ingress
+// annotations cannot override it.
+func umcChartPortalDomain(effectiveDomain, kernelDomain string) (portalSubdomain, domain string) {
+	if effectiveDomain == "" {
+		return "", kernelDomain
+	}
+	if kernelDomain != "" && strings.HasSuffix(effectiveDomain, "."+kernelDomain) {
+		return strings.TrimSuffix(effectiveDomain, "."+kernelDomain), kernelDomain
+	}
+	if dot := strings.IndexByte(effectiveDomain, '.'); dot > 0 {
+		return effectiveDomain[:dot], effectiveDomain[dot+1:]
+	}
+	return effectiveDomain, kernelDomain
+}
+
+func umcGentianLoginName(tenantName string) string {
+	return fmt.Sprintf("umc-%s-gentian-login", tenantName)
+}
+
+type gentianLoginBranding struct {
+	Name            string `json:"name"`
+	Tagline         string `json:"tagline"`
+	LogoURL         string `json:"logoUrl"`
+	ThemeColor      string `json:"themeColor"`
+	AccentColor     string `json:"accentColor"`
+	BackgroundColor string `json:"backgroundColor"`
+	CardColor       string `json:"cardColor"`
+	OrgName         string `json:"orgName"`
+}
+
+func (r *TenantReconciler) ensureUMCGentianLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	name := umcGentianLoginName(tenant.Name)
+	brandingName := name + "-branding"
+	displayName := tenant.Spec.DisplayName
+	if displayName == "" {
+		displayName = tenant.Name
+	}
+	brandingJSON, err := json.Marshal(gentianLoginBranding{
+		Name:            displayName,
+		Tagline:         "Sign in to manage your tenant",
+		LogoURL:         "/favicon/gentian-logo.png",
+		ThemeColor:      "#262696",
+		AccentColor:     "#4A4AB3",
+		BackgroundColor: "#F4F1EA",
+		CardColor:       "#FFFFFF",
+		OrgName:         displayName,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal gentian login branding: %w", err)
+	}
+
+	desiredCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      brandingName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+				"app.kubernetes.io/name": "gentian-login",
+			},
+		},
+		Data: map[string]string{"branding.json": string(brandingJSON)},
+	}
+	existingCM := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: brandingName, Namespace: nsName}, existingCM); errors.IsNotFound(err) {
+		if err := r.Create(ctx, desiredCM); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else if !equality.Semantic.DeepEqual(existingCM.Data, desiredCM.Data) {
+		patch := client.MergeFrom(existingCM.DeepCopy())
+		existingCM.Data = desiredCM.Data
+		if err := r.Patch(ctx, existingCM, patch); err != nil {
+			return err
+		}
+	}
+
+	image := fmt.Sprintf("%s/%s:%s", gentianPortalFrontendRegistry, gentianPortalFrontendRepo, gentianPortalFrontendTag)
+	replicas := int32(1)
+	labels := map[string]string{
+		tenantLabel:                tenant.Name,
+		managedByLabel:             managedByValue,
+		"app.kubernetes.io/name":   "gentian-login",
+		"app.kubernetes.io/instance": name,
+	}
+	desiredDeploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: nsName,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app.kubernetes.io/name":     "gentian-login",
+					"app.kubernetes.io/instance": name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "portal-frontend",
+						Image: image,
+						Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 80}},
+						LivenessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{Path: "/login/", Port: intstrFromName("http")},
+							},
+						},
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{Path: "/login/", Port: intstrFromName("http")},
+							},
+						},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("20m"),
+								corev1.ResourceMemory: resource.MustParse("32Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "branding",
+							MountPath: "/var/www/html/branding.json",
+							SubPath:   "branding.json",
+							ReadOnly:  true,
+						}},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "branding",
+						VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{Name: brandingName},
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	existingDeploy := &appsv1.Deployment{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existingDeploy); errors.IsNotFound(err) {
+		if err := r.Create(ctx, desiredDeploy); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else if !equality.Semantic.DeepEqual(existingDeploy.Spec, desiredDeploy.Spec) {
+		patch := client.MergeFrom(existingDeploy.DeepCopy())
+		existingDeploy.Spec = desiredDeploy.Spec
+		if err := r.Patch(ctx, existingDeploy, patch); err != nil {
+			return err
+		}
+	}
+
+	desiredSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: nsName,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app.kubernetes.io/name":     "gentian-login",
+				"app.kubernetes.io/instance": name,
+			},
+			Ports: []corev1.ServicePort{{
+				Name: "http",
+				Port: 80,
+				TargetPort: intstrFromName("http"),
+			}},
+		},
+	}
+	existingSvc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existingSvc); errors.IsNotFound(err) {
+		if err := r.Create(ctx, desiredSvc); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else if !equality.Semantic.DeepEqual(existingSvc.Spec, desiredSvc.Spec) {
+		patch := client.MergeFrom(existingSvc.DeepCopy())
+		existingSvc.Spec = desiredSvc.Spec
+		if err := r.Patch(ctx, existingSvc, patch); err != nil {
+			return err
+		}
+	}
+
+	pathTypePrefix := networkingv1.PathTypePrefix
+	pathTypeExact := networkingv1.PathTypeExact
+	ingressClass := "public"
+	ingressAnn := umcIngressAnnotationStrings(effectiveDomain, r.KernelDomain)
+	desiredIngress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   nsName,
+			Labels:      labels,
+			Annotations: ingressAnn,
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClass,
+			TLS: []networkingv1.IngressTLS{{
+				Hosts:      []string{effectiveDomain},
+				SecretName: kernelWildcardTenantSecret,
+			}},
+			Rules: []networkingv1.IngressRule{{
+				Host: effectiveDomain,
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{
+						Paths: []networkingv1.HTTPIngressPath{
+							{Path: "/login", PathType: &pathTypePrefix, Backend: ingressBackend(name)},
+							{Path: "/css", PathType: &pathTypePrefix, Backend: ingressBackend(name)},
+							{Path: "/fonts", PathType: &pathTypePrefix, Backend: ingressBackend(name)},
+							{Path: "/sw.js", PathType: &pathTypeExact, Backend: ingressBackend(name)},
+						},
+					},
+				},
+			}},
+		},
+	}
+	existingIngress := &networkingv1.Ingress{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existingIngress); errors.IsNotFound(err) {
+		return r.Create(ctx, desiredIngress)
+	}
+	if err != nil {
+		return err
+	}
+	if !ingressSpecEqual(existingIngress, desiredIngress) {
+		patch := client.MergeFrom(existingIngress.DeepCopy())
+		existingIngress.Spec = desiredIngress.Spec
+		existingIngress.Annotations = desiredIngress.Annotations
+		return r.Patch(ctx, existingIngress, patch)
+	}
+	return nil
+}
+
+func (r *TenantReconciler) deleteUMCGentianLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+	name := umcGentianLoginName(tenant.Name)
+	for _, obj := range []client.Object{
+		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-branding", Namespace: nsName}},
+	} {
+		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ingressBackend(serviceName string) networkingv1.IngressBackend {
+	return networkingv1.IngressBackend{
+		Service: &networkingv1.IngressServiceBackend{
+			Name: serviceName,
+			Port: networkingv1.ServiceBackendPort{Name: "http"},
+		},
+	}
+}
+
+func intstrFromName(name string) intstr.IntOrString {
+	return intstr.IntOrString{Type: intstr.String, StrVal: name}
+}
+
+func ingressSpecEqual(a, b *networkingv1.Ingress) bool {
+	return equality.Semantic.DeepEqual(a.Spec, b.Spec) &&
+		equality.Semantic.DeepEqual(a.Annotations, b.Annotations)
 }
