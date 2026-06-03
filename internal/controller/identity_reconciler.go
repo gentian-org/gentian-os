@@ -71,11 +71,8 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{}, err
 	}
 
-	if len(oidcApps) == 0 {
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
-			"NoIdentityRequired", "No apps require identity provisioning")
-		return ctrl.Result{}, nil
-	}
+	// We must always provision the Keycloak realm because the tenant UMC server
+	// relies on it for SAML authentication, even if no apps currently require OIDC.
 
 	realmDone, err := r.ensureRealmJob(ctx, tenant, realmName)
 	if err != nil {

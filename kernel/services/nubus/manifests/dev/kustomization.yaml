@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - service-aliases.yaml
   - release.yaml
+  - setup-iam-templates-job.yaml
 
 configMapGenerator:
   - name: nubus-base-values

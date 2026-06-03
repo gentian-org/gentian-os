@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nubus-dev-setup-iam-templates
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    spec:
+      containers:
+        - name: setup
+          image: curlimages/curl:8.7.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              
+              BASE_URL="http://nubus-dev-udm-rest-api.gentian-dev.svc.cluster.local:9979/udm"
+              LDAP_BASE="dc=swp-ldap,dc=internal"
+              
+              echo "Waiting for UDM REST API..."
+              until curl -s -f -o /dev/null -k -u "Administrator:${UDM_ADMIN_PASSWORD}" -H "Accept: application/json" "${BASE_URL}/" 2>/dev/null; do sleep 5; done
+              echo "UDM REST API is up."
+              
+              urlencode() { printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/%3D/g'; }
+              
+              CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+              
+              # 1. Create global App Users group
+              APP_USERS_DN="cn=App Users,cn=groups,${LDAP_BASE}"
+              APP_USERS_ENC=$(urlencode "${APP_USERS_DN}")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/groups/group/${APP_USERS_ENC}")
+              if [ "${STATUS}" = "404" ]; then
+                  curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
+                      "${BASE_URL}/groups/group/" \
+                      -d "{\"properties\":{\"name\":\"App Users\",\"description\":\"Users with access to generic AppProfiles\"},\"position\":\"cn=groups,${LDAP_BASE}\"}"
+                  echo "Created App Users group."
+              fi
+              
+              # 2. Create 'App User' template
+              APP_TEMPLATE_DN="cn=App User,cn=templates,cn=univention,${LDAP_BASE}"
+              APP_TEMPLATE_ENC=$(urlencode "${APP_TEMPLATE_DN}")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${APP_TEMPLATE_ENC}")
+              if [ "${STATUS}" = "404" ]; then
+                  curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
+                      "${BASE_URL}/settings/usertemplate/" \
+                      -d "{\"properties\":{\"name\":\"App User\",\"description\":\"Standard user with access to apps\",\"opendeskFileshareEnabled\":true,\"opendeskLivecollaborationEnabled\":true,\"groups\":[\"${APP_USERS_DN}\"]},\"position\":\"cn=templates,cn=univention,${LDAP_BASE}\"}"
+                  echo "Created App User template."
+              fi
+              
+              # 3. Create 'Admin User' template
+              ADMIN_TEMPLATE_DN="cn=Admin User,cn=templates,cn=univention,${LDAP_BASE}"
+              ADMIN_TEMPLATE_ENC=$(urlencode "${ADMIN_TEMPLATE_DN}")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${ADMIN_TEMPLATE_ENC}")
+              if [ "${STATUS}" = "404" ]; then
+                  curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
+                      "${BASE_URL}/settings/usertemplate/" \
+                      -d "{\"properties\":{\"name\":\"Admin User\",\"description\":\"Administrative user without app access\",\"opendeskFileshareEnabled\":false,\"opendeskLivecollaborationEnabled\":false},\"position\":\"cn=templates,cn=univention,${LDAP_BASE}\"}"
+                  echo "Created Admin User template."
+              fi
+              
+              echo "IAM templates setup complete."
+          env:
+            - name: UDM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nubus-credentials
+                  key: default-admin-password
+      restartPolicy: Never

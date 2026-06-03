@@ -249,7 +249,7 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 		for _, tile := range profile.Spec.PortalTiles {
 			allowedGroupCN := tile.AllowedGroup
 			if allowedGroupCN == "" {
-				allowedGroupCN = "Domain Users"
+				allowedGroupCN = "App Users"
 			}
 			linkTarget := string(tile.LinkTarget)
 			if linkTarget == "" {

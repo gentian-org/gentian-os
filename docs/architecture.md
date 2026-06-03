@@ -583,6 +583,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
 | AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
 | OpenBao, ESO, deterministic seeding, rotation | [design/secrets.md](design/secrets.md) |
+| Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |

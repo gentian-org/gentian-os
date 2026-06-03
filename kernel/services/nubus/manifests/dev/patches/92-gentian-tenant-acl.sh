@@ -345,6 +345,22 @@ if domain_users_dn_rule not in content:
 else:
     print("cn=Domain Users rule already present.")
 
+# ── Patch 8b: cn=App Users group membership ──────────────────────────────────
+# Gentian OS custom "App Users" global group. Tenant admins need write on
+# memberUid/uniqueMember for this group.
+app_users_dn_rule = f'access to dn.base="cn=App Users,cn=groups,{ldap_base}" attrs=entry,memberUid,uniqueMember\n'
+if app_users_dn_rule not in content:
+    app_users_acl = (
+        f'# Gentian: tenant admins may add users to cn=App Users\n'
+        f'access to dn.base="cn=App Users,cn=groups,{ldap_base}" attrs=entry,memberUid,uniqueMember\n'
+        f'   by {tenant_admins_set}\n'
+        f'   by * +0 break\n'
+    )
+    content = content.replace(catchall_marker, app_users_acl + catchall_marker, 1)
+    print("Patched cn=App Users group membership for Tenant Admins.")
+else:
+    print("cn=App Users rule already present.")
+
 # ── Patch 9: tenant OU read restriction ──────────────────────────────────────
 # The catch-all 'by users read' grants every authenticated user read access to
 # the whole LDAP tree.  Insert two rules immediately before the catch-all that

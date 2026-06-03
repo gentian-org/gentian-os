@@ -58,7 +58,7 @@ global:
             users:
               user:
                 add:
-                  default: cn=openDesk User,cn=templates,cn=univention,dc=swp-ldap,dc=internal
+                  default: cn=App User,cn=templates,cn=univention,dc=swp-ldap,dc=internal
                 properties:
                   description:
                     syntax: TextArea
