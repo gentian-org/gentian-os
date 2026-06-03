@@ -809,6 +809,8 @@ func makeAdminUserJob(tenant *gentianov1alpha1.Tenant, ouDN string, creds secret
 
 func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 	ttl := int32(3600)
+	c := udmContainer("provision-admin-policy", buildAdminPolicyScript(ouDN, tenant.Name))
+	c.Env = append(c.Env, corev1.EnvVar{Name: "ADMIN_USERNAME", Value: "admin-" + tenant.Name})
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      adminPolicyJobName(tenant.Name),
@@ -823,9 +825,7 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						udmContainer("provision-admin-policy", buildAdminPolicyScript(ouDN, tenant.Name)),
-					},
+					Containers:    []corev1.Container{c},
 				},
 			},
 		},
@@ -1129,6 +1129,31 @@ fi`, ouDN, appName, tenantName, appName, tenantName, appName, tenantName, appNam
 func buildAdminUserScript(ouDN, tenantName, adminEmail string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+udm_patch_ok() {
+	local url="$1"
+	local data="$2"
+	local label="$3"
+	local http
+	http=$(curl -s --max-time 30 -o /tmp/udm-patch-body -w "%%{http_code}" -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${url}" -d "${data}")
+	case "${http}" in
+	200|204)
+		echo "${label} (HTTP ${http})"
+		return 0
+		;;
+	400|422)
+		echo "${label}: already satisfied (HTTP ${http})"
+		return 0
+		;;
+	*)
+		echo "${label}: PATCH failed (HTTP ${http})" >&2
+		cat /tmp/udm-patch-body >&2 2>/dev/null || true
+		return 1
+		;;
+	esac
+}
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
@@ -1177,26 +1202,22 @@ fi
 # Ensure the admin user is enabled and does not require a forced password change.
 # disabled:false explicitly marks the account as active, preventing Keycloak's
 # univention-ldap-mapper from importing the account as disabled on first login.
-curl -sf --max-time 30 -X PATCH ${CREDS} \
-	-H "Content-Type: application/json" \
-	-H "Accept: application/json" \
-	"${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
-	-d "{\"properties\":{\"disabled\":false,\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\",\"opendeskFileshareEnabled\":false,\"opendeskLivecollaborationEnabled\":false}}"
-echo "user ${ADMIN_USERNAME} enabled and pwdChangeNextLogin cleared"
+# On Retain redeploy the user already exists; on Delete redeploy a fresh user
+# was created above. Never reset the password when the user already existed.
+udm_patch_ok "${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
+	"{\"properties\":{\"disabled\":false,\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\",\"opendeskFileshareEnabled\":false,\"opendeskLivecollaborationEnabled\":false}}" \
+	"user ${ADMIN_USERNAME} enabled and pwdChangeNextLogin cleared" || exit 1
 
 # Ensure the admin user is in the admins_<tenant> group (idempotent PATCH).
 ADMINS_BODY=$(curl -s --max-time 30 ${CREDS} \
   -H "Accept: application/json" \
-	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}")
-if echo "${ADMINS_BODY}" | grep -q "\"${ADMIN_DN}\""; then
+	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" | tr -d '\n')
+if printf '%%s' "${ADMINS_BODY}" | grep -qF "${ADMIN_DN}"; then
   echo "user ${ADMIN_USERNAME} already in admins group"
 else
-  curl -sf --max-time 30 -X PATCH ${CREDS} \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json" \
-	"${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
-    -d "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}"
-  echo "user ${ADMIN_USERNAME} added to admins group"
+  udm_patch_ok "${BASE_URL}/groups/group/${ADMINS_GRP_ENC}" \
+    "{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}" \
+    "user ${ADMIN_USERNAME} added to admins group" || exit 1
 fi
 
 # Unlock all users in the tenant OU (idempotent; reverses Retain lock on redeploy).
@@ -1241,10 +1262,39 @@ echo "unlock sweep complete for ${USERS_OU_POS}"`, ouDN, adminEmail, tenantName)
 func buildAdminPolicyScript(ouDN, tenantName string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+# PATCH helper: succeed on 200/204 and on 400/422 when UDM reports an idempotent conflict.
+udm_patch_ok() {
+	local url="$1"
+	local data="$2"
+	local label="$3"
+	local http
+	http=$(curl -s --max-time 30 -o /tmp/udm-patch-body -w "%%{http_code}" -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${url}" -d "${data}")
+	case "${http}" in
+	200|204)
+		echo "${label} (HTTP ${http})"
+		return 0
+		;;
+	400|422)
+		echo "${label}: already satisfied (HTTP ${http})"
+		return 0
+		;;
+	*)
+		echo "${label}: PATCH failed (HTTP ${http})" >&2
+		cat /tmp/udm-patch-body >&2 2>/dev/null || true
+		return 1
+		;;
+	esac
+}
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 
 OU_POS="%s"
+USERS_OU_POS="ou=users,${OU_POS}"
+ADMIN_DN="uid=${ADMIN_USERNAME},${USERS_OU_POS}"
+ADMIN_DN_ENC=$(urlencode "${ADMIN_DN}")
 ADMINS_GRP_DN="cn=admins_%s,${OU_POS}"
 POLICY_DN="cn=tenant-admins-%s,cn=UMC,cn=policies,${UDM_LDAP_BASE}"
 OPSET_DN="cn=tenant-%s-admin,${UDM_LDAP_BASE}"
@@ -1399,53 +1449,43 @@ else
 	exit 1
 fi
 
+# Verify the tenant admin user exists. After a Retain undeploy the user is preserved;
+# after a Delete undeploy the admin-user Job recreates it before this Job runs.
+ADMIN_STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/users/user/${ADMIN_DN_ENC}")
+if [ "${ADMIN_STATUS}" = "404" ]; then
+	echo "admin user ${ADMIN_DN} not found — run admin-user job first" >&2
+	exit 1
+elif [ "${ADMIN_STATUS}" != "200" ]; then
+	echo "UDM not ready for admin user (HTTP ${ADMIN_STATUS}); will retry" >&2
+	exit 1
+fi
+
 # Add the tenant admins group as a nested member of cn=Tenant Admins (idempotent).
 # UDM uses 'nestedGroup' for nested groups, which writes to uniqueMember in LDAP.
 # We ALSO add the admin user as a direct member (in 'users') because UMC portal
-# evaluates allowedGroups without expanding nested groups.
-NESTED_BODY=$(curl -s --max-time 30 ${CREDS} \
+# evaluates allowedGroups without expanding nested groups. PATCH each property
+# separately so a partial update never resends malformed JSON extracted from an
+# existing UDM object graph.
+TENANT_ADMINS_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" | tr -d '\n')
-CURRENT_NESTED=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"nestedGroup":[[:space:]]*\[\([^]]*\)\].*/\1/p')
-CURRENT_USERS=$(printf '%%s' "${NESTED_BODY}" | sed -n 's/.*"users":[[:space:]]*\[\([^]]*\)\].*/\1/p')
 
-TENANT_NAME=${ADMINS_GRP_DN#cn=admins_}
-TENANT_NAME=${TENANT_NAME%%,*}
-ADMIN_DN="uid=admin-${TENANT_NAME},ou=users,${OU_POS}"
-
-NEEDS_PATCH=0
-NEW_NESTED="${CURRENT_NESTED}"
-NEW_USERS="${CURRENT_USERS}"
-
-if printf '%%s' "${CURRENT_NESTED}" | grep -qF "\"${ADMINS_GRP_DN}\""; then
+if printf '%%s' "${TENANT_ADMINS_BODY}" | grep -qF "${ADMINS_GRP_DN}"; then
 	echo "Tenant Admins: ${ADMINS_GRP_DN} already a nested member"
 else
-	if [ -z "${CURRENT_NESTED}" ]; then
-		NEW_NESTED="[\"${ADMINS_GRP_DN}\"]"
-	else
-		NEW_NESTED="[${CURRENT_NESTED},\"${ADMINS_GRP_DN}\"]"
-	fi
-	NEEDS_PATCH=1
+	udm_patch_ok "${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
+		"{\"properties\":{\"nestedGroup\":[\"${ADMINS_GRP_DN}\"]}}" \
+		"Tenant Admins: nested member ${ADMINS_GRP_DN}" || exit 1
 fi
 
-if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${ADMIN_DN}\""; then
+if printf '%%s' "${TENANT_ADMINS_BODY}" | grep -qF "${ADMIN_DN}"; then
 	echo "Tenant Admins: ${ADMIN_DN} already a direct member"
 else
-	if [ -z "${CURRENT_USERS}" ]; then
-		NEW_USERS="[\"${ADMIN_DN}\"]"
-	else
-		NEW_USERS="[${CURRENT_USERS},\"${ADMIN_DN}\"]"
-	fi
-	NEEDS_PATCH=1
-fi
-
-if [ "${NEEDS_PATCH}" = "1" ]; then
-	curl -sf --max-time 30 -X PATCH ${CREDS} \
-		-H "Content-Type: application/json" \
-		-H "Accept: application/json" \
-		"${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
-		-d "{\"properties\":{\"nestedGroup\":${NEW_NESTED},\"users\":${NEW_USERS}}}"
-	echo "Tenant Admins: added ${ADMINS_GRP_DN} as nested member and ${ADMIN_DN} as user"
+	udm_patch_ok "${BASE_URL}/groups/group/${TENANT_ADMINS_ENC}" \
+		"{\"properties\":{\"users\":[\"${ADMIN_DN}\"]}}" \
+		"Tenant Admins: direct member ${ADMIN_DN}" || exit 1
 fi
 
 # Add the tenant OU's users sub-container to the global settings/directory
@@ -1453,28 +1493,20 @@ fi
 # places new users in ou=users,<tenantOU> (the Keycloak federation target) rather
 # than the OU root. Users at the OU root would not be picked up by the tenant
 # realm's LDAP federation and would be invisible to tenant-realm OIDC clients.
-USERS_OU_POS="ou=users,${OU_POS}"
 SETTINGS_DN="cn=default containers,cn=univention,${UDM_LDAP_BASE}"
 SETTINGS_ENC=$(urlencode "${SETTINGS_DN}")
 SETTINGS_BODY=$(curl -s --max-time 30 ${CREDS} \
 	-H "Accept: application/json" \
 	"${BASE_URL}/settings/directory/${SETTINGS_ENC}" | tr -d '\n')
-CURRENT_USERS=$(printf '%%s' "${SETTINGS_BODY}" | sed -n 's/.*"users":[[:space:]]*\[\([^]]*\)\].*/\1/p')
-if printf '%%s' "${CURRENT_USERS}" | grep -qF "\"${USERS_OU_POS}\""; then
+if printf '%%s' "${SETTINGS_BODY}" | grep -qF "${USERS_OU_POS}"; then
 	echo "settings/directory: ${USERS_OU_POS} already in users default containers"
 else
-	if [ -z "${CURRENT_USERS}" ]; then
-		NEW_USERS="[\"${USERS_OU_POS}\"]"
-	else
-		NEW_USERS="[${CURRENT_USERS},\"${USERS_OU_POS}\"]"
-	fi
-	curl -sf --max-time 30 -X PATCH ${CREDS} \
-		-H "Content-Type: application/json" \
-		-H "Accept: application/json" \
-		"${BASE_URL}/settings/directory/${SETTINGS_ENC}" \
-		-d "{\"properties\":{\"users\":${NEW_USERS}}}"
-	echo "settings/directory: added ${USERS_OU_POS} to users default containers"
-fi`,
+	udm_patch_ok "${BASE_URL}/settings/directory/${SETTINGS_ENC}" \
+		"{\"properties\":{\"users\":[\"${USERS_OU_POS}\"]}}" \
+		"settings/directory: users default container ${USERS_OU_POS}" || exit 1
+fi
+
+echo "admin policy provisioning complete for ${ADMIN_USERNAME}"`,
 		ouDN, tenantName, tenantName, tenantName,
 		tenantName, tenantName,
 		tenantName, tenantName, tenantName,
