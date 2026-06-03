@@ -609,13 +609,21 @@ func buildUMCHelmValues(effectiveDomain string) map[string]interface{} {
 		"ingress": map[string]interface{}{
 			"enabled":          true,
 			"host":             effectiveDomain,
-			"ingressClassName": "nginx",
+			"ingressClassName": "public",
 			"certManager": map[string]interface{}{
 				"enabled": false,
 			},
 			"tls": map[string]interface{}{
 				"enabled":    true,
 				"secretName": kernelWildcardTenantSecret,
+			},
+			// Match kernel nubusUmcServer wiring. ssl-redirect must stay off so
+			// Cloudflare (HTTP to origin) does not loop 308 → https when the
+			// client is already on HTTPS.
+			"annotations": map[string]interface{}{
+				"nginx.ingress.kubernetes.io/use-regex":         "true",
+				"nginx.ingress.kubernetes.io/ssl-redirect":        "false",
+				"nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
 			},
 			"paths": []interface{}{
 				map[string]interface{}{

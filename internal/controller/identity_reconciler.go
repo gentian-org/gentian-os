@@ -250,7 +250,7 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 			}
 			umcClientSecret = umcCreds.ClientSecret
 		}
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName, ldap, broker, umcClientSecret))
+		return false, r.Create(ctx, makeRealmJob(tenant, realmName, r.KernelDomain, ldap, broker, umcClientSecret))
 	}
 	if err != nil {
 		return false, err
@@ -415,12 +415,18 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string, ldap *realmLDAPParams, broker *realmBrokerParams, umcClientSecret string) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, ldap *realmLDAPParams, broker *realmBrokerParams, umcClientSecret string) *batchv1.Job {
 	ttl := int32(3600)
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
 	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
+	if effectiveDomain := tenant.EffectiveDomain(kernelDomain); effectiveDomain != "" {
+		c.Env = append(c.Env, corev1.EnvVar{
+			Name:  "TENANT_UMC_BASE",
+			Value: "https://" + effectiveDomain,
+		})
+	}
 	if ldap != nil {
 		c.Env = append(c.Env,
 			corev1.EnvVar{Name: "LDAP_SERVER", Value: ldap.server},
@@ -833,10 +839,15 @@ fi
 # redirect fails with "invalid client" in the tenant realm.
 # Requires KERNEL_EXTERNAL_URL (https://id.<domain>) to be set.
 if [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
-  # Per-tenant UMC is served at https://<realm>.<domain>/univention/management/.
-  # Derive the kernel domain by stripping the "https://id." prefix.
-  KERNEL_DOMAIN=$(printf '%%s' "${KERNEL_EXTERNAL_URL}" | sed 's|https://id\.||')
-  UMC_BASE="https://${REALM_NAME}.${KERNEL_DOMAIN}"
+  # Per-tenant UMC is served at the tenant effective domain (vanity spec.domain
+  # when set, otherwise https://<realm>.<kernel_domain>). TENANT_UMC_BASE is
+  # injected by makeRealmJob to stay aligned with umc_reconciler OIDC settings.
+  if [ -n "${TENANT_UMC_BASE:-}" ]; then
+    UMC_BASE="${TENANT_UMC_BASE}"
+  else
+    KERNEL_DOMAIN=$(printf '%%s' "${KERNEL_EXTERNAL_URL}" | sed 's|https://id\.||')
+    UMC_BASE="https://${REALM_NAME}.${KERNEL_DOMAIN}"
+  fi
   UMC_CLIENT_ID="${UMC_BASE}/univention/oidc/"
   # URL-encode for use as a query parameter value.
   UMC_CLIENT_ID_ENC=$(printf '%%s' "${UMC_CLIENT_ID}" | sed 's|:|%%3A|g; s|/|%%2F|g')
