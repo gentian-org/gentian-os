@@ -85,8 +85,9 @@ func TestMain(m *testing.M) {
 	}
 
 	if err := (&controller.TenantReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		KernelRealm: "kernel",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

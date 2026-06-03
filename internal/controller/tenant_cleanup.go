@@ -65,6 +65,27 @@ func appendUniqueStrings(base []string, extra ...string) []string {
 	return out
 }
 
+func isTenantCleanupJobName(tenantName, jobName string) bool {
+	cleanupPrefixes := []string{
+		fmt.Sprintf("keycloak-realm-delete-%s", tenantName),
+		fmt.Sprintf("keycloak-realm-disable-%s", tenantName),
+		fmt.Sprintf("ldap-ou-delete-%s", tenantName),
+		fmt.Sprintf("ldap-lock-%s", tenantName),
+		fmt.Sprintf("ldap-admin-user-delete-%s", tenantName),
+		fmt.Sprintf("ldap-portal-entry-delete-%s-", tenantName),
+		fmt.Sprintf("mariadb-delete-%s-", tenantName),
+		fmt.Sprintf("s3-delete-%s-", tenantName),
+		fmt.Sprintf("nc-group-delete-%s", tenantName),
+		fmt.Sprintf("redis-acl-delete-%s-", tenantName),
+	}
+	for _, prefix := range cleanupPrefixes {
+		if strings.HasPrefix(jobName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // listTenantAppsFromJobPrefix returns app profile names inferred from completed
 // or attempted provision Jobs whose names start with namePrefix.
 func (r *TenantReconciler) listTenantAppsFromJobPrefix(ctx context.Context, tenantName, namePrefix string) ([]string, error) {
@@ -79,26 +100,6 @@ func (r *TenantReconciler) listTenantAppsFromJobPrefix(ctx context.Context, tena
 		}
 		app := strings.TrimPrefix(job.Name, namePrefix)
 		apps = appendUniqueStrings(apps, app)
-	}
-	return apps, nil
-}
-
-// listTenantAppsFromDatabaseCRs returns app names recorded on tenant Database CRs.
-func (r *TenantReconciler) listTenantAppsFromDatabaseCRs(ctx context.Context, tenantName string) ([]string, error) {
-	dbList := &unstructured.UnstructuredList{}
-	dbList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   cnpgGroup,
-		Version: cnpgVersion,
-		Kind:    cnpgDatabaseKind + "List",
-	})
-	if err := r.List(ctx, dbList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenantName)); err != nil {
-		return nil, fmt.Errorf("list Database CRs for tenant %s: %w", tenantName, err)
-	}
-	var apps []string
-	for i := range dbList.Items {
-		if app := dbList.Items[i].GetLabels()[appLabel]; app != "" {
-			apps = appendUniqueStrings(apps, app)
-		}
 	}
 	return apps, nil
 }
@@ -173,8 +174,9 @@ func (r *TenantReconciler) deleteTenantLabeledDatabaseCRs(ctx context.Context, t
 }
 
 // purgeTenantKernelResources removes orchestrator-owned kernel artifacts that
-// may survive app uninstalls or partial deletes. Called as the final step of
-// DeletionPolicy=Delete reconciliation once all cleanup Jobs have finished.
+// may survive app uninstalls or partial deletes. It runs after awaited cleanup
+// Jobs have finished; still-active fire-and-forget cleanup Jobs are left to
+// finish and expire via their TTL.
 func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
@@ -218,8 +220,8 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	prop := metav1.DeletePropagationBackground
 	for i := range jobList.Items {
 		job := &jobList.Items[i]
-		if !jobIsComplete(job) && job.DeletionTimestamp == nil {
-			return fmt.Errorf("cleanup job %s still running during purge", job.Name)
+		if isTenantCleanupJobName(tenant.Name, job.Name) && !jobIsComplete(job) && job.DeletionTimestamp == nil {
+			continue
 		}
 		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Job %s: %w", job.Name, err)
