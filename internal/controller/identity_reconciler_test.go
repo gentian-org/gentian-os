@@ -102,8 +102,8 @@ func markJobCompleteWhenReady(jobName, namespace string) {
 	}
 }
 
-// TestIdentity_NoOIDCApps verifies that a Tenant with no apps does not create
-// any identity Jobs and gets IdentityReady=True with reason NoIdentityRequired.
+// TestIdentity_NoOIDCApps verifies that a Tenant with no apps still creates
+// the base realm and admin identity Jobs (for UMC), but no client Jobs.
 func TestIdentity_NoOIDCApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -119,8 +119,24 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
+	// Wait for realm Job, then mark it complete.
 	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-realm-noidc", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-realm-noidc", "platform-kernel")
+
+	// Wait for admin Job, then mark it complete.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-admin-noidc", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-admin-noidc", "platform-kernel")
+
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, 15*time.Second, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "noidc"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -138,15 +154,8 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	if identCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected IdentityReady=True, got %v", identCond.Status)
 	}
-	if identCond.Reason != "NoIdentityRequired" {
-		t.Errorf("expected reason NoIdentityRequired, got %q", identCond.Reason)
-	}
-
-	// No realm Job should have been created.
-	job := &batchv1.Job{}
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-realm-noidc", Namespace: "platform-kernel"}, job); err == nil {
-		t.Error("expected no realm Job for Tenant with no OIDC apps")
+	if identCond.Reason != "Provisioned" {
+		t.Errorf("expected reason Provisioned, got %q", identCond.Reason)
 	}
 }
 

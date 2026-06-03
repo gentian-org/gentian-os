@@ -21,9 +21,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -149,6 +151,40 @@ func TestMain(m *testing.M) {
 	}); err != nil {
 		panic(err)
 	}
+
+	// Auto-complete Keycloak realm and admin Jobs for all tests EXCEPT those
+	// in identity_reconciler_test.go that explicitly test the Identity flow
+	// and need to control job timing manually.
+	// We need this because ensureIdentity was updated to ALWAYS provision the
+	// Keycloak realm (for UMC), which breaks all existing tests that expected
+	// Phase=Ready immediately for non-identity apps.
+	go func() {
+		for {
+			time.Sleep(200 * time.Millisecond)
+			var jobs batchv1.JobList
+			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
+				for _, job := range jobs.Items {
+					if job.Status.Succeeded == 0 && (strings.HasPrefix(job.Name, "keycloak-realm-") || strings.HasPrefix(job.Name, "keycloak-admin-")) {
+						name := job.Name
+						if strings.Contains(name, "clienttest") || strings.Contains(name, "allready") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "destroyer") || strings.Contains(name, "del-tenant") || strings.Contains(name, "del-full") || strings.Contains(name, "cachedelete") || strings.Contains(name, "dbdelete") || strings.Contains(name, "ldapdelete") || strings.Contains(name, "storagedelete") {
+							// These tests test deletion flows which explicitly wait for
+							// keycloak-realm-delete-* or similar jobs.
+							// And the explicit identity tests.
+							continue
+						}
+						now := metav1.Now()
+						job.Status.StartTime = &now
+						job.Status.CompletionTime = &now
+						job.Status.Succeeded = 1
+						job.Status.Conditions = []batchv1.JobCondition{
+							{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
+						}
+						_ = testClient.Status().Update(context.Background(), &job)
+					}
+				}
+			}
+		}
+	}()
 
 	code := m.Run()
 
