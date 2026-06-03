@@ -63,6 +63,13 @@ const (
 	umcSMTPSecretName          = "umc-smtp"
 	umcOIDCSecretName          = "umc-oidc-client"
 	umcUCRConfigMapName        = "umc-ucr"
+
+	reloaderAutoAnnotation  = "reloader.stakater.com/auto"
+	reloaderMatchAnnotation = "reloader.stakater.com/match"
+
+	// umc-gateway reads base-defaults.conf via UCR; an empty file breaks Apache
+	// LogLevel generation (see kernel nubus-dev-stack-data-ums-ucr).
+	umcUCRBaseDefaultsConf = "# This file is empty on purpose\n# And needs to have at least two lines\n"
 )
 
 // helmReleaseGVK is the GVK for the Crossplane provider-helm Release CR.
@@ -115,6 +122,7 @@ var (
 
 // ensureUMC deploys per-tenant UMC stack on the tenant effective domain:
 //
+//   /                              → redirect to /login/
 //   /login/                          → gentian-ui portal-frontend (branded login)
 //   /univention/management/, /js/    → nubus umc-gateway (dojo UMC shell)
 //   /univention/(auth|oidc|get|…)/   → nubus umc-server (API)
@@ -422,14 +430,16 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 	samlIDPExternal := fmt.Sprintf("https://id.%s/realms/%s/protocol/saml/descriptor", r.KernelDomain, tenant.Name)
 	samlIDPInternal := fmt.Sprintf("%s/protocol/saml/descriptor", keycloakInternal)
 
-	baseForcedConf := strings.Join(append([]string{
+	baseForcedConf := strings.Join(append(append([]string{
 		"server/role: memberserver",
 		// hostname + domainname are required by SSSD's UCR template (sssd.conf
 		// domain section) and by UMC's saml/sp.py which builds the cert path as
 		// /etc/univention/ssl/<hostname>.<domainname>/cert.pem.
 		fmt.Sprintf("hostname: %s", tenant.Name),
 		fmt.Sprintf("domainname: %s", r.KernelDomain),
-		fmt.Sprintf("ldap/master: %s", r.LDAPServer),
+		// ldap/master must be a plain hostname (not a URL) — UCR templates build
+		// ldap:// URIs themselves.
+		fmt.Sprintf("ldap/master: %s", umcLDAPServerName),
 		"ldap/master/port: 389",
 		// ldap/server/name is the plain hostname (no scheme/port) consumed by
 		// SSSD's getLDAPURIs() helper to build ldap_uri in sssd.conf.
@@ -441,20 +451,17 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 		// SAML SP: the entrypoint script (50-entrypoint.sh) reads these to
 		// download the IdP metadata and to create the cert symlink at
 		// /etc/univention/ssl/<sp-server>/cert.pem.  sp-server must equal
-		// <hostname>.<domainname> so that saml/sp.py finds the symlinked cert.
+		// the tenant effective domain so certs and redirects are correct.
 		fmt.Sprintf("umc/saml/sp-server: %s", effectiveDomain),
 		fmt.Sprintf("umc/saml/idp-server: %s", samlIDPExternal),
 		fmt.Sprintf("umc/saml/idp-server-internal: %s", samlIDPInternal),
-		fmt.Sprintf("umc/oidc/issuer: %s", keycloakExternal),
-		fmt.Sprintf("umc/oidc/issuer-internal: %s", keycloakInternal),
-		fmt.Sprintf("umc/oidc/nubus/issuer: %s", keycloakExternal),
-		fmt.Sprintf("umc/oidc/nubus/client-id: %s", oidcClientID),
+	}, umcApacheUCRLines()...), append(umcOIDCUCRLines(keycloakExternal, keycloakInternal, oidcClientID), append([]string{
 		// UMC's Tornado HTTP server defaults to binding on 127.0.0.1. The
 		// Kubernetes liveness/readiness probes connect to the pod IP, so UMC
 		// must bind on all interfaces for the probes (and the Traefik proxy
 		// pod) to reach it.
 		"umc/http/interface: 0.0.0.0",
-	}, smtpLines...), "\n") + "\n"
+	}, smtpLines...)...)...), "\n") + "\n"
 
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -464,10 +471,13 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
 			},
+			Annotations: map[string]string{
+				reloaderMatchAnnotation: "true",
+			},
 		},
 		Data: map[string]string{
 			"base.conf":          baseForcedConf,
-			"base-defaults.conf": "",
+			"base-defaults.conf": umcUCRBaseDefaultsConf,
 		},
 	}
 
@@ -482,7 +492,19 @@ func (r *TenantReconciler) ensureUMCConfigMap(ctx context.Context, tenant *genti
 	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) {
 		patch := client.MergeFrom(existing.DeepCopy())
 		existing.Data = desired.Data
-		return r.Patch(ctx, existing, patch)
+		if err := r.Patch(ctx, existing, patch); err != nil {
+			return err
+		}
+	}
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	if existing.Annotations[reloaderMatchAnnotation] != "true" {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Annotations[reloaderMatchAnnotation] = "true"
+		if err := r.Patch(ctx, existing, patch); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -582,6 +604,9 @@ func buildUMCHelmValues(effectiveDomain, kernelDomain string) map[string]interfa
 	return map[string]interface{}{
 		"global": map[string]interface{}{
 			"configMapUcr": umcUCRConfigMapName,
+		},
+		"podAnnotations": map[string]interface{}{
+			reloaderAutoAnnotation: "true",
 		},
 		"selfService": map[string]interface{}{
 			"enabled": false,
@@ -734,6 +759,9 @@ func buildUMCGatewayHelmValues(effectiveDomain, kernelDomain string) map[string]
 			},
 			"annotations": umcIngressAnnotations(effectiveDomain, kernelDomain),
 		},
+		"podAnnotations": map[string]interface{}{
+			reloaderAutoAnnotation: "true",
+		},
 	}
 }
 
@@ -762,6 +790,33 @@ func umcChartPortalDomain(effectiveDomain, kernelDomain string) (portalSubdomain
 		return effectiveDomain[:dot], effectiveDomain[dot+1:]
 	}
 	return effectiveDomain, kernelDomain
+}
+
+func umcApacheUCRLines() []string {
+	return []string{
+		"apache2/autostart: yes",
+		"apache2/documentroot: /var/www/",
+		"apache2/loglevel: info",
+		"apache2/startsite: univention/",
+		"apache2/force_https/exclude/http_host/localhost: localhost",
+	}
+}
+
+// umcOIDCUCRLines returns UCR keys required for /usr/share/univention-management-
+// console/oidc/oidc.json generation (see kernel nubus-dev-stack-data-ums-ucr).
+func umcOIDCUCRLines(keycloakExternal, keycloakInternal, oidcClientID string) []string {
+	return []string{
+		"umc/oidc/default-op: nubus",
+		fmt.Sprintf("umc/oidc/issuer: %s", keycloakExternal),
+		fmt.Sprintf("umc/oidc/issuer-internal: %s", keycloakInternal),
+		fmt.Sprintf("umc/oidc/nubus/issuer: %s", keycloakExternal),
+		fmt.Sprintf("umc/oidc/nubus/client-id: %s", oidcClientID),
+		"umc/oidc/nubus/client-secret-file: /etc/oidc-rp-umc-server.secret",
+		"umc/oidc/nubus/extra-parameter: kc_idp_hint",
+		"umc/oidc/nubus/openid-certs: /usr/share/univention-management-console/oidc/nubus.jwks",
+		"umc/oidc/nubus/openid-configuration: /usr/share/univention-management-console/oidc/nubus.json",
+		"umc/oidc/rp/server: nubus",
+	}
 }
 
 func umcGentianLoginName(tenantName string) string {
@@ -987,7 +1042,72 @@ func (r *TenantReconciler) ensureUMCGentianLogin(ctx context.Context, tenant *ge
 		patch := client.MergeFrom(existingIngress.DeepCopy())
 		existingIngress.Spec = desiredIngress.Spec
 		existingIngress.Annotations = desiredIngress.Annotations
-		return r.Patch(ctx, existingIngress, patch)
+		if err := r.Patch(ctx, existingIngress, patch); err != nil {
+			return err
+		}
+	}
+	return r.ensureUMCRootRedirect(ctx, tenant, nsName, effectiveDomain)
+}
+
+func umcRootRedirectName(tenantName string) string {
+	return fmt.Sprintf("umc-%s-root-redirect", tenantName)
+}
+
+func (r *TenantReconciler) ensureUMCRootRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	name := umcRootRedirectName(tenant.Name)
+	loginSvc := umcGentianLoginName(tenant.Name)
+	pathTypePrefix := networkingv1.PathTypePrefix
+	ingressClass := "public"
+	labels := map[string]string{
+		tenantLabel:                tenant.Name,
+		managedByLabel:             managedByValue,
+		"app.kubernetes.io/name":   "gentian-login",
+		"app.kubernetes.io/instance": name,
+	}
+	desired := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: nsName,
+			Labels:    labels,
+			Annotations: map[string]string{
+				"nginx.ingress.kubernetes.io/permanent-redirect":   "/login/",
+				"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
+				"nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClass,
+			TLS: []networkingv1.IngressTLS{{
+				Hosts:      []string{effectiveDomain},
+				SecretName: kernelWildcardTenantSecret,
+			}},
+			Rules: []networkingv1.IngressRule{{
+				Host: effectiveDomain,
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{
+						Paths: []networkingv1.HTTPIngressPath{{
+							Path:     "/",
+							PathType: &pathTypePrefix,
+							Backend:  ingressBackend(loginSvc),
+						}},
+					},
+				},
+			}},
+		},
+	}
+	existing := &networkingv1.Ingress{}
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !ingressSpecEqual(existing, desired) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Spec = desired.Spec
+		existing.Annotations = desired.Annotations
+		return r.Patch(ctx, existing, patch)
 	}
 	return nil
 }
@@ -995,6 +1115,7 @@ func (r *TenantReconciler) ensureUMCGentianLogin(ctx context.Context, tenant *ge
 func (r *TenantReconciler) deleteUMCGentianLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	name := umcGentianLoginName(tenant.Name)
 	for _, obj := range []client.Object{
+		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: umcRootRedirectName(tenant.Name), Namespace: nsName}},
 		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},

@@ -80,4 +80,33 @@ func TestBuildUMCHelmValues_IngressPathsExcludeManagement(t *testing.T) {
 	if strings.Contains(pathStr, "management") {
 		t.Fatalf("umc-server ingress path must not include management (served by umc-gateway): %s", pathStr)
 	}
+	podAnn, ok := vals["podAnnotations"].(map[string]interface{})
+	if !ok || podAnn[reloaderAutoAnnotation] != "true" {
+		t.Fatalf("expected reloader pod annotation on umc-server, got %#v", vals["podAnnotations"])
+	}
+}
+
+func TestUmcOIDCUCRLines(t *testing.T) {
+	lines := umcOIDCUCRLines(
+		"https://id.desk.gentian.org/realms/demo",
+		"http://keycloak/realms/demo",
+		"https://demo.desk.gentian.org/univention/oidc/",
+	)
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"umc/oidc/default-op: nubus",
+		"umc/oidc/nubus/openid-configuration:",
+		"umc/oidc/nubus/client-id: https://demo.desk.gentian.org/univention/oidc/",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in OIDC UCR lines:\n%s", want, joined)
+		}
+	}
+}
+
+func TestUmcApacheUCRLines(t *testing.T) {
+	lines := umcApacheUCRLines()
+	if !strings.Contains(strings.Join(lines, "\n"), "apache2/loglevel: info") {
+		t.Fatalf("expected apache2/loglevel in gateway UCR lines: %v", lines)
+	}
 }
