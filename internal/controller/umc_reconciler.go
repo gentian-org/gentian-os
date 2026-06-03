@@ -18,21 +18,18 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -93,12 +90,12 @@ var (
 	umcChartVersion = envOrDefault("UMC_CHART_VERSION", "0.54.2")
 	umcGatewayChartName = envOrDefault("UMC_GATEWAY_CHART_NAME", "umc-gateway")
 
-	// gentian-ui portal-frontend image (same image as kernel gentian-login /
-	// portal-frontend). Serves the branded Gentian login shell on each tenant
-	// domain at /login.
-	gentianPortalFrontendRegistry = envOrDefault("GENTIAN_PORTAL_FRONTEND_REGISTRY", "ghcr.io")
-	gentianPortalFrontendRepo       = envOrDefault("GENTIAN_PORTAL_FRONTEND_REPO", "gentian-org/portal-frontend")
-	gentianPortalFrontendTag        = envOrDefault("GENTIAN_PORTAL_FRONTEND_TAG", "0855185a")
+	// Post-login destination for tenant-domain entry redirects (/ and /login).
+	// Nubus LoginDialog sends authenticated users here; matches kernel portal
+	// login tile link target (/univention/login/?location=/univention/portal/).
+	// Per-tenant portal UI is not provisioned yet — management console is the
+	// tenant-admin entry point on the tenant effective domain.
+	nubusTenantLoginLocation = "/univention/management/"
 
 	// Shared PostgreSQL connection — authSession database used by all per-tenant
 	// UMC instances. UMC sessions are keyed by user DN (which includes the
@@ -120,15 +117,17 @@ var (
 		fmt.Sprintf("nubus-dev-ldap-server.%s.svc.cluster.local", servicesNamespace))
 )
 
-// ensureUMC deploys per-tenant UMC stack on the tenant effective domain:
+// ensureUMC deploys per-tenant Nubus UMC stack on the tenant effective domain:
 //
-//   /                              → redirect to /login/
-//   /login/                          → gentian-ui portal-frontend (branded login)
-//   /univention/management/, /js/    → nubus umc-gateway (dojo UMC shell)
-//   /univention/(auth|oidc|get|…)/   → nubus umc-server (API)
+//   /, /login                        → redirect to /univention/login/ (Nubus LoginDialog)
+//   /univention/login/               → umc-gateway (Nubus login UI, not raw Keycloak)
+//   /univention/management/, /js/    → umc-gateway (dojo UMC shell)
+//   /univention/(auth|oidc|get|…)/   → umc-server (API; OIDC backend only)
 //
-// The shared kernel portal (portal.<kernel-domain>) uses the kernel Keycloak
-// realm and cannot authenticate tenant-scoped LDAP users.
+// Keycloak remains the IdP behind Nubus OIDC — users must never be sent to
+// id.<kernel-domain> directly from tenant ingress. The kernel portal at
+// portal.<kernel-domain> uses the kernel realm and cannot authenticate
+// tenant-scoped LDAP users.
 func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
@@ -157,8 +156,11 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	if err := r.ensureUMCGatewayRelease(ctx, tenant, nsName, effectiveDomain); err != nil {
 		return fmt.Errorf("ensure UMC gateway Release: %w", err)
 	}
-	if err := r.ensureUMCGentianLogin(ctx, tenant, nsName, effectiveDomain); err != nil {
-		return fmt.Errorf("ensure gentian-ui login frontend: %w", err)
+	if err := r.deleteUMCLegacyGentianLogin(ctx, tenant, nsName); err != nil {
+		return fmt.Errorf("remove legacy gentian-ui login frontend: %w", err)
+	}
+	if err := r.ensureUMCNubusLoginRedirects(ctx, tenant, nsName, effectiveDomain); err != nil {
+		return fmt.Errorf("ensure Nubus login redirects: %w", err)
 	}
 	return nil
 }
@@ -552,7 +554,10 @@ func (r *TenantReconciler) deleteUMC(ctx context.Context, tenant *gentianov1alph
 	if err := r.Delete(ctx, gwCR); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete UMC gateway Release CR: %w", err)
 	}
-	if err := r.deleteUMCGentianLogin(ctx, tenant, tenantNamespaceName(tenant)); err != nil {
+	if err := r.deleteUMCNubusLoginRedirects(ctx, tenant, tenantNamespaceName(tenant)); err != nil {
+		return err
+	}
+	if err := r.deleteUMCLegacyGentianLogin(ctx, tenant, tenantNamespaceName(tenant)); err != nil {
 		return err
 	}
 	return nil
@@ -685,8 +690,8 @@ func buildUMCHelmValues(effectiveDomain, kernelDomain string) map[string]interfa
 			"annotations": umcIngressAnnotations(effectiveDomain, kernelDomain),
 			"paths": []interface{}{
 				map[string]interface{}{
-					// API paths only — static UMC shell (HTML/JS/CSS) is served by
-					// umc-gateway; gentian-ui portal-frontend covers /login branding.
+					// API paths only — static UMC shell and Nubus login UI are served
+					// by umc-gateway (/univention/login/, /univention/management/, …).
 					"path":     `/(univention)/(auth|logout|oidc|get|set|command|upload)(.*)$`,
 					"pathType": "ImplementationSpecific",
 				},
@@ -750,6 +755,7 @@ func buildUMCGatewayHelmValues(effectiveDomain, kernelDomain string) map[string]
 			"enabled":          true,
 			"host":             effectiveDomain,
 			"ingressClassName": "public",
+			"enableLoginPath":  true,
 			"certManager": map[string]interface{}{
 				"enabled": false,
 			},
@@ -823,257 +829,87 @@ func umcGentianLoginName(tenantName string) string {
 	return fmt.Sprintf("umc-%s-gentian-login", tenantName)
 }
 
-type gentianLoginBranding struct {
-	Name            string `json:"name"`
-	Tagline         string `json:"tagline"`
-	LogoURL         string `json:"logoUrl"`
-	ThemeColor      string `json:"themeColor"`
-	AccentColor     string `json:"accentColor"`
-	BackgroundColor string `json:"backgroundColor"`
-	CardColor       string `json:"cardColor"`
-	OrgName         string `json:"orgName"`
-}
-
-func (r *TenantReconciler) ensureUMCGentianLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
-	name := umcGentianLoginName(tenant.Name)
-	brandingName := name + "-branding"
-	displayName := tenant.Spec.DisplayName
-	if displayName == "" {
-		displayName = tenant.Name
-	}
-	brandingJSON, err := json.Marshal(gentianLoginBranding{
-		Name:            displayName,
-		Tagline:         "Sign in to manage your tenant",
-		LogoURL:         "/favicon/gentian-logo.png",
-		ThemeColor:      "#262696",
-		AccentColor:     "#4A4AB3",
-		BackgroundColor: "#F4F1EA",
-		CardColor:       "#FFFFFF",
-		OrgName:         displayName,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal gentian login branding: %w", err)
-	}
-
-	desiredCM := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      brandingName,
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				"app.kubernetes.io/name": "gentian-login",
-			},
-		},
-		Data: map[string]string{"branding.json": string(brandingJSON)},
-	}
-	existingCM := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Name: brandingName, Namespace: nsName}, existingCM); errors.IsNotFound(err) {
-		if err := r.Create(ctx, desiredCM); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else if !equality.Semantic.DeepEqual(existingCM.Data, desiredCM.Data) {
-		patch := client.MergeFrom(existingCM.DeepCopy())
-		existingCM.Data = desiredCM.Data
-		if err := r.Patch(ctx, existingCM, patch); err != nil {
-			return err
-		}
-	}
-
-	image := fmt.Sprintf("%s/%s:%s", gentianPortalFrontendRegistry, gentianPortalFrontendRepo, gentianPortalFrontendTag)
-	replicas := int32(1)
-	labels := map[string]string{
-		tenantLabel:                tenant.Name,
-		managedByLabel:             managedByValue,
-		"app.kubernetes.io/name":   "gentian-login",
-		"app.kubernetes.io/instance": name,
-	}
-	desiredDeploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: nsName,
-			Labels:    labels,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app.kubernetes.io/name":     "gentian-login",
-					"app.kubernetes.io/instance": name,
-				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "portal-frontend",
-						Image: image,
-						Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 80}},
-						LivenessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								HTTPGet: &corev1.HTTPGetAction{Path: "/login/", Port: intstrFromName("http")},
-							},
-						},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								HTTPGet: &corev1.HTTPGetAction{Path: "/login/", Port: intstrFromName("http")},
-							},
-						},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("20m"),
-								corev1.ResourceMemory: resource.MustParse("32Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("64Mi"),
-							},
-						},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "branding",
-							MountPath: "/var/www/html/branding.json",
-							SubPath:   "branding.json",
-							ReadOnly:  true,
-						}},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "branding",
-						VolumeSource: corev1.VolumeSource{
-							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{Name: brandingName},
-							},
-						},
-					}},
-				},
-			},
-		},
-	}
-
-	existingDeploy := &appsv1.Deployment{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existingDeploy); errors.IsNotFound(err) {
-		if err := r.Create(ctx, desiredDeploy); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else if !equality.Semantic.DeepEqual(existingDeploy.Spec, desiredDeploy.Spec) {
-		patch := client.MergeFrom(existingDeploy.DeepCopy())
-		existingDeploy.Spec = desiredDeploy.Spec
-		if err := r.Patch(ctx, existingDeploy, patch); err != nil {
-			return err
-		}
-	}
-
-	desiredSvc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: nsName,
-			Labels:    labels,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app.kubernetes.io/name":     "gentian-login",
-				"app.kubernetes.io/instance": name,
-			},
-			Ports: []corev1.ServicePort{{
-				Name: "http",
-				Port: 80,
-				TargetPort: intstrFromName("http"),
-			}},
-		},
-	}
-	existingSvc := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existingSvc); errors.IsNotFound(err) {
-		if err := r.Create(ctx, desiredSvc); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else if !equality.Semantic.DeepEqual(existingSvc.Spec, desiredSvc.Spec) {
-		patch := client.MergeFrom(existingSvc.DeepCopy())
-		existingSvc.Spec = desiredSvc.Spec
-		if err := r.Patch(ctx, existingSvc, patch); err != nil {
-			return err
-		}
-	}
-
-	pathTypePrefix := networkingv1.PathTypePrefix
-	pathTypeExact := networkingv1.PathTypeExact
-	ingressClass := "public"
-	ingressAnn := umcIngressAnnotationStrings(effectiveDomain, r.KernelDomain)
-	desiredIngress := &networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Namespace:   nsName,
-			Labels:      labels,
-			Annotations: ingressAnn,
-		},
-		Spec: networkingv1.IngressSpec{
-			IngressClassName: &ingressClass,
-			TLS: []networkingv1.IngressTLS{{
-				Hosts:      []string{effectiveDomain},
-				SecretName: kernelWildcardTenantSecret,
-			}},
-			Rules: []networkingv1.IngressRule{{
-				Host: effectiveDomain,
-				IngressRuleValue: networkingv1.IngressRuleValue{
-					HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{
-							{Path: "/login", PathType: &pathTypePrefix, Backend: ingressBackend(name)},
-							{Path: "/css", PathType: &pathTypePrefix, Backend: ingressBackend(name)},
-							{Path: "/fonts", PathType: &pathTypePrefix, Backend: ingressBackend(name)},
-							{Path: "/sw.js", PathType: &pathTypeExact, Backend: ingressBackend(name)},
-						},
-					},
-				},
-			}},
-		},
-	}
-	existingIngress := &networkingv1.Ingress{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existingIngress); errors.IsNotFound(err) {
-		return r.Create(ctx, desiredIngress)
-	}
-	if err != nil {
-		return err
-	}
-	if !ingressSpecEqual(existingIngress, desiredIngress) {
-		patch := client.MergeFrom(existingIngress.DeepCopy())
-		existingIngress.Spec = desiredIngress.Spec
-		existingIngress.Annotations = desiredIngress.Annotations
-		if err := r.Patch(ctx, existingIngress, patch); err != nil {
-			return err
-		}
-	}
-	return r.ensureUMCRootRedirect(ctx, tenant, nsName, effectiveDomain)
-}
-
 func umcRootRedirectName(tenantName string) string {
 	return fmt.Sprintf("umc-%s-root-redirect", tenantName)
 }
 
-func (r *TenantReconciler) ensureUMCRootRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
-	name := umcRootRedirectName(tenant.Name)
-	loginSvc := umcGentianLoginName(tenant.Name)
-	pathTypePrefix := networkingv1.PathTypePrefix
-	ingressClass := "public"
-	labels := map[string]string{
-		tenantLabel:                tenant.Name,
+func umcLoginRedirectName(tenantName string) string {
+	return fmt.Sprintf("umc-%s-login-redirect", tenantName)
+}
+
+func umcFrontendLabels(tenantName, instance string) map[string]string {
+	return map[string]string{
+		tenantLabel:                tenantName,
 		managedByLabel:             managedByValue,
-		"app.kubernetes.io/name":   "gentian-login",
-		"app.kubernetes.io/instance": name,
+		umcFrontendComponentLabel:  umcFrontendComponentValue,
+		"app.kubernetes.io/name":   "nubus-login-redirect",
+		"app.kubernetes.io/instance": instance,
+	}
+}
+
+func nubusTenantLoginURL(effectiveDomain string) string {
+	u := url.URL{
+		Scheme: "https",
+		Host:   effectiveDomain,
+		Path:   "/univention/login/",
+	}
+	q := u.Query()
+	q.Set("location", nubusTenantLoginLocation)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func (r *TenantReconciler) ensureUMCNubusLoginRedirects(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	gatewaySvc := umcGatewayReleaseName(tenant.Name)
+	loginURL := nubusTenantLoginURL(effectiveDomain)
+	redirectAnn := map[string]string{
+		"nginx.ingress.kubernetes.io/permanent-redirect":   loginURL,
+		"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
+		"nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+	}
+
+	rootName := umcRootRedirectName(tenant.Name)
+	if err := r.ensureNginxRedirectIngress(ctx, nsName, effectiveDomain, rootName, tenant.Name, redirectAnn, gatewaySvc, []redirectPath{
+		{path: "/", pathType: networkingv1.PathTypePrefix},
+	}); err != nil {
+		return fmt.Errorf("root redirect ingress: %w", err)
+	}
+
+	loginName := umcLoginRedirectName(tenant.Name)
+	return r.ensureNginxRedirectIngress(ctx, nsName, effectiveDomain, loginName, tenant.Name, redirectAnn, gatewaySvc, []redirectPath{
+		{path: "/login", pathType: networkingv1.PathTypePrefix},
+	})
+}
+
+type redirectPath struct {
+	path     string
+	pathType networkingv1.PathType
+}
+
+func (r *TenantReconciler) ensureNginxRedirectIngress(
+	ctx context.Context,
+	nsName, effectiveDomain, name, tenantName string,
+	annotations map[string]string,
+	backendSvc string,
+	paths []redirectPath,
+) error {
+	ingressClass := "public"
+	labels := umcFrontendLabels(tenantName, name)
+	httpPaths := make([]networkingv1.HTTPIngressPath, 0, len(paths))
+	for _, p := range paths {
+		pt := p.pathType
+		httpPaths = append(httpPaths, networkingv1.HTTPIngressPath{
+			Path:     p.path,
+			PathType: &pt,
+			Backend:  ingressBackend(backendSvc),
+		})
 	}
 	desired := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: nsName,
-			Labels:    labels,
-			Annotations: map[string]string{
-				"nginx.ingress.kubernetes.io/permanent-redirect":   "/login/",
-				"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
-				"nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
-			},
+			Name:        name,
+			Namespace:   nsName,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: networkingv1.IngressSpec{
 			IngressClassName: &ingressClass,
@@ -1084,13 +920,7 @@ func (r *TenantReconciler) ensureUMCRootRedirect(ctx context.Context, tenant *ge
 			Rules: []networkingv1.IngressRule{{
 				Host: effectiveDomain,
 				IngressRuleValue: networkingv1.IngressRuleValue{
-					HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &pathTypePrefix,
-							Backend:  ingressBackend(loginSvc),
-						}},
-					},
+					HTTP: &networkingv1.HTTPIngressRuleValue{Paths: httpPaths},
 				},
 			}},
 		},
@@ -1107,23 +937,43 @@ func (r *TenantReconciler) ensureUMCRootRedirect(ctx context.Context, tenant *ge
 		patch := client.MergeFrom(existing.DeepCopy())
 		existing.Spec = desired.Spec
 		existing.Annotations = desired.Annotations
+		existing.Labels = desired.Labels
 		return r.Patch(ctx, existing, patch)
 	}
 	return nil
 }
 
-func (r *TenantReconciler) deleteUMCGentianLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+func (r *TenantReconciler) deleteUMCNubusLoginRedirects(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+	for _, name := range []string{umcRootRedirectName(tenant.Name), umcLoginRedirectName(tenant.Name)} {
+		ing := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}}
+		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteUMCLegacyGentianLogin removes the superseded gentian-ui portal-frontend
+// stack (Deployment, Service, ConfigMap, Ingress) from clusters reconciled before
+// Nubus /univention/login/ became the tenant entry point.
+func (r *TenantReconciler) deleteUMCLegacyGentianLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	name := umcGentianLoginName(tenant.Name)
 	for _, obj := range []client.Object{
-		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: umcRootRedirectName(tenant.Name), Namespace: nsName}},
 		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-branding", Namespace: nsName}},
 	} {
 		if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
 			return err
 		}
+	}
+	// Deployment type removed from imports; delete via unstructured if present.
+	deploy := &unstructured.Unstructured{}
+	deploy.SetGroupVersionKind(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"})
+	deploy.SetName(name)
+	deploy.SetNamespace(nsName)
+	if err := r.Delete(ctx, deploy); client.IgnoreNotFound(err) != nil {
+		return err
 	}
 	return nil
 }
@@ -1137,11 +987,8 @@ func ingressBackend(serviceName string) networkingv1.IngressBackend {
 	}
 }
 
-func intstrFromName(name string) intstr.IntOrString {
-	return intstr.IntOrString{Type: intstr.String, StrVal: name}
-}
-
 func ingressSpecEqual(a, b *networkingv1.Ingress) bool {
 	return equality.Semantic.DeepEqual(a.Spec, b.Spec) &&
-		equality.Semantic.DeepEqual(a.Annotations, b.Annotations)
+		equality.Semantic.DeepEqual(a.Annotations, b.Annotations) &&
+		equality.Semantic.DeepEqual(a.Labels, b.Labels)
 }

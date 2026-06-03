@@ -60,6 +60,21 @@ func TestBuildUMCGatewayHelmValues_GlobalDomain(t *testing.T) {
 	if global["configMapUcr"] != umcUCRConfigMapName {
 		t.Fatalf("global.configMapUcr = %v, want %s", global["configMapUcr"], umcUCRConfigMapName)
 	}
+	ingress, ok := vals["ingress"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected ingress map in gateway values")
+	}
+	if ingress["enableLoginPath"] != true {
+		t.Fatalf("ingress.enableLoginPath = %v, want true", ingress["enableLoginPath"])
+	}
+}
+
+func TestNubusTenantLoginURL(t *testing.T) {
+	got := nubusTenantLoginURL("demo.desk.gentian.org")
+	want := "https://demo.desk.gentian.org/univention/login/?location=%2Funivention%2Fmanagement%2F"
+	if got != want {
+		t.Fatalf("nubusTenantLoginURL = %q, want %q", got, want)
+	}
 }
 
 func TestBuildUMCHelmValues_IngressPathsExcludeManagement(t *testing.T) {

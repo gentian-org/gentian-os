@@ -54,6 +54,11 @@ const (
 	tenantLabel     = "gentianos.io/tenant"
 	managedByLabel  = "app.kubernetes.io/managed-by"
 	managedByValue  = "gentian-os"
+	// umcFrontendComponentLabel marks Ingress objects owned by the per-tenant UMC
+	// stack (Nubus login redirects, umc-gateway paths). They must not be deleted by the app
+	// ingress stale cleanup in ensureIngress.
+	umcFrontendComponentLabel = "gentianos.io/component"
+	umcFrontendComponentValue = "umc-frontend"
 	kernelNamespace = "platform-kernel"
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	// Pods in this namespace must be allowed ingress to tenant pods so that the

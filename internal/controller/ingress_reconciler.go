@@ -199,6 +199,9 @@ func (r *TenantReconciler) deleteStaleIngressesForTenant(
 	}
 	for i := range list.Items {
 		name := list.Items[i].Name
+		if isUMCFrontendIngress(&list.Items[i]) {
+			continue
+		}
 		if expectedIngresses != nil {
 			if _, wanted := expectedIngresses[name]; wanted {
 				continue
@@ -490,4 +493,8 @@ func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effec
 		sub = appProfile
 	}
 	return fmt.Sprintf("%s.%s", sub, effectiveDomain)
+}
+
+func isUMCFrontendIngress(ing *networkingv1.Ingress) bool {
+	return ing.Labels[umcFrontendComponentLabel] == umcFrontendComponentValue
 }
