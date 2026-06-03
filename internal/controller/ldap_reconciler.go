@@ -1194,6 +1194,9 @@ if [ "${STATUS}" = "404" ]; then
   echo "UDM user ${ADMIN_USERNAME} created in ${USERS_OU_POS}"
 elif [ "${STATUS}" = "200" ]; then
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
+  udm_patch_ok "${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
+	"{\"properties\":{\"password\":\"${ADMIN_PASSWORD}\",\"disabled\":false,\"pwdChangeNextLogin\":false}}" \
+	"user ${ADMIN_USERNAME} password synced" || exit 1
 else
   echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
   exit 1
@@ -1202,8 +1205,6 @@ fi
 # Ensure the admin user is enabled and does not require a forced password change.
 # disabled:false explicitly marks the account as active, preventing Keycloak's
 # univention-ldap-mapper from importing the account as disabled on first login.
-# On Retain redeploy the user already exists; on Delete redeploy a fresh user
-# was created above. Never reset the password when the user already existed.
 udm_patch_ok "${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
 	"{\"properties\":{\"disabled\":false,\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\",\"opendeskFileshareEnabled\":false,\"opendeskLivecollaborationEnabled\":false}}" \
 	"user ${ADMIN_USERNAME} enabled and pwdChangeNextLogin cleared" || exit 1

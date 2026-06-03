@@ -899,11 +899,11 @@ fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminU
 }
 
 // buildKCLDAPSyncScript returns a shell script that triggers a full Keycloak
-// LDAP user-storage sync for the kernel realm. Running this after all LDAP
+// LDAP user-storage sync for the tenant realm. Running this after all LDAP
 // provisioning jobs have completed ensures that any users cached with
 // enabled=false (due to the brief UDM shadowExpire race during user creation)
 // are re-imported from LDAP with the correct enabled state.
-func buildKCLDAPSyncScript(kernelRealm string) string {
+func buildKCLDAPSyncScript(realmName string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -920,11 +920,11 @@ if [ -z "${PROVIDER_ID}" ]; then
 fi
 RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
-echo "Keycloak LDAP full sync complete for realm %s: ${RESULT}"`, kernelRealm, kernelRealm, kernelRealm, kernelRealm)
+echo "Keycloak LDAP full sync complete for realm %s: ${RESULT}"`, realmName, realmName, realmName, realmName)
 }
 
 // makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP full sync.
-func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, kernelRealm string) *batchv1.Job {
+func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -941,7 +941,7 @@ func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, kernelRealm string) *bat
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("kc-ldap-sync", buildKCLDAPSyncScript(kernelRealm)),
+						keycloakContainer("kc-ldap-sync", buildKCLDAPSyncScript(realmName)),
 					},
 				},
 			},
@@ -958,7 +958,7 @@ func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gent
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeKCLDAPSyncJob(tenant, r.KernelRealm))
+		return false, r.Create(ctx, makeKCLDAPSyncJob(tenant, keycloakRealmName(tenant)))
 	}
 	if err != nil {
 		return false, err

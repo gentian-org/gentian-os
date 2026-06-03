@@ -46,7 +46,8 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 	for _, want := range []string{
 		"udm_patch_ok",
 		"UDM user ${ADMIN_USERNAME} already exists",
-		"Never reset the password when the user already existed",
+		"user ${ADMIN_USERNAME} password synced",
+		"${ADMIN_PASSWORD}",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected admin user script to contain %q", want)

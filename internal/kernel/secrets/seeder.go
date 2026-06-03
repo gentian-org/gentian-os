@@ -64,6 +64,13 @@ func (s *Seeder) gen(salt, info string, n int) string {
 	return hex.EncodeToString(buf)[:n]
 }
 
+// genTenantAdminPassword returns a password that satisfies typical UCS/Nubus
+// complexity rules (mixed character classes). Pure-hex derived passwords are
+// rejected on PATCH even when CREATE succeeded on an earlier deploy.
+func (s *Seeder) genTenantAdminPassword(salt string) string {
+	return "Gt!" + s.gen(salt, "password", 24)
+}
+
 // seedAndRead writes data with PutOnce, then re-reads to honour any value
 // already present (manual overrides or values from a prior reconcile).
 func (s *Seeder) seedAndRead(ctx context.Context, path string, data map[string]string) (map[string]string, error) {
@@ -301,7 +308,7 @@ func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdmi
 	salt := TenantAdminPath(tenant)
 	want := map[string]string{
 		"username": "admin-" + tenant,
-		"password": s.gen(salt, "password", 40),
+		"password": s.genTenantAdminPassword(salt),
 	}
 	got, err := s.seedAndRead(ctx, salt, want)
 	if err != nil {
