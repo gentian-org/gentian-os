@@ -711,15 +711,6 @@ func umcIngressAnnotations(effectiveDomain, kernelDomain string) map[string]inte
 	}
 }
 
-func umcIngressAnnotationStrings(effectiveDomain, kernelDomain string) map[string]string {
-	raw := umcIngressAnnotations(effectiveDomain, kernelDomain)
-	out := make(map[string]string, len(raw))
-	for k, v := range raw {
-		out[k] = fmt.Sprint(v)
-	}
-	return out
-}
-
 func buildUMCGatewayRelease(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(helmReleaseGVK)
