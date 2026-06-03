@@ -270,20 +270,21 @@ tenant_ldap_ou_from_resource() {
 run_ldap_ou_delete_fallback() {
   local tenant_name="${1}"
   local resource_file="${2}"
+  local force="${3:-false}"
   local ou_spec
   local job_name="ldap-ou-delete-${tenant_name}"
 
   ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
   ou_spec="${ou_spec//\"/\\\"}"
-  echo "Running LDAP OU delete fallback for tenant '${tenant_name}' (${ou_spec})..."
+  echo "Running LDAP OU delete for tenant '${tenant_name}' (${ou_spec})..."
 
-  if kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+  if [[ "${force}" == "true" ]]; then
+    kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
+  elif kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
     kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
       --for=condition=complete --timeout=300s
     return $?
   fi
-
-  kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
 
   kubectl apply -f - <<EOF
 apiVersion: batch/v1
@@ -319,6 +320,10 @@ spec:
             -H "Accept: application/json" \\
             "\${BASE_URL}/container/ou/\${OU_ENC}?cleanup=1&recursive=1")
           echo "OU \${OU_POS} deletion requested (HTTP \${HTTP})"
+          case "\${HTTP}" in
+            200|204|404) ;;
+            *) echo "ERROR: OU delete failed (HTTP \${HTTP})" >&2; exit 1 ;;
+          esac
         env:
         - name: UDM_URL
           valueFrom:
@@ -341,6 +346,77 @@ EOF
     --for=condition=complete --timeout=300s
 }
 
+verify_ldap_ou_absent() {
+  local tenant_name="${1}"
+  local resource_file="${2}"
+  local ou_spec
+  local job_name="ldap-ou-verify-gone-${tenant_name}"
+
+  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
+  ou_spec="${ou_spec//\"/\\\"}"
+
+  kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
+
+  kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant_name}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: verify-ou-gone
+        image: curlimages/curl:8.7.1
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eu
+          urlencode() { printf '%s' "\$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
+          CREDS="-u Administrator:\${UDM_ADMIN_PASSWORD}"
+          BASE_URL="\${UDM_URL}/udm"
+          OU_SPEC="${ou_spec}"
+          case "\${OU_SPEC}" in
+            *,*) OU_POS="\${OU_SPEC}" ;;
+            *) OU_POS="\${OU_SPEC},\${UDM_LDAP_BASE}" ;;
+          esac
+          OU_ENC=\$(urlencode "\${OU_POS}")
+          HTTP=\$(curl -s -o /dev/null -w "%{http_code}" \${CREDS} \\
+            -H "Accept: application/json" \\
+            "\${BASE_URL}/container/ou/\${OU_ENC}")
+          echo "OU \${OU_POS} lookup (HTTP \${HTTP})"
+          case "\${HTTP}" in
+            404) echo "OU absent (HTTP 404)" ;;
+            *) echo "ERROR: tenant LDAP OU still present (HTTP \${HTTP})" >&2; exit 1 ;;
+          esac
+        env:
+        - name: UDM_URL
+          valueFrom:
+            secretKeyRef:
+              name: udm-admin
+              key: url
+        - name: UDM_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: udm-admin
+              key: password
+        - name: UDM_LDAP_BASE
+          valueFrom:
+            secretKeyRef:
+              name: udm-admin
+              key: ldapBase
+EOF
+
+  kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+    --for=condition=complete --timeout=120s
+}
+
 wait_for_purge_controller_cleanup() {
   local tenant_name="${1}"
   local resource_file="${2}"
@@ -349,15 +425,23 @@ wait_for_purge_controller_cleanup() {
 
   if kubectl get job "${ou_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
     echo "Waiting for controller LDAP OU delete job '${ou_job}'..."
-    kubectl wait job "${ou_job}" -n "${KERNEL_NAMESPACE}" \
-      --for=condition=complete --timeout=300s
-    return $?
+    if ! kubectl wait job "${ou_job}" -n "${KERNEL_NAMESPACE}" \
+      --for=condition=complete --timeout=300s; then
+      echo "WARNING: controller OU delete job did not complete successfully." >&2
+    fi
+  elif kubectl get job "${lock_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    echo "WARNING: Retain LDAP cleanup ran (job '${lock_job}'); tenant CR likely had deletionPolicy=Retain during delete." >&2
   fi
 
-  if kubectl get job "${lock_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
-    echo "WARNING: Retain LDAP cleanup detected (job '${lock_job}'); running OU delete fallback." >&2
-    run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}"
-    return $?
+  # Always re-run OU delete on purge: idempotent (404 = already gone) and covers
+  # cases where GitOps overwrote deletionPolicy=Delete before the controller ran.
+  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true; then
+    return 1
+  fi
+
+  echo "Verifying tenant LDAP OU is gone..."
+  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}"; then
+    return 1
   fi
 
   return 0
@@ -602,8 +686,8 @@ print_tenant_admin_login_instructions() {
   echo "─── Tenant Keycloak Realm Admin (secondary) ─────────────────────────────────"
   echo "  Same user manages OIDC clients and realm settings in Keycloak."
   echo "  Keycloak Admin Console: ${id_base}/admin/${realm}/console"
-  echo "  Username : ${username}"
-  echo "  Password : ${password}  (same credentials)"
+  echo "  Login email: ${login_email}"
+  echo "  Password    : ${password}"
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 

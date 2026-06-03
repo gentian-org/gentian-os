@@ -1560,7 +1560,11 @@ OU_ENC=$(urlencode "${OU_POS}")
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
   -H "Accept: application/json" \
 	"${BASE_URL}/container/ou/${OU_ENC}?cleanup=1&recursive=1")
-echo "OU %s deletion requested (HTTP ${HTTP})"`, ouDN, ouDN)
+echo "OU %s deletion requested (HTTP ${HTTP})"
+case "${HTTP}" in
+  200|204|404) ;;
+  *) echo "ERROR: OU delete failed (HTTP ${HTTP})" >&2; exit 1 ;;
+esac`, ouDN, ouDN)
 }
 
 // --- Name helpers ------------------------------------------------------------
