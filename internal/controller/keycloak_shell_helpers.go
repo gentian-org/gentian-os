@@ -18,9 +18,10 @@ func keycloakShellJSONIDExtractor() string {
   _kj_val="$3"
   _kj_id=$(printf '%s' "${_kj_json}" | sed -n "s/.*\"id\":\"\([^\"]*\)\",\"${_kj_attr}\":\"${_kj_val}\".*/\1/p" | head -1)
   if [ -z "${_kj_id}" ]; then
-    _kj_id=$(printf '%s' "${_kj_json}" | sed -n "s/.*\"${_kj_attr}\":\"${_kj_val}\"[^}]*\"id\":\"\([^\"]*\)\".*/\1/p" | head -1)
+    _kj_id=$(printf '%s' "${_kj_json}" | sed -n "s/.*\"${_kj_attr}\":\"${_kj_val}\",\"id\":\"\([^\"]*\)\".*/\1/p" | head -1)
   fi
-}`
+}
+`
 }
 
 // keycloakShellRequireID emits shell that assigns outVar from the extractor or exits 1.
@@ -39,7 +40,7 @@ func extractKeycloakJSONIDByAttr(json, attr, value string) string {
 	if m := before.FindStringSubmatch(json); len(m) > 1 {
 		return m[1]
 	}
-	after := regexp.MustCompile(regexp.QuoteMeta(attr) + `":"` + regexp.QuoteMeta(value) + `[^}]*"id":"([^"]+)"`)
+	after := regexp.MustCompile(`"` + regexp.QuoteMeta(attr) + `":"` + regexp.QuoteMeta(value) + `","id":"([^"]+)"`)
 	if m := after.FindStringSubmatch(json); len(m) > 1 {
 		return m[1]
 	}

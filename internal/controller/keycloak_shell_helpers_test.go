@@ -3,6 +3,8 @@
 package controller
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -52,5 +54,20 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	}
 	if !strings.Contains(script, `keycloak_json_id_by_attr ${LDAP_COMPONENTS} "name" "ldap"`) {
 		t.Fatal("expected LDAP_ID resolution via keycloak_json_id_by_attr")
+	}
+	if !strings.Contains(script, `"${KEYCLOAK_URL}/admin/realms/demo")`) {
+		t.Fatal("realm script must not corrupt HTTP realm URL with misplaced format args")
+	}
+	if strings.Contains(script, "keycloak_json_id_by_attr ${LDAP_COMPONENTS}") &&
+		strings.Contains(script, "/admin/realms/keycloak_json") {
+		t.Fatal("realm script must not splice ldapIDBlock into the HTTP curl line")
+	}
+
+	path := t.TempDir() + "/realm.sh"
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
+		t.Fatalf("realm script must be valid POSIX sh: %v\n%s", err, out)
 	}
 }

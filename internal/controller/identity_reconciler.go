@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -668,6 +669,11 @@ func keycloakContainer(name, script string) corev1.Container {
 // Keycloak before LDAP clears shadowExpire triggers a re-import that re-disables
 // the user. The dedicated ensureOpendeskAdminEnableJob handles the re-enable
 // after the LDAP admin-user job is confirmed complete.
+const (
+	realmScriptLDAPIDPlaceholder   = "__GENTIAN_LDAP_ID_BLOCK__"
+	realmScriptBrokerIDPlaceholder = "__GENTIAN_BROKER_ID_BLOCK__"
+)
+
 func buildRealmScript(realmName, displayName string) string {
 	ldapIDBlock := keycloakShellRequireID("LDAP_ID", "${LDAP_COMPONENTS}", "name", "ldap")
 	brokerResolveID := `keycloak_json_id_by_attr "${BROKER_RESP}" "clientId" "${BROKER_CLIENT_ID}"
@@ -677,8 +683,7 @@ if [ -z "${BROKER_KC_ID}" ]; then
   exit 1
 fi`
 
-	return fmt.Sprintf(`set -eu
-%s
+	script := fmt.Sprintf(`set -eu
 
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -757,7 +762,7 @@ if [ -n "${LDAP_SERVER:-}" ]; then
     LDAP_COMPONENTS=$(curl -sf \
       -H "Authorization: Bearer ${TOKEN}" \
       "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider")
-%s
+`+realmScriptLDAPIDPlaceholder+`
     GROUP_MAPPERS=$(curl -sf \
       -H "Authorization: Bearer ${TOKEN}" \
       "${KEYCLOAK_URL}/admin/realms/%s/components?parent=${LDAP_ID}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper" || echo "[]")
@@ -817,7 +822,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
   if echo "${BROKER_RESP}" | grep -q "\"clientId\":\"${BROKER_CLIENT_ID}\""; then
-%s
+`+realmScriptBrokerIDPlaceholder+`
     curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
@@ -830,7 +835,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
       -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
     BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
       "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-%s
+`+realmScriptBrokerIDPlaceholder+`
     echo "broker client ${BROKER_CLIENT_ID} created in ${KERNEL_REALM} realm"
   fi
   BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
@@ -859,11 +864,12 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
   #  on mailPrimaryAddress). The kernel IdP registered above remains available
   #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
-fi`, keycloakShellJSONIDExtractor(), ldapIDBlock,
-		realmName, realmName, displayName, realmName, realmName, realmName, realmName,
+fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName,
-		brokerResolveID, brokerResolveID)
+		realmName, realmName, realmName, realmName, realmName, realmName)
+	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
+	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
+	return keycloakShellJSONIDExtractor() + script
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
