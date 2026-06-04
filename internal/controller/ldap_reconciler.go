@@ -1280,7 +1280,7 @@ TEMPLATE_BODY=$(cat <<EOF
   "properties": {
     "name": "App User (%s)",
     "description": "Standard user with access to apps; email prefill uses @${MAIL_DOMAIN}",
-    "mailPrimaryAddress": "<username>.@${MAIL_DOMAIN}",
+    "mailPrimaryAddress": "<username>@${MAIL_DOMAIN}",
     "opendeskFileshareEnabled": true,
     "opendeskLivecollaborationEnabled": true,
     "groups": ["${APP_USERS_DN}"]

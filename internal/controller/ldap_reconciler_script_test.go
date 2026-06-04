@@ -61,7 +61,7 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 	for _, want := range []string{
 		"openDesk User",
 		"mailPrimaryAddress",
-		`"mailPrimaryAddress": "<username>.@${MAIL_DOMAIN}"`,
+		`"mailPrimaryAddress": "<username>@${MAIL_DOMAIN}"`,
 		"MAIL_DOMAIN=\"demo.desk.gentian.org\"",
 		"cn=templates,${OU_POS}",
 		"App User (demo)",

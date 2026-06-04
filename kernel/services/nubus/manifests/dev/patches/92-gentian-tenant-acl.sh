@@ -4,7 +4,7 @@
 #
 # Patch slapd.conf to give tenant admins the LDAP access needed to provision users.
 #
-# Ten insertions are made (all idempotent):
+# Eleven insertions are made (all idempotent):
 #
 # 1. cn=temporary ACL — insert 'by set=Tenant Admins' before Domain Admins in the
 #    three lock-object blocks, so tenant admins can acquire UID/SID locks when
@@ -62,6 +62,13 @@
 #     (e.g. 'gtn-test' from 'gtn-test.gentian.cloud') is captured as '$1' and
 #     matched against 'ou=$1' in the requesting user's DN.  System and admin
 #     accounts always get read access via 'break' clauses before the tenant check.
+#
+# 11. global usertemplate visibility — kernel templates at
+#     cn=<name>,cn=templates,cn=univention,... are readable via the catch-all
+#     'by users read', so tenant admins see the kernel "App User" template in
+#     the UMC picker and UCR default points at the wrong mail domain.  Restrict
+#     reads to admin/service accounts; tenant admins only see templates under
+#     cn=templates,ou=<tenant>,... in their own OU (patch 9 write/read rules).
 #
 # Runs as /entrypoint.d/92-gentian-tenant-acl.sh before slapd starts.
 # Idempotent: exits 0 without changes if all patches are already applied.
@@ -653,6 +660,23 @@ elif patch10_tenant_admins_sentinel not in content:
         print("Upgraded mail/domain visibility to grant Tenant Admins read (patch 10 tenant-admins).")
 else:
     print("mail/domain visibility restriction (patch 10) already present.")
+
+# ── Patch 11: global usertemplate visibility restriction ─────────────────────
+patch11_sentinel = f'# Gentian patch 11: restrict global usertemplate visibility\n'
+if patch11_sentinel not in content:
+    global_template_acl = (
+        f'# Gentian patch 11: restrict global usertemplate visibility to admins\n'
+        f'access to dn.regex="^cn=[^,]+,cn=templates,cn=univention,{ldap_base}$"\n'
+        f'   by sockname="PATH=/var/run/slapd/ldapi" read break\n'
+        f'   by dn="cn=admin,{ldap_base}" read break\n'
+        f'   by group/univentionGroup/uniqueMember="cn=Domain Admins,cn=groups,{ldap_base}" read break\n'
+        f'   by dn="uid=Administrator,cn=users,{ldap_base}" read break\n'
+        f'   by * none\n'
+    )
+    content = content.replace(catchall_marker, global_template_acl + catchall_marker, 1)
+    print("Patched global usertemplate visibility restriction (patch 11).")
+else:
+    print("global usertemplate visibility restriction (patch 11) already present.")
 
 with open(SLAPD_CONF, "w") as f:
     f.write(content)
