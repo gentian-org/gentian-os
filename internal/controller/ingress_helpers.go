@@ -48,8 +48,10 @@ func frameAncestorsIngressSnippet(ancestorOrigin string) string {
 	// sandbox origin must keep script-src without 'unsafe-eval' so client-side
 	// isolation self-tests pass. Clearing Content-Security-Policy and setting only
 	// frame-ancestors breaks those apps with "eval should not be permitted".
+	// Use native add_header (not headers-more more_add_headers): microk8s and
+	// several ingress-nginx builds only expose more_set_headers/more_clear_headers.
 	return fmt.Sprintf(`more_clear_headers "X-Frame-Options";
-more_add_headers "Content-Security-Policy: frame-ancestors 'self' %s";`, ancestorOrigin)
+add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigin)
 }
 
 // stripLegacyPortalEmbeddingSnippet removes per-profile frame-ancestors / X-Frame-Options
@@ -65,6 +67,7 @@ func stripLegacyPortalEmbeddingSnippet(snippet string) string {
 			strings.Contains(trimmed, `more_clear_headers "Content-Security-Policy"`) ||
 			strings.Contains(trimmed, `more_set_headers "Content-Security-Policy`) ||
 			strings.Contains(trimmed, `more_add_headers "Content-Security-Policy`) ||
+			strings.Contains(trimmed, `add_header Content-Security-Policy`) ||
 			strings.Contains(trimmed, "frame-ancestors") {
 			continue
 		}

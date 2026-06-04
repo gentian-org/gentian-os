@@ -108,7 +108,7 @@ sub_filter_once on;`,
 	if strings.Contains(got, `more_clear_headers "Content-Security-Policy"`) {
 		t.Fatal("must not clear upstream Content-Security-Policy (breaks CryptPad sandbox eval check)")
 	}
-	if !strings.Contains(got, `more_add_headers "Content-Security-Policy`) {
+	if !strings.Contains(got, `add_header Content-Security-Policy "frame-ancestors`) {
 		t.Fatalf("expected appended frame-ancestors CSP, got:\n%s", got)
 	}
 }

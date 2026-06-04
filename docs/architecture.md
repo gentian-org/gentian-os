@@ -265,11 +265,11 @@ by default browsers block iframe embedding unless the embedded page explicitly
 permits it. The gentian-os controller injects this as an NGINX
 `configuration-snippet` on every `Ingress` it creates: it clears any
 `X-Frame-Options` the app sets and **appends** a second
-`Content-Security-Policy` header containing only `frame-ancestors 'self'`
-and the shared kernel portal origin (`https://portal.<kernel_domain>`). The
-app's own CSP (script-src, connect-src, …) is left intact — replacing the
-whole header breaks CryptPad, whose sandbox origin must keep a strict
-script-src without `'unsafe-eval'`. Per-tenant portal hostnames are not used;
+`Content-Security-Policy` header (via native NGINX `add_header … always`)
+containing only `frame-ancestors 'self'` and the shared kernel portal origin
+(`https://portal.<kernel_domain>`). The app's own CSP (script-src,
+connect-src, …) is left intact — replacing the whole header breaks CryptPad,
+whose sandbox origin must keep a strict script-src without `'unsafe-eval'`. Per-tenant portal hostnames are not used;
 tenants authenticate via the kernel portal. CryptPad's additional
 `pad-sandbox.<tenant>` ingress instead allows `https://pad.<tenant>` and
 `https://portal.<kernel_domain>` because CSP checks the full ancestor chain when
