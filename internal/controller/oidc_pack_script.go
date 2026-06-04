@@ -140,7 +140,7 @@ if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
 else
   _kj_mh=$(curl -sS -o /dev/null -w "%%{http_code}" -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" \
-    -d "{\"name\":%q,\"protocol\":\"openid-connect\",\"protocolMapper\":%q,\"config\":%s}")
+    -d "{\"name\":\"%s\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"%s\",\"config\":%s}")
   if [ "${_kj_mh}" != "201" ] && [ "${_kj_mh}" != "409" ]; then
     echo "ERROR: mapper %s POST failed (HTTP ${_kj_mh})" >&2
     exit 1

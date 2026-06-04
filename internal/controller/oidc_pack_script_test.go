@@ -37,6 +37,12 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if !strings.Contains(script, "_kj_scope_id_from_list") {
 		t.Fatal("expected dedicated client-scope id lookup helper")
 	}
+	if strings.Contains(script, `\"name\":"opendesk_useruuid"`) {
+		t.Fatal("mapper POST JSON must quote name field values")
+	}
+	if !strings.Contains(script, `\"name\":\"opendesk_useruuid\"`) {
+		t.Fatal("expected properly quoted mapper name in POST body")
+	}
 	if !strings.Contains(script, "default-default-client-scopes") {
 		t.Fatal("expected fallback lookup on default-default-client-scopes")
 	}
