@@ -133,8 +133,8 @@ func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTempl
 		}
 	cfgJSON := mapperConfigJSON(tmpl.Config)
 	fmt.Fprintf(&b, `
-MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models")
+MAPPERS=$(curl -sS -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" 2>/dev/null || echo "[]")
 if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
   echo "mapper %s already on scope ${SCOPE_NAME}"
 else
