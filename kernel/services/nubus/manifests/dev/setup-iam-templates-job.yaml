@@ -57,7 +57,7 @@ spec:
                         "properties": {
                           "name": "App User",
                           "description": "Platform-wide app user template (kernel admins)",
-                          "mailPrimaryAddress": "@desk.gentian.org",
+                          "mailPrimaryAddress": "<username>.@desk.gentian.org",
                           "opendeskFileshareEnabled": true,
                           "opendeskLivecollaborationEnabled": true,
                           "groups": ["'"${APP_USERS_DN}"'"]
