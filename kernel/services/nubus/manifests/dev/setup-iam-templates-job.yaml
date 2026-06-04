@@ -80,7 +80,8 @@ spec:
               for LEGACY_NAME in "openDesk User" "openDesk Admin" "openDesk Administrator"; do
                   LEGACY_DN="cn=${LEGACY_NAME},cn=templates,cn=univention,${LDAP_BASE}"
                   LEGACY_ENC=$(urlencode "${LEGACY_DN}")
-                  LEGACY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}")
+                  LEGACY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" \
+                      "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}")
                   if [ "${LEGACY_STATUS}" = "200" ]; then
                       curl -sf -X DELETE ${CREDS} -H "Accept: application/json" \
                           "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}"

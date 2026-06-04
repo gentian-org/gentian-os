@@ -501,6 +501,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 				// Delete provisioning jobs so they are re-created on the next deploy.
 				r.deleteProvisioningJobs(ctx,
 					ouJobName(tenant.Name),
+					appUserTemplateJobName(tenant.Name),
 					adminUserJobName(tenant.Name),
 					adminPolicyJobName(tenant.Name),
 				)
@@ -525,7 +526,12 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 	switch ajErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, aj); {
 	case errors.IsNotFound(ajErr), ajErr == nil && !jobIsComplete(aj):
 		// Admin user was never fully provisioned; nothing to lock.
-		r.deleteProvisioningJobs(ctx, ouJobName(tenant.Name), adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+		r.deleteProvisioningJobs(ctx,
+			ouJobName(tenant.Name),
+			appUserTemplateJobName(tenant.Name),
+			adminUserJobName(tenant.Name),
+			adminPolicyJobName(tenant.Name),
+		)
 		r.deleteProvisioningJobs(ctx, portalJobNames...)
 		return nil
 	case ajErr != nil:
@@ -539,7 +545,12 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		if jobIsComplete(lockJob) {
 			// Also remove the OU provision job so a subsequent deploy
 			// re-runs it (ensures the OU is recreated if it was removed).
-			r.deleteProvisioningJobs(ctx, ouJobName(tenant.Name), adminUserJobName(tenant.Name), adminPolicyJobName(tenant.Name))
+			r.deleteProvisioningJobs(ctx,
+				ouJobName(tenant.Name),
+				appUserTemplateJobName(tenant.Name),
+				adminUserJobName(tenant.Name),
+				adminPolicyJobName(tenant.Name),
+			)
 			r.deleteProvisioningJobs(ctx, portalJobNames...)
 			return nil
 		}
@@ -559,7 +570,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 // best-effort step identical in purpose to ensureNextcloudGroup: it does not
 // affect Phase=Ready. For tenants WITH LDAP apps, ensureLDAP already handles
 // all steps so this function is a no-op to avoid duplicate Job creation.
-// Sequence: OU → admin-user → admin-policy (each step waits for the previous).
+// Sequence: OU → App User template → admin-user → admin-policy (each step waits for the previous).
 // Admin user runs before policy for the same reason as in ensureLDAP: the
 // portal groups cache must be populated before portal allowedGroups are set.
 func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
