@@ -87,8 +87,8 @@ func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
 	if !strings.Contains(got, "https://pad.demo.desk.gentian.org") {
 		t.Fatalf("expected main CryptPad origin in sandbox snippet, got:\n%s", got)
 	}
-	if strings.Contains(got, "portal.desk.gentian.org") {
-		t.Fatal("sandbox ingress must not use kernel portal frame-ancestors")
+	if !strings.Contains(got, "https://portal.desk.gentian.org") {
+		t.Fatal("sandbox ingress must allow kernel portal in frame-ancestors for nested portal→pad→sandbox")
 	}
 }
 

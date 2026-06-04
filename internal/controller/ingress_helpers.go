@@ -30,11 +30,16 @@ func portalEmbeddingIngressSnippet(kernelDomain string) string {
 	return frameAncestorsIngressSnippet(portalOrigin)
 }
 
-// cryptpadSandboxIngressSnippet allows the main CryptPad origin to embed the
-// sandbox iframe (pad.<tenant> → pad-sandbox.<tenant>).
-func cryptpadSandboxIngressSnippet(effectiveDomain string) string {
-	parentOrigin := fmt.Sprintf("https://pad.%s", effectiveDomain)
-	return frameAncestorsIngressSnippet(parentOrigin)
+// cryptpadSandboxIngressSnippet allows the main CryptPad origin and the shared
+// kernel portal to embed the sandbox iframe. CSP frame-ancestors checks the full
+// ancestor chain: portal → pad.<tenant> → pad-sandbox.<tenant> when the portal
+// opens CryptPad in an embedded window; pad alone is sufficient in a top-level tab.
+func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string {
+	origins := fmt.Sprintf("https://pad.%s", effectiveDomain)
+	if kernelDomain != "" {
+		origins += fmt.Sprintf(" https://portal.%s", kernelDomain)
+	}
+	return frameAncestorsIngressSnippet(origins)
 }
 
 func frameAncestorsIngressSnippet(ancestorOrigin string) string {
@@ -70,7 +75,7 @@ func ensurePortalEmbeddingAnnotations(annotations map[string]string, kernelDomai
 	var embedding string
 	switch {
 	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
-		embedding = cryptpadSandboxIngressSnippet(effectiveDomain)
+		embedding = cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain)
 	case kernelDomain != "":
 		embedding = portalEmbeddingIngressSnippet(kernelDomain)
 	default:
