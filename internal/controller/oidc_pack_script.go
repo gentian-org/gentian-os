@@ -141,8 +141,8 @@ func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTempl
 		if !ok {
 			continue
 		}
-	cfgJSON := mapperConfigJSON(tmpl.Config)
-	fmt.Fprintf(&b, `
+		cfgJSON := mapperConfigJSON(tmpl.Config)
+		fmt.Fprintf(&b, `
 MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models")
 if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
