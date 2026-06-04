@@ -1108,6 +1108,115 @@ EOF
 }
 
 # =============================================================================
+# Crossplane platform compositions (not per-AppProfile)
+# =============================================================================
+# Tenant apps (jitsi, cryptpad, …) are AppProfile CRs from gentian-apps; they use
+# one of these composition *variants* via spec.compositionRef (default: app-default).
+# Adding a new AppProfile does not require editing install/update/uninstall unless
+# you introduce a new variant file matching app-<name>.yaml in crossplane/compositions/.
+
+apply_crossplane_app_compositions() {
+    local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
+    local f
+    shopt -s nullglob
+    for f in "${comp_dir}"/app-*.yaml; do
+        info "Applying Composition $(basename "${f}")..."
+        kubectl apply -f "${f}"
+    done
+    shopt -u nullglob
+}
+
+apply_crossplane_platform_compositions() {
+    info "Applying Composition (cluster-default)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
+    apply_crossplane_app_compositions
+    info "Applying Composition (tenant-default)..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
+}
+
+apply_crossplane_platform_compositions_update() {
+    # Day-2: apply every composition YAML in the directory (including any new app-* variant).
+    local f
+    shopt -s nullglob
+    for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
+        info "Applying Composition $(basename "${f}")..."
+        kubectl apply -f "${f}"
+    done
+    shopt -u nullglob
+}
+
+delete_crossplane_compositions() {
+    if ! kubectl get crd compositions.apiextensions.crossplane.io >/dev/null 2>&1; then
+        info "  Composition CRD absent; skipping Composition deletion."
+        return
+    fi
+    local f
+    shopt -s nullglob
+    for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
+        kubectl delete -f "${f}" --ignore-not-found=true 2>/dev/null || true
+        success "  Removed: $(basename "${f}")"
+    done
+    shopt -u nullglob
+}
+
+# Collect Helm Release CR names from kernel/services manifests (Pattern B kernel
+# charts). Tenant app Releases are owned by App XRs and are removed with Tenant CRs.
+_collect_kernel_helm_release_names() {
+    local env="$1"
+    local -n _outvar="$2"
+    _outvar=()
+    local release_file name
+    while IFS= read -r -d '' release_file; do
+        while IFS= read -r name; do
+            [[ -n "${name}" ]] && _outvar+=("${name}")
+        done < <(awk '
+            /^kind: Release/ { in_release=1 }
+            in_release && /^  name:/ { print $2; in_release=0 }
+            /^---/ { in_release=0 }
+        ' "${release_file}")
+    done < <(find "${SCRIPT_DIR}/kernel/services" \
+        -name "release.yaml" \
+        -path "*/${env}/*" \
+        -print0 2>/dev/null | sort -z)
+}
+
+_delete_helm_release_cr() {
+    local release_name="$1"
+    if ! kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
+        return 0
+    fi
+    info "Deleting provider-helm Release ${release_name}..."
+    kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
+    local local_deadline=$((SECONDS + 180))
+    while kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; do
+        if (( SECONDS > local_deadline )); then
+            warn "Release ${release_name} still present after 3m — forcing finalizer removal."
+            kubectl patch release.helm.crossplane.io/"${release_name}" \
+                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                2>/dev/null || true
+            break
+        fi
+        sleep 5
+    done
+    success "Release ${release_name} removed."
+}
+
+# Delete Pattern B kernel Releases declared in kernel/services (reverse install order).
+delete_kernel_helm_releases() {
+    local env="${1:-dev}"
+    local -a release_names=()
+    _collect_kernel_helm_release_names "${env}" release_names
+    if [[ ${#release_names[@]} -eq 0 ]]; then
+        info "No kernel Helm Release names found under kernel/services/*/${env}/"
+        return
+    fi
+    local i
+    for (( i=${#release_names[@]}-1; i>=0; i-- )); do
+        _delete_helm_release_cr "${release_names[i]}"
+    done
+}
+
+# =============================================================================
 # 1. Install CLI tools
 # =============================================================================
 install_tools() {

@@ -1225,7 +1225,8 @@ TEMPLATES_POS="cn=templates,${OU_POS}"
 APP_USERS_DN="cn=App Users,cn=groups,${UDM_LDAP_BASE}"
 MAIL_DOMAIN="%s"
 MAIL_DOMAIN_CONTAINER="cn=domain,cn=mail,${UDM_LDAP_BASE}"
-TEMPLATE_DN="cn=App User,${TEMPLATES_POS}"
+# UDM uses the template "name" property ("1 App User") as the LDAP RDN cn.
+TEMPLATE_DN="cn=1 App User,${TEMPLATES_POS}"
 TEMPLATE_ENC=$(urlencode "${TEMPLATE_DN}")
 
 # Remove kernel App User template if present (app users are tenant-scoped only).
@@ -1314,11 +1315,26 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/settings/usertemplate/" \
     -d "${TEMPLATE_BODY}")
   if [ "${HTTP}" != "200" ] && [ "${HTTP}" != "201" ]; then
-    echo "failed to create App User template (HTTP ${HTTP})" >&2
-    cat /tmp/udm-template-body >&2 2>/dev/null || true
-    exit 1
+    # UDM may return 422 when the template RDN already exists (e.g. after a manual UMC edit).
+    if [ "${HTTP}" = "422" ]; then
+      STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+        -H "Accept: application/json" \
+        "${BASE_URL}/settings/usertemplate/${TEMPLATE_ENC}")
+      if [ "${STATUS}" = "200" ]; then
+        echo "App User template already exists at ${TEMPLATE_DN}"
+      else
+        echo "failed to create App User template (HTTP ${HTTP})" >&2
+        cat /tmp/udm-template-body >&2 2>/dev/null || true
+        exit 1
+      fi
+    else
+      echo "failed to create App User template (HTTP ${HTTP})" >&2
+      cat /tmp/udm-template-body >&2 2>/dev/null || true
+      exit 1
+    fi
+  else
+    echo "App User template created for ${MAIL_DOMAIN}"
   fi
-  echo "App User template created for ${MAIL_DOMAIN}"
 elif [ "${STATUS}" = "200" ]; then
   HTTP=$(curl -s -o /tmp/udm-template-body -w "%%{http_code}" -X PATCH ${CREDS} \
     -H "Content-Type: application/json" \
@@ -1736,7 +1752,7 @@ fi
 # default points at the kernel template; tenant admins cannot read it (LDAP ACL
 # patch 11). UMC gateway patch 93 selects this template when it is the only
 # visible entry in the template picker.
-TENANT_TEMPLATE_DN="cn=App User,cn=templates,${OU_POS}"
+TENANT_TEMPLATE_DN="cn=1 App User,cn=templates,${OU_POS}"
 TENANT_TEMPLATE_ENC=$(urlencode "${TENANT_TEMPLATE_DN}")
 TEMPLATE_STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \

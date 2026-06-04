@@ -33,7 +33,15 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 banner()  { echo -e "\n${CYAN}══════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $*${NC}"; echo -e "${CYAN}══════════════════════════════════════════════════${NC}\n"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Shared helpers (composition glob, kernel Release discovery).
+export GENTIAN_INSTALL_LIB_ONLY=1
+# shellcheck source=scripts/install-lib.sh
+source "${SCRIPT_DIR}/scripts/install-lib.sh"
+unset GENTIAN_INSTALL_LIB_ONLY
+
 MODE="safe"
+ENV="${ENV:-dev}"
 UNINSTALL_CLUSTER_INFRA=0
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
 GENTIAN_MANAGED_CERT_MANAGER="${GENTIAN_MANAGED_CERT_MANAGER:-0}"
@@ -276,36 +284,10 @@ else
     info "Release nubus-dev not found; skipping."
 fi
 
-# ── Pattern B Release CRs (postgresql, mariadb, nextcloud × 3) ──────────────
-# Managed by Crossplane provider-helm (Pattern B). Delete in reverse install order so
-# notifypush stops before the AIO chart it depends on, etc.
-for release_name in \
-    nextcloud-notifypush-dev \
-    nextcloud-dev \
-    nextcloud-management-dev \
-    opendesk-mariadb-dev \
-    opendesk-postgresql-dev \
-    collabora-dev \
-    dovecot-dev \
-    postfix-dev
-do
-    if kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
-        info "Deleting provider-helm Release ${release_name}..."
-        kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
-        local_deadline=$((SECONDS + 180))
-        while kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; do
-            if (( SECONDS > local_deadline )); then
-                warn "Release ${release_name} still present after 3m — forcing finalizer removal."
-                kubectl patch release.helm.crossplane.io/"${release_name}" \
-                    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                    2>/dev/null || true
-                break
-            fi
-            sleep 5
-        done
-        success "Release ${release_name} removed."
-    fi
-done
+# ── Pattern B Release CRs (kernel/services/*/manifests/<env>/release.yaml) ───
+# Discovered from manifests (same source as update.sh --reconcile-releases), not a
+# hardcoded app list. Tenant app Helm releases are removed with Tenant/App CRs.
+delete_kernel_helm_releases "${ENV}"
 
 for ns in gentian-dev gentian-infra-dev; do
     info "Removing nubus ConfigMaps / Secrets from ${ns}..."
@@ -433,21 +415,7 @@ fi
 # =============================================================================
 banner "Step 2 — Remove Crossplane XRDs, Compositions, ProviderConfigs"
 
-if kubectl get crd compositions.apiextensions.crossplane.io >/dev/null 2>&1; then
-    for file in \
-        "${SCRIPT_DIR}/crossplane/compositions/app-ox.yaml" \
-        "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml" \
-        "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml" \
-        "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
-    do
-        if [[ -f "${file}" ]]; then
-            kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
-            success "  Removed: $(basename "${file}")"
-        fi
-    done
-else
-    info "  Composition CRD absent; skipping Composition deletion."
-fi
+delete_crossplane_compositions
 
 if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/null 2>&1; then
     for file in \

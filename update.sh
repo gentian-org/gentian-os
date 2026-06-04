@@ -911,11 +911,8 @@ op_crossplane_update() {
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
 
-    info "Applying Compositions..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/app-default.yaml"
-
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
+    info "Applying Compositions (all crossplane/compositions/*.yaml)..."
+    apply_crossplane_platform_compositions_update
 
     upsert_gentian_cluster_config
 
