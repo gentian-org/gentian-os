@@ -36,7 +36,11 @@ func buildOIDCPackScript(
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
-	return fmt.Sprintf(`set -eu
+	scopeUUIDBlock := keycloakShellRequireID("SCOPE_UUID", "${SCOPE_LIST}", "name", "${SCOPE_NAME}")
+	clientUUIDBlock := keycloakShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
+	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${LDAP_GROUP}")
+
+	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
@@ -57,16 +61,15 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 # --- Client scope ---
 SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
 if echo "${SCOPE_LIST}" | grep -Fq "\"name\":\"${SCOPE_NAME}\""; then
-  SCOPE_UUID=$(echo "${SCOPE_LIST}" | tr ',' '\n' | grep -F "\"name\":\"${SCOPE_NAME}\"" | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "client scope ${SCOPE_NAME} already exists"
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
     -d "{\"name\":\"${SCOPE_NAME}\",\"description\":\"${SCOPE_DESC}\",\"protocol\":\"openid-connect\"}"
   SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
-  SCOPE_UUID=$(echo "${SCOPE_LIST}" | tr ',' '\n' | grep -F "\"name\":\"${SCOPE_NAME}\"" | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "client scope ${SCOPE_NAME} created"
 fi
+%s
 
 # --- Protocol mappers on scope ---
 %s
@@ -75,20 +78,20 @@ fi
 EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
 if echo "${EXISTING}" | grep -q '"id"'; then
-  CLIENT_UUID=$(echo "${EXISTING}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
-  curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
-    -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
-  echo "client ${CLIENT_ID} updated"
+  echo "client ${CLIENT_ID} already exists"
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
     -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
   EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
-  CLIENT_UUID=$(echo "${EXISTING}" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
   echo "client ${CLIENT_ID} created"
 fi
+%s
+curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
+  -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
+echo "client ${CLIENT_ID} configured"
 
 # --- Client role ---
 ROLE_HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -H "${AUTH_HEADER}" \
@@ -108,11 +111,7 @@ ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 # --- Map LDAP group to client role ---
 GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?search=${LDAP_GROUP}")
-GROUP_ID=$(echo "${GROUP_LIST}" | tr ',' '\n' | grep -F "\"name\":\"${LDAP_GROUP}\"" | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
-if [ -z "${GROUP_ID}" ]; then
-  echo "LDAP group ${LDAP_GROUP} not found in Keycloak realm ${REALM}; ensure LDAP group mapper ran" >&2
-  exit 1
-fi
+%s
 curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${GROUP_ID}/role-mappings/clients/${CLIENT_UUID}" \
   -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${CLIENT_ROLE}\"}]" >/dev/null || true
@@ -120,7 +119,8 @@ echo "group ${LDAP_GROUP} mapped to client role ${CLIENT_ROLE}"
 
 # --- Default client scopes (built-ins + app scope) ---
 for SCOPE in profile email roles web-origins acr ${SCOPE_NAME}; do
-  SID=$(echo "${SCOPE_LIST}" | tr ',' '\n' | grep -F "\"name\":\"${SCOPE}\"" | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE}"
+  SID="${_kj_id}"
   if [ -n "${SID}" ]; then
     curl -sf -X PUT -H "${AUTH_HEADER}" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/default-client-scopes/${SID}" >/dev/null 2>&1 || true
@@ -131,7 +131,7 @@ SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, pack.LDAPGroup,
 		string(redirectJSON), publicClient, fullScope,
-		mapperBlocks, secretClause, secretClause)
+		scopeUUIDBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
 }
 
 func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTemplate) string {

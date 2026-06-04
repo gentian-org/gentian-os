@@ -3,6 +3,8 @@
 package controller
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -28,6 +30,19 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
 		}
+	}
+	if strings.Contains(script, `tr ',' '\n' | grep -F "\"name\":\"${SCOPE_NAME}\""`) {
+		t.Fatal("oidc pack script must not use fragile tr/grep scope id extraction")
+	}
+	if !strings.Contains(script, `keycloak_json_id_by_attr ${SCOPE_LIST} "name" "${SCOPE_NAME}"`) {
+		t.Fatal("expected SCOPE_UUID via keycloak_json_id_by_attr")
+	}
+	path := t.TempDir() + "/oidc-pack.sh"
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
+		t.Fatalf("oidc pack script must be valid POSIX sh: %v\n%s", err, out)
 	}
 }
 
