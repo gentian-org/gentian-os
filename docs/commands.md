@@ -108,9 +108,13 @@ kubectl gentian tenants undeploy gtn-demo -f
 
 The purge flag sets `deletionPolicy=Delete` on the live Tenant CR, waits until
 that policy is stable (re-patching if ArgoCD selfHeal reverts it), deletes the
-Tenant CR and waits for controller Delete cleanup (LDAP OU delete, databases,
-etc.), then removes the instance from Git. After the Tenant CR is gone it also
-deletes any remaining kernel artifacts labeled `gentianos.io/tenant=<name>`.
+Tenant CR, removes the instance from Git, and immediately syncs the tenants
+ArgoCD Application so selfHeal cannot recreate the CR from a stale revision.
+It then waits for controller Delete cleanup (LDAP OU delete, databases, etc.).
+If the Tenant CR reappears without a `deletionTimestamp`, the plugin re-syncs
+ArgoCD and re-issues delete until cleanup completes. After the Tenant CR is
+gone it also deletes any remaining kernel artifacts labeled
+`gentianos.io/tenant=<name>`.
 If a prior undeploy ran Retain cleanup only, purge falls back to an LDAP OU
 delete Job when it detects `ldap-lock-<tenant>` without `ldap-ou-delete-<tenant>`.
 

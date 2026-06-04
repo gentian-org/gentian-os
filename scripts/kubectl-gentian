@@ -513,15 +513,112 @@ purge_tenant_cluster_artifacts() {
   delete_labeled_resources "jobs" "${KERNEL_NAMESPACE}" "${label_selector}"
 }
 
+# Resolve the ArgoCD Application that syncs ENV_NAME/tenants. Prints "namespace/name".
+argocd_tenants_app_for_env() {
+  local env_name="${1}"
+  local want_path="${env_name}/tenants"
+
+  kubectl get application.argoproj.io -A \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.source.path}{"\n"}{end}' \
+    2>/dev/null \
+    | awk -F'\t' -v p="${want_path}" '$2 == p {print $1; exit}'
+}
+
+# Hard-refresh and sync-with-prune the tenants Application so Git revisions apply
+# before selfHeal can recreate a manually deleted Tenant CR.
+argocd_trigger_sync_prune() {
+  local env_name="${1}"
+  local app_ns_name
+  app_ns_name="$(argocd_tenants_app_for_env "${env_name}")"
+
+  if [[ -z "${app_ns_name}" ]]; then
+    echo "No ArgoCD app found for '${env_name}/tenants'; skipping ArgoCD sync." >&2
+    return 0
+  fi
+
+  local argocd_ns="${app_ns_name%%/*}"
+  local argocd_app="${app_ns_name##*/}"
+
+  echo "Refreshing ArgoCD app '${argocd_app}' (${env_name}/tenants)..."
+  kubectl annotate "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
+    "argocd.argoproj.io/refresh=hard" --overwrite &>/dev/null || true
+
+  if command -v argocd >/dev/null 2>&1; then
+    echo "  triggering ArgoCD sync with prune..."
+    argocd app sync "${argocd_app}" --prune --timeout 120 >/dev/null 2>&1 || true
+  else
+    echo "  triggering ArgoCD sync with prune via kubectl patch..."
+    kubectl patch "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" --type merge \
+      -p '{"operation":{"initiatedBy":{"username":"kubectl-gentian"},"sync":{"prune":true}}}' \
+      >/dev/null 2>&1 || true
+  fi
+
+  local i=0
+  while [[ ${i} -lt 90 ]]; do
+    local sync_status
+    sync_status="$(kubectl get "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
+      -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")"
+    if [[ "${sync_status}" == "Synced" ]]; then
+      echo "ArgoCD app '${argocd_app}' is Synced."
+      return 0
+    fi
+    sleep 2
+    i=$((i + 2))
+  done
+
+  echo "WARNING: ArgoCD app '${argocd_app}' did not reach Synced within 90s." >&2
+  return 0
+}
+
 wait_for_tenant_delete() {
   local tenant_name="${1}"
   local ns_name="${2}"
   local purge="${3:-false}"
   local resource_file="${4:-}"
+  local env_name="${5:-}"
+  local timeout=300
+  local elapsed=0
+  local last_argocd_sync=-1000
 
-  echo "Waiting for tenant '${tenant_name}' finalizers and controller cleanup (timeout: 300s)..."
+  echo "Waiting for tenant '${tenant_name}' finalizers and controller cleanup (timeout: ${timeout}s)..."
   echo "  (operator is removing tenant resources; this can take a few minutes)"
-  if ! kubectl wait tenant "${tenant_name}" --for=delete --timeout=300s 2>/dev/null; then
+
+  while (( elapsed < timeout )); do
+    if ! kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
+      break
+    fi
+
+    local deletion_ts
+    deletion_ts="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)"
+
+    if [[ -z "${deletion_ts}" ]]; then
+      echo "WARNING: tenant '${tenant_name}' exists without deletionTimestamp (likely ArgoCD selfHeal); recovering..." >&2
+      if [[ -n "${env_name}" ]] && (( elapsed - last_argocd_sync >= 10 )); then
+        argocd_trigger_sync_prune "${env_name}" || true
+        last_argocd_sync=$elapsed
+      fi
+      if [[ "${purge}" == "true" ]]; then
+        ensure_tenant_deletion_policy_live "${tenant_name}" "Delete" || true
+      fi
+      kubectl delete tenant "${tenant_name}" --ignore-not-found=true
+      sleep 3
+      elapsed=$((elapsed + 3))
+      continue
+    fi
+
+    local remaining=$((timeout - elapsed))
+    local chunk=30
+    if (( remaining < chunk )); then
+      chunk=$remaining
+    fi
+    if kubectl wait tenant "${tenant_name}" --for=delete --timeout="${chunk}s" 2>/dev/null; then
+      break
+    fi
+    elapsed=$((elapsed + chunk))
+  done
+
+  if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
     echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
     echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
     return 1
@@ -1095,21 +1192,13 @@ EOF
 argocd_refresh_await_prune() {
   local env_name="${1}"
   local tenant_name="${2}"
-  local want_path="${env_name}/tenants"
 
   if ! kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
     return 0
   fi
 
-  # Find "namespace/app-name" for the app tracking this env's tenants.
-  local app_ns_name
-  app_ns_name="$(kubectl get application.argoproj.io -A \
-    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.source.path}{"\n"}{end}' \
-    2>/dev/null \
-    | awk -F'\t' -v p="${want_path}" '$2 == p {print $1; exit}')"
-
-  if [[ -z "${app_ns_name}" ]]; then
-    echo "No ArgoCD app found for '${want_path}'; deleting tenant CR directly..."
+  if [[ -z "$(argocd_tenants_app_for_env "${env_name}")" ]]; then
+    echo "No ArgoCD app found for '${env_name}/tenants'; deleting tenant CR directly..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
     wait_with_message \
       "Waiting for tenant '${tenant_name}' to be removed after direct delete (timeout: 120s)..." \
@@ -1121,22 +1210,7 @@ argocd_refresh_await_prune() {
     return 0
   fi
 
-  local argocd_ns="${app_ns_name%%/*}"
-  local argocd_app="${app_ns_name##*/}"
-
-  echo "Syncing ArgoCD app '${argocd_app}' so tenant '${tenant_name}' is pruned..."
-  kubectl annotate "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
-    "argocd.argoproj.io/refresh=hard" --overwrite &>/dev/null || true
-
-  if command -v argocd >/dev/null 2>&1; then
-    echo "  triggering ArgoCD sync with prune (timeout: 120s)..."
-    argocd app sync "${argocd_app}" --prune --timeout 120 >/dev/null 2>&1 || true
-  else
-    echo "  triggering ArgoCD sync with prune via kubectl patch..."
-    kubectl patch "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" --type merge \
-      -p '{"operation":{"initiatedBy":{"username":"kubectl-gentian"},"sync":{"prune":true}}}' \
-      >/dev/null 2>&1 || true
-  fi
+  argocd_trigger_sync_prune "${env_name}"
 
   echo "Waiting for ArgoCD to prune tenant '${tenant_name}' from the cluster (timeout: 120s)..."
   local i=0
@@ -1471,9 +1545,11 @@ cmd_tenant_undeploy_purge() {
     # while controller cleanup runs (previously we waited first, leaving git stale).
     if is_instance_deployed "${instance}" "${env_name}"; then
       tenant_undeploy_remove_from_git "${instance}" "${env_name}" "${kustom_file}" false "${tenant_name}"
+      # Push Git removal before selfHeal can recreate the Tenant CR from stale desired state.
+      argocd_trigger_sync_prune "${env_name}"
     fi
 
-    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" true "${resource_file}"; then
+    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" true "${resource_file}" "${env_name}"; then
       exit 1
     fi
 
