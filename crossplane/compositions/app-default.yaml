@@ -118,6 +118,7 @@ spec:
             {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
+            {{- $nodeIP        := dig "node.ip"        "" $ccData }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
@@ -492,6 +493,7 @@ spec:
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- if $nodeIP      }}{{ $raw = $raw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
             {{- if and $spec.config $spec.config.extraValues }}

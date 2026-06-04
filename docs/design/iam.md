@@ -47,6 +47,25 @@ Users sign in at the **single shared portal** with their email address at
 `https://portal.<kernel-domain>/login/`. Tenant realms remain for per-app OIDC;
 they do not host a separate portal or UMC stack.
 
+### 1.3 OpenDesk OIDC packs (tenant realms)
+
+Per-app OpenDesk OIDC configuration (client scopes, protocol mappers, client
+roles, and LDAP group → role mappings) is declared in a YAML catalog embedded
+in the operator (`internal/oidc/packs/opendesk.yaml`). When an `AppProfile`
+sets `kernelRequirements.identity.oidc.clientId` to a catalog key (e.g.
+`opendesk-jitsi`), the identity reconciler applies that pack in the tenant
+realm via an idempotent Keycloak Admin API Job.
+
+The catalog mirrors `opendesk/helmfile/apps/nubus/values-opendesk-keycloak-bootstrap.yaml.gotmpl`.
+Apps without a pack entry fall back to a minimal OIDC client Job.
+
+Once per tenant (when any OIDC app is installed), the reconciler also sets the
+realm browser flow to `browser-kernel-idp` (auto-redirect to the kernel IdP)
+so users are not prompted for a tenant-realm LDAP password after portal login.
+
+LDAP `group-ldap-mapper` on the tenant realm federation imports
+`managed-by-attribute-*` groups from the tenant OU so pack role mappings resolve.
+
 ## 2. Roles and User Templates
 
 Gentian OS establishes distinct separation between normal users and administrators by employing specialized UMC User Templates.
@@ -56,7 +75,7 @@ Gentian OS establishes distinct separation between normal users and administrato
 * **Template**: `cn=App User,cn=templates,ou=<tenant>,...` displayed as **1 App User** in UMC (one per tenant; upstream `openDesk User` templates are removed). There is **no** kernel-level App User template—app accounts exist only inside tenant OUs. Tenant admins may optionally pick the kernel **2 Admin User** template for tenant IT accounts.
 * **Characteristics**:
   * Pre-fills `mailPrimaryAddress` as `<username>@<tenant>.<kernel-domain>` (same openDesk `@domain` template syntax).
-  * Automatically assigned the `opendeskFileshareEnabled`, `opendeskLivecollaborationEnabled` attributes (granting access to Nextcloud, Jitsi, etc.).
+  * Automatically assigned the `opendeskFileshareEnabled`, `opendeskLivecollaborationEnabled`, and `opendeskVideoconferenceEnabled` attributes (granting access to Nextcloud, Element, Jitsi, etc.).
   * Added to the global `cn=App Users` group.
   * Can see and access application tiles in the Nubus Portal.
   * **Cannot** access the Univention Management Console (UMC) or manage other users.

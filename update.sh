@@ -917,6 +917,8 @@ op_crossplane_update() {
 
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
 
+    upsert_gentian_cluster_config
+
     success "Crossplane XRDs and Compositions updated."
 }
 

@@ -1296,6 +1296,7 @@ TEMPLATE_BODY=$(cat <<EOF
     "mailPrimaryAddress": "<username>@${MAIL_DOMAIN}",
     "opendeskFileshareEnabled": true,
     "opendeskLivecollaborationEnabled": true,
+    "opendeskVideoconferenceEnabled": true,
     "groups": ["${APP_USERS_DN}"]
   },
   "position": "${TEMPLATES_POS}"

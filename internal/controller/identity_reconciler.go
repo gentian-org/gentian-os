@@ -45,10 +45,11 @@ const (
 // realmLDAPParams holds LDAP federation parameters for the realm provisioning job.
 // When nil, LDAP federation is not configured for the realm.
 type realmLDAPParams struct {
-	server  string // LDAP connection URL, e.g. ldap://host:389
-	bindDN  string // bind account DN, e.g. uid=app-keycloak,ou=tenant,dc=...
-	bindPW  string // bind account password (from OpenBao seeder)
-	usersDN string // users search base, e.g. ou=users,ou=tenant,dc=...
+	server   string // LDAP connection URL, e.g. ldap://host:389
+	bindDN   string // bind account DN, e.g. uid=app-keycloak,ou=tenant,dc=...
+	bindPW   string // bind account password (from OpenBao seeder)
+	usersDN  string // users search base, e.g. ou=users,ou=tenant,dc=...
+	groupsDN string // tenant OU where managed-by-attribute-* groups live
 }
 
 // realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.
@@ -66,7 +67,7 @@ type realmBrokerParams struct {
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	realmName := keycloakRealmName(tenant)
 
-	oidcApps, err := r.collectOIDCApps(ctx, tenant)
+	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -95,11 +96,23 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
-	allDone := true
-	for _, appName := range oidcApps {
-		done, err := r.ensureClientJob(ctx, tenant, realmName, appName)
+	if len(oidcConfigs) > 0 {
+		browserDone, err := r.ensureOIDCBrowserFlowJob(ctx, tenant, realmName)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Keycloak client Job for app %s: %w", appName, err)
+			return ctrl.Result{}, fmt.Errorf("ensure OIDC browser flow Job: %w", err)
+		}
+		if !browserDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningBrowserFlow", "Waiting for OIDC browser flow Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+	}
+
+	allDone := true
+	for _, cfg := range oidcConfigs {
+		done, err := r.ensureOIDCClientJob(ctx, tenant, realmName, cfg)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OIDC Job for app %s: %w", cfg.profileName, err)
 		}
 		if !done {
 			allDone = false
@@ -223,10 +236,11 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 				return false, fmt.Errorf("seed keycloak ldap: %w", seedErr)
 			}
 			ldap = &realmLDAPParams{
-				server:  r.LDAPServer,
-				bindDN:  bindDN,
-				bindPW:  creds.BindPassword,
-				usersDN: "ou=users," + ouDN,
+				server:   r.LDAPServer,
+				bindDN:   bindDN,
+				bindPW:   creds.BindPassword,
+				usersDN:  "ou=users," + ouDN,
+				groupsDN: ouDN,
 			}
 		}
 		var broker *realmBrokerParams
@@ -299,7 +313,7 @@ func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov
 
 // ensureClientJob creates the OIDC client Job for one app if absent.
 // Returns true when the Job has completed successfully.
-func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName string) (bool, error) {
+func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string) (bool, error) {
 	jobName := clientJobName(tenant.Name, appName)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
@@ -320,13 +334,13 @@ func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentiano
 				issuerHost = r.KernelDomain
 			}
 			issuer := fmt.Sprintf("https://id.%s/realms/%s", issuerHost, realmName)
-			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, oidcClientID(tenant.Name, appName))
+			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, clientID)
 			if seedErr != nil {
 				return false, fmt.Errorf("seed oidc: %w", seedErr)
 			}
 			clientSecret = creds.ClientSecret
 		}
-		return false, r.Create(ctx, makeClientJob(tenant, realmName, appName, clientSecret, r.KernelDomain))
+		return false, r.Create(ctx, makeClientJob(tenant, realmName, appName, clientID, redirectURIs, clientSecret))
 	}
 	if err != nil {
 		return false, err
@@ -374,7 +388,11 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	if err == nil {
 		if jobIsComplete(existing) {
 			// Delete provisioning jobs so they are re-created on the next deploy.
-			provNames := []string{realmJobName(tenant.Name), adminJobName(tenant.Name), kernelAdminEnableJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name)}
+			provNames := []string{
+				realmJobName(tenant.Name), adminJobName(tenant.Name),
+				oidcBrowserFlowJobName(tenant.Name),
+				kernelAdminEnableJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
+			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
 			}
@@ -413,6 +431,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 			corev1.EnvVar{Name: "LDAP_BIND_DN", Value: ldap.bindDN},
 			corev1.EnvVar{Name: "LDAP_BIND_PASSWORD", Value: ldap.bindPW},
 			corev1.EnvVar{Name: "LDAP_USERS_DN", Value: ldap.usersDN},
+			corev1.EnvVar{Name: "LDAP_GROUPS_DN", Value: ldap.groupsDN},
 		)
 	}
 	if broker != nil {
@@ -442,23 +461,9 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 	}
 }
 
-func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientSecret, kernelDomain string) *batchv1.Job {
+func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
 	ttl := int32(3600)
-	clientID := oidcClientID(tenant.Name, appName)
-	// Redirect URI lives on the tenant's app plane (vanity domain when set,
-	// otherwise <tenant>.<kernel_domain> fallback). See architecture §2.5.
-	redirectHost := tenant.EffectiveDomain(kernelDomain)
-	if redirectHost == "" {
-		redirectHost = tenant.Spec.Domain
-	}
-	var redirectURI string
-	if appName == "element" {
-		// Synapse handles OIDC on behalf of Element: the callback goes to the
-		// Matrix homeserver endpoint, not the frontend app path.
-		redirectURI = fmt.Sprintf("https://matrix.%s/_synapse/client/oidc/callback", redirectHost)
-	} else {
-		redirectURI = fmt.Sprintf("https://%s/%s/*", redirectHost, appName)
-	}
+	redirectURI := redirectURIs[0]
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if clientSecret != "" {
 		container.Env = append(container.Env, corev1.EnvVar{
@@ -736,6 +741,46 @@ if [ -n "${LDAP_SERVER:-}" ]; then
       }"
     echo "LDAP federation provider registered in realm %s"
   fi
+
+  # Sync managed-by-attribute-* groups from the tenant OU for OIDC role mapping.
+  if [ -n "${LDAP_GROUPS_DN:-}" ]; then
+    LDAP_COMPONENTS=$(curl -sf \
+      -H "Authorization: Bearer ${TOKEN}" \
+      "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider")
+    LDAP_ID=$(echo "${LDAP_COMPONENTS}" | tr ',' '\n' | grep -F '"name":"ldap"' | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
+    GROUP_MAPPERS=$(curl -sf \
+      -H "Authorization: Bearer ${TOKEN}" \
+      "${KEYCLOAK_URL}/admin/realms/%s/components?parent=${LDAP_ID}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper" || echo "[]")
+    if echo "${GROUP_MAPPERS}" | grep -q '"name":"group-mapper"'; then
+      echo "LDAP group-mapper already registered in realm %s"
+    else
+      curl -sf \
+        -X POST "${KEYCLOAK_URL}/admin/realms/%s/components" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"name\":\"group-mapper\",
+          \"providerId\":\"group-ldap-mapper\",
+          \"providerType\":\"org.keycloak.storage.ldap.mappers.LDAPStorageMapper\",
+          \"parentId\":\"${LDAP_ID}\",
+          \"config\":{
+            \"groups.dn\":[\"${LDAP_GROUPS_DN}\"],
+            \"group.name.ldap.attribute\":[\"cn\"],
+            \"group.object.classes\":[\"univentionGroup\"],
+            \"groups.ldap.filter\":[\"(&(cn=managed-by-attribute*)(objectClass=univentionGroup))\"],
+            \"membership.attribute.type\":[\"DN\"],
+            \"membership.ldap.attribute\":[\"uniqueMember\"],
+            \"membership.user.ldap.attribute\":[\"uid\"],
+            \"mode\":[\"LDAP_ONLY\"],
+            \"ignore.missing.groups\":[\"true\"],
+            \"drop.non.existing.groups.during.sync\":[\"false\"]
+          }
+        }"
+      echo "LDAP group-mapper registered in realm %s (groupsDn=${LDAP_GROUPS_DN})"
+      curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
+        "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${LDAP_ID}/sync?action=triggerFullSync" >/dev/null 2>&1 || true
+    fi
+  fi
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -806,7 +851,8 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   #  on mailPrimaryAddress). The kernel IdP registered above remains available
   #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName,
+		realmName, realmName, realmName, realmName, realmName, realmName)
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared

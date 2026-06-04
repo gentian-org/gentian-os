@@ -1067,6 +1067,47 @@ check_prereqs() {
 }
 
 # =============================================================================
+# upsert_gentian_cluster_config — cluster-wide ConfigMap for Crossplane / apps
+# =============================================================================
+# Idempotent. Used by install.sh (after Cluster XR Ready) and update.sh
+# (--crossplane / --all) so day-2 runs pick up node.ip and LDAP endpoints.
+upsert_gentian_cluster_config() {
+    if [[ -z "${NODE_IP:-}" ]]; then
+        NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+        if [[ -n "${NODE_IP}" ]]; then
+            info "Auto-detected NODE_IP: ${NODE_IP}"
+        fi
+    fi
+    export NODE_IP
+
+    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
+    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
+    local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
+    local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
+
+    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>})..."
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: crossplane-system
+  labels:
+    app.kubernetes.io/managed-by: gentian-os-install
+    gentianos.io/config-type: cluster-config
+data:
+  ldap.server: "${_ldap_server}"
+  ldap.baseDn: "${LDAP_BASE_DN:-}"
+  udm.url: "${_udm_url}"
+  minio.endpoint: "${_minio_endpoint}"
+  cnpg.host: "${_cnpg_host}"
+  secretMode: "${SECRET_MODE:-derived}"
+  node.ip: "${NODE_IP:-}"
+EOF
+    success "gentian-cluster-config ConfigMap upserted."
+}
+
+# =============================================================================
 # 1. Install CLI tools
 # =============================================================================
 install_tools() {

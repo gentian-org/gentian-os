@@ -1,0 +1,206 @@
+# OpenDesk OIDC pack catalog for Gentian OS tenant Keycloak realms.
+#
+# Each pack mirrors one entry in opendesk/helmfile/apps/nubus/
+# values-opendesk-keycloak-bootstrap.yaml.gotmpl (clientAccessRestrictions +
+# opendesk.clientScopes). Packs are keyed by OIDC clientId; the identity
+# reconciler applies them per tenant realm when an AppProfile declares a
+# matching kernelRequirements.identity.oidc.clientId.
+#
+# LDAP groups are tenant-scoped: cn=managed-by-attribute-<App>,ou=<tenant>,...
+
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: opendesk
+spec:
+  mapperTemplates:
+    opendesk_useruuid:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: entryUUID
+        claim.name: opendesk_useruuid
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    opendesk_username:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: uid
+        claim.name: opendesk_username
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    email:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: email
+        claim.name: email
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    full_name:
+      protocolMapper: oidc-full-name-mapper
+      config:
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    given_name:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: firstName
+        claim.name: given_name
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    family_name:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: lastName
+        claim.name: family_name
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    openproject_admin:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: opendeskProjectmanagementAdmin
+        claim.name: openproject_admin
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    ox_context:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: oxContextIDNum
+        claim.name: context
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+
+  packs:
+    opendesk-jitsi:
+      scopeName: opendesk-jitsi-scope
+      scopeDescription: "Scope for the claims required by openDesk's Jitsi instance."
+      clientRole: opendesk-jitsi-access-control
+      ldapGroup: managed-by-attribute-Videoconference
+      publicClient: true
+      fullScopeAllowed: true
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - opendesk_useruuid
+        - opendesk_username
+        - full_name
+        - email
+
+    opendesk-synapse:
+      scopeName: opendesk-matrix-scope
+      scopeDescription: "Scope for the claims required by openDesk's Matrix instance."
+      clientRole: opendesk-matrix-access-control
+      ldapGroup: managed-by-attribute-Livecollaboration
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - opendesk_useruuid
+        - opendesk_username
+        - full_name
+        - email
+
+    opendesk-nextcloud:
+      scopeName: opendesk-nextcloud-scope
+      scopeDescription: "Scope for the claims required by openDesk's Nextcloud instance."
+      clientRole: opendesk-nextcloud-access-control
+      ldapGroup: managed-by-attribute-Fileshare
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - opendesk_useruuid
+        - opendesk_username
+        - email
+
+    opendesk-openproject:
+      scopeName: opendesk-openproject-scope
+      scopeDescription: "Scope for the claims required by openDesk's OpenProject instance."
+      clientRole: opendesk-openproject-access-control
+      ldapGroup: managed-by-attribute-Projectmanagement
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - opendesk_useruuid
+        - opendesk_username
+        - openproject_admin
+        - email
+        - given_name
+        - family_name
+
+    opendesk-xwiki:
+      scopeName: opendesk-xwiki-scope
+      scopeDescription: "Scope for the claims required by openDesk's XWiki instance."
+      clientRole: opendesk-xwiki-access-control
+      ldapGroup: managed-by-attribute-Knowledgemanagement
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - opendesk_useruuid
+        - opendesk_username
+        - full_name
+        - email
+
+    opendesk-oxappsuite:
+      scopeName: opendesk-oxappsuite-scope
+      scopeDescription: "Scope for the claims required by openDesk's OX App Suite instance."
+      clientRole: opendesk-oxappsuite-access-control
+      ldapGroup: managed-by-attribute-Groupware
+      publicClient: false
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - ox_context
+        - opendesk_useruuid
+        - opendesk_username
+        - full_name
+        - email

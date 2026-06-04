@@ -626,31 +626,7 @@ apply_cluster_xr() {
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     info "  ${mr_count} managed resource(s) reconciled."
 
-    # Upsert a cluster-config ConfigMap providing cluster-specific LDAP and UDM
-    # endpoints consumed by Crossplane Compositions and app init Jobs.
-    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
-    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
-    local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
-    local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
-    info "Upserting gentian-cluster-config ConfigMap (ldap.server=${_ldap_server})..."
-    kubectl apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gentian-cluster-config
-  namespace: crossplane-system
-  labels:
-    app.kubernetes.io/managed-by: gentian-os-install
-    gentianos.io/config-type: cluster-config
-data:
-  ldap.server: "${_ldap_server}"
-  ldap.baseDn: "${LDAP_BASE_DN}"
-  udm.url: "${_udm_url}"
-  minio.endpoint: "${_minio_endpoint}"
-  cnpg.host: "${_cnpg_host}"
-  secretMode: "${SECRET_MODE:-derived}"
-EOF
-    success "gentian-cluster-config ConfigMap upserted."
+    upsert_gentian_cluster_config
 }
 
 # =============================================================================
