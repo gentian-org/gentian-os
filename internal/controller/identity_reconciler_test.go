@@ -256,7 +256,15 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-admin-clienttest", "platform-kernel")
 
-	// Client Job should be created after admin is complete.
+	// OIDC browser-flow Job must complete before client Jobs are created.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-oidc-browser-clienttest", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-oidc-browser-clienttest", "platform-kernel")
+
+	// Client Job should be created after browser flow is complete.
 	clientJob := &batchv1.Job{}
 	waitFor(t, 15*time.Second, func() bool {
 		return testClient.Get(context.Background(),
@@ -310,6 +318,13 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-admin-allready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-admin-allready", "platform-kernel")
+
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-oidc-browser-allready", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-oidc-browser-allready", "platform-kernel")
 
 	// Wait for client Job, then mark it complete.
 	waitFor(t, 15*time.Second, func() bool {
@@ -438,6 +453,19 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	}
 
 	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
+
+	// OIDC browser-flow Job should appear; client Job must still wait.
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-oidc-browser-admintest", Namespace: "platform-kernel"}, j) == nil
+	})
+	if testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil {
+		t.Error("client Job should not exist before OIDC browser flow Job completes")
+	}
+
+	markJobComplete(t, "keycloak-oidc-browser-admintest", "platform-kernel")
 
 	// Client Job should now be created.
 	waitFor(t, 10*time.Second, func() bool {
