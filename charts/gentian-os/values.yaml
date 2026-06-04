@@ -4,11 +4,15 @@
 replicaCount: 1
 
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
-# It is the domain on which all kernel UIs (Keycloak, Nubus, Argo CD, Intercom)
-# are served, and the base used for tenants without a vanity domain
-# (`<tenant>.<kernel_domain>`). Plumbed into the operator as the KERNEL_DOMAIN
-# env var. See docs/architecture.md §2.5.
+# Kernel UIs are served on this domain; tenant app zones default to
+# `<tenant>.<kernel_domain>`. Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
 kernelDomain: ""
+
+# tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
+# wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
+# write records in the zone containing effectiveDomain (platform zone for default
+# tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
+tenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare"
 
 # kernelRealm is the name of the shared Keycloak realm that holds all platform
 # users (synced via Nubus LDAP). Defaults to "kernel" when empty.
@@ -83,12 +87,11 @@ logLevel: info
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
 
-# Cloudflare DNS management for per-tenant app-hostname CNAME records.
-# When all three fields are set, the operator automatically creates proxied
-# CNAME records for each app subdomain of a vanity-domain tenant, enabling
-# Cloudflare Total TLS to provision edge certificates for multi-level
-# subdomains not covered by Universal SSL (e.g. chat.gtn-demo-2.desk.gentian.org).
-# Leave empty to disable (operator skips DNS record management).
+# Optional Cloudflare edge-DNS adapter. When all fields are set, the operator
+# ensures a proxied CNAME *.<effectiveDomain> per tenant so Total TLS can mint
+# edge certs for tenant app hostnames (e.g. meet.demo.desk.gentian.org) that
+# Universal SSL does not cover. Origin TLS is still issued by cert-manager in
+# the tenant namespace. Leave empty to disable (use grey-cloud DNS or passthrough).
 cloudflare:
   # Cloudflare API token with DNS:Edit permission for the zone.
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.

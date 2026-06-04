@@ -41,7 +41,7 @@ gentian-os/
 │   ├── storage/                      #   S3 admin creds
 │   ├── mail/                         #   MTA/MDA admin creds
 │   ├── cache/                        #   Redis/Memcached admin creds
-│   ├── dns/                          #   Cloudflare API token (kernel wildcard)
+│   ├── dns/                          #   Cloudflare API token (kernel + tenant DNS-01)
 │   └── messaging/                    #   reserved for future IPC bus
 │
 └── tenants/

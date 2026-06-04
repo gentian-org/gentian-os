@@ -33,7 +33,7 @@ You need a running, reachable cluster. Both `install.sh` and
 - Kubernetes 1.26+
 - Default StorageClass available (tested with `nfs-csi` and `microk8s-hostpath`)
 - Ingress controller installed (tested with `ingress-nginx`)
-- DNS records pointing at your chosen `KERNEL_DOMAIN` (and any vanity domains)
+- DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
 
 Tested cluster distributions:
 - **microk8s** (local dev, with `dns`, `hostpath-storage`, `ingress`, and
@@ -137,7 +137,7 @@ running the installer.
 | 11 | Crossplane | Create 8 derived-credential K8s Secrets in `crossplane-system` |
 | 12 | Cluster XR | Apply Cluster claim → kernel structural resources reconciled by `provider-vault` and `provider-kubernetes`: KV mount + policies + K8s auth backend/roles, KV seed paths (database, cache, storage, identity, mail), ArgoCD AppProject, ESO ClusterSecretStore, cert-manager ClusterIssuer |
 | 12b | Secrets | Seed remaining secrets: registry, DNS/Cloudflare, internal |
-| 12c _(optional)_ | TLS | Install kernel wildcard Certificate (requires `CF_API_TOKEN`) |
+| 12c _(optional)_ | TLS | Install kernel wildcard Certificate for platform UIs (requires `CF_API_TOKEN`); tenant apps use per-tenant DNS-01 wildcards via the operator |
 | **13** | **Crossplane** | **Wait for `provider-helm` Healthy** |
 | **14** | **Nubus** | **Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR** |
 

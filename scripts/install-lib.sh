@@ -755,7 +755,7 @@ save_install_state() {
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
 # which all kernel UIs — Keycloak, Nubus, Argo CD, Intercom — are served, and
 # which provides the `<tenant>.<kernel_domain>` fallback for tenants without a
-# vanity domain). See docs/architecture.md §2.5.
+# tenant app zones). See docs/design/multi-tenancy.md §3.
 #
 # Persisted to ${INSTALL_STATE_FILE} so subsequent re-runs do not re-prompt.
 # =============================================================================
@@ -844,9 +844,9 @@ prompt_network_mode() {
 #
 #   - CF_API_TOKEN: Cloudflare API token with Zone:Read + DNS:Edit on the
 #     KERNEL_DOMAIN's zone. Used to solve DNS-01 ACME challenges for the
-#     kernel wildcard `*.${KERNEL_DOMAIN}`. Optional — if left empty, only
-#     the HTTP-01 ClusterIssuer is provisioned and tenants must rely on
-#     per-host HTTP-01 (vanity domain mode). See docs/architecture.md §2.5.
+#     kernel wildcard *.${KERNEL_DOMAIN} (platform UIs only). Tenant apps
+#     use per-tenant DNS-01 wildcards via TENANT_DNS01_CLUSTER_ISSUER.
+#     Optional — see docs/design/multi-tenancy.md §3.
 #
 # Persisted in ${INSTALL_SECRETS_CACHE} alongside the other credentials.
 # =============================================================================
@@ -928,7 +928,7 @@ prompt_kernel_secrets() {
 
     echo ""
     info "Cloudflare API token for kernel wildcard *.${KERNEL_DOMAIN} (optional)."
-    info "Leave empty to skip the wildcard and use HTTP-01 per-host certs only."
+    info "Leave empty to skip the kernel wildcard (tenant per-zone certs still need DNS-01)."
     info "Token requires Zone:Read + DNS:Edit on the ${KERNEL_DOMAIN} zone."
 
     # Loop: re-prompt up to 3 times on verification failure. User can always
@@ -1477,7 +1477,7 @@ install_kernel_wildcard() {
     fi
     if [[ -z "${CF_API_TOKEN:-}" ]]; then
         info "CF_API_TOKEN not set; skipping kernel wildcard Certificate."
-        info "  (HTTP-01 per-host certs will still work for tenants with vanity domains.)"
+        info "  (Tenant app TLS still requires DNS-01 per-tenant wildcards; configure TENANT_DNS01_CLUSTER_ISSUER on the operator.)"
         return
     fi
 
@@ -1522,7 +1522,7 @@ install_kernel_wildcard() {
 
     # 4) Propagate wildcard-kernel-tls → wildcard-tls in every kernel app namespace
     #    that references it (nubus, nextcloud, intercom-service, nextcloud-notifypush).
-    #    The Tenant operator handles tenant namespaces automatically (kernel-wildcard-tls),
+    #    The Tenant operator issues per-tenant wildcard certs (tenant-*-wildcard-tls),
     #    but the kernel service namespaces are not managed by the operator.
     #    Wait up to 180 s for the cert to be issued first.
     info "Waiting for wildcard-kernel-tls to be issued (max 180s)..."

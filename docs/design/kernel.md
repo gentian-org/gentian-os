@@ -14,7 +14,7 @@ OS kernel does the same for cloud-native applications.
 |---|---|---|---|
 | Identity & permissions | UID/GID, PAM | OIDC provider + LDAP directory (SSO, user/group, token exchange) | v1 |
 | Filesystem | VFS, ext4 | WebDAV (hierarchical files, locking, sharing) + S3 (object storage) | v1 |
-| Networking | TCP/IP stack | K8s CNI + Ingress + NetworkPolicies + per-cluster kernel domain (hybrid wildcard / HTTP-01 TLS) | v1 |
+| Networking | TCP/IP stack | K8s CNI + Ingress + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) | v1 |
 | Process execution | Scheduler, init | K8s scheduling + GitOps deployment | v1 |
 | Secrets keyring | Keychain | Centralised secret store with tenant-scoped policies | v1 |
 | Database services | — | Shared SQL clusters with per-app-per-tenant isolation | v1 |

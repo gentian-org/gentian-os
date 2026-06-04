@@ -85,9 +85,11 @@ func TestMain(m *testing.M) {
 	}
 
 	if err := (&controller.TenantReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		KernelRealm: "kernel",
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		KernelDomain:             "desk.gentian.org",
+		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
+		KernelRealm:              "kernel",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

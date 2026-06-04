@@ -233,10 +233,11 @@ type IngressSpec struct {
 	// +kubebuilder:default=true
 	TLSEnabled bool `json:"tlsEnabled,omitempty"`
 
-	// ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
-	// Defaults to "letsencrypt-http01" (HTTP-01 per-host) when not set.
-	// See docs/architecture.md §2.5 for the kernel-vs-vanity domain
-	// model and the wildcard fallback.
+	// ClusterIssuer is reserved for future per-app issuer overrides. Tenant app
+	// ingress TLS is issued by the operator as one DNS-01 wildcard per tenant
+	// (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
+	// Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
+	// See docs/design/multi-tenancy.md §3.
 	// +optional
 	// +kubebuilder:default=letsencrypt-http01
 	ClusterIssuer string `json:"clusterIssuer,omitempty"`

@@ -83,14 +83,15 @@ func main() {
 	}
 
 	if err := (&controller.TenantReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		Seeder:        buildSeeder(),
-		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
-		KernelRealm:   kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		LDAPServer:    os.Getenv("LDAP_SERVER"),
-		LDAPBase:      os.Getenv("LDAP_BASE"),
-		CloudflareDNS: buildCloudflareDNSClient(),
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		Seeder:                   buildSeeder(),
+		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
+		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
+		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		LDAPServer:               os.Getenv("LDAP_SERVER"),
+		LDAPBase:                 os.Getenv("LDAP_BASE"),
+		CloudflareDNS:            buildCloudflareDNSClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)

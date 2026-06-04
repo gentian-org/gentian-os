@@ -60,6 +60,8 @@ spec:
               value: {{ .Values.openbao.role | quote }}
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
+            - name: TENANT_DNS01_CLUSTER_ISSUER
+              value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
             - name: LDAP_SERVER

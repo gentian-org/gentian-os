@@ -206,15 +206,12 @@ Multiple tenants share one cluster:
   LimitRanges. Identity, data, and mail are isolated through dedicated
   Keycloak realms, per-app database users, MinIO bucket policies,
   Redis ACLs, and (for mail) per-domain DKIM keys.
-- **Domains** use a hybrid two-plane model: a per-cluster wildcard
-  (`*.<kernel_domain>`) covers platform UIs and the default tenant URL
-  (`<tenant>.<kernel_domain>`); customers with a vanity domain
-  (`acme.com`) get HTTP-01 per-host certs without sharing any DNS
-  credentials with the platform. The **canonical pattern** for new tenants
-  is to leave `spec.domain` unset — `EffectiveDomain()` then returns
-  `<name>.<kernelDomain>` automatically. Only set `spec.domain` when a
-  genuine custom vanity domain is required; the `kernelDomain` itself is
-  the single source of truth and is set once in the Cluster XR claim.
+- **Domains** use a two-plane model: a per-cluster wildcard
+  (`*.<kernel_domain>`) covers **kernel UIs only**; each tenant app zone
+  gets its own wildcard (`*.<effectiveDomain>`) via DNS-01. The default
+  effective domain is `<tenant>.<kernelDomain>`; set `spec.domain` only for
+  a customer vanity domain (e.g. `acme.com`). See
+  [design/multi-tenancy.md](design/multi-tenancy.md) §3.
 - **App-to-app calls** go through OIDC token exchange, with the
   `IntegrationBinding` defining which exchanges are permitted.
 - **Database isolation:** each app within each tenant gets its own
@@ -228,23 +225,25 @@ issuance flow — are in
 
 ### 6.1 TLS certificate provisioning
 
-Every `AppProfile` with `spec.ingress.tlsEnabled: true` (the default) causes the
-**gentian-os controller** to create two resources per tenant app deployment:
+For each tenant with ingress-enabled apps, the **gentian-os controller** ensures:
 
-1. A Kubernetes `Ingress` pointing `{subDomain}.{tenantDomain}` → the app's
-   `Service:{servicePort}`.
-2. A cert-manager `Certificate` CR requesting a TLS certificate from the
-   `spec.ingress.clusterIssuer` (default: `letsencrypt-http01`).
+1. One cert-manager `Certificate` per tenant for `*.<effectiveDomain>` and
+   `<effectiveDomain>` (DNS-01), stored as `tenant-{name}-wildcard-tls`.
+2. One Kubernetes `Ingress` per app: `{subDomain}.{effectiveDomain}` →
+   `Service:{servicePort}`, all referencing that TLS secret.
 
-cert-manager's **HTTP-01 solver** then satisfies the ACME challenge via the same
-NGINX Ingress and stores the issued certificate as a Kubernetes `Secret` in the
-tenant namespace. The Ingress TLS stanza references this secret so every app
-automatically gets its own signed certificate without any manual intervention.
+`effectiveDomain` is `Tenant.spec.domain` when set, otherwise
+`<tenant>.<kernelDomain>`. The issuer is configured cluster-wide via
+`TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`).
 
-The cluster wildcard cert (`*.<kernelDomain>`, issued via DNS-01 against the
-Cloudflare token stored in OpenBao) covers platform-layer hostnames only.
-Per-tenant vanity-domain hostnames always use HTTP-01 so no DNS credentials
-need to be shared.
+The **kernel** wildcard (`*.<kernelDomain>`, DNS-01 at install) covers
+platform hostnames only (`portal`, `id`, Argo CD, …) and is never
+replicated into tenant namespaces.
+
+When traffic is proxied through Cloudflare, an optional operator adapter
+ensures `*.<effectiveDomain>` CNAME records so Total TLS can mint edge
+certs for multi-level tenant hostnames. Origin TLS remains cert-manager in
+the tenant namespace. See [design/multi-tenancy.md](design/multi-tenancy.md) §3.
 
 ### 6.2 CORS and iframe embedding
 

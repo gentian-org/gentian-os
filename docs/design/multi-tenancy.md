@@ -31,43 +31,58 @@ ext4 per user).
 |---|---|---|
 | **namespace-per-tenant** (default) | K8s RBAC, ResourceQuotas, NetworkPolicies | Trusted internal tenants, cost efficiency |
 
-## 3. Domains and TLS — Hybrid Two-Plane Model
+## 3. Domains and TLS — Two Planes, One Tenant-Zone Model
 
-| Plane | Domain | Hosts | TLS issuance | DNS responsibility |
+| Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
-| **Kernel plane** | `KERNEL_DOMAIN` (one per cluster, e.g. `desk.gentian.org`) | Keycloak, Argo CD, Portal, all kernel UIs | One DNS-01 wildcard cert `*.<kernel_domain>` issued at install | Cluster operator (one cert, controlled DNS API access) |
-| **Tenant plane (default)** | `<tenant>.<kernel_domain>` (e.g. `gtn-demo.desk.gentian.org`) | Tenant apps when no vanity domain set | Reuses kernel wildcard (Secret replicated by the platform into each tenant namespace) | None — covered by wildcard A/CNAME |
-| **Tenant plane (vanity)** | `Tenant.spec.domain` (e.g. `acme.com`) | Tenant apps when vanity domain set | HTTP-01 per-host certs by cert-manager | Customer creates A/CNAME pointing at cluster ingress IP |
+| **Kernel** | `KERNEL_DOMAIN` | `portal.desk.gentian.org`, `id.desk.gentian.org` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
+| **Tenant apps** | `effectiveDomain` | `meet.demo.desk.gentian.org`, `meet.acme.com` | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
 
-**Why this split:**
+**Effective domain** (same for ingress, mail, OIDC redirects to apps):
 
-- **One DNS API token.** The Cloudflare (or other DNS provider)
-  credential for DNS-01 lives only in the kernel namespace; never
-  replicated to tenant namespaces, never exposed to vanity-domain
-  customers, never required for tenant onboarding.
-- **Customers own DNS, not access.** Vanity domains require no
-  platform-side DNS automation: the customer creates CNAME/A records
-  to the cluster ingress IP and HTTP-01 handles certs.
-- **Stable OIDC issuer.** The Keycloak issuer URL stays at
-  `https://keycloak.<kernel_domain>/realms/<tenant>` regardless of
-  where the tenant's apps live. Token validation is therefore
-  independent of vanity domain choice; changing/removing the vanity
-  domain does not invalidate any tokens.
-- **Better cookie isolation.** Apps on different registrable domains
-  cannot share third-party cookies — strict improvement over a single
-  shared domain.
-- **Predictable fallback.** A tenant with no `domain` field gets a
-  working URL under the kernel wildcard — useful for demos and the
-  period before vanity DNS is wired up.
+- If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
+- Else → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
 
-**Migration from default to vanity:** customer (a) creates the DNS
-records, (b) sets `Tenant.spec.domain`. The platform switches Ingresses
-from the replicated wildcard Secret to per-host HTTP-01 certs without
-touching Keycloak.
+App hostnames are always `{subDomain}.{effectiveDomain}` (e.g. `meet` + `demo.desk.gentian.org`).
 
-The Cloudflare API token used for the kernel wildcard is stored in
-OpenBao (`gentian-os/kernel/dns/cloudflare`) and surfaced as a Secret
-in the `cert-manager` namespace by ESO.
+The gentian-os operator creates, for every tenant with ingress-enabled apps:
+
+1. One cert-manager `Certificate` with `dnsNames: [*.effectiveDomain, effectiveDomain]`.
+2. Secret `tenant-{name}-wildcard-tls` in the tenant namespace.
+3. One `Ingress` per app, all referencing that secret.
+
+The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant namespaces. It does not cover `meet.demo.desk.gentian.org` (only one DNS label under the kernel domain).
+
+### Why per-tenant wildcard (not kernel wildcard reuse)
+
+- **Correct SANs:** `*.demo.desk.gentian.org` covers all app subdomains for that tenant.
+- **Rate limits:** One ACME certificate per tenant, not one per app host.
+- **CSP edge:** Multi-level names need their own edge cert when proxied (see below).
+- **Customer vanity:** Same code path when `spec.domain` is `acme.com` — only DNS delegation changes.
+
+### Issuer configuration (portable across DNS providers)
+
+Wildcard certificates require **DNS-01**. The operator uses a single cluster-wide issuer name, configurable via `TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`, default `letsencrypt-dns01-cloudflare`). That `ClusterIssuer` must use a cert-manager DNS webhook matching your provider (Cloudflare, Route53, Azure DNS, Google Cloud DNS, etc.) and must be able to write `_acme-challenge` records in the zone that contains `effectiveDomain`.
+
+`AppProfile.spec.ingress.clusterIssuer` is **not** used for tenant ingress today; it is reserved for future per-app overrides.
+
+### Edge TLS (optional, CSP-specific)
+
+When traffic is **proxied** (e.g. Cloudflare orange cloud), the CSP must also present a valid certificate for each hostname. Universal SSL on `*.desk.gentian.org` does **not** cover `meet.demo.desk.gentian.org`.
+
+Optional operator integration (Cloudflare today): proxied CNAME `*.<effectiveDomain>` → tunnel target so **Total TLS** issues `*.<effectiveDomain>` at the edge. If disabled, use DNS-only (grey cloud) or TLS passthrough to the cluster origin cert.
+
+Origin and edge are separate: cert-manager in the tenant namespace is the portable contract; Cloudflare/ACM/Front Door adapters are deployment options.
+
+### Customer vanity domains (`spec.domain`)
+
+- **OIDC issuer** stays at `https://id.<kernel_domain>/realms/<tenant>` — app URL changes do not invalidate tokens.
+- **DNS:** Customer points `*.acme.com` (or per-host records) at the platform ingress/tunnel.
+- **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token). If the customer will not grant DNS API access, a future tier can use HTTP-01 per hostname or BYO certificates — still the same Ingress host naming.
+
+### Kernel DNS credential
+
+The Cloudflare (or other) API token for the **kernel** wildcard lives only in the kernel/`cert-manager` namespace (`gentian-os/kernel/dns/cloudflare` via OpenBao). The **tenant** DNS-01 issuer typically uses the same provider credentials at the cluster level but issues certs in each `tenant-*` namespace; it does not expose kernel secrets to tenants.
 
 ## 4. Network Boundaries
 

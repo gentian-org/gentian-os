@@ -455,7 +455,7 @@ fi
 
 # --- Cloudflare API token (DNS-01 ACME for kernel wildcard) ---
 # Optional: only required when KERNEL_DOMAIN is served via Cloudflare and the
-# kernel wildcard Certificate is enabled (see docs/architecture.md §2.5).
+# kernel wildcard Certificate is enabled (see docs/design/multi-tenancy.md §3).
 # Sourced from CF_API_TOKEN env var to keep the positional-arg contract stable.
 if [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put_once "dns/cloudflare" "$(jq -n \

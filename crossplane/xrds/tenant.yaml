@@ -31,7 +31,7 @@ spec:
                 domain:
                   type: string
                   description: >
-                    Optional vanity domain (e.g. "acme.com"). When omitted the
+                    Optional custom app zone (e.g. "acme.com"). When omitted the
                     tenant is served under "<name>.<kernelDomain>".
                 adminEmail:
                   type: string

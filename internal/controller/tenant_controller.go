@@ -137,11 +137,15 @@ type TenantReconciler struct {
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
 	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
-	// on which the kernel UIs (Keycloak, Argo CD, Nubus, Intercom) and the
-	// `<tenant>.<kernel_domain>` fallback for tenants without a vanity domain
-	// are served. Sourced from the KERNEL_DOMAIN env var at startup.
-	// See docs/architecture.md §2.5.
+	// on which kernel UIs (Keycloak, Argo CD, Nubus, Intercom) are served.
+	// Tenant app domains default to `<tenant>.<kernel_domain>` when
+	// Tenant.spec.domain is unset. Sourced from KERNEL_DOMAIN at startup.
+	// See docs/design/multi-tenancy.md §3.
 	KernelDomain string
+	// TenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used to issue
+	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
+	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.
+	TenantDNS01ClusterIssuer string
 	// KernelRealm is the name of the shared Keycloak realm that holds all
 	// platform users (synced via Nubus LDAP). Defaults to "kernel".
 	// Sourced from the KERNEL_REALM env var at startup.
@@ -155,12 +159,11 @@ type TenantReconciler struct {
 	// Used to construct per-tenant bind DNs and users DNs for LDAP federation.
 	// Sourced from the LDAP_BASE env var at startup.
 	LDAPBase string
-	// CloudflareDNS manages per-tenant app-hostname CNAME records in Cloudflare
-	// so that Cloudflare Total TLS can provision edge certificates for multi-level
-	// subdomains (e.g. chat.gtn-demo-2.desk.gentian.org). Nil when
-	// CLOUDFLARE_ZONE_ID or CLOUDFLARE_TUNNEL_CNAME are not set — in that case
-	// DNS record management is skipped and the operator relies on a manually
-	// created wildcard or per-hostname DNS record.
+	// CloudflareDNS is an optional edge-DNS adapter: when set, the operator
+	// ensures a proxied CNAME *.<effectiveDomain> → tunnel so Cloudflare Total
+	// TLS can provision edge certs for tenant app hostnames (e.g.
+	// meet.demo.desk.gentian.org). Nil when CLOUDFLARE_* env vars are unset;
+	// use DNS-only (grey cloud) or passthrough to origin in that case.
 	CloudflareDNS *CloudflareDNSClient
 }
 
@@ -389,7 +392,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 12. Ingress (per-app Ingress + TLS — kernel-wildcard fallback or per-host HTTP-01 for vanity domains; see ingress_reconciler.go)
+	// 12. Ingress (per-app Ingress + per-tenant wildcard TLS; see ingress_reconciler.go)
 	if _, err := r.ensureIngress(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionIngressReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		_ = r.Status().Update(ctx, tenant)

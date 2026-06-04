@@ -88,10 +88,9 @@ spec:
                     clusterIssuer:
                       default: letsencrypt-http01
                       description: |-
-                        ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
-                        Defaults to "letsencrypt-http01" (HTTP-01 per-host) when not set.
-                        See docs/architecture.md §2.5 for the kernel-vs-vanity domain
-                        model and the wildcard fallback.
+                        Reserved for future per-app issuer overrides. Tenant ingress
+                        TLS uses the operator per-tenant DNS-01 wildcard; see
+                        docs/design/multi-tenancy.md §3.
                       type: string
                     ingressClassName:
                       default: nginx
@@ -276,10 +275,9 @@ spec:
                   clusterIssuer:
                     default: letsencrypt-http01
                     description: |-
-                      ClusterIssuer is the cert-manager ClusterIssuer to use for TLS.
-                      Defaults to "letsencrypt-http01" (HTTP-01 per-host) when not set.
-                      See docs/architecture.md §2.5 for the kernel-vs-vanity domain
-                      model and the wildcard fallback.
+                      Reserved for future per-app issuer overrides. Tenant ingress
+                      TLS uses the operator per-tenant DNS-01 wildcard; see
+                      docs/design/multi-tenancy.md §3.
                     type: string
                   ingressClassName:
                     default: nginx

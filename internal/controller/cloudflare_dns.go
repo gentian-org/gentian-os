@@ -14,9 +14,9 @@ import (
 
 const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
 
-// CloudflareDNSClient is a minimal client for managing Cloudflare DNS records.
-// It only supports CNAME create/ensure/delete operations, which is all the
-// operator needs for per-tenant app-hostname records.
+// CloudflareDNSClient is an optional edge-DNS adapter for Cloudflare. It only
+// supports CNAME create/ensure/delete for *.<effectiveDomain> so Total TLS can
+// provision edge certificates for tenant app hostnames.
 type CloudflareDNSClient struct {
 	token       string
 	zoneID      string

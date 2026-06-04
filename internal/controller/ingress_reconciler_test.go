@@ -154,6 +154,61 @@ func TestIngress_CreatesIngressResource(t *testing.T) {
 	}
 }
 
+// TestIngress_CreatesCertificateForDerivedDomain: wildcard cert for <tenant>.<kernel> when spec.domain is unset.
+func TestIngress_CreatesCertificateForDerivedDomain(t *testing.T) {
+	t.Parallel()
+	profileName := "ingress-profile-derived"
+	profile := newIngressProfile(profileName, &gentianov1alpha1.IngressSpec{
+		SubDomain:  "meet",
+		TLSEnabled: true,
+	})
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenantName := "ingress-derived"
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: tenantName},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Derived Domain Co",
+			AdminEmail:  "admin@ingress-derived.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: profileName}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	nsName := fmt.Sprintf("tenant-%s", tenantName)
+	certName := fmt.Sprintf("tenant-%s-wildcard", tenantName)
+	wantDomain := tenantName + ".desk.gentian.org"
+
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certManagerCertGVKTest)
+	waitFor(t, 15*time.Second, func() bool {
+		err := testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, cert)
+		return err == nil
+	})
+
+	dnsNames, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
+	wantWildcard := "*." + wantDomain
+	if len(dnsNames) != 2 || dnsNames[0] != wantWildcard || dnsNames[1] != wantDomain {
+		t.Errorf("expected dnsNames=[%q, %q], got %v", wantWildcard, wantDomain, dnsNames)
+	}
+
+	ingressName := fmt.Sprintf("ingress-%s-%s", tenantName, profileName)
+	ing := &networkingv1.Ingress{}
+	waitFor(t, 15*time.Second, func() bool {
+		return testClient.Get(context.Background(), types.NamespacedName{Name: ingressName, Namespace: nsName}, ing) == nil
+	})
+	wantHost := "meet." + wantDomain
+	if len(ing.Spec.Rules) == 0 || ing.Spec.Rules[0].Host != wantHost {
+		t.Errorf("expected host %q, got %+v", wantHost, ing.Spec.Rules)
+	}
+}
+
 // TestIngress_CreatesCertificateForTenant: wildcard cert-manager Certificate CR is created.
 func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 	t.Parallel()

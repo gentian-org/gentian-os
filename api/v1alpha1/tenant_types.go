@@ -13,11 +13,11 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxLength=256
 	DisplayName string `json:"displayName"`
 
-	// Domain is the optional vanity domain for this tenant's apps (e.g.
-	// `acme.com`). When unset, the operator falls back to
-	// `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `gtn-demo.desk.gentian.org`),
-	// served under the kernel wildcard certificate. See
-	// docs/architecture.md §2.5.
+	// Domain is the optional custom domain for this tenant's app zone (e.g.
+	// `acme.com`). When unset, the effective domain is
+	// `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
+	// In both cases the operator issues a per-tenant wildcard TLS certificate
+	// for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
 	Domain string `json:"domain,omitempty"`
@@ -275,9 +275,10 @@ func (t *Tenant) EffectiveDomain(kernelDomain string) string {
 	return t.Name + "." + kernelDomain
 }
 
-// HasVanityDomain reports whether the tenant has an explicit vanity domain
-// configured (i.e. spec.domain is set). When false, the tenant uses the
-// `<tenant>.<kernel_domain>` fallback covered by the kernel wildcard cert.
+// HasVanityDomain reports whether the tenant has an explicit custom app domain
+// configured (i.e. spec.domain is set). When false, EffectiveDomain() derives
+// `<tenant>.<kernel_domain>`. TLS uses the same per-tenant wildcard model in
+// both cases; only the effective domain string differs.
 func (t *Tenant) HasVanityDomain() bool {
 	return t.Spec.Domain != ""
 }
