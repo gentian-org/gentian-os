@@ -40,8 +40,8 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if strings.Contains(script, `\"name\":"opendesk_useruuid"`) {
 		t.Fatal("mapper POST JSON must quote name field values")
 	}
-	if !strings.Contains(script, `\"name\":\"opendesk_useruuid\"`) {
-		t.Fatal("expected properly quoted mapper name in POST body")
+	if !strings.Contains(script, `{"name":"opendesk_useruuid","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"`) {
+		t.Fatal("mapper POST heredoc must use mapper name and protocolMapper in correct fields")
 	}
 	if !strings.Contains(script, "default-default-client-scopes") {
 		t.Fatal("expected fallback lookup on default-default-client-scopes")

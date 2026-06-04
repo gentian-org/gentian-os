@@ -150,7 +150,7 @@ EOF
     exit 1
   fi
   echo "mapper %s added to scope ${SCOPE_NAME}"
-fi`, name, name, name, tmpl.ProtocolMapper, cfgJSON, name, name, name, name, name)
+fi`, name, name, name, name, tmpl.ProtocolMapper, cfgJSON, name, name, name, name)
 	}
 	return b.String()
 }
