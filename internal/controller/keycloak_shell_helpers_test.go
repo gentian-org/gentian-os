@@ -27,6 +27,25 @@ func TestExtractKeycloakJSONIDByAttr_IDAfterAttribute(t *testing.T) {
 	}
 }
 
+func TestExtractKeycloakJSONIDByAttr_FieldsBetweenNameAndID(t *testing.T) {
+	t.Parallel()
+	// Keycloak ClientScopeRepresentation often places id after description/protocol.
+	json := `[{"name":"opendesk-jitsi-scope","description":"Scope for openDesk","protocol":"openid-connect","id":"scope-uuid-1"}]`
+	got := extractKeycloakJSONIDByAttr(json, "name", "opendesk-jitsi-scope")
+	if got != "scope-uuid-1" {
+		t.Fatalf("got id %q", got)
+	}
+}
+
+func TestExtractKeycloakJSONIDByAttr_MultiObjectArray(t *testing.T) {
+	t.Parallel()
+	json := `[{"name":"email","id":"a"},{"name":"opendesk-jitsi-scope","description":"x","id":"b"}]`
+	got := extractKeycloakJSONIDByAttr(json, "name", "opendesk-jitsi-scope")
+	if got != "b" {
+		t.Fatalf("got id %q", got)
+	}
+}
+
 func TestExtractKeycloakJSONIDByAttr_BrokerClient(t *testing.T) {
 	t.Parallel()
 	json := `[{"id":"client-uuid","clientId":"broker-demo","protocol":"openid-connect"}]`

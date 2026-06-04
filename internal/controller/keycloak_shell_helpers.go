@@ -5,21 +5,19 @@ package controller
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // keycloakShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
 // field from minified Keycloak Admin API JSON arrays by matching another field
-// (e.g. name=ldap, clientId=broker-demo). Keycloak usually emits "id" before the
-// matched attribute; a fallback pattern handles the reverse order.
+// (e.g. name=ldap, clientId=broker-demo). Objects are split on "},{" so fields
+// between "name" and "id" (description, protocol, …) do not break extraction.
 func keycloakShellJSONIDExtractor() string {
 	return `keycloak_json_id_by_attr() {
   _kj_json="$1"
   _kj_attr="$2"
   _kj_val="$3"
-  _kj_id=$(printf '%s' "${_kj_json}" | sed -n "s/.*\"id\":\"\([^\"]*\)\",\"${_kj_attr}\":\"${_kj_val}\".*/\1/p" | head -1)
-  if [ -z "${_kj_id}" ]; then
-    _kj_id=$(printf '%s' "${_kj_json}" | sed -n "s/.*\"${_kj_attr}\":\"${_kj_val}\",\"id\":\"\([^\"]*\)\".*/\1/p" | head -1)
-  fi
+  _kj_id=$(printf '%s' "${_kj_json}" | sed 's/},{/}\n{/g' | grep -F "\"${_kj_attr}\":\"${_kj_val}\"" | head -1 | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 }
 `
 }
@@ -34,15 +32,23 @@ if [ -z "${%s}" ]; then
 fi`, jsonVar, attr, value, outVar, outVar, attr, value)
 }
 
-// extractKeycloakJSONIDByAttr mirrors the shell sed logic for unit tests.
+// extractKeycloakJSONIDByAttr mirrors the shell object-split logic for unit tests.
 func extractKeycloakJSONIDByAttr(json, attr, value string) string {
-	before := regexp.MustCompile(`"id":"([^"]+)","` + regexp.QuoteMeta(attr) + `":"` + regexp.QuoteMeta(value))
-	if m := before.FindStringSubmatch(json); len(m) > 1 {
-		return m[1]
+	needle := `"` + attr + `":"` + value + `"`
+	idRe := regexp.MustCompile(`"id":"([^"]+)"`)
+	inner := strings.TrimSpace(json)
+	inner = strings.TrimPrefix(inner, "[")
+	inner = strings.TrimSuffix(inner, "]")
+	if inner == "" {
+		return ""
 	}
-	after := regexp.MustCompile(`"` + regexp.QuoteMeta(attr) + `":"` + regexp.QuoteMeta(value) + `","id":"([^"]+)"`)
-	if m := after.FindStringSubmatch(json); len(m) > 1 {
-		return m[1]
+	for _, obj := range strings.Split(inner, "},{") {
+		if !strings.Contains(obj, needle) {
+			continue
+		}
+		if m := idRe.FindStringSubmatch(obj); len(m) > 1 {
+			return m[1]
+		}
 	}
 	return ""
 }
