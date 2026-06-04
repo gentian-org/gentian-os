@@ -132,12 +132,12 @@ jobs:
 
       - name: Install crossplane CLI
         run: |
-          CROSSPLANE_VERSION=v2.2.2
-          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-          curl -sL "https://github.com/crossplane/crossplane/releases/download/${CROSSPLANE_VERSION}/crossplane_${OS}_${ARCH}" -o crossplane
-          chmod +x crossplane
-          sudo mv crossplane /usr/local/bin/crossplane
+          tmpdir="$(mktemp -d)"
+          (
+            cd "$tmpdir"
+            curl -sL "https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh" | XP_VERSION=v2.2.0 sh
+            sudo mv crossplane /usr/local/bin/crossplane
+          )
           crossplane version || true   # exits 1 when no cluster, CLI itself is OK
 
       - name: Install kubeconform
