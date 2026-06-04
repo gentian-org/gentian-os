@@ -15,7 +15,7 @@ set -euo pipefail
 XP_VERSION="${XP_VERSION:-v2.2.1}"
 _ver="${XP_VERSION#v}"
 _major="${_ver%%.*}"
-_minor_patch="${_ver#${_major}.}"
+_minor_patch="${_ver#"${_major}".}"
 _minor="${_minor_patch%%.*}"
 
 os=$(uname -s)
