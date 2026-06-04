@@ -49,25 +49,44 @@ spec:
                   echo "Created App Users group."
               fi
 
-              # 2. Create 'App User' template
+              # 2. Create global App User template (kernel / platform admins)
               APP_TEMPLATE_DN="cn=App User,cn=templates,cn=univention,${LDAP_BASE}"
               APP_TEMPLATE_ENC=$(urlencode "${APP_TEMPLATE_DN}")
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${APP_TEMPLATE_ENC}")
+              APP_TEMPLATE_BODY='{
+                        "properties": {
+                          "name": "App User",
+                          "description": "Platform-wide app user template (kernel admins)",
+                          "mailPrimaryAddress": "@desk.gentian.org",
+                          "opendeskFileshareEnabled": true,
+                          "opendeskLivecollaborationEnabled": true,
+                          "groups": ["'"${APP_USERS_DN}"'"]
+                        },
+                        "position": "cn=templates,cn=univention,'"${LDAP_BASE}"'"
+                      }'
               if [ "${STATUS}" = "404" ]; then
                   curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
                       "${BASE_URL}/settings/usertemplate/" \
-                      -d "{
-                        \"properties\": {
-                          \"name\": \"App User\",
-                          \"description\": \"Standard user with access to apps\",
-                          \"opendeskFileshareEnabled\": true,
-                          \"opendeskLivecollaborationEnabled\": true,
-                          \"groups\": [\"${APP_USERS_DN}\"]
-                        },
-                        \"position\": \"cn=templates,cn=univention,${LDAP_BASE}\"
-                      }"
+                      -d "${APP_TEMPLATE_BODY}"
                   echo "Created App User template."
+              elif [ "${STATUS}" = "200" ]; then
+                  curl -sf -X PATCH ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
+                      "${BASE_URL}/settings/usertemplate/${APP_TEMPLATE_ENC}" \
+                      -d "${APP_TEMPLATE_BODY}"
+                  echo "Reconciled App User template."
               fi
+
+              # Remove upstream openDesk user templates from the UMC picker.
+              for LEGACY_NAME in "openDesk User" "openDesk Admin" "openDesk Administrator"; do
+                  LEGACY_DN="cn=${LEGACY_NAME},cn=templates,cn=univention,${LDAP_BASE}"
+                  LEGACY_ENC=$(urlencode "${LEGACY_DN}")
+                  LEGACY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}")
+                  if [ "${LEGACY_STATUS}" = "200" ]; then
+                      curl -sf -X DELETE ${CREDS} -H "Accept: application/json" \
+                          "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}"
+                      echo "Removed legacy template ${LEGACY_NAME}."
+                  fi
+              done
 
               # 3. Create 'Admin User' template
               ADMIN_TEMPLATE_DN="cn=Admin User,cn=templates,cn=univention,${LDAP_BASE}"

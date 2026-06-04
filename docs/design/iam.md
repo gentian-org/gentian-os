@@ -53,8 +53,9 @@ Gentian OS establishes distinct separation between normal users and administrato
 
 ### The "App User"
 * **Purpose**: Day-to-day employees or members of the organization utilizing applications.
-* **Template**: `cn=App User`
+* **Template**: `cn=App User,cn=templates,ou=<tenant>,...` (one per tenant; upstream `openDesk User` templates are removed)
 * **Characteristics**:
+  * Pre-fills `mailPrimaryAddress` as `<username>@<tenant>.<kernel-domain>` (same openDesk `@domain` template syntax).
   * Automatically assigned the `opendeskFileshareEnabled`, `opendeskLivecollaborationEnabled` attributes (granting access to Nextcloud, Jitsi, etc.).
   * Added to the global `cn=App Users` group.
   * Can see and access application tiles in the Nubus Portal.

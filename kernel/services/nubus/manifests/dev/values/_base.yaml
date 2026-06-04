@@ -58,6 +58,9 @@ global:
             users:
               user:
                 add:
+                  # Default kernel template; tenant admins use the per-tenant
+                  # "App User" template at cn=App User,cn=templates,ou=<tenant>,...
+                  # which pre-fills <username>@<tenant>.<kernel-domain>.
                   default: cn=App User,cn=templates,cn=univention,dc=swp-ldap,dc=internal
                 properties:
                   description:

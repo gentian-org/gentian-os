@@ -54,3 +54,34 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
+	t.Parallel()
+	script := buildAppUserTemplateScript("ou=demo,${UDM_LDAP_BASE}", "demo", "demo.desk.gentian.org")
+	for _, want := range []string{
+		"openDesk User",
+		"mailPrimaryAddress",
+		`"mailPrimaryAddress": "@${MAIL_DOMAIN}"`,
+		"MAIL_DOMAIN=\"demo.desk.gentian.org\"",
+		"cn=templates,${OU_POS}",
+		"App User (demo)",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected App User template script to contain %q", want)
+		}
+	}
+}
+
+func TestBuildOUDeleteScript_FailsOnNonSuccessHTTP(t *testing.T) {
+	t.Parallel()
+	script := buildOUDeleteScript("ou=test,dc=example,dc=com")
+	for _, want := range []string{
+		`case "${HTTP}" in`,
+		`200|204|404) ;;`,
+		`exit 1`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("buildOUDeleteScript() missing %q", want)
+		}
+	}
+}

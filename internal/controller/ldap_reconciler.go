@@ -97,6 +97,17 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
+	// Step 1b — tenant-scoped App User template with username@<tenant-domain> prefill.
+	appUserTemplateDone, err := r.ensureAppUserTemplateJob(ctx, tenant, ouDN)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure LDAP App User template Job: %w", err)
+	}
+	if !appUserTemplateDone {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
+			"ProvisioningAppUserTemplate", "Waiting for UDM App User template Job to complete")
+		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
+	}
+
 	// Step 2 — tenant admin UDM user.
 	// Must run BEFORE the admin policy job: the policy job updates the portal
 	// entry allowedGroups, and the Nubus portal consumer groups cache must
@@ -360,6 +371,30 @@ func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gen
 	return jobIsComplete(job), nil
 }
 
+// ensureAppUserTemplateJob creates the tenant-scoped App User UDM template if absent.
+// Returns true when the Job has completed successfully.
+func (r *TenantReconciler) ensureAppUserTemplateJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
+	jobName := appUserTemplateJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		mailDomain := tenantUserMailDomain(tenant, r.KernelDomain)
+		if mailDomain == "" {
+			return false, fmt.Errorf("tenant %q has no effective domain for App User mail prefill", tenant.Name)
+		}
+		return false, r.Create(ctx, makeAppUserTemplateJob(tenant, ouDN, mailDomain))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
 // ensureAdminUserJob creates the UDM users/user Job for the tenant admin if absent.
 // The admin is added to admins_<tenant> so the UMC delegated admin policy takes effect.
 // Returns true when the Job has completed successfully.
@@ -541,6 +576,11 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 
 	ouDone, err := r.ensureOUJob(ctx, tenant, ouDN)
 	if err != nil || !ouDone {
+		return err
+	}
+
+	templateDone, err := r.ensureAppUserTemplateJob(ctx, tenant, ouDN)
+	if err != nil || !templateDone {
 		return err
 	}
 
@@ -773,6 +813,31 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPass
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{c},
+				},
+			},
+		},
+	}
+}
+
+func makeAppUserTemplateJob(tenant *gentianov1alpha1.Tenant, ouDN, mailDomain string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      appUserTemplateJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("provision-app-user-template", buildAppUserTemplateScript(ouDN, tenant.Name, mailDomain)),
+					},
 				},
 			},
 		},
@@ -1043,6 +1108,25 @@ else
   exit 1
 fi
 
+# Create cn=templates container for tenant-scoped user templates.
+TEMPLATES_CN_ENC=$(urlencode "cn=templates,${OU_POS}")
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/container/cn/${TEMPLATES_CN_ENC}")
+if [ "${STATUS}" = "404" ]; then
+  curl -s -o /dev/null -X POST ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/container/cn/" \
+    -d "{\"properties\":{\"name\":\"templates\",\"description\":\"Tenant user templates\"},\"position\":\"${OU_POS}\"}"
+  echo "cn=templates container created"
+elif [ "${STATUS}" = "200" ]; then
+  echo "cn=templates container already exists"
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
+fi
+
 # Create per-tenant managed-by-attribute-* groups inside the tenant OU.
 # These replace the global cn=groups managed-by-attribute-* groups so that
 # app access control stays scoped to the tenant (one OU = one realm = one tenant).
@@ -1114,6 +1198,122 @@ else
   echo "unexpected UDM status (HTTP ${STATUS}); will retry" >&2
   exit 1
 fi`, ouDN, appName, tenantName, appName, tenantName, appName, tenantName, appName, tenantName, appName, tenantName)
+}
+
+// buildAppUserTemplateScript provisions a tenant-scoped App User template that
+// pre-fills mailPrimaryAddress as <username>@<tenant-domain> (openDesk-style
+// "@domain" template syntax). Also ensures the tenant mail domain exists in UDM
+// and removes upstream openDesk user templates from the template picker.
+func buildAppUserTemplateScript(ouDN, tenantName, mailDomain string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+OU_POS="%s"
+TEMPLATES_POS="cn=templates,${OU_POS}"
+APP_USERS_DN="cn=App Users,cn=groups,${UDM_LDAP_BASE}"
+MAIL_DOMAIN="%s"
+MAIL_DOMAIN_CONTAINER="cn=domain,cn=mail,${UDM_LDAP_BASE}"
+TEMPLATE_DN="cn=App User,${TEMPLATES_POS}"
+TEMPLATE_ENC=$(urlencode "${TEMPLATE_DN}")
+
+# Hide upstream openDesk templates so tenant admins only see Gentian templates.
+for LEGACY_NAME in "openDesk User" "openDesk Admin" "openDesk Administrator"; do
+  LEGACY_DN="cn=${LEGACY_NAME},cn=templates,cn=univention,${UDM_LDAP_BASE}"
+  LEGACY_ENC=$(urlencode "${LEGACY_DN}")
+  LEGACY_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}")
+  if [ "${LEGACY_STATUS}" = "200" ]; then
+    curl -sf --max-time 30 -X DELETE ${CREDS} \
+      -H "Accept: application/json" \
+      "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}" || true
+    echo "removed legacy template ${LEGACY_NAME}"
+  fi
+done
+
+# Ensure the tenant mail domain object exists for UMC validation and prefill.
+MAIL_DOMAIN_SEARCH=$(curl -s --max-time 30 ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/mail/domain/?filter=name%%3D${MAIL_DOMAIN}")
+if ! echo "${MAIL_DOMAIN_SEARCH}" | grep -q '"dn"'; then
+  curl -sf --max-time 30 -X POST ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/mail/domain/" \
+    -d "{\"properties\":{\"name\":\"${MAIL_DOMAIN}\"},\"position\":\"${MAIL_DOMAIN_CONTAINER}\"}"
+  echo "mail domain ${MAIL_DOMAIN} created"
+else
+  echo "mail domain ${MAIL_DOMAIN} already exists"
+fi
+
+# Ensure cn=templates exists (also created by the OU job; idempotent here).
+TEMPLATES_CN_ENC=$(urlencode "${TEMPLATES_POS}")
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/container/cn/${TEMPLATES_CN_ENC}")
+if [ "${STATUS}" = "404" ]; then
+  curl -sf --max-time 30 -X POST ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/container/cn/" \
+    -d "{\"properties\":{\"name\":\"templates\",\"description\":\"Tenant user templates\"},\"position\":\"${OU_POS}\"}"
+  echo "cn=templates container created"
+elif [ "${STATUS}" != "200" ]; then
+  echo "UDM not ready for cn=templates (HTTP ${STATUS}); will retry" >&2
+  exit 1
+fi
+
+TEMPLATE_BODY=$(cat <<EOF
+{
+  "properties": {
+    "name": "App User (%s)",
+    "description": "Standard user with access to apps; email prefill uses @${MAIL_DOMAIN}",
+    "mailPrimaryAddress": "@${MAIL_DOMAIN}",
+    "opendeskFileshareEnabled": true,
+    "opendeskLivecollaborationEnabled": true,
+    "groups": ["${APP_USERS_DN}"]
+  },
+  "position": "${TEMPLATES_POS}"
+}
+EOF
+)
+
+STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/settings/usertemplate/${TEMPLATE_ENC}")
+if [ "${STATUS}" = "404" ]; then
+  HTTP=$(curl -s -o /tmp/udm-template-body -w "%%{http_code}" -X POST ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/settings/usertemplate/" \
+    -d "${TEMPLATE_BODY}")
+  if [ "${HTTP}" != "200" ] && [ "${HTTP}" != "201" ]; then
+    echo "failed to create App User template (HTTP ${HTTP})" >&2
+    cat /tmp/udm-template-body >&2 2>/dev/null || true
+    exit 1
+  fi
+  echo "App User template created for ${MAIL_DOMAIN}"
+elif [ "${STATUS}" = "200" ]; then
+  HTTP=$(curl -s -o /tmp/udm-template-body -w "%%{http_code}" -X PATCH ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/settings/usertemplate/${TEMPLATE_ENC}" \
+    -d "${TEMPLATE_BODY}")
+  case "${HTTP}" in
+  200|204|400|422)
+    echo "App User template reconciled for ${MAIL_DOMAIN} (HTTP ${HTTP})"
+    ;;
+  *)
+    echo "failed to reconcile App User template (HTTP ${HTTP})" >&2
+    cat /tmp/udm-template-body >&2 2>/dev/null || true
+    exit 1
+    ;;
+  esac
+else
+  echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+  exit 1
+fi`, ouDN, mailDomain, tenantName)
 }
 
 // buildAdminUserScript creates the tenant admin as a users/user in the tenant
@@ -1592,6 +1792,12 @@ func tenantConcreteOUDN(tenant *gentianov1alpha1.Tenant, ldapBase string) string
 	return strings.ReplaceAll(tenantOUDN(tenant), "${UDM_LDAP_BASE}", ldapBase)
 }
 
+// tenantUserMailDomain returns the mail domain used for tenant end-user accounts.
+// App users get <username>@<tenant-domain> for cluster-wide LDAP uniqueness.
+func tenantUserMailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain string) string {
+	return tenant.EffectiveDomain(kernelDomain)
+}
+
 func ouJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-ou-%s", tenantName)
 }
@@ -1606,6 +1812,10 @@ func adminPolicyJobName(tenantName string) string {
 
 func adminUserJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-admin-user-%s", tenantName)
+}
+
+func appUserTemplateJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-app-user-template-%s", tenantName)
 }
 
 func ouDeleteJobName(tenantName string) string {

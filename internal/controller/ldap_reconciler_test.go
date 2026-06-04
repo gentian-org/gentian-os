@@ -18,7 +18,6 @@ package controller_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -468,20 +467,6 @@ func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-delete-ldapdelete", Namespace: "platform-kernel"}, j) == nil
 	})
-}
-
-func TestBuildOUDeleteScript_FailsOnNonSuccessHTTP(t *testing.T) {
-	t.Parallel()
-	script := buildOUDeleteScript("ou=test,dc=example,dc=com")
-	for _, want := range []string{
-		`case "${HTTP}" in`,
-		`200|204|404) ;;`,
-		`exit 1`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Errorf("buildOUDeleteScript() missing %q", want)
-		}
-	}
 }
 
 // TestLDAP_RetainPolicy_PreservesAdminUser verifies that deleting a Tenant with
