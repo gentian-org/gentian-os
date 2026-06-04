@@ -41,16 +41,112 @@ Darwin)
 	;;
 esac
 
+use_legacy_host=false
 if [ "${_major}" -lt 2 ] || { [ "${_major}" -eq 2 ] && [ "${_minor}" -lt 3 ]; }; then
-	url="https://releases.crossplane.io/stable/v${_ver}/bin/${os_arch}/crank"
-else
-	url="https://cli.crossplane.io/stable/v${_ver}/bin/${os_arch}/crossplane"
+	use_legacy_host=true
 fi
 
-if ! curl -sfL "${url}" -o crossplane; then
-	echo "Failed to download Crossplane CLI v${_ver} from ${url}" >&2
-	exit 1
+curl_fetch() {
+	local dest="$1"
+	shift
+	local url
+	for url in "$@"; do
+		if curl -sfL \
+			--retry 5 --retry-delay 2 --retry-all-errors \
+			--connect-timeout 30 --max-time 600 \
+			"${url}" -o "${dest}"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+verify_cli_binary() {
+	local path="$1"
+	[ -f "${path}" ] && [ -s "${path}" ] && [ -x "${path}" ] || return 1
+	# Reject HTML error pages masquerading as binaries.
+	head -c 4 "${path}" | grep -q $'\x7fELF' && return 0
+	head -c 4 "${path}" | grep -q $'\xcf\xfa\xed\xfe' && return 0 # Mach-O
+	return 1
+}
+
+install_from_releases() {
+	local host url bin_name
+	if [ "${use_legacy_host}" = true ]; then
+		host="releases.crossplane.io"
+		bin_name="crank"
+	else
+		host="cli.crossplane.io"
+		bin_name="crossplane"
+	fi
+
+	# Prefer uncompressed binary; fall back to upstream bundle tarball.
+	local urls=(
+		"https://${host}/stable/v${_ver}/bin/${os_arch}/${bin_name}"
+		"https://${host}/stable/v${_ver}/bundle/${os_arch}/${bin_name}.tar.gz"
+	)
+	if [ "${bin_name}" = "crank" ]; then
+		urls+=("https://${host}/stable/v${_ver}/bin/${os_arch}/crossplane")
+	fi
+
+	local tmp
+	tmp=$(mktemp)
+	if ! curl_fetch "${tmp}" "${urls[@]}"; then
+		rm -f "${tmp}"
+		return 1
+	fi
+
+	if tar tzf "${tmp}" >/dev/null 2>&1; then
+		tar xzf "${tmp}" -C .
+		rm -f "${tmp}"
+		if [ -f "${bin_name}" ]; then
+			mv -f "${bin_name}" crossplane
+			chmod +x crossplane
+			rm -f "${bin_name}.sha256" 2>/dev/null || true
+			verify_cli_binary crossplane
+			return $?
+		fi
+		rm -f "${bin_name}" "${bin_name}.sha256" 2>/dev/null || true
+		return 1
+	fi
+
+	mv -f "${tmp}" crossplane
+	chmod +x crossplane
+	verify_cli_binary crossplane
+}
+
+install_via_go() {
+	command -v go >/dev/null 2>&1 || return 1
+	local mod="github.com/crossplane/crossplane/v2/cmd/crank"
+	if [ "${use_legacy_host}" = false ]; then
+		mod="github.com/crossplane/cli/v2/cmd/crossplane"
+	fi
+	local gopath
+	gopath=$(mktemp -d)
+	if ! GOPATH="${gopath}" GOBIN="$(pwd)" go install "${mod}@${XP_VERSION}"; then
+		rm -rf "${gopath}"
+		return 1
+	fi
+	rm -rf "${gopath}"
+	if [ -f crank ] && [ ! -f crossplane ]; then
+		mv -f crank crossplane
+	fi
+	chmod +x crossplane 2>/dev/null || true
+	verify_cli_binary crossplane
+}
+
+rm -f crossplane
+
+if install_from_releases; then
+	echo "crossplane CLI v${_ver} downloaded ($(pwd)/crossplane)"
+	exit 0
 fi
 
-chmod +x crossplane
-echo "crossplane CLI v${_ver} downloaded ($(pwd)/crossplane)"
+echo "Crossplane CLI: release download failed, trying go install..." >&2
+if install_via_go; then
+	echo "crossplane CLI v${_ver} built with go install ($(pwd)/crossplane)"
+	exit 0
+fi
+
+echo "Failed to install Crossplane CLI v${_ver} (releases.crossplane.io and go install)" >&2
+exit 1
