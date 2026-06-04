@@ -135,7 +135,7 @@ jobs:
           tmpdir="$(mktemp -d)"
           (
             cd "$tmpdir"
-            curl -sL "https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh" | XP_VERSION=v2.2.1 sh
+            curl -sL "https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh" | XP_VERSION=v2.2.2 sh
             sudo mv crossplane /usr/local/bin/crossplane
           )
           crossplane version || true   # exits 1 when no cluster, CLI itself is OK
