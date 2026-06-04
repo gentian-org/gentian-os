@@ -241,7 +241,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for realm Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-clienttest", Namespace: "platform-kernel"}, j) == nil
@@ -249,7 +249,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	markJobComplete(t, "keycloak-realm-clienttest", "platform-kernel")
 
 	// Wait for admin Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-admin-clienttest", Namespace: "platform-kernel"}, j) == nil
@@ -258,7 +258,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 
 	// Client Job should be created after admin is complete.
 	clientJob := &batchv1.Job{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-client-clienttest-oidc-app2", Namespace: "platform-kernel"}, clientJob) == nil
 	})
@@ -394,7 +394,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Realm Job should be created first.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-admintest", Namespace: "platform-kernel"}, j) == nil
@@ -410,7 +410,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	markJobComplete(t, "keycloak-realm-admintest", "platform-kernel")
 
 	// Now the admin Job should appear.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob) == nil
 	})

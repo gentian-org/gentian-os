@@ -48,6 +48,11 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
 		return oidcAppConfig{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 	}
+	if profile.Spec.KernelRequirements == nil || 
+		profile.Spec.KernelRequirements.Identity == nil ||
+		profile.Spec.KernelRequirements.Identity.OIDC == nil {
+		return oidcAppConfig{}, fmt.Errorf("AppProfile %s missing OIDC configuration", profileName)
+	}
 	oidcSpec := profile.Spec.KernelRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
