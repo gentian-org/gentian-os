@@ -17,10 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func TestIsUMCFrontendIngress(t *testing.T) {
@@ -48,5 +51,65 @@ func TestIsUMCFrontendIngress(t *testing.T) {
 	}
 	if isUMCFrontendIngress(app) {
 		t.Fatal("expected app ingress not to be treated as umc frontend")
+	}
+}
+
+func TestPortalEmbeddingIngressSnippetUsesKernelPortal(t *testing.T) {
+	snippet := portalEmbeddingIngressSnippet("desk.gentian.org")
+	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
+		t.Fatalf("expected kernel portal origin in snippet, got:\n%s", snippet)
+	}
+	if strings.Contains(snippet, "portal.demo.desk.gentian.org") {
+		t.Fatal("must not use tenant-scoped portal hostname")
+	}
+}
+
+func TestEnsurePortalEmbeddingAnnotationsReplacesLegacyTenantPortalCSP(t *testing.T) {
+	annotations := map[string]string{
+		nginxConfigurationSnippetAnnotation: `more_clear_headers "X-Frame-Options";
+more_clear_headers "Content-Security-Policy";
+more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.demo.desk.gentian.org";`,
+	}
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org")
+	got := annotations[nginxConfigurationSnippetAnnotation]
+	if !strings.Contains(got, "https://portal.desk.gentian.org") {
+		t.Fatalf("expected kernel portal in merged snippet, got:\n%s", got)
+	}
+	if strings.Contains(got, "portal.demo.desk.gentian.org") {
+		t.Fatal("legacy tenant portal origin must be removed")
+	}
+}
+
+func TestEnsurePortalEmbeddingAnnotationsPreservesCustomSnippet(t *testing.T) {
+	annotations := map[string]string{
+		nginxConfigurationSnippetAnnotation: `proxy_set_header Accept-Encoding "";
+sub_filter_once on;`,
+	}
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org")
+	got := annotations[nginxConfigurationSnippetAnnotation]
+	if !strings.Contains(got, "sub_filter_once on;") {
+		t.Fatalf("expected custom snippet preserved, got:\n%s", got)
+	}
+	if !strings.Contains(got, "frame-ancestors") {
+		t.Fatalf("expected portal embedding directives prepended, got:\n%s", got)
+	}
+}
+
+func TestBuildAppIngressInjectsKernelPortalCSP(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+	}
+	ingress := &gentianov1alpha1.IngressSpec{
+		SubDomain:   "meet",
+		ServiceName: "jitsi-web",
+		ServicePort: 80,
+		Annotations: map[string]string{
+			nginxConfigurationSnippetAnnotation: `more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.${TENANT_DOMAIN}";`,
+		},
+	}
+	ing := buildAppIngress(tenant, "tenant-demo", "jitsi", ingress, "meet.demo.desk.gentian.org", "tenant-demo-wildcard-tls", "demo.desk.gentian.org", "desk.gentian.org")
+	snippet := ing.Annotations[nginxConfigurationSnippetAnnotation]
+	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
+		t.Fatalf("expected kernel portal CSP, got:\n%s", snippet)
 	}
 }
