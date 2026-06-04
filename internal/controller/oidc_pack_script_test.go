@@ -34,9 +34,8 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if strings.Contains(script, `tr ',' '\n' | grep -F "\"name\":\"${SCOPE_NAME}\""`) {
 		t.Fatal("oidc pack script must not use fragile tr/grep scope id extraction")
 	}
-	if !strings.Contains(script, `keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE_NAME}"`) &&
-		!strings.Contains(script, `keycloak_json_id_by_attr ${SCOPE_LIST} "name" "${SCOPE_NAME}"`) {
-		t.Fatal("expected SCOPE_UUID via keycloak_json_id_by_attr")
+	if !strings.Contains(script, "_kj_scope_id_from_list") {
+		t.Fatal("expected dedicated client-scope id lookup helper")
 	}
 	if !strings.Contains(script, "default-default-client-scopes") {
 		t.Fatal("expected fallback lookup on default-default-client-scopes")

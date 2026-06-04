@@ -23,8 +23,9 @@ func keycloakShellJSONIDExtractor() string {
   _kj_id=""
   if command -v jq >/dev/null 2>&1; then
     _kj_id=$(printf '%s' "${_kj_json}" | jq -r --arg a "${_kj_attr}" --arg v "${_kj_val}" '
-      [.. | objects | select(has($a) and (.[$a] | tostring) == $v and has("id") and (.id | type) == "string" and .id != "") | .id]
-      | first // empty' 2>/dev/null | head -1)
+      (if type == "array" then .[] elif (.content? | type) == "array" then .content[] else empty end)
+      | select(has($a) and (.[$a] | tostring) == $v and has("id") and (.id | type) == "string" and .id != "")
+      | .id // empty' 2>/dev/null | head -1)
     if [ "${_kj_id}" = "null" ]; then
       _kj_id=""
     fi
@@ -47,16 +48,30 @@ if [ -z "${%s}" ]; then
 fi`, jsonVar, attr, value, outVar, outVar, attr, value)
 }
 
+// keycloakShellScopeIDFromList defines a helper to extract a client-scope id by name from JSON.
+func keycloakShellScopeIDFromList() string {
+	return `_kj_scope_id_from_list() {
+  _kj_id=$(printf '%s' "$1" | jq -r --arg n "${SCOPE_NAME}" '
+    (if type == "array" then .[] elif (.content? | type) == "array" then .content[] else empty end)
+    | select(.name? == $n) | .id // empty' 2>/dev/null | head -1)
+  if [ "${_kj_id}" = "null" ]; then
+    _kj_id=""
+  fi
+}
+`
+}
+
 // keycloakShellLookupClientScopeID resolves SCOPE_UUID for the OIDC pack job (create if missing).
 func keycloakShellLookupClientScopeID() string {
-	return `SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
-keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE_NAME}"
+	return keycloakShellScopeIDFromList() + `
+SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+_kj_scope_id_from_list "${SCOPE_LIST}"
 SCOPE_UUID="${_kj_id}"
 if [ -z "${SCOPE_UUID}" ]; then
   for _kj_ep in default-default-client-scopes optional-client-scopes; do
     _kj_list=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/${_kj_ep}" 2>/dev/null || true)
     if [ -n "${_kj_list}" ]; then
-      keycloak_json_id_by_attr "${_kj_list}" "name" "${SCOPE_NAME}"
+      _kj_scope_id_from_list "${_kj_list}"
       SCOPE_UUID="${_kj_id}"
       if [ -n "${SCOPE_UUID}" ]; then
         break
@@ -74,7 +89,7 @@ if [ -z "${SCOPE_UUID}" ]; then
   else
     echo "client scope ${SCOPE_NAME} already exists"
     SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
-    keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE_NAME}"
+    _kj_scope_id_from_list "${SCOPE_LIST}"
     SCOPE_UUID="${_kj_id}"
   fi
 else
@@ -84,6 +99,7 @@ if [ -z "${SCOPE_UUID}" ]; then
   echo "ERROR: could not resolve client scope id (name=${SCOPE_NAME})" >&2
   exit 1
 fi
+echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
 `
 }
 

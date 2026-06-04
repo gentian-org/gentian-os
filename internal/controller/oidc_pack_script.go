@@ -40,7 +40,7 @@ func buildOIDCPackScript(
 	clientUUIDBlock := keycloakShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
 	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${LDAP_GROUP}")
 
-	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloakShellJSONIDExtractor() + keycloakShellScopeIDFromList() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
