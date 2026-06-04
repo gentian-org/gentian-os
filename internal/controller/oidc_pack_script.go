@@ -36,7 +36,7 @@ func buildOIDCPackScript(
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
-	scopeUUIDBlock := keycloakShellRequireID("SCOPE_UUID", "${SCOPE_LIST}", "name", "${SCOPE_NAME}")
+	scopeLookupBlock := keycloakShellLookupClientScopeID()
 	clientUUIDBlock := keycloakShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
 	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${LDAP_GROUP}")
 
@@ -59,16 +59,6 @@ TOKEN=$(curl -sf \
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 # --- Client scope ---
-SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
-if echo "${SCOPE_LIST}" | grep -Fq "\"name\":\"${SCOPE_NAME}\""; then
-  echo "client scope ${SCOPE_NAME} already exists"
-else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
-    -d "{\"name\":\"${SCOPE_NAME}\",\"description\":\"${SCOPE_DESC}\",\"protocol\":\"openid-connect\"}"
-  SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
-  echo "client scope ${SCOPE_NAME} created"
-fi
 %s
 
 # --- Protocol mappers on scope ---
@@ -131,7 +121,7 @@ SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, pack.LDAPGroup,
 		string(redirectJSON), publicClient, fullScope,
-		scopeUUIDBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
+		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
 }
 
 func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTemplate) string {

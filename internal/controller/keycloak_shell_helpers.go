@@ -22,7 +22,9 @@ func keycloakShellJSONIDExtractor() string {
   _kj_val="$3"
   _kj_id=""
   if command -v jq >/dev/null 2>&1; then
-    _kj_id=$(printf '%s' "${_kj_json}" | jq -r --arg a "${_kj_attr}" --arg v "${_kj_val}" '(if type == "array" then .[] elif (.content? | type) == "array" then .content[] else empty end) | select(.[$a] == $v) | .id // empty' 2>/dev/null | head -1)
+    _kj_id=$(printf '%s' "${_kj_json}" | jq -r --arg a "${_kj_attr}" --arg v "${_kj_val}" '
+      [.. | objects | select(has($a) and (.[$a] | tostring) == $v and has("id") and (.id | type) == "string" and .id != "") | .id]
+      | first // empty' 2>/dev/null | head -1)
     if [ "${_kj_id}" = "null" ]; then
       _kj_id=""
     fi
@@ -45,28 +47,81 @@ if [ -z "${%s}" ]; then
 fi`, jsonVar, attr, value, outVar, outVar, attr, value)
 }
 
+// keycloakShellLookupClientScopeID resolves SCOPE_UUID for the OIDC pack job (create if missing).
+func keycloakShellLookupClientScopeID() string {
+	return `SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE_NAME}"
+SCOPE_UUID="${_kj_id}"
+if [ -z "${SCOPE_UUID}" ]; then
+  for _kj_ep in default-default-client-scopes optional-client-scopes; do
+    _kj_list=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/${_kj_ep}" 2>/dev/null || true)
+    if [ -n "${_kj_list}" ]; then
+      keycloak_json_id_by_attr "${_kj_list}" "name" "${SCOPE_NAME}"
+      SCOPE_UUID="${_kj_id}"
+      if [ -n "${SCOPE_UUID}" ]; then
+        break
+      fi
+    fi
+  done
+fi
+if [ -z "${SCOPE_UUID}" ]; then
+  _kj_hdr=$(curl -si -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
+    -d "{\"name\":\"${SCOPE_NAME}\",\"description\":\"${SCOPE_DESC}\",\"protocol\":\"openid-connect\"}")
+  SCOPE_UUID=$(echo "${_kj_hdr}" | grep -i '^Location:' | tail -1 | tr -d '\r' | sed 's|.*/||')
+  if [ -n "${SCOPE_UUID}" ]; then
+    echo "client scope ${SCOPE_NAME} created"
+  else
+    echo "client scope ${SCOPE_NAME} already exists"
+    SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+    keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE_NAME}"
+    SCOPE_UUID="${_kj_id}"
+  fi
+else
+  echo "client scope ${SCOPE_NAME} already exists"
+fi
+if [ -z "${SCOPE_UUID}" ]; then
+  echo "ERROR: could not resolve client scope id (name=${SCOPE_NAME})" >&2
+  exit 1
+fi
+`
+}
+
 // extractKeycloakJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
 func extractKeycloakJSONIDByAttr(raw, attr, value string) string {
-	var items []map[string]any
+	var walk func(any)
+	var found string
+	walk = func(v any) {
+		if found != "" {
+			return
+		}
+		m, ok := v.(map[string]any)
+		if !ok {
+			return
+		}
+		if fmt.Sprint(m[attr]) == value {
+			if id, ok := m["id"].(string); ok && id != "" {
+				found = id
+				return
+			}
+		}
+		for _, child := range m {
+			walk(child)
+		}
+	}
 	trimmed := strings.TrimSpace(raw)
-	if strings.HasPrefix(trimmed, "{") {
-		var wrapped struct {
-			Content []map[string]any `json:"content"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &wrapped); err == nil && len(wrapped.Content) > 0 {
-			items = wrapped.Content
-		}
-	}
-	if items == nil {
-		var arr []map[string]any
-		if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
-			items = arr
-		}
-	}
-	for _, item := range items {
-		if fmt.Sprint(item[attr]) == value {
-			if id, ok := item["id"].(string); ok && id != "" {
-				return id
+	if trimmed != "" {
+		var parsed any
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			if arr, ok := parsed.([]any); ok {
+				for _, item := range arr {
+					walk(item)
+				}
+			} else {
+				walk(parsed)
+			}
+			if found != "" {
+				return found
 			}
 		}
 	}
