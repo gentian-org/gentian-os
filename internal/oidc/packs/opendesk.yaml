@@ -43,6 +43,7 @@ spec:
         userinfo.token.claim: "true"
         introspection.token.claim: "true"
     full_name:
+      keycloakName: "full name"
       protocolMapper: oidc-full-name-mapper
       config:
         id.token.claim: "true"

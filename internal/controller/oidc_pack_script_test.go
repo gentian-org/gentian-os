@@ -40,8 +40,17 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if strings.Contains(script, `\"name\":"opendesk_useruuid"`) {
 		t.Fatal("mapper POST JSON must quote name field values")
 	}
-	if !strings.Contains(script, `{"name":"opendesk_useruuid","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"`) {
-		t.Fatal("mapper POST heredoc must use mapper name and protocolMapper in correct fields")
+	if !strings.Contains(script, `"name":"opendesk_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
+		t.Fatal("mapper POST body must include opendesk_useruuid name and usermodel protocolMapper")
+	}
+	if !strings.Contains(script, `"consentRequired":false`) {
+		t.Fatal("mapper POST body must set consentRequired false")
+	}
+	if !strings.Contains(script, `"multivalued":"false"`) {
+		t.Fatal("usermodel mappers must include multivalued false")
+	}
+	if !strings.Contains(script, `"name":"full name"`) {
+		t.Fatal("full_name template must map to Keycloak mapper name \"full name\"")
 	}
 	if !strings.Contains(script, "default-default-client-scopes") {
 		t.Fatal("expected fallback lookup on default-default-client-scopes")

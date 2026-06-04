@@ -124,43 +124,79 @@ echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
 }
 
+type protocolMapperPOST struct {
+	Name            string            `json:"name"`
+	Protocol        string            `json:"protocol"`
+	ProtocolMapper  string            `json:"protocolMapper"`
+	ConsentRequired bool              `json:"consentRequired"`
+	Config          map[string]string `json:"config"`
+}
+
 func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTemplate) string {
 	var b strings.Builder
-	for _, name := range pack.Mappers {
-		tmpl, ok := templates[name]
+	fmt.Fprintf(&b, `
+# Drop corrupt mappers left by earlier failed provision runs.
+MAPPERS=$(curl -sS -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" 2>/dev/null || echo "[]")
+for _kj_mid in $(printf '%%s' "${MAPPERS}" | jq -r '.[] | select(.name=="oidc-usermodel-attribute-mapper") | .id // empty' 2>/dev/null); do
+  [ -z "${_kj_mid}" ] && continue
+  curl -sS -X DELETE -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models/${_kj_mid}" >/dev/null 2>&1 || true
+  echo "removed corrupt mapper id=${_kj_mid} from scope ${SCOPE_NAME}"
+done
+`)
+	for _, templateKey := range pack.Mappers {
+		tmpl, ok := templates[templateKey]
 		if !ok {
 			continue
 		}
-	cfgJSON := mapperConfigJSON(tmpl.Config)
-	fmt.Fprintf(&b, `
+		mapperName := templateKey
+		if tmpl.KeycloakName != "" {
+			mapperName = tmpl.KeycloakName
+		}
+		cfg := make(map[string]string, len(tmpl.Config)+1)
+		for k, v := range tmpl.Config {
+			cfg[k] = v
+		}
+		if tmpl.ProtocolMapper == "oidc-usermodel-attribute-mapper" {
+			if _, ok := cfg["multivalued"]; !ok {
+				cfg["multivalued"] = "false"
+			}
+		}
+		bodyJSON, err := json.Marshal(protocolMapperPOST{
+			Name:            mapperName,
+			Protocol:        "openid-connect",
+			ProtocolMapper:  tmpl.ProtocolMapper,
+			ConsentRequired: false,
+			Config:          cfg,
+		})
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, `
 MAPPERS=$(curl -sS -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" 2>/dev/null || echo "[]")
 if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
   echo "mapper %s already on scope ${SCOPE_NAME}"
 else
   cat > "/tmp/mapper-%s.json" <<'EOF'
-{"name":"%s","protocol":"openid-connect","protocolMapper":"%s","config":%s}
+%s
 EOF
-  _kj_mh=$(curl -sS -o /dev/null -w "%%{http_code}" -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  _kj_mbody=$(mktemp)
+  _kj_mh=$(curl -sS -o "${_kj_mbody}" -w "%%{http_code}" -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" \
     -d @/tmp/mapper-%s.json)
   rm -f "/tmp/mapper-%s.json"
   if [ "${_kj_mh}" != "201" ] && [ "${_kj_mh}" != "409" ]; then
-    echo "ERROR: mapper %s POST failed (HTTP ${_kj_mh})" >&2
+    echo "ERROR: mapper %s POST failed (HTTP ${_kj_mh}): $(cat "${_kj_mbody}" 2>/dev/null)" >&2
+    rm -f "${_kj_mbody}"
     exit 1
   fi
+  rm -f "${_kj_mbody}"
   echo "mapper %s added to scope ${SCOPE_NAME}"
-fi`, name, name, name, name, tmpl.ProtocolMapper, cfgJSON, name, name, name, name)
+fi`, mapperName, mapperName, templateKey, string(bodyJSON), templateKey, templateKey, mapperName, mapperName)
 	}
 	return b.String()
-}
-
-func mapperConfigJSON(cfg map[string]string) string {
-	inner := make([]string, 0, len(cfg))
-	for k, v := range cfg {
-		inner = append(inner, fmt.Sprintf("%q:[%q]", k, v))
-	}
-	return "{" + strings.Join(inner, ",") + "}"
 }
 
 // buildOIDCBrowserFlowScript configures the tenant realm browser flow to auto-redirect to the kernel IdP.
