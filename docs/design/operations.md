@@ -29,13 +29,13 @@ application-specific tools.
 
 The per-tenant isolation model (separate databases, buckets, realms,
 namespaces) enables **single-tenant restore** without touching others.
-Restoring tenant `gtn-demo` means:
+Restoring tenant `demo` means:
 
-1. Restore PostgreSQL databases matching `gtn_*` from pgBackRest.
-2. Restore MinIO buckets matching `gtn-demo-*`.
-3. Restore Dovecot mailboxes for `gtn-demo.example.com`.
-4. Re-import the Keycloak realm `gtn-demo` from JSON export.
-5. Restore namespace `tenant-gtn-demo` via Velero.
+1. Restore PostgreSQL databases matching `demo_*` from pgBackRest.
+2. Restore MinIO buckets matching `demo-*`.
+3. Restore Dovecot mailboxes for the tenant mail domain.
+4. Re-import the Keycloak realm `demo` from JSON export.
+5. Restore namespace `tenant-demo` via Velero.
 
 This sequence will be automated by a `RestoreTenant` CR in a future
 release.
@@ -57,8 +57,8 @@ For full-cluster DR, recovery follows the deployment layers:
 2. Apply the `Cluster` XR — Crossplane provisions kernel
    infrastructure from declared state.
 3. Restore data: OpenBao snapshots, database backups, S3 replication.
-4. Apply Tenant CRs — Crossplane re-provisions tenant resources;
-   apps pick up the restored data.
+4. Apply Tenant CRs — the operator and Crossplane re-provision tenant
+   resources; apps pick up the restored data.
 
 GitOps ensures the desired state of all workloads is recoverable from
 Git; only stateful data requires backup restoration. The deterministic
@@ -74,22 +74,25 @@ Crossplane's MR status model gives uniform observability:
 # Tenant health at a glance
 kubectl get tenants
 NAME          STATUS         APPS   READY   MAIL         AGE
-gtn-demo      Ready          6      6/6     selfhosted   30d
-beta-inc      Ready          4      4/4     external     15d
-new-customer  Provisioning   5      3/5     selfhosted   2m
+demo          Ready          2      2/2     selfhosted   30d
 
-# Walk the entire dependency graph for one tenant
-crossplane trace tenant gtn-demo
+# Tenant app installs (Crossplane claims → helm Releases)
+kubectl get apps -n tenant-demo
+kubectl get releases.helm.crossplane.io -n tenant-demo
+
+# Optional: Crossplane composite for namespace/policy (if XTenant is used)
+kubectl get xtenant demo 2>/dev/null || true
 
 # Integration contract health
-kubectl get integrationbindings -A
+kubectl get integrationbindings -n tenant-demo
 
-# ArgoCD sync status for a tenant's apps
-kubectl get applications -n argocd -l gentianos.io/tenant=gtn-demo
+# Kernel / GitOps (not per-tenant app charts)
+kubectl get applications -n argocd
 ```
 
-Every composed MR has standard Ready/Synced conditions. There is no
-custom status aggregation code — the rollup is data, not logic.
+Tenant apps are observed via **`App` claim status** and **helm `Release`
+MRs** in `tenant-{name}`. ArgoCD Applications cover kernel services and
+catalogue sync (`gentian-appprofiles`), not each tenant app install.
 
 ## 6. Metrics
 
@@ -102,7 +105,7 @@ Prometheus metrics exposed by Crossplane and the kernel:
 | `crossplane_reconcile_errors_total` | Crossplane | Failed reconciliations |
 | `crossplane_resource_ready_status` | Crossplane | Ready conditions per MR |
 | `externalsecrets_sync_calls_total` | ESO | OpenBao → K8s Secret sync health |
-| `argocd_app_health_status` | ArgoCD | App health per tenant |
+| `argocd_app_health_status` | ArgoCD | Kernel Application health |
 | `gentian_os_credentials_age_seconds` | Custom | Age of oldest credential per tenant |
 | `gentian_os_integration_bindings_status` | Custom | Binding health by contract |
 
@@ -116,8 +119,9 @@ upgrades are platform-wide and atomic, unlike app upgrades which can
 roll per-tenant.
 
 App upgrades are catalogue-wide: bumping an `AppProfile`'s chart
-version propagates to every tenant referencing the profile, with
-ArgoCD performing the rolling upgrade per tenant.
+version propagates to every tenant referencing the profile via
+Crossplane helm `Release` reconciliation (and operator-driven
+`App` claim updates when `spec.apps` changes).
 
 ### 7.2 Per-Environment Update Policies
 

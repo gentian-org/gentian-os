@@ -4,6 +4,38 @@
 
 ---
 
+## 0. Cluster reality vs documentation layers
+
+Three layers are easy to conflate:
+
+| Layer | Knob | What it controls on dev today |
+|---|---|---|
+| **Cluster install** | `MAIL_SERVICE_MODE` in `install.env` (`external` \| `kernel`) | Whether `install.sh` step **15b** deploys Postfix/Dovecot helm Releases into **`gentian-dev`** and whether Postfix relays to an external SMTP host or delivers via Dovecot LMTP |
+| **Per tenant** | `Tenant.spec.mail.mode` | What the **gentian-os operator** provisions: virtual domains, DKIM paths, `smtp-credentials-*` Secrets, DNS guidance |
+| **Per app** | `AppProfile` `mail.smtp` / `mail.imap` | Whether the operator creates app SMTP/IMAP secrets pointing at kernel or external endpoints |
+
+**In-cluster SMTP today (when kernel Postfix is deployed):**
+
+```
+postfix-dev.gentian-dev.svc.cluster.local:587
+```
+
+Legacy docs referred to `postfix.platform-kernel.svc.cluster.local`; that
+Service does not exist on the current dev layout. The operator writes the
+`gentian-dev` hostname into tenant `smtp-credentials-*` Secrets.
+
+**Operational checks (dev):**
+
+```bash
+kubectl get release postfix-dev dovecot-dev -n gentian-dev
+kubectl get pods -n gentian-dev -l 'app.kubernetes.io/name in (postfix,dovecot)'
+kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode'
+```
+
+Switching install mode: [commands.md](../commands.md) §9 (`./update.sh` after editing `install.env`).
+
+---
+
 ## 1. Why Mail Is an Extension, Not Core Kernel
 
 Not every deployment of Gentian OS needs self-hosted mail. Some
@@ -26,6 +58,11 @@ Selected via `Tenant.spec.mail.mode`:
 | `external` | Tenant's own | Tenant's own | App → external IMAP/SMTP | Tenant uses Gmail / existing mail server |
 | `transport-only` | Shared kernel MTA | External | App → external storage | Kernel handles SMTP relay only |
 | `disabled` | — | — | App → SMTP relay (outbound only) | Outbound notifications only |
+
+If `MAIL_SERVICE_MODE=external` at install time, kernel Dovecot/LMTP
+may be absent; tenants in `selfhosted` mode still get operator-managed
+secrets but full delivery requires switching install mode to `kernel`
+and re-running `update.sh`.
 
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
 
@@ -62,7 +99,7 @@ other shared kernel component.
 ## 5. Provisioning Flow (selfhosted mode)
 
 When a Tenant with `mail.mode: selfhosted` is reconciled, the
-Composition emits these MRs:
+**operator** (not a finished Crossplane-only pipeline) performs:
 
 1. **DKIM keypair Secret** in OpenBao at
    `tenants/{name}/mail/dkim`. Generated deterministically from the
@@ -71,10 +108,9 @@ Composition emits these MRs:
    `mail-postfix-virtual-domains` ConfigMap (registers the tenant's
    mail domain).
 3. **SASL credentials Secret** in the tenant namespace
-   (`smtp-credentials-{name}`) — used by tenant apps for SMTP
-   submission.
+   (`smtp-credentials-{name}`) — host `postfix-dev.gentian-dev.svc.cluster.local:587` on dev.
 4. **Dovecot domain config** patched into the shared
-   `mail-dovecot-domains` ConfigMap (registers the mailbox path).
+   `mail-dovecot-domains` ConfigMap when Dovecot is deployed.
 5. **Status update** on the Tenant CR with the DNS records the customer
    must publish:
    - DKIM TXT record (`gtn._domainkey.<domain>`)
@@ -84,15 +120,18 @@ Composition emits these MRs:
 Reloader picks up the ConfigMap/Secret changes and rolls the
 Postfix/Dovecot/Rspamd pods.
 
+**Future:** emit the same objects from a mail Composition step once
+`MAIL_SERVICE_MODE` and tenant modes are single-sourced in Crossplane.
+
 ## 6. Per-App Mail Wiring
 
 For each app in the tenant that declares `mail.smtp` and/or
-`mail.imap` in its `AppProfile`, the Composition creates an
-`ExternalSecret` that materialises:
+`mail.imap` in its `AppProfile`, the operator (and app Composition
+`ExternalSecret` paths) materialise:
 
-- SMTP host (`postfix.platform-kernel.svc.cluster.local`), port,
+- SMTP host (`postfix-dev.gentian-dev.svc.cluster.local` on dev), port,
   user (per-app SASL identity), password.
-- IMAP host (`dovecot.platform-kernel.svc.cluster.local`), port,
+- IMAP host (Dovecot service in `gentian-dev` when deployed), port,
   bind credentials (the same LDAP bind the app already uses for SSO).
 
 The chart consumes these via standard `existingSecret` references —
@@ -121,10 +160,9 @@ derivation.
 When `mail.mode: external`, the platform skips Postfix/Dovecot
 provisioning entirely and instead expects the customer to provide
 SMTP/IMAP host + credentials in the Tenant spec (referenced via a
-secret). The Composition creates ExternalSecrets that point at those
-values; apps consume them through the same `existingSecret`
-references — they never know whether the SMTP server is the kernel's
-or someone else's.
+secret). The operator creates Secrets that point at those values; apps
+consume them through the same `existingSecret` references — they never
+know whether the SMTP server is the kernel's or someone else's.
 
 ## 9. Operational View
 
@@ -132,7 +170,7 @@ or someone else's.
 # Per-tenant mail config and status
 kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode,DOMAIN:.spec.mail.domain,DKIM:.status.mail.dkimDnsRecord'
 
-# Shared infrastructure health
-kubectl -n platform-kernel get pods -l app.kubernetes.io/component=mail
-kubectl -n platform-kernel logs -l app=postfix --tail=50
+# Shared infrastructure health (dev layout)
+kubectl get release -n gentian-dev postfix-dev dovecot-dev
+kubectl logs -n gentian-dev -l app.kubernetes.io/name=postfix --tail=50
 ```

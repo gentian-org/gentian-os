@@ -79,7 +79,7 @@ on a standard contract instead of bringing its own backend.
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Redis / Memcached** | Page cache, `tmpfs` | `cache` requirement |
 | Mail | **Postfix + Dovecot + Rspamd** | Built-in mail spool | SMTP submit + IMAP endpoint + DKIM (kernel extension) |
-| Window manager | **Univention Portal** | Desktop shell, Start menu | `central-navigation` contract |
+| Window manager | **Gentian Portal** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell, Start menu | `central-navigation` contract |
 | Notification surface | **Notification Gateway** | Notification daemon, Action Center | Notifications contract (future) |
 | Secret store | **OpenBao** | Keychain | Underlying store for ESO-backed Secrets |
 

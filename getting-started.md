@@ -53,7 +53,7 @@ them or store them in the config files below.
 
 | Variable | Description |
 |---|---|
-| `MASTER_PASSWORD` | HMAC master secret — all app passwords are derived from this |
+| `MASTER_PASSWORD` | Master secret — kernel and app passwords are derived via HKDF-SHA256 |
 | `OD_PRIVATE_REGISTRY_USERNAME` | `registry.opencode.de` username |
 | `OD_PRIVATE_REGISTRY_PASSWORD` | `registry.opencode.de` token/password |
 | `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
@@ -110,9 +110,10 @@ The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
 
 ### Cluster claim
 
-Edit `crossplane/claims/dev-cluster.yaml` to set your `kernelDomain`,
-`ldapBaseDn`, OpenBao address, and other cluster-level parameters before
-running the installer.
+For templated installs, set `KERNEL_DOMAIN` (and optional `LDAP_BASE_DN`)
+before `install.sh` runs — it renders `crossplane/claims/dev-cluster.yaml`
+from `dev-cluster.yaml.tmpl`. The checked-in `dev-cluster.yaml` example
+uses `ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
 
 ---
 
@@ -121,7 +122,7 @@ running the installer.
 | Step | Component | Description |
 |------|-----------|-------------|
 | 0 | Crossplane | Install Crossplane core (controller + RBAC) via Helm |
-| 0b | Crossplane | Install providers: `provider-kubernetes`, `provider-vault`, `provider-helm`, `function-go-templating`, `function-auto-ready` |
+| 0b | Crossplane | Apply providers from `crossplane/providers/providers.yaml` (kubernetes, vault, helm, http, keycloak, functions). **Install waits** until helm, kubernetes, vault, and core functions are Healthy |
 | 0c | Crossplane | Apply XRD (`XCluster` / `Cluster`) + Composition |
 | 1 | Namespaces | Create kernel namespaces |
 | 2 | Cluster | Pre-warm cluster (PLEG/CRI race mitigation) |
@@ -140,6 +141,10 @@ running the installer.
 | 12c _(optional)_ | TLS | Install kernel wildcard Certificate for platform UIs (requires `CF_API_TOKEN`); tenant apps use per-tenant DNS-01 wildcards via the operator |
 | **13** | **Crossplane** | **Wait for `provider-helm` Healthy** |
 | **14** | **Nubus** | **Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR** |
+| **14b** | **LDAP scope** | **`update.sh --fix-kernel-ldap-scope`** (kernel realm LDAP search base) |
+| **15** | **Operator** | **Install gentian-os controller** (CRDs + reconcilers in `gentian-system`) |
+| **15b** | **Mail** | **Postfix + Dovecot** when `MAIL_SERVICE_MODE=kernel` |
+| **15c** | **App catalogue** | **ArgoCD Application `gentian-appprofiles`** syncs `gentian-apps/profiles/` |
 
 ---
 
@@ -219,37 +224,42 @@ kubectl gentian apps list
 
 ## Provision your first tenant
 
-Apply a Tenant CR to trigger full tenant provisioning. Example Tenant CRs
-live in the [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
-repo (per-environment) and AppProfile CRs in
-[`gentian-apps`](https://github.com/gentian-org/gentian-apps) under `profiles/`.
+**Catalogue** (cluster-wide): `gentian-apps/profiles/` → ArgoCD app
+**`gentian-appprofiles`** (install step 15c). **Tenant apps** (per org):
+edit `spec.apps` in
+[`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
+(e.g. `dev/tenants/instances/demo/tenant.yaml`), commit, and apply — the
+operator creates `App` claims; Crossplane installs helm Releases. There is
+no ArgoCD Application per tenant app.
 
 ```bash
-kubectl apply -f path/to/your/tenant.yaml
+# Example: demo tenant with Element + Jitsi
+kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/dev/tenants/instances/demo/tenant.yaml"
+# Or: kubectl gentian apps install element --tenant demo  (updates Git + applies)
 ```
 
 Watch provisioning progress:
 
 ```bash
-kubectl get tenant gtn-demo -w
+kubectl get tenant demo -w
 ```
 
 The orchestrator provisions these in order:
-1. Tenant namespace (`tenant-gtn-demo`)
+1. Tenant namespace (`tenant-demo`)
 2. Keycloak realm + OIDC clients (via Jobs in `platform-kernel`)
 3. LDAP OU + bind accounts (via UDM REST API Jobs)
 4. PostgreSQL databases (CloudNativePG `Database` CRs)
 5. MariaDB databases (SQL Jobs)
 6. MinIO S3 buckets + Nextcloud groups
-7. Redis ACL users + Memcached ArgoCD Applications
-8. App deployment (ArgoCD Application CRs)
+7. Redis ACL users + Memcached (ArgoCD Application when cache required)
+8. App deployment (`App` claims → Crossplane helm Releases)
 9. Ingress + TLS certificate
 10. IntegrationBinding CRs (auto-wired cross-app contracts)
 
 Provisioning is complete when:
 
 ```bash
-kubectl get tenant gtn-demo -o jsonpath='{.status.phase}'
+kubectl get tenant demo -o jsonpath='{.status.phase}'
 # → Ready
 ```
 
@@ -262,7 +272,7 @@ kubectl get tenants
 Decommission a single tenant:
 
 ```bash
-kubectl gentian tenants delete gtn-demo
+kubectl gentian tenants delete demo
 ```
 
 Behavior depends on `spec.deletionPolicy` on the Tenant:
@@ -483,8 +493,9 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 - [Architecture](docs/architecture.md) — full system design
 - [Design docs](docs/design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
 - [docs/commands.md](docs/commands.md) — reference for day-2 kubectl commands
-- [Implementation Plan](docs/implementation-plan.md) — increment history and decisions
-- [scripts/seed-openbao.sh](scripts/seed-openbao.sh) — secret derivation details (HMAC-SHA256)
+- [Roadmap](docs/roadmap.md) — planned features (rotation, SOC 2 hardening)
+- [scripts/seed-openbao.sh](scripts/seed-openbao.sh) — bootstrap seed paths (operator uses HKDF-SHA256 at runtime)
+- [gentian-ui CI setup](../gentian-ui/docs/ci-setup.md) — portal image build and ArgoCD rollout
 - [crossplane/claims/dev-cluster.yaml](crossplane/claims/dev-cluster.yaml) — the Cluster XR claim
 - [crossplane/compositions/cluster-default.yaml](crossplane/compositions/cluster-default.yaml) — Composition that provisions all kernel MRs
 - [`gentian-apps`](https://github.com/gentian-org/gentian-apps) — catalogue of AppProfile CRs (one per app)

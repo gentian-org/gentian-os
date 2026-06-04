@@ -50,7 +50,7 @@ const (
 
 	// mailSharedPostfixHost is the cluster-internal hostname of the shared Postfix
 	// submission endpoint. Apps in tenant namespaces use this to send outbound mail.
-	mailSharedPostfixHost = "postfix.platform-kernel.svc.cluster.local"
+	mailSharedPostfixHost = "postfix-dev.gentian-dev.svc.cluster.local"
 	mailSharedPostfixPort = "587"
 
 	// smtpPasswordLength is the number of random bytes used to generate per-tenant

@@ -28,7 +28,7 @@ kubectl get tenants
 
 Tenants are modeled in the deployments repository as:
 
-- `dev/tenants/definitions/<definition>/...` (what a tenant is)
+- `dev/tenants/instances/<tenant>/tenant.yaml` (tenant instance)
 - `dev/tenants/instances/<instance>/...` (how that definition is instantiated)
 - `dev/tenants/kustomization.yaml` (which instances are deployed in dev)
 
@@ -41,7 +41,7 @@ kubectl gentian tenants list
 Deploy a specific tenant instance:
 
 ```bash
-kubectl gentian tenants deploy gtn-demo
+kubectl gentian tenants deploy demo
 ```
 
 Deploy is transactional:
@@ -68,7 +68,7 @@ To target another environment, use `--env`:
 
 ```bash
 kubectl gentian tenants list --env staging
-kubectl gentian tenants deploy gtn-demo --env staging
+kubectl gentian tenants deploy demo --env staging
 ```
 
 The deploy command updates `resources:` in
@@ -79,14 +79,14 @@ Equivalent Git edit:
 
 ```yaml
 resources:
-- instances/gtn-demo
+- instances/demo
 ```
 
 Check tenant reconciliation:
 
 ```bash
-kubectl get tenant gtn-demo -o yaml
-kubectl describe tenant gtn-demo
+kubectl get tenant demo -o yaml
+kubectl describe tenant demo
 ```
 
 ## 4. Uninstall a Tenant
@@ -94,16 +94,16 @@ kubectl describe tenant gtn-demo
 Undeploy a tenant instance:
 
 ```bash
-kubectl gentian tenants undeploy gtn-demo
+kubectl gentian tenants undeploy demo
 ```
 
 For destructive cleanup that removes all orchestrator-owned artifacts (LDAP
 users, databases, mail secrets, UMC releases, and labeled kernel Jobs), use:
 
 ```bash
-kubectl gentian tenants undeploy gtn-demo --purge
+kubectl gentian tenants undeploy demo --purge
 # or
-kubectl gentian tenants undeploy gtn-demo -f
+kubectl gentian tenants undeploy demo -f
 ```
 
 The purge flag sets `deletionPolicy=Delete` on the live Tenant CR, waits until
@@ -138,7 +138,7 @@ If you want immediate local convergence before ArgoCD sync, delete the live
 Tenant CR after removing the instance from Git:
 
 ```bash
-kubectl delete tenant gtn-demo --ignore-not-found
+kubectl delete tenant demo --ignore-not-found
 ```
 
 This undeploys runtime resources but keeps the tenant definition and instance
@@ -148,7 +148,7 @@ Confirm ArgoCD prunes the Tenant CR:
 
 ```bash
 kubectl describe application -n argocd gentian-os
-kubectl get tenant gtn-demo
+kubectl get tenant demo
 ```
 
 ## 5. List Available App Profiles
@@ -206,6 +206,13 @@ kubectl describe application -n argocd gentian-os
 ```
 
 ## 9. Kernel Mail Stack (Dovecot + Postfix)
+
+**Two knobs:** `MAIL_SERVICE_MODE` in `install.env` controls whether the
+**installer** deploys Postfix/Dovecot into `gentian-dev` and how Postfix
+relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
+**operator** provisions per organisation. See [design/mail.md](design/mail.md) §0.
+
+On dev, in-cluster SMTP is `postfix-dev.gentian-dev.svc.cluster.local:587`.
 
 ### Enable kernel mail delivery
 

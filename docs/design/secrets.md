@@ -74,13 +74,13 @@ install:
 
 | Mode | `install.env` value | Description |
 | --- | --- | --- |
-| **Deterministic** (default) | `SECRET_MODE=derived` | All credentials derived from a single master password via HMAC-SHA256. No backup required for recovery. |
+| **Deterministic** (default) | `SECRET_MODE=derived` | All credentials derived from a single master password via HKDF-SHA256. No backup required for recovery. |
 | **Random** | `SECRET_MODE=random` | Each credential generated with `openssl rand -hex 32` at provision time. Recovery requires OpenBao backup. Supports independent per-credential rotation. |
 
 ### 3.1 Deterministic mode (`derived`)
 
 Kernel secrets and per-app init credentials are derived from a single
-**master password** using HMAC-SHA256:
+**master password** using HKDF-SHA256:
 
 ```bash
 derive() {
@@ -104,11 +104,11 @@ so that Composition init Jobs can derive per-app credentials at
 app-install time without requiring the operator to be present.
 
 > **Security note:** the `sha1sum` pipe that appeared in earlier
-> versions of `seed-openbao.sh` has been removed. Piping HMAC-SHA256
+> versions of `seed-openbao.sh` has been removed. Piping HKDF-SHA256
 > binary output through SHA-1 weakened the construction: an attacker
 > with one known derived credential could run an offline dictionary
 > attack against the master password at SHA-1 speed. The corrected
-> implementation uses the HMAC-SHA256 hex output directly (64 chars).
+> implementation uses the HKDF-SHA256 hex output directly (64 chars).
 > This is a backward-incompatible change; all derived passwords changed
 > when the fix was applied.
 
@@ -202,19 +202,19 @@ Reloader bridges the gap so rotation happens without a human running
 
 ### Rotation in `random` mode
 
-Rotation is triggered by an annotation on the Tenant CR:
+Annotation-driven rotation on the Tenant CR is **planned** (see
+[roadmap.md](../roadmap.md)); the operator does not implement
+`gentian-os.io/rotate-credentials` yet. Until then, rotate by updating
+OpenBao and rolling affected pods (Reloader where annotated).
 
 ```bash
-# Rotate a single app's credentials
-kubectl annotate tenant gtn-demo gentian-os.io/rotate-credentials=<app-name>
-
-# Rotate all tenant app credentials
-kubectl annotate tenant gtn-demo gentian-os.io/rotate-credentials=all
+# Planned interface (not implemented yet):
+# kubectl annotate tenant demo gentian-os.io/rotate-credentials=<app-name>
+# kubectl annotate tenant demo gentian-os.io/rotate-credentials=all
 ```
 
-A Composition function reads this annotation, generates a new random
-credential, writes it to OpenBao, and lets ESO + Reloader propagate
-the change. OpenBao KV v2 records `updated_time` per secret version,
+When implemented, a reconciler will write new random credentials to
+OpenBao and let ESO + Reloader propagate the change. OpenBao KV v2 records `updated_time` per secret version,
 giving auditors a verifiable rotation history without any extra tooling.
 
 This satisfies SOC 2 Type 1. Scheduled automatic rotation (SOC 2
@@ -240,7 +240,7 @@ sequenceDiagram
     participant AC as ArgoCD
     participant Pod as Workload
 
-    Seed->>OB: write kernel/* (HMAC-derived from master password)
+    Seed->>OB: write kernel/* (HKDF-derived from master password)
     Note over XP: Tenant CR applied
     XP->>Op: create operator CRs (DB, OIDC, bucket, …)
     Op->>OB: store provisioned credentials

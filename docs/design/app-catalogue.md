@@ -6,21 +6,25 @@
 
 ## 1. The Catalogue Model
 
-The platform exposes three CRDs to humans. Two are authored
-(`AppProfile`, `Tenant`); two are generated (`IntegrationBinding`,
-ArgoCD `Application`).
+The platform exposes four CRDs to humans. Two are authored
+(`AppProfile`, `Tenant`); two are generated (`App`, `IntegrationBinding`).
 
 ```
-AppProfile (cluster-scoped) ─┐
-                             ├─► Crossplane Composition ─► Many MRs
-Tenant (namespace-scoped) ───┘
-                                 │
-                                 ├─► Operator CRs (Database, KeycloakClient, MinIO bucket, …)
-                                 ├─► ExternalSecret CRs (ESO sync from OpenBao)
-                                 ├─► IntegrationBinding CRs (auto-generated cross-app contracts)
-                                 ├─► NetworkPolicy CRs (per-tenant + per-binding)
-                                 └─► ArgoCD Application CRs (handoff to deployment plane)
+AppProfile (cluster-scoped)
+Tenant (cluster-scoped)
+    │
+    ├─► gentian-os operator ─► namespace, identity Jobs, LDAP, DB/MariaDB,
+    │                         storage, cache, mail, ingress/TLS, IntegrationBindings
+    │
+    └─► operator ensures App claims (namespace-scoped, tenant-{name})
+            │
+            └─► Crossplane Composition (app-default / app-element / app-ox)
+                    ├─► ExternalSecret → sensitive-values Secret
+                    └─► helm.crossplane.io Release (tenant app chart)
 ```
+
+Kernel services (Nubus, Nextcloud, …) deploy via ArgoCD from `gentian-os/kernel/`,
+not via tenant `App` claims.
 
 ## 2. AppProfile — the Catalogue Entry
 
@@ -39,7 +43,9 @@ spec:
 
   kernelRequirements:
     identity:
-      oidc: true
+      oidc:
+        clientId: opendesk-openproject
+        accessType: CONFIDENTIAL
       ldap: { sync: true, interval: 1h }
     database:
       engine: postgresql
@@ -61,7 +67,7 @@ spec:
       provider: nextcloud
       capabilities: [webdav:read, webdav:write]
     - contract: central-navigation
-      provider: portal
+      provider: portal   # Gentian Portal (kernel UI at portal.<kernelDomain>)
       capabilities: [navigation:register]
 
   chart:
@@ -128,7 +134,7 @@ Real Helm charts have 5–30 internal secrets (admin passwords, session
 keys, cluster tokens) that don't correspond to any kernel function.
 `appSecrets` keeps `valueMapping` focused on kernel-provided resources
 while handling the reality of complex upstream charts. Values are
-**deterministically derived** (HMAC-SHA256 from master password +
+**deterministically derived** (HKDF-SHA256 from master password +
 tenant + app + secret name), stored in OpenBao, and synced via
 ExternalSecret. See [secrets.md](secrets.md).
 
@@ -138,23 +144,22 @@ ExternalSecret. See [secrets.md](secrets.md).
 apiVersion: gentianos.io/v1alpha1
 kind: Tenant
 metadata:
-  name: gtn-demo
+  name: demo
 spec:
-  displayName: "GTN Demo"
+  displayName: "Demo"
   domain: acme.com              # optional; falls back to <name>.<KERNEL_DOMAIN>
-  adminEmail: admin@gtn-demo.example.com
+  adminEmail: admin-demo@gentian.org
 
   isolation:
-    mode: namespace             # namespace
-    namespace: tenant-gtn-demo
-    ldapOU: "ou=gtn-demo"
-    keycloakRealm: gtn-demo
-    databasePrefix: gtn_
-    s3Prefix: gtn-demo-
+    mode: namespace
+    keycloakRealm: demo
+    ldapOU: "ou=demo"
+    databasePrefix: demo_
+    s3Prefix: demo-
 
   mail:
     mode: selfhosted            # selfhosted | external | transport-only | disabled
-    domain: gtn-demo.example.com
+    domain: demo.example.com
     quotaPerUser: 5Gi
     rateLimit: 100/h
 
@@ -193,7 +198,7 @@ consumes. Examples:
 | `central-navigation` | Portal | All apps | Navigation registration |
 | `project-management` | OpenProject | (consumers TBD) | http-json task API |
 
-When the Crossplane Composition reconciles a `Tenant` and finds both
+When the **gentian-os operator** reconciles a `Tenant` and finds both
 the provider and consumer of a contract in `spec.apps`, it
 auto-generates an `IntegrationBinding`:
 
@@ -201,19 +206,19 @@ auto-generates an `IntegrationBinding`:
 apiVersion: gentianos.io/v1alpha1
 kind: IntegrationBinding
 metadata:
-  name: gtn-demo-filepicker
-  namespace: tenant-gtn-demo
+  name: demo-filepicker
+  namespace: tenant-demo
   ownerReferences:
     - kind: Tenant
-      name: gtn-demo
+      name: demo
 spec:
   contract: filepicker
-  provider: { app: nextcloud, namespace: tenant-gtn-demo }
-  consumer: { app: ox-appsuite, namespace: tenant-gtn-demo }
+  provider: { app: nextcloud, namespace: tenant-demo }
+  consumer: { app: ox-appsuite, namespace: tenant-demo }
   capabilities: [webdav:read, webdav:write, ocs:shares]
   auth:
     method: oidc-token-exchange
-    vaultPath: gentian-os/tenants/gtn-demo/contracts/filepicker
+    vaultPath: gentian-os/tenants/demo/contracts/filepicker
 status:
   state: Ready
   conditions:
@@ -229,56 +234,55 @@ OIDC token exchange so the consumer can act on behalf of the user, and
 tracks health through status conditions. Bindings are owned by the
 Tenant and garbage-collected on delete.
 
-## 5. End-to-End Flow: One Tenant Claim → Many Resources
+**Today vs Crossplane-only:** `IntegrationBinding` CRs are created and
+reconciled only by the **gentian-os operator** when it sees matching
+provider/consumer apps in `spec.apps`. Crossplane app Compositions do
+**not** emit bindings yet. A desirable mid-term shape is a composition
+pipeline step (or dedicated `IntegrationBinding` Composition) that
+runs after both `App` claims are Ready, writes contract secrets via
+`provider-vault`, and optionally configures `provider-keycloak` token
+exchange — one reconcile graph instead of a second operator loop.
+
+## 5. End-to-End Flow: Tenant CR → operator + App compositions
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant Git as Git
+    participant U as Tenant admin
+    participant Git as gentian-deployments
     participant AC as ArgoCD
+    participant OP as gentian-os operator
     participant XP as Crossplane
-    participant ESO as ESO
     participant OB as OpenBao
-    participant Op as Operators
 
-    U->>Git: PR adds tenants/gtn-demo.yaml
-    Git->>AC: webhook
-    AC->>XP: applies Tenant claim
-    XP->>XP: Composition pipeline\n(load AppProfiles, render MRs)
-
-    par For each app
-        XP->>Op: Database MR (CloudNativePG)
-        XP->>Op: KeycloakClient MR
-        XP->>Op: MinIO bucket MR
-        Op->>OB: store credentials
-        XP->>ESO: ExternalSecret MR
-        ESO->>OB: read credentials
-        ESO->>AC: K8s Secret materialised
-        XP->>AC: Argo Application MR
-        AC->>AC: deploy Helm chart
-    end
-
-    XP->>XP: emit IntegrationBinding MRs
-    XP-->>U: Tenant.status.conditions[Ready]=True
+    U->>Git: append profile to Tenant.spec.apps
+    U->>OP: kubectl apply tenant.yaml
+    AC->>OP: sync Tenant CR (Git source of truth)
+    OP->>OP: namespace, identity, LDAP, DB, ingress, …
+    OP->>XP: create/update App claim per profile
+    XP->>XP: Composition → ExternalSecret + helm Release
+    XP->>OB: read tenant/app secret paths
+    OP->>OP: IntegrationBindings when contracts match
+    OP-->>U: Tenant.status.conditions[Ready]=True
 ```
 
-Reconciliation across providers is **parallel** wherever the dependency
-graph allows; there is no single-controller serialisation bottleneck.
+Reconciliation is **parallel** across operator loops and Crossplane
+compositions wherever dependencies allow.
 
 ## 6. Lifecycle: Update and Delete
 
 **Update an AppProfile** (e.g., bump chart version): Crossplane
-re-renders every Tenant referencing the profile, updates the Argo
-Application MRs, and ArgoCD rolls out the upgrade tenant by tenant.
+re-renders every `App` claim referencing the profile and updates helm
+`Release` MRs.
 
-**Update a Tenant** (e.g., add an app): Crossplane diffs the new
-spec against existing MRs, creates the new app's resources, and emits
-new IntegrationBindings if peer apps now exist.
+**Update a Tenant** (e.g., add an app in `spec.apps`): the operator
+creates or updates `App` claims; Crossplane provisions the chart; the
+operator emits new `IntegrationBindings` when peer apps now match a
+contract.
 
-**Delete a Tenant**: ownerReferences trigger garbage collection of all
-composed MRs (Argo Applications, ExternalSecrets, NetworkPolicies,
-IntegrationBindings). The deletion policy controls whether backing
-data (DBs, buckets, mailboxes) is preserved or dropped.
+**Delete a Tenant**: finalizers and owner references tear down `App`
+claims, helm Releases, operator-managed Jobs, and `IntegrationBindings`.
+The deletion policy controls whether backing data (DBs, buckets,
+mailboxes) is preserved or dropped.
 
 ## 7. Catalogue Repository Layout
 
@@ -291,6 +295,7 @@ gentian-apps/
 │   ├── element.yaml
 │   ├── xwiki.yaml
 │   └── jitsi.yaml
+│   # CryptPad is a kernel service (gentian-os/kernel/services/cryptpad), not a catalogue app
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml
@@ -301,6 +306,14 @@ gentian-apps/
 
 Adding an app to the catalogue is one PR adding one YAML file. No code
 changes, no operator rebuilds.
+
+## 8b. Future Direction: Crossplane-owned bindings
+
+Move contract wiring from operator-only reconciliation into the App /
+tenant Composition pipeline: gate on both sides Ready, write OpenBao
+paths, apply NetworkPolicy patches, and surface status on
+`IntegrationBinding` without separate imperative Jobs. This aligns with
+the Phase 3b goal in [architecture.md](../architecture.md) §3.1.
 
 ## 8. Future Direction: Broadcast Contracts
 
