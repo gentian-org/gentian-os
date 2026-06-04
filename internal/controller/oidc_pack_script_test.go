@@ -52,6 +52,9 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if !strings.Contains(script, `"name":"full name"`) {
 		t.Fatal("full_name template must map to Keycloak mapper name \"full name\"")
 	}
+	if !strings.Contains(script, `keycloak_json_id_by_attr "${EXISTING}" "clientId"`) {
+		t.Fatal("client UUID lookup must quote EXISTING JSON")
+	}
 	if !strings.Contains(script, "default-default-client-scopes") {
 		t.Fatal("expected fallback lookup on default-default-client-scopes")
 	}

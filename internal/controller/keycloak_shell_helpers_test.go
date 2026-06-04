@@ -71,8 +71,8 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if strings.Contains(script, `tr ',' '\\n' | grep -F '"name":"ldap"'`) {
 		t.Fatal("realm script must not use fragile tr/grep LDAP_ID extraction")
 	}
-	if !strings.Contains(script, `keycloak_json_id_by_attr ${LDAP_COMPONENTS} "name" "ldap"`) {
-		t.Fatal("expected LDAP_ID resolution via keycloak_json_id_by_attr")
+	if !strings.Contains(script, `keycloak_json_id_by_attr "${LDAP_COMPONENTS}" "name" "ldap"`) {
+		t.Fatal("expected quoted LDAP_COMPONENTS JSON for keycloak_json_id_by_attr")
 	}
 	if !strings.Contains(script, `"${KEYCLOAK_URL}/admin/realms/demo")`) {
 		t.Fatal("realm script must not corrupt HTTP realm URL with misplaced format args")

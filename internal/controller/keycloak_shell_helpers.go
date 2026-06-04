@@ -39,8 +39,10 @@ func keycloakShellJSONIDExtractor() string {
 }
 
 // keycloakShellRequireID emits shell that assigns outVar from the extractor or exits 1.
+// jsonVar must be a shell expansion such as ${EXISTING}; it is always double-quoted
+// so JSON arrays/objects are not word-split by the shell.
 func keycloakShellRequireID(outVar, jsonVar, attr, value string) string {
-	return fmt.Sprintf(`keycloak_json_id_by_attr %s "%s" "%s"
+	return fmt.Sprintf(`keycloak_json_id_by_attr "%s" "%s" "%s"
 %s="${_kj_id}"
 if [ -z "${%s}" ]; then
   echo "ERROR: could not resolve Keycloak resource id (%s=%s)" >&2
