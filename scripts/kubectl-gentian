@@ -242,6 +242,9 @@ assert_live_tenant_deletion_policy() {
       fi
     else
       stable_checks=0
+      if (( elapsed > 0 && elapsed % 10 == 0 )); then
+        echo "  live deletionPolicy is '${live_policy}'; waiting for stable '${policy}' (${elapsed}s elapsed)..."
+      fi
     fi
 
     sleep 2
@@ -250,6 +253,14 @@ assert_live_tenant_deletion_policy() {
 
   echo "ERROR: timed out waiting for stable deletionPolicy=${policy} on tenant '${tenant_name}'." >&2
   return 1
+}
+
+# Print a status line before kubectl wait (which is silent until it finishes).
+wait_with_message() {
+  local message="${1}"
+  shift
+  echo "${message}"
+  kubectl wait "$@"
 }
 
 tenant_ldap_ou_from_resource() {
@@ -281,7 +292,9 @@ run_ldap_ou_delete_fallback() {
   if [[ "${force}" == "true" ]]; then
     kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
   elif kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
-    kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+    wait_with_message \
+      "Waiting for existing LDAP OU delete job '${job_name}' to complete (timeout: 300s)..." \
+      job "${job_name}" -n "${KERNEL_NAMESPACE}" \
       --for=condition=complete --timeout=300s
     return $?
   fi
@@ -342,7 +355,9 @@ spec:
               key: ldapBase
 EOF
 
-  kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+  wait_with_message \
+    "Waiting for LDAP OU delete job '${job_name}' to complete (timeout: 300s)..." \
+    job "${job_name}" -n "${KERNEL_NAMESPACE}" \
     --for=condition=complete --timeout=300s
 }
 
@@ -413,7 +428,9 @@ spec:
               key: ldapBase
 EOF
 
-  kubectl wait job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+  wait_with_message \
+    "Waiting for LDAP OU verification job '${job_name}' to complete (timeout: 120s)..." \
+    job "${job_name}" -n "${KERNEL_NAMESPACE}" \
     --for=condition=complete --timeout=120s
 }
 
@@ -424,8 +441,9 @@ wait_for_purge_controller_cleanup() {
   local lock_job="ldap-lock-${tenant_name}"
 
   if kubectl get job "${ou_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
-    echo "Waiting for controller LDAP OU delete job '${ou_job}'..."
-    if ! kubectl wait job "${ou_job}" -n "${KERNEL_NAMESPACE}" \
+    if ! wait_with_message \
+      "Waiting for controller LDAP OU delete job '${ou_job}' to complete (timeout: 300s)..." \
+      job "${ou_job}" -n "${KERNEL_NAMESPACE}" \
       --for=condition=complete --timeout=300s; then
       echo "WARNING: controller OU delete job did not complete successfully." >&2
     fi
@@ -501,7 +519,8 @@ wait_for_tenant_delete() {
   local purge="${3:-false}"
   local resource_file="${4:-}"
 
-  echo "Waiting for tenant '${tenant_name}' cleanup to complete..."
+  echo "Waiting for tenant '${tenant_name}' finalizers and controller cleanup (timeout: 300s)..."
+  echo "  (operator is removing tenant resources; this can take a few minutes)"
   if ! kubectl wait tenant "${tenant_name}" --for=delete --timeout=300s 2>/dev/null; then
     echo "ERROR: timed out waiting for tenant '${tenant_name}' cleanup to complete." >&2
     echo "  Check operator logs: kubectl logs -n gentian-system deployment/gentian-os --tail=50" >&2
@@ -1092,7 +1111,9 @@ argocd_refresh_await_prune() {
   if [[ -z "${app_ns_name}" ]]; then
     echo "No ArgoCD app found for '${want_path}'; deleting tenant CR directly..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
-    kubectl wait tenant "${tenant_name}" --for=delete --timeout=120s 2>/dev/null || true
+    wait_with_message \
+      "Waiting for tenant '${tenant_name}' to be removed after direct delete (timeout: 120s)..." \
+      tenant "${tenant_name}" --for=delete --timeout=120s 2>/dev/null || true
     if kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
       echo "ERROR: tenant '${tenant_name}' still present after direct delete." >&2
       return 1
@@ -1108,18 +1129,24 @@ argocd_refresh_await_prune() {
     "argocd.argoproj.io/refresh=hard" --overwrite &>/dev/null || true
 
   if command -v argocd >/dev/null 2>&1; then
+    echo "  triggering ArgoCD sync with prune (timeout: 120s)..."
     argocd app sync "${argocd_app}" --prune --timeout 120 >/dev/null 2>&1 || true
   else
+    echo "  triggering ArgoCD sync with prune via kubectl patch..."
     kubectl patch "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" --type merge \
       -p '{"operation":{"initiatedBy":{"username":"kubectl-gentian"},"sync":{"prune":true}}}' \
       >/dev/null 2>&1 || true
   fi
 
+  echo "Waiting for ArgoCD to prune tenant '${tenant_name}' from the cluster (timeout: 120s)..."
   local i=0
   while [[ ${i} -lt 120 ]]; do
     if ! kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
       echo "Tenant '${tenant_name}' removed from cluster."
       return 0
+    fi
+    if (( i > 0 && i % 10 == 0 )); then
+      echo "  tenant '${tenant_name}' still present after ArgoCD sync (${i}s elapsed)..."
     fi
     sleep 2
     (( i += 2 ))
@@ -1127,11 +1154,14 @@ argocd_refresh_await_prune() {
 
   echo "WARNING: tenant '${tenant_name}' still present after ArgoCD sync; deleting directly..." >&2
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
-  kubectl wait tenant "${tenant_name}" --for=delete --timeout=120s 2>/dev/null || true
+  wait_with_message \
+    "Waiting for tenant '${tenant_name}' finalizers to finish after direct delete (timeout: 120s)..." \
+    tenant "${tenant_name}" --for=delete --timeout=120s 2>/dev/null || true
   if kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
     echo "ERROR: failed to remove tenant '${tenant_name}' from cluster." >&2
     return 1
   fi
+  echo "Tenant '${tenant_name}' removed from cluster."
   return 0
 }
 
