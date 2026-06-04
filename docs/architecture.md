@@ -443,6 +443,24 @@ configured once at the platform level.
 
 ---
 
+## 9c. The Diagrams Kernel Extension (CryptPad)
+
+Nextcloud diagram editing (diagrams.net via the openincryptpad app) uses a
+**shared CryptPad kernel service**, modelled like Collabora in §9b. One
+instance at `pad.<kernel_domain>` (+ `pad-sandbox.<kernel_domain>` for the
+crypto sandbox origin) serves all tenants; Nextcloud embeds it from
+`files.<kernel_domain>`.
+
+There is **no AppProfile or portal tile** — users open diagrams from Nextcloud
+Files. Configuration matches OpenDesk: `restrictRegistration: true`,
+`availablePadTypes: ["diagram"]`, `enableEmbedding: true`, no OIDC.
+
+The nextcloud-management chart enables the CryptPad app when the kernel service
+is deployed (`feature.apps.cryptpad.enabled: true`). Per-tenant CryptPad
+AppProfiles are not used.
+
+---
+
 ## 10. Backup, DR and Observability
 
 Backup is **per subsystem** — each kernel component uses the

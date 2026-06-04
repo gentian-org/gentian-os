@@ -301,6 +301,8 @@ for ns in gentian-dev gentian-infra-dev; do
         nextcloud-notifypush-dev-values \
         collabora-base-values \
         collabora-dev-values \
+        cryptpad-base-values \
+        cryptpad-dev-values \
         postfix-base-values \
         postfix-dev-values \
         dovecot-base-values \

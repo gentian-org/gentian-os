@@ -44,10 +44,17 @@ servicesNamespace: "gentian-dev"
 #   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
 #   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
 #   ${REDIS_HOST}   — Redis primary hostname (no port)
+#   ${TURN_*}       — Shared TURN server settings for Element + Jitsi
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
+  turnHost: ""
+  turnPort: "3478"
+  turnTLSHost: ""
+  turnTLSPort: "5349"
+  turnTransport: "udp"
+  turnCredentials: ""
 
 image:
   repository: ghcr.io/gentian-org/gentian-os

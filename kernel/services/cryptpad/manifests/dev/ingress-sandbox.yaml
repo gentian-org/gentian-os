@@ -1,0 +1,33 @@
+# =============================================================================
+# cryptpad — sandbox Ingress (httpSafeOrigin)
+#
+# CryptPad isolates client-side crypto on a separate origin. CSP frame-ancestors
+# must allow the main pad host and Nextcloud (full ancestor chain).
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cryptpad-sandbox
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+    nginx.org/websocket-services: "cryptpad"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header Content-Security-Policy "frame-ancestors 'self' https://pad.desk.gentian.org https://files.desk.gentian.org https://portal.desk.gentian.org" always;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - pad-sandbox.desk.gentian.org
+      secretName: wildcard-tls
+  rules:
+    - host: pad-sandbox.desk.gentian.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cryptpad
+                port:
+                  number: 80

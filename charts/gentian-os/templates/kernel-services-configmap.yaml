@@ -1,4 +1,5 @@
-{{- if or .Values.kernelDomain .Values.kernelServices.s3Endpoint .Values.kernelServices.mysqlHost .Values.kernelServices.redisHost }}
+{{- $ks := .Values.kernelServices -}}
+{{- if or .Values.kernelDomain $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.turnHost $ks.turnCredentials }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,13 +12,31 @@ data:
   {{- with .Values.kernelDomain }}
   KERNEL_DOMAIN: {{ . | quote }}
   {{- end }}
-  {{- with .Values.kernelServices.s3Endpoint }}
+  {{- with $ks.s3Endpoint }}
   S3_ENDPOINT: {{ . | quote }}
   {{- end }}
-  {{- with .Values.kernelServices.mysqlHost }}
+  {{- with $ks.mysqlHost }}
   MYSQL_HOST: {{ . | quote }}
   {{- end }}
-  {{- with .Values.kernelServices.redisHost }}
+  {{- with $ks.redisHost }}
   REDIS_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnHost }}
+  TURN_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnPort }}
+  TURN_PORT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnTLSHost }}
+  TURN_TLS_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnTLSPort }}
+  TURN_TLS_PORT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnTransport }}
+  TURN_TRANSPORT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnCredentials }}
+  TURN_CREDENTIALS: {{ . | quote }}
   {{- end }}
 {{- end }}

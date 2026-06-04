@@ -474,7 +474,7 @@ spec:
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
             {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
-            {{- /*   ${REDIS_HOST}       — Redis primary hostname (from kernel CM) */}}
+            {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
             {{- if $pSpec.extraValues }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
@@ -485,6 +485,12 @@ spec:
             {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
             {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
             {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
+            {{- $turnHost     := dig "TURN_HOST"        "" $ksCMData }}
+            {{- $turnPort     := dig "TURN_PORT"        "3478" $ksCMData }}
+            {{- $turnTLSHost  := dig "TURN_TLS_HOST"    "" $ksCMData }}
+            {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
+            {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
+            {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
@@ -493,6 +499,12 @@ spec:
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
+            {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
+            {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
+            {{- $raw = $raw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
+            {{- $raw = $raw | replace "${TURN_TRANSPORT}" $turnTransport }}
+            {{- $raw = $raw | replace "${TURN_CREDENTIALS}" $turnCreds }}
             {{- if $nodeIP      }}{{ $raw = $raw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
