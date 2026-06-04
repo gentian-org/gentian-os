@@ -262,11 +262,14 @@ Gentian OS sidesteps most browser CORS restrictions by design:
 
 The remaining app-side requirement is the **`frame-ancestors` CSP header**:
 by default browsers block iframe embedding unless the embedded page explicitly
-permits it. The gentian-os controller injects this header as an NGINX
-`configuration-snippet` annotation on every `Ingress` it creates, clearing any
-`X-Frame-Options` the app itself sets and replacing the `Content-Security-Policy`
-header with one that allows only `'self'` and the shared kernel portal origin
-(`https://portal.<kernel_domain>`). Per-tenant portal hostnames are not used;
+permits it. The gentian-os controller injects this as an NGINX
+`configuration-snippet` on every `Ingress` it creates: it clears any
+`X-Frame-Options` the app sets and **appends** a second
+`Content-Security-Policy` header containing only `frame-ancestors 'self'`
+and the shared kernel portal origin (`https://portal.<kernel_domain>`). The
+app's own CSP (script-src, connect-src, …) is left intact — replacing the
+whole header breaks CryptPad, whose sandbox origin must keep a strict
+script-src without `'unsafe-eval'`. Per-tenant portal hostnames are not used;
 tenants authenticate via the kernel portal. CryptPad's additional
 `pad-sandbox.<tenant>` ingress instead allows `https://pad.<tenant>` and
 `https://portal.<kernel_domain>` because CSP checks the full ancestor chain when

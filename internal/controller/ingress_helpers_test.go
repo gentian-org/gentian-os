@@ -105,6 +105,12 @@ sub_filter_once on;`,
 	if !strings.Contains(got, "frame-ancestors") {
 		t.Fatalf("expected portal embedding directives prepended, got:\n%s", got)
 	}
+	if strings.Contains(got, `more_clear_headers "Content-Security-Policy"`) {
+		t.Fatal("must not clear upstream Content-Security-Policy (breaks CryptPad sandbox eval check)")
+	}
+	if !strings.Contains(got, `more_add_headers "Content-Security-Policy`) {
+		t.Fatalf("expected appended frame-ancestors CSP, got:\n%s", got)
+	}
 }
 
 func TestBuildAppIngressInjectsKernelPortalCSP(t *testing.T) {

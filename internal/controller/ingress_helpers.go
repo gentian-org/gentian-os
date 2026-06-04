@@ -43,9 +43,13 @@ func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string 
 }
 
 func frameAncestorsIngressSnippet(ancestorOrigin string) string {
+	// Append a second CSP policy instead of replacing the app's header. CryptPad
+	// (and similar apps) rely on upstream script-src/connect-src rules — e.g. the
+	// sandbox origin must keep script-src without 'unsafe-eval' so client-side
+	// isolation self-tests pass. Clearing Content-Security-Policy and setting only
+	// frame-ancestors breaks those apps with "eval should not be permitted".
 	return fmt.Sprintf(`more_clear_headers "X-Frame-Options";
-more_clear_headers "Content-Security-Policy";
-more_set_headers "Content-Security-Policy: frame-ancestors 'self' %s";`, ancestorOrigin)
+more_add_headers "Content-Security-Policy: frame-ancestors 'self' %s";`, ancestorOrigin)
 }
 
 // stripLegacyPortalEmbeddingSnippet removes per-profile frame-ancestors / X-Frame-Options
@@ -59,6 +63,8 @@ func stripLegacyPortalEmbeddingSnippet(snippet string) string {
 		}
 		if strings.Contains(trimmed, `more_clear_headers "X-Frame-Options"`) ||
 			strings.Contains(trimmed, `more_clear_headers "Content-Security-Policy"`) ||
+			strings.Contains(trimmed, `more_set_headers "Content-Security-Policy`) ||
+			strings.Contains(trimmed, `more_add_headers "Content-Security-Policy`) ||
 			strings.Contains(trimmed, "frame-ancestors") {
 			continue
 		}
