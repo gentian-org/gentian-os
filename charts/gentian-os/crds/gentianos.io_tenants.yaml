@@ -110,11 +110,11 @@ spec:
                 type: string
               domain:
                 description: |-
-                  Domain is the optional custom app zone for this tenant (e.g.
+                  Domain is the optional custom domain for this tenant's app zone (e.g.
                   `acme.com`). When unset, the effective domain is
                   `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
-                  The operator issues a per-tenant DNS-01 wildcard for
-                  *.<effectiveDomain>. See docs/design/multi-tenancy.md §3.
+                  In both cases the operator issues a per-tenant wildcard TLS certificate
+                  for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
                 pattern: ^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$
                 type: string
               isolation:
