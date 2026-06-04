@@ -138,15 +138,19 @@ MAPPERS=$(curl -sS -H "${AUTH_HEADER}" \
 if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
   echo "mapper %s already on scope ${SCOPE_NAME}"
 else
+  cat > "/tmp/mapper-%s.json" <<'EOF'
+{"name":"%s","protocol":"openid-connect","protocolMapper":"%s","config":%s}
+EOF
   _kj_mh=$(curl -sS -o /dev/null -w "%%{http_code}" -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" \
-    -d "{\"name\":\"%s\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"%s\",\"config\":%s}")
+    -d @/tmp/mapper-%s.json)
+  rm -f "/tmp/mapper-%s.json"
   if [ "${_kj_mh}" != "201" ] && [ "${_kj_mh}" != "409" ]; then
     echo "ERROR: mapper %s POST failed (HTTP ${_kj_mh})" >&2
     exit 1
   fi
   echo "mapper %s added to scope ${SCOPE_NAME}"
-fi`, name, name, name, tmpl.ProtocolMapper, cfgJSON, name, name)
+fi`, name, name, name, tmpl.ProtocolMapper, cfgJSON, name, name, name, name, name)
 	}
 	return b.String()
 }
