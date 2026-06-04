@@ -267,8 +267,11 @@ permits it. The gentian-os controller injects this header as an NGINX
 `X-Frame-Options` the app itself sets and replacing the `Content-Security-Policy`
 header with one that allows only `'self'` and the shared kernel portal origin
 (`https://portal.<kernel_domain>`). Per-tenant portal hostnames are not used;
-tenants authenticate via the kernel portal. Apps with extra NGINX snippet needs
-(e.g. CryptPad `sub_filter`) keep those lines; frame-ancestors is still injected.
+tenants authenticate via the kernel portal. CryptPad's additional
+`pad-sandbox.<tenant>` ingress instead allows `https://pad.<tenant>` because the
+sandbox iframe is embedded by the main CryptPad origin, not the portal. Apps with
+extra NGINX snippet needs (e.g. CryptPad `sub_filter`) keep those lines;
+frame-ancestors is still injected on each ingress according to its role.
 
 ---
 

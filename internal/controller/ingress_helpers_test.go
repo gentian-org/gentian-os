@@ -70,7 +70,7 @@ func TestEnsurePortalEmbeddingAnnotationsReplacesLegacyTenantPortalCSP(t *testin
 more_clear_headers "Content-Security-Policy";
 more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.demo.desk.gentian.org";`,
 	}
-	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org")
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", "meet")
 	got := annotations[nginxConfigurationSnippetAnnotation]
 	if !strings.Contains(got, "https://portal.desk.gentian.org") {
 		t.Fatalf("expected kernel portal in merged snippet, got:\n%s", got)
@@ -80,12 +80,24 @@ more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal
 	}
 }
 
+func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
+	annotations := map[string]string{}
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
+	got := annotations[nginxConfigurationSnippetAnnotation]
+	if !strings.Contains(got, "https://pad.demo.desk.gentian.org") {
+		t.Fatalf("expected main CryptPad origin in sandbox snippet, got:\n%s", got)
+	}
+	if strings.Contains(got, "portal.desk.gentian.org") {
+		t.Fatal("sandbox ingress must not use kernel portal frame-ancestors")
+	}
+}
+
 func TestEnsurePortalEmbeddingAnnotationsPreservesCustomSnippet(t *testing.T) {
 	annotations := map[string]string{
 		nginxConfigurationSnippetAnnotation: `proxy_set_header Accept-Encoding "";
 sub_filter_once on;`,
 	}
-	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org")
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", "pad")
 	got := annotations[nginxConfigurationSnippetAnnotation]
 	if !strings.Contains(got, "sub_filter_once on;") {
 		t.Fatalf("expected custom snippet preserved, got:\n%s", got)

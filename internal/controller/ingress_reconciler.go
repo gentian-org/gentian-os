@@ -364,7 +364,7 @@ func buildAppIngress(
 	for k, v := range ingress.Annotations {
 		annotations[k] = substituteIngressAnnotationPlaceholders(v, effectiveDomain, kernelDomain)
 	}
-	ensurePortalEmbeddingAnnotations(annotations, kernelDomain)
+	ensurePortalEmbeddingAnnotations(annotations, kernelDomain, effectiveDomain, ingress.SubDomain)
 	ingressClass := ingress.IngressClassName
 	if ingressClass == "" {
 		ingressClass = defaultIngressClass
