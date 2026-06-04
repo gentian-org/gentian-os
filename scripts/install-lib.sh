@@ -1550,11 +1550,70 @@ install_cert_manager() {
     success "cert-manager installed."
 }
 
+# ACME_ENV: production (default) or staging (Let's Encrypt staging API).
+# Staging avoids production rate limits; certs are not browser-trusted.
+gentian_dns01_cluster_issuer_name() {
+    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
+        echo "letsencrypt-staging-dns01-cloudflare"
+    else
+        echo "letsencrypt-dns01-cloudflare"
+    fi
+}
+
+gentian_cluster_issuers_manifest() {
+    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
+        echo "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers-staging.yaml"
+    else
+        echo "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers.yaml"
+    fi
+}
+
+# Apply (or refresh) kernel ClusterIssuers. Safe to re-run (update.sh --acme-issuers).
+apply_gentian_cluster_issuers() {
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset: skipping ClusterIssuers."
+        return
+    fi
+
+    : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
+    : "${INGRESS_CLASS_NAME:=nginx}"
+    export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN
+
+    if ! command -v envsubst &>/dev/null; then
+        error "envsubst not found (install gettext-base). Aborting."
+        exit 1
+    fi
+
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
+        local detected_ns=""
+        detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
+            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+            | head -1 || true)
+        if [[ -n "${detected_ns}" ]]; then
+            CERT_MANAGER_NAMESPACE="${detected_ns}"
+            export CERT_MANAGER_NAMESPACE
+        fi
+    fi
+
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
+        error "cert-manager webhook not found; cannot apply ClusterIssuers."
+        exit 1
+    fi
+
+    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
+        info "ACME_ENV=staging: using Let's Encrypt staging (untrusted certs, separate rate limits)."
+    fi
+
+    envsubst "\${LETSENCRYPT_EMAIL} \${INGRESS_CLASS_NAME}" \
+        < "$(gentian_cluster_issuers_manifest)" \
+        | kubectl apply -f -
+}
+
 # =============================================================================
 # 3b. Install kernel cert-manager ClusterIssuers (always — both HTTP-01 and
 # DNS-01-Cloudflare). The wildcard Certificate + cloudflare-api-token
 # ExternalSecret are applied later by `install_kernel_wildcard` (after the
-# OpenBao seeding step has populated the token). See docs/architecture.md §2.5.
+# OpenBao seeding step has populated the token). See docs/design/multi-tenancy.md §3.
 # =============================================================================
 install_kernel_cert_resources() {
     if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
@@ -1568,18 +1627,7 @@ install_kernel_cert_resources() {
 
     banner "Step 3b — Installing kernel cert-manager ClusterIssuers"
 
-    : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${INGRESS_CLASS_NAME:=nginx}"
-    export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN
-
-    if ! command -v envsubst &>/dev/null; then
-        error "envsubst not found (install gettext-base). Aborting."
-        exit 1
-    fi
-
-    # Resolve cert-manager namespace dynamically (Helm default is cert-manager,
-    # but distro addons may place it elsewhere).
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" &>/dev/null; then
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
         local detected_ns=""
         detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
             | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
@@ -1589,10 +1637,11 @@ install_kernel_cert_resources() {
             export CERT_MANAGER_NAMESPACE
         fi
     fi
+    : "${CERT_MANAGER_NAMESPACE:=cert-manager}"
+    export CERT_MANAGER_NAMESPACE
 
     if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" &>/dev/null; then
         error "cert-manager webhook deployment not found in namespace ${CERT_MANAGER_NAMESPACE}."
-        error "cert-manager is not operational; cannot apply ClusterIssuers safely."
         error "Fix cert-manager first, then re-run install.sh."
         exit 1
     fi
@@ -1603,13 +1652,12 @@ install_kernel_cert_resources() {
     kubectl rollout status -n "${CERT_MANAGER_NAMESPACE}" deploy/cert-manager-webhook --timeout=180s >/dev/null \
         || warn "cert-manager-webhook not Ready within 180s (continuing)."
 
-    # Apply the two ClusterIssuers (always safe — no Cloudflare secret
-    # needed yet). The wildcard Certificate is applied later by
-    # install_kernel_wildcard, after seed_secrets populates OpenBao.
-    envsubst "\${LETSENCRYPT_EMAIL} \${INGRESS_CLASS_NAME}" \
-        < "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers.yaml" \
-        | kubectl apply -f -
-    success "ClusterIssuers letsencrypt-http01 and letsencrypt-dns01-cloudflare applied."
+    apply_gentian_cluster_issuers
+    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
+        success "ClusterIssuers letsencrypt-staging-http01 and letsencrypt-staging-dns01-cloudflare applied."
+    else
+        success "ClusterIssuers letsencrypt-http01 and letsencrypt-dns01-cloudflare applied."
+    fi
 }
 
 # =============================================================================
@@ -1635,7 +1683,8 @@ install_kernel_wildcard() {
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
     : "${INGRESS_CLASS_NAME:=nginx}"
-    export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN
+    DNS01_CLUSTER_ISSUER="$(gentian_dns01_cluster_issuer_name)"
+    export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN DNS01_CLUSTER_ISSUER
 
     # 1) ExternalSecret in cert-manager → materializes cloudflare-api-token
     #    Secret from OpenBao. Requires the ClusterSecretStore "openbao" to
@@ -1664,7 +1713,7 @@ install_kernel_wildcard() {
     fi
 
     # 3) Apply the wildcard Certificate (with domain name templating).
-    envsubst "\${KERNEL_DOMAIN}" \
+    envsubst "\${KERNEL_DOMAIN} \${DNS01_CLUSTER_ISSUER}" \
         < "${SCRIPT_DIR}/kernel/manifests/cert-manager/wildcard-kernel-cert.yaml" \
         | kubectl apply -f -
     success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."

@@ -8,7 +8,8 @@
 #   ${LETSENCRYPT_EMAIL}     — ACME account email (default admin@${KERNEL_DOMAIN})
 #   ${INGRESS_CLASS_NAME}    — IngressClass for HTTP-01 challenges (default public)
 #
-# See docs/architecture.md §2.5.
+# For dev / rate-limit relief use cluster-issuers-staging.yaml (ACME_ENV=staging).
+# See docs/design/multi-tenancy.md §3.
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

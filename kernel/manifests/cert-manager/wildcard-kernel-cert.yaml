@@ -7,7 +7,8 @@
 # internal/controller/ingress_reconciler.go and docs/design/multi-tenancy.md §3.
 #
 # Templated on:
-#   ${KERNEL_DOMAIN}  — single platform-wide DNS suffix (e.g. desk.gentian.org)
+#   ${KERNEL_DOMAIN}           — single platform-wide DNS suffix (e.g. desk.gentian.org)
+#   ${DNS01_CLUSTER_ISSUER}    — ClusterIssuer name (production or staging DNS-01)
 #
 # See docs/architecture.md §2.5.
 apiVersion: cert-manager.io/v1
@@ -21,7 +22,7 @@ metadata:
 spec:
   secretName: wildcard-kernel-tls
   issuerRef:
-    name: letsencrypt-dns01-cloudflare
+    name: ${DNS01_CLUSTER_ISSUER}
     kind: ClusterIssuer
   commonName: ${KERNEL_DOMAIN}
   dnsNames:

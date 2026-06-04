@@ -84,6 +84,19 @@ Origin and edge are separate: cert-manager in the tenant namespace is the portab
 
 The Cloudflare (or other) API token for the **kernel** wildcard lives only in the kernel/`cert-manager` namespace (`gentian-os/kernel/dns/cloudflare` via OpenBao). The **tenant** DNS-01 issuer typically uses the same provider credentials at the cluster level but issues certs in each `tenant-*` namespace; it does not expose kernel secrets to tenants.
 
+### ACME rate limits and dev staging
+
+Let's Encrypt production enforces per-account and per-registered-domain limits (notably **50 certificates per registered domain per week** for `desk.gentian.org` and descendants). Each **reinstall** or issuer change that re-orders the kernel wildcard plus one wildcard per tenant can consume several certificates quickly.
+
+| Environment | Recommendation |
+|---|---|
+| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/dev/kernel/values-dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. Re-apply issuers with `./update.sh --acme-issuers`. |
+| **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `uninstall.sh -f` loops that re-issue everything. |
+| **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.desk.gentian.org` gets an edge cert — Universal SSL on `*.desk.gentian.org` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
+| **Switching issuer on a live cluster** | Patch operator Helm value, run `./update.sh --acme-issuers`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
+
+Manifests: production `cluster-issuers.yaml`; staging `cluster-issuers-staging.yaml`. Kernel wildcard `wildcard-kernel-cert.yaml` templates `DNS01_CLUSTER_ISSUER` from `ACME_ENV` at install time.
+
 ## 4. Network Boundaries
 
 NetworkPolicies enforce three rules at the CNI level:

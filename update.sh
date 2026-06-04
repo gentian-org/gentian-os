@@ -66,6 +66,7 @@ OP_FIX_KERNEL_LDAP_SCOPE=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
 OP_PLUGIN=0
+OP_ACME_ISSUERS=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -109,6 +110,8 @@ Options:
                            gentian-apps repository.
   --plugin                 Reinstall the kubectl-gentian plugin from this
                            repository (idempotent: skips if already up-to-date).
+  --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
+                           (ACME_ENV=production or staging). Not included in --all.
   --all                    Run all update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -129,6 +132,7 @@ while [[ $# -gt 0 ]]; do
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
+        --acme-issuers)        OP_ACME_ISSUERS=1 ;;
         --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
@@ -892,6 +896,24 @@ op_ldap_acl_upgrade() {
 }
 
 # =============================================================================
+# op_acme_issuers — re-apply ClusterIssuers per ACME_ENV in install.env
+# =============================================================================
+op_acme_issuers() {
+    banner "cert-manager ClusterIssuers (ACME_ENV=${ACME_ENV:-production})"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would apply: $(gentian_cluster_issuers_manifest)"
+        return 0
+    fi
+
+    apply_gentian_cluster_issuers
+    success "ClusterIssuers applied (ACME_ENV=${ACME_ENV:-production})."
+    info "Tenant operator issuer: set tenantDNS01ClusterIssuer in Helm values to match."
+    info "  production: letsencrypt-dns01-cloudflare"
+    info "  staging:    letsencrypt-staging-dns01-cloudflare"
+}
+
+# =============================================================================
 # op_crossplane_update — re-apply Crossplane XRDs and Compositions from repo
 #
 # This brings the cluster in sync with repository changes to compositions or
@@ -1112,6 +1134,7 @@ _init
 [[ "${OP_KEYCLOAK_SYNC}"        == "1" ]] && op_keycloak_sync
 [[ "${OP_FIX_KERNEL_LDAP_SCOPE}" == "1" ]] && op_fix_kernel_ldap_scope
 [[ "${OP_PLUGIN}"               == "1" ]] && install_app_catalogue
+[[ "${OP_ACME_ISSUERS}"         == "1" ]] && op_acme_issuers
 
 echo ""
 success "update.sh completed."
