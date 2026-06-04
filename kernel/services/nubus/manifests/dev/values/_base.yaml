@@ -58,15 +58,10 @@ global:
             users:
               user:
                 add:
-                  # Hide kernel templates from the UMC picker. Tenant admins only
-                  # see the per-tenant "App User (<tenant>)" template under
-                  # cn=templates,ou=<tenant>,... which is auto-selected when it is
-                  # the sole visible template.
-                  templates:
-                    cn=App User,cn=templates,cn=univention,dc=swp-ldap,dc=internal:
-                      visible: "False"
-                    cn=Admin User,cn=templates,cn=univention,dc=swp-ldap,dc=internal:
-                      visible: "False"
+                  # UMC matches add/default by template label. Tenant admins get "1 App User"
+                  # via per-tenant templates; gateway patch 93 applies that default. Kernel LDAP
+                  # has no App User template (only "2 Admin User" for platform admins).
+                  default: "1 App User"
                 properties:
                   description:
                     syntax: TextArea
@@ -617,6 +612,9 @@ nubusUmcGateway:
     - name: gentian-umc-template-default
       mountPath: /entrypoint.d/93-gentian-umc-template-default.sh
       subPath: 93-gentian-umc-template-default.sh
+    - name: gentian-umc-template-default
+      mountPath: /entrypoint.d/94-gentian-umc-template-picker.sh
+      subPath: 94-gentian-umc-template-picker.sh
   ingress:
     enableLoginPath: false
     certManager:

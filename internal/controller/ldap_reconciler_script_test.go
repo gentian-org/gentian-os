@@ -66,7 +66,7 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 		`"mailPrimaryAddress": "<username>@${MAIL_DOMAIN}"`,
 		"MAIL_DOMAIN=\"demo.desk.gentian.org\"",
 		"cn=templates,${OU_POS}",
-		`"name": "App User"`,
+		`"name": "1 App User"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected App User template script to contain %q", want)

@@ -1228,6 +1228,19 @@ MAIL_DOMAIN_CONTAINER="cn=domain,cn=mail,${UDM_LDAP_BASE}"
 TEMPLATE_DN="cn=App User,${TEMPLATES_POS}"
 TEMPLATE_ENC=$(urlencode "${TEMPLATE_DN}")
 
+# Remove kernel App User template if present (app users are tenant-scoped only).
+KERNEL_APP_TEMPLATE_DN="cn=App User,cn=templates,cn=univention,${UDM_LDAP_BASE}"
+KERNEL_APP_ENC=$(urlencode "${KERNEL_APP_TEMPLATE_DN}")
+KERNEL_APP_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/settings/usertemplate/${KERNEL_APP_ENC}")
+if [ "${KERNEL_APP_STATUS}" = "200" ]; then
+  curl -sf --max-time 30 -X DELETE ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/settings/usertemplate/${KERNEL_APP_ENC}" || true
+  echo "removed kernel App User template"
+fi
+
 # Hide upstream openDesk templates so tenant admins only see Gentian templates.
 for LEGACY_NAME in "openDesk User" "openDesk Admin" "openDesk Administrator"; do
   LEGACY_DN="cn=${LEGACY_NAME},cn=templates,cn=univention,${UDM_LDAP_BASE}"
@@ -1278,7 +1291,7 @@ fi
 TEMPLATE_BODY=$(cat <<EOF
 {
   "properties": {
-    "name": "App User",
+    "name": "1 App User",
     "description": "Standard user with access to apps; email prefill uses @${MAIL_DOMAIN}",
     "mailPrimaryAddress": "<username>@${MAIL_DOMAIN}",
     "opendeskFileshareEnabled": true,

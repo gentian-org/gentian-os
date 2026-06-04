@@ -27,6 +27,7 @@ configMapGenerator:
     namespace: gentian-dev
     files:
       - 93-gentian-umc-template-default.sh=patches/93-gentian-umc-template-default.sh
+      - 94-gentian-umc-template-picker.sh=patches/94-gentian-umc-template-picker.sh
 
 generatorOptions:
   disableNameSuffixHash: true

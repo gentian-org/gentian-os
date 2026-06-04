@@ -49,31 +49,15 @@ spec:
                   echo "Created App Users group."
               fi
 
-              # 2. Create global App User template (kernel / platform admins)
-              APP_TEMPLATE_DN="cn=App User,cn=templates,cn=univention,${LDAP_BASE}"
-              APP_TEMPLATE_ENC=$(urlencode "${APP_TEMPLATE_DN}")
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${APP_TEMPLATE_ENC}")
-              APP_TEMPLATE_BODY='{
-                        "properties": {
-                          "name": "Platform App User",
-                          "description": "Platform-wide app user template (kernel admins)",
-                          "mailPrimaryAddress": "<username>@desk.gentian.org",
-                          "opendeskFileshareEnabled": true,
-                          "opendeskLivecollaborationEnabled": true,
-                          "groups": ["'"${APP_USERS_DN}"'"]
-                        },
-                        "position": "cn=templates,cn=univention,'"${LDAP_BASE}"'"
-                      }'
-              if [ "${STATUS}" = "404" ]; then
-                  curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
-                      "${BASE_URL}/settings/usertemplate/" \
-                      -d "${APP_TEMPLATE_BODY}"
-                  echo "Created App User template."
-              elif [ "${STATUS}" = "200" ]; then
-                  curl -sf -X PATCH ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
-                      "${BASE_URL}/settings/usertemplate/${APP_TEMPLATE_ENC}" \
-                      -d "${APP_TEMPLATE_BODY}"
-                  echo "Reconciled App User template."
+              # 2. Remove legacy kernel App User template (app users are tenant-scoped only).
+              KERNEL_APP_TEMPLATE_DN="cn=App User,cn=templates,cn=univention,${LDAP_BASE}"
+              KERNEL_APP_TEMPLATE_ENC=$(urlencode "${KERNEL_APP_TEMPLATE_DN}")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" \
+                  "${BASE_URL}/settings/usertemplate/${KERNEL_APP_TEMPLATE_ENC}")
+              if [ "${STATUS}" = "200" ]; then
+                  curl -sf -X DELETE ${CREDS} -H "Accept: application/json" \
+                      "${BASE_URL}/settings/usertemplate/${KERNEL_APP_TEMPLATE_ENC}"
+                  echo "Removed kernel App User template."
               fi
 
               # Remove upstream openDesk user templates from the UMC picker.
@@ -89,23 +73,29 @@ spec:
                   fi
               done
 
-              # 3. Create 'Admin User' template
+              # 3. Create '2 Admin User' template (kernel admins; tenant admins see it second in UMC)
               ADMIN_TEMPLATE_DN="cn=Admin User,cn=templates,cn=univention,${LDAP_BASE}"
               ADMIN_TEMPLATE_ENC=$(urlencode "${ADMIN_TEMPLATE_DN}")
+              ADMIN_TEMPLATE_BODY='{
+                        "properties": {
+                          "name": "2 Admin User",
+                          "description": "Administrative user without app access",
+                          "opendeskFileshareEnabled": false,
+                          "opendeskLivecollaborationEnabled": false
+                        },
+                        "position": "cn=templates,cn=univention,'"${LDAP_BASE}"'"
+                      }'
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${ADMIN_TEMPLATE_ENC}")
               if [ "${STATUS}" = "404" ]; then
                   curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
                       "${BASE_URL}/settings/usertemplate/" \
-                      -d "{
-                        \"properties\": {
-                          \"name\": \"Admin User\",
-                          \"description\": \"Administrative user without app access\",
-                          \"opendeskFileshareEnabled\": false,
-                          \"opendeskLivecollaborationEnabled\": false
-                        },
-                        \"position\": \"cn=templates,cn=univention,${LDAP_BASE}\"
-                      }"
+                      -d "${ADMIN_TEMPLATE_BODY}"
                   echo "Created Admin User template."
+              elif [ "${STATUS}" = "200" ]; then
+                  curl -sf -X PATCH ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
+                      "${BASE_URL}/settings/usertemplate/${ADMIN_TEMPLATE_ENC}" \
+                      -d "${ADMIN_TEMPLATE_BODY}"
+                  echo "Reconciled Admin User template."
               fi
 
               echo "IAM templates setup complete."

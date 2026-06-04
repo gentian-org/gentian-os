@@ -53,7 +53,7 @@ Gentian OS establishes distinct separation between normal users and administrato
 
 ### The "App User"
 * **Purpose**: Day-to-day employees or members of the organization utilizing applications.
-* **Template**: `cn=App User,cn=templates,ou=<tenant>,...` (one per tenant; upstream `openDesk User` templates are removed). UMC selects it via `directory/manager/web/modules/users/user/add/default` (kernel DN for platform admins) or, for tenant admins who only see their tenant template, a gateway fallback when exactly one template is visible.
+* **Template**: `cn=App User,cn=templates,ou=<tenant>,...` displayed as **1 App User** in UMC (one per tenant; upstream `openDesk User` templates are removed). There is **no** kernel-level App User template—app accounts exist only inside tenant OUs. Tenant admins may optionally pick the kernel **2 Admin User** template for tenant IT accounts.
 * **Characteristics**:
   * Pre-fills `mailPrimaryAddress` as `<username>@<tenant>.<kernel-domain>` (same openDesk `@domain` template syntax).
   * Automatically assigned the `opendeskFileshareEnabled`, `opendeskLivecollaborationEnabled` attributes (granting access to Nextcloud, Jitsi, etc.).
@@ -63,7 +63,7 @@ Gentian OS establishes distinct separation between normal users and administrato
 
 ### The "Admin User" (Tenant Admin)
 * **Purpose**: IT Administrators responsible for managing their tenant's users and groups.
-* **Template**: `cn=Admin User`
+* **Template**: `cn=Admin User,cn=templates,cn=univention,...` displayed as **2 Admin User** in UMC (kernel-wide; the only user template at the platform LDAP level)
 * **Characteristics**:
   * Explicitly **lacks** app-enabling attributes (`opendeskFileshareEnabled=False`).
   * Not included in the `App Users` group.
