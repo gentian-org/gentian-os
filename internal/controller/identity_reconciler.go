@@ -622,8 +622,8 @@ func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, ten
 }
 
 // keycloakContainer returns a Container spec that runs a shell script via the
-// curl-based Keycloak provisioner image. Credentials are injected from the
-// well-known keycloak-admin Secret in the kernel namespace.
+// Alpine-based Keycloak provisioner image (wget + jq). Credentials are injected
+// from the well-known keycloak-admin Secret in the kernel namespace.
 func keycloakContainer(name, script string) corev1.Container {
 	return corev1.Container{
 		Name:    name,

@@ -208,8 +208,8 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 		t.Fatal("expected at least one container in realm Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "curlimages/curl:8.7.1" {
-		t.Errorf("unexpected container image %q", container.Image)
+	if container.Image != "alpine:3.20" {
+		t.Errorf("unexpected container image %q, want alpine:3.20", container.Image)
 	}
 	if len(container.Env) < 2 {
 		t.Errorf("expected at least 2 env vars (KEYCLOAK_URL, KEYCLOAK_ADMIN_PASSWORD), got %d", len(container.Env))
