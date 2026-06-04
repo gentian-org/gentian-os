@@ -141,8 +141,8 @@ func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTempl
 		if !ok {
 			continue
 		}
-		cfgJSON := mapperConfigJSON(tmpl.Config)
-		b.WriteString(fmt.Sprintf(`
+	cfgJSON := mapperConfigJSON(tmpl.Config)
+	fmt.Fprintf(&b, `
 MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models")
 if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
@@ -152,7 +152,7 @@ else
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" \
     -d "{\"name\":%q,\"protocol\":\"openid-connect\",\"protocolMapper\":%q,\"config\":%s}"
   echo "mapper %s added to scope ${SCOPE_NAME}"
-fi`, name, name, name, tmpl.ProtocolMapper, cfgJSON, name))
+fi`, name, name, name, tmpl.ProtocolMapper, cfgJSON, name)
 	}
 	return b.String()
 }
