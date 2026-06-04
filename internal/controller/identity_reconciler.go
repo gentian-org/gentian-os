@@ -37,7 +37,7 @@ import (
 
 const (
 	conditionIdentityReady   = "IdentityReady"
-	keycloakProvisionerImage = "curlimages/curl:8.7.1"
+	keycloakProvisionerImage = "alpine:3.20"
 	keycloakAdminSecret      = "keycloak-admin"
 	appLabel                 = "gentianos.io/app"
 	identityRequeueAfter     = 2 * time.Second
@@ -628,7 +628,7 @@ func keycloakContainer(name, script string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
 		Image:   keycloakProvisionerImage,
-		Command: []string{"/bin/sh", "-c", script},
+		Command: []string{"/bin/sh", "-c", keycloakProvisionerBootstrap + script},
 		Env: []corev1.EnvVar{
 			{
 				Name: "KEYCLOAK_URL",
