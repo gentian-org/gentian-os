@@ -165,8 +165,10 @@ test-unit: test-unit-render test-unit-functions test-unit-schema
 install-tools:
 	@which crossplane >/dev/null 2>&1 || { \
 		echo "Installing crossplane CLI..."; \
-		curl -sL "https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh" | XP_VERSION=v2.2.1 sh; \
-		sudo mv crossplane /usr/local/bin/crossplane; \
+		tmpdir=$$(mktemp -d); \
+		( cd "$$tmpdir" && XP_VERSION=v2.2.1 bash "$(shell pwd)/scripts/install-crossplane-cli.sh" \
+		  && sudo mv crossplane /usr/local/bin/crossplane ); \
+		rmdir "$$tmpdir"; \
 	}
 	@which kubeconform >/dev/null 2>&1 || { \
 		echo "Installing kubeconform..."; \
