@@ -88,9 +88,11 @@ spec:
                     clusterIssuer:
                       default: letsencrypt-http01
                       description: |-
-                        Reserved for future per-app issuer overrides. Tenant ingress
-                        TLS uses the operator per-tenant DNS-01 wildcard; see
-                        docs/design/multi-tenancy.md §3.
+                        ClusterIssuer is reserved for future per-app issuer overrides. Tenant app
+                        ingress TLS is issued by the operator as one DNS-01 wildcard per tenant
+                        (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
+                        Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
+                        See docs/design/multi-tenancy.md §3.
                       type: string
                     ingressClassName:
                       default: nginx
@@ -275,9 +277,11 @@ spec:
                   clusterIssuer:
                     default: letsencrypt-http01
                     description: |-
-                      Reserved for future per-app issuer overrides. Tenant ingress
-                      TLS uses the operator per-tenant DNS-01 wildcard; see
-                      docs/design/multi-tenancy.md §3.
+                      ClusterIssuer is reserved for future per-app issuer overrides. Tenant app
+                      ingress TLS is issued by the operator as one DNS-01 wildcard per tenant
+                      (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
+                      Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
+                      See docs/design/multi-tenancy.md §3.
                     type: string
                   ingressClassName:
                     default: nginx
