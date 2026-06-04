@@ -55,7 +55,7 @@ spec:
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${APP_TEMPLATE_ENC}")
               APP_TEMPLATE_BODY='{
                         "properties": {
-                          "name": "App User",
+                          "name": "Platform App User",
                           "description": "Platform-wide app user template (kernel admins)",
                           "mailPrimaryAddress": "<username>@desk.gentian.org",
                           "opendeskFileshareEnabled": true,

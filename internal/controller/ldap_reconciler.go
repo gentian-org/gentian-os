@@ -1278,7 +1278,7 @@ fi
 TEMPLATE_BODY=$(cat <<EOF
 {
   "properties": {
-    "name": "App User (%s)",
+    "name": "App User",
     "description": "Standard user with access to apps; email prefill uses @${MAIL_DOMAIN}",
     "mailPrimaryAddress": "<username>@${MAIL_DOMAIN}",
     "opendeskFileshareEnabled": true,
@@ -1324,7 +1324,7 @@ elif [ "${STATUS}" = "200" ]; then
 else
   echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
   exit 1
-fi`, ouDN, mailDomain, tenantName)
+fi`, ouDN, mailDomain)
 }
 
 // buildAdminUserScript creates the tenant admin as a users/user in the tenant
@@ -1717,6 +1717,21 @@ else
 		"{\"properties\":{\"users\":[\"${USERS_OU_POS}\"]}}" \
 		"settings/directory: users default container ${USERS_OU_POS}" || exit 1
 fi
+
+# Tenant-scoped App User template used by UMC when creating users. The global UCR
+# default points at the kernel template; tenant admins cannot read it (LDAP ACL
+# patch 11). UMC gateway patch 93 selects this template when it is the only
+# visible entry in the template picker.
+TENANT_TEMPLATE_DN="cn=App User,cn=templates,${OU_POS}"
+TENANT_TEMPLATE_ENC=$(urlencode "${TENANT_TEMPLATE_DN}")
+TEMPLATE_STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
+	-H "Accept: application/json" \
+	"${BASE_URL}/settings/usertemplate/${TENANT_TEMPLATE_ENC}")
+if [ "${TEMPLATE_STATUS}" != "200" ]; then
+	echo "tenant App User template ${TENANT_TEMPLATE_DN} missing (HTTP ${TEMPLATE_STATUS})" >&2
+	exit 1
+fi
+echo "tenant App User template ${TENANT_TEMPLATE_DN} is the UMC default for ${ADMIN_USERNAME}"
 
 echo "admin policy provisioning complete for ${ADMIN_USERNAME}"`,
 		ouDN, tenantName, tenantName, tenantName,

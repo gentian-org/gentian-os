@@ -605,6 +605,18 @@ nubusLdapServer:
 
 # UMC Gateway — management shell only; human login is /login/ (gentian-login).
 nubusUmcGateway:
+  # When the global UCR default template is hidden from LDAP (tenant admins), UMC
+  # would otherwise leave the template unset. 93-gentian-umc-template-default.sh
+  # selects the sole visible template in that case.
+  extraVolumes:
+    - name: gentian-umc-template-default
+      configMap:
+        name: '{{ .Release.Name }}-umc-template-default'
+        defaultMode: 0755
+  extraVolumeMounts:
+    - name: gentian-umc-template-default
+      mountPath: /entrypoint.d/93-gentian-umc-template-default.sh
+      subPath: 93-gentian-umc-template-default.sh
   ingress:
     enableLoginPath: false
     certManager:

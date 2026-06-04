@@ -53,7 +53,7 @@ Gentian OS establishes distinct separation between normal users and administrato
 
 ### The "App User"
 * **Purpose**: Day-to-day employees or members of the organization utilizing applications.
-* **Template**: `cn=App User,cn=templates,ou=<tenant>,...` (one per tenant; upstream `openDesk User` templates are removed)
+* **Template**: `cn=App User,cn=templates,ou=<tenant>,...` (one per tenant; upstream `openDesk User` templates are removed). UMC selects it via `directory/manager/web/modules/users/user/add/default` (kernel DN for platform admins) or, for tenant admins who only see their tenant template, a gateway fallback when exactly one template is visible.
 * **Characteristics**:
   * Pre-fills `mailPrimaryAddress` as `<username>@<tenant>.<kernel-domain>` (same openDesk `@domain` template syntax).
   * Automatically assigned the `opendeskFileshareEnabled`, `opendeskLivecollaborationEnabled` attributes (granting access to Nextcloud, Jitsi, etc.).

@@ -23,6 +23,10 @@ configMapGenerator:
     namespace: gentian-dev
     files:
       - 92-gentian-tenant-acl.sh=patches/92-gentian-tenant-acl.sh
+  - name: nubus-dev-umc-template-default
+    namespace: gentian-dev
+    files:
+      - 93-gentian-umc-template-default.sh=patches/93-gentian-umc-template-default.sh
 
 generatorOptions:
   disableNameSuffixHash: true
