@@ -462,6 +462,13 @@ spec:
             {{- if and $s.name $s.valuePath }}
             {{- $relSet = append $relSet (dict "name" $s.valuePath
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- /* Jitsi Prosody hybrid_matrix_token auth needs JWT_APP_SECRET in   */}}
+            {{- /* extraEnvs (OpenDesk values-jitsi.yaml.gotmpl parity). settings.  */}}
+            {{- /* jwtAppSecret.value only feeds the keycloak-adapter sidecar.       */}}
+            {{- if and (eq $app "jitsi") (eq $s.name "jwt_app_secret") }}
+            {{- $relSet = append $relSet (dict "name" "jitsi.prosody.extraEnvs[2].value"
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
             {{- end }}
             {{- end }}
 

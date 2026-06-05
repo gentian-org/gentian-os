@@ -333,6 +333,16 @@ spec:
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
 
+            {{- /* Element web-only config: merge into config.json, not homeserver.yaml */}}
+            {{- $elementExtraVals := deepCopy $extraVals }}
+            {{- $elementConf := dig "configuration" dict $elementExtraVals }}
+            {{- $elementAddConf := dig "additionalConfiguration" dict $elementConf }}
+            {{- $elementAddConf = mergeOverwrite $elementAddConf (dict
+                "sso_redirect_options" (dict "immediate" true "on_welcome_page" true)
+            ) }}
+            {{- $elementConf = mergeOverwrite $elementConf (dict "additionalConfiguration" $elementAddConf) }}
+            {{- $elementExtraVals = mergeOverwrite $elementExtraVals (dict "configuration" $elementConf) }}
+
             {{- /* ── Emit Keycloak Client CR ─────────────────────────────────────────── */}}
             {{- /* When kernelRequirements.identity.oidc is set, the composition   */}}
             {{- /* registers the app as an OIDC client in the tenant's own realm.  */}}
@@ -443,9 +453,9 @@ spec:
                   version: {{ $chart.version | quote }}
                 namespace: {{ $ns }}
                 wait: false
-                {{- if gt (len $extraVals) 0 }}
+                {{- if gt (len $elementExtraVals) 0 }}
                 values:
-                  {{ toYaml $extraVals | nindent 18 }}
+                  {{ toYaml $elementExtraVals | nindent 18 }}
                 {{- end }}
                 {{- if gt (len $relSet) 0 }}
                 set:
