@@ -1149,7 +1149,9 @@ fi
 # LDAP-federated users cannot use reset-password; portal auth uses kernel LDAP + UDM.
 USER_JSON=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}")
+FEDERATED=0
 if echo "${USER_JSON}" | grep -q '"federationLink"'; then
+  FEDERATED=1
   echo "tenant admin ${TENANT_ADMIN_USERNAME} is LDAP-federated; password is managed in UDM (skip Keycloak reset-password)"
 else
   HTTP=$(curl -s -o /tmp/kc-pw-body -w "%%{http_code}" -X PUT -H "${AUTH_HEADER}" \
@@ -1167,11 +1169,15 @@ else
     ;;
   esac
 fi
-curl -sf -X PUT -H "${AUTH_HEADER}" \
-	-H "Content-Type: application/json" \
-	"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
-	-d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"requiredActions\":[]}"
-echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
+if [ "${FEDERATED}" = "1" ]; then
+  echo "tenant admin user attributes managed by LDAP federation (skip Keycloak user PUT)"
+else
+  curl -sf -X PUT -H "${AUTH_HEADER}" \
+    -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
+    -d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"requiredActions\":[]}"
+  echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
+fi
 echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
 echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
 

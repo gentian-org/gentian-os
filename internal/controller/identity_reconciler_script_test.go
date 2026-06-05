@@ -30,4 +30,7 @@ func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
 	if !strings.Contains(script, "federationLink") {
 		t.Fatal("script must skip Keycloak reset-password for LDAP-federated users")
 	}
+	if !strings.Contains(script, "skip Keycloak user PUT") {
+		t.Fatal("script must skip Keycloak user PUT for LDAP-federated users")
+	}
 }
