@@ -1020,23 +1020,23 @@ rollback_deploy() {
   local tenant_name="${2}"
   local env_name="${3}"
   local kustom_file="${4}"
+  local ns_name="tenant-${tenant_name}"
 
   echo "failed to provision tenant, rolling back" >&2
 
-  if ! is_instance_deployed "${instance}" "${env_name}"; then
-    echo "Rollback skipped: tenant instance '${instance}' is already undeployed in '${env_name}'." >&2
-    return 1
-  fi
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    remove_instance_resource "${kustom_file}" "${instance}"
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${kustom_file}"
+    )
 
-  remove_instance_resource "${kustom_file}" "${instance}"
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    git add "${kustom_file}"
-  )
-
-  if ! git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}"; then
-    echo "rollback failed: could not commit/push rollback change" >&2
-    return 1
+    if ! git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}"; then
+      echo "rollback failed: could not commit/push rollback change" >&2
+      return 1
+    fi
+  else
+    echo "Tenant instance '${instance}' is already removed from '${env_name}' GitOps; cleaning up cluster..." >&2
   fi
 
   if ! apply_env_kustomization "${env_name}"; then
@@ -1044,8 +1044,29 @@ rollback_deploy() {
     return 1
   fi
 
-  kubectl delete tenant "${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
+  # Mirror cmd_tenant_undeploy: let ArgoCD prune, delete the CR, then wait for
+  # finalizers/selfHeal recovery. A fire-and-forget delete races ArgoCD and
+  # reports failure while the Tenant CR is still terminating.
+  argocd_refresh_await_prune "${env_name}" "${tenant_name}" || true
+
+  if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
+    ns_name="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.status.namespace}' 2>/dev/null || true)"
+    if [[ -z "${ns_name}" ]]; then
+      ns_name="tenant-${tenant_name}"
+    fi
+    kubectl delete tenant "${tenant_name}" --ignore-not-found=true
+  fi
+
+  if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
+    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${env_name}"; then
+      echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
+      return 1
+    fi
+  fi
+
   kubectl delete jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
+  argocd_refresh_await_prune "${env_name}" "${tenant_name}" || true
 
   if is_instance_deployed "${instance}" "${env_name}"; then
     echo "rollback failed: tenant instance '${instance}' is still marked deployed in '${env_name}'" >&2

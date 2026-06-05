@@ -50,6 +50,7 @@ Deploy is transactional:
 - retrieves the initial tenant-admin credentials
 - only then prints login credentials
 - if provisioning or credential retrieval fails, it rolls back the GitOps deploy and prints `failed to provision tenant, rolling back`
+- rollback reverts the GitOps change, triggers ArgoCD prune, deletes the Tenant CR, and waits for operator finalizers (same cleanup path as `tenants undeploy`)
 
 After successful deploy, the CLI prints tenant-admin login guidance, including:
 
