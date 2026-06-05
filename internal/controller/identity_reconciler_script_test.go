@@ -21,4 +21,10 @@ func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
 	if !strings.Contains(script, "curl -sf -H \"${AUTH_HEADER}\"") {
 		t.Fatalf("script must pass authorization via -H \"${AUTH_HEADER}\"")
 	}
+	if !strings.Contains(script, "INITIAL_TENANT_ADMIN realm=") {
+		t.Fatal("script must emit INITIAL_TENANT_ADMIN after password sync")
+	}
+	if strings.Contains(script, "password reset skipped") {
+		t.Fatal("script must always sync tenant admin password from OpenBao")
+	}
 }

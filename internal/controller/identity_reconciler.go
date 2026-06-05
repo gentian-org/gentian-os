@@ -295,9 +295,9 @@ func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov
 // zero visibility into other realms.
 //
 // The admin password is derived from the master via Seeder.SeedTenantAdmin and
-// stored write-once at gentian-os/tenants/<tenant>/admin in OpenBao. On first
-// login Keycloak will prompt the tenant admin to set a new password
-// (UPDATE_PASSWORD required action).
+// stored write-once at gentian-os/tenants/<tenant>/admin in OpenBao. The
+// provision Job always syncs that canonical password into Keycloak (including
+// redeploys after deletionPolicy=Retain) and emits INITIAL_TENANT_ADMIN once.
 //
 // When Seeder is nil (envtest / staged rollout) a placeholder password is
 // used so the Job is still created and the test flow can proceed.
@@ -522,10 +522,15 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secrets.TenantAdminCreds) *batchv1.Job {
 	ttl := int32(3600)
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
+	adminEmail := tenant.Spec.AdminEmail
+	if adminEmail == "" {
+		adminEmail = creds.Username + "@gentian.org"
+	}
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: creds.Username},
 		corev1.EnvVar{Name: "TENANT_ADMIN_PASSWORD", Value: creds.Password},
+		corev1.EnvVar{Name: "TENANT_ADMIN_EMAIL", Value: adminEmail},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1107,8 +1112,7 @@ func buildAdminScript(realmName string) string {
 	// The script:
 	//   1. Authenticates to the master realm (cluster-admin creds from keycloakAdminSecret).
 	//   2. Creates the tenant admin user in the tenant realm if absent.
-	//   3. Sets the password and marks it temporary only when the tenant admin user
-	//      is newly created (UPDATE_PASSWORD required action on first login).
+	//   3. Always syncs the OpenBao-canonical password and clears stale requiredActions.
 	//   4. Grants the realm-management/realm-admin composite role so the user can
 	//      manage users/groups/clients/sessions within this realm only.
 	//
@@ -1141,18 +1145,19 @@ else
   echo "tenant admin ${TENANT_ADMIN_USERNAME} created (id=${UID}) in realm %s"
 fi
 
-# --- 2. Set password only for a newly created admin user ---
-if [ "${CREATED}" = "1" ]; then
-	curl -sf -X PUT -H "${AUTH_HEADER}" \
-		-H "Content-Type: application/json" \
-		"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
-		-d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}"
-	echo "password set (temporary=false)"
-	echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
-	echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
-else
-	echo "password reset skipped for existing tenant admin user"
-fi
+# --- 2. Sync OpenBao-canonical password (idempotent; required after Retain redeploy) ---
+curl -sf -X PUT -H "${AUTH_HEADER}" \
+	-H "Content-Type: application/json" \
+	"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
+	-d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}"
+echo "password synced from OpenBao (temporary=false)"
+curl -sf -X PUT -H "${AUTH_HEADER}" \
+	-H "Content-Type: application/json" \
+	"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
+	-d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"requiredActions\":[]}"
+echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
+echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
+echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
 
 # --- 3. Grant realm-admin composite role via realm-management client ---
 MGMT_CLIENT_ID=$(curl -sf -H "${AUTH_HEADER}" \
@@ -1174,7 +1179,8 @@ else
   echo "realm-admin role granted"
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName,
+		realmName, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {

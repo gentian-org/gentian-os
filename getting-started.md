@@ -142,7 +142,7 @@ uses `ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
 | 12c _(optional)_ | TLS | Install kernel wildcard Certificate for platform UIs (requires `CF_API_TOKEN`); tenant apps use per-tenant DNS-01 wildcards via the operator |
 | **13** | **Crossplane** | **Wait for `provider-helm` Healthy** |
 | **14** | **Nubus** | **Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR** |
-| **14b** | **LDAP scope** | **`update.sh --fix-kernel-ldap-scope`** (kernel realm LDAP search base) |
+| **14b** | **LDAP scope** | **`update.sh --fix-kernel-ldap-scope`** (kernel realm SUBTREE + mailPrimaryAddress for portal login) |
 | **15** | **Operator** | **Install gentian-os controller** (CRDs + reconcilers in `gentian-system`) |
 | **15b** | **Mail** | **Postfix + Dovecot** when `MAIL_SERVICE_MODE=kernel` |
 | **15c** | **App catalogue** | **ArgoCD Application `gentian-appprofiles`** syncs `gentian-apps/profiles/` |

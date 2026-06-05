@@ -100,10 +100,9 @@ Options:
                            to re-import all users with up-to-date LDAP attributes.
                            Run this after provisioning new tenants so their admin
                            accounts are immediately visible in the portal.
-  --fix-kernel-ldap-scope  Patch the kernel realm's LDAP federation scope so it
-                           targets only cn=users (service accounts) instead of
-                           the full tree. Run once after cluster install to fix
-                           the Nubus keycloak-bootstrap default. Idempotent.
+  --fix-kernel-ldap-scope  Patch the kernel realm LDAP federation for shared-portal
+                           login: SUBTREE on the LDAP base, mailPrimaryAddress
+                           as username. Idempotent (see ldap-federation-patch.yaml).
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository. Run after committing composition changes
                            so the cluster picks them up without a full reinstall.
@@ -708,29 +707,25 @@ op_keycloak_sync() {
 }
 
 # =============================================================================
-# op_fix_kernel_ldap_scope — patch the kernel realm's LDAP User Storage
-#                             Provider so it targets only the service accounts
-#                             container (cn=users) rather than the full tree.
+# op_fix_kernel_ldap_scope — patch the kernel realm LDAP User Storage Provider
+#                             for shared-portal authentication (iam.md §1.2).
 #
-# Background: Nubus keycloak-bootstrap seeds the kernel realm's LDAP federation
-# with usersDn=dc=swp-ldap,dc=internal (full tree, searchScope=2). This causes
-# all tenant users to appear in the kernel realm, making UMC expose all tenants
-# to every authenticated user. The fix scopes the kernel LDAP federation to
-# cn=users,dc=swp-ldap,dc=internal (one-level, searchScope=1) so only kernel
-# service accounts are imported — no human tenant users.
-#
-# Run once after cluster install / reinstall before provisioning tenants.
+# Nubus keycloak-bootstrap seeds ldap-provider with cn=users + ONE_LEVEL scope,
+# which hides tenant humans under ou=<tenant>. The keycloak-config PostSync hook
+# (ldap-federation-patch.yaml) corrects this to SUBTREE + mailPrimaryAddress;
+# install and manual recovery call this function to apply the same settings.
 # =============================================================================
 _fix_kernel_ldap_scope() {
     local release_name="nubus-dev"
     local ns="${KERNEL_NAMESPACE}"
     local kc_realm="${KERNEL_REALM:-kernel}"
-    local target_users_dn="cn=users,${LDAP_BASE:-dc=swp-ldap,dc=internal}"
+    local ldap_base="${LDAP_BASE:-dc=swp-ldap,dc=internal}"
+    local target_users_dn="${ldap_base}"
 
-    info "Patching kernel realm LDAP federation scope to ${target_users_dn} (searchScope=1)..."
+    info "Patching kernel realm LDAP federation for portal login (usersDn=${target_users_dn}, SUBTREE, mailPrimaryAddress)..."
 
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would patch kernel realm LDAP federation usersDn=${target_users_dn} searchScope=1"
+        info "[dry-run] would patch kernel realm LDAP federation usersDn=${target_users_dn} searchScope=2 mailPrimaryAddress"
         return 0
     fi
 
@@ -797,30 +792,41 @@ for p in json.load(sys.stdin):
     done
     provider_id=$(echo "${provider_json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 
-    # Check current usersDn — skip if already scoped correctly.
-    local current_dn
-    current_dn=$(echo "${provider_json}" | python3 -c "
+    # Skip when all four target fields already match (idempotent).
+    local already_correct
+    already_correct=$(echo "${provider_json}" | python3 -c "
 import sys, json
 p = json.load(sys.stdin)
-print(p.get('config', {}).get('usersDn', [''])[0])
-" 2>/dev/null || true)
-    if [[ "${current_dn}" == "${target_users_dn}" ]]; then
-        success "Kernel LDAP scope already correct (${target_users_dn}) — nothing to do"
+cfg = p.get('config', {})
+desired = {
+    'usersDn': ['${target_users_dn}'],
+    'searchScope': ['2'],
+    'usernameLDAPAttribute': ['mailPrimaryAddress'],
+    'customUserSearchFilter': ['(mailPrimaryAddress=*)'],
+}
+print('yes' if all(cfg.get(k) == v for k, v in desired.items()) else 'no')
+" 2>/dev/null || echo "no")
+    if [[ "${already_correct}" == "yes" ]]; then
+        success "Kernel LDAP federation already configured for portal login — nothing to do"
         return 0
     fi
-    info "Current kernel LDAP usersDn: ${current_dn} → patching to ${target_users_dn}"
 
-    # Build the patched component JSON by updating only the relevant config fields.
+    local current_dn current_scope
+    current_dn=$(echo "${provider_json}" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p.get('config',{}).get('usersDn',[''])[0])" 2>/dev/null || true)
+    current_scope=$(echo "${provider_json}" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p.get('config',{}).get('searchScope',[''])[0])" 2>/dev/null || true)
+    info "Current kernel LDAP usersDn=${current_dn} searchScope=${current_scope} → patching SUBTREE + mailPrimaryAddress"
+
     local patched_json
     patched_json=$(echo "${provider_json}" | python3 -c "
 import sys, json
 p = json.load(sys.stdin)
 p['config']['usersDn'] = ['${target_users_dn}']
-p['config']['searchScope'] = ['1']
+p['config']['searchScope'] = ['2']
+p['config']['usernameLDAPAttribute'] = ['mailPrimaryAddress']
+p['config']['customUserSearchFilter'] = ['(mailPrimaryAddress=*)']
 print(json.dumps(p))
 ")
 
-    # PUT the updated component back.
     local http_status
     http_status=$(curl -sf --max-time 30 -o /dev/null -w "%{http_code}" \
         -X PUT \
@@ -829,7 +835,7 @@ print(json.dumps(p))
         "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components/${provider_id}" \
         -d "${patched_json}" 2>/dev/null || echo "ERR")
     if [[ "${http_status}" == "204" ]]; then
-        success "Kernel LDAP scope patched: usersDn=${target_users_dn}, searchScope=1"
+        success "Kernel LDAP federation patched for shared-portal login (SUBTREE, mailPrimaryAddress)"
     else
         warn "Unexpected HTTP ${http_status} when patching kernel LDAP provider — check Keycloak logs"
         return 1
