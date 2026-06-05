@@ -24,7 +24,7 @@ func TestBuildPortalRealtimeLinksScript(t *testing.T) {
 		"https://meet.demo.desk.gentian.org",
 		"swp.realtime_collaboration_demo",
 		"https://chat.demo.desk.gentian.org",
-		"cn=App Users,${OU_POS}",
+		"cn=users_demo,${OU_POS}",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)

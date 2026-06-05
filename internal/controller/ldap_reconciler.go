@@ -2230,9 +2230,10 @@ CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="`)
 	body.WriteString(ouDN)
-	body.WriteString(`"
-USERS_GRP_DN="cn=App Users,${OU_POS}"
-ensure_realtime_entry() {
+	body.WriteString(fmt.Sprintf(`"
+USERS_GRP_DN="cn=users_%s,${OU_POS}"
+ensure_realtime_entry() {`, tenantName))
+	body.WriteString(`
   ENTRY_CN="$1"
   LINK="$2"
   ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
