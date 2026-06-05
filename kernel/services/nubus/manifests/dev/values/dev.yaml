@@ -220,3 +220,13 @@ nubusLdapServer:
     limits:
       cpu: 250m
       memory: 256Mi
+
+# The nubus umc-gateway sub-chart does not evaluate Helm tpl in extraVolumes
+# (unlike ldap-server and udm-listener). Use the literal release name so the
+# volume binds to the ConfigMap created by nubus-manifests-dev Kustomize.
+nubusUmcGateway:
+  extraVolumes:
+    - name: gentian-umc-template-default
+      configMap:
+        name: nubus-dev-umc-template-default
+        defaultMode: 0755

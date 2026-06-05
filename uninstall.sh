@@ -1022,6 +1022,36 @@ if [[ "${MODE}" == "force" || "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
 fi
 
 # =============================================================================
+# Step 10b — Remove AppProfile CRs (cluster-scoped catalog)
+#
+# AppProfiles are synced by the gentian-appprofiles ArgoCD Application from the
+# gentian-apps repo.  They are cluster-scoped and survive namespace teardown
+# because the appprofiles.gentianos.io CRD is not removed by uninstall.  Stale
+# profiles (e.g. drifted valueMapping from a prior release) block a clean
+# reinstall until ArgoCD can apply the current git state.
+# =============================================================================
+banner "Step 10b — Remove AppProfile CRs"
+
+if kubectl get crd appprofiles.gentianos.io >/dev/null 2>&1; then
+    _appprofile_count=$(kubectl get appprofiles.gentianos.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${_appprofile_count}" -gt 0 ]]; then
+        info "Deleting ${_appprofile_count} AppProfile CR(s)..."
+        while IFS= read -r _ap; do
+            [[ -z "${_ap}" ]] && continue
+            kubectl patch "${_ap}" \
+                --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                2>/dev/null || true
+            kubectl delete "${_ap}" --ignore-not-found=true --wait=false 2>/dev/null || true
+        done < <(kubectl get appprofiles.gentianos.io -o name 2>/dev/null)
+        success "AppProfile CRs removed."
+    else
+        info "No AppProfile CRs found; skipping."
+    fi
+else
+    info "AppProfile CRD not found; skipping."
+fi
+
+# =============================================================================
 # Step 11 — Remove kernel namespaces
 # In safe mode, namespaces that contain PVCs are preserved.
 # In force mode, all kernel namespaces are deleted.

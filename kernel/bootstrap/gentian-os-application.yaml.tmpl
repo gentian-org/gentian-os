@@ -61,13 +61,18 @@ spec:
     jsonPointers:
     - /metadata/annotations
     - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
-  # Crossplane enriches the apps.gentianos.io CRD with additional printer
+  # Crossplane enriches gentianos.io XRD-owned CRDs with additional printer
   # columns and its own spec properties (compositionRef, resourceRefs, etc.)
   # after the initial install. Ignore spec.versions drift so ArgoCD does not
   # report permanent OutOfSync noise.
   - group: apiextensions.k8s.io
     kind: CustomResourceDefinition
     name: apps.gentianos.io
+    jsonPointers:
+    - /spec/versions
+  - group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+    name: xtenants.gentianos.io
     jsonPointers:
     - /spec/versions
   sources:
