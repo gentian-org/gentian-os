@@ -1509,8 +1509,38 @@ sync_admin_password() {
 		;;
 	422)
 		if grep -q 'Password has been used before' /tmp/udm-pw-body 2>/dev/null; then
-			echo "user ${ADMIN_USERNAME} password already matches OpenBao (HTTP 422 password history)"
-			return 0
+			# UDM rejects re-setting a password already in history even when the
+			# live LDAP hash differs (common after deletionPolicy=Retain redeploy).
+			# Rotate through a one-shot interim password, then apply OpenBao.
+			echo "user ${ADMIN_USERNAME} password history blocked direct sync; rotating via interim password"
+			INTERIM="Gt!$(openssl rand -hex 12)"
+			http=$(curl -s --max-time 30 -o /tmp/udm-pw-body -w "%%{http_code}" -X PATCH ${CREDS} \
+				-H "Content-Type: application/json" \
+				-H "Accept: application/json" \
+				"${url}" -d "{\"properties\":{\"password\":\"${INTERIM}\"}}")
+			case "${http}" in
+			200|204) ;;
+			*)
+				echo "user ${ADMIN_USERNAME} interim password PATCH failed (HTTP ${http})" >&2
+				cat /tmp/udm-pw-body >&2 2>/dev/null || true
+				return 1
+				;;
+			esac
+			http=$(curl -s --max-time 30 -o /tmp/udm-pw-body -w "%%{http_code}" -X PATCH ${CREDS} \
+				-H "Content-Type: application/json" \
+				-H "Accept: application/json" \
+				"${url}" -d "{\"properties\":{\"password\":\"${ADMIN_PASSWORD}\"}}")
+			case "${http}" in
+			200|204)
+				echo "user ${ADMIN_USERNAME} password synced via interim rotation (HTTP ${http})"
+				return 0
+				;;
+			*)
+				echo "user ${ADMIN_USERNAME} OpenBao password PATCH failed after interim rotation (HTTP ${http})" >&2
+				cat /tmp/udm-pw-body >&2 2>/dev/null || true
+				return 1
+				;;
+			esac
 		fi
 		echo "user ${ADMIN_USERNAME} password PATCH returned HTTP 422; body:" >&2
 		cat /tmp/udm-pw-body >&2 2>/dev/null || true
