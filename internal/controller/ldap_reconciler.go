@@ -1513,7 +1513,7 @@ sync_admin_password() {
 			# live LDAP hash differs (common after deletionPolicy=Retain redeploy).
 			# Rotate through a one-shot interim password, then apply OpenBao.
 			echo "user ${ADMIN_USERNAME} password history blocked direct sync; rotating via interim password"
-			INTERIM="Gt!$(openssl rand -hex 12)"
+			INTERIM="Gt!$(dd if=/dev/urandom bs=12 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
 			http=$(curl -s --max-time 30 -o /tmp/udm-pw-body -w "%%{http_code}" -X PATCH ${CREDS} \
 				-H "Content-Type: application/json" \
 				-H "Accept: application/json" \

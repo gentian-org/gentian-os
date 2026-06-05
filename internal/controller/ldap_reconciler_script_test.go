@@ -50,6 +50,7 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 		"sync_admin_password",
 		"Password has been used before",
 		"rotating via interim password",
+		"/dev/urandom",
 		"password synced via interim rotation",
 		"UDM user ${ADMIN_USERNAME} already exists",
 		"user ${ADMIN_USERNAME} password synced",
