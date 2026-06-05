@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
@@ -839,11 +840,17 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 	return nil
 }
 
-// ensureStagingCaTrust replicates gentian-staging-ca-tls from the services
-// namespace into the tenant namespace when present (ACME staging dev clusters).
-// No-op when the source secret does not exist (production clusters).
+// ensureStagingCaTrust bootstraps gentian-staging-ca-tls in the services namespace
+// from the kernel wildcard leaf cert (ACME staging), then replicates it into the
+// tenant namespace for openDesk in-cluster OIDC clients (Synapse, Jitsi adapter).
+// No-op on production clusters where the leaf secret is absent.
 func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	const secretName = "gentian-staging-ca-tls"
+	const secretName = stagingca.SecretName
+
+	if _, err := stagingca.EnsureStagingCASecret(ctx, r.Client, servicesNamespace,
+		stagingca.DefaultCertManagerNS, stagingca.DefaultLeafSecret); err != nil {
+		return fmt.Errorf("bootstrap staging CA in %s: %w", servicesNamespace, err)
+	}
 
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: servicesNamespace}, source); err != nil {

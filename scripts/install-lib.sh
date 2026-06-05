@@ -1807,6 +1807,15 @@ print(json.dumps(s))
 " "${_wc_ns}" | kubectl apply -f -
         success "wildcard-tls propagated to ${_wc_ns}."
     done
+
+    # ACME staging: trust bundle for in-cluster OIDC (openDesk Synapse/Jitsi).
+    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
+        local staging_ca_script="${SCRIPT_DIR}/scripts/create-staging-ca-secret.sh"
+        if [[ -x "${staging_ca_script}" ]]; then
+            info "Creating gentian-staging-ca-tls in ${app_ns} (ACME staging)..."
+            "${staging_ca_script}" "${app_ns}" || warn "gentian-staging-ca-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."
+        fi
+    fi
 }
 
 # =============================================================================

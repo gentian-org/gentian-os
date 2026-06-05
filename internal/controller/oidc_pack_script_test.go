@@ -12,6 +12,33 @@ import (
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
+func TestOIDCPacksNeedLDAPGroups(t *testing.T) {
+	packs, templates, err := oidc.LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack := packs["opendesk-jitsi"]
+	if !oidcPacksNeedLDAPGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
+		t.Fatal("expected opendesk-jitsi pack to require LDAP groups")
+	}
+	if oidcPacksNeedLDAPGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
+		t.Fatal("expected custom client without pack to skip LDAP group gate")
+	}
+}
+
+func TestBuildKCLDAPGroupSyncScript(t *testing.T) {
+	script := buildKCLDAPGroupSyncScript("demo")
+	for _, want := range []string{
+		`REALM="demo"`,
+		"group-mapper",
+		"mappers/${MAPPER_ID}/sync?action=triggerFullSync",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q", want)
+		}
+	}
+}
+
 func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	packs, templates, err := oidc.LoadCatalog()
 	if err != nil {

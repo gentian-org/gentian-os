@@ -66,6 +66,13 @@ so users are not prompted for a tenant-realm LDAP password after portal login.
 LDAP `group-ldap-mapper` on the tenant realm federation imports
 `managed-by-attribute-*` groups from the tenant OU so pack role mappings resolve.
 
+**Provisioning order (operator):** realm registration (including the group-mapper)
+runs first; the UDM OU Job creates per-tenant `managed-by-attribute-*` groups;
+a Keycloak **LDAP group sync** Job imports them into the tenant realm; only then
+do OpenDesk OIDC pack Jobs map each group to its client role. A final **LDAP user
+sync** runs after the admin user is unlocked in LDAP so portal login stays
+consistent with UDM `shadowExpire` handling.
+
 ## 2. Roles and User Templates
 
 Gentian OS establishes distinct separation between normal users and administrators by employing specialized UMC User Templates.

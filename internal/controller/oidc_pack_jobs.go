@@ -27,6 +27,17 @@ type oidcAppConfig struct {
 	templates    map[string]oidc.MapperTemplate
 }
 
+// oidcPacksNeedLDAPGroups reports whether any resolved OIDC config uses an
+// OpenDesk pack that maps a managed-by-attribute-* LDAP group to a client role.
+func oidcPacksNeedLDAPGroups(configs []oidcAppConfig) bool {
+	for _, cfg := range configs {
+		if cfg.pack != nil && cfg.pack.LDAPGroup != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]oidcAppConfig, error) {
 	apps, err := r.collectOIDCApps(ctx, tenant)
 	if err != nil {

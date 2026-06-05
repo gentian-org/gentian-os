@@ -116,14 +116,16 @@ authoritative “today” view; §3’s diagram is the stable mental model.
 Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
 `spec.apps: [element, jitsi]`) triggers the operator in order:
 
-1. Namespace `tenant-{name}`, quota, limit range, network policy, registry pull secret  
-2. Keycloak **realm** and OIDC setup via **Jobs** in `platform-kernel` (realm → admin → browser-flow → per-app client Jobs)  
-3. LDAP OU, groups, and bind accounts via UDM REST Jobs (`dc=swp-ldap,dc=internal` on dev)  
-4. Per-app databases, object storage, cache where required  
-5. Mail secrets / virtual-domain registration when `spec.mail.mode` needs kernel mail (see [design/mail.md](design/mail.md))  
-6. **`App` claim per `spec.apps` entry** — created by the operator (authoritative today)  
-7. Per-tenant DNS-01 wildcard cert + per-app `Ingress` (`chat.demo.desk.gentian.org`, …)  
-8. **`IntegrationBinding`** CRs when two installed apps match a contract in `spec.apps`
+1. Namespace `tenant-{name}`, quota, limit range, network policy, registry pull secret; replicate `gentian-staging-ca-tls` on ACME staging clusters  
+2. Keycloak **realm** via Jobs in `platform-kernel` (realm → admin → browser-flow)  
+3. LDAP OU, `managed-by-attribute-*` groups, and bind accounts via UDM REST Jobs (`dc=swp-ldap,dc=internal` on dev)  
+4. Keycloak **LDAP group sync** → OpenDesk **OIDC pack** client Jobs (maps `managed-by-attribute-*` → client roles per `internal/oidc/packs/opendesk.yaml`)  
+5. Post-unlock **LDAP user sync** and kernel admin re-enable  
+6. Per-app databases, object storage, cache where required  
+7. Mail secrets / virtual-domain registration when `spec.mail.mode` needs kernel mail (see [design/mail.md](design/mail.md))  
+8. **`App` claim per `spec.apps` entry** — created by the operator (authoritative today)  
+9. Per-tenant DNS-01 wildcard cert + per-app `Ingress` (`chat.demo.desk.gentian.org`, …)  
+10. **`IntegrationBinding`** CRs when two installed apps match a contract in `spec.apps`
 
 In parallel, the operator also ensures an **`XTenant`** composite
 (`tenant-default` Composition). That path renders namespace, limits,

@@ -109,6 +109,30 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		}
 	}
 
+	// OpenDesk OIDC packs map managed-by-attribute-* LDAP groups to client roles.
+	// Those groups must exist in LDAP (OU Job) and be imported into Keycloak
+	// (group-ldap-mapper sync) before client Jobs run — see docs/design/iam.md §1.3.
+	if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
+		ouDone, err := r.ldapOUJobComplete(ctx, tenant.Name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !ouDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"WaitingLDAPOU", "Waiting for tenant LDAP OU and managed-by-attribute groups")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+		groupSyncDone, err := r.ensureKCLDAPGroupSyncJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak LDAP group sync Job: %w", err)
+		}
+		if !groupSyncDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"SyncingKCLDAPGroups", "Waiting for Keycloak LDAP group sync before OIDC client Jobs")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+	}
+
 	allDone := true
 	for _, cfg := range oidcConfigs {
 		done, err := r.ensureOIDCClientJob(ctx, tenant, realmName, cfg)
@@ -392,7 +416,8 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			provNames := []string{
 				realmJobName(tenant.Name), adminJobName(tenant.Name),
 				oidcBrowserFlowJobName(tenant.Name),
-				kernelAdminEnableJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
+				kernelAdminEnableJobName(tenant.Name), kcLDAPGroupSyncJobName(tenant.Name),
+				kcLDAPSyncJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -898,13 +923,44 @@ else
 fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
 }
 
-// buildKCLDAPSyncScript returns a shell script that triggers a full Keycloak
-// LDAP user-storage sync for the tenant realm. Running this after all LDAP
-// provisioning jobs have completed ensures that any users cached with
-// enabled=false (due to the brief UDM shadowExpire race during user creation)
-// are re-imported from LDAP with the correct enabled state.
+// buildKCLDAPSyncScript triggers a full Keycloak LDAP user import after admin
+// unlock. See buildKCLDAPFederationSyncScript for the shared preamble.
 func buildKCLDAPSyncScript(realmName string) string {
+	return buildKCLDAPFederationSyncScript(realmName, true, false)
+}
+
+// buildKCLDAPGroupSyncScript imports managed-by-attribute-* groups from the
+// tenant OU into Keycloak before OpenDesk OIDC pack Jobs map them to client roles.
+func buildKCLDAPGroupSyncScript(realmName string) string {
+	return buildKCLDAPFederationSyncScript(realmName, false, true)
+}
+
+func buildKCLDAPFederationSyncScript(realmName string, syncUsers, syncGroups bool) string {
+	var steps string
+	if syncGroups {
+		steps += `
+MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/components?parent=${PROVIDER_ID}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper")
+MAPPER_ID=$(printf '%s' "${MAPPERS}" | jq -r '.[] | select(.name=="group-mapper") | .id' 2>/dev/null | head -1)
+if [ -z "${MAPPER_ID}" ] || [ "${MAPPER_ID}" = "null" ]; then
+  echo "group-mapper not found in realm ${REALM}" >&2
+  exit 1
+fi
+RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/mappers/${MAPPER_ID}/sync?action=triggerFullSync")
+echo "Keycloak LDAP group sync complete for realm ${REALM}: ${RESULT}"
+`
+	}
+	if syncUsers {
+		steps += `
+RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
+echo "Keycloak LDAP user sync complete for realm ${REALM}: ${RESULT}"
+`
+	}
 	return fmt.Sprintf(`set -eu
+%s
+REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -912,23 +968,37 @@ TOKEN=$(curl -sf \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 PROVIDER_ID=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider" \
-  | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/components?type=org.keycloak.storage.UserStorageProvider" \
+  | jq -r '.[0].id // empty' 2>/dev/null | head -1)
 if [ -z "${PROVIDER_ID}" ]; then
-  echo "LDAP provider not found in %s realm — skipping sync"
+  PROVIDER_ID=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/components?type=org.keycloak.storage.UserStorageProvider" \
+    | sed 's/.*"id":"\([^"]*\)".*/\1/')
+fi
+if [ -z "${PROVIDER_ID}" ]; then
+  echo "LDAP provider not found in ${REALM} realm — skipping sync"
   exit 0
 fi
-RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
-echo "Keycloak LDAP full sync complete for realm %s: ${RESULT}"`, realmName, realmName, realmName, realmName)
+%s`, keycloakProvisionerBootstrap, realmName, steps)
 }
 
-// makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP full sync.
+// makeKCLDAPGroupSyncJob imports LDAP groups before OpenDesk OIDC pack Jobs.
+func makeKCLDAPGroupSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	return makeKCLDAPFederationSyncJob(tenant, kcLDAPGroupSyncJobName(tenant.Name), "kc-ldap-group-sync",
+		buildKCLDAPGroupSyncScript(realmName))
+}
+
+// makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP user sync.
 func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	return makeKCLDAPFederationSyncJob(tenant, kcLDAPSyncJobName(tenant.Name), "kc-ldap-sync",
+		buildKCLDAPSyncScript(realmName))
+}
+
+func makeKCLDAPFederationSyncJob(tenant *gentianov1alpha1.Tenant, jobName, containerName, script string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      kcLDAPSyncJobName(tenant.Name),
+			Name:      jobName,
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
@@ -941,7 +1011,7 @@ func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batch
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("kc-ldap-sync", buildKCLDAPSyncScript(realmName)),
+						keycloakContainer(containerName, script),
 					},
 				},
 			},
@@ -949,16 +1019,33 @@ func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batch
 	}
 }
 
-// ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and
-// returns true when it has completed. Called after the admin-enable job so
-// all LDAP changes (including shadowExpire clearance) are stable in LDAP
-// before the sync re-imports users into Keycloak.
-func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	jobName := kcLDAPSyncJobName(tenant.Name)
+// ensureKCLDAPGroupSyncJob creates the pre-OIDC LDAP group import job.
+func (r *TenantReconciler) ensureKCLDAPGroupSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPGroupSyncJobName(tenant.Name),
+		func() *batchv1.Job { return makeKCLDAPGroupSyncJob(tenant, keycloakRealmName(tenant)) })
+}
+
+// ldapOUJobComplete reports whether the UDM OU Job (managed-by-attribute groups) finished.
+func (r *TenantReconciler) ldapOUJobComplete(ctx context.Context, tenantName string) (bool, error) {
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: ouJobName(tenantName), Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
+func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, makeJob func() *batchv1.Job) (bool, error) {
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeKCLDAPSyncJob(tenant, keycloakRealmName(tenant)))
+		return false, r.Create(ctx, makeJob())
 	}
 	if err != nil {
 		return false, err
@@ -969,6 +1056,15 @@ func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gent
 		return false, nil
 	}
 	return jobIsComplete(job), nil
+}
+
+// ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and
+// returns true when it has completed. Called after the admin-enable job so
+// all LDAP changes (including shadowExpire clearance) are stable in LDAP
+// before the sync re-imports users into Keycloak.
+func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPSyncJobName(tenant.Name),
+		func() *batchv1.Job { return makeKCLDAPSyncJob(tenant, keycloakRealmName(tenant)) })
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -1175,7 +1271,13 @@ func kernelAdminEnableJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-kernel-enable-%s", tenantName)
 }
 
-// kcLDAPSyncJobName returns the name of the Keycloak LDAP full-sync job.
+// kcLDAPGroupSyncJobName returns the Keycloak LDAP group import job run after
+// the OU Job and before OpenDesk OIDC pack Jobs.
+func kcLDAPGroupSyncJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-ldap-group-sync-%s", tenantName)
+}
+
+// kcLDAPSyncJobName returns the name of the Keycloak LDAP user sync job.
 // This job runs after the admin-enable job so all LDAP users (not just the
 // admin) are re-imported with their correct enabled state, clearing any cached
 // disabled entries caused by the brief UDM shadowExpire race during provisioning.
