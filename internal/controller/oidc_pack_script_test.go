@@ -31,7 +31,7 @@ func TestBuildKCLDAPGroupSyncScript(t *testing.T) {
 	for _, want := range []string{
 		`REALM="demo"`,
 		"group-mapper",
-		"mappers/${MAPPER_ID}/sync?action=triggerFullSync",
+		"mappers/${MAPPER_ID}/sync?direction=fedToKeycloak",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)

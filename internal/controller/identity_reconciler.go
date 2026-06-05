@@ -947,7 +947,7 @@ if [ -z "${MAPPER_ID}" ] || [ "${MAPPER_ID}" = "null" ]; then
   exit 1
 fi
 RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/mappers/${MAPPER_ID}/sync?action=triggerFullSync")
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/mappers/${MAPPER_ID}/sync?direction=fedToKeycloak")
 echo "Keycloak LDAP group sync complete for realm ${REALM}: ${RESULT}"
 `
 	}
@@ -959,7 +959,6 @@ echo "Keycloak LDAP user sync complete for realm ${REALM}: ${RESULT}"
 `
 	}
 	return fmt.Sprintf(`set -eu
-%s
 REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -979,7 +978,7 @@ if [ -z "${PROVIDER_ID}" ]; then
   echo "LDAP provider not found in ${REALM} realm — skipping sync"
   exit 0
 fi
-%s`, keycloakProvisionerBootstrap, realmName, steps)
+%s`, realmName, steps)
 }
 
 // makeKCLDAPGroupSyncJob imports LDAP groups before OpenDesk OIDC pack Jobs.
