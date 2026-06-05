@@ -108,6 +108,19 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
+	// Step 1c — backfill opendesk*Enabled on existing app users (e.g. users created
+	// before the App User template or without it). Required for Element/Jitsi OIDC
+	// and managed-by-attribute-* group membership via the Nubus listener.
+	appUserCapsDone, err := r.ensureAppUserCapabilitiesJob(ctx, tenant, ouDN)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure LDAP App User capabilities Job: %w", err)
+	}
+	if !appUserCapsDone {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
+			"ProvisioningAppUserCapabilities", "Waiting for UDM App User capabilities Job to complete")
+		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
+	}
+
 	// Step 2 — tenant admin UDM user.
 	// Must run BEFORE the admin policy job: the policy job updates the portal
 	// entry allowedGroups, and the Nubus portal consumer groups cache must
@@ -385,6 +398,26 @@ func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gen
 	return jobIsComplete(job), nil
 }
 
+// ensureAppUserCapabilitiesJob backfills opendesk*Enabled on existing tenant users.
+// Returns true when the Job has completed successfully.
+func (r *TenantReconciler) ensureAppUserCapabilitiesJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
+	jobName := appUserCapabilitiesJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makeAppUserCapabilitiesJob(tenant, ouDN))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
 // ensureAppUserTemplateJob creates the tenant-scoped App User UDM template if absent.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensureAppUserTemplateJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
@@ -606,6 +639,11 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 
 	templateDone, err := r.ensureAppUserTemplateJob(ctx, tenant, ouDN)
 	if err != nil || !templateDone {
+		return err
+	}
+
+	capsDone, err := r.ensureAppUserCapabilitiesJob(ctx, tenant, ouDN)
+	if err != nil || !capsDone {
 		return err
 	}
 
@@ -838,6 +876,31 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPass
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{c},
+				},
+			},
+		},
+	}
+}
+
+func makeAppUserCapabilitiesJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      appUserCapabilitiesJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("provision-app-user-capabilities", buildAppUserCapabilitiesScript(ouDN, tenant.Name)),
+					},
 				},
 			},
 		},
@@ -1371,6 +1434,54 @@ else
 fi`, ouDN, mailDomain)
 }
 
+// buildAppUserCapabilitiesScript enables openDesk app attributes on existing
+// tenant users who were not created from the App User template (e.g. manual UMC
+// users or accounts provisioned before the template existed). Skips the tenant
+// admin account, which must remain without app-enabling attributes.
+func buildAppUserCapabilitiesScript(ouDN, tenantName string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+OU_POS="%s"
+USERS_OU_POS="ou=users,${OU_POS}"
+ADMIN_USERNAME="admin-%s"
+ADMIN_DN="uid=${ADMIN_USERNAME},${USERS_OU_POS}"
+OU_ENC=$(urlencode "${USERS_OU_POS}")
+CAPS_BODY='{"properties":{"opendeskFileshareEnabled":true,"opendeskLivecollaborationEnabled":true,"opendeskVideoconferenceEnabled":true}}'
+
+echo "backfilling openDesk app attributes for users in ${USERS_OU_POS}"
+USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/user/?position=${OU_ENC}")
+printf '%%s' "${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
+  if [ -z "${USER_DN}" ]; then
+    continue
+  fi
+  if [ "${USER_DN}" = "${ADMIN_DN}" ]; then
+    echo "skipping tenant admin ${USER_DN}"
+    continue
+  fi
+  USER_ENC=$(urlencode "${USER_DN}")
+  HTTP=$(curl -s --max-time 30 -o /tmp/udm-caps-body -w "%%{http_code}" -X PATCH ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/users/user/${USER_ENC}" \
+    -d "${CAPS_BODY}")
+  case "${HTTP}" in
+  200|204|400|422)
+    echo "app capabilities enabled for ${USER_DN} (HTTP ${HTTP})"
+    ;;
+  *)
+    echo "failed to enable app capabilities for ${USER_DN} (HTTP ${HTTP})" >&2
+    cat /tmp/udm-caps-body >&2 2>/dev/null || true
+    exit 1
+    ;;
+  esac
+done
+echo "app user capabilities backfill complete for ${USERS_OU_POS}"`, ouDN, tenantName)
+}
+
 // buildAdminUserScript creates the tenant admin as a users/user in the tenant
 // OU and adds them to admins_<tenant>. ADMIN_USERNAME and ADMIN_PASSWORD are
 // injected as environment variables by the Job constructor. The call is
@@ -1886,6 +1997,10 @@ func adminUserJobName(tenantName string) string {
 
 func appUserTemplateJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-app-user-template-%s", tenantName)
+}
+
+func appUserCapabilitiesJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-app-user-capabilities-%s", tenantName)
 }
 
 func ouDeleteJobName(tenantName string) string {

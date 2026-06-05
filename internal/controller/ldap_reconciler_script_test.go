@@ -57,6 +57,23 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 	}
 }
 
+func TestBuildAppUserCapabilitiesScript_BackfillsOpenDeskAttributes(t *testing.T) {
+	t.Parallel()
+	script := buildAppUserCapabilitiesScript("ou=demo,${UDM_LDAP_BASE}", "demo")
+	for _, want := range []string{
+		"opendeskLivecollaborationEnabled",
+		"opendeskVideoconferenceEnabled",
+		"opendeskFileshareEnabled",
+		"ADMIN_USERNAME=\"admin-demo\"",
+		"skipping tenant admin",
+		"app user capabilities backfill complete",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected App User capabilities script to contain %q", want)
+		}
+	}
+}
+
 func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 	t.Parallel()
 	script := buildAppUserTemplateScript("ou=demo,${UDM_LDAP_BASE}", "demo", "demo.desk.gentian.org")
