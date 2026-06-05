@@ -94,7 +94,7 @@ func TestCache_NoCacheApps(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nocache"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})

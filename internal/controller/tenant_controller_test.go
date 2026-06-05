@@ -46,6 +46,11 @@ import (
 // testClient is the shared client used by all tests in this package.
 var testClient client.Client
 
+// tenantReadyTimeout is the default envtest wait for TenantPhaseReady. Identity
+// and LDAP base jobs are auto-completed asynchronously; under t.Parallel() load
+// 10s is too tight on CI runners.
+const tenantReadyTimeout = 20 * time.Second
+
 // ldapManualTestTenants lists tenant names whose LDAP base jobs must not be
 // auto-completed because ldap_reconciler_test.go asserts provisioning order.
 var ldapManualTestTenants = map[string]struct{}{
@@ -203,7 +208,7 @@ func TestMain(m *testing.M) {
 	// most controller tests time out waiting for Phase=Ready.
 	go func() {
 		for {
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			var jobs batchv1.JobList
 			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
 				for _, job := range jobs.Items {
@@ -222,7 +227,20 @@ func TestMain(m *testing.M) {
 						continue
 					}
 					markJobSucceeded(&j)
-					_ = testClient.Status().Update(context.Background(), &j)
+					for attempt := 0; attempt < 3; attempt++ {
+						if err := testClient.Status().Update(context.Background(), &j); err == nil {
+							break
+						} else if k8serrors.IsConflict(err) {
+							time.Sleep(20 * time.Millisecond)
+							if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "platform-kernel"}, &j); err != nil {
+								break
+							}
+							if j.Status.Succeeded > 0 {
+								break
+							}
+							markJobSucceeded(&j)
+						}
+					}
 				}
 			}
 		}
@@ -306,7 +324,7 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "beta"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})

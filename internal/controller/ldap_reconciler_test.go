@@ -607,7 +607,7 @@ func TestLDAP_RetainPolicy_LocksUsers(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Tenant reaches Ready without LDAP jobs completing (ensureLDAPBase is non-blocking).
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		updated := &gentianov1alpha1.Tenant{}
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "ldaplocktest"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
