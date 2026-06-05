@@ -95,6 +95,11 @@ data:
                 done
                 if php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
                   php /var/www/html/occ richdocuments:update-empty-templates || true
+                  # management-init sets defaultFormat=ODF but runs at sync-wave 9,
+                  # before Collabora (wave 12) is available, so doc_format is often
+                  # left unset and the Files "+" menu omits ODT/ODS/ODP entries.
+                  php /var/www/html/occ config:app:set richdocuments doc_format \
+                    --value="odf" || true
                   # Ensure WOPI backend calls use the in-cluster HTTP URL to avoid
                   # TLS cert validation failures (e.g. self-signed cert during
                   # cert-manager issuance / Let's Encrypt rate-limit periods).

@@ -2790,6 +2790,113 @@ deploy_kernel_mail_services() {
     info "         argocd app sync gentian-infra-helm-${env}"
 }
 
+# =============================================================================
+# reconcile_nextcloud_office — ensure Collabora / richdocuments is configured
+#
+# nextcloud-management init (wave 9) configures richdocuments before Collabora
+# (wave 12) is reachable, so doc_format and WOPI settings are often incomplete.
+# The Nextcloud AIO postStart hook in nextcloud-base-values keeps them correct
+# across restarts; this function applies the ConfigMap and re-runs the occ steps
+# on the live pod so existing clusters converge without manual kubectl exec.
+#
+# Idempotent — safe to call from install.sh and update.sh --nextcloud-office.
+# =============================================================================
+reconcile_nextcloud_office() {
+    local env="${ENV:-dev}"
+    local ns="gentian-${env}"
+    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be set}"
+    local manifest_dir="${SCRIPT_DIR}/kernel/services/nextcloud/manifests/${env}"
+    local dry_run="${GENTIAN_DRY_RUN:-0}"
+
+    banner "Nextcloud Office reconciliation (Collabora / richdocuments)"
+
+    if [[ ! -d "${manifest_dir}" ]]; then
+        warn "No nextcloud manifests for env=${env} — skipping"
+        return 0
+    fi
+
+    if [[ "${dry_run}" == "1" ]]; then
+        info "[dry-run] Would apply ${manifest_dir}/ and reconcile nextcloud-dev Release"
+    else
+        info "Applying nextcloud manifests (ConfigMaps)..."
+        while IFS= read -r -d '' f; do
+            kubectl apply -f "${f}" >/dev/null
+        done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
+            ! -name 'kustomization.yaml' -print0 | sort -z)
+
+        if kubectl get release.helm.crossplane.io/nextcloud-dev >/dev/null 2>&1; then
+            info "Re-reconciling nextcloud-dev Release to pick up lifecycle hook changes..."
+            kubectl delete release.helm.crossplane.io/nextcloud-dev --ignore-not-found >/dev/null
+            local i=0
+            while kubectl get release.helm.crossplane.io/nextcloud-dev >/dev/null 2>&1; do
+                sleep 1
+                (( ++i ))
+                if [[ $i -ge 30 ]]; then
+                    warn "Timed out waiting for nextcloud-dev deletion — continuing"
+                    break
+                fi
+            done
+            kubectl apply -f "${manifest_dir}/" >/dev/null
+            info "Waiting for nextcloud-dev Release to reconcile (up to 5m)..."
+            i=0
+            while [[ $i -lt 60 ]]; do
+                local rel_ready
+                rel_ready=$(kubectl get release.helm.crossplane.io/nextcloud-dev \
+                    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
+                    2>/dev/null || echo "")
+                if [[ "${rel_ready}" == "True" ]] \
+                    && kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
+                    break
+                fi
+                sleep 5
+                (( ++i ))
+            done
+        fi
+    fi
+
+    if [[ "${dry_run}" == "1" ]]; then
+        info "[dry-run] Would configure richdocuments on nextcloud-dev-aio pod"
+        return 0
+    fi
+
+    if ! kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
+        warn "nextcloud-dev-aio not deployed yet — office config will apply on first pod start"
+        return 0
+    fi
+
+    info "Waiting for nextcloud-dev-aio rollout (up to 5m)..."
+    kubectl rollout status deployment/nextcloud-dev-aio -n "${ns}" --timeout=5m \
+        >/dev/null 2>&1 || warn "nextcloud-dev-aio rollout still in progress"
+
+    if ! kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
+        php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
+        warn "richdocuments app not enabled — skipping office config"
+        return 0
+    fi
+
+    local collabora_host="collabora.${ns}.svc.cluster.local:9980"
+    local public_wopi="https://office.${domain}"
+
+    info "Applying richdocuments office settings on live pod..."
+    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
+        php /var/www/html/occ richdocuments:update-empty-templates >/dev/null 2>&1 || true
+    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
+        php /var/www/html/occ config:app:set richdocuments doc_format --value=odf >/dev/null
+    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
+        php /var/www/html/occ config:app:set richdocuments wopi_url \
+        --value="http://${collabora_host}" >/dev/null
+    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
+        php /var/www/html/occ config:app:set richdocuments public_wopi_url \
+        --value="${public_wopi}" >/dev/null
+
+    if kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
+        php /var/www/html/occ richdocuments:activate-config 2>&1 | grep -q 'Detected WOPI server'; then
+        success "Nextcloud Office configured (doc_format=odf, Collabora WOPI healthy)"
+    else
+        warn "richdocuments:activate-config did not confirm Collabora — check collabora pod and ingress"
+    fi
+}
+
 
 # =============================================================================
 # Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform

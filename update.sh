@@ -8,6 +8,7 @@
 #
 # Usage:
 #   ./update.sh --mail                     # Reconcile mail (ConfigMap, secrets, deployments)
+#   ./update.sh --nextcloud-office           # Reconcile Nextcloud Office (Collabora / richdocuments)
 #   ./update.sh --secrets                  # Re-seed all OpenBao KV secrets
 #   ./update.sh --reconcile-releases       # Re-reconcile any failing Crossplane Release CRs
 #   ./update.sh --reconcile-releases --force  # Force re-reconcile ALL Release CRs
@@ -15,6 +16,11 @@
 #   ./update.sh --mail --dry-run           # Print what would change without applying
 #
 # What it reconciles:
+#   --nextcloud-office:
+#     - Applies nextcloud ConfigMaps (richdocuments postStart hook)
+#     - Re-reconciles the nextcloud-dev Release CR so provider-helm picks up
+#       lifecycle hook changes
+#     - Runs occ on the live pod: doc_format=odf, WOPI URLs, empty templates
 #   --mail:
 #     - Patches postfix-dev-values ConfigMap when MAIL_SERVICE_MODE drifts
 #     - Re-seeds mail OpenBao KV paths (postfix + dovecot)
@@ -57,6 +63,7 @@ KERNEL_NAMESPACE=gentian-dev
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 DRY_RUN=0
 OP_MAIL=0
+OP_NEXTCLOUD_OFFICE=0
 OP_SECRETS=0
 OP_RECONCILE=0
 OP_NUBUS_RECOVER=0
@@ -81,6 +88,8 @@ Usage: ./update.sh [OPTIONS]
 Options:
   --mail                   Reconcile mail: patch postfix ConfigMap, re-seed
                            credentials, deploy kernel mail services if needed.
+  --nextcloud-office       Reconcile Nextcloud Office: apply richdocuments
+                           settings (doc_format=odf, WOPI URLs, templates).
   --secrets                Re-seed all OpenBao KV secrets and re-apply the
                            Cluster XR.
   --reconcile-releases     Re-reconcile any Crossplane Release CR that is not
@@ -128,6 +137,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --mail)                OP_MAIL=1 ;;
+        --nextcloud-office)    OP_NEXTCLOUD_OFFICE=1 ;;
         --secrets)             OP_SECRETS=1 ;;
         --reconcile-releases)  OP_RECONCILE=1 ;;
         --force)               FORCE_RECONCILE=1 ;;
@@ -141,7 +151,7 @@ while [[ $# -gt 0 ]]; do
         --setup-iam)           OP_SETUP_IAM=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
         --acme-issuers)        OP_ACME_ISSUERS=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_SETUP_IAM=1; OP_PLUGIN=1 ;;
+        --all)                 OP_MAIL=1; OP_NEXTCLOUD_OFFICE=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_SETUP_IAM=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -150,8 +160,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
     OP_MAIL=1
+    OP_NEXTCLOUD_OFFICE=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
@@ -1258,6 +1269,9 @@ echo ""
 _init
 
 [[ "${OP_MAIL}"            == "1" ]] && op_mail
+if [[ "${OP_NEXTCLOUD_OFFICE}" == "1" ]]; then
+    GENTIAN_DRY_RUN="${DRY_RUN}" reconcile_nextcloud_office
+fi
 [[ "${OP_SECRETS}"         == "1" ]] && op_secrets
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
