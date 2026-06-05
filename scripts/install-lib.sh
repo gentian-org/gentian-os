@@ -2791,6 +2791,80 @@ deploy_kernel_mail_services() {
 }
 
 # =============================================================================
+# _repair_nextcloud_object_home_mounts — fix LDAP user Files 500 errors
+#
+# With primary object storage, oc_mounts points at object::user:<uid> but first-
+# login filecache rows are often created on home::<uid>. The Files app then
+# returns "The root directory of the user's files is missing". Merge home::
+# filecache into the object::user storage and point the mount at the home root.
+# =============================================================================
+_repair_nextcloud_object_home_mounts() {
+    local env="${ENV:-dev}"
+    local infra_ns="gentian-infra-${env}"
+    local pg_pod="opendesk-postgresql-${env}-0"
+
+    if ! kubectl get pod -n "${infra_ns}" "${pg_pod}" >/dev/null 2>&1; then
+        info "PostgreSQL pod ${pg_pod} not found — skipping object/home mount repair"
+        return 0
+    fi
+
+    local repaired
+    repaired=$(kubectl exec -n "${infra_ns}" "${pg_pod}" -- psql -U nextcloud_user -d nextcloud -v ON_ERROR_STOP=1 -tA <<'EOSQL'
+SELECT count(*) FROM (
+  SELECT m.user_id,
+         hs.numeric_id AS home_sid,
+         os.numeric_id AS object_sid,
+         hr.fileid AS home_root,
+         (SELECT count(*) FROM oc_filecache WHERE storage = hs.numeric_id) AS home_files,
+         (SELECT count(*) FROM oc_filecache WHERE storage = os.numeric_id) AS object_files
+  FROM oc_mounts m
+  JOIN oc_storages os ON os.id = 'object::user:' || m.user_id
+  JOIN oc_storages hs ON hs.id = 'home::' || m.user_id
+  JOIN oc_filecache hr ON hr.storage = hs.numeric_id AND hr.path = '' AND hr.parent = -1
+  WHERE m.storage_id = os.numeric_id
+    AND (SELECT count(*) FROM oc_filecache WHERE storage = hs.numeric_id)
+        > (SELECT count(*) FROM oc_filecache WHERE storage = os.numeric_id)
+) mismatched;
+EOSQL
+) || repaired=0
+
+    if [[ "${repaired:-0}" == "0" ]]; then
+        info "No object/home filecache mismatches detected"
+        return 0
+    fi
+
+    info "Repairing ${repaired} Nextcloud user(s) with object/home filecache mismatch..."
+    kubectl exec -n "${infra_ns}" "${pg_pod}" -- psql -U nextcloud_user -d nextcloud -v ON_ERROR_STOP=1 <<'EOSQL'
+DO $$
+DECLARE
+  rec RECORD;
+BEGIN
+  FOR rec IN
+    SELECT m.user_id,
+           hs.numeric_id AS home_sid,
+           os.numeric_id AS object_sid,
+           hr.fileid AS home_root
+    FROM oc_mounts m
+    JOIN oc_storages os ON os.id = 'object::user:' || m.user_id
+    JOIN oc_storages hs ON hs.id = 'home::' || m.user_id
+    JOIN oc_filecache hr ON hr.storage = hs.numeric_id AND hr.path = '' AND hr.parent = -1
+    WHERE m.storage_id = os.numeric_id
+      AND (SELECT count(*) FROM oc_filecache WHERE storage = hs.numeric_id)
+          > (SELECT count(*) FROM oc_filecache WHERE storage = os.numeric_id)
+  LOOP
+    DELETE FROM oc_filecache
+      WHERE storage = rec.object_sid AND path = '' AND fileid <> rec.home_root;
+    UPDATE oc_filecache SET storage = rec.object_sid WHERE storage = rec.home_sid;
+    UPDATE oc_mounts
+      SET storage_id = rec.object_sid, root_id = rec.home_root
+      WHERE user_id = rec.user_id;
+    RAISE NOTICE 'repaired user %', rec.user_id;
+  END LOOP;
+END $$;
+EOSQL
+}
+
+# =============================================================================
 # reconcile_nextcloud_office — ensure Collabora / richdocuments is configured
 #
 # nextcloud-management init (wave 9) configures richdocuments before Collabora
@@ -2816,7 +2890,7 @@ reconcile_nextcloud_office() {
     fi
 
     if [[ "${dry_run}" == "1" ]]; then
-        info "[dry-run] Would apply ${manifest_dir}/ and reconcile nextcloud-dev Release"
+        info "[dry-run] Would apply ${manifest_dir}/ ConfigMaps and restart nextcloud-dev-aio"
     else
         info "Applying nextcloud manifests (ConfigMaps)..."
         while IFS= read -r -d '' f; do
@@ -2824,33 +2898,12 @@ reconcile_nextcloud_office() {
         done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
             ! -name 'kustomization.yaml' -print0 | sort -z)
 
-        if kubectl get release.helm.crossplane.io/nextcloud-dev >/dev/null 2>&1; then
-            info "Re-reconciling nextcloud-dev Release to pick up lifecycle hook changes..."
-            kubectl delete release.helm.crossplane.io/nextcloud-dev --ignore-not-found >/dev/null
-            local i=0
-            while kubectl get release.helm.crossplane.io/nextcloud-dev >/dev/null 2>&1; do
-                sleep 1
-                (( ++i ))
-                if [[ $i -ge 30 ]]; then
-                    warn "Timed out waiting for nextcloud-dev deletion — continuing"
-                    break
-                fi
-            done
-            kubectl apply -f "${manifest_dir}/" >/dev/null
-            info "Waiting for nextcloud-dev Release to reconcile (up to 5m)..."
-            i=0
-            while [[ $i -lt 60 ]]; do
-                local rel_ready
-                rel_ready=$(kubectl get release.helm.crossplane.io/nextcloud-dev \
-                    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' \
-                    2>/dev/null || echo "")
-                if [[ "${rel_ready}" == "True" ]] \
-                    && kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
-                    break
-                fi
-                sleep 5
-                (( ++i ))
-            done
+        # Restart the web pod so the postStart lifecycle hook re-runs. Do NOT
+        # delete/recreate the Crossplane Release — that triggers a Helm upgrade
+        # that can break LDAP user file mounts (HTTP 500 on /apps/files/).
+        if kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
+            info "Restarting nextcloud-dev-aio to apply lifecycle hook changes..."
+            kubectl rollout restart deployment/nextcloud-dev-aio -n "${ns}" >/dev/null
         fi
     fi
 
@@ -2867,6 +2920,8 @@ reconcile_nextcloud_office() {
     info "Waiting for nextcloud-dev-aio rollout (up to 5m)..."
     kubectl rollout status deployment/nextcloud-dev-aio -n "${ns}" --timeout=5m \
         >/dev/null 2>&1 || warn "nextcloud-dev-aio rollout still in progress"
+
+    _repair_nextcloud_object_home_mounts
 
     if ! kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
         php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
