@@ -1494,7 +1494,45 @@ echo "app user capabilities backfill complete for ${USERS_OU_POS}"`, ouDN, tenan
 // therefore NOT imported by the federation.
 func buildAdminUserScript(ouDN, tenantName, adminEmail string) string {
 	return fmt.Sprintf(`set -eu
-urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g'; }
+sync_admin_password() {
+	local url="$1"
+	local http
+	http=$(curl -s --max-time 30 -o /tmp/udm-pw-body -w "%%{http_code}" -X PATCH ${CREDS} \
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"${url}" -d "{\"properties\":{\"password\":\"${ADMIN_PASSWORD}\"}}")
+	case "${http}" in
+	200|204)
+		echo "user ${ADMIN_USERNAME} password synced (HTTP ${http})"
+		return 0
+		;;
+	422)
+		echo "user ${ADMIN_USERNAME} password PATCH returned HTTP 422; body:" >&2
+		cat /tmp/udm-pw-body >&2 2>/dev/null || true
+		http=$(curl -s --max-time 30 -o /tmp/udm-pw-body -w "%%{http_code}" -X PUT ${CREDS} \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			"${url}" -d "{\"properties\":{\"password\":\"${ADMIN_PASSWORD}\"}}")
+		case "${http}" in
+		200|204)
+			echo "user ${ADMIN_USERNAME} password synced via PUT (HTTP ${http})"
+			return 0
+			;;
+		*)
+			echo "user ${ADMIN_USERNAME} password sync failed (HTTP ${http})" >&2
+			cat /tmp/udm-pw-body >&2 2>/dev/null || true
+			return 1
+			;;
+		esac
+		;;
+	*)
+		echo "user ${ADMIN_USERNAME} password sync failed (HTTP ${http})" >&2
+		cat /tmp/udm-pw-body >&2 2>/dev/null || true
+		return 1
+		;;
+	esac
+}
 udm_patch_ok() {
 	local url="$1"
 	local data="$2"
@@ -1560,9 +1598,7 @@ if [ "${STATUS}" = "404" ]; then
   echo "UDM user ${ADMIN_USERNAME} created in ${USERS_OU_POS}"
 elif [ "${STATUS}" = "200" ]; then
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
-  udm_patch_ok "${BASE_URL}/users/user/${ADMIN_DN_ENC}" \
-	"{\"properties\":{\"password\":\"${ADMIN_PASSWORD}\",\"disabled\":false,\"pwdChangeNextLogin\":false}}" \
-	"user ${ADMIN_USERNAME} password synced" || exit 1
+  sync_admin_password "${BASE_URL}/users/user/${ADMIN_DN_ENC}" || exit 1
 else
   echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
   exit 1

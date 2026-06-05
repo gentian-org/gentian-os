@@ -1146,11 +1146,27 @@ else
 fi
 
 # --- 2. Sync OpenBao-canonical password (idempotent; required after Retain redeploy) ---
-curl -sf -X PUT -H "${AUTH_HEADER}" \
-	-H "Content-Type: application/json" \
-	"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
-	-d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}"
-echo "password synced from OpenBao (temporary=false)"
+# LDAP-federated users cannot use reset-password; portal auth uses kernel LDAP + UDM.
+USER_JSON=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}")
+if echo "${USER_JSON}" | grep -q '"federationLink"'; then
+  echo "tenant admin ${TENANT_ADMIN_USERNAME} is LDAP-federated; password is managed in UDM (skip Keycloak reset-password)"
+else
+  HTTP=$(curl -s -o /tmp/kc-pw-body -w "%%{http_code}" -X PUT -H "${AUTH_HEADER}" \
+    -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
+    -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}")
+  case "${HTTP}" in
+  200|204)
+    echo "password synced from OpenBao (temporary=false)"
+    ;;
+  *)
+    echo "Keycloak reset-password failed (HTTP ${HTTP})" >&2
+    cat /tmp/kc-pw-body >&2 2>/dev/null || true
+    exit 1
+    ;;
+  esac
+fi
 curl -sf -X PUT -H "${AUTH_HEADER}" \
 	-H "Content-Type: application/json" \
 	"${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
@@ -1180,7 +1196,7 @@ else
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName)
+		realmName, realmName, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {

@@ -27,4 +27,7 @@ func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
 	if strings.Contains(script, "password reset skipped") {
 		t.Fatal("script must always sync tenant admin password from OpenBao")
 	}
+	if !strings.Contains(script, "federationLink") {
+		t.Fatal("script must skip Keycloak reset-password for LDAP-federated users")
+	}
 }

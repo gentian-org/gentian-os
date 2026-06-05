@@ -47,6 +47,7 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 	script := buildAdminUserScript("ou=demo,${UDM_LDAP_BASE}", "demo", "admin-demo@gentian.org")
 	for _, want := range []string{
 		"udm_patch_ok",
+		"sync_admin_password",
 		"UDM user ${ADMIN_USERNAME} already exists",
 		"user ${ADMIN_USERNAME} password synced",
 		"${ADMIN_PASSWORD}",
