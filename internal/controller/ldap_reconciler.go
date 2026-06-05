@@ -2225,7 +2225,7 @@ fi`,
 func buildPortalRealtimeLinksScript(tenantName, ouDN, meetURL, chatURL string, includeLegacy bool) string {
 	var body strings.Builder
 	body.WriteString(`set -eu
-urlencode() { printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
+urlencode() { printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="`)

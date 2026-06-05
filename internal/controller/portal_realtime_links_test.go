@@ -33,6 +33,9 @@ func TestBuildPortalRealtimeLinksScript(t *testing.T) {
 	if strings.Contains(script, `ensure_realtime_entry "swp.realtime_videoconference"`) {
 		t.Fatal("multi mode must not create legacy swp.realtime_videoconference entry")
 	}
+	if strings.Contains(script, `s/=/=%3D/g`) {
+		t.Fatal("urlencode must not encode = in LDAP DNs; UDM REST paths require literal cn=/ou=")
+	}
 	path := t.TempDir() + "/portal-realtime.sh"
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
