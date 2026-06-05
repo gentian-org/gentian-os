@@ -189,6 +189,21 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		}
 	}
 
+	// Step 4b — kernel portal contact deep links (swp.realtime_*).
+	// OpenDesk seeds these at meet.<kernel-domain>; Gentian tenant apps live at
+	// meet.<tenant>.<kernel-domain>. Until the portal resolves links per user OU,
+	// patch the shared kernel entries when this tenant installs Jitsi / Element.
+	meetURL, chatURL := r.portalRealtimeLinkTargets(tenant)
+	if meetURL != "" || chatURL != "" {
+		rtDone, err := r.ensurePortalRealtimeLinksJob(ctx, tenant, meetURL, chatURL)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure portal realtime links Job: %w", err)
+		}
+		if !rtDone {
+			allDone = false
+		}
+	}
+
 	if !allDone {
 		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
 			"ProvisioningBindAccounts", "Waiting for UDM bind account Jobs to complete")
@@ -1894,6 +1909,75 @@ func portalEntryDeleteJobName(tenantName, appName string) string {
 	return fmt.Sprintf("ldap-portal-entry-delete-%s-%s", tenantName, appName)
 }
 
+func portalRealtimeLinksJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-portal-realtime-links-%s", tenantName)
+}
+
+// portalRealtimeLinkTargets returns meet/chat base URLs for kernel portal contact
+// actions when the tenant has Jitsi and/or Element installed.
+func (r *TenantReconciler) portalRealtimeLinkTargets(tenant *gentianov1alpha1.Tenant) (meetURL, chatURL string) {
+	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+	if effectiveDomain == "" {
+		return "", ""
+	}
+	for _, app := range tenant.Spec.Apps {
+		switch app.Profile {
+		case "jitsi":
+			meetURL = fmt.Sprintf("https://meet.%s", effectiveDomain)
+		case "element":
+			chatURL = fmt.Sprintf("https://chat.%s", effectiveDomain)
+		}
+	}
+	return meetURL, chatURL
+}
+
+func (r *TenantReconciler) ensurePortalRealtimeLinksJob(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	meetURL, chatURL string,
+) (bool, error) {
+	jobName := portalRealtimeLinksJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makePortalRealtimeLinksJob(tenant, meetURL, chatURL))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
+func makePortalRealtimeLinksJob(tenant *gentianov1alpha1.Tenant, meetURL, chatURL string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      portalRealtimeLinksJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("patch-portal-realtime-links", buildPortalRealtimeLinksScript(meetURL, chatURL)),
+					},
+				},
+			},
+		},
+	}
+}
+
 // --- Portal entry scripts ----------------------------------------------------
 
 // buildPortalEntryScript returns a shell script that idempotently creates (or
@@ -2015,6 +2099,48 @@ fi`,
 		ouDN, tenantName, tileName, subDomain, tenantDomain, linkSuffix,
 		linkTarget, allowedGroupCN, logo,
 		displayNameDE, displayNameEN)
+}
+
+// buildPortalRealtimeLinksScript patches kernel portal entries used when starting
+// a video call or chat from the contacts UI (swp.realtime_videoconference /
+// swp.realtime_collaboration).
+func buildPortalRealtimeLinksScript(meetURL, chatURL string) string {
+	var body strings.Builder
+	body.WriteString(`set -eu
+urlencode() { printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+patch_link() {
+  ENTRY_CN="$1"
+  LINK="$2"
+  ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
+  ENTRY_ENC=$(urlencode "${ENTRY_DN}")
+  STATUS=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/portals/entry/${ENTRY_ENC}")
+  if [ "${STATUS}" = "404" ]; then
+    echo "portal entry ${ENTRY_CN} not found (HTTP 404); skipping" >&2
+    return 0
+  fi
+  if [ "${STATUS}" != "200" ]; then
+    echo "portal entry ${ENTRY_CN} lookup failed (HTTP ${STATUS})" >&2
+    exit 1
+  fi
+  curl -sf --max-time 30 -X PATCH ${CREDS} \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    "${BASE_URL}/portals/entry/${ENTRY_ENC}" \
+    -d "{\"properties\":{\"link\":[[\"en_US\",\"${LINK}\"]]}}"
+  echo "portal entry ${ENTRY_CN} link set to ${LINK}"
+}
+`)
+	if meetURL != "" {
+		fmt.Fprintf(&body, "patch_link %q %q\n", "swp.realtime_videoconference", meetURL)
+	}
+	if chatURL != "" {
+		fmt.Fprintf(&body, "patch_link %q %q\n", "swp.realtime_collaboration", chatURL)
+	}
+	return body.String()
 }
 
 // buildPortalEntryDeleteScript returns a shell script that removes a per-tenant

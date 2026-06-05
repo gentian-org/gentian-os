@@ -143,6 +143,10 @@ nubusStackDataUms:
     smtpHost: postfix-dev.gentian-dev.svc.cluster.local
     smtpPort: 25
   templateContext:
+    # Dev tenant apps (demo) live on the tenant zone; contact-initiated calls use
+    # swp.realtime_* portal entries (also patched by gentian-os per tenant).
+    portalRealtimeCollaborationLinkBase: https://chat.demo.desk.gentian.org
+    portalRealtimeVideoconferenceLinkBase: https://meet.demo.desk.gentian.org
     # Usernames and lastnames only — passwords injected via nubus-sensitive-values ESO secret
     ldapSearchUsers:
       - username: ldapsearch_keycloak
