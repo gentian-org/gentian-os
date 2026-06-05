@@ -108,7 +108,8 @@ spec:
               # 3. Create '2 Admin User' template (kernel admins; tenant admins see it second in UMC)
               # Do not set opendesk* properties here — they require stack-data-ums extended
               # attributes and cause 422 if the UDM module cache is not ready yet.
-              ADMIN_TEMPLATE_DN="cn=Admin User,cn=templates,cn=univention,${LDAP_BASE}"
+              # RDN must match properties.name ("2 Admin User"); a mismatched cn breaks idempotent PATCH.
+              ADMIN_TEMPLATE_DN="cn=2 Admin User,cn=templates,cn=univention,${LDAP_BASE}"
               ADMIN_TEMPLATE_ENC=$(urlencode "${ADMIN_TEMPLATE_DN}")
               ADMIN_TEMPLATE_BODY='{
                         "properties": {
