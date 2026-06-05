@@ -23,11 +23,21 @@ func substituteIngressAnnotationPlaceholders(s, effectiveDomain, kernelDomain st
 // main CryptPad host (pad.<tenant>), not by the kernel portal.
 const cryptpadSandboxSubDomain = "pad-sandbox"
 
+// cryptpadMainSubDomain is the main CryptPad ingress hostname prefix. CryptPad
+// ships a full Content-Security-Policy (script-src without 'unsafe-eval'); the
+// operator must append frame-ancestors, not replace the upstream header.
+const cryptpadMainSubDomain = "pad"
+
 // portalEmbeddingIngressSnippet returns NGINX directives that allow the shared
 // kernel portal (portal.<kernelDomain>) to embed the app in an iframe.
 func portalEmbeddingIngressSnippet(kernelDomain string) string {
 	portalOrigin := fmt.Sprintf("https://portal.%s", kernelDomain)
-	return frameAncestorsIngressSnippet(portalOrigin)
+	return frameAncestorsIngressSnippetReplace(portalOrigin)
+}
+
+func portalEmbeddingIngressSnippetAppend(kernelDomain string) string {
+	portalOrigin := fmt.Sprintf("https://portal.%s", kernelDomain)
+	return frameAncestorsIngressSnippetAppend(portalOrigin)
 }
 
 // cryptpadSandboxIngressSnippet allows the main CryptPad origin and the shared
@@ -39,19 +49,26 @@ func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string 
 	if kernelDomain != "" {
 		origins += fmt.Sprintf(" https://portal.%s", kernelDomain)
 	}
-	return frameAncestorsIngressSnippet(origins)
+	return frameAncestorsIngressSnippetAppend(origins)
 }
 
-func frameAncestorsIngressSnippet(ancestorOrigin string) string {
-	// Append a second CSP policy instead of replacing the app's header. CryptPad
-	// (and similar apps) rely on upstream script-src/connect-src rules — e.g. the
-	// sandbox origin must keep script-src without 'unsafe-eval' so client-side
-	// isolation self-tests pass. Clearing Content-Security-Policy and setting only
-	// frame-ancestors breaks those apps with "eval should not be permitted".
-	// Use native add_header (not headers-more more_add_headers): microk8s and
-	// several ingress-nginx builds only expose more_set_headers/more_clear_headers.
+// frameAncestorsIngressSnippetReplace clears upstream X-Frame-Options and
+// Content-Security-Policy, then sets a single frame-ancestors policy. Use for
+// standard AppProfile apps (Element, Jitsi, OpenProject, …) whose nginx only
+// emits frame-ancestors 'self' — appending a second CSP header leaves both
+// policies active and browsers still block portal embedding.
+func frameAncestorsIngressSnippetReplace(ancestorOrigins string) string {
 	return fmt.Sprintf(`more_clear_headers "X-Frame-Options";
-add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigin)
+more_clear_headers "Content-Security-Policy";
+add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
+}
+
+// frameAncestorsIngressSnippetAppend adds a second CSP header without clearing
+// the upstream policy. Required for CryptPad, which relies on upstream
+// script-src/connect-src (sandbox must not gain 'unsafe-eval').
+func frameAncestorsIngressSnippetAppend(ancestorOrigins string) string {
+	return fmt.Sprintf(`more_clear_headers "X-Frame-Options";
+add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
 
 // stripLegacyPortalEmbeddingSnippet removes per-profile frame-ancestors / X-Frame-Options
@@ -85,6 +102,8 @@ func ensurePortalEmbeddingAnnotations(annotations map[string]string, kernelDomai
 	switch {
 	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
 		embedding = cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain)
+	case ingressSubDomain == cryptpadMainSubDomain && kernelDomain != "":
+		embedding = portalEmbeddingIngressSnippetAppend(kernelDomain)
 	case kernelDomain != "":
 		embedding = portalEmbeddingIngressSnippet(kernelDomain)
 	default:

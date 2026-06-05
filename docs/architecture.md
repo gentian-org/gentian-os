@@ -345,13 +345,14 @@ Gentian OS sidesteps most browser CORS restrictions by design:
 The remaining app-side requirement is the **`frame-ancestors` CSP header**:
 by default browsers block iframe embedding unless the embedded page explicitly
 permits it. The gentian-os controller injects this as an NGINX
-`configuration-snippet` on every `Ingress` it creates: it clears any
-`X-Frame-Options` the app sets and **appends** a second
-`Content-Security-Policy` header (via native NGINX `add_header … always`)
-containing only `frame-ancestors 'self'` and the shared kernel portal origin
-(`https://portal.<kernel_domain>`). The app's own CSP (script-src,
-connect-src, …) is left intact — replacing the whole header breaks CryptPad,
-whose sandbox origin must keep a strict script-src without `'unsafe-eval'`. Per-tenant portal hostnames are not used;
+`configuration-snippet` on every `Ingress` it creates. For standard
+AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
+`X-Frame-Options` and `Content-Security-Policy`, then sets a single
+`frame-ancestors 'self' https://portal.<kernel_domain>` policy — many charts
+only emit `frame-ancestors 'self'`, and **appending** a second CSP header
+leaves both active so browsers still block the portal iframe. CryptPad
+(`pad` / `pad-sandbox` subdomains) **appends** a second header instead so
+upstream `script-src` without `'unsafe-eval'` stays intact. Per-tenant portal hostnames are not used;
 tenants authenticate via the kernel portal. CryptPad's additional
 `pad-sandbox.<tenant>` ingress instead allows `https://pad.<tenant>` and
 `https://portal.<kernel_domain>` because CSP checks the full ancestor chain when

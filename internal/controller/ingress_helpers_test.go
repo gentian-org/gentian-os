@@ -62,6 +62,9 @@ func TestPortalEmbeddingIngressSnippetUsesKernelPortal(t *testing.T) {
 	if strings.Contains(snippet, "portal.demo.desk.gentian.org") {
 		t.Fatal("must not use tenant-scoped portal hostname")
 	}
+	if !strings.Contains(snippet, `more_clear_headers "Content-Security-Policy"`) {
+		t.Fatal("standard apps must replace upstream CSP (Element double-header bug)")
+	}
 }
 
 func TestEnsurePortalEmbeddingAnnotationsReplacesLegacyTenantPortalCSP(t *testing.T) {
@@ -92,12 +95,12 @@ func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
 	}
 }
 
-func TestEnsurePortalEmbeddingAnnotationsPreservesCustomSnippet(t *testing.T) {
+func TestEnsurePortalEmbeddingAnnotationsPreservesCustomSnippetCryptpadMain(t *testing.T) {
 	annotations := map[string]string{
 		nginxConfigurationSnippetAnnotation: `proxy_set_header Accept-Encoding "";
 sub_filter_once on;`,
 	}
-	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", "pad")
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", cryptpadMainSubDomain)
 	got := annotations[nginxConfigurationSnippetAnnotation]
 	if !strings.Contains(got, "sub_filter_once on;") {
 		t.Fatalf("expected custom snippet preserved, got:\n%s", got)
@@ -106,10 +109,24 @@ sub_filter_once on;`,
 		t.Fatalf("expected portal embedding directives prepended, got:\n%s", got)
 	}
 	if strings.Contains(got, `more_clear_headers "Content-Security-Policy"`) {
-		t.Fatal("must not clear upstream Content-Security-Policy (breaks CryptPad sandbox eval check)")
+		t.Fatal("CryptPad main ingress must append CSP, not replace upstream policy")
 	}
 	if !strings.Contains(got, `add_header Content-Security-Policy "frame-ancestors`) {
 		t.Fatalf("expected appended frame-ancestors CSP, got:\n%s", got)
+	}
+}
+
+func TestEnsurePortalEmbeddingAnnotationsReplacesUpstreamCSPForElement(t *testing.T) {
+	annotations := map[string]string{
+		nginxConfigurationSnippetAnnotation: `nginx.ingress.kubernetes.io/proxy-body-size: 100M`,
+	}
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", "chat")
+	got := annotations[nginxConfigurationSnippetAnnotation]
+	if !strings.Contains(got, `more_clear_headers "Content-Security-Policy"`) {
+		t.Fatalf("Element/chat must clear upstream frame-ancestors 'self', got:\n%s", got)
+	}
+	if !strings.Contains(got, "https://portal.desk.gentian.org") {
+		t.Fatalf("expected kernel portal in snippet, got:\n%s", got)
 	}
 }
 
