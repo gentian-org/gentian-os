@@ -136,7 +136,7 @@ keys, cluster tokens) that don't correspond to any kernel function.
 while handling the reality of complex upstream charts. Values are
 **deterministically derived** (HKDF-SHA256 from master password +
 tenant + app + secret name), stored in OpenBao, and synced via
-ExternalSecret. See [secrets.md](secrets.md).
+ExternalSecret. See [security.md](security.md).
 
 ## 3. Tenant — the Customer
 

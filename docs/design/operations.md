@@ -62,7 +62,7 @@ For full-cluster DR, recovery follows the deployment layers:
 
 GitOps ensures the desired state of all workloads is recoverable from
 Git; only stateful data requires backup restoration. The deterministic
-secret-derivation model (see [secrets.md](secrets.md)) means kernel
+secret-derivation model (see [security.md](security.md)) means kernel
 credentials can be regenerated from the master password alone if
 OpenBao itself is unrecoverable.
 
@@ -172,7 +172,7 @@ admins do not.
   drift.
 - **OpenBao paths** managed by Crossplane use
   `managementPolicies: [Observe, Create]` — never overwrite live
-  credentials. See [secrets.md](secrets.md).
+  credentials. See [security.md](security.md).
 - **Plaintext-secret admission policy** rejects any `Release` MR that
   literally embeds a secret value instead of referencing one.
 - **Backup verification** runs daily: pgBackRest verify, MinIO

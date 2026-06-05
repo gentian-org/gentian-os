@@ -443,7 +443,7 @@ already-configured Kubernetes auth backend.
 
 The OpenBao path layout, ESO sync flow, derivation algorithm, rotation
 mechanics (Stakater Reloader), and credential-leak guard rails are in
-[design/secrets.md](design/secrets.md).
+[design/security.md](design/security.md).
 
 ---
 
@@ -703,7 +703,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Kernel functions, default install, OS analogy details | [design/kernel.md](design/kernel.md) |
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
 | AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
-| OpenBao, ESO, deterministic seeding, rotation | [design/secrets.md](design/secrets.md) |
+| OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |

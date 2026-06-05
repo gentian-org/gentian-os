@@ -152,7 +152,7 @@ no app-specific mail logic in the platform.
 - **Per-user quotas** (`Tenant.spec.mail.quotaPerUser`) are enforced
   by Dovecot.
 
-See [secrets.md](secrets.md) for OpenBao path layout and key
+See [security.md](security.md) for OpenBao path layout and key
 derivation.
 
 ## 8. External-Mode Tenants

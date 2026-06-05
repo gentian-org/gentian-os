@@ -469,7 +469,15 @@ spec:
             {{- $confVals    := dig "configuration" dict $extraVals }}
             {{- $imagePull   := dig "imagePullSecrets" list $extraVals }}
             {{- if $acmeStaging }}
-            {{- $confVals = mergeOverwrite $confVals (dict "homeserver" (dict "oidc" (dict "skip_verification" true))) }}
+            {{- /* opendesk-synapse does not render homeserver.oidc.skip_verification into
+                 oidc_providers. skip_verification only skips OIDC metadata checks anyway;
+                 Twisted's outbound HTTP client (OIDC discovery) uses platformTrust() and
+                 ignores REQUESTS_CA_BUNDLE — staging LE certs need the Synapse test flag. */}}
+            {{- $addConf := dig "additionalConfiguration" dict $confVals }}
+            {{- $addConf = mergeOverwrite $addConf (dict
+                "use_insecure_ssl_client_just_for_testing_do_not_use" true
+            ) }}
+            {{- $confVals = mergeOverwrite $confVals (dict "additionalConfiguration" $addConf) }}
             {{- end }}
             {{- $synapseVals := dict
                 "global"           $globalVals

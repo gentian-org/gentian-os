@@ -1,10 +1,14 @@
-# Secrets and Credentials
+# Security
 
 **Companion to:** [architecture.md](../architecture.md)
 
+This document covers **secrets and credentials** (OpenBao, ESO, rotation) and
+**TLS / certificate configuration** (ACME issuers, in-cluster IdP trust, and
+production requirements).
+
 ---
 
-## 1. Topology
+## 1. Secrets topology
 
 ```
                     ┌──────────────┐
@@ -265,3 +269,71 @@ sequenceDiagram
 
 Everything else (CR specs, AppProfiles, Compositions, manifests) is
 plaintext-safe and committed to Git.
+
+## 9. TLS and certificates
+
+Gentian OS terminates TLS at the ingress layer using cert-manager DNS-01
+wildcards. Kernel hosts (`portal.<kernel>`, `id.<kernel>`) and each tenant app
+zone (`*.<tenant>.<kernel>`) receive separate certificates. See
+[multi-tenancy.md](multi-tenancy.md) §3 for DNS-01 layout and ACME rate-limit
+guidance.
+
+### 9.1 Development (ACME staging)
+
+Set `ACME_ENV=staging` in `install.env` before install. The platform provisions
+Let's Encrypt **staging** `ClusterIssuer`s and sets `ACME_STAGING: "true"` on
+the `gentian-kernel-services` ConfigMap in `gentian-system`. Staging
+certificates are **not** trusted by browsers or by default system CA bundles.
+
+**In-cluster OIDC clients** (apps that call `https://id.<kernel-domain>/…`
+from inside the cluster — notably **Synapse** and the **Jitsi Keycloak
+adapter**) need extra configuration on staging clusters:
+
+| Mechanism | Purpose | Limitation |
+|---|---|---|
+| `gentian-staging-ca-tls` secret | PEM bundle (Mozilla CAs + LE staging intermediate) replicated into each `tenant-*` namespace by the operator | Works for `curl`, Python `requests`, and similar clients that honour `SSL_CERT_FILE` / `--cacert` |
+| `app-element` / `app-default` composition mounts | Mount `gentian-staging-ca-tls` and set `REQUESTS_CA_BUNDLE` on affected pods | **Insufficient for Synapse** — OIDC discovery uses Twisted `platformTrust()`, which ignores those environment variables |
+| `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (OIDC metadata fetch). **Staging only.** |
+
+**Synapse startup failure (staging):** if `opendesk-synapse` is in
+`CrashLoopBackOff` with `Error while initialising OIDC provider 'oidc'` and a
+timeout fetching `/.well-known/openid-configuration`, the usual cause on a
+staging cluster is TLS verification of `id.<kernel-domain>`, not a wrong issuer
+URL. `skip_verification` on the OIDC provider only skips *metadata validation*
+after a successful HTTPS fetch; it does not disable TLS certificate checks.
+
+Bootstrap / refresh staging trust:
+
+```bash
+./update.sh --acme-issuers    # recreates gentian-staging-ca-tls in gentian-dev
+# operator reconcile replicates the secret into tenant namespaces
+```
+
+### 9.2 Production
+
+Production clusters **must** use Let's Encrypt **production** issuers (or another
+publicly trusted CA at both ingress and origin). Concretely:
+
+1. Set `ACME_ENV=production` (or omit staging) in `install.env` and use
+   production `ClusterIssuer` manifests only.
+2. Ensure `gentian-kernel-services` has `ACME_STAGING: "false"` (default when
+   the configured issuer name does not contain `staging`).
+3. **Do not** rely on `gentian-staging-ca-tls`, `use_insecure_ssl_client_just_for_testing_do_not_use`, or other staging-only workarounds — compositions gate these on `ACME_STAGING=true` and omit them in production.
+4. Verify `https://id.<kernel-domain>/realms/<tenant>/.well-known/openid-configuration`
+   presents a chain trusted by standard clients before rolling Element or other
+   OIDC-dependent apps.
+5. Prefer stable DNS-01 credentials and avoid reinstall loops that re-issue many
+   wildcards per week (see [multi-tenancy.md](multi-tenancy.md) rate-limit table).
+
+With production certificates, Synapse and other in-cluster OIDC clients trust
+`id.<kernel-domain>` through the normal system CA store; no custom CA mount or
+insecure client flag is required.
+
+### 9.3 Cloudflare tunnel / orange-cloud
+
+When traffic is proxied at Cloudflare, **edge TLS** and **origin TLS** are
+independent. Origin certificates from cert-manager still matter for in-cluster
+and direct-origin callers (including Synapse → Keycloak). Enable **Total TLS**
+(or equivalent) at the edge so multi-label tenant hostnames
+(`chat.demo.<kernel>`) receive edge certificates — the kernel wildcard alone is
+not sufficient. See [multi-tenancy.md](multi-tenancy.md) §3.
