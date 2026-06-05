@@ -344,6 +344,13 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-kernel-enable-allready", "platform-kernel")
 
+	waitFor(t, 10*time.Second, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-kernel-ldap-sync-allready", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-kernel-ldap-sync-allready", "platform-kernel")
+
 	// Wait for the Keycloak LDAP sync Job, then mark it complete.
 	waitFor(t, 10*time.Second, func() bool {
 		j := &batchv1.Job{}

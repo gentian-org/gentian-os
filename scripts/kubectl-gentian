@@ -890,6 +890,18 @@ wait_for_tenant_ready() {
   done
 }
 
+ldap_admin_password_synced() {
+  local tenant_name="${1}"
+  local ldap_job="ldap-admin-user-${tenant_name}"
+  local succeeded
+  succeeded="$(kubectl --request-timeout=5s get job -n platform-kernel "${ldap_job}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+  if [[ -z "${succeeded}" || "${succeeded}" == "0" ]]; then
+    return 1
+  fi
+  kubectl --request-timeout=5s logs -n platform-kernel "${ldap_job}" 2>/dev/null \
+    | grep -qE 'TENANT_ADMIN_LDAP_PASSWORD_SYNCED|password synced via interim rotation|user admin-'"${tenant_name}"' password synced \(HTTP'
+}
+
 fetch_tenant_admin_credentials() {
   local tenant_name="${1}"
   local timeout_secs="${2:-300}"
@@ -903,62 +915,60 @@ fetch_tenant_admin_credentials() {
   echo "Retrieving tenant-admin credentials for '${tenant_name}' (timeout: ${timeout_secs}s)..."
 
   while true; do
-    local line
-    line="$(kubectl --request-timeout=5s logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
-
-    if [[ -n "${line}" ]]; then
-      TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
-      TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
-      if [[ -n "${TENANT_ADMIN_USERNAME}" && -n "${TENANT_ADMIN_PASSWORD}" ]]; then
-        local now_ok
-        now_ok="$(date +%s)"
-        echo "Retrieved tenant-admin credentials from Keycloak admin Job logs after $((now_ok - start))s."
-        return 0
+    if ! ldap_admin_password_synced "${tenant_name}"; then
+      local now_ldap
+      now_ldap="$(date +%s)"
+      local elapsed_ldap
+      elapsed_ldap=$((now_ldap - start))
+      if (( elapsed_ldap >= next_progress_at )); then
+        echo "  waiting for LDAP admin password sync (elapsed: ${elapsed_ldap}s)"
+        next_progress_at=$((next_progress_at + 30))
       fi
-    fi
-
-    if command -v bao >/dev/null 2>&1; then
-      local bao_user
-      local bao_pw
-      bao_user="$(bao kv get -mount=secret -field=username "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
-      bao_pw="$(bao kv get -mount=secret -field=password "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
-      if [[ -n "${bao_pw}" ]]; then
-        TENANT_ADMIN_USERNAME="${bao_user}"
+    else
+      # Portal login validates against LDAP; prefer OpenBao (canonical) once LDAP sync is done.
+      local k8s_creds
+      k8s_creds="$(fetch_tenant_admin_credentials_via_k8s_auth "${tenant_name}")"
+      if [[ -n "${k8s_creds}" ]]; then
+        IFS=$'\t' read -r TENANT_ADMIN_USERNAME TENANT_ADMIN_PASSWORD <<<"${k8s_creds}"
         if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
           TENANT_ADMIN_USERNAME="admin-${tenant_name}"
         fi
-        TENANT_ADMIN_PASSWORD="${bao_pw}"
-        local now_bao
-        now_bao="$(date +%s)"
-        echo "Retrieved tenant-admin credentials from OpenBao after $((now_bao - start))s."
+        local now_k8s
+        now_k8s="$(date +%s)"
+        echo "Retrieved tenant-admin credentials from OpenBao after LDAP sync ($((now_k8s - start))s)."
         return 0
       fi
-    fi
 
-    # Fallback: use Kubernetes auth from inside the OpenBao pod. This works
-    # even when local BAO_ADDR/BAO_TOKEN are not configured.
-    local k8s_creds
-    k8s_creds="$(fetch_tenant_admin_credentials_via_k8s_auth "${tenant_name}")"
-    if [[ -n "${k8s_creds}" ]]; then
-      IFS=$'\t' read -r TENANT_ADMIN_USERNAME TENANT_ADMIN_PASSWORD <<<"${k8s_creds}"
-      if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
-        TENANT_ADMIN_USERNAME="admin-${tenant_name}"
+      if command -v bao >/dev/null 2>&1; then
+        local bao_user
+        local bao_pw
+        bao_user="$(bao kv get -mount=secret -field=username "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+        bao_pw="$(bao kv get -mount=secret -field=password "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+        if [[ -n "${bao_pw}" ]]; then
+          TENANT_ADMIN_USERNAME="${bao_user}"
+          if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
+            TENANT_ADMIN_USERNAME="admin-${tenant_name}"
+          fi
+          TENANT_ADMIN_PASSWORD="${bao_pw}"
+          local now_bao
+          now_bao="$(date +%s)"
+          echo "Retrieved tenant-admin credentials from OpenBao after LDAP sync ($((now_bao - start))s)."
+          return 0
+        fi
       fi
-      local now_k8s
-      now_k8s="$(date +%s)"
-      echo "Retrieved tenant-admin credentials from OpenBao Kubernetes auth after $((now_k8s - start))s."
-      return 0
-    fi
 
-    if ! command -v bao >/dev/null 2>&1; then
-      local job_succeeded
-      job_succeeded="$(kubectl --request-timeout=5s get job -n platform-kernel "keycloak-admin-${tenant_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
-      if [[ -n "${job_succeeded}" && "${job_succeeded}" != "0" ]]; then
-        echo "Cannot retrieve tenant-admin password automatically: keycloak-admin job completed and neither log marker nor OpenBao Kubernetes-auth retrieval succeeded." >&2
-        return 1
+      local line
+      line="$(kubectl --request-timeout=5s logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
+      if [[ -n "${line}" ]]; then
+        TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
+        TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
+        if [[ -n "${TENANT_ADMIN_USERNAME}" && -n "${TENANT_ADMIN_PASSWORD}" ]]; then
+          local now_ok
+          now_ok="$(date +%s)"
+          echo "Retrieved tenant-admin credentials from Keycloak admin Job logs after LDAP sync ($((now_ok - start))s)."
+          return 0
+        fi
       fi
-    else
-      :
     fi
 
     local now_status
@@ -973,6 +983,7 @@ fetch_tenant_admin_credentials() {
     local now
     now="$(date +%s)"
     if (( now - start >= timeout_secs )); then
+      echo "Timed out waiting for LDAP admin password sync and tenant-admin credentials." >&2
       return 1
     fi
 

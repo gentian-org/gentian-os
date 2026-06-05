@@ -48,6 +48,7 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 	for _, want := range []string{
 		"udm_patch_ok",
 		"sync_admin_password",
+		"TENANT_ADMIN_LDAP_PASSWORD_SYNCED",
 		"Password has been used before",
 		"rotating via interim password",
 		"/dev/urandom",

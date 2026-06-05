@@ -1495,6 +1495,9 @@ echo "app user capabilities backfill complete for ${USERS_OU_POS}"`, ouDN, tenan
 func buildAdminUserScript(ouDN, tenantName, adminEmail string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g'; }
+ldap_password_sync_marker() {
+	echo "TENANT_ADMIN_LDAP_PASSWORD_SYNCED username=${ADMIN_USERNAME} email=${ADMIN_EMAIL}"
+}
 sync_admin_password() {
 	local url="$1"
 	local http
@@ -1505,6 +1508,7 @@ sync_admin_password() {
 	case "${http}" in
 	200|204)
 		echo "user ${ADMIN_USERNAME} password synced (HTTP ${http})"
+		ldap_password_sync_marker
 		return 0
 		;;
 	422)
@@ -1533,6 +1537,7 @@ sync_admin_password() {
 			case "${http}" in
 			200|204)
 				echo "user ${ADMIN_USERNAME} password synced via interim rotation (HTTP ${http})"
+				ldap_password_sync_marker
 				return 0
 				;;
 			*)
@@ -1616,6 +1621,7 @@ if [ "${STATUS}" = "404" ]; then
     "${BASE_URL}/users/user/" \
 		-d "{\"properties\":{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"firstname\":\"Tenant\",\"lastname\":\"Admin\",\"mailPrimaryAddress\":\"${ADMIN_EMAIL}\",\"pwdChangeNextLogin\":false,\"isOxUser\":false,\"oxAccess\":\"none\"},\"position\":\"${USERS_OU_POS}\"}"
   echo "UDM user ${ADMIN_USERNAME} created in ${USERS_OU_POS}"
+  ldap_password_sync_marker
 elif [ "${STATUS}" = "200" ]; then
   echo "UDM user ${ADMIN_USERNAME} already exists (HTTP ${STATUS})"
   sync_admin_password "${BASE_URL}/users/user/${ADMIN_DN_ENC}" || exit 1

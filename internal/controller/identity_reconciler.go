@@ -183,13 +183,27 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	// environments, or deployments without Keycloak) there is no kernel realm
 	// user to re-enable and no LDAP provider to sync, so skip these steps.
 	if r.KernelRealm != "" {
-		opendeskEnableDone, err := r.ensureOpendeskAdminEnableJob(ctx, tenant, "admin-"+tenant.Name)
+		adminEmail := tenant.Spec.AdminEmail
+		if adminEmail == "" {
+			adminEmail = fmt.Sprintf("admin-%s@gentian.org", tenant.Name)
+		}
+		opendeskEnableDone, err := r.ensureOpendeskAdminEnableJob(ctx, tenant, adminEmail)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure kernel admin re-enable Job: %w", err)
 		}
 		if !opendeskEnableDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningOpendeskEnable", "Waiting for opendesk admin enable Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+
+		kernelLDAPSyncDone, err := r.ensureKernelLDAPSyncJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure kernel Keycloak LDAP sync Job: %w", err)
+		}
+		if !kernelLDAPSyncDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"SyncingKernelLDAP", "Waiting for kernel Keycloak LDAP sync before portal login")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
 
@@ -416,8 +430,8 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			provNames := []string{
 				realmJobName(tenant.Name), adminJobName(tenant.Name),
 				oidcBrowserFlowJobName(tenant.Name),
-				kernelAdminEnableJobName(tenant.Name), kcLDAPGroupSyncJobName(tenant.Name),
-				kcLDAPSyncJobName(tenant.Name),
+				kernelAdminEnableJobName(tenant.Name), kernelLDAPSyncJobName(tenant.Name),
+				kcLDAPGroupSyncJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -603,7 +617,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 	}
 }
 
-func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername, kernelRealm string) *batchv1.Job {
+func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, kernelRealm string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -620,7 +634,7 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername, 
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						keycloakContainer("re-enable-kernel-admin", buildOpendeskAdminEnableScript(adminUsername, kernelRealm)),
+						keycloakContainer("re-enable-kernel-admin", buildOpendeskAdminEnableScript(adminEmail, kernelRealm)),
 					},
 				},
 			},
@@ -633,12 +647,12 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminUsername, 
 // admin-user job has completed so shadowExpire is already cleared in LDAP,
 // making the Keycloak re-enable durable against subsequent LDAP federation
 // imports.
-func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminUsername string) (bool, error) {
+func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminEmail string) (bool, error) {
 	jobName := kernelAdminEnableJobName(tenant.Name)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeOpendeskAdminEnableJob(tenant, adminUsername, r.KernelRealm))
+		return false, r.Create(ctx, makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
 	}
 	if err != nil {
 		return false, err
@@ -907,7 +921,10 @@ fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmNa
 // buildRealmScript so it only runs after the LDAP admin-user job has cleared
 // shadowExpire, preventing Keycloak's next LDAP import from overriding the
 // re-enable with the previously-locked LDAP state.
-func buildOpendeskAdminEnableScript(adminUsername, kernelRealm string) string {
+//
+// The kernel realm uses mailPrimaryAddress as the Keycloak username, so lookup
+// is by email (portal login identifier), not uid=admin-<tenant>.
+func buildOpendeskAdminEnableScript(adminEmail, kernelRealm string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -915,7 +932,7 @@ TOKEN=$(curl -sf \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users?username=%s&exact=true" || echo "")
+  "${KEYCLOAK_URL}/admin/realms/%s/users?email=%s&exact=true" || echo "")
 if echo "${USER_RESP}" | grep -q '"id"'; then
   UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
@@ -925,7 +942,7 @@ if echo "${USER_RESP}" | grep -q '"id"'; then
   echo "admin %s re-enabled in %s realm (LDAP shadowExpire already cleared)"
 else
   echo "admin %s not found in %s realm (first deploy, no action needed)"
-fi`, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm, adminUsername, kernelRealm)
+fi`, kernelRealm, adminEmail, kernelRealm, adminEmail, kernelRealm, adminEmail, kernelRealm)
 }
 
 // buildKCLDAPSyncScript triggers a full Keycloak LDAP user import after admin
@@ -1069,6 +1086,13 @@ func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, te
 func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPSyncJobName(tenant.Name),
 		func() *batchv1.Job { return makeKCLDAPSyncJob(tenant, keycloakRealmName(tenant)) })
+}
+
+// ensureKernelLDAPSyncJob re-imports LDAP users into the shared kernel realm so
+// portal login sees up-to-date enabled state and mailPrimaryAddress usernames.
+func (r *TenantReconciler) ensureKernelLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kernelLDAPSyncJobName(tenant.Name),
+		func() *batchv1.Job { return makeKCLDAPSyncJob(tenant, r.KernelRealm) })
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -1296,6 +1320,13 @@ func realmDisableJobName(tenantName string) string {
 // shadowExpire so the re-enable is durable against Keycloak LDAP re-imports.
 func kernelAdminEnableJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-kernel-enable-%s", tenantName)
+}
+
+// kernelLDAPSyncJobName returns the kernel-realm LDAP user sync job used for
+// shared-portal login (iam.md §1.2). Distinct from kcLDAPSyncJobName, which
+// targets the tenant realm for per-app OIDC.
+func kernelLDAPSyncJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-kernel-ldap-sync-%s", tenantName)
 }
 
 // kcLDAPGroupSyncJobName returns the Keycloak LDAP group import job run after
