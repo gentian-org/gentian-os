@@ -65,6 +65,8 @@ OP_KEYCLOAK_SYNC=0
 OP_FIX_KERNEL_LDAP_SCOPE=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
+OP_ARGOCD=0
+OP_SETUP_IAM=0
 OP_PLUGIN=0
 OP_ACME_ISSUERS=0
 FORCE_RECONCILE=0
@@ -108,6 +110,11 @@ Options:
   --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.
+  --argocd                 Re-apply gentian-os / appprofiles ArgoCD Application
+                           manifests (ignoreDifferences updates) and hard-refresh
+                           all Applications.
+  --setup-iam              Re-run the nubus-dev-setup-iam-templates job after
+                           stack-data-ums has completed (fixes failed IAM hooks).
   --plugin                 Reinstall the kubectl-gentian plugin from this
                            repository (idempotent: skips if already up-to-date).
   --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
@@ -131,9 +138,11 @@ while [[ $# -gt 0 ]]; do
         --fix-kernel-ldap-scope) OP_FIX_KERNEL_LDAP_SCOPE=1 ;;
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
+        --argocd)              OP_ARGOCD=1 ;;
+        --setup-iam)           OP_SETUP_IAM=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
         --acme-issuers)        OP_ACME_ISSUERS=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_PLUGIN=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_SETUP_IAM=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -142,13 +151,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_LDAP_ACL=1
     OP_CROSSPLANE=1
     OP_APPPROFILES=1
+    OP_ARGOCD=1
+    OP_SETUP_IAM=1
     OP_PLUGIN=1
 fi
 
@@ -1006,6 +1017,103 @@ op_appprofiles_bootstrap() {
 }
 
 # =============================================================================
+# op_argocd_bootstrap — re-apply operator ArgoCD Application manifests and
+#                       refresh all Applications (picks up ignoreDifferences).
+# =============================================================================
+op_argocd_bootstrap() {
+    banner "ArgoCD Application manifest reconciliation"
+
+    local env="${ENV:-dev}"
+    local gentian_os_branch
+    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would apply gentian-os + gentian-tenants Applications"
+        info "[dry-run] would hard-refresh all ArgoCD Applications"
+        return 0
+    fi
+
+    if [[ -f "${tmpl}" ]]; then
+        info "Re-applying gentian-os + gentian-tenants Applications (branch=${gentian_os_branch})..."
+        sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+            -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}|g" \
+            -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH:-main}|g" \
+            -e "s|%ENV%|${env}|g" \
+            "${tmpl}" | kubectl apply -f -
+        success "gentian-os Application manifest updated."
+    else
+        warn "Template not found: ${tmpl}"
+    fi
+
+    op_appprofiles_bootstrap
+
+    # Pick up ApplicationSet template changes (ignoreDifferences, etc.) without
+    # waiting for gentian-appsets to poll git.
+    local portal_appset="${SCRIPT_DIR}/kernel/appsets/22-gentian-portal.yaml"
+    if [[ -f "${portal_appset}" ]]; then
+        info "Re-applying gentian-portal ApplicationSet..."
+        kubectl apply -f "${portal_appset}"
+    fi
+
+    info "Hard-refreshing all ArgoCD Applications..."
+    kubectl get applications -n argocd -o name 2>/dev/null \
+        | xargs -r -I{} kubectl annotate {} -n argocd \
+            "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
+
+    verify_argocd_apps || true
+}
+
+# =============================================================================
+# op_setup_iam_recover — delete and re-run nubus-dev-setup-iam-templates
+#
+# The job is an ArgoCD PostSync hook on nubus-manifests-dev.  Failures usually
+# mean it ran before stack-data-ums registered opendesk extended attributes, or
+# the Admin User template body referenced opendesk* properties too early.
+# =============================================================================
+op_setup_iam_recover() {
+    banner "setup-iam-templates job recovery"
+
+    local ns="gentian-${ENV:-dev}"
+    local release_name="nubus-${ENV:-dev}"
+    local job="nubus-${ENV:-dev}-setup-iam-templates"
+    local job_manifest="${SCRIPT_DIR}/kernel/services/nubus/manifests/${ENV:-dev}/setup-iam-templates-job.yaml"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would wait for stack-data-ums, delete ${job}, re-apply job manifest"
+        return 0
+    fi
+
+    # Ensure stack-data-ums has completed (extended attributes must exist).
+    local sdu_job=""
+    sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
+        -o custom-columns=NAME:.metadata.name 2>/dev/null \
+        | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+    if [[ -n "${sdu_job}" ]]; then
+        info "Waiting for ${sdu_job} to be Complete..."
+        kubectl wait "job/${sdu_job}" -n "${ns}" \
+            --for=condition=complete --timeout=600s 2>/dev/null \
+        || warn "${sdu_job} is not Complete — setup-iam may still fail."
+    else
+        warn "No stack-data-ums job found in ${ns}; proceeding anyway."
+    fi
+
+    info "Deleting failed job ${job} (if present)..."
+    kubectl delete job "${job}" -n "${ns}" --ignore-not-found=true --wait=true 2>/dev/null || true
+
+    if [[ ! -f "${job_manifest}" ]]; then
+        error "Job manifest not found: ${job_manifest}"
+        return 1
+    fi
+
+    info "Re-applying ${job_manifest}..."
+    kubectl apply -f "${job_manifest}"
+
+    wait_for_setup_iam_job || return 1
+    success "setup-iam-templates job recovered."
+}
+
+# =============================================================================
 # op_nubus_recover — reapply the stack-data-ums job in the correct namespace
 #
 # Background: install.sh's _wait_and_fix_stack_data_ums() calls `helm get
@@ -1147,6 +1255,8 @@ _init
 [[ "${OP_SECRETS}"         == "1" ]] && op_secrets
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
+[[ "${OP_ARGOCD}"          == "1" ]] && op_argocd_bootstrap
+[[ "${OP_SETUP_IAM}"       == "1" ]] && op_setup_iam_recover
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
 [[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover

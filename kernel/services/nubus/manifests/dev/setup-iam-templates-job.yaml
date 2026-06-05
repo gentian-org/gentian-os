@@ -4,9 +4,15 @@ metadata:
   name: nubus-dev-setup-iam-templates
   namespace: gentian-dev
   annotations:
-    argocd.argoproj.io/hook: Sync
+    # PostSync: run after nubus-manifests resources are applied.  Sync hooks fire
+    # too early — often before the nubus Helm stack-data-ums job has registered
+    # opendesk extended attributes on the UDM REST API.
+    argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "5"
 spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
   template:
     spec:
       containers:
@@ -32,21 +38,49 @@ spec:
 
               CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 
+              udm_http() {
+                  # Usage: udm_http METHOD URL [body-file]
+                  local method="$1" url="$2" body_file="${3:-}"
+                  local code
+                  if [[ -n "${body_file}" ]]; then
+                      code=$(curl -s -o /tmp/udm_resp -w "%{http_code}" -X "${method}" \
+                          ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
+                          -d @"${body_file}" "${url}")
+                  else
+                      code=$(curl -s -o /tmp/udm_resp -w "%{http_code}" -X "${method}" \
+                          ${CREDS} -H "Accept: application/json" "${url}")
+                  fi
+                  if [[ "${code}" =~ ^(200|201|204)$ ]]; then
+                      return 0
+                  fi
+                  echo "UDM ${method} ${url} failed (HTTP ${code}):" >&2
+                  cat /tmp/udm_resp >&2 || true
+                  return 1
+              }
+
               # 1. Create global App Users group
               APP_USERS_DN="cn=App Users,cn=groups,${LDAP_BASE}"
               APP_USERS_ENC=$(urlencode "${APP_USERS_DN}")
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/groups/group/${APP_USERS_ENC}")
               if [ "${STATUS}" = "404" ]; then
-                  curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
-                      "${BASE_URL}/groups/group/" \
-                      -d "{
+                  printf '%s' "{
                         \"properties\": {
                           \"name\": \"App Users\",
                           \"description\": \"Users with access to generic AppProfiles\"
                         },
                         \"position\": \"cn=groups,${LDAP_BASE}\"
-                      }"
-                  echo "Created App Users group."
+                      }" > /tmp/app_users.json
+                  if udm_http POST "${BASE_URL}/groups/group/" /tmp/app_users.json; then
+                      echo "Created App Users group."
+                  else
+                      echo "App Users group creation failed." >&2
+                      exit 1
+                  fi
+              elif [ "${STATUS}" = "200" ]; then
+                  echo "App Users group already exists."
+              else
+                  echo "Unexpected status ${STATUS} for App Users group lookup." >&2
+                  exit 1
               fi
 
               # 2. Remove legacy kernel App User template (app users are tenant-scoped only).
@@ -55,9 +89,8 @@ spec:
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" \
                   "${BASE_URL}/settings/usertemplate/${KERNEL_APP_TEMPLATE_ENC}")
               if [ "${STATUS}" = "200" ]; then
-                  curl -sf -X DELETE ${CREDS} -H "Accept: application/json" \
-                      "${BASE_URL}/settings/usertemplate/${KERNEL_APP_TEMPLATE_ENC}"
-                  echo "Removed kernel App User template."
+                  udm_http DELETE "${BASE_URL}/settings/usertemplate/${KERNEL_APP_TEMPLATE_ENC}" \
+                      && echo "Removed kernel App User template."
               fi
 
               # Remove upstream openDesk user templates from the UMC picker.
@@ -67,35 +100,34 @@ spec:
                   LEGACY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" \
                       "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}")
                   if [ "${LEGACY_STATUS}" = "200" ]; then
-                      curl -sf -X DELETE ${CREDS} -H "Accept: application/json" \
-                          "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}"
-                      echo "Removed legacy template ${LEGACY_NAME}."
+                      udm_http DELETE "${BASE_URL}/settings/usertemplate/${LEGACY_ENC}" \
+                          && echo "Removed legacy template ${LEGACY_NAME}."
                   fi
               done
 
               # 3. Create '2 Admin User' template (kernel admins; tenant admins see it second in UMC)
+              # Do not set opendesk* properties here — they require stack-data-ums extended
+              # attributes and cause 422 if the UDM module cache is not ready yet.
               ADMIN_TEMPLATE_DN="cn=Admin User,cn=templates,cn=univention,${LDAP_BASE}"
               ADMIN_TEMPLATE_ENC=$(urlencode "${ADMIN_TEMPLATE_DN}")
               ADMIN_TEMPLATE_BODY='{
                         "properties": {
                           "name": "2 Admin User",
-                          "description": "Administrative user without app access",
-                          "opendeskFileshareEnabled": false,
-                          "opendeskLivecollaborationEnabled": false
+                          "description": "Administrative user without app access"
                         },
                         "position": "cn=templates,cn=univention,'"${LDAP_BASE}"'"
                       }'
+              printf '%s' "${ADMIN_TEMPLATE_BODY}" > /tmp/admin_template.json
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" "${BASE_URL}/settings/usertemplate/${ADMIN_TEMPLATE_ENC}")
               if [ "${STATUS}" = "404" ]; then
-                  curl -sf -X POST ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
-                      "${BASE_URL}/settings/usertemplate/" \
-                      -d "${ADMIN_TEMPLATE_BODY}"
+                  udm_http POST "${BASE_URL}/settings/usertemplate/" /tmp/admin_template.json
                   echo "Created Admin User template."
               elif [ "${STATUS}" = "200" ]; then
-                  curl -sf -X PATCH ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
-                      "${BASE_URL}/settings/usertemplate/${ADMIN_TEMPLATE_ENC}" \
-                      -d "${ADMIN_TEMPLATE_BODY}"
+                  udm_http PATCH "${BASE_URL}/settings/usertemplate/${ADMIN_TEMPLATE_ENC}" /tmp/admin_template.json
                   echo "Reconciled Admin User template."
+              else
+                  echo "Unexpected status ${STATUS} for Admin User template lookup." >&2
+                  exit 1
               fi
 
               echo "IAM templates setup complete."

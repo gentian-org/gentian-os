@@ -2786,6 +2786,46 @@ deploy_kernel_mail_services() {
 # Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
 
 # =============================================================================
+# wait_for_setup_iam_job — wait for nubus-dev-setup-iam-templates (ArgoCD hook)
+#
+# The job is deployed by nubus-manifests-dev (wave 21) as a PostSync hook.
+# It must run after stack-data-ums has registered opendesk extended attributes.
+# Returns 0 when the job completed successfully, 1 on timeout or failure.
+# =============================================================================
+wait_for_setup_iam_job() {
+    local ns="gentian-${ENV:-dev}"
+    local job="nubus-${ENV:-dev}-setup-iam-templates"
+    local timeout="${SETUP_IAM_TIMEOUT:-300}"
+    local elapsed=0
+    local interval=10
+
+    banner "Waiting for ${job} (up to ${timeout}s)"
+
+    info "Waiting for job ${job} to appear in ${ns}..."
+    while ! kubectl get "job/${job}" -n "${ns}" >/dev/null 2>&1; do
+        if (( elapsed >= timeout )); then
+            warn "Job ${job} did not appear within ${timeout}s."
+            warn "  Check: kubectl get application nubus-manifests-${ENV:-dev} -n argocd"
+            return 1
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    info "Waiting for job ${job} to complete..."
+    if kubectl wait "job/${job}" -n "${ns}" \
+            --for=condition=complete --timeout=$((timeout - elapsed))s 2>/dev/null; then
+        success "Job ${job} completed."
+        return 0
+    fi
+
+    warn "Job ${job} did not complete successfully."
+    warn "  kubectl logs -n ${ns} -l job-name=${job} --tail=40"
+    warn "  Recover with: ./update.sh --setup-iam"
+    return 1
+}
+
+# =============================================================================
 # 16. Verify ArgoCD Applications
 # =============================================================================
 # healthy when every Application is Synced+Healthy. Returns 0 on healthy,

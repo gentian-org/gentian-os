@@ -1267,6 +1267,10 @@ main_cp() {
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
     bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
 
+    # Step 16 — wait for async ArgoCD hooks / apps, then verify cluster health.
+    wait_for_setup_iam_job || true
+    verify_argocd_apps || true
+
     # Clear the persisted run-start epoch so the next install (after a future
     # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.
     unset INSTALL_START_EPOCH

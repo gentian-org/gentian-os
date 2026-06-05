@@ -76,3 +76,26 @@ spec:
           - CreateNamespace=false
           - ServerSideApply=true
           - Force=true
+      # Portal-frontend only (nubus-{{.env}}-portal-frontend).  Harmless no-op
+      # for base-router / gentian-login apps where that Deployment does not exist.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          name: nubus-{{.env}}-portal-frontend
+          namespace: gentian-{{.env}}
+          jqPathExpressions:
+            - .spec.progressDeadlineSeconds
+            - .spec.revisionHistoryLimit
+            - .spec.strategy
+            - .spec.template.metadata.creationTimestamp
+            - .spec.template.spec.dnsPolicy
+            - .spec.template.spec.restartPolicy
+            - .spec.template.spec.schedulerName
+            - .spec.template.spec.terminationGracePeriodSeconds
+            - .spec.template.spec.serviceAccount
+            - .spec.template.spec.serviceAccountName
+            - .spec.template.spec.containers[].imagePullPolicy
+            - .spec.template.spec.containers[].resources
+            - .spec.template.spec.containers[].terminationMessagePath
+            - .spec.template.spec.containers[].terminationMessagePolicy
+            - .spec.template.spec.volumes[].configMap.defaultMode

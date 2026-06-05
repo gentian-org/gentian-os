@@ -75,6 +75,18 @@ spec:
     name: xtenants.gentianos.io
     jsonPointers:
     - /spec/versions
+  # ESO adds default remoteRef fields and a cleanup finalizer after apply.
+  # Ignore them so gentian-os stays Synced (same pattern as gentian-infra-helm).
+  - group: external-secrets.io
+    kind: ExternalSecret
+    name: cloudflare-api-token-gentian-system
+    namespace: gentian-system
+    jqPathExpressions:
+    - .spec.data[].remoteRef.conversionStrategy
+    - .spec.data[].remoteRef.decodingStrategy
+    - .spec.data[].remoteRef.metadataPolicy
+    - .spec.data[].remoteRef.nullBytePolicy
+    - .metadata.finalizers
   sources:
   # Source 1: gentian-os Helm chart (operator)
   # Values come from $deploy (%ENV%/kernel/values-%ENV%.yaml in the
