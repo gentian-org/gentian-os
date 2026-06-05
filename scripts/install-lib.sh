@@ -2865,6 +2865,40 @@ EOSQL
 }
 
 # =============================================================================
+# _ensure_nextcloud_portal_embedding_ingress — allow kernel portal to iframe Files
+#
+# Nextcloud is a kernel Helm release (not an AppProfile ingress). The operator
+# does not manage its Ingress; CSP must be set in nextcloud-base-values and
+# patched here so update.sh applies immediately without recreating the Release.
+# =============================================================================
+_ensure_nextcloud_portal_embedding_ingress() {
+    local ns="${1:?}"
+    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be set}"
+    local ingress_name="nextcloud-dev-aio"
+    local snippet
+    snippet=$(printf 'proxy_hide_header X-Frame-Options;\nproxy_hide_header Content-Security-Policy;\nadd_header Content-Security-Policy "frame-ancestors '\''self'\'' https://portal.%s" always;' "${domain}")
+
+    if ! kubectl get ingress "${ingress_name}" -n "${ns}" >/dev/null 2>&1; then
+        info "Ingress ${ingress_name} not found — portal embedding will apply on next Helm sync"
+        return 0
+    fi
+
+    local current
+    current=$(kubectl get ingress "${ingress_name}" -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/configuration-snippet}' 2>/dev/null || true)
+    if [[ "${current}" == "${snippet}" ]]; then
+        info "Nextcloud ingress portal embedding CSP already correct"
+        return 0
+    fi
+
+    info "Patching ${ingress_name} ingress for portal iframe embedding..."
+    kubectl annotate ingress "${ingress_name}" -n "${ns}" \
+        "nginx.ingress.kubernetes.io/configuration-snippet=${snippet}" \
+        --overwrite >/dev/null
+    success "Nextcloud ingress allows portal.${domain} in frame-ancestors"
+}
+
+# =============================================================================
 # reconcile_nextcloud_office — ensure Collabora / richdocuments is configured
 #
 # nextcloud-management init (wave 9) configures richdocuments before Collabora
@@ -2901,6 +2935,8 @@ reconcile_nextcloud_office() {
         # Restart the web pod so the postStart lifecycle hook re-runs. Do NOT
         # delete/recreate the Crossplane Release — that triggers a Helm upgrade
         # that can break LDAP user file mounts (HTTP 500 on /apps/files/).
+        _ensure_nextcloud_portal_embedding_ingress "${ns}"
+
         if kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
             info "Restarting nextcloud-dev-aio to apply lifecycle hook changes..."
             kubectl rollout restart deployment/nextcloud-dev-aio -n "${ns}" >/dev/null

@@ -59,10 +59,12 @@ data:
         tls:
           secretName: "wildcard-tls"
         annotations:
+          # Portal iframe embedding (§6 app-profile-guide.md): replace upstream
+          # X-Frame-Options/CSP — microk8s ingress-nginx lacks more_clear_headers.
           nginx.ingress.kubernetes.io/configuration-snippet: |
-            more_clear_headers "X-Frame-Options";
-            more_clear_headers "Content-Security-Policy";
-            more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.desk.gentian.org";
+            proxy_hide_header X-Frame-Options;
+            proxy_hide_header Content-Security-Policy;
+            add_header Content-Security-Policy "frame-ancestors 'self' https://portal.desk.gentian.org" always;
 
       debug:
         loglevel: "2"
