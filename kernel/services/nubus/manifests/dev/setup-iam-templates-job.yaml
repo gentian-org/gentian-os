@@ -42,7 +42,7 @@ spec:
                   # Usage: udm_http METHOD URL [body-file]
                   local method="$1" url="$2" body_file="${3:-}"
                   local code
-                  if [[ -n "${body_file}" ]]; then
+                  if [ -n "${body_file}" ]; then
                       code=$(curl -s -o /tmp/udm_resp -w "%{http_code}" -X "${method}" \
                           ${CREDS} -H "Content-Type: application/json" -H "Accept: application/json" \
                           -d @"${body_file}" "${url}")
@@ -50,9 +50,9 @@ spec:
                       code=$(curl -s -o /tmp/udm_resp -w "%{http_code}" -X "${method}" \
                           ${CREDS} -H "Accept: application/json" "${url}")
                   fi
-                  if [[ "${code}" =~ ^(200|201|204)$ ]]; then
-                      return 0
-                  fi
+                  case "${code}" in
+                      200|201|204) return 0 ;;
+                  esac
                   echo "UDM ${method} ${url} failed (HTTP ${code}):" >&2
                   cat /tmp/udm_resp >&2 || true
                   return 1
