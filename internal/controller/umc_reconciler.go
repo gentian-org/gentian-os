@@ -59,7 +59,7 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	if r.KernelDomain == "" {
 		return nil
 	}
-	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	if effectiveDomain == "" || effectiveDomain == kernelPortalHost(r.KernelDomain) {
 		return nil
 	}

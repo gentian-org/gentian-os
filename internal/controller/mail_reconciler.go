@@ -147,7 +147,7 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	if err != nil {
 		return fmt.Errorf("ensure DKIM key Secret: %w", err)
 	}
-	domain := mailDomain(tenant, r.KernelDomain)
+	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	if tenant.Status.Mail == nil {
 		tenant.Status.Mail = &gentianov1alpha1.TenantMailStatus{}
 	}
@@ -245,7 +245,7 @@ func (r *TenantReconciler) ensureMailTransportOnly(ctx context.Context, tenant *
 // virtual-domains ConfigMap in the kernel namespace. The ConfigMap is created if it
 // does not yet exist. This is idempotent — existing entries are not modified.
 func (r *TenantReconciler) ensurePostfixVirtualDomain(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	domain := mailDomain(tenant, r.KernelDomain)
+	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	cm := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace}, cm)
 	if errors.IsNotFound(err) {
@@ -281,7 +281,7 @@ func (r *TenantReconciler) ensurePostfixVirtualDomain(ctx context.Context, tenan
 // yet exist. Dovecot uses this to map each domain to a tenant-scoped mailbox path
 // (/var/mail/{domain}/{user}).
 func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	domain := mailDomain(tenant, r.KernelDomain)
+	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	cm := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{Name: mailDovecotDomainsConfigMap, Namespace: kernelNamespace}, cm)
 	if errors.IsNotFound(err) {
@@ -573,11 +573,11 @@ func (r *TenantReconciler) ensureDKIMSecret(ctx context.Context, tenant *gentian
 // mailDomain returns the effective mail domain for a tenant: spec.mail.domain
 // if set, otherwise the tenant's effective ingress domain (vanity or
 // <tenant>.<kernel_domain> fallback). See architecture §2.5.
-func mailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain string) string {
+func mailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode string) string {
 	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Domain != "" {
 		return tenant.Spec.Mail.Domain
 	}
-	return tenant.EffectiveDomain(kernelDomain)
+	return tenant.EffectiveDomain(kernelDomain, tenancyMode)
 }
 
 func dkimSecretName(tenantName string) string {

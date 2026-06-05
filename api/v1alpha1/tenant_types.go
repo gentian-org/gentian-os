@@ -14,8 +14,9 @@ type TenantSpec struct {
 	DisplayName string `json:"displayName"`
 
 	// Domain is the optional custom domain for this tenant's app zone (e.g.
-	// `acme.com`). When unset, the effective domain is
-	// `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
+	// `acme.com`). When unset, the effective domain depends on cluster
+	// tenancy mode: multi → `<tenant-name>.<KERNEL_DOMAIN>`; single →
+	// `<KERNEL_DOMAIN>` (flat URLs). See docs/design/multi-tenancy.md §3.
 	// In both cases the operator issues a per-tenant wildcard TLS certificate
 	// for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
 	// +optional
@@ -259,26 +260,30 @@ type TenantList struct {
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing
-// for this tenant. It returns spec.domain if set, otherwise it falls back
-// to "<tenant-name>.<kernelDomain>". An empty kernelDomain combined with
-// an empty spec.domain returns the empty string — callers must treat that
+// for this tenant. It returns spec.domain if set. When spec.domain is unset,
+// multi-tenancy mode uses "<tenant-name>.<kernelDomain>"; single-tenancy mode
+// uses "<kernelDomain>" (flat app hostnames). An empty kernelDomain combined
+// with an empty spec.domain returns the empty string — callers must treat that
 // as a configuration error and skip ingress provisioning.
 //
-// See docs/architecture.md §2.5 (Domains and TLS).
-func (t *Tenant) EffectiveDomain(kernelDomain string) string {
+// See docs/design/multi-tenancy.md §3.
+func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
 	if t.Spec.Domain != "" {
 		return t.Spec.Domain
 	}
 	if kernelDomain == "" {
 		return ""
 	}
+	if NormalizeTenancyMode(tenancyMode) == TenancyModeSingle {
+		return kernelDomain
+	}
 	return t.Name + "." + kernelDomain
 }
 
 // HasVanityDomain reports whether the tenant has an explicit custom app domain
 // configured (i.e. spec.domain is set). When false, EffectiveDomain() derives
-// `<tenant>.<kernel_domain>`. TLS uses the same per-tenant wildcard model in
-// both cases; only the effective domain string differs.
+// the zone from tenancy mode and tenant name. TLS uses the same per-tenant
+// wildcard model in both cases; only the effective domain string differs.
 func (t *Tenant) HasVanityDomain() bool {
 	return t.Spec.Domain != ""
 }

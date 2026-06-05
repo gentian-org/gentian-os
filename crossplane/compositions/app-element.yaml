@@ -461,9 +461,16 @@ spec:
             {{- /* overriding fullnameOverride to "opendesk-synapse" so the       */}}
             {{- /* headless Service matches the DNS name HAProxy in synapse-web   */}}
             {{- /* is hardcoded to resolve: opendesk-synapse.<ns>.svc.cluster.local */}}
+            {{- $ksResStaging := dig "kernelServices" list $extraRes }}
+            {{- $ksCMStaging  := default dict (index $ksResStaging 0) }}
+            {{- $ksCMDataStaging := dig "data" dict $ksCMStaging }}
+            {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMDataStaging) "true" }}
             {{- $globalVals  := dig "global" dict $extraVals }}
             {{- $confVals    := dig "configuration" dict $extraVals }}
             {{- $imagePull   := dig "imagePullSecrets" list $extraVals }}
+            {{- if $acmeStaging }}
+            {{- $confVals = mergeOverwrite $confVals (dict "homeserver" (dict "oidc" (dict "skip_verification" true))) }}
+            {{- end }}
             {{- $synapseVals := dict
                 "global"           $globalVals
                 "configuration"    $confVals
@@ -472,6 +479,24 @@ spec:
                 "replicaCount"     1
                 "federation" (dict "ingress" (dict "enabled" false))
             }}
+            {{- if $acmeStaging }}
+            {{- $synapseVals = mergeOverwrite $synapseVals (dict
+                "extraEnvVars" (list
+                  (dict "name" "REQUESTS_CA_BUNDLE" "value" "/etc/ssl/certs/ca-certificates.crt")
+                  (dict "name" "SSL_CERT_FILE" "value" "/etc/ssl/certs/ca-certificates.crt")
+                  (dict "name" "SSL_CERT_DIR" "value" "/etc/ssl/certs")
+                )
+                "extraVolumes" (list
+                  (dict "name" "trusted-cert-secret-volume" "secret" (dict
+                    "secretName" "gentian-staging-ca-tls"
+                    "items" (list (dict "key" "ca.crt" "path" "ca-certificates.crt"))
+                  ))
+                )
+                "extraVolumeMounts" (list
+                  (dict "name" "trusted-cert-secret-volume" "mountPath" "/etc/ssl/certs/ca-certificates.crt" "subPath" "ca-certificates.crt")
+                )
+            ) }}
+            {{- end }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release

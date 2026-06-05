@@ -138,10 +138,13 @@ type TenantReconciler struct {
 	Seeder *secrets.Seeder
 	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
 	// on which kernel UIs (Keycloak, Argo CD, Nubus, Intercom) are served.
-	// Tenant app domains default to `<tenant>.<kernel_domain>` when
-	// Tenant.spec.domain is unset. Sourced from KERNEL_DOMAIN at startup.
+	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
+	// unset. Sourced from KERNEL_DOMAIN at startup.
 	// See docs/design/multi-tenancy.md §3.
 	KernelDomain string
+	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
+	// single → {sub}.{kernel}. Sourced from TENANCY_MODE (default multi).
+	TenancyMode string
 	// TenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used to issue
 	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
 	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.
@@ -249,6 +252,46 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// tenantEffectiveDomain returns the ingress/mail domain for tenant app hostnames.
+func (r *TenantReconciler) tenantEffectiveDomain(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
+}
+
+// validateTenancyConstraints enforces single-tenancy cluster rules.
+func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) != gentianov1alpha1.TenancyModeSingle {
+		return nil
+	}
+	if tenant.Name != gentianov1alpha1.SingleTenantName {
+		return fmt.Errorf(
+			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
+			gentianov1alpha1.SingleTenantName, tenant.Name,
+		)
+	}
+	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
+		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
+		return fmt.Errorf(
+			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
+			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
+		)
+	}
+	var others gentianov1alpha1.TenantList
+	if err := r.List(ctx, &others); err != nil {
+		return err
+	}
+	for i := range others.Items {
+		other := &others.Items[i]
+		if other.Name == tenant.Name || !other.DeletionTimestamp.IsZero() {
+			continue
+		}
+		return fmt.Errorf(
+			"cluster TENANCY_MODE=single allows only one Tenant CR (found %q and %q)",
+			tenant.Name, other.Name,
+		)
+	}
+	return nil
+}
+
 // Reconcile is the main reconciliation loop for Tenant resources.
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -294,6 +337,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint",
+			err.Error())
+		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, nil
+	}
+
 	nsName := tenantNamespaceName(tenant)
 	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName)
 
@@ -318,6 +369,12 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// so charts pulling from private registries (e.g. registry.opencode.de) work
 	// without per-tenant ExternalSecret boilerplate.
 	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 1c. Replicate gentian-staging-ca-tls for ACME staging dev clusters so
+	// in-cluster OIDC clients (Synapse, Jitsi adapter) trust id.<kernel-domain>.
+	if err := r.ensureStagingCaTrust(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -745,6 +802,55 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 			return nil
 		}
 		return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
+	}
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Type: source.Type,
+		Data: source.Data,
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Type = desired.Type
+		existing.Data = desired.Data
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		existing.Labels[tenantLabel] = tenant.Name
+		existing.Labels[managedByLabel] = managedByValue
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+// ensureStagingCaTrust replicates gentian-staging-ca-tls from the services
+// namespace into the tenant namespace when present (ACME staging dev clusters).
+// No-op when the source secret does not exist (production clusters).
+func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
+	const secretName = "gentian-staging-ca-tls"
+
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: servicesNamespace}, source); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read source %s in %s: %w", secretName, servicesNamespace, err)
 	}
 
 	desired := &corev1.Secret{

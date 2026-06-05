@@ -476,11 +476,11 @@ spec:
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
-            {{- if $pSpec.extraValues }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- if $pSpec.extraValues }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
             {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
             {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
@@ -513,6 +513,25 @@ spec:
             {{- end }}
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
+            {{- end }}
+            {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
+            {{- if $acmeStaging }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "extraEnvVars" (list
+                  (dict "name" "REQUESTS_CA_BUNDLE" "value" "/etc/ssl/certs/ca-certificates.crt")
+                  (dict "name" "SSL_CERT_FILE" "value" "/etc/ssl/certs/ca-certificates.crt")
+                  (dict "name" "DENO_CERT" "value" "/etc/ssl/certs/ca-certificates.crt")
+                )
+                "extraVolumes" (list
+                  (dict "name" "trusted-cert-secret-volume" "secret" (dict
+                    "secretName" "gentian-staging-ca-tls"
+                    "items" (list (dict "key" "ca.crt" "path" "ca-certificates.crt"))
+                  ))
+                )
+                "extraVolumeMounts" (list
+                  (dict "name" "trusted-cert-secret-volume" "mountPath" "/etc/ssl/certs/ca-certificates.crt" "subPath" "ca-certificates.crt")
+                )
+            ) }}
             {{- end }}
 
             {{- /* ── Emit Keycloak Client CR ──────────────────────────────────── */}}

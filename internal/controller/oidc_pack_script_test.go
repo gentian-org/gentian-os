@@ -81,7 +81,7 @@ func TestResolveOIDCRedirectURIsFromProfile(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Spec.Domain = "demo.desk.gentian.org"
 	uris := resolveOIDCRedirectURIs(tenant, "jitsi",
-		[]string{"https://meet.${TENANT_DOMAIN}/*"}, "desk.gentian.org")
+		[]string{"https://meet.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
 	if len(uris) != 1 || uris[0] != "https://meet.demo.desk.gentian.org/*" {
 		t.Fatalf("redirects: %v", uris)
 	}

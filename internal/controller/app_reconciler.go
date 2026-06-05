@@ -171,7 +171,7 @@ func (r *TenantReconciler) ensureAppClaim(
 	obj.SetGroupVersionKind(appClaimGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: claimName, Namespace: nsName}, obj)
 	if errors.IsNotFound(err) {
-		desired := buildAppClaim(tenant, app, r.KernelDomain, profile)
+		desired := buildAppClaim(tenant, app, r.KernelDomain, r.TenancyMode, profile)
 		return false, r.Create(ctx, desired)
 	}
 	if err != nil {
@@ -180,7 +180,7 @@ func (r *TenantReconciler) ensureAppClaim(
 
 	// Propagate domain changes: if the tenant's effective domain differs from
 	// what the claim has, patch it so TENANT_DOMAIN substitutions stay correct.
-	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	currentDomain, _, _ := unstructured.NestedString(obj.Object, "spec", "domain")
 	if effectiveDomain != "" && currentDomain != effectiveDomain {
 		patch := obj.DeepCopy()
@@ -215,7 +215,7 @@ func (r *TenantReconciler) ensureAppClaim(
 func buildAppClaim(
 	tenant *gentianov1alpha1.Tenant,
 	app gentianov1alpha1.TenantApp,
-	kernelDomain string,
+	kernelDomain, tenancyMode string,
 	profile *gentianov1alpha1.AppProfile,
 ) *unstructured.Unstructured {
 	nsName := tenantNamespaceName(tenant)
@@ -237,7 +237,7 @@ func buildAppClaim(
 		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
 	}
 
-	if domain := tenant.EffectiveDomain(kernelDomain); domain != "" {
+	if domain := tenant.EffectiveDomain(kernelDomain, tenancyMode); domain != "" {
 		_ = unstructured.SetNestedField(obj.Object, domain, "spec", "domain")
 	}
 

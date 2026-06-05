@@ -31,19 +31,39 @@ ext4 per user).
 |---|---|---|
 | **namespace-per-tenant** (default) | K8s RBAC, ResourceQuotas, NetworkPolicies | Trusted internal tenants, cost efficiency |
 
-## 3. Domains and TLS — Two Planes, One Tenant-Zone Model
+## 3. Domains and TLS — Two Planes, Tenant Zones, and Tenancy Mode
+
+Install-time **`TENANCY_MODE`** (`multi` default, set in `install.env` / operator Helm
+`tenancyMode`) selects the default app URL shape when `Tenant.spec.domain` is unset.
+Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
+
+| Mode | Cluster profile | Default `effectiveDomain` | Example Jitsi URL |
+|---|---|---|---|
+| **`multi`** | Shared SaaS | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.desk.gentian.org` |
+| **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.desk.gentian.org` |
+
+**Single-tenancy rules:** exactly one `Tenant` CR named `default`, users in
+`ou=default`, operator env `TENANCY_MODE=single`. Vanity `spec.domain` still overrides
+in either mode.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
 | **Kernel** | `KERNEL_DOMAIN` | `portal.desk.gentian.org`, `id.desk.gentian.org` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
-| **Tenant apps** | `effectiveDomain` | `meet.demo.desk.gentian.org`, `meet.acme.com` | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
+| **Tenant apps** | `effectiveDomain` | `meet.demo.desk.gentian.org` (multi) or `meet.desk.gentian.org` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
 
-**Effective domain** (same for ingress, mail, OIDC redirects to apps):
+**Effective domain** (same for ingress, mail, OIDC redirect URIs to apps):
 
 - If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
-- Else → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
+- Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat OpenDesk-style URLs).
+- Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
 
-App hostnames are always `{subDomain}.{effectiveDomain}` (e.g. `meet` + `demo.desk.gentian.org`).
+App hostnames are always `{subDomain}.{effectiveDomain}`.
+
+**Portal contact deep links** (video call / chat from the address book): the operator
+creates per-tenant UDM entries `swp.realtime_videoconference_<tenant>` and
+`swp.realtime_collaboration_<tenant>` with `allowedGroups` scoped to that tenant's
+LDAP OU, so each user receives URLs for their tenant zone. In `single` mode, legacy
+OpenDesk entry names (`swp.realtime_videoconference`) are also maintained.
 
 The gentian-os operator creates, for every tenant with ingress-enabled apps:
 

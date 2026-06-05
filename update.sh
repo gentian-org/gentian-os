@@ -911,6 +911,25 @@ op_acme_issuers() {
     info "Tenant operator issuer: set tenantDNS01ClusterIssuer in Helm values to match."
     info "  production: letsencrypt-dns01-cloudflare"
     info "  staging:    letsencrypt-staging-dns01-cloudflare"
+    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
+        op_staging_ca_secret
+    fi
+}
+
+# =============================================================================
+# op_staging_ca_secret — CA bundle for in-cluster TLS to id.<kernel-domain>
+# =============================================================================
+op_staging_ca_secret() {
+    banner "gentian-staging-ca-tls (ACME staging CA trust bundle)"
+    local script="${SCRIPT_DIR}/scripts/create-staging-ca-secret.sh"
+    if [[ ! -x "$script" ]]; then
+        chmod +x "$script"
+    fi
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would run: $script ${SERVICES_NAMESPACE:-gentian-dev}"
+        return 0
+    fi
+    "$script" "${SERVICES_NAMESPACE:-gentian-dev}"
 }
 
 # =============================================================================

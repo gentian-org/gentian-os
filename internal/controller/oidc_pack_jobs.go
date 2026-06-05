@@ -53,7 +53,7 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain)
+	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
 
 	cfg := oidcAppConfig{
 		profileName:  profileName,
@@ -69,9 +69,9 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	return cfg, nil
 }
 
-func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain string) []string {
+func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain, tenancyMode string) []string {
 	if len(uris) > 0 {
-		host := tenant.EffectiveDomain(kernelDomain)
+		host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
 		if host == "" {
 			host = tenant.Spec.Domain
 		}
@@ -82,7 +82,7 @@ func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string
 		return out
 	}
 	// Legacy fallback when AppProfile omits redirectUris.
-	host := tenant.EffectiveDomain(kernelDomain)
+	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
 	if host == "" {
 		host = tenant.Spec.Domain
 	}

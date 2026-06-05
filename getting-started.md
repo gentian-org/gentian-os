@@ -59,6 +59,7 @@ them or store them in the config files below.
 | `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
 | `OD_SMTP_RELAY_PASSWORD` | SMTP relay password (e.g. Gmail App Password) |
 | `KERNEL_DOMAIN` | Platform-wide DNS suffix (e.g. `platform.example.com`) |
+| `TENANCY_MODE` | `multi` (default) or `single` — see [multi-tenancy.md](docs/design/multi-tenancy.md) §3 |
 | `EXTERNAL_SMTP_HOST` | Required when `MAIL_SERVICE_MODE=external` (default) |
 
 **Optional:**

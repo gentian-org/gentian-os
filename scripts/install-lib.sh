@@ -251,6 +251,7 @@ INPUT_HIERARCHY_VARS=(
     EXTERNAL_SMTP_SSL
     EXTERNAL_SMTP_STARTTLS
     KERNEL_DOMAIN
+    TENANCY_MODE
     NODE_IP
     NETWORK_MODE
     SKIP_TOOLS
@@ -423,6 +424,13 @@ validate_config() {
         (( errors++ )) || true
     else
         echo "  [OK]       KERNEL_DOMAIN=${KERNEL_DOMAIN}"
+    fi
+    TENANCY_MODE="${TENANCY_MODE:-multi}"
+    if [[ "${TENANCY_MODE}" != "multi" && "${TENANCY_MODE}" != "single" ]]; then
+        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single'"
+        (( errors++ )) || true
+    else
+        echo "  [OK]       TENANCY_MODE=${TENANCY_MODE}"
     fi
 
     echo ""
@@ -729,6 +737,8 @@ save_install_state() {
         echo "# Delete to be re-prompted on next run."
         val="${KERNEL_DOMAIN:-}"
         [[ -n "$val" ]] && printf 'export KERNEL_DOMAIN=%q\n' "$val"
+        val="${TENANCY_MODE:-}"
+        [[ -n "$val" ]] && printf 'export TENANCY_MODE=%q\n' "$val"
         val="${MAIL_SERVICE_MODE:-}"
         [[ -n "$val" ]] && printf 'export MAIL_SERVICE_MODE=%q\n' "$val"
         val="${EXTERNAL_SMTP_HOST:-}"
@@ -754,8 +764,8 @@ save_install_state() {
 # =============================================================================
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
 # which all kernel UIs — Keycloak, Nubus, Argo CD, Intercom — are served, and
-# which provides the `<tenant>.<kernel_domain>` fallback for tenants without a
-# tenant app zones). See docs/design/multi-tenancy.md §3.
+# which provides the tenant app zone fallback when Tenant.spec.domain is unset
+# (shape depends on TENANCY_MODE — see docs/design/multi-tenancy.md §3).
 #
 # Persisted to ${INSTALL_STATE_FILE} so subsequent re-runs do not re-prompt.
 # =============================================================================
@@ -2609,6 +2619,7 @@ install_orchestrator() {
         --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
         --set argocd.namespace="argocd" \
         --set kernelDomain="${KERNEL_DOMAIN}" \
+        --set tenancyMode="${TENANCY_MODE:-multi}" \
         --wait --timeout 5m
 
     info "Waiting for orchestrator CRDs to be Established..."

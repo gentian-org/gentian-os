@@ -40,8 +40,10 @@ import (
 //
 // +kubebuilder:webhook:path=/validate-gentianos-io-v1alpha1-tenant,mutating=false,failurePolicy=fail,sideEffects=None,groups=gentianos.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=vtenant.gentianos.io,admissionReviewVersions=v1
 type TenantValidator struct {
-	Client  client.Client
-	Decoder admission.Decoder
+	Client      client.Client
+	Decoder     admission.Decoder
+	TenancyMode string
+	KernelDomain string
 }
 
 // Handle implements admission.Handler.
@@ -104,6 +106,45 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		}
 	}
 
+	if err := v.validateTenancy(ctx, tenant); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (v *TenantValidator) validateTenancy(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	mode := gentianov1alpha1.NormalizeTenancyMode(v.TenancyMode)
+	if mode != gentianov1alpha1.TenancyModeSingle {
+		return nil
+	}
+	if tenant.Name != gentianov1alpha1.SingleTenantName {
+		return fmt.Errorf(
+			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
+			gentianov1alpha1.SingleTenantName, tenant.Name,
+		)
+	}
+	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
+		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
+		return fmt.Errorf(
+			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
+			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
+		)
+	}
+	var others gentianov1alpha1.TenantList
+	if err := v.Client.List(ctx, &others); err != nil {
+		return fmt.Errorf("list tenants: %w", err)
+	}
+	for i := range others.Items {
+		other := &others.Items[i]
+		if other.Name == tenant.Name || !other.DeletionTimestamp.IsZero() {
+			continue
+		}
+		return fmt.Errorf(
+			"cluster TENANCY_MODE=single allows only one Tenant CR (found %q and %q)",
+			tenant.Name, other.Name,
+		)
+	}
 	return nil
 }
 

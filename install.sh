@@ -1161,6 +1161,7 @@ print_summary_cp() {
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
+    echo -e "${GREEN}  Tenancy mode   : ${TENANCY_MODE:-multi}${NC}"
     echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
     echo -e "${GREEN}  Nubus Release  : nubus-dev (Synced=${nubus_synced})${NC}"

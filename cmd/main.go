@@ -87,6 +87,7 @@ func main() {
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:              os.Getenv("TENANCY_MODE"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		LDAPServer:               os.Getenv("LDAP_SERVER"),
@@ -107,7 +108,9 @@ func main() {
 
 	if enableWebhook {
 		(&webhook.TenantValidator{
-			Client: mgr.GetClient(),
+			Client:       mgr.GetClient(),
+			TenancyMode:  os.Getenv("TENANCY_MODE"),
+			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		}).SetupWithManager(mgr)
 	}
 

@@ -4,9 +4,15 @@
 replicaCount: 1
 
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
-# Kernel UIs are served on this domain; tenant app zones default to
-# `<tenant>.<kernel_domain>`. Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
+# Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
+# Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
 kernelDomain: ""
+
+# tenancyMode controls default tenant app URL shape when Tenant.spec.domain is unset:
+#   multi  — {sub}.{tenant}.{kernelDomain} (default, shared cluster)
+#   single — {sub}.{kernelDomain} (dedicated single-tenant cluster; one Tenant named "default")
+# Plumbed as TENANCY_MODE.
+tenancyMode: multi
 
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can

@@ -107,7 +107,7 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		return ctrl.Result{}, nil
 	}
 
-	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	if effectiveDomain == "" {
 		r.setCondition(tenant, conditionIngressReady, metav1.ConditionFalse,
 			"NoDomain", "tenant.spec.domain is unset and operator KERNEL_DOMAIN is not configured")
@@ -268,7 +268,7 @@ func (r *TenantReconciler) ensureAppIngress(
 func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 
-	effectiveDomain := tenant.EffectiveDomain(r.KernelDomain)
+	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {

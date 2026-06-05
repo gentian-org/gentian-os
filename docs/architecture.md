@@ -283,10 +283,11 @@ Multiple tenants share one cluster:
   Redis ACLs, and (for mail) per-domain DKIM keys.
 - **Domains** use a two-plane model: a per-cluster wildcard
   (`*.<kernel_domain>`) covers **kernel UIs only**; each tenant app zone
-  gets its own wildcard (`*.<effectiveDomain>`) via DNS-01. The default
-  effective domain is `<tenant>.<kernelDomain>`; set `spec.domain` only for
-  a customer vanity domain (e.g. `acme.com`). See
-  [design/multi-tenancy.md](design/multi-tenancy.md) §3.
+  gets its own wildcard (`*.<effectiveDomain>`) via DNS-01. Default
+  effective domain depends on **`TENANCY_MODE`**: `multi` →
+  `<tenant>.<kernelDomain>`; `single` → `<kernelDomain>` (flat URLs, one
+  `Tenant` named `default`). Set `spec.domain` only for a customer vanity
+  domain (e.g. `acme.com`). See [design/multi-tenancy.md](design/multi-tenancy.md) §3.
 - **App-to-app calls** go through OIDC token exchange, with the
   `IntegrationBinding` defining which exchanges are permitted.
 - **Database isolation:** each app within each tenant gets its own
@@ -307,8 +308,9 @@ For each tenant with ingress-enabled apps, the **gentian-os controller** ensures
 2. One Kubernetes `Ingress` per app: `{subDomain}.{effectiveDomain}` →
    `Service:{servicePort}`, all referencing that TLS secret.
 
-`effectiveDomain` is `Tenant.spec.domain` when set, otherwise
-`<tenant>.<kernelDomain>`. The issuer is configured cluster-wide via
+`effectiveDomain` is `Tenant.spec.domain` when set; otherwise it follows
+`TENANCY_MODE` (`multi` → `<tenant>.<kernelDomain>`; `single` →
+`<kernelDomain>`). The issuer is configured cluster-wide via
 `TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`).
 `AppProfile.spec.ingress.clusterIssuer` is reserved for a possible future
 per-host HTTP-01 mode; the operator does not read it today.
