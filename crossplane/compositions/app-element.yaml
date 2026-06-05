@@ -618,7 +618,7 @@ spec:
                 )
                 "podSecurityContext" (dict "enabled" true "fsGroup" 101)
                 "resources" (dict
-                  "limits" (dict "cpu" "99" "memory" "256Mi")
+                  "limits" (dict "cpu" "3" "memory" "256Mi")
                   "requests" (dict "cpu" "100m" "memory" "128Mi")
                 )
             }}
