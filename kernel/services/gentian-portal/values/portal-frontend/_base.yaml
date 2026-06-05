@@ -124,8 +124,8 @@ podAnnotations:
 #            and auto-patches this file with the new SHA tag.
 # Update:    docker build -f frontend/Dockerfile.cluster -t ghcr.io/gentian-org/portal-frontend:<sha> ./frontend
 #            docker push ghcr.io/gentian-org/portal-frontend:<sha>
-#            then update tag: "83fc4328"
+#            then update tag: "15a331b8"
 image:
   registry: "ghcr.io"
   repository: "gentian-org/portal-frontend"
-  tag: "83fc4328"
+  tag: "15a331b8"
