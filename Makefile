@@ -12,6 +12,10 @@ BOILERPLATE := hack/boilerplate.go.txt
 
 IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
+# Crossplane CLI/core version used for install-tools, CI, and schema validation.
+CROSSPLANE_CLI_VERSION ?= v2.2.1
+CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VERSION)
+
 # Envtest binaries — set KUBEBUILDER_ASSETS to override (e.g. in CI via setup-envtest)
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
@@ -141,12 +145,15 @@ test-unit-schema:
 	@echo "--- valid fixtures (must pass)"
 	@for f in crossplane/tests/unit/schema/valid/*.yaml; do \
 		[ -f "$$f" ] || continue; \
-		crossplane beta validate crossplane/xrds/ "$$f" 2>&1 && echo "PASS: $$f" || { echo "FAIL: $$f"; exit 1; }; \
+		crossplane beta validate crossplane/xrds/ "$$f" \
+			--crossplane-image="$(CROSSPLANE_IMAGE)" 2>&1 \
+			&& echo "PASS: $$f" || { echo "FAIL: $$f"; exit 1; }; \
 	done
 	@echo "--- invalid fixtures (must fail validation)"
 	@for f in crossplane/tests/unit/schema/invalid/*.yaml; do \
 		[ -f "$$f" ] || continue; \
-		if crossplane beta validate crossplane/xrds/ "$$f" 2>&1; then \
+		if crossplane beta validate crossplane/xrds/ "$$f" \
+			--crossplane-image="$(CROSSPLANE_IMAGE)" 2>&1; then \
 			echo "FAIL (expected rejection): $$f"; exit 1; \
 		else \
 			echo "PASS (correctly rejected): $$f"; \
@@ -166,7 +173,7 @@ install-tools:
 	@which crossplane >/dev/null 2>&1 || { \
 		echo "Installing crossplane CLI..."; \
 		tmpdir=$$(mktemp -d); \
-		( cd "$$tmpdir" && XP_VERSION=v2.2.1 bash "$(shell pwd)/scripts/install-crossplane-cli.sh" \
+		( cd "$$tmpdir" && XP_VERSION=$(CROSSPLANE_CLI_VERSION) bash "$(shell pwd)/scripts/install-crossplane-cli.sh" \
 		  && sudo mv crossplane /usr/local/bin/crossplane ); \
 		rmdir "$$tmpdir"; \
 	}
