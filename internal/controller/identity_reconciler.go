@@ -1009,9 +1009,17 @@ func makeKCLDAPGroupSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *
 		buildKCLDAPGroupSyncScript(realmName))
 }
 
-// makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP user sync.
+// makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP user sync in
+// the tenant realm after admin provisioning is stable.
 func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	return makeKCLDAPFederationSyncJob(tenant, kcLDAPSyncJobName(tenant.Name), "kc-ldap-sync",
+		buildKCLDAPSyncScript(realmName))
+}
+
+// makeKernelLDAPSyncJob returns the Job that re-imports LDAP users into the
+// shared kernel realm for portal login (iam.md §1.2).
+func makeKernelLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	return makeKCLDAPFederationSyncJob(tenant, kernelLDAPSyncJobName(tenant.Name), "kernel-ldap-sync",
 		buildKCLDAPSyncScript(realmName))
 }
 
@@ -1092,7 +1100,7 @@ func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gent
 // portal login sees up-to-date enabled state and mailPrimaryAddress usernames.
 func (r *TenantReconciler) ensureKernelLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kernelLDAPSyncJobName(tenant.Name),
-		func() *batchv1.Job { return makeKCLDAPSyncJob(tenant, r.KernelRealm) })
+		func() *batchv1.Job { return makeKernelLDAPSyncJob(tenant, r.KernelRealm) })
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
