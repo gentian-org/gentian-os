@@ -102,6 +102,9 @@ func TestBuildOIDCBrowserFlowScript(t *testing.T) {
 	if !strings.Contains(script, "defaultProvider") {
 		t.Fatal("expected IdP redirector defaultProvider config")
 	}
+	if !strings.Contains(script, "\"requirement\":\"REQUIRED\"") {
+		t.Fatal("expected IdP redirector execution reconciled to REQUIRED")
+	}
 }
 
 func TestResolveOIDCRedirectURIsFromProfile(t *testing.T) {
