@@ -58,8 +58,10 @@ func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string 
 // emits frame-ancestors 'self' — appending a second CSP header leaves both
 // policies active and browsers still block portal embedding.
 func frameAncestorsIngressSnippetReplace(ancestorOrigins string) string {
-	return fmt.Sprintf(`more_clear_headers "X-Frame-Options";
-more_clear_headers "Content-Security-Policy";
+	// proxy_hide_header works on stock ingress-nginx (including microk8s builds
+	// that lack the headers-more module). more_clear_headers is not available there.
+	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
+proxy_hide_header Content-Security-Policy;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
 
@@ -67,7 +69,7 @@ add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancesto
 // the upstream policy. Required for CryptPad, which relies on upstream
 // script-src/connect-src (sandbox must not gain 'unsafe-eval').
 func frameAncestorsIngressSnippetAppend(ancestorOrigins string) string {
-	return fmt.Sprintf(`more_clear_headers "X-Frame-Options";
+	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
 
@@ -82,10 +84,13 @@ func stripLegacyPortalEmbeddingSnippet(snippet string) string {
 		}
 		if strings.Contains(trimmed, `more_clear_headers "X-Frame-Options"`) ||
 			strings.Contains(trimmed, `more_clear_headers "Content-Security-Policy"`) ||
+			strings.Contains(trimmed, `proxy_hide_header X-Frame-Options`) ||
+			strings.Contains(trimmed, `proxy_hide_header Content-Security-Policy`) ||
 			strings.Contains(trimmed, `more_set_headers "Content-Security-Policy`) ||
 			strings.Contains(trimmed, `more_add_headers "Content-Security-Policy`) ||
 			strings.Contains(trimmed, `add_header Content-Security-Policy`) ||
-			strings.Contains(trimmed, "frame-ancestors") {
+			strings.Contains(trimmed, "frame-ancestors") ||
+			strings.Contains(trimmed, "nginx.ingress.kubernetes.io/") {
 			continue
 		}
 		kept = append(kept, line)

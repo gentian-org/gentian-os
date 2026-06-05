@@ -62,7 +62,7 @@ func TestPortalEmbeddingIngressSnippetUsesKernelPortal(t *testing.T) {
 	if strings.Contains(snippet, "portal.demo.desk.gentian.org") {
 		t.Fatal("must not use tenant-scoped portal hostname")
 	}
-	if !strings.Contains(snippet, `more_clear_headers "Content-Security-Policy"`) {
+	if !strings.Contains(snippet, `proxy_hide_header Content-Security-Policy`) {
 		t.Fatal("standard apps must replace upstream CSP (Element double-header bug)")
 	}
 }
@@ -108,7 +108,7 @@ sub_filter_once on;`,
 	if !strings.Contains(got, "frame-ancestors") {
 		t.Fatalf("expected portal embedding directives prepended, got:\n%s", got)
 	}
-	if strings.Contains(got, `more_clear_headers "Content-Security-Policy"`) {
+	if strings.Contains(got, `proxy_hide_header Content-Security-Policy`) {
 		t.Fatal("CryptPad main ingress must append CSP, not replace upstream policy")
 	}
 	if !strings.Contains(got, `add_header Content-Security-Policy "frame-ancestors`) {
@@ -122,8 +122,8 @@ func TestEnsurePortalEmbeddingAnnotationsReplacesUpstreamCSPForElement(t *testin
 	}
 	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", "chat")
 	got := annotations[nginxConfigurationSnippetAnnotation]
-	if !strings.Contains(got, `more_clear_headers "Content-Security-Policy"`) {
-		t.Fatalf("Element/chat must clear upstream frame-ancestors 'self', got:\n%s", got)
+	if !strings.Contains(got, `proxy_hide_header Content-Security-Policy`) {
+		t.Fatalf("Element/chat must hide upstream frame-ancestors 'self', got:\n%s", got)
 	}
 	if !strings.Contains(got, "https://portal.desk.gentian.org") {
 		t.Fatalf("expected kernel portal in snippet, got:\n%s", got)
