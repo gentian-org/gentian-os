@@ -334,9 +334,8 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-client-allready-oidc-app3", "platform-kernel")
 
-	// Wait for the post-LDAP opendesk-enable Job, then mark it complete.
-	// The LDAP admin-user job does not exist in this test environment (no LDAP
-	// reconciler), so ensureIdentity proceeds past the gate and creates this job.
+	// Wait for kernel-realm admin re-enable and LDAP sync Jobs (after LDAP
+	// admin-user completes via ensureLDAPBase / test auto-completion).
 	waitFor(t, 10*time.Second, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),

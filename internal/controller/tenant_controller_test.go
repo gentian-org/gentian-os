@@ -46,6 +46,48 @@ import (
 // testClient is the shared client used by all tests in this package.
 var testClient client.Client
 
+// ldapManualTestTenants lists tenant names whose LDAP base jobs must not be
+// auto-completed because ldap_reconciler_test.go asserts provisioning order.
+var ldapManualTestTenants = map[string]struct{}{
+	"adminpolicy": {},
+	"bindtest":    {},
+}
+
+func ldapBaseJobTenant(jobName string) (tenant string, ok bool) {
+	for _, prefix := range []string{
+		"ldap-ou-",
+		"ldap-app-user-template-",
+		"ldap-app-user-capabilities-",
+		"ldap-admin-user-",
+		"ldap-admin-policy-",
+	} {
+		if strings.HasPrefix(jobName, prefix) {
+			return strings.TrimPrefix(jobName, prefix), true
+		}
+	}
+	return "", false
+}
+
+func shouldAutoCompleteLDAPJob(jobName string) bool {
+	tenant, ok := ldapBaseJobTenant(jobName)
+	if !ok {
+		return false
+	}
+	_, manual := ldapManualTestTenants[tenant]
+	return !manual
+}
+
+func markJobSucceeded(job *batchv1.Job) {
+	now := metav1.Now()
+	job.Status.StartTime = &now
+	job.Status.CompletionTime = &now
+	job.Status.Succeeded = 1
+	job.Status.Conditions = []batchv1.JobCondition{
+		{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
+		{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
+	}
+}
+
 // TestMain sets up a single envtest environment and controller manager shared
 // across all tests. Each test creates its own Tenant with a unique name.
 func TestMain(m *testing.M) {
@@ -155,12 +197,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// Auto-complete Keycloak realm and admin Jobs for all tests EXCEPT those
-	// in identity_reconciler_test.go that explicitly test the Identity flow
-	// and need to control job timing manually.
-	// We need this because ensureIdentity was updated to ALWAYS provision the
-	// Keycloak realm (for UMC), which breaks all existing tests that expected
-	// Phase=Ready immediately for non-identity apps.
+	// Auto-complete Keycloak Jobs and LDAP base provisioning Jobs for tests that
+	// do not assert job ordering manually. ensureIdentity blocks on the LDAP
+	// admin-user Job when ensureLDAPBase has created it; without auto-completion
+	// most controller tests time out waiting for Phase=Ready.
 	go func() {
 		for {
 			time.Sleep(200 * time.Millisecond)
@@ -168,24 +208,21 @@ func TestMain(m *testing.M) {
 			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
 				for _, job := range jobs.Items {
 					j := job // copy loop variable
-					if j.Status.Succeeded == 0 && strings.HasPrefix(j.Name, "keycloak-") {
-						name := j.Name
-						if strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant") {
-							// These tests test deletion flows which explicitly wait for
-							// keycloak-realm-delete-* or similar jobs.
-							// And the explicit identity tests.
-							continue
-						}
-						now := metav1.Now()
-						j.Status.StartTime = &now
-						j.Status.CompletionTime = &now
-						j.Status.Succeeded = 1
-						j.Status.Conditions = []batchv1.JobCondition{
-							{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
-							{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
-						}
-						_ = testClient.Status().Update(context.Background(), &j)
+					if j.Status.Succeeded > 0 {
+						continue
 					}
+					name := j.Name
+					autoKeycloak := strings.HasPrefix(name, "keycloak-")
+					autoLDAP := shouldAutoCompleteLDAPJob(name)
+					if !autoKeycloak && !autoLDAP {
+						continue
+					}
+					if autoKeycloak && (strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant")) {
+						// These tests control Keycloak job timing or test deletion flows.
+						continue
+					}
+					markJobSucceeded(&j)
+					_ = testClient.Status().Update(context.Background(), &j)
 				}
 			}
 		}
