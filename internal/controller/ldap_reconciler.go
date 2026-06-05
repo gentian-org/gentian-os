@@ -1508,23 +1508,13 @@ sync_admin_password() {
 		return 0
 		;;
 	422)
+		if grep -q 'Password has been used before' /tmp/udm-pw-body 2>/dev/null; then
+			echo "user ${ADMIN_USERNAME} password already matches OpenBao (HTTP 422 password history)"
+			return 0
+		fi
 		echo "user ${ADMIN_USERNAME} password PATCH returned HTTP 422; body:" >&2
 		cat /tmp/udm-pw-body >&2 2>/dev/null || true
-		http=$(curl -s --max-time 30 -o /tmp/udm-pw-body -w "%%{http_code}" -X PUT ${CREDS} \
-			-H "Content-Type: application/json" \
-			-H "Accept: application/json" \
-			"${url}" -d "{\"properties\":{\"password\":\"${ADMIN_PASSWORD}\"}}")
-		case "${http}" in
-		200|204)
-			echo "user ${ADMIN_USERNAME} password synced via PUT (HTTP ${http})"
-			return 0
-			;;
-		*)
-			echo "user ${ADMIN_USERNAME} password sync failed (HTTP ${http})" >&2
-			cat /tmp/udm-pw-body >&2 2>/dev/null || true
-			return 1
-			;;
-		esac
+		return 1
 		;;
 	*)
 		echo "user ${ADMIN_USERNAME} password sync failed (HTTP ${http})" >&2

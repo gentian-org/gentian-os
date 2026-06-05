@@ -48,6 +48,8 @@ func TestBuildAdminUserScript_IdempotentRedeploy(t *testing.T) {
 	for _, want := range []string{
 		"udm_patch_ok",
 		"sync_admin_password",
+		"Password has been used before",
+		"password already matches OpenBao",
 		"UDM user ${ADMIN_USERNAME} already exists",
 		"user ${ADMIN_USERNAME} password synced",
 		"${ADMIN_PASSWORD}",
