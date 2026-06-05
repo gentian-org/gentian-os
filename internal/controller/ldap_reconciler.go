@@ -2230,9 +2230,9 @@ CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="`)
 	body.WriteString(ouDN)
-	body.WriteString(fmt.Sprintf(`"
+	fmt.Fprintf(&body, `"
 USERS_GRP_DN="cn=users_%s,${OU_POS}"
-ensure_realtime_entry() {`, tenantName))
+ensure_realtime_entry() {`, tenantName)
 	body.WriteString(`
   ENTRY_CN="$1"
   LINK="$2"
