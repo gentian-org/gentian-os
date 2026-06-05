@@ -270,6 +270,15 @@ sequenceDiagram
 Everything else (CR specs, AppProfiles, Compositions, manifests) is
 plaintext-safe and committed to Git.
 
+### 8.1 Matrix service accounts (Element / UVS)
+
+Tenant **users** authenticate via OIDC only (`id.<kernel>/realms/<tenant>`).
+Synapse may still allow **local password login** for internal Matrix service
+accounts (e.g. `@uvs` for the User Verification Service bootstrap job). Those
+passwords live in OpenBao (`matrix_uvs_password`) and are not human credentials.
+Do not set `password_config.enabled: false` on Synapse unless the UVS bootstrap
+path is replaced — see [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §7b.
+
 ## 9. TLS and certificates
 
 Gentian OS terminates TLS at the ingress layer using cert-manager DNS-01
