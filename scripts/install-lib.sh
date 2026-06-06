@@ -2920,6 +2920,31 @@ _ensure_nextcloud_portal_embedding_ingress() {
     success "Nextcloud ingress allows portal.${domain} in frame-ancestors"
 }
 
+# _apply_kernel_manifest_dir applies kernel service manifests from manifest_dir.
+# nubus uses kustomize (configMapGenerator); kubectl apply -f dir/ fails on
+# kustomization.yaml with "no matches for kind Kustomization".
+# mode=all: ConfigMaps, ExternalSecrets, Ingresses, and Release CRs.
+# mode=release: only release.yaml (after all other manifests are current).
+_apply_kernel_manifest_dir() {
+    local manifest_dir="$1"
+    local mode="${2:-all}"
+
+    if [[ -f "${manifest_dir}/kustomization.yaml" ]]; then
+        kubectl apply -k "${manifest_dir}" >/dev/null
+        return 0
+    fi
+
+    if [[ "${mode}" == "release" && -f "${manifest_dir}/release.yaml" ]]; then
+        kubectl apply -f "${manifest_dir}/release.yaml" >/dev/null
+        return 0
+    fi
+
+    while IFS= read -r -d '' f; do
+        kubectl apply -f "${f}" >/dev/null
+    done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
+        ! -name 'kustomization.yaml' -print0 | sort -z)
+}
+
 # =============================================================================
 # reconcile_nextcloud_office — ensure Collabora / richdocuments is configured
 #
@@ -2980,6 +3005,12 @@ reconcile_nextcloud_office() {
         >/dev/null 2>&1 || warn "nextcloud-dev-aio rollout still in progress"
 
     _repair_nextcloud_object_home_mounts
+
+    if kubectl get deployment collabora -n "${ns}" >/dev/null 2>&1; then
+        info "Waiting for collabora rollout (up to 3m)..."
+        kubectl rollout status deployment/collabora -n "${ns}" --timeout=3m \
+            >/dev/null 2>&1 || warn "collabora rollout still in progress"
+    fi
 
     if ! kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
         php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then

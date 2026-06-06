@@ -540,10 +540,10 @@ op_reconcile_releases() {
                     >/dev/null 2>&1; then
                 warn "  ${name}: not found — applying manifest directory"
                 if [[ "${DRY_RUN}" != "1" ]]; then
-                    kubectl apply -f "${manifest_dir}/" >/dev/null
+                    _apply_kernel_manifest_dir "${manifest_dir}" all
                     any_action=1
                 else
-                    info "  [dry-run] Would: kubectl apply -f ${manifest_dir}/"
+                    info "  [dry-run] Would: apply kernel manifests in ${manifest_dir}/"
                 fi
                 continue
             fi
@@ -582,12 +582,7 @@ op_reconcile_releases() {
 
             # Apply manifest dir first so ConfigMaps/ExternalSecrets are current.
             info "  Applying manifest directory (ConfigMaps / ExternalSecrets)..."
-            # Exclude kustomization.yaml — kubectl apply -f dir/ would try to
-            # process it as a plain resource, failing with "no matches for kind".
-            while IFS= read -r -d '' f; do
-                kubectl apply -f "${f}" >/dev/null
-            done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
-                ! -name 'kustomization.yaml' -print0 | sort -z)
+            _apply_kernel_manifest_dir "${manifest_dir}" all
 
             info "  Deleting ${name}..."
             kubectl delete release.helm.crossplane.io/"${name}" \
@@ -606,7 +601,7 @@ op_reconcile_releases() {
             done
 
             info "  Recreating ${name}..."
-            kubectl apply -f "${manifest_dir}/" >/dev/null
+            _apply_kernel_manifest_dir "${manifest_dir}" release
             success "  ${name}: re-reconciled"
             any_action=1
         done
