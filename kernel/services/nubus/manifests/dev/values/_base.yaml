@@ -501,6 +501,9 @@ nubusPortalServer:
     authMode: oidc
     featureToggles:
       windows_enabled: true
+      # nubusNotificationsApi.enabled is false (openDesk default) — keep the portal
+      # frontend from opening /notifications-api/v1/notifications/stream (404).
+      notifications_api: false
   objectStorage:
     auth:
       existingSecret:
