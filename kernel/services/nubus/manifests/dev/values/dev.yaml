@@ -58,6 +58,18 @@ keycloak:
     limits:
       cpu: 1000m
       memory: 2Gi
+  extraVolumes: |
+    - name: gentian-staging-ca
+      secret:
+        secretName: gentian-staging-ca-tls
+        defaultMode: 0444
+  extraVolumeMounts: |
+    - name: gentian-staging-ca
+      mountPath: /opt/keycloak/certs
+      readOnly: true
+  extraEnv: |
+    - name: KC_TRUSTSTORE_PATHS
+      value: /opt/keycloak/certs/ca.crt
 
 nubusGuardian:
   postgresql:
