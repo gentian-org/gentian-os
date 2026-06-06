@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -64,7 +63,7 @@ func TestIngress_NoIngressApps(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "ingress-none"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -123,7 +122,7 @@ func TestIngress_CreatesIngressResource(t *testing.T) {
 	ingressName := fmt.Sprintf("ingress-%s-%s", tenantName, profileName)
 
 	ing := &networkingv1.Ingress{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: ingressName, Namespace: nsName}, ing)
 		return err == nil
 	})
@@ -187,7 +186,7 @@ func TestIngress_CreatesCertificateForDerivedDomain(t *testing.T) {
 
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certManagerCertGVKTest)
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, cert)
 		return err == nil
 	})
@@ -200,7 +199,7 @@ func TestIngress_CreatesCertificateForDerivedDomain(t *testing.T) {
 
 	ingressName := fmt.Sprintf("ingress-%s-%s", tenantName, profileName)
 	ing := &networkingv1.Ingress{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: ingressName, Namespace: nsName}, ing) == nil
 	})
 	wantHost := "meet." + wantDomain
@@ -246,7 +245,7 @@ func TestIngress_CreatesCertificateForTenant(t *testing.T) {
 
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certManagerCertGVKTest)
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: certName, Namespace: nsName}, cert)
 		return err == nil
 	})
@@ -311,7 +310,7 @@ func TestIngress_MultipleApps(t *testing.T) {
 	for _, appName := range profiles {
 		ingName := fmt.Sprintf("ingress-%s-%s", tenantName, appName)
 		ing := &networkingv1.Ingress{}
-		waitFor(t, 15*time.Second, func() bool {
+		waitFor(t, tenantReadyTimeout, func() bool {
 			return testClient.Get(context.Background(), types.NamespacedName{Name: ingName, Namespace: nsName}, ing) == nil
 		})
 	}
@@ -320,7 +319,7 @@ func TestIngress_MultipleApps(t *testing.T) {
 	wildcardCertName := fmt.Sprintf("tenant-%s-wildcard", tenantName)
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certManagerCertGVKTest)
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: wildcardCertName, Namespace: nsName}, cert) == nil
 	})
 }
@@ -355,7 +354,7 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 	wildcardCertName := fmt.Sprintf("tenant-%s-wildcard", tenantName)
 
 	ing := &networkingv1.Ingress{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: ingressName, Namespace: nsName}, ing) == nil
 	})
 
@@ -367,14 +366,14 @@ func TestIngress_DeleteRemovesIngressAndCert(t *testing.T) {
 	go markJobCompleteWhenReady("ldap-ou-delete-ingress-delete", "platform-kernel")
 	go markJobCompleteWhenReady("nc-group-delete-ingress-delete", "platform-kernel")
 
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: ingressName, Namespace: nsName}, &networkingv1.Ingress{})
 		return err != nil
 	})
 
 	certObj := &unstructured.Unstructured{}
 	certObj.SetGroupVersionKind(certManagerCertGVKTest)
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: wildcardCertName, Namespace: nsName}, certObj)
 		return err != nil
 	})

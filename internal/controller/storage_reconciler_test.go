@@ -19,7 +19,6 @@ package controller_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,7 +130,7 @@ func TestStorage_NextcloudGroupAlwaysCreated(t *testing.T) {
 
 	// NC group job must be created even with no apps.
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "nc-group-nc-always", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -199,7 +198,7 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -268,7 +267,7 @@ func TestStorage_CreatesNextcloudGroupJob(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "nc-group-nccreate", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -324,13 +323,13 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 
 	// Phase should be Provisioning while the S3 Job is pending.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "storageready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseProvisioning
 	})
 
 	// Wait for the bucket Job then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "platform-kernel"}, job) == nil
@@ -338,7 +337,7 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markJobComplete(t, "s3-bucket-storageready-s3-app2", "platform-kernel")
 
 	// Phase=Ready and StorageReady=True should follow.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "storageready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -389,7 +388,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	}
 
 	// Wait for setup Jobs to be created to confirm storage reconciler ran.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "platform-kernel"}, job) == nil
@@ -405,7 +404,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 
 	// S3 delete Job should appear.
 	s3DeleteJob := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "platform-kernel"}, s3DeleteJob) == nil
 	})
@@ -415,7 +414,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 
 	// Nextcloud delete Job should appear.
 	ncDeleteJob := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "nc-group-delete-storagedelete", Namespace: "platform-kernel"}, ncDeleteJob) == nil
 	})

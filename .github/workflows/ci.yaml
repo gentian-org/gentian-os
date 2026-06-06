@@ -36,7 +36,7 @@ jobs:
           # internal/controller uses envtest whose watch goroutines are incompatible
           # with the race detector; run it separately without -race.
           go test $(go list ./... | grep -v 'internal/controller') -race -count=1
-          go test ./internal/controller/... -count=1
+          go test ./internal/controller/... -count=1 -parallel 8
 
       - name: go build
         run: go build ./...

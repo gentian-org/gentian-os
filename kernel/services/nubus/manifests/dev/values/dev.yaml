@@ -108,16 +108,18 @@ nubusKeycloakExtensions:
       enabled: true
   proxy:
     ingress:
-      # Allow the Gentian portal to embed Keycloak pages (e.g. OIDC login and
-      # check_session_iframe) in an iframe.  Keycloak's default headers are
-      # X-Frame-Options: SAMEORIGIN and CSP frame-ancestors 'self', both of
-      # which block cross-origin framing.  Strip them and set a permissive
-      # frame-ancestors that includes the portal origin.
+      # Allow the Gentian portal and tenant app origins to embed Keycloak pages
+      # (OIDC login, check_session_iframe). Portal tiles load apps in an iframe;
+      # SSO then loads id.<kernel> inside the app iframe — the immediate parent
+      # is chat.<tenant>.<kernel>, not the portal. CSP only supports one *. label
+      # per host-source, so tenant apps need https://*.<tenant>.<kernel> here.
+      # The gentian-os operator converges this annotation for all Tenant CRs on
+      # reconcile; this file is the Helm baseline (demo tenant on dev clusters).
       annotations:
         nginx.ingress.kubernetes.io/configuration-snippet: |
-          more_clear_headers "X-Frame-Options";
-          more_clear_headers "Content-Security-Policy";
-          more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.desk.gentian.org";
+          proxy_hide_header X-Frame-Options;
+          proxy_hide_header Content-Security-Policy;
+          add_header Content-Security-Policy "frame-ancestors 'self' https://portal.desk.gentian.org https://*.demo.desk.gentian.org https://chat.demo.desk.gentian.org https://matrix.demo.desk.gentian.org" always;
 
 nubusStackDataUms:
   postgresql:

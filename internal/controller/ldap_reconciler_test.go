@@ -51,7 +51,7 @@ func newLDAPProfile(name string) *gentianov1alpha1.AppProfile {
 func markAppUserTemplateComplete(t *testing.T, tenantName string) {
 	t.Helper()
 	jobName := "ldap-app-user-template-" + tenantName
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
@@ -62,7 +62,7 @@ func markAppUserTemplateComplete(t *testing.T, tenantName string) {
 func markAppUserCapabilitiesComplete(t *testing.T, tenantName string) {
 	t.Helper()
 	jobName := "ldap-app-user-capabilities-" + tenantName
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
@@ -93,7 +93,7 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	// Wait for and complete the base LDAP jobs (OU, App User template, admin user)
 	// which are created via ensureLDAPBase and required by identity_reconciler.
 	job := &batchv1.Job{}
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-noldap", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -102,14 +102,14 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	markAppUserTemplateComplete(t, "noldap")
 	markAppUserCapabilitiesComplete(t, "noldap")
 
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-user-noldap", Namespace: "platform-kernel"}, job) == nil
 	})
 	markJobComplete(t, "ldap-admin-user-noldap", "platform-kernel")
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "noldap"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -132,7 +132,7 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	}
 
 	// ensureLDAPBase must have fired the OU Job even though no LDAP apps are installed.
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-noldap", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -163,7 +163,7 @@ func TestLDAP_CreatesOUJob(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-outest", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -208,7 +208,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for OU Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-bindtest", Namespace: "platform-kernel"}, j) == nil
@@ -219,7 +219,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	markAppUserCapabilitiesComplete(t, "bindtest")
 
 	// Wait for admin-user Job (runs before admin-policy), then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-user-bindtest", Namespace: "platform-kernel"}, j) == nil
@@ -227,7 +227,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	markJobComplete(t, "ldap-admin-user-bindtest", "platform-kernel")
 
 	// Wait for admin-policy Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-policy-bindtest", Namespace: "platform-kernel"}, j) == nil
@@ -236,7 +236,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 
 	// Bind account Job should appear after all predecessor Jobs are complete.
 	bindJob := &batchv1.Job{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-bind-bindtest-ldap-app2", Namespace: "platform-kernel"}, bindJob) == nil
 	})
@@ -276,7 +276,7 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for OU Job.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-adminpolicy", Namespace: "platform-kernel"}, j) == nil
@@ -292,7 +292,7 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	markJobComplete(t, "ldap-ou-adminpolicy", "platform-kernel")
 
 	// App User template Job should appear after OU completion.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-app-user-template-adminpolicy", Namespace: "platform-kernel"}, j) == nil
@@ -307,7 +307,7 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	markJobComplete(t, "ldap-app-user-template-adminpolicy", "platform-kernel")
 
 	// App User capabilities Job should appear after App User template completion.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-app-user-capabilities-adminpolicy", Namespace: "platform-kernel"}, j) == nil
@@ -322,7 +322,7 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	markJobComplete(t, "ldap-app-user-capabilities-adminpolicy", "platform-kernel")
 
 	// Admin-user Job should appear after App User capabilities completion.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, j) == nil
@@ -337,7 +337,7 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	markJobComplete(t, "ldap-admin-user-adminpolicy", "platform-kernel")
 
 	// Admin-policy Job should appear after admin-user completion.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-policy-adminpolicy", Namespace: "platform-kernel"}, j) == nil
@@ -375,7 +375,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Mark OU Job complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-ldapready", Namespace: "platform-kernel"}, j) == nil
@@ -386,7 +386,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markAppUserCapabilitiesComplete(t, "ldapready")
 
 	// Mark admin-user Job complete (runs before admin-policy).
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-user-ldapready", Namespace: "platform-kernel"}, j) == nil
@@ -394,7 +394,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markJobComplete(t, "ldap-admin-user-ldapready", "platform-kernel")
 
 	// Mark admin-policy Job complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-policy-ldapready", Namespace: "platform-kernel"}, j) == nil
@@ -402,7 +402,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markJobComplete(t, "ldap-admin-policy-ldapready", "platform-kernel")
 
 	// Wait for bind account Job, then mark it complete.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-bind-ldapready-ldap-app3", Namespace: "platform-kernel"}, j) == nil
@@ -411,7 +411,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 
 	// Wait for LDAPReady=True.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "ldapready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -458,7 +458,7 @@ func TestLDAP_OUNameFromIsolation(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-customou", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -509,7 +509,7 @@ func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	}
 
 	// Wait until the OU Job is created.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-ldapdelete", Namespace: "platform-kernel"}, j) == nil
@@ -523,7 +523,7 @@ func TestLDAP_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	go markJobCompleteWhenReady("keycloak-realm-delete-ldapdelete", "platform-kernel")
 
 	// Expect the OU-deletion cleanup Job.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-delete-ldapdelete", Namespace: "platform-kernel"}, j) == nil
@@ -558,7 +558,7 @@ func TestLDAP_RetainPolicy_PreservesAdminUser(t *testing.T) {
 	}
 
 	// Wait until the OU Job is created (tenant provisioned).
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-ldapretain", Namespace: "platform-kernel"}, j) == nil
@@ -615,7 +615,7 @@ func TestLDAP_RetainPolicy_LocksUsers(t *testing.T) {
 
 	// Complete the LDAP base provisioning chain so the admin user job is marked complete.
 	// The lock job guard requires adminUserJob to be complete before creating ldap-lock-*.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-ldaplocktest", Namespace: "platform-kernel"}, j) == nil
@@ -625,7 +625,7 @@ func TestLDAP_RetainPolicy_LocksUsers(t *testing.T) {
 	markAppUserTemplateComplete(t, "ldaplocktest")
 	markAppUserCapabilitiesComplete(t, "ldaplocktest")
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-admin-user-ldaplocktest", Namespace: "platform-kernel"}, j) == nil
@@ -640,14 +640,14 @@ func TestLDAP_RetainPolicy_LocksUsers(t *testing.T) {
 	go markJobCompleteWhenReady("ldap-lock-ldaplocktest", "platform-kernel")
 
 	// Lock job must be created.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-lock-ldaplocktest", Namespace: "platform-kernel"}, j) == nil
 	})
 
 	// Tenant CR must be gone (finalizer removed after lock job completes).
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: "ldaplocktest"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})

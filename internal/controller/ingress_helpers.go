@@ -28,6 +28,49 @@ const cryptpadSandboxSubDomain = "pad-sandbox"
 // operator must append frame-ancestors, not replace the upstream header.
 const cryptpadMainSubDomain = "pad"
 
+// keycloakSSOAppSubdomains are tenant app ingress prefixes that commonly embed
+// the shared IdP (id.<kernel>) during OIDC — e.g. Element chat framing Keycloak,
+// Synapse matrix handling the OIDC callback.
+var keycloakSSOAppSubdomains = []string{"chat", "matrix", "meet", "projects", "webmail", "pad"}
+
+// keycloakOIDCAncestorOrigins builds space-separated https origins for the
+// Keycloak proxy ingress frame-ancestors policy: kernel portal plus, per tenant
+// effective domain, a wildcard and explicit SSO app hosts.
+func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []string) string {
+	if kernelDomain == "" {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(tenantEffectiveDomains)*(len(keycloakSSOAppSubdomains)+1)+1)
+	var origins []string
+	add := func(origin string) {
+		if origin == "" {
+			return
+		}
+		if _, ok := seen[origin]; ok {
+			return
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	add(fmt.Sprintf("https://portal.%s", kernelDomain))
+	for _, effective := range tenantEffectiveDomains {
+		if effective == "" {
+			continue
+		}
+		add(fmt.Sprintf("https://*.%s", effective))
+		for _, sub := range keycloakSSOAppSubdomains {
+			add(fmt.Sprintf("https://%s.%s", sub, effective))
+		}
+	}
+	return strings.Join(origins, " ")
+}
+
+// keycloakOIDCEmbeddingIngressSnippet returns NGINX directives for the shared
+// Keycloak ingress so portal-embedded apps can frame OIDC login pages.
+func keycloakOIDCEmbeddingIngressSnippet(kernelDomain string, tenantEffectiveDomains []string) string {
+	return frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(kernelDomain, tenantEffectiveDomains))
+}
+
 // portalEmbeddingIngressSnippet returns NGINX directives that allow the shared
 // kernel portal (portal.<kernelDomain>) to embed the app in an iframe.
 func portalEmbeddingIngressSnippet(kernelDomain string) string {

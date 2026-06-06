@@ -19,7 +19,6 @@ package controller_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -123,7 +122,7 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	var claim *unstructured.Unstructured
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		err := testClient.Get(context.Background(),
@@ -194,7 +193,7 @@ func TestApps_MultipleApps(t *testing.T) {
 
 	for _, name := range appNames {
 		n := name
-		waitFor(t, 15*time.Second, func() bool {
+		waitFor(t, tenantReadyTimeout, func() bool {
 			obj := &unstructured.Unstructured{}
 			obj.SetGroupVersionKind(appClaimTestGVK)
 			return testClient.Get(context.Background(),
@@ -228,7 +227,7 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	}
 
 	// Wait for App claim to appear.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		return testClient.Get(context.Background(),
@@ -245,7 +244,7 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	go markJobCompleteWhenReady("nc-group-delete-del-tenant", "platform-kernel")
 
 	// App claim should be removed.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		err := testClient.Get(context.Background(),
@@ -290,7 +289,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	// Wait for both App claims to appear in the tenant namespace.
 	for _, name := range []string{"keep-app", "remove-app"} {
 		n := name
-		waitFor(t, 15*time.Second, func() bool {
+		waitFor(t, tenantReadyTimeout, func() bool {
 			obj := &unstructured.Unstructured{}
 			obj.SetGroupVersionKind(appClaimTestGVK)
 			return testClient.Get(context.Background(),
@@ -317,7 +316,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	}
 
 	// The removed app's claim should be cleaned up.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		err := testClient.Get(context.Background(),
@@ -360,7 +359,7 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for the app's App claim to appear in the tenant namespace.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		return testClient.Get(context.Background(),
@@ -402,7 +401,7 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	}
 
 	// Wait for reconcile to complete (the managed app claim remains).
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		return testClient.Get(context.Background(),

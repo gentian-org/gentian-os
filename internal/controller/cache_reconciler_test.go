@@ -19,7 +19,6 @@ package controller_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -142,7 +141,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -201,7 +200,7 @@ func TestCache_CreatesMemcachedApplication(t *testing.T) {
 
 	app := &unstructured.Unstructured{}
 	app.SetGroupVersionKind(argocdAppGVK)
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "memcached-mccreate", Namespace: "argocd"}, app) == nil
 	})
@@ -249,13 +248,13 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 
 	// Phase should be Provisioning while the Redis ACL Job is pending.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "cacheready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseProvisioning
 	})
 
 	// Wait for the ACL Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "platform-kernel"}, job) == nil
@@ -263,7 +262,7 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	markJobComplete(t, "redis-acl-cacheready-redis-app2", "platform-kernel")
 
 	// Phase=Ready and CacheReady=True should follow.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "cacheready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -315,12 +314,12 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	}
 
 	// Wait for setup resources to confirm the cache reconciler ran.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "platform-kernel"}, job) == nil
 	})
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		app := &unstructured.Unstructured{}
 		app.SetGroupVersionKind(argocdAppGVK)
 		return testClient.Get(context.Background(),
@@ -338,7 +337,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 
 	// Redis delete Job should appear.
 	deleteJob := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "redis-acl-delete-cachedelete-redis-app3", Namespace: "platform-kernel"}, deleteJob) == nil
 	})
@@ -347,7 +346,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	}
 
 	// Memcached Application CR should be gone.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		app := &unstructured.Unstructured{}
 		app.SetGroupVersionKind(argocdAppGVK)
 		err := testClient.Get(context.Background(),

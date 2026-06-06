@@ -19,7 +19,6 @@ package controller_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -141,7 +140,7 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Step 1: role Job must be created first.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
@@ -158,7 +157,7 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 	// Step 2: mark role Job complete; DB CR should then be created in platform-kernel.
 	markJobComplete(t, "pg-role-dbcreate-pg-app1", "platform-kernel")
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "platform-kernel"}, db) == nil
 	})
@@ -203,7 +202,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 
 	// Step 1: role Job must be created immediately (before Database CR).
 	roleJob := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
 	})
@@ -219,7 +218,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 	// Mark role Job as complete; Database CR should now be created in platform-kernel.
 	markJobComplete(t, "pg-role-rolejob-pg-app2", "platform-kernel")
 
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "platform-kernel"}, db) == nil
 	})
@@ -265,13 +264,13 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 
 	// Phase should be Provisioning (waiting for DB)
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "dbready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseProvisioning
 	})
 
 	// Step 1: wait for role Job then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "platform-kernel"}, job) == nil
@@ -279,7 +278,7 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 	markJobComplete(t, "pg-role-dbready-pg-app3", "platform-kernel")
 
 	// Step 2: wait for Database CR in platform-kernel then mark it ready.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		return testClient.Get(context.Background(),
@@ -288,7 +287,7 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 	patchDatabaseCRReady(t, "db-dbready-pg-app3", "platform-kernel")
 
 	// Now Phase=Ready and DatabaseReady=True
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "dbready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -330,7 +329,7 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	}
 
 	// Step 1: wait for role Job then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-dbdelete-pg-app4", Namespace: "platform-kernel"}, job) == nil
@@ -338,7 +337,7 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	markJobComplete(t, "pg-role-dbdelete-pg-app4", "platform-kernel")
 
 	// Step 2: wait for Database CR to be created in platform-kernel.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		return testClient.Get(context.Background(),
@@ -354,7 +353,7 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	go markJobCompleteWhenReady("ldap-ou-delete-dbdelete", "platform-kernel")
 
 	// Database CR should be deleted from platform-kernel.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		err := testClient.Get(context.Background(),
@@ -405,7 +404,7 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		t.Fatalf("create orphaned Database CR: %v", err)
 	}
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		updated := &gentianov1alpha1.Tenant{}
 		if err := testClient.Get(context.Background(), types.NamespacedName{Name: "dborphan"}, updated); err != nil {
 			return false
@@ -424,7 +423,7 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", "platform-kernel")
 	go markJobCompleteWhenReady("ldap-ou-delete-dborphan", "platform-kernel")
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		err := testClient.Get(context.Background(),

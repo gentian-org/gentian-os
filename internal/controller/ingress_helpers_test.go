@@ -130,6 +130,25 @@ func TestEnsurePortalEmbeddingAnnotationsReplacesUpstreamCSPForElement(t *testin
 	}
 }
 
+func TestKeycloakOIDCEmbeddingIngressSnippet(t *testing.T) {
+	snippet := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"})
+	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
+		t.Fatalf("expected kernel portal origin, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, "https://*.demo.desk.gentian.org") {
+		t.Fatalf("expected tenant wildcard origin, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, "https://chat.demo.desk.gentian.org") {
+		t.Fatalf("expected explicit chat origin for Element SSO, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, "https://matrix.demo.desk.gentian.org") {
+		t.Fatalf("expected explicit matrix origin for Synapse OIDC, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, `proxy_hide_header Content-Security-Policy`) {
+		t.Fatal("Keycloak IdP ingress must replace upstream CSP (not append)")
+	}
+}
+
 func TestBuildAppIngressInjectsKernelPortalCSP(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},

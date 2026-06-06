@@ -46,10 +46,16 @@ import (
 // testClient is the shared client used by all tests in this package.
 var testClient client.Client
 
-// tenantReadyTimeout is the default envtest wait for TenantPhaseReady. Identity
-// and LDAP base jobs are auto-completed asynchronously; under t.Parallel() load
-// 10s is too tight on CI runners.
-const tenantReadyTimeout = 20 * time.Second
+// envtestWaitTimeout is the default poll deadline for controller envtest waits.
+// Tests share one manager; under t.Parallel() load on CI runners, shorter
+// deadlines flake when many tenants reconcile and extra Keycloak/LDAP Jobs run.
+const envtestWaitTimeout = 30 * time.Second
+
+// tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
+const tenantReadyTimeout = envtestWaitTimeout
+
+// jobAppearTimeout is an alias for waits on Job creation or intermediate conditions.
+const jobAppearTimeout = envtestWaitTimeout
 
 // ldapManualTestTenants lists tenant names whose LDAP base jobs must not be
 // auto-completed because ldap_reconciler_test.go asserts provisioning order.
@@ -296,7 +302,7 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	ns := &corev1.Namespace{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-acme"}, ns) == nil
 	})
 
@@ -373,7 +379,7 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	rq := &corev1.ResourceQuota{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-gamma"}, rq) == nil
 	})
 
@@ -401,7 +407,7 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	lr := &corev1.LimitRange{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-delta"}, lr) == nil
 	})
 
@@ -433,7 +439,7 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	np := &networkingv1.NetworkPolicy{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-epsilon"}, np) == nil
 	})
 
@@ -470,7 +476,7 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "missing-profile"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseDegraded
 	})
@@ -520,7 +526,7 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	ns := &corev1.Namespace{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "zeta-custom"}, ns) == nil
 	})
 
@@ -545,7 +551,7 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 	}
 
 	// Wait for namespace to exist
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-retainer"}, &corev1.Namespace{}) == nil
 	})
 
@@ -557,7 +563,7 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 	// For Retain policy deleteIdentity is a no-op: retainer has no apps so no realm was provisioned.
 
 	// Wait for Tenant CR to be gone (finalizer removed)
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: "retainer"}, &gentianov1alpha1.Tenant{})
 		return err != nil // NotFound = gone
 	})
@@ -585,7 +591,7 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	}
 
 	// Wait for namespace to be created
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-destroyer"}, &corev1.Namespace{}) == nil
 	})
 
@@ -599,7 +605,7 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	go markJobCompleteWhenReady("nc-group-delete-destroyer", "platform-kernel")
 
 	// Wait for Tenant CR to be gone
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: "destroyer"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})

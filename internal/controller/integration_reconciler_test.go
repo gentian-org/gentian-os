@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -88,7 +87,7 @@ func TestBindings_NoIntegrations(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "bind-none"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -148,7 +147,7 @@ func TestBindings_ProviderPresent(t *testing.T) {
 	ibName := fmt.Sprintf("%s--bind-consumer-app--file-store", tenantName)
 
 	ib := &gentianov1alpha1.IntegrationBinding{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: ibName, Namespace: nsName}, ib)
 		return err == nil
 	})
@@ -192,7 +191,7 @@ func TestBindings_ProviderAbsent(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -255,7 +254,7 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 
 	// Wait for IntegrationBinding to be created.
 	ib := &gentianov1alpha1.IntegrationBinding{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(), types.NamespacedName{Name: ibName, Namespace: nsName}, ib) == nil
 	})
 
@@ -279,7 +278,7 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 	}
 
 	// IntegrationBinding should be garbage-collected.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(), types.NamespacedName{Name: ibName, Namespace: nsName}, &gentianov1alpha1.IntegrationBinding{})
 		return err != nil
 	})

@@ -594,6 +594,7 @@ spec:
             {{- $uvsVals := dict
                 "global" $globalVals
                 "imagePullSecrets" $imagePull
+                "fullnameOverride" "opendesk-matrix-user-verification-service"
                 "replicaCount" 1
                 "extraEnvVars" (list
                   (dict "name" "UVS_ACCESS_TOKEN" "valueFrom" (dict "secretKeyRef" (dict "name" "opendesk-matrix-user-verification-service-account" "key" "access_token")))

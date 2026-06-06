@@ -19,7 +19,6 @@ package controller_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -71,11 +70,11 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(ctx, tenantB) })
 
 	npA := &networkingv1.NetworkPolicy{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-a"}, npA) == nil
 	})
 	npB := &networkingv1.NetworkPolicy{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-b"}, npB) == nil
 	})
 
@@ -104,7 +103,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
 
 	np := &networkingv1.NetworkPolicy{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-ingress"}, np) == nil
 	})
 
@@ -155,7 +154,7 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
 
 	np := &networkingv1.NetworkPolicy{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-iso-egress"}, np) == nil
 	})
 
@@ -216,7 +215,7 @@ func TestIsolation_ResourceQuotaAllFields(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
 
 	rq := &corev1.ResourceQuota{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-iso-quota"}, rq) == nil
 	})
 
@@ -251,7 +250,7 @@ func TestIsolation_LimitRangeDefaults(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(ctx, tenant) })
 
 	lr := &corev1.LimitRange{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-iso-limits"}, lr) == nil
 	})
 
@@ -315,17 +314,17 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	}
 
 	// Wait for namespace and initial resources.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, &corev1.Namespace{}) == nil
 	})
 
 	np := &networkingv1.NetworkPolicy{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-del-full"}, np) == nil
 	})
 
 	// Verify mail resources: DKIM secret + Postfix CM entry + SMTP credentials.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		cm := &corev1.ConfigMap{}
 		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
 			return false
@@ -335,12 +334,12 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	})
 
 	dkimSecret := &corev1.Secret{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, dkimSecret) == nil
 	})
 
 	smtpSecret := &corev1.Secret{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "smtp-credentials-del-full", Namespace: "tenant-del-full"}, smtpSecret) == nil
 	})
 
@@ -359,7 +358,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	go markJobCompleteWhenReady("redis-acl-delete-del-full-del-pgapp", "platform-kernel")
 
 	// Wait for Tenant CR to be gone (finalizer ran).
-	waitFor(t, 30*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(ctx, types.NamespacedName{Name: "del-full"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})
@@ -374,7 +373,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		"redis-acl-delete-del-full-del-pgapp",
 	} {
 		t.Run("purges "+jobName, func(t *testing.T) {
-			waitFor(t, 5*time.Second, func() bool {
+			waitFor(t, jobAppearTimeout, func() bool {
 				job := &batchv1.Job{}
 				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
 				return k8serrors.IsNotFound(err)
@@ -434,16 +433,16 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	}
 
 	// Wait for namespace + NetworkPolicy + mail infrastructure.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-ret-full"}, &corev1.Namespace{}) == nil
 	})
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{
 			Name: "tenant-isolation", Namespace: "tenant-ret-full",
 		}, &networkingv1.NetworkPolicy{}) == nil
 	})
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		cm := &corev1.ConfigMap{}
 		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
 			return false
@@ -460,7 +459,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	// Retain policy: deleteIdentity is a no-op for tenants with no OIDC apps (ret-app has none).
 
 	// Wait for Tenant CR to be gone (finalizer completed).
-	waitFor(t, 20*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(ctx, types.NamespacedName{Name: "ret-full"}, &gentianov1alpha1.Tenant{})
 		return err != nil
 	})

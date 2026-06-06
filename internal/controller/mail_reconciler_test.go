@@ -47,7 +47,7 @@ func TestMail_Disabled(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "maildisabled"}, updated)
 		return findCondition(updated, "MailReady") != nil
 	})
@@ -95,7 +95,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 
 	// Wait for MailReady=True.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "mailself"}, updated)
 		cond := findCondition(updated, "MailReady")
 		return cond != nil && cond.Status == metav1.ConditionTrue
@@ -108,7 +108,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 
 	// DKIM key Secret must be in the kernel namespace (accessible to shared Rspamd).
 	dkimSecret := &corev1.Secret{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "dkim-mailself", Namespace: "platform-kernel"}, dkimSecret) == nil
 	})
@@ -122,7 +122,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 
 	// Postfix virtual-domains ConfigMap must contain the tenant domain.
 	postfixCM := &corev1.ConfigMap{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM) == nil
 	})
@@ -132,7 +132,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 
 	// Dovecot domains ConfigMap must contain the tenant domain.
 	dovecotCM := &corev1.ConfigMap{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM) == nil
 	})
@@ -142,7 +142,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 
 	// SMTP credentials Secret must be in the tenant namespace.
 	smtpSecret := &corev1.Secret{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "smtp-credentials-mailself", Namespace: "tenant-mailself"}, smtpSecret) == nil
 	})
@@ -195,7 +195,7 @@ func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
 
 	// Wait for MailReady=True to confirm provisioning is complete.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "mailnoapps"}, updated)
 		cond := findCondition(updated, "MailReady")
 		return cond != nil && cond.Status == metav1.ConditionTrue
@@ -233,7 +233,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 
 	// Wait for MailReady=True.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "maildefault"}, updated)
 		cond := findCondition(updated, "MailReady")
 		return cond != nil && cond.Status == metav1.ConditionTrue
@@ -244,7 +244,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 
 	// Confirm the tenant is registered in the shared Postfix ConfigMap.
 	postfixCM := &corev1.ConfigMap{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM) == nil
 	})
@@ -255,7 +255,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 
 	// Confirm the tenant is registered in the shared Dovecot ConfigMap.
 	dovecotCM := &corev1.ConfigMap{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM) == nil
 	})
@@ -286,7 +286,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 
 	// Wait for Postfix ConfigMap entry.
 	postfixCM := &corev1.ConfigMap{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err != nil {
 			return false
@@ -300,7 +300,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 
 	// SMTP credentials Secret must be in the tenant namespace.
 	smtpSecret := &corev1.Secret{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "smtp-credentials-mailrelay", Namespace: "tenant-mailrelay"}, smtpSecret) == nil
 	})
@@ -338,7 +338,7 @@ func TestMail_External_MissingConfig(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "mailextnotconf"}, updated)
 		cond := findCondition(updated, "MailReady")
 		return cond != nil && cond.Reason == "MissingConfig"
@@ -389,7 +389,7 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	dst := &corev1.Secret{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "smtp-credentials-mailexternal", Namespace: "tenant-mailexternal"}, dst) == nil
 	})
@@ -402,7 +402,7 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 	}
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "mailexternal"}, updated)
 		cond := findCondition(updated, "MailReady")
 		return cond != nil && cond.Status == metav1.ConditionTrue

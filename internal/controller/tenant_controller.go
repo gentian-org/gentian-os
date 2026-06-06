@@ -500,6 +500,12 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
 	}
 
+	// 14e. Keycloak IdP ingress — allow portal-embedded tenant apps to frame OIDC.
+	// Non-blocking; baseline CSP is also in nubus Helm values (see ingress_helpers).
+	if err := r.ensureKeycloakIDPEmbeddingIngress(ctx); err != nil {
+		logger.Error(err, "ensure Keycloak IdP frame-ancestors (non-blocking, will retry)")
+	}
+
 	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName

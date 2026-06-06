@@ -360,6 +360,14 @@ the portal embeds CryptPad in a window and CryptPad embeds the sandbox. Apps wit
 extra NGINX snippet needs (e.g. CryptPad `sub_filter`) keep those lines;
 frame-ancestors is still injected on each ingress according to its role.
 
+**IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
+`chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
+Keycloak proxy ingress must allow both `https://portal.<kernel_domain>` and
+`https://*.<tenant-effective-domain>` (CSP allows only one `*.` label, so
+`https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). Baseline CSP
+lives in nubus Helm values; the operator converges the Keycloak proxy ingress
+annotation when tenants are added or removed.
+
 ---
 
 ## 7. Secrets and Credentials

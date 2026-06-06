@@ -19,7 +19,6 @@ package controller_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -122,7 +121,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mariadb-setup-mariacreate-maria-app1", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -195,13 +194,13 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 
 	// Phase should be Provisioning while setup Job is pending.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "mariaready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseProvisioning
 	})
 
 	// Wait for setup Job then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mariadb-setup-mariaready-maria-app2", Namespace: "platform-kernel"}, job) == nil
@@ -209,7 +208,7 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 	markJobComplete(t, "mariadb-setup-mariaready-maria-app2", "platform-kernel")
 
 	// Phase=Ready and MariaDBReady=True should follow.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "mariaready"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -251,7 +250,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	}
 
 	// Wait for the setup Job to be created first.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mariadb-setup-mariadelete-maria-app3", Namespace: "platform-kernel"}, job) == nil
@@ -267,7 +266,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 
 	// A delete Job should be created in the kernel namespace.
 	deleteJob := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "mariadb-delete-mariadelete-maria-app3", Namespace: "platform-kernel"}, deleteJob) == nil
 	})

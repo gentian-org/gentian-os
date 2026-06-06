@@ -132,7 +132,7 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for realm Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-noidc", Namespace: "platform-kernel"}, j) == nil
@@ -140,7 +140,7 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	markJobComplete(t, "keycloak-realm-noidc", "platform-kernel")
 
 	// Wait for admin Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-admin-noidc", Namespace: "platform-kernel"}, j) == nil
@@ -148,7 +148,7 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	markJobComplete(t, "keycloak-admin-noidc", "platform-kernel")
 
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "noidc"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
@@ -196,7 +196,7 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	job := &batchv1.Job{}
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-realmtest", Namespace: "platform-kernel"}, job) == nil
 	})
@@ -241,7 +241,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for realm Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-clienttest", Namespace: "platform-kernel"}, j) == nil
@@ -249,7 +249,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	markJobComplete(t, "keycloak-realm-clienttest", "platform-kernel")
 
 	// Wait for admin Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-admin-clienttest", Namespace: "platform-kernel"}, j) == nil
@@ -257,7 +257,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	markJobComplete(t, "keycloak-admin-clienttest", "platform-kernel")
 
 	// OIDC browser-flow Job must complete before client Jobs are created.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-oidc-browser-clienttest", Namespace: "platform-kernel"}, j) == nil
@@ -266,7 +266,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 
 	// Client Job should be created after browser flow is complete.
 	clientJob := &batchv1.Job{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-client-clienttest-oidc-app2", Namespace: "platform-kernel"}, clientJob) == nil
 	})
@@ -304,7 +304,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Mark realm Job complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-allready", Namespace: "platform-kernel"}, j) == nil
@@ -312,14 +312,14 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markJobComplete(t, "keycloak-realm-allready", "platform-kernel")
 
 	// Mark admin Job complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-admin-allready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-admin-allready", "platform-kernel")
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-oidc-browser-allready", Namespace: "platform-kernel"}, j) == nil
@@ -327,7 +327,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markJobComplete(t, "keycloak-oidc-browser-allready", "platform-kernel")
 
 	// Wait for client Job, then mark it complete.
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-client-allready-oidc-app3", Namespace: "platform-kernel"}, j) == nil
@@ -336,14 +336,14 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 
 	// Wait for kernel-realm admin re-enable and LDAP sync Jobs (after LDAP
 	// admin-user completes via ensureLDAPBase / test auto-completion).
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-kernel-enable-allready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-kernel-enable-allready", "platform-kernel")
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-kernel-ldap-sync-allready", Namespace: "platform-kernel"}, j) == nil
@@ -351,7 +351,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	markJobComplete(t, "keycloak-kernel-ldap-sync-allready", "platform-kernel")
 
 	// Wait for the Keycloak LDAP sync Job, then mark it complete.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-ldap-sync-allready", Namespace: "platform-kernel"}, j) == nil
@@ -360,7 +360,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 
 	// Wait for IdentityReady=True and Phase=Ready.
 	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "allready"}, updated)
 		for _, c := range updated.Status.Conditions {
 			if c.Type == "IdentityReady" && c.Status == metav1.ConditionTrue {
@@ -415,7 +415,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Realm Job should be created first.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-admintest", Namespace: "platform-kernel"}, j) == nil
@@ -431,7 +431,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	markJobComplete(t, "keycloak-realm-admintest", "platform-kernel")
 
 	// Now the admin Job should appear.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob) == nil
 	})
@@ -461,7 +461,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
 
 	// OIDC browser-flow Job should appear; client Job must still wait.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-oidc-browser-admintest", Namespace: "platform-kernel"}, j) == nil
@@ -474,7 +474,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	markJobComplete(t, "keycloak-oidc-browser-admintest", "platform-kernel")
 
 	// Client Job should now be created.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil
 	})
@@ -505,7 +505,7 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	}
 
 	// Wait until the realm Job is created (tenant has been reconciled at least once).
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-identdelete", Namespace: "platform-kernel"}, j) == nil
@@ -517,7 +517,7 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	}
 
 	// Expect a realm-deletion cleanup Job.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-delete-identdelete", Namespace: "platform-kernel"}, j) == nil
@@ -550,7 +550,7 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 	}
 
 	// Wait until the realm Job is created.
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-identretain", Namespace: "platform-kernel"}, j) == nil
@@ -563,7 +563,7 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 	go markJobCompleteWhenReady("keycloak-realm-disable-identretain", "platform-kernel")
 
 	// Expect a realm-disable Job (not a delete Job).
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-disable-identretain", Namespace: "platform-kernel"}, j) == nil
