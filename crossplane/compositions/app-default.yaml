@@ -63,6 +63,19 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
+            # Gentian Jitsi OIDC/JWT overlays (portal iframe SSO, kernel IdP broker).
+            # Published by install-lib upsert_gentian_jitsi_oidc_overlays_configmap().
+            - kind: ConfigMap
+              into: jitsiOidcOverlays
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: jitsi-oidc-overlays
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -119,6 +132,11 @@ spec:
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
+
+            {{- /* ── Load Jitsi OIDC overlay files (optional until install upserts CM) */}}
+            {{- $jitsiOverlayRes  := dig "jitsiOidcOverlays" list $extraRes }}
+            {{- $jitsiOverlayCM   := default dict (index $jitsiOverlayRes 0) }}
+            {{- $jitsiOverlayData := dig "data" dict $jitsiOverlayCM }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
@@ -521,6 +539,52 @@ spec:
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
+
+            {{- /* ── Jitsi: mount Gentian OIDC/JWT overlays over chart ConfigMaps ── */}}
+            {{- if eq $app "jitsi" }}
+            {{- if eq (len $jitsiOverlayData) 0 }}
+              {{- fail "gentian-jitsi-oidc-overlays ConfigMap missing — run gentian-os install/update (upsert_gentian_jitsi_oidc_overlays_configmap)" }}
+            {{- end }}
+            {{- $jitsiOidcCM := printf "%s-oidc-overlays" $xrName }}
+            {{- $jitsiWebOverlayItems := list
+                (dict "key" "body.html" "path" "body.html")
+                (dict "key" "oidc-adapter.html" "path" "oidc-adapter.html")
+                (dict "key" "oidc-redirect.html" "path" "oidc-redirect.html")
+                (dict "key" "plugin.head.html" "path" "plugin.head.html")
+            }}
+            {{- $jitsiWebOverlayMounts := list
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "body.html" "mountPath" "/usr/share/jitsi-meet/body.html")
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "plugin.head.html" "mountPath" "/usr/share/jitsi-meet/plugin.head.html")
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-adapter.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-adapter.html")
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-redirect.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-redirect.html")
+            }}
+            {{- $jitsiOverlayVol := dict
+                "name" "gentian-jitsi-oidc-overlays"
+                "configMap" (dict "name" $jitsiOidcCM "items" $jitsiWebOverlayItems)
+            }}
+            {{- $jitsiAdapterOverlayVol := dict
+                "name" "gentian-jitsi-adapter-overlay"
+                "configMap" (dict "name" $jitsiOidcCM "items" (list (dict "key" "context.ts" "path" "context.ts")))
+            }}
+            {{- $jitsiAdapterOverlayMount := dict
+                "name" "gentian-jitsi-adapter-overlay"
+                "subPath" "context.ts"
+                "mountPath" "/app/context.ts"
+            }}
+            {{- $jitsiWebExtra := default dict (dig "jitsi" dict $extraVals) }}
+            {{- $jitsiWeb := default dict (dig "web" dict $jitsiWebExtra) }}
+            {{- $jitsiWeb = mergeOverwrite $jitsiWeb (dict
+                "extraVolumes" (concat (default list $jitsiWeb.extraVolumes) (list $jitsiOverlayVol))
+                "extraVolumeMounts" (concat (default list $jitsiWeb.extraVolumeMounts) $jitsiWebOverlayMounts)
+            ) }}
+            {{- $jitsiWebExtra = mergeOverwrite $jitsiWebExtra (dict "web" $jitsiWeb) }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "jitsi" $jitsiWebExtra
+                "extraVolumes" (concat (default list $extraVals.extraVolumes) (list $jitsiAdapterOverlayVol))
+                "extraVolumeMounts" (concat (default list $extraVals.extraVolumeMounts) (list $jitsiAdapterOverlayMount))
+            ) }}
+            {{- end }}
+
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
             {{- if $acmeStaging }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
@@ -627,6 +691,36 @@ spec:
                       deletionPolicy: Retain
                     data:
                       {{ toYaml $esData | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Emit Jitsi OIDC overlay ConfigMap (tenant copy of cluster overlays) */}}
+            {{- if and (eq $app "jitsi") (gt (len $jitsiOverlayData) 0) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-overlays-cm
+              name: {{ $xrName }}-oidc-overlays-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ printf "%s-oidc-overlays" $xrName }}
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/app: jitsi
+                      gentianos.io/tenant: {{ $tenant }}
+                  data:
+                    {{- range $key, $val := $jitsiOverlayData }}
+                    {{ $key }}: |
+                      {{- $val | nindent 6 }}
+                    {{- end }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}

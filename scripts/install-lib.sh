@@ -1117,6 +1117,28 @@ EOF
     success "gentian-cluster-config ConfigMap upserted."
 }
 
+# upsert_gentian_jitsi_oidc_overlays_configmap — cluster-wide Jitsi OIDC/JWT file
+# overlays consumed by app-default composition (portal iframe SSO, kernel IdP broker).
+upsert_gentian_jitsi_oidc_overlays_configmap() {
+    local overlay_dir="${SCRIPT_DIR}/overlays/jitsi"
+    if [[ ! -d "${overlay_dir}" ]]; then
+        warn "Jitsi OIDC overlay directory missing (${overlay_dir}); skipping"
+        return
+    fi
+
+    info "Upserting gentian-jitsi-oidc-overlays ConfigMap..."
+    kubectl create configmap gentian-jitsi-oidc-overlays \
+        -n crossplane-system \
+        --from-file="${overlay_dir}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - \
+            gentianos.io/config-type=jitsi-oidc-overlays \
+            app.kubernetes.io/managed-by=gentian-os-install \
+            --dry-run=client -o yaml \
+        | kubectl apply -f - >/dev/null
+    success "gentian-jitsi-oidc-overlays ConfigMap upserted."
+}
+
 # =============================================================================
 # Crossplane platform compositions (not per-AppProfile)
 # =============================================================================

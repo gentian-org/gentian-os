@@ -622,6 +622,7 @@ apply_cluster_xr() {
     info "  ${mr_count} managed resource(s) reconciled."
 
     upsert_gentian_cluster_config
+    upsert_gentian_jitsi_oidc_overlays_configmap
 }
 
 # =============================================================================
