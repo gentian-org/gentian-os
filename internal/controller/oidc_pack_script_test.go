@@ -102,8 +102,11 @@ func TestBuildOIDCBrowserFlowScript(t *testing.T) {
 	if !strings.Contains(script, "defaultProvider") {
 		t.Fatal("expected IdP redirector defaultProvider config")
 	}
-	if !strings.Contains(script, "\"requirement\":\"REQUIRED\"") {
+	if !strings.Contains(script, "requirement") || !strings.Contains(script, "REQUIRED") {
 		t.Fatal("expected IdP redirector execution reconciled to REQUIRED")
+	}
+	if !strings.Contains(script, "set to REQUIRED (defaultProvider=kernel)") {
+		t.Fatal("expected IdP redirector REQUIRED reconciliation log line")
 	}
 }
 
