@@ -13,8 +13,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "12"
     nginx.org/websocket-services: "cryptpad"
     nginx.ingress.kubernetes.io/configuration-snippet: |
-      # yamllint disable-line rule:line-length
-      add_header Content-Security-Policy "frame-ancestors 'self' https://pad.desk.gentian.org https://files.desk.gentian.org https://portal.desk.gentian.org" always;
+      add_header Content-Security-Policy "frame-ancestors 'self' https://pad.desk.gentian.org \
+        https://files.desk.gentian.org https://portal.desk.gentian.org" always;
 spec:
   ingressClassName: nginx
   tls:
