@@ -91,6 +91,11 @@ data:
                   > /var/www/html/config/trusted-domains.config.php
                 printf '<?php\n$CONFIG=["allow_local_remote_servers"=>true];\n' \
                   > /var/www/html/config/allow-local-servers.config.php
+                # Collabora WOPI callbacks use the public HTTPS URL; without
+                # overwriteprotocol, reverse-proxy detection can yield http://
+                # WOPI/settings URLs and Collabora fails to parse viewsettings.
+                printf '<?php\n$CONFIG=["overwriteprotocol"=>"https","overwritehost"=>"files.desk.gentian.org"];\n' \
+                  > /var/www/html/config/overwrite.config.php
                 waited=0; max=120
                 while [ "$waited" -lt "$max" ] && ! [ -f /var/www/html/config/config.php ]; do
                   sleep 2; waited=$((waited+2))
