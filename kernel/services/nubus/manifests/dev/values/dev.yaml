@@ -116,6 +116,11 @@ nubusKeycloakExtensions:
       # The gentian-os operator converges this annotation for all Tenant CRs on
       # reconcile; this file is the Helm baseline (demo tenant on dev clusters).
       annotations:
+        # server-snippet: strip X-Frame-Options for broker /endpoint (microk8s may
+        # miss proxy_hide_header in location-only configuration-snippet).
+        nginx.ingress.kubernetes.io/server-snippet: |
+          proxy_hide_header X-Frame-Options;
+          proxy_hide_header Content-Security-Policy;
         nginx.ingress.kubernetes.io/configuration-snippet: |
           proxy_hide_header X-Frame-Options;
           proxy_hide_header Content-Security-Policy;

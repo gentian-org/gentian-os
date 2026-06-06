@@ -742,15 +742,15 @@ if [ "${HTTP}" = "404" ]; then
     -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false}'
+    -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false,"browserSecurityHeaders":`+keycloakBrowserSecurityHeadersJSON+`}'
   echo "realm %s created"
 else
   curl -sf \
     -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true}'
-  echo "realm %s already exists, ensured enabled=true (was HTTP ${HTTP})"
+    -d '{"realm":"%s","enabled":true,"browserSecurityHeaders":`+keycloakBrowserSecurityHeadersJSON+`}'
+  echo "realm %s already exists, ensured enabled=true and browserSecurityHeaders (was HTTP ${HTTP})"
 fi
 
 # Register LDAP User Storage Provider for per-tenant user federation.

@@ -65,10 +65,23 @@ func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []s
 	return strings.Join(origins, " ")
 }
 
+// keycloakOIDCIngressServerSnippet strips upstream framing headers at the server
+// block (microk8s ingress sometimes misses proxy_hide_header in location only).
+const nginxServerSnippetAnnotation = "nginx.ingress.kubernetes.io/server-snippet"
+
+func keycloakOIDCIngressServerSnippet() string {
+	return `proxy_hide_header X-Frame-Options;
+proxy_hide_header Content-Security-Policy;`
+}
+
 // keycloakOIDCEmbeddingIngressSnippet returns NGINX directives for the shared
 // Keycloak ingress so portal-embedded apps can frame OIDC login pages.
 func keycloakOIDCEmbeddingIngressSnippet(kernelDomain string, tenantEffectiveDomains []string) string {
-	return frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(kernelDomain, tenantEffectiveDomains))
+	// Repeat hide directives in the location block; browsers enforce X-Frame-Options
+	// before CSP frame-ancestors, so SAMEORIGIN from Keycloak blocks broker endpoints
+	// even when frame-ancestors lists chat.<tenant>.
+	return keycloakOIDCIngressServerSnippet() + "\n" +
+		frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(kernelDomain, tenantEffectiveDomains))
 }
 
 // portalEmbeddingIngressSnippet returns NGINX directives that allow the shared

@@ -505,6 +505,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if err := r.ensureKeycloakIDPEmbeddingIngress(ctx); err != nil {
 		logger.Error(err, "ensure Keycloak IdP frame-ancestors (non-blocking, will retry)")
 	}
+	// 14f. Disable Keycloak X-Frame-Options on kernel + tenant realms (broker /endpoint).
+	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
+		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
+	}
 
 	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")

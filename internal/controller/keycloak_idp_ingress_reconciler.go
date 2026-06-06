@@ -66,10 +66,13 @@ func (r *TenantReconciler) ensureKeycloakIDPEmbeddingIngress(ctx context.Context
 	for k, v := range existing.Annotations {
 		annotations[k] = v
 	}
-	if annotations[nginxConfigurationSnippetAnnotation] == desiredSnippet {
+	desiredServerSnippet := keycloakOIDCIngressServerSnippet()
+	if annotations[nginxConfigurationSnippetAnnotation] == desiredSnippet &&
+		annotations[nginxServerSnippetAnnotation] == desiredServerSnippet {
 		return nil
 	}
 	annotations[nginxConfigurationSnippetAnnotation] = desiredSnippet
+	annotations[nginxServerSnippetAnnotation] = desiredServerSnippet
 
 	patch := client.MergeFrom(existing.DeepCopy())
 	existing.Annotations = annotations
