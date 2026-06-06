@@ -716,11 +716,12 @@ spec:
                       app.kubernetes.io/managed-by: gentian-os
                       gentianos.io/app: jitsi
                       gentianos.io/tenant: {{ $tenant }}
-                  data:
-                    {{- range $key, $val := $jitsiOverlayData }}
-                    {{ $key }}: |
-                      {{- $val | nindent 6 }}
-                    {{- end }}
+                  binaryData:
+                    body.html: {{ index $jitsiOverlayData "body.html" | b64enc | quote }}
+                    context.ts: {{ index $jitsiOverlayData "context.ts" | b64enc | quote }}
+                    oidc-adapter.html: {{ index $jitsiOverlayData "oidc-adapter.html" | b64enc | quote }}
+                    oidc-redirect.html: {{ index $jitsiOverlayData "oidc-redirect.html" | b64enc | quote }}
+                    plugin.head.html: {{ index $jitsiOverlayData "plugin.head.html" | b64enc | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
