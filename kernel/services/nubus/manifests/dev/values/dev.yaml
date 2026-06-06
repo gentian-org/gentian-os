@@ -119,7 +119,9 @@ nubusKeycloakExtensions:
         nginx.ingress.kubernetes.io/configuration-snippet: |
           proxy_hide_header X-Frame-Options;
           proxy_hide_header Content-Security-Policy;
-          add_header Content-Security-Policy "frame-ancestors 'self' https://portal.desk.gentian.org https://*.demo.desk.gentian.org https://chat.demo.desk.gentian.org https://matrix.demo.desk.gentian.org https://meet.demo.desk.gentian.org" always;
+          add_header Content-Security-Policy "frame-ancestors 'self' https://portal.desk.gentian.org \
+            https://*.demo.desk.gentian.org https://chat.demo.desk.gentian.org \
+            https://matrix.demo.desk.gentian.org https://meet.demo.desk.gentian.org" always;
 
 nubusStackDataUms:
   postgresql:
