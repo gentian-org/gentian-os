@@ -13,8 +13,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "12"
     nginx.org/websocket-services: "cryptpad"
     nginx.ingress.kubernetes.io/configuration-snippet: |
-      add_header Content-Security-Policy "frame-ancestors 'self' https://pad.desk.gentian.org \
-        https://files.desk.gentian.org https://portal.desk.gentian.org" always;
+      # yamllint disable-line rule:line-length
+      # Do NOT line-wrap this header: nginx passes backslashes literally and
+      # breaks CryptPad sandbox iframe embedding (diagram editor).
+      add_header Content-Security-Policy "frame-ancestors 'self' https://pad.desk.gentian.org https://files.desk.gentian.org https://portal.desk.gentian.org" always;
 spec:
   ingressClassName: nginx
   tls:

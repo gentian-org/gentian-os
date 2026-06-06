@@ -226,14 +226,14 @@ fi
 
 EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-  | tr ',' '\n' | grep -F '"providerId":"identity-provider-redirector"' | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  | jq -r 'map(select(.providerId == "identity-provider-redirector"))[0].id // empty')
 if [ -z "${EXEC_ID}" ]; then
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
     -d "{\"provider\":\"identity-provider-redirector\",\"requirement\":\"REQUIRED\"}"
   EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    | tr ',' '\n' | grep -F '"providerId":"identity-provider-redirector"' | head -1 | sed 's/.*"id":"\([^"]*\)".*/\1/')
+    | jq -r 'map(select(.providerId == "identity-provider-redirector"))[0].id // empty')
 fi
 if [ -n "${EXEC_ID}" ]; then
   curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
