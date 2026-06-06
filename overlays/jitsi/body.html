@@ -177,8 +177,39 @@ SPDX-License-Identifier: Apache-2.0
   // This script silently refreshes the portal session by using a hidden iframe
   // and uses this session while fetching the navigation data.
   // ---------------------------------------------------------------------------
-  let ICS = "";
-  let PORTAL = "";
+  // ---------------------------------------------------------------------------
+  // Get fallback URLs based on current hostname
+  // ---------------------------------------------------------------------------
+  function getFallbackUrls() {
+    try {
+      const host = window.location.hostname;
+      let portal = "https://portal.desk.gentian.org";
+      let ics = "https://ics.desk.gentian.org";
+
+      const parts = host.split(".");
+      if (parts.length >= 3 && parts[0] === "meet") {
+        if (parts[1] !== "desk" && parts.length >= 4) {
+          const clusterDomain = parts.slice(2).join(".");
+          portal = `https://portal.${clusterDomain}`;
+          ics = `https://ics.${clusterDomain}`;
+        } else {
+          const clusterDomain = parts.slice(1).join(".");
+          portal = `https://portal.${clusterDomain}`;
+          ics = `https://ics.${clusterDomain}`;
+        }
+      }
+      return { portal, ics };
+    } catch {
+      return {
+        portal: "https://portal.desk.gentian.org",
+        ics: "https://ics.desk.gentian.org"
+      };
+    }
+  }
+
+  const fallbacks = getFallbackUrls();
+  let ICS = fallbacks.ics;
+  let PORTAL = fallbacks.portal;
   let ARE_LISTENERS_ADDED = false;
 
   // ---------------------------------------------------------------------------
@@ -188,10 +219,14 @@ SPDX-License-Identifier: Apache-2.0
     try {
       const url = "/static/url-ics";
       const res = await fetch(url);
-
-      ICS = await res.text();
+      if (!res.ok) throw new Error("not ok");
+      const text = await res.text();
+      if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) {
+        throw new Error("invalid content");
+      }
+      ICS = text.trim();
     } catch {
-      // Do nothing
+      // Do nothing, keep fallback
     }
   }
 
@@ -202,10 +237,14 @@ SPDX-License-Identifier: Apache-2.0
     try {
       const url = "/static/url-portal";
       const res = await fetch(url);
-
-      PORTAL = await res.text();
+      if (!res.ok) throw new Error("not ok");
+      const text = await res.text();
+      if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) {
+        throw new Error("invalid content");
+      }
+      PORTAL = text.trim();
     } catch {
-      // Do nothing
+      // Do nothing, keep fallback
     }
   }
 
