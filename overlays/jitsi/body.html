@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
     }
     hash = encodeURIComponent(hash);
 
-    window.top.location =
+    window.location =
       `/oidc/auth?path=${path}&search=${search}&hash=${hash}`;
 
     try {
@@ -585,7 +585,7 @@ SPDX-License-Identifier: Apache-2.0
   // Main
   // ---------------------------------------------------------------------------
   // Add topbar if this is a standalone window (not an iframe)
-  if (!self.name || self.name === "tab_realtime_videoconference") {
+  if (window.self === window.top && (!self.name || self.name === "tab_realtime_videoconference")) {
     addTopbar();
   }
 </script>

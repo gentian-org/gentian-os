@@ -16,7 +16,7 @@ SPDX-License-Identifier: Apache-2.0
           window.location.hash.substring(1),
         );
 
-        window.top.location = `/oidc/redirect` +
+        window.location = `/oidc/redirect` +
           `?path=${path}&search=${search}&hash=${hash}`;
       }
     </script>
