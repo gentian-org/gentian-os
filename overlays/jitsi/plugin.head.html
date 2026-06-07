@@ -94,7 +94,7 @@ SPDX-License-Identifier: Apache-2.0
   var oidc = params.get("oidc");
   var jwt = params.get("jwt");
   if (oidc === "authorized" && jwt) {
-    window.location.replace(
+    window.top.location.replace(
       window.location.pathname +
         "?jwt=" + encodeURIComponent(jwt) +
         "#config.prejoinConfig.enabled=false"
