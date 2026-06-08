@@ -300,11 +300,12 @@ spec:
             {{- /* ── Resolve non-sensitive values (domain + kernel substitution) ── */}}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
             {{- $extraVals := dict }}
+            {{- $kernelDomain := "" }}
             {{- if $pSpec.extraValues }}
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
-            {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
+            {{- $kernelDomain = dig "KERNEL_DOMAIN" "" $ksCMData }}
             {{- $turnHost     := dig "TURN_HOST"         "" $ksCMData }}
             {{- $turnPort     := dig "TURN_PORT"         "3478" $ksCMData }}
             {{- $turnTLSHost  := dig "TURN_TLS_HOST"     "" $ksCMData }}
@@ -358,7 +359,9 @@ spec:
             {{- end }}
             {{- $postLogout := list }}
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
-            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- $postLogoutUri := $uri | replace "${TENANT_DOMAIN}" $domain | replace "${TENANT_ID}" $tenant }}
+            {{- if $kernelDomain }}{{ $postLogoutUri = $postLogoutUri | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
+            {{- $postLogout = append $postLogout $postLogoutUri }}
             {{- end }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
