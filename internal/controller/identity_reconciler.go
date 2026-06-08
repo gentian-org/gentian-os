@@ -228,27 +228,6 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	return ctrl.Result{}, nil
 }
 
-// collectOIDCApps returns the profile names of apps in tenant.spec.apps that
-// have kernelRequirements.identity.oidc enabled.
-func (r *TenantReconciler) collectOIDCApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	var oidcApps []string
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue // profile not yet installed; will retry on next reconcile
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.OIDC != nil {
-			oidcApps = append(oidcApps, app.Profile)
-		}
-	}
-	return oidcApps, nil
-}
-
 // ensureRealmJob creates the Keycloak realm Job if absent.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
