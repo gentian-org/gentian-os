@@ -1,0 +1,26 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "gentian-app.fullname" . }}
+rules:
+  - apiGroups: ["gentianos.io"]
+    resources: ["apps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gentianos.io"]
+    resources: ["appcatalogues", "appprofiles"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "gentian-app.fullname" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "gentian-app.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gentian-app.fullname" . }}
