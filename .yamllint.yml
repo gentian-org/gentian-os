@@ -7,6 +7,7 @@ ignore: |
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/
+  export/**/chart/templates/
   kernel/manifests/flux-crds/
   crossplane/compositions/
   kernel/services/nextcloud-management/manifests/
