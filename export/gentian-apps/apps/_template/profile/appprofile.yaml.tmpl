@@ -1,0 +1,50 @@
+# Replace APP_ID, display metadata, and chart coordinates before committing to gentian-apps/profiles/.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: APP_ID
+  labels:
+    gentianos.io/profile-name: APP_ID
+spec:
+  displayName: "My Gentian App"
+  description: "Describe what this app does for tenant admins."
+
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: "APP_ID"
+        name: "My Gentian App"
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://app.${TENANT_DOMAIN}/oauth/callback"
+    database:
+      engine: postgresql
+      databasePerTenant: true
+
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: APP_ID
+    version: "0.1.0"
+
+  valueMapping:
+    oidc:
+      issuerKey: "oidc.issuer"
+      clientIdKey: "oidc.clientId"
+      clientSecretKey: "oidc.clientSecret"
+    database:
+      hostKey: "database.host"
+      portKey: "database.port"
+      nameKey: "database.name"
+      userKey: "database.user"
+      passwordKey: "database.password"
+
+  ingress:
+    subDomain: app
+    servicePort: 80
+    tlsEnabled: true
+
+  browserProxy:
+    - path: api
+      target: "http://APP_ID-api:8000/api"
+
+  deploymentMethod: crossplane

@@ -1,0 +1,74 @@
+name: Apps CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "apps/**"
+      - "profiles/**"
+      - ".github/workflows/apps-ci.yaml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "apps/**"
+      - "profiles/**"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_ORG: gentian-org
+
+jobs:
+  build-app-store:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/app-store/backend
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/app-store-api:0.1.0
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/app-store-api:${{ github.sha }}
+
+      - name: Build and push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/app-store/frontend
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/app-store-web:0.1.0
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/app-store-web:${{ github.sha }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package and push chart
+        if: github.event_name != 'pull_request'
+        run: |
+          helm package apps/app-store/chart -d /tmp
+          helm push /tmp/app-store-0.1.0.tgz oci://${{ env.REGISTRY }}/${{ env.IMAGE_ORG }}/charts
+
+  validate-profiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate AppProfile YAML
+        run: |
+          for f in profiles/*.yaml; do
+            echo "Checking $f"
+            python3 -c "import yaml; yaml.safe_load(open('$f'))"
+          done

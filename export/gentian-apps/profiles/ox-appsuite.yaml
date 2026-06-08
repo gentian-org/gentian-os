@@ -1,0 +1,290 @@
+# AppProfile — OX App Suite (groupware)
+#
+# Source charts (three-stage deployment):
+#   1. opendesk-open-xchange-bootstrap v4.0.2
+#      oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-open-xchange-bootstrap
+#      One-shot DB migration + context creation. Must complete before appsuite starts.
+#   2. appsuite-public-sector v2.26.32  ← primary chart declared below
+#      oci://registry.opencode.de/bmi/opendesk/components/supplier/open-xchange/charts-mirror
+#      Main OX App Suite deployment.
+#   3. ox-connector v0.34.0
+#      oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
+#      Syncs Nubus LDAP users into OX contexts.
+#
+# TODO (orchestrator): OX requires three sequential Helm releases (bootstrap → appsuite →
+# connector). The AppProfile CRD supports a single chart reference. The orchestrator's
+# Composition for ox-appsuite must deploy all three and gate them on the previous wave
+# completing (bootstrap wait: true before appsuite starts; connector after appsuite
+# SOAP endpoint is available). Until that Composition exists, OX is deployed at the
+# kernel level via kernel/services/ox-appsuite/manifests/dev/.
+#
+# Secret inventory:
+#   Kernel-provided (injected via valueMapping):
+#     oidc_client_secret       → appsuite.core-mw.properties.com.openexchange.oidc.clientSecret
+#     database password        → global.mysql.auth.password + readPassword
+#     database root password   → global.mysql.auth.rootPassword  (bootstrap only)
+#     s3 secret key            → appsuite.core-mw.propertiesFiles[filestore-s3.properties].secretKey
+#     ldap bind password       → appsuite.core-mw.propertiesFiles[ldapauth.properties].bindDNPassword
+#     redis auth password      → appsuite.core-mw.redis.auth.password
+#   App-internal (5) → appSecrets:
+#     cookie_hash_salt             → global.appsuite.cookieHashSalt
+#     share_crypt_key              → global.appsuite.shareCryptKey
+#     sessiond_encryption_key      → global.appsuite.sessiondEncryptionKey
+#     ox_admin_password            → appsuite.core-mw.masterPassword + openXchange.auth.password
+#     connector_provisioning_api   → provisioningApi.auth.password (ox-connector)
+#
+# Portal tile activation:
+#   stack-data-ums seeds the groupware portal tiles (swp.groupware_mail,
+#   swp.groupware_calendar, swp.groupware_contacts, swp.groupware_tasks) with
+#   activated: false when apps.oxAppSuite.enabled: false (the base default).
+#   The orchestrator creates per-tenant tiles via spec.portalTiles (below)
+#   linked to the tenant ingress URL and the managed-by-attribute-Groupware group.
+#
+# Upstream bug note:
+#   32-ox-connector-opendesk_on.yaml sends globaladdressbookdisabled: True
+#   (Python boolean) which UDM REST API rejects with 422. After OX is deployed,
+#   ox-connector-fix-jobs.yaml (ArgoCD PostSync hook) patches this out of the
+#   opendesk_standard LDAP access profile and the ox-connector PVC.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: ox-appsuite
+  labels:
+    gentianos.io/profile-name: ox-appsuite
+spec:
+  displayName: "OX App Suite"
+  description: "Open-source groupware suite providing webmail, calendar, contacts, and tasks with Keycloak SSO and LDAP user sync."
+  logo: "data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiBmaWxsPSIjMDAzQjhFIj4KICA8dGl0bGU+T1ggQXBwIFN1aXRlPC90aXRsZT4KICA8cGF0aCBkPSJNNi41IDRDNC41NjcgNCAzIDUuNTY3IDMgNy41djlDMyAxOC40MzMgNC41NjcgMjAgNi41IDIwaDExYzEuOTMzIDAgMy41LTEuNTY3IDMuNS0zLjV2LTlDMjEgNS41NjcgMTkuNDMzIDQgMTcuNSA0aC0xMXptMCAxLjVoMTFjMS4xMDUgMCAyIC44OTUgMiAydi43MmwtNy41IDQuNjg4TDQuNSA4LjIyVjcuNWMwLTEuMTA1Ljg5NS0yIDItMnpNNC41IDkuOTdsNy4xNzggNC40ODdhLjc1Ljc1IDAgMDAuNjQ0IDBMMTkuNSA5Ljk3VjE2LjVjMCAxLjEwNS0uODk1IDItMiAyaC0xMWMtMS4xMDUgMC0yLS44OTUtMi0yVjkuOTd6Ii8+Cjwvc3ZnPgo="
+  compositionRef: app-ox
+
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: "opendesk-oxappsuite"
+        name: "OX App Suite"
+        accessType: PUBLIC
+        redirectUris:
+          - "https://webmail.${TENANT_DOMAIN}/appsuite/api/oidc/auth"
+          - "https://webmail.${TENANT_DOMAIN}/appsuite/api/oidc/logout"
+      ldap:
+        search: true
+        sync: true
+        interval: "1h"
+    database:
+      engine: mariadb
+      databasePerTenant: true
+      allowDynamicDatabaseCreation: true
+    storage:
+      s3:
+        bucketPerTenant: true
+    cache:
+      engine: redis
+    mail:
+      smtp:
+        auth: plain
+        port: 587
+      imap:
+        port: 143
+
+  provides:
+    - name: groupware
+      protocol: http
+
+  optionalIntegrations:
+    - contract: central-navigation
+      provider: portal
+      capabilities:
+        - navigation:register
+
+  # One portal tile per OX sub-app.  The orchestrator creates a UDM portal
+  # entry (swp.{name}_{tenant}) for each tile and links it into the
+  # od.applications category so users see deep-linked launchers in gentian-ui.
+  portalTiles:
+    - name: ox-mail
+      displayName:
+        de_DE: "E-Mail"
+        en_US: "Mail"
+      linkSuffix: "#app=io.ox/mail"
+      linkTarget: newwindow
+      allowedGroup: "managed-by-attribute-Groupware"
+    - name: ox-calendar
+      displayName:
+        de_DE: "Kalender"
+        en_US: "Calendar"
+      linkSuffix: "#app=io.ox/calendar"
+      linkTarget: newwindow
+      allowedGroup: "managed-by-attribute-Groupware"
+    - name: ox-contacts
+      displayName:
+        de_DE: "Adressbuch"
+        en_US: "Contacts"
+      linkSuffix: "#app=io.ox/contacts"
+      linkTarget: newwindow
+      allowedGroup: "managed-by-attribute-Groupware"
+    - name: ox-tasks
+      displayName:
+        de_DE: "Aufgaben"
+        en_US: "Tasks"
+      linkSuffix: "#app=io.ox/tasks"
+      linkTarget: newwindow
+      allowedGroup: "managed-by-attribute-Groupware"
+
+  chart:
+    repository: "oci://registry.opencode.de/bmi/opendesk/components/supplier/open-xchange/charts-mirror"
+    name: appsuite-public-sector
+    version: "2.26.32"
+
+  deploymentMethod: crossplane
+
+  valueMapping:
+    oidc:
+      clientSecretKey: "appsuite.core-mw.properties.com\\.openexchange\\.oidc\\.clientSecret"
+    database:
+      nameKey: "global.mysql.database"
+      readNameKey: "global.mysql.readDatabase"
+      userKey: "global.mysql.auth.user"
+      readUserKey: "global.mysql.auth.readUser"
+      passwordKey: "global.mysql.auth.password"
+    s3:
+      secretKeyKey: "appsuite.core-mw.propertiesFiles[/opt/open-xchange/etc/filestore-s3\\.properties].com\\.openexchange\\.filestore\\.s3\\.ox-filestore-s3\\.secretKey"
+    cache:
+      passwordKey: "appsuite.core-mw.redis.auth.password"
+    ldap:
+      bindPasswordKey: "appsuite.core-mw.propertiesFiles[/opt/open-xchange/etc/ldapauth\\.properties].bindDNPassword"
+
+  appSecrets:
+    - name: cookie_hash_salt
+      valuePath: "global.appsuite.cookieHashSalt"
+    - name: share_crypt_key
+      valuePath: "global.appsuite.shareCryptKey"
+    - name: sessiond_encryption_key
+      valuePath: "global.appsuite.sessiondEncryptionKey"
+    - name: ox_admin_password
+      valuePath: "appsuite.core-mw.masterPassword"
+    - name: connector_provisioning_api_password
+      valuePath: "provisioningApi.auth.password"
+
+  ingress:
+    subDomain: webmail
+    serviceName: appsuite
+    servicePort: 80
+    ingressClassName: "nginx"
+    tlsEnabled: true
+    # TLS: operator uses per-tenant DNS-01 wildcard (clusterIssuer field unused)
+    # Portal iframe CSP (frame-ancestors) is injected by the operator (app-profile-guide §6).
+
+  extraValues:
+    fullnameOverride: "appsuite"
+    global:
+      # App zone only — all OIDC endpoints below use id.${KERNEL_DOMAIN} explicitly.
+      domain: "${TENANT_DOMAIN}"
+      hostname: "webmail.${TENANT_DOMAIN}"
+      mysql:
+        host: "${MYSQL_HOST}"
+        readHost: "${MYSQL_HOST}"
+      appsuite:
+        cookieHashSalt: "${cookie_hash_salt}"
+        shareCryptKey: "${share_crypt_key}"
+        sessiondEncryptionKey: "${sessiond_encryption_key}"
+
+    appsuite:
+      appsuite-toolkit:
+        enabled: false
+      switchboard:
+        enabled: false
+        jwtSecret:
+          enabled: false
+        appsuiteSecret:
+          enabled: false
+      office-web:
+        enabled: false
+      plugins-ui:
+        enabled: false
+      istio:
+        enabled: false
+      core-mw:
+        masterAdmin: "admin"
+        serverName: "oxserver"
+        replicaCount: 1
+        redis:
+          enabled: true
+          mode: "standalone"
+          hosts:
+            - "${REDIS_HOST}:6379"
+          auth:
+            enabled: true
+            username: ""
+        asConfig:
+          default:
+            oidcLogin: true
+            oidcPath: "/oidc/"
+        packages:
+          status:
+            open-xchange-oidc: "enabled"
+            open-xchange-filestore-s3: "enabled"
+            open-xchange-authentication-masterpassword: "disabled"
+            open-xchange-authentication-oauth: "disabled"
+            open-xchange-authentication-database: "disabled"
+            open-xchange-authentication-ldap: "disabled"
+            open-xchange-oauth-provider: "enabled"
+        properties:
+          com.openexchange.oidc.enabled: "true"
+          com.openexchange.oidc.startDefaultBackend: "true"
+          com.openexchange.oidc.autologinCookieMode: "ox_direct"
+          com.openexchange.oidc.backchannelLogoutEnabled: "true"
+          com.openexchange.oidc.ssoLogout: "true"
+          com.openexchange.oidc.clientId: "opendesk-oxappsuite"
+          com.openexchange.oidc.contextLookupClaim: "context"
+          com.openexchange.oidc.contextLookupNamePart: "full"
+          com.openexchange.oidc.userLookupClaim: "opendesk_username"
+          com.openexchange.oidc.userLookupNamePart: "full"
+          com.openexchange.oidc.enablePasswordGrant: "true"
+          com.openexchange.oidc.passwordGrantUserNamePart: "local-part"
+          com.openexchange.oidc.opAuthorizationEndpoint: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}/protocol/openid-connect/auth"
+          com.openexchange.oidc.opIssuer: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}"
+          com.openexchange.oidc.opJwkSetEndpoint: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}/protocol/openid-connect/certs"
+          com.openexchange.oidc.opLogoutEndpoint: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}/protocol/openid-connect/logout"
+          com.openexchange.oidc.opTokenEndpoint: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}/protocol/openid-connect/token"
+          com.openexchange.oidc.rpRedirectURIAuth: "https://webmail.${TENANT_DOMAIN}/appsuite/api/oidc/auth"
+          com.openexchange.oidc.rpRedirectURILogout: "https://portal.${KERNEL_DOMAIN}"
+          com.openexchange.oidc.rpRedirectURIPostSSOLogout: "https://webmail.${TENANT_DOMAIN}/appsuite/api/oidc/logout"
+          com.openexchange.oauth.provider.enabled: "true"
+          com.openexchange.oauth.provider.mode: "expect_jwt"
+          com.openexchange.oauth.provider.allowedIssuer: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}"
+          com.openexchange.oauth.provider.contextLookupClaim: "context"
+          com.openexchange.oauth.provider.contextLookupNamePart: "full"
+          com.openexchange.oauth.provider.userLookupClaim: "opendesk_username"
+          com.openexchange.oauth.provider.userLookupNamePart: "full"
+          com.openexchange.oauth.provider.jwt.jwksUri: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}/protocol/openid-connect/certs"
+          com.openexchange.mail.authType: "xoauth2"
+          com.openexchange.mail.loginSource: "name"
+          com.openexchange.mail.mailServer: "mail.${TENANT_DOMAIN}"
+          com.openexchange.mail.mailServerSource: "global"
+          com.openexchange.mail.transport.authType: "xoauth2"
+          com.openexchange.mail.transportServer: "${SMTP_HOST}"
+          com.openexchange.mail.transportServerSource: "global"
+          com.openexchange.mail.filter.server: "${IMAP_HOST}"
+          com.openexchange.mail.filter.loginType: "global"
+          com.openexchange.mail.filter.credentialSource: "mail"
+          com.openexchange.mail.filter.preferredSaslMech: "XOAUTH2"
+          com.openexchange.imap.enableTls: "true"
+          com.openexchange.imap.requireTls: "false"
+          com.openexchange.noreply.address: "noreply@${TENANT_DOMAIN}"
+          com.openexchange.user.enforceUniqueDisplayName: "false"
+          com.openexchange.folderstorage.database.preferDisplayName: "false"
+          com.openexchange.secret.secretSource: "\"<user-id> + '@' + <context-id> + '/' + <random>\""
+          com.openexchange.capability.public-sector: "true"
+          com.openexchange.capability.public-sector-navigation: "true"
+        propertiesFiles:
+          /opt/open-xchange/etc/filestore-s3.properties:
+            com.openexchange.filestore.s3.ox-filestore-s3.endpoint: "${S3_ENDPOINT}"
+            com.openexchange.filestore.s3.ox-filestore-s3.bucketName: "openxchange-${TENANT_ID}"
+            com.openexchange.filestore.s3.ox-filestore-s3.accessKey: "openxchange_${TENANT_ID}"
+            com.openexchange.filestore.s3.ox-filestore-s3.pathStyleAccess: "true"
+          /opt/open-xchange/etc/ldapauth.properties:
+            java.naming.provider.url: "ldap://${LDAP_HOST}/ou=users,${LDAP_BASE_DN}"
+            bindDN: "${LDAP_BIND_DN}"
+      ingress:
+        enabled: false
+        dav:
+          enabled: false

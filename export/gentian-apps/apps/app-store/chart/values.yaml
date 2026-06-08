@@ -1,0 +1,39 @@
+nameOverride: app-store
+tenantId: demo
+tenantNamespace: tenant-demo
+
+api:
+  image:
+    repository: ghcr.io/gentian-org/app-store-api
+    tag: "0.1.0"
+  replicaCount: 1
+
+web:
+  image:
+    repository: ghcr.io/gentian-org/app-store-web
+    tag: "0.1.0"
+  replicaCount: 1
+
+ingress:
+  enabled: true
+  className: nginx
+  subDomain: store
+  tlsEnabled: true
+
+existingSecret:
+  name: app-store-secrets
+
+auth:
+  disabled: false
+
+installMode: gitops
+
+gentian:
+  deploymentsRepo: https://github.com/gentian-org/gentian-deployments
+  deploymentsPath: /data/gentian-deployments
+  appsRepo: https://github.com/gentian-org/gentian-apps
+  appsBranch: main
+
+gitOps:
+  enabled: true
+  existingSecret: app-store-git-credentials

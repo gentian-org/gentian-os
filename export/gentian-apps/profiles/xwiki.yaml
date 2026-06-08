@@ -1,0 +1,390 @@
+# AppProfile — XWiki (wiki and knowledge management)
+#
+# Source chart: oci://registry.opencode.de/bmi/opendesk/components/supplier/xwiki/charts-mirror
+#   xwiki v1.4.4
+# Value paths verified against:
+#   opendesk/helmfile/apps/xwiki/values.yaml.gotmpl
+# Chart version from: opendesk/helmfile/environments/default/charts.yaml.gotmpl
+# Image from:         opendesk/helmfile/environments/default/images.yaml.gotmpl
+#
+# Secret inventory:
+#   Kernel-provided (4):
+#     oidc_client_secret  → customConfigs."xwiki.properties"."oidc.secret"
+#                           (set_sensitive path: customConfigs.xwiki\.properties.oidc\.secret)
+#     db_password         → externalDB.password
+#     smtp_password       → properties["property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.password"]
+#     ldap_bind_password  → customConfigs."xwiki.cfg"."xwiki.authentication.ldap.bind_pass"
+#                           (set_sensitive path: customConfigs.xwiki\.cfg.xwiki\.authentication\.ldap\.bind_pass)
+#   App-internal (0):
+#     None — all credentials are kernel-provisioned.
+#
+# Design notes:
+#   XWiki authenticates users via the OIDC authenticator extension. The client type
+#   is CONFIDENTIAL (client_secret_basic method) because XWiki's OIDC plugin runs
+#   server-side and can keep the client secret. The client identifier is
+#   "opendesk-xwiki" in the per-tenant Keycloak realm (${TENANT_ID}).
+#   Note: unlike OpenProject/OX, XWiki does NOT use backchannel logout; it uses
+#   RP-Initiated Logout (oidc.logoutMechanism: rpInitiated).
+#
+#   LDAP sync uses the per-tenant bind account uid=ldapsearch_xwiki,cn=users,<base_dn>
+#   provisioned by the LDAP reconciler (Inc 4). Non-secret parameters
+#   (${LDAP_HOST}, ${LDAP_BASE_DN}) are substituted by the operator.
+#   The bind password comes from OpenBao via valueMapping.ldap.bindPasswordKey.
+#
+#   Database: PostgreSQL only (the openDesk default since v1.2.0). The chart's
+#   externalDB.host field accepts a combined "hostname:port" or bare "hostname"
+#   (JDBC defaults to port 5432). valueMapping.database.hostKey injects the
+#   hostname; the JDBC driver uses the default PostgreSQL port 5432.
+#
+#   Persistence: XWiki stores attachments on a PVC (not S3). The default size is
+#   10Gi; override per-tenant via App.spec.config.extraValues.persistence.size.
+#
+#   xwiki.properties keys that contain literal "${}" expressions
+#   (e.g. oidc.user.nameFormater: "${oidc.user.opendesk_username._clean._lowerCase}")
+#   are XWiki's own internal template expressions — they are NOT operator placeholders.
+#   The operator substitutes only its known placeholder names (TENANT_DOMAIN,
+#   TENANT_ID, LDAP_HOST, etc.) and must leave unknown ${...} tokens intact.
+#
+#   Central navigation (workplaceServices.portalSecret) is wired by the
+#   central-navigation IntegrationBinding when Nubus is present.
+#   The Collabora WOPI office integration is wired by the office-editor
+#   IntegrationBinding when Collabora is present.
+#
+#   Value paths use dot-escaped notation for the Helm --set-sensitive flag:
+#   "xwiki.cfg" and "xwiki.properties" are YAML map keys that contain literal
+#   dots. Escaped as "xwiki\.cfg" / "xwiki\.properties" in the set path.
+#
+#   The chart uses direct Helm value injection (.Values.*) → Pattern B.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: xwiki
+  labels:
+    gentianos.io/profile-name: xwiki
+spec:
+  displayName: "XWiki"
+  description: "Structured wiki and knowledge management platform with OIDC authentication and LDAP user/group sync."
+  logo: "data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMDI1RThDIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+WFdpa2k8L3RpdGxlPjxwYXRoIGQ9Ik0xOSAzSDVhMiAyIDAgMCAwLTIgMnYxNGEyIDIgMCAwIDAgMiAyaDE0YTIgMiAwIDAgMCAyLTJWNWEyIDIgMCAwIDAtMi0yem0tMSAxNkg2VjVoMTJ2MTR6bS0yLTlIOFY4aDh2MnptMCA0SDh2LTJoOHYyem0tMyA0SDh2LTJoNXYyeiIvPjwvc3ZnPg=="
+
+  kernelRequirements:
+    identity:
+      oidc:
+        # CONFIDENTIAL client — XWiki's OIDC plugin runs server-side and keeps the
+        # client secret. Method: client_secret_basic (set in xwiki.properties below).
+        clientId: "opendesk-xwiki"
+        name: "XWiki"
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://wiki.${TENANT_DOMAIN}/*"
+        postLogoutRedirectUris:
+          - "https://wiki.${TENANT_DOMAIN}/"
+        # XWiki uses RP-Initiated Logout, not backchannel logout.
+        # No backchannelLogoutUrl needed.
+      ldap:
+        # Per-tenant LDAP search account provisioned by the LDAP init Job on
+        # first app install; sync account provisioned by the LDAP reconciler.
+        # Credentials are written to OpenBao and injected via valueMapping.ldap.
+        search: true
+        sync: true
+        interval: "5m"
+    database:
+      engine: postgresql
+      databasePerTenant: true
+    mail:
+      smtp:
+        auth: plain
+        port: 587
+
+  provides:
+    - name: wiki
+      protocol: http-json
+
+  optionalIntegrations:
+    - contract: central-navigation
+      provider: portal
+      capabilities:
+        - navigation:register
+    - contract: office-editor
+      provider: collabora
+      capabilities:
+        - wopi:edit
+
+  portalTiles:
+    - name: xwiki
+      displayName:
+        de_DE: "Wissen"
+        en_US: "Wiki"
+      linkTarget: newwindow
+      allowedGroup: "App Users"
+
+  chart:
+    repository: "oci://registry.opencode.de/bmi/opendesk/components/supplier/xwiki/charts-mirror"
+    name: xwiki
+    version: "1.4.4"
+
+  deploymentMethod: crossplane
+
+  valueMapping:
+    oidc:
+      # Dot-escaped path: "xwiki.properties" is the YAML map key (literal dot);
+      # "oidc.secret" is the xwiki.properties config key inside that block.
+      clientSecretKey: 'customConfigs.xwiki\.properties.oidc\.secret'
+    database:
+      # externalDB.host accepts a bare hostname; JDBC defaults to port 5432.
+      hostKey: "externalDB.host"
+      nameKey: "externalDB.database"
+      userKey: "externalDB.user"
+      passwordKey: "externalDB.password"
+    smtp:
+      # XWiki properties map key — bracket notation for the key with special chars.
+      passwordKey: 'properties[property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.password]'
+    ldap:
+      # Dot-escaped path: "xwiki.cfg" is the YAML map key; the rest is the
+      # xwiki.cfg config key (with literal dots, escaped for Helm --set).
+      bindPasswordKey: 'customConfigs.xwiki\.cfg.xwiki\.authentication\.ldap\.bind_pass'
+
+  # No appSecrets — all credentials are kernel-provisioned (oidc, db, smtp, ldap).
+
+  # Operator ingress — chart-managed ingress disabled below (ingress.enabled: false).
+  # Portal iframe CSP (frame-ancestors) is injected by the operator (app-profile-guide §6).
+  ingress:
+    subDomain: "wiki"
+    serviceName: "xwiki"
+    servicePort: 80
+    ingressClassName: "nginx"
+    tlsEnabled: true
+    # TLS: operator uses per-tenant DNS-01 wildcard (clusterIssuer field unused)
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "100M"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+
+  # BrowserProxy routes expose the XWiki REST API to the shell via a CORS-safe
+  # server-side proxy. The shell forwards the user's bearer token to XWiki,
+  # which validates it via the OIDC authenticator extension.
+  browserProxy:
+    - path: api
+      # Forwards /api/apps/xwiki/api/** → http://xwiki.{namespace}.svc/rest/
+      target: "http://xwiki.{namespace}.svc/rest/"
+      authMode: forward-bearer
+      stripPrefix: true
+
+  # Default values aligned with opendesk/helmfile/apps/xwiki/values.yaml.gotmpl.
+  # ${TENANT_DOMAIN}, ${TENANT_ID} substituted by the operator at deploy time.
+  # ${LDAP_HOST}, ${LDAP_BASE_DN} substituted from kernel LDAP metadata.
+  # ${SMTP_HOST} substituted from the kernel Postfix service address.
+  # Secret values injected via set_sensitive (valueMapping) — not here.
+  #
+  # Note: xwiki.properties values beginning with "${oidc.user.*}" are XWiki's
+  # own internal template expressions, not operator placeholders. The operator
+  # must leave unknown ${...} tokens intact when substituting extraValues.
+  extraValues:
+    global:
+      # Kernel domain so global.hosts.keycloak → id.<kernel> (central IdP).
+      # Wiki URLs use wiki.${TENANT_DOMAIN} explicitly in customConfigs/properties.
+      domain: "${KERNEL_DOMAIN}"
+      hosts:
+        xwiki: "wiki.${TENANT_ID}"
+        keycloak: "id"
+        nubus: "portal"
+      imagePullSecrets:
+        - name: registry-credentials
+
+    # fullnameOverride locks the Kubernetes Service name to "xwiki" regardless of
+    # the Helm release name generated by the Crossplane composition.
+    fullnameOverride: "xwiki"
+
+    # Use opendesk-mirrored XWiki PostgreSQL+Jetty image.
+    image:
+      name: "registry.opencode.de/bmi/opendesk/components/supplier/xwiki/images-mirror/xwiki"
+      tag: "17.4.7-postgres-jetty-alpine@sha256:d534ace977a3a988e83945c73f15d4fd5c082d7b9b5b8ae1134569be5e023c96"
+      pullPolicy: "IfNotPresent"
+
+    imagePullSecrets:
+      - name: registry-credentials
+
+    # External DB — all connection fields injected via valueMapping.database.*Key.
+    # customKeyRef.enabled: false disables Kubernetes Secret lookup; all values
+    # come from direct Helm injection (Pattern B).
+    externalDB:
+      customKeyRef:
+        enabled: false
+
+    securityContext:
+      enabled: true
+      fsGroup: 101
+
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      enabled: true
+      privileged: false
+      runAsUser: 100
+      runAsGroup: 101
+      runAsNonRoot: true
+      capabilities:
+        drop:
+          - "ALL"
+      seccompProfile:
+        type: "RuntimeDefault"
+      # XWiki writes to its data directory at runtime; readOnlyRootFilesystem
+      # must remain false for the chart's standard configuration.
+      readOnlyRootFilesystem: false
+
+    customConfigs:
+      # YAML map key "xwiki.cfg" contains a literal dot — must be quoted.
+      "xwiki.cfg":
+        "xwiki.url.protocol": "https"
+        # LDAP authenticator configuration.
+        "xwiki.authentication.ldap.UID_attr": "uid"
+        "xwiki.authentication.ldap.photo_attribute": "jpegPhoto"
+        "xwiki.authentication.ldap.update_photo": 1
+        # LDAP connection — ${LDAP_HOST} and ${LDAP_BASE_DN} substituted by operator.
+        "xwiki.authentication.ldap.server": "${LDAP_HOST}"
+        "xwiki.authentication.ldap.port": 389
+        # bind_DN uses the standard per-tenant ldapsearch_xwiki account.
+        "xwiki.authentication.ldap.bind_DN": "uid=ldapsearch_xwiki,cn=users,${LDAP_BASE_DN}"
+        # bind_pass injected via valueMapping.ldap.bindPasswordKey (from OpenBao).
+        "xwiki.authentication.ldap.base_DN": "${LDAP_BASE_DN}"
+        "xwiki.authentication.ldap.groupcache_expiration": 300
+        "xwiki.authentication.ldap.fields_mapping": "last_name=sn,first_name=givenName,email=mailPrimaryAddress"
+
+      # YAML map key "xwiki.properties" contains a literal dot — must be quoted.
+      "xwiki.properties":
+        "wikiInitializer.initialRequest.xwiki.url": "https://wiki.${TENANT_DOMAIN}/distribution/"
+        "wikiInitializer.initialRequest.xwiki.contextPath": "/"
+        "wikiInitializer.initialRequest.xwiki.remoteAddress": "wiki.${TENANT_DOMAIN}"
+
+        # OIDC configuration.
+        # oidc.secret injected via valueMapping.oidc.clientSecretKey (from OpenBao).
+        "oidc.clientid": "opendesk-xwiki"
+        "oidc.endpoint.token.auth_method": "client_secret_basic"
+        "oidc.endpoint.userinfo.method": "GET"
+        "oidc.logoutMechanism": "rpInitiated"
+        # oidc.provider uses the per-tenant realm (${TENANT_ID}) — NOT a hardcoded
+        # realm name like "opendesk". This is the key per-tenant fix vs opendesk.
+        "oidc.provider": "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}"
+        "oidc.scope": "openid,opendesk-xwiki-scope"
+        "oidc.skipped": false
+        # These ${oidc.user.*} expressions are XWiki's own internal template
+        # expressions (not operator placeholders). Leave them as literal strings.
+        "oidc.user.nameFormater": "${oidc.user.opendesk_username._clean._lowerCase}"
+        "oidc.user.subjectFormater": "${oidc.user.opendesk_username._lowerCase}"
+        "oidc.userinfoclaims": "xwiki_user_accessibility,xwiki_user_company,xwiki_user_displayHiddenDocuments,xwiki_user_editor,xwiki_user_usertype"
+
+        "url.trustedDomains": "id.${KERNEL_DOMAIN}"
+
+        # Central navigation — portalSecret wired by central-navigation IntegrationBinding.
+        "workplaceServices.navigationEndpoint": "https://portal.${KERNEL_DOMAIN}/univention/portal/navigation.json"
+        "workplaceServices.base": "https://portal.${KERNEL_DOMAIN}"
+        # workplaceServices.portalSecret: injected by central-navigation IntegrationBinding.
+
+        "openoffice.serverType": "0"
+        "openoffice.autoStart": "false"
+        "openoffice.homePath": "/tmp"
+        "notifications.emails.live.graceTime": "5"
+
+    # Chart-managed ingress disabled — the operator's spec.ingress handles it.
+    ingress:
+      enabled: false
+
+    mariadb:
+      enabled: false
+
+    mysql:
+      enabled: false
+
+    postgresql:
+      enabled: false
+
+    # PVC for attachments — XWiki does not use S3 for file storage.
+    persistence:
+      size: "10Gi"
+      storageClass: ""
+
+    properties:
+      # XWiki wiki properties — injected into the wiki database on first startup.
+      # Keys use XWiki's property notation (colon/caret separators); quoted in YAML.
+
+      "property:xwiki:XWiki.XWikiServerXwiki^XWiki.XWikiServerClass.secure": 1
+      "property:xwiki:XWiki.XWikiServerXwiki^XWiki.XWikiServerClass.server": "wiki.${TENANT_DOMAIN}"
+      "property:xwiki:XWiki.XWikiServerXwiki^XWiki.XWikiServerClass.port": 443
+
+      # LDAP admin group mapping — uses ${LDAP_BASE_DN} placeholder.
+      "property:xwiki:XWiki.XWikiPreferences^XWiki.XWikiPreferences.ldap_group_mapping": "xwiki:XWiki.XWikiAdminGroup=cn=managed-by-attribute-KnowledgemanagementAdmin,cn=groups,${LDAP_BASE_DN}"
+
+      # Collabora WOPI integration — server URL wired by office-editor IntegrationBinding.
+      # Static default points to the cluster-internal Collabora service name.
+      "property:xwiki:Collabora.Code.Configuration^Collabora.Code.ConfigurationClass.isEnabled": 1
+      "property:xwiki:Collabora.Code.Configuration^Collabora.Code.ConfigurationClass.server": "http://collabora:9980"
+
+      # SMTP settings — from: and username: use ${TENANT_DOMAIN} placeholder.
+      # host: uses ${SMTP_HOST} (kernel Postfix service address).
+      # password: injected via valueMapping.smtp.passwordKey (from OpenBao).
+      "property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.from": "noreply@${TENANT_DOMAIN}"
+      "property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.host": "${SMTP_HOST}"
+      "property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.port": 587
+      "property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.properties": "mail.smtp.starttls.enable=true"
+      "property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.username": "opendesk-system@${TENANT_DOMAIN}"
+      # property:xwiki:Mail.MailConfig^Mail.SendMailConfigClass.password:
+      #   injected via valueMapping.smtp.passwordKey.
+
+      # Link LDAP users with OIDC-authenticated sessions (required for LDAP+OIDC).
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.addOIDCObject": 1
+      # OIDCIssuer uses per-tenant realm (${TENANT_ID}) — NOT hardcoded "opendesk".
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.OIDCIssuer": "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}"
+
+      # Auth service — delegates password auth to the OIDC bridge.
+      "property:xwiki:XWiki.AuthService.Configuration^XWiki.AuthService.ConfigurationClass.authService": "keycloak-bridge-auth"
+
+      # UI / theme settings aligned with opendesk Iceberg theme.
+      "property:xwiki:XWiki.XWikiPreferences^XWiki.XWikiPreferences.colorTheme": "FlamingoThemes.Iceberg"
+      "property:xwiki:XWiki.XWikiPreferences^XWiki.XWikiPreferences.default_language": "de"
+      "property:xwiki:XWiki.XWikiPreferences^XWiki.XWikiPreferences.timezone": "Europe/Berlin"
+      "property:xwiki:XWiki.XWikiPreferences^XWiki.XWikiPreferences.languages": "de"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.link-color": "@brand-primary"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.btn-primary-bg": "@brand-primary"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.navbar-default-color": "@brand-primary"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.navbar-default-link-color": "@brand-primary"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.navbar-default-link-hover-color": "@brand-primary"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.navbar-default-link-active-color": "@brand-primary"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.brand-primary": "#003063"
+      "property:xwiki:FlamingoThemes.Iceberg^FlamingoThemesCode.ThemeClass.navbar-default-bg": "#ffffff"
+
+      # LDAP user import settings — restrict and configure the admin import UI.
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.ldapUserAttributes": "sn,givenname,uid,mailPrimaryAddress"
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.usersAllowedToImport": "globalAdmin"
+      # Enable group and user synchronisation triggers.
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.triggerGroupsUpdate": 1
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.triggerGroupImport": 1
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.forceXWikiUsersGroupMembershipUpdate": 1
+      # Group search DN — ${LDAP_BASE_DN} substituted by operator.
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.ldapGroupImportSearchDN": "${LDAP_BASE_DN}"
+      # Only sync groups marked as KnowledgeManagement groups in LDAP.
+      "property:xwiki:LDAPUserImport.WebHome^LDAPUserImport.LDAPUserImportConfigClass.ldapGroupImportSearchFilter": "(&(objectClass=opendeskKnowledgemanagementGroup)(opendeskKnowledgemanagementEnabled=TRUE))"
+
+    cluster:
+      replicas: 1
+
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+
+    podAnnotations:
+      # Stakater Reloader restarts the pod when the ExternalSecret updates
+      # (e.g. after credential rotation), ensuring the new secret values are
+      # picked up without manual intervention.
+      reloader.stakater.com/auto: "true"
+
+    service:
+      externalPort: 80
+      enabled: true
+
+    serviceAccount:
+      annotations: {}
+
+    volumePermissions:
+      enabled: true
