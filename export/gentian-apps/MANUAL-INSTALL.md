@@ -4,8 +4,8 @@ Copy everything in this folder (except this file) into your local clone root.
 
 ```bash
 cd /path/to/gentian-apps
-# extract archive contents into repo root (not into a subfolder)
-tar xzf gentian-apps.tar.gz --strip-components=1
+# tarball unpacks into the current directory (no --strip-components)
+tar xzf /path/to/gentian-os/export/gentian-apps.tar.gz
 
 git checkout -b cursor/app-template-and-store-6bce   # or your branch
 git add -A
@@ -19,7 +19,8 @@ If you prefer preserving the exact commit from the cloud agent:
 
 ```bash
 cd /path/to/gentian-apps
-git fetch ../gentian-apps-cursor-app-template-and-store-6bce.bundle cursor/app-template-and-store-6bce:cursor/app-template-and-store-6bce
+git fetch /path/to/gentian-os/export/gentian-apps-cursor-app-template-and-store-6bce.bundle \
+  cursor/app-template-and-store-6bce:cursor/app-template-and-store-6bce
 git checkout cursor/app-template-and-store-6bce
 git push -u origin cursor/app-template-and-store-6bce
 ```
