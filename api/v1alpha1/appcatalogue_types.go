@@ -71,6 +71,10 @@ type CatalogueEntry struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
+	// Logo is the AppProfile logo data URI (image/svg+xml;base64,...).
+	// +optional
+	Logo string `json:"logo,omitempty"`
+
 	// ChartVersion is the chart version declared in the AppProfile.
 	ChartVersion string `json:"chartVersion"`
 

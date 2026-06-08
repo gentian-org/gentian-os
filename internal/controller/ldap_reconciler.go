@@ -289,6 +289,10 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 			if allowedGroupCN == "" {
 				allowedGroupCN = "App Users"
 			}
+			// Tenant Admins is a catalogue-level alias for per-tenant cn=admins_<tenant>.
+			if allowedGroupCN == "Tenant Admins" {
+				allowedGroupCN = "admins_" + tenant.Name
+			}
 			linkTarget := string(tile.LinkTarget)
 			if linkTarget == "" {
 				linkTarget = "newwindow"
@@ -2193,7 +2197,9 @@ USERS_GRP_CN="%s"
 # group (created by the ldap-ou job). If the tenant-scoped group does not exist
 # (e.g. UDM rejected creation due to a pre-existing global group with the same CN),
 # fall back to the global cn=groups group so the tile remains accessible.
-if printf '%%s' "${USERS_GRP_CN}" | grep -q '^managed-by-attribute-'; then
+if printf '%%s' "${USERS_GRP_CN}" | grep -q '^admins_'; then
+  USERS_GRP_DN="cn=${USERS_GRP_CN},${OU_POS}"
+elif printf '%%s' "${USERS_GRP_CN}" | grep -q '^managed-by-attribute-'; then
   TENANT_GRP_DN="cn=${USERS_GRP_CN},${OU_POS}"
   GLOBAL_GRP_DN="cn=${USERS_GRP_CN},cn=groups,${UDM_LDAP_BASE}"
   TENANT_GRP_STATUS=$(curl -s --max-time 10 -o /dev/null -w "%%{http_code}" ${CREDS} \

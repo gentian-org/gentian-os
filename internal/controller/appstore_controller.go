@@ -133,6 +133,7 @@ func (r *AppStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			Name:               p.Name,
 			DisplayName:        p.Spec.DisplayName,
 			Description:        p.Spec.Description,
+			Logo:               p.Spec.Logo,
 			ChartVersion:       p.Spec.Chart.Version,
 			DeploymentMethod:   p.Spec.DeploymentMethod,
 			KernelRequirements: kernelRequirementLabels(p.Spec.KernelRequirements),

@@ -202,10 +202,13 @@ For a comprehensive explanation of how these templates function, and how the "Ap
 **Current operating model:** tenant admins edit Tenant manifests in
 the deployments repo via PR (process-controlled).
 
-**Future operating model:** tenant admins use a CLI/WebUI; an
-automation bot writes Git commits on their behalf. This preserves
-GitOps as the source of truth while removing the requirement that
-tenant admins know YAML.
+**App Store (current):** tenant admins use the **App Store** web UI
+(`app-store` AppProfile) or `kubectl gentian apps` to install catalogue apps.
+Installs commit to `gentian-deployments` (GitOps) or create namespace-scoped
+`App` claims when `INSTALL_MODE=k8s`. See [commands.md](../commands.md) §5.
+
+**Future:** further self-service (tenant config, quotas) via the same surfaces
+without requiring YAML edits.
 
 ## 9. Future: Capability Enforcement at Runtime
 

@@ -472,6 +472,11 @@ gentian-os/              # The OS itself (versioned artifact)
 
 gentian-apps/            # The catalogue (versioned artifact)
 ├── profiles/            # One AppProfile YAML per app
+├── apps/                # First-party app source (FastAPI + React + Helm)
+│   ├── _template/       # gentian-app-template copy
+│   └── app-store/       # Tenant admin App Store UI
+├── app-profile-guide.md # Wrap upstream charts (profile only)
+├── custom-app-guide.md  # Build new Gentian-native apps
 └── contracts/           # Contract schema definitions
 
 gentian-deployments/     # Per-cluster state (the only repo specific to a cluster)
@@ -717,3 +722,5 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
+| AppProfile authoring (upstream charts) | [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) |
+| Custom Gentian-native apps | [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) |

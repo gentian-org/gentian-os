@@ -92,6 +92,9 @@ spec:
                       items:
                         type: string
                       type: array
+                    logo:
+                      description: Logo is the AppProfile logo data URI (image/svg+xml;base64,...).
+                      type: string
                     name:
                       description: Name is the AppProfile CR name.
                       type: string

@@ -288,24 +288,27 @@ mailboxes) is preserved or dropped.
 
 ```
 gentian-apps/
-├── profiles/
-│   ├── openproject.yaml
-│   ├── nextcloud.yaml
-│   ├── ox-appsuite.yaml
+├── profiles/              # AppProfile YAML — synced by ArgoCD gentian-appprofiles
+│   ├── openproject.yaml   # upstream chart (profile only)
 │   ├── element.yaml
-│   ├── xwiki.yaml
-│   └── jitsi.yaml
-│   # CryptPad is a kernel service (gentian-os/kernel/services/cryptpad), not a catalogue app
+│   └── app-store.yaml     # first-party (source in apps/app-store/)
+├── apps/                  # First-party implementations
+│   ├── _template/         # gentian-app-template scaffold
+│   └── app-store/         # FastAPI + React + Helm
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml
 │   └── central-navigation.yaml
-└── tests/
-    └── validate-profiles.sh   # schema validation in CI
+├── app-profile-guide.md   # Wrap existing upstream charts
+├── custom-app-guide.md    # Build new Gentian-native apps
+└── .github/workflows/apps-ci.yaml
 ```
 
-Adding an app to the catalogue is one PR adding one YAML file. No code
-changes, no operator rebuilds.
+**Third-party apps:** one PR adding `profiles/<app>.yaml` only — no operator rebuild.
+
+**First-party apps:** implement under `apps/<app>/`, publish pinned images + OCI
+chart via CI, then add or bump `profiles/<app>.yaml` `spec.chart.version`.
+ArgoCD syncs `profiles/` only; app source is not mounted into the cluster.
 
 ## 8b. Future Direction: Crossplane-owned bindings
 

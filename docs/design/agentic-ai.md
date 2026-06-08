@@ -116,7 +116,9 @@ The same MCP fabric powers operator-side automation:
 - **AppProfile generation:** an agent reads a Helm chart's
   `values.yaml`, infers the kernel requirements (does it need OIDC?
   S3? mail?), and proposes an `AppProfile` — a human reviews and
-  commits to `gentian-apps`.
+  commits to `gentian-apps`. For building new first-party apps, agents should
+  follow [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md)
+  and [gentian-apps/apps/_template/docs/AGENTS.md](../../gentian-apps/apps/_template/docs/AGENTS.md).
 - **Tenant provisioning assistant:** "spin up a new tenant for ACME
   Corp with NextCloud, OpenProject, Element, mail mode external,
   isolation namespace" — produces the Tenant CR for review.

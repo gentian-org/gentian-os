@@ -152,13 +152,36 @@ kubectl describe application -n argocd gentian-os
 kubectl get tenant demo
 ```
 
-## 5. List Available App Profiles
+## 5. Tenant App Store
+
+Tenant admins install apps via the **App Store** web UI (preferred) or the CLI.
+
+### Web UI
+
+When `app-store` is installed for a tenant, open:
+
+```text
+https://store.<tenant>.<kernel-domain>
+```
+
+The UI lists `AppCatalogue` entries, shows kernel requirements, and installs or
+uninstalls apps via GitOps commits to `gentian-deployments` (default) or direct
+`App` claims when `INSTALL_MODE=k8s` is set on the App Store deployment.
+
+Portal: tenant admins see an **App Store** tile (`allowedGroup: Tenant Admins`).
+
+### CLI (fallback)
 
 ```bash
 kubectl gentian apps list
+kubectl gentian apps install openproject --tenant gtn-demo
+kubectl gentian apps uninstall openproject --tenant gtn-demo
 ```
 
-The `kubectl gentian` commands are the tenant-facing Gentian OS command interface.
+Guides:
+
+- [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) — build new apps
+- [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) — publish upstream charts
 
 Show all available `kubectl gentian` subcommands:
 

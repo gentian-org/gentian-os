@@ -499,5 +499,5 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 - [gentian-ui CI setup](../gentian-ui/docs/ci-setup.md) — portal image build and ArgoCD rollout
 - [crossplane/claims/dev-cluster.yaml](crossplane/claims/dev-cluster.yaml) — the Cluster XR claim
 - [crossplane/compositions/cluster-default.yaml](crossplane/compositions/cluster-default.yaml) — Composition that provisions all kernel MRs
-- [`gentian-apps`](https://github.com/gentian-org/gentian-apps) — catalogue of AppProfile CRs (one per app)
+- [`gentian-apps`](https://github.com/gentian-org/gentian-apps) — AppProfile catalogue (`profiles/`) and first-party app source (`apps/`). See [custom-app-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/custom-app-guide.md) to build apps.
 - [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments) — per-environment Tenant and IntegrationBinding CRs
