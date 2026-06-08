@@ -120,6 +120,17 @@ func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov
 			return err
 		}
 	}
+	for _, sidecar := range profile.Spec.Sidecars {
+		scAppName := gentianov1alpha1.SidecarAppName(appName, sidecar.Name)
+		for _, s := range sidecar.AppSecrets {
+			if s.Name == "" {
+				continue
+			}
+			if _, err := r.Seeder.SeedAppSecret(ctx, tenant.Name, scAppName, s.Name); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

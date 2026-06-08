@@ -52,9 +52,20 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
+            - kind: ConfigMap
+              into: jitsiOidcOverlays
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: jitsi-oidc-overlays
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
-    # Element variant: deploys five charts:
+    # Element variant: deploys five charts plus optional sidecars (Jitsi):
     #   1. opendesk-element      (frontend)          — AppProfile spec.chart
     #   2. opendesk-synapse      (Matrix homeserver) — hardcoded chart ref
     #   3. opendesk-synapse-create-account (UVS bootstrap Job)
@@ -683,6 +694,284 @@ spec:
                   {{ toYaml $synapseWebVals | nindent 18 }}
               providerConfigRef:
                 name: kubernetes
+
+            {{- /* ── Sidecars (e.g. Jitsi for Element video conferencing) ─────── */}}
+            {{- $sidecars := default list $pSpec.sidecars }}
+            {{- $jitsiOverlayRes  := dig "jitsiOidcOverlays" list $extraRes }}
+            {{- $jitsiOverlayCM   := default dict (index $jitsiOverlayRes 0) }}
+            {{- $jitsiOverlayData := dig "data" dict $jitsiOverlayCM }}
+            {{- range $sidecar := $sidecars }}
+            {{- $scName := $sidecar.name }}
+            {{- $scAppKey := printf "%s-%s" $app $scName }}
+            {{- $scXrName := printf "%s-sidecar-%s" $xrName $scName }}
+            {{- $scChart := $sidecar.chart }}
+            {{- $scSecrets := default list $sidecar.appSecrets }}
+            {{- $scSecretName := printf "%s-sensitive-values" $scAppKey }}
+
+            {{- /* Sidecar ExternalSecret data[] */}}
+            {{- $scEsData := list }}
+            {{- range $s := $scSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $scAppKey $s.name }}
+            {{- $scEsData = append $scEsData (dict "secretKey" (printf "internal-%s" $s.name)
+                "remoteRef" (dict "key" $internalPath "property" "value")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Seed sidecar app-internal secrets into OpenBao */}}
+            {{- range $s := $scSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $safeName := $s.name | replace "_" "-" }}
+            {{- $seedName := printf "%s-%s-seed" $scXrName $safeName }}
+            {{- $kvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $scAppKey $s.name }}
+            {{- $seedVal  := sha256sum (printf "%s:%s:%s" $scXrName $scAppKey $s.name) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-{{ $safeName }}-seed-secret
+              name: {{ $seedName }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $seedName }}
+                    namespace: crossplane-system
+                  type: Opaque
+                  stringData:
+                    data.json: '{"value":"{{ $seedVal }}"}'
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-{{ $safeName }}-kv
+              name: {{ $seedName }}-kv
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: secret
+                name: {{ $kvPath }}
+                dataJsonSecretRef:
+                  name: {{ $seedName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            {{- end }}
+
+            {{- if gt (len $scEsData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-external-secret
+              name: {{ $scXrName }}-external-secret
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1beta1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $scSecretName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $scSecretName }}
+                      creationPolicy: Owner
+                      deletionPolicy: Retain
+                    data:
+                      {{ toYaml $scEsData | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* Sidecar Helm set[] */}}
+            {{- $scRelSet := list }}
+            {{- range $s := $scSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $scRelSet = append $scRelSet (dict "name" $s.valuePath
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- if and (eq $scName "jitsi") (eq $s.name "jwt_app_secret") }}
+            {{- $scRelSet = append $scRelSet (dict "name" "jitsi.prosody.extraEnvs[2].value"
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Sidecar extraValues with kernel substitution */}}
+            {{- $scExtraVals := dict }}
+            {{- if $sidecar.extraValues }}
+            {{- $ksRes := dig "kernelServices" list $extraRes }}
+            {{- $ksCM  := default dict (index $ksRes 0) }}
+            {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- $scKernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
+            {{- $scTurnHost     := dig "TURN_HOST"        "" $ksCMData }}
+            {{- $scTurnPort     := dig "TURN_PORT"        "3478" $ksCMData }}
+            {{- $scTurnTLSHost  := dig "TURN_TLS_HOST"    "" $ksCMData }}
+            {{- $scTurnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
+            {{- $scTurnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
+            {{- $scTurnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
+            {{- $scRaw := $sidecar.extraValues | toJson }}
+            {{- $scRaw = $scRaw | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $scRaw = $scRaw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $scRaw = $scRaw | replace "${TENANT_NAME}"     $tenant }}
+            {{- $scRaw = $scRaw | replace "${TENANT_ID}"       $tenant }}
+            {{- if $scKernelDomain }}{{ $scRaw = $scRaw | replace "${KERNEL_DOMAIN}" $scKernelDomain }}{{ end }}
+            {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $scTurnHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $scTurnPort }}
+            {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $scTurnTLSHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_TLS_PORT}"   $scTurnTLSPort }}
+            {{- $scRaw = $scRaw | replace "${TURN_TRANSPORT}" $scTurnTransport }}
+            {{- $scRaw = $scRaw | replace "${TURN_CREDENTIALS}" $scTurnCreds }}
+            {{- if $nodeIP }}{{ $scRaw = $scRaw | replace "${NODE_IP}" $nodeIP }}{{ end }}
+            {{- $scExtraVals = $scRaw | fromJson }}
+            {{- end }}
+
+            {{- /* Jitsi: mount Gentian OIDC/JWT overlays over chart ConfigMaps */}}
+            {{- if eq $scName "jitsi" }}
+            {{- if eq (len $jitsiOverlayData) 0 }}
+              {{- fail "gentian-jitsi-oidc-overlays ConfigMap missing — run gentian-os install/update (upsert_gentian_jitsi_oidc_overlays_configmap)" }}
+            {{- end }}
+            {{- $jitsiOidcCM := printf "%s-oidc-overlays" $scXrName }}
+            {{- $jitsiWebOverlayItems := list
+                (dict "key" "body.html" "path" "body.html")
+                (dict "key" "oidc-adapter.html" "path" "oidc-adapter.html")
+                (dict "key" "oidc-redirect.html" "path" "oidc-redirect.html")
+                (dict "key" "plugin.head.html" "path" "plugin.head.html")
+            }}
+            {{- $jitsiWebOverlayMounts := list
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "body.html" "mountPath" "/usr/share/jitsi-meet/body.html")
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "plugin.head.html" "mountPath" "/usr/share/jitsi-meet/plugin.head.html")
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-adapter.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-adapter.html")
+                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-redirect.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-redirect.html")
+            }}
+            {{- $jitsiOverlayVol := dict
+                "name" "gentian-jitsi-oidc-overlays"
+                "configMap" (dict "name" $jitsiOidcCM "items" $jitsiWebOverlayItems)
+            }}
+            {{- $jitsiAdapterOverlayVol := dict
+                "name" "gentian-jitsi-adapter-overlay"
+                "configMap" (dict "name" $jitsiOidcCM "items" (list (dict "key" "context.ts" "path" "context.ts")))
+            }}
+            {{- $jitsiAdapterOverlayMount := dict
+                "name" "gentian-jitsi-adapter-overlay"
+                "subPath" "context.ts"
+                "mountPath" "/usr/src/app/dist/context.ts"
+            }}
+            {{- $jitsiWebExtra := default dict (dig "jitsi" dict $scExtraVals) }}
+            {{- $jitsiWeb := default dict (dig "web" dict $jitsiWebExtra) }}
+            {{- $jitsiWeb = mergeOverwrite $jitsiWeb (dict
+                "extraVolumes" (concat (default list $jitsiWeb.extraVolumes) (list $jitsiOverlayVol))
+                "extraVolumeMounts" (concat (default list $jitsiWeb.extraVolumeMounts) $jitsiWebOverlayMounts)
+            ) }}
+            {{- $jitsiWebExtra = mergeOverwrite $jitsiWebExtra (dict "web" $jitsiWeb) }}
+            {{- $scExtraVals = mergeOverwrite $scExtraVals (dict
+                "jitsi" $jitsiWebExtra
+                "extraVolumes" (concat (default list $scExtraVals.extraVolumes) (list $jitsiAdapterOverlayVol))
+                "extraVolumeMounts" (concat (default list $scExtraVals.extraVolumeMounts) (list $jitsiAdapterOverlayMount))
+            ) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-oidc-overlays-cm
+              name: {{ $scXrName }}-oidc-overlays-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $jitsiOidcCM }}
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/app: {{ $scAppKey }}
+                      gentianos.io/tenant: {{ $tenant }}
+                  binaryData:
+                    body.html: {{ index $jitsiOverlayData "body.html" | b64enc | quote }}
+                    context.ts: {{ index $jitsiOverlayData "context.ts" | b64enc | quote }}
+                    oidc-adapter.html: {{ index $jitsiOverlayData "oidc-adapter.html" | b64enc | quote }}
+                    oidc-redirect.html: {{ index $jitsiOverlayData "oidc-redirect.html" | b64enc | quote }}
+                    plugin.head.html: {{ index $jitsiOverlayData "plugin.head.html" | b64enc | quote }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-release
+              name: {{ $scXrName }}-release
+            spec:
+              forProvider:
+                chart:
+                  repository: {{ $scChart.repository }}
+                  name: {{ $scChart.name }}
+                  version: {{ $scChart.version | quote }}
+                namespace: {{ $ns }}
+                wait: false
+                {{- if gt (len $scExtraVals) 0 }}
+                values:
+                  {{ toYaml $scExtraVals | nindent 18 }}
+                {{- end }}
+                {{- if gt (len $scRelSet) 0 }}
+                set:
+                  {{ toYaml $scRelSet | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- $stableSvcName := default "" $sidecar.stableServiceName }}
+            {{- if $stableSvcName }}
+            {{- $stableSvcPort := default 80 ($sidecar.stableServicePort | int) }}
+            {{- $scComponent := "web" }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-stable-svc
+              name: {{ $scXrName }}-stable-svc
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: {{ $stableSvcName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    selector:
+                      app.kubernetes.io/instance: {{ $scXrName }}-release
+                      app.kubernetes.io/component: {{ $scComponent }}
+                    ports:
+                    - name: http
+                      port: {{ $stableSvcPort }}
+                      targetPort: {{ $stableSvcPort }}
+                      protocol: TCP
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
 
     # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────
     - step: automatically-detect-ready-composed-resources

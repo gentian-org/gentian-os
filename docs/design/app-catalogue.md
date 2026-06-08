@@ -292,9 +292,9 @@ gentian-apps/
 │   ├── openproject.yaml
 │   ├── nextcloud.yaml
 │   ├── ox-appsuite.yaml
-│   ├── element.yaml
+│   ├── element.yaml          # includes Jitsi sidecar (spec.sidecars)
 │   ├── xwiki.yaml
-│   └── jitsi.yaml
+│   # Jitsi is bundled with Element, not a standalone AppProfile
 │   # CryptPad is a kernel service (gentian-os/kernel/services/cryptpad), not a catalogue app
 ├── contracts/
 │   ├── file-store.yaml

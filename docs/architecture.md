@@ -114,7 +114,7 @@ authoritative “today” view; §3’s diagram is the stable mental model.
 
 **Tenant lifecycle (operator-led)**  
 Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
-`spec.apps: [element, jitsi]`) triggers the operator in order:
+`spec.apps: [element]`) triggers the operator in order:
 
 1. Namespace `tenant-{name}`, quota, limit range, network policy, registry pull secret; replicate `gentian-staging-ca-tls` on ACME staging clusters  
 2. Keycloak **realm** via Jobs in `platform-kernel` (realm → admin → browser-flow)  
@@ -196,7 +196,7 @@ CRs; tenant admins consume them by name.
 Declares **who** uses the platform: an optional vanity domain, an
 isolation mode (namespace), resource quotas, mail mode, a deletion
 policy, and **`spec.apps`** — the list of catalogue profiles to install
-for this tenant (e.g. `element`, `jitsi`). Creating a `Tenant`
+for this tenant (e.g. `element` — Jitsi is deployed as an Element sidecar). Creating a `Tenant`
 provisions kernel-layer infrastructure: namespace, RBAC, OpenBao
 policies, LDAP entries, DNS/TLS, and the Keycloak realm. The operator
 then creates one **`App` claim per `spec.apps` entry**; Crossplane

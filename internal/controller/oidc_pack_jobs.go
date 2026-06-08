@@ -39,17 +39,43 @@ func oidcPacksNeedLDAPGroups(configs []oidcAppConfig) bool {
 }
 
 func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]oidcAppConfig, error) {
-	apps, err := r.collectOIDCApps(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
 	var configs []oidcAppConfig
-	for _, profileName := range apps {
-		cfg, err := r.resolveOIDCAppConfig(ctx, tenant, profileName)
-		if err != nil {
-			return nil, err
+	seen := make(map[string]struct{})
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
-		configs = append(configs, cfg)
+		if profile.Spec.KernelRequirements != nil &&
+			profile.Spec.KernelRequirements.Identity != nil &&
+			profile.Spec.KernelRequirements.Identity.OIDC != nil {
+			cfg, err := r.resolveOIDCAppConfig(ctx, tenant, app.Profile)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, cfg)
+			seen[app.Profile] = struct{}{}
+		}
+		for _, sidecar := range profile.Spec.Sidecars {
+			if sidecar.KernelRequirements == nil ||
+				sidecar.KernelRequirements.Identity == nil ||
+				sidecar.KernelRequirements.Identity.OIDC == nil {
+				continue
+			}
+			scKey := gentianov1alpha1.SidecarAppName(app.Profile, sidecar.Name)
+			if _, ok := seen[scKey]; ok {
+				continue
+			}
+			cfg, err := r.resolveSidecarOIDCAppConfig(ctx, tenant, app.Profile, sidecar)
+			if err != nil {
+				return nil, err
+			}
+			configs = append(configs, cfg)
+			seen[scKey] = struct{}{}
+		}
 	}
 	return configs, nil
 }
@@ -60,6 +86,29 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 		return oidcAppConfig{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 	}
 	oidcSpec := profile.Spec.KernelRequirements.Identity.OIDC
+	clientID := oidcSpec.ClientID
+	if clientID == "" {
+		clientID = oidcClientID(tenant.Name, profileName)
+	}
+	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
+
+	cfg := oidcAppConfig{
+		profileName:  profileName,
+		clientID:     clientID,
+		redirectURIs: redirects,
+	}
+	if pack, templates, ok, err := oidc.PackForClient(clientID); err != nil {
+		return oidcAppConfig{}, err
+	} else if ok {
+		cfg.pack = &pack
+		cfg.templates = templates
+	}
+	return cfg, nil
+}
+
+func (r *TenantReconciler) resolveSidecarOIDCAppConfig(_ context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
+	profileName := gentianov1alpha1.SidecarAppName(parentProfile, sidecar.Name)
+	oidcSpec := sidecar.KernelRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)

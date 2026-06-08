@@ -643,6 +643,306 @@ spec:
                   - name
                   type: object
                 type: array
+              sidecars:
+                description: |-
+                  Sidecars declares companion services deployed by purpose-built compositions
+                  alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+                  clients and internal secrets use the synthetic app key {profile}-{sidecar}.
+                items:
+                  description: |-
+                    AppSidecarSpec declares a companion service deployed alongside the primary
+                    app by a purpose-built composition (for example Jitsi with Element).
+                  properties:
+                    appSecrets:
+                      description: |-
+                        AppSecrets are sidecar-internal secrets stored at
+                        gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.
+                      items:
+                        description: |-
+                          AppSecret declares an app-internal secret the orchestrator must generate
+                          and inject. These are credentials the app needs (admin passwords, session
+                          signing keys, cluster tokens) that are not provided by any kernel service.
+                        properties:
+                          name:
+                            description: |-
+                              Name is the logical identifier for this secret (e.g., "admin_password").
+                              Used as the suffix in the OpenBao path:
+                              gentian-os/tenants/{tenant}/apps/{app}/internal/{name}
+                            maxLength: 64
+                            minLength: 1
+                            pattern: ^[a-z0-9_]+$
+                            type: string
+                          valuePath:
+                            description: |-
+                              ValuePath is the dot-notation (or bracket-notation) Helm value key that
+                              should receive the generated secret value.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - valuePath
+                        type: object
+                      type: array
+                    chart:
+                      description: Chart references the sidecar Helm chart.
+                      properties:
+                        name:
+                          description: Name is the chart name within the repository.
+                          minLength: 1
+                          type: string
+                        repository:
+                          description: Repository is the OCI repository URL (e.g.,
+                            oci://registry.example.com/charts).
+                          minLength: 1
+                          type: string
+                        version:
+                          description: Version is the chart version to deploy.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - repository
+                      - version
+                      type: object
+                    extraValues:
+                      description: ExtraValues are merged into the sidecar Helm release
+                        values.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    kernelRequirements:
+                      description: KernelRequirements declares kernel services the
+                        sidecar needs.
+                      properties:
+                        cache:
+                          description: Cache specifies a caching backend requirement.
+                          properties:
+                            engine:
+                              default: redis
+                              description: Engine selects the caching backend. Defaults
+                                to redis.
+                              enum:
+                              - redis
+                              - memcached
+                              type: string
+                          type: object
+                        database:
+                          description: Database specifies a relational database requirement.
+                          properties:
+                            allowDynamicDatabaseCreation:
+                              default: false
+                              description: |-
+                                AllowDynamicDatabaseCreation grants the app user privileges to create new databases
+                                dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
+                                Only supported by the mariadb engine.
+                              type: boolean
+                            databasePerTenant:
+                              default: true
+                              description: |-
+                                DatabasePerTenant creates a separate database for each tenant (default true).
+                                Set to false only for shared-schema apps.
+                              type: boolean
+                            engine:
+                              default: postgresql
+                              description: Engine selects the database engine. Defaults
+                                to postgresql.
+                              enum:
+                              - postgresql
+                              - mariadb
+                              type: string
+                          type: object
+                        identity:
+                          description: Identity specifies OIDC and/or LDAP requirements.
+                          properties:
+                            ldap:
+                              description: LDAP requests a per-tenant LDAP bind account
+                                in the UCS LDAP directory.
+                              properties:
+                                interval:
+                                  description: Interval is the sync interval (e.g.,
+                                    "1h"). Defaults to "1h" when sync is true.
+                                  pattern: ^[0-9]+(s|m|h|d)$
+                                  type: string
+                                search:
+                                  description: |-
+                                    Search provisions a per-tenant LDAP search account via the app init Job on first install.
+                                    Credentials are written to OpenBao and injected via valueMapping.ldap.
+                                  type: boolean
+                                sync:
+                                  description: Sync enables periodic user/group sync
+                                    from LDAP into the app's own store.
+                                  type: boolean
+                              type: object
+                            oidc:
+                              description: |-
+                                OIDC describes the OIDC client to register in the tenant's Keycloak realm.
+                                When set, the composition emits a Client CR so every newly deployed tenant
+                                automatically gets the correct Keycloak client without manual setup.
+                                Leave unset for apps whose Keycloak client is managed externally
+                                (e.g. kernel-realm clients managed via keycloak-config).
+                              properties:
+                                accessType:
+                                  default: PUBLIC
+                                  description: |-
+                                    AccessType controls whether the client requires a shared secret
+                                    (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
+                                    (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
+                                  enum:
+                                  - PUBLIC
+                                  - CONFIDENTIAL
+                                  type: string
+                                backchannelLogoutUrl:
+                                  description: |-
+                                    BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
+                                    notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                  type: string
+                                clientId:
+                                  description: ClientID is the OIDC client identifier
+                                    registered in Keycloak.
+                                  minLength: 1
+                                  type: string
+                                directAccessGrantsEnabled:
+                                  description: |-
+                                    DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
+                                    grant (legacy / CLI apps). Defaults to false.
+                                  type: boolean
+                                name:
+                                  description: |-
+                                    Name is the human-readable display name shown in the Keycloak admin UI.
+                                    Defaults to ClientID when empty.
+                                  type: string
+                                postLogoutRedirectUris:
+                                  description: |-
+                                    PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
+                                    Supports ${TENANT_DOMAIN} substitution.
+                                  items:
+                                    type: string
+                                  type: array
+                                redirectUris:
+                                  description: |-
+                                    RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
+                                    code flow. Supports ${TENANT_DOMAIN} substitution.
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - clientId
+                              type: object
+                          type: object
+                        mail:
+                          description: Mail specifies SMTP and/or IMAP requirements.
+                          properties:
+                            imap:
+                              description: IMAP requests inbound mail (IMAP) credentials.
+                              properties:
+                                port:
+                                  default: 993
+                                  description: Port is the IMAP port.
+                                  format: int32
+                                  type: integer
+                              type: object
+                            smtp:
+                              description: SMTP requests outbound mail (SMTP submission)
+                                credentials.
+                              properties:
+                                auth:
+                                  description: Auth is the SMTP authentication mechanism.
+                                  enum:
+                                  - plain
+                                  - login
+                                  - cram-md5
+                                  type: string
+                                port:
+                                  default: 587
+                                  description: Port is the SMTP submission port.
+                                  format: int32
+                                  type: integer
+                              type: object
+                          type: object
+                        mcp:
+                          description: |-
+                            MCP specifies a Model Context Protocol server requirement.
+                            When enabled, the orchestrator registers the app's MCP endpoint in the
+                            kernel MCP registry and wires OIDC authentication.
+                          properties:
+                            auth:
+                              default: oidc
+                              description: Auth is the authentication method for MCP
+                                calls.
+                              enum:
+                              - oidc
+                              - none
+                              type: string
+                            enabled:
+                              default: true
+                              description: Enabled activates MCP endpoint registration.
+                              type: boolean
+                            endpoint:
+                              default: /mcp
+                              description: Endpoint is the HTTP path where the app
+                                exposes its MCP server.
+                              pattern: ^/.*
+                              type: string
+                          required:
+                          - enabled
+                          type: object
+                        storage:
+                          description: Storage specifies object storage (S3) and/or
+                            filesystem (WebDAV) requirements.
+                          properties:
+                            files:
+                              description: Files requests WebDAV access to the tenant's
+                                Nextcloud instance.
+                              properties:
+                                capabilities:
+                                  description: Capabilities lists the required access
+                                    capabilities.
+                                  items:
+                                    type: string
+                                  type: array
+                                protocol:
+                                  default: webdav
+                                  description: Protocol is the access protocol. Currently
+                                    only webdav is supported.
+                                  enum:
+                                  - webdav
+                                  type: string
+                              type: object
+                            s3:
+                              description: S3 requests a per-tenant S3 bucket via
+                                the MinIO kernel service.
+                              properties:
+                                bucketPerTenant:
+                                  default: true
+                                  description: BucketPerTenant creates a dedicated
+                                    bucket for each tenant. Defaults to true.
+                                  type: boolean
+                              type: object
+                          type: object
+                      type: object
+                    name:
+                      description: |-
+                        Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
+                        use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+                      minLength: 1
+                      pattern: ^[a-z0-9-]+$
+                      type: string
+                    stableServiceName:
+                      description: |-
+                        StableServiceName is the Kubernetes Service name the tenant ingress
+                        reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+                        a stable ClusterIP alias pointing at the sidecar release.
+                      type: string
+                    stableServicePort:
+                      default: 80
+                      description: StableServicePort is the port on StableServiceName.
+                        Defaults to 80.
+                      format: int32
+                      type: integer
+                  required:
+                  - chart
+                  - name
+                  type: object
+                type: array
               valueMapping:
                 description: |-
                   ValueMapping is the schema-based mapping of kernel-provided values to

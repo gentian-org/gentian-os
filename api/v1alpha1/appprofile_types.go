@@ -102,6 +102,12 @@ type AppProfileSpec struct {
 	// +optional
 	AdditionalIngresses []IngressSpec `json:"additionalIngresses,omitempty"`
 
+	// Sidecars declares companion services deployed by purpose-built compositions
+	// alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+	// clients and internal secrets use the synthetic app key {profile}-{sidecar}.
+	// +optional
+	Sidecars []AppSidecarSpec `json:"sidecars,omitempty"`
+
 	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
 	// UDM portal entry under swp.{tile.name}_{tenantName}.
@@ -652,6 +658,51 @@ type LDAPValueMapping struct {
 	// `appsuite.core-mw.propertiesFiles["/opt/.../ldapauth.properties"].bindDNPassword`
 	// +optional
 	BindPasswordKey string `json:"bindPasswordKey,omitempty"`
+}
+
+// AppSidecarSpec declares a companion service deployed alongside the primary
+// app by a purpose-built composition (for example Jitsi with Element).
+type AppSidecarSpec struct {
+	// Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
+	// use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
+	Name string `json:"name"`
+
+	// Chart references the sidecar Helm chart.
+	Chart ChartRef `json:"chart"`
+
+	// KernelRequirements declares kernel services the sidecar needs.
+	// +optional
+	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
+
+	// AppSecrets are sidecar-internal secrets stored at
+	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.
+	// +optional
+	AppSecrets []AppSecret `json:"appSecrets,omitempty"`
+
+	// ExtraValues are merged into the sidecar Helm release values.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
+
+	// StableServiceName is the Kubernetes Service name the tenant ingress
+	// reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+	// a stable ClusterIP alias pointing at the sidecar release.
+	// +optional
+	StableServiceName string `json:"stableServiceName,omitempty"`
+
+	// StableServicePort is the port on StableServiceName. Defaults to 80.
+	// +optional
+	// +kubebuilder:default=80
+	StableServicePort int32 `json:"stableServicePort,omitempty"`
+}
+
+// SidecarAppName returns the synthetic app key used for sidecar OpenBao paths
+// and OIDC client jobs ({parent}-{sidecar}).
+func SidecarAppName(parentProfile, sidecarName string) string {
+	return parentProfile + "-" + sidecarName
 }
 
 // AppSecret declares an app-internal secret the orchestrator must generate

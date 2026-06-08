@@ -2090,18 +2090,16 @@ func portalRealtimeLinksJobName(tenantName string) string {
 }
 
 // portalRealtimeLinkTargets returns meet/chat base URLs for kernel portal contact
-// actions when the tenant has Jitsi and/or Element installed.
+// actions when the tenant has Element installed (Jitsi is bundled as a sidecar).
 func (r *TenantReconciler) portalRealtimeLinkTargets(tenant *gentianov1alpha1.Tenant) (meetURL, chatURL string) {
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	if effectiveDomain == "" {
 		return "", ""
 	}
 	for _, app := range tenant.Spec.Apps {
-		switch app.Profile {
-		case "jitsi":
-			meetURL = fmt.Sprintf("https://meet.%s", effectiveDomain)
-		case "element":
+		if app.Profile == "element" {
 			chatURL = fmt.Sprintf("https://chat.%s", effectiveDomain)
+			meetURL = fmt.Sprintf("https://meet.%s", effectiveDomain)
 		}
 	}
 	return meetURL, chatURL
