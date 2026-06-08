@@ -508,7 +508,8 @@ On the dev cluster today, Postfix (and Dovecot when enabled) run in
 `postfix-dev.gentian-dev.svc.cluster.local:587`, not
 `postfix.platform-kernel.svc.cluster.local`.
 
-**Install-time vs per-tenant:** `MAIL_SERVICE_MODE` in `install.env`
+**Install-time vs per-tenant:** `MAIL_SERVICE_MODE` in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
 (`external` or `kernel`) decides whether the installer deploys kernel
 mail and how Postfix relays. **`Tenant.spec.mail.mode`** (`selfhosted`,
 `external`, `transport-only`, `disabled`) decides what the operator

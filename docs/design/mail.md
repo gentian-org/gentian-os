@@ -10,7 +10,7 @@ Three layers are easy to conflate:
 
 | Layer | Knob | What it controls on dev today |
 |---|---|---|
-| **Cluster install** | `MAIL_SERVICE_MODE` in `install.env` (`external` \| `kernel`) | Whether `install.sh` step **15b** deploys Postfix/Dovecot helm Releases into **`gentian-dev`** and whether Postfix relays to an external SMTP host or delivers via Dovecot LMTP |
+| **Cluster install** | `MAIL_SERVICE_MODE` in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` (`external` \| `kernel`) | Whether `install.sh` step **15b** deploys Postfix/Dovecot helm Releases into **`gentian-dev`** and whether Postfix relays to an external SMTP host or delivers via Dovecot LMTP |
 | **Per tenant** | `Tenant.spec.mail.mode` | What the **gentian-os operator** provisions: virtual domains, DKIM paths, `smtp-credentials-*` Secrets, DNS guidance |
 | **Per app** | `AppProfile` `mail.smtp` / `mail.imap` | Whether the operator creates app SMTP/IMAP secrets pointing at kernel or external endpoints |
 
@@ -32,7 +32,7 @@ kubectl get pods -n gentian-dev -l 'app.kubernetes.io/name in (postfix,dovecot)'
 kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode'
 ```
 
-Switching install mode: [commands.md](../commands.md) §9 (`./update.sh` after editing `install.env`).
+Switching install mode: [commands.md](../commands.md) §9 (`./update.sh` after editing `cluster-settings.env`).
 
 ---
 

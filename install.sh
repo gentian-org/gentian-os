@@ -1223,6 +1223,8 @@ main_cp() {
 
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
+    prompt_app_repos
+    load_deployments_cluster_settings
     prompt_credentials
     prompt_kernel_domain
     prompt_network_mode

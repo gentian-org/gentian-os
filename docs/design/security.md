@@ -73,10 +73,11 @@ app's secrets, and no tenant can read another tenant's secrets.
 ## 3. Secret Generation Mode
 
 The platform supports two credential generation strategies, selected
-by setting `SECRET_MODE` in `install.env` before the initial cluster
-install:
+by setting `SECRET_MODE` in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
+before the initial cluster install:
 
-| Mode | `install.env` value | Description |
+| Mode | `cluster-settings.env` value | Description |
 | --- | --- | --- |
 | **Deterministic** (default) | `SECRET_MODE=derived` | All credentials derived from a single master password via HKDF-SHA256. No backup required for recovery. |
 | **Random** | `SECRET_MODE=random` | Each credential generated with `openssl rand -hex 32` at provision time. Recovery requires OpenBao backup. Supports independent per-credential rotation. |

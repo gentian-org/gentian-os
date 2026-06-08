@@ -28,9 +28,8 @@ kubectl get tenants
 
 Tenants are modeled in the deployments repository as:
 
-- `dev/tenants/instances/<tenant>/tenant.yaml` (tenant instance)
-- `dev/tenants/instances/<instance>/...` (how that definition is instantiated)
-- `dev/tenants/kustomization.yaml` (which instances are deployed in dev)
+- `clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml` (tenant instance)
+- `clusters/<cluster>/tenants/<tenant>/<stage>/kustomization.yaml` (tenant-scoped deployment entrypoint)
 
 List available tenant instances and whether they are currently deployed:
 
@@ -62,7 +61,7 @@ After successful deploy, the CLI prints tenant-admin login guidance, including:
 Render and apply the active tenant set for dev manually (optional):
 
 ```bash
-kubectl apply -k gentian-deployments/dev/tenants
+kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
 ```
 
 To target another environment, use `--env`:
@@ -72,16 +71,11 @@ kubectl gentian tenants list --env staging
 kubectl gentian tenants deploy demo --env staging
 ```
 
-The deploy command updates `resources:` in
-`gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, then
-applies that Kustomization.
+The deploy command writes/updates tenant manifests under
+`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
+and ArgoCD ApplicationSet discovers the directory automatically.
 
-Equivalent Git edit:
-
-```yaml
-resources:
-- instances/demo
-```
+Equivalent Git change: add/remove tenant directories for the selected stage.
 
 Check tenant reconciliation:
 
@@ -120,8 +114,8 @@ If a prior undeploy ran Retain cleanup only, purge falls back to an LDAP OU
 delete Job when it detects `ldap-lock-<tenant>` without `ldap-ou-delete-<tenant>`.
 
 The undeploy command removes the instance from
-`gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, applies
-the Kustomization, and deletes the live Tenant CR.
+`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
+and deletes the live Tenant CR.
 
 Equivalent Git edit:
 
@@ -132,7 +126,7 @@ resources: []
 Apply the desired state manually (optional):
 
 ```bash
-kubectl apply -k gentian-deployments/dev/tenants
+kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
 ```
 
 If you want immediate local convergence before ArgoCD sync, delete the live
@@ -208,7 +202,8 @@ kubectl describe application -n argocd gentian-os
 
 ## 9. Kernel Mail Stack (Dovecot + Postfix)
 
-**Two knobs:** `MAIL_SERVICE_MODE` in `install.env` controls whether the
+**Two knobs:** `MAIL_SERVICE_MODE` in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` controls whether the
 **installer** deploys Postfix/Dovecot into `gentian-dev` and how Postfix
 relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
 **operator** provisions per organisation. See [design/mail.md](design/mail.md) §0.
@@ -220,12 +215,14 @@ On dev, in-cluster SMTP is `postfix-dev.gentian-dev.svc.cluster.local:587`.
 Kernel mail mode deploys Dovecot alongside Postfix and configures Postfix
 to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
 
-**Step 1** — Update `install.env`:
+**Step 1** — Update `cluster-settings.env`:
+
 ```ini
 MAIL_SERVICE_MODE=kernel
 ```
 
 **Step 2** — Run `update.sh`. It detects the drift and patches the cluster:
+
 ```bash
 ./update.sh
 ```
@@ -254,7 +251,7 @@ kubectl get externalsecret -n gentian-dev dovecot-sensitive-values postfix-sensi
 ### Switch back to external relay mode
 
 ```ini
-# install.env
+# gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env
 MAIL_SERVICE_MODE=external
 EXTERNAL_SMTP_HOST=smtp.gmail.com
 EXTERNAL_SMTP_PORT=587

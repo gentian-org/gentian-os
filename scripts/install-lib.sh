@@ -263,11 +263,17 @@ INPUT_HIERARCHY_VARS=(
     GENTIAN_DEPLOYMENTS_REPO
     GENTIAN_DEPLOYMENTS_BRANCH
     GENTIAN_DEPLOYMENTS_PATH
+    GENTIAN_DEPLOYMENTS_CLUSTER
+    GENTIAN_DEPLOYMENTS_STAGE
     GENTIAN_NONINTERACTIVE
     INSTALL_CLUSTER_INFRA
     GENTIAN_MANAGED_CERT_MANAGER
     CF_API_TOKEN
     CF_ZONE_NAME
+    SECRET_MODE
+    MINIO_ENDPOINT
+    CNPG_HOST
+    STORAGE_CLASS
 )
 
 # ─── Versions ────────────────────────────────────────────────────────────────
@@ -651,6 +657,8 @@ prompt_app_repos() {
     local default_apps_branch="main"
     local default_deploy_repo="https://github.com/gentian-org/gentian-deployments"
     local default_deploy_branch="main"
+    local default_deploy_cluster="default-cluster"
+    local default_deploy_stage="${ENV:-dev}"
     local v
 
     if [[ -z "${GENTIAN_APPS_REPO:-}" ]]; then
@@ -691,13 +699,35 @@ prompt_app_repos() {
         fi
     fi
 
+    if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_DEPLOYMENTS_CLUSTER="${default_deploy_cluster}"
+        else
+            read -rp "  gentian-deployments cluster path segment [${default_deploy_cluster}]: " v
+            GENTIAN_DEPLOYMENTS_CLUSTER="${v:-${default_deploy_cluster}}"
+        fi
+    fi
+
+    if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_DEPLOYMENTS_STAGE="${default_deploy_stage}"
+        else
+            read -rp "  gentian-deployments stage [${default_deploy_stage}]: " v
+            GENTIAN_DEPLOYMENTS_STAGE="${v:-${default_deploy_stage}}"
+        fi
+    fi
+
     : "${GENTIAN_APPS_REPO:=${default_apps_repo}}"
     : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
     : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
+        : "${GENTIAN_DEPLOYMENTS_CLUSTER:=${default_deploy_cluster}}"
+        : "${GENTIAN_DEPLOYMENTS_STAGE:=${default_deploy_stage}}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
     export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH \
-           GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH GENTIAN_DEPLOYMENTS_PATH
+            GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH \
+            GENTIAN_DEPLOYMENTS_CLUSTER GENTIAN_DEPLOYMENTS_STAGE \
+            GENTIAN_DEPLOYMENTS_PATH
 
     # Persist to ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
     # The plugin sources this file directly; keep variable names aligned with the
@@ -712,6 +742,8 @@ GENTIAN_APPS_REPO="${GENTIAN_APPS_REPO}"
 GENTIAN_APPS_BRANCH="${GENTIAN_APPS_BRANCH}"
 GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}"
 GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH}"
+GENTIAN_DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE}"
 GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"
 EOF
     chmod 0600 "$cfg_file"
@@ -751,6 +783,14 @@ save_install_state() {
         [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_STARTTLS=%q\n' "$val"
         val="${NETWORK_MODE:-}"
         [[ -n "$val" ]] && printf 'export NETWORK_MODE=%q\n' "$val"
+        val="${SECRET_MODE:-}"
+        [[ -n "$val" ]] && printf 'export SECRET_MODE=%q\n' "$val"
+        val="${MINIO_ENDPOINT:-}"
+        [[ -n "$val" ]] && printf 'export MINIO_ENDPOINT=%q\n' "$val"
+        val="${CNPG_HOST:-}"
+        [[ -n "$val" ]] && printf 'export CNPG_HOST=%q\n' "$val"
+        val="${STORAGE_CLASS:-}"
+        [[ -n "$val" ]] && printf 'export STORAGE_CLASS=%q\n' "$val"
         val="${GENTIAN_MANAGED_CERT_MANAGER:-}"
         [[ -n "$val" ]] && printf 'export GENTIAN_MANAGED_CERT_MANAGER=%q\n' "$val"
         val="${INSTALL_START_EPOCH:-}"
@@ -759,6 +799,23 @@ save_install_state() {
     install -m 0644 "$tmp" "${INSTALL_STATE_FILE}"
     rm -f "$tmp"
     info "Saved installer state to ${INSTALL_STATE_FILE}."
+}
+
+# =============================================================================
+# Load cluster-scoped non-secret settings from gentian-deployments checkout.
+# File path convention:
+#   ${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/cluster-settings.env
+# =============================================================================
+load_deployments_cluster_settings() {
+    : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
+
+    if [[ -r "${settings_file}" ]]; then
+        load_env_file "${settings_file}" "deployments cluster settings"
+    else
+        info "No deployments cluster settings file found at ${settings_file} (optional)."
+    fi
 }
 
 # =============================================================================
@@ -1094,6 +1151,8 @@ upsert_gentian_cluster_config() {
     local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
     local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
     local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
+    local _storage_class="${STORAGE_CLASS:-}"
+    local _mail_mode="${MAIL_SERVICE_MODE:-external}"
 
     info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>})..."
     kubectl apply -f - <<EOF
@@ -1111,6 +1170,8 @@ data:
   udm.url: "${_udm_url}"
   minio.endpoint: "${_minio_endpoint}"
   cnpg.host: "${_cnpg_host}"
+  storageClass: "${_storage_class}"
+  mail.serviceMode: "${_mail_mode}"
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
 EOF
@@ -2582,7 +2643,8 @@ install_orchestrator() {
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local crd_dir="${chart_dir}/crds"
     local ns="gentian-system"
-    local env="${ENV:-dev}"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local required_crds=(
         tenants.gentianos.io
         appprofiles.gentianos.io
@@ -2676,21 +2738,23 @@ install_orchestrator() {
     sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-        -e "s|%ENV%|${env}|g" \
+        -e "s|%CLUSTER%|${cluster}|g" \
+        -e "s|%STAGE%|${stage}|g" \
         "$tmpl" >"$rendered"
 
-    info "Registering gentian-os + gentian-tenants ArgoCD Applications..."
+    info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
     info "  operator branch:    ${gentian_os_branch}"
     info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
     info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
-    info "  environment:        ${env}"
+    info "  deployments cluster:${cluster}"
+    info "  deployments stage:  ${stage}"
     kubectl apply -f "$rendered"
     rm -f "$rendered"
 
-    success "Phase 2 complete: gentian-os and gentian-tenants Applications registered with ArgoCD."
+    success "Phase 2 complete: gentian-os Application and gentian-tenants ApplicationSet registered with ArgoCD."
     success "  Image updates are now fully automatic via argocd-image-updater."
     info "Monitor operator:  kubectl get application gentian-os -n argocd"
-    info "Monitor tenants:   kubectl get application gentian-tenants -n argocd"
+    info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"
     info "Monitor updater:   kubectl get imageupdater gentian-os -n argocd"
     info "Provision tenants: kubectl gentian tenants list"
     info "                   kubectl gentian tenants deploy gtn-demo"

@@ -183,6 +183,7 @@ _init() {
     [[ -f "$cfg" ]] || { echo "ERROR: $cfg not found." >&2; exit 1; }
     load_env_file "$cfg"  "install.env"
     [[ -f "$sec" ]] && load_env_file "$sec" "install.secrets.env"
+    load_deployments_cluster_settings
 
     : "${MASTER_PASSWORD:?MASTER_PASSWORD must be set (via install.secrets.env or env var)}"
 
@@ -1036,23 +1037,25 @@ op_appprofiles_bootstrap() {
 op_argocd_bootstrap() {
     banner "ArgoCD Application manifest reconciliation"
 
-    local env="${ENV:-dev}"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local gentian_os_branch
     gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
 
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would apply gentian-os + gentian-tenants Applications"
+        info "[dry-run] would apply gentian-os Application + gentian-tenants ApplicationSet"
         info "[dry-run] would hard-refresh all ArgoCD Applications"
         return 0
     fi
 
     if [[ -f "${tmpl}" ]]; then
-        info "Re-applying gentian-os + gentian-tenants Applications (branch=${gentian_os_branch})..."
+        info "Re-applying gentian-os Application + gentian-tenants ApplicationSet (branch=${gentian_os_branch})..."
         sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
             -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}|g" \
             -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH:-main}|g" \
-            -e "s|%ENV%|${env}|g" \
+            -e "s|%CLUSTER%|${cluster}|g" \
+            -e "s|%STAGE%|${stage}|g" \
             "${tmpl}" | kubectl apply -f -
         success "gentian-os Application manifest updated."
     else

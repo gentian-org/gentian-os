@@ -33,8 +33,10 @@ ext4 per user).
 
 ## 3. Domains and TLS — Two Planes, Tenant Zones, and Tenancy Mode
 
-Install-time **`TENANCY_MODE`** (`multi` default, set in `install.env` / operator Helm
-`tenancyMode`) selects the default app URL shape when `Tenant.spec.domain` is unset.
+Install-time **`TENANCY_MODE`** (`multi` default, set in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` and mirrored
+to operator Helm `tenancyMode`) selects the default app URL shape when
+`Tenant.spec.domain` is unset.
 Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 
 | Mode | Cluster profile | Default `effectiveDomain` | Example Jitsi URL |
@@ -110,7 +112,7 @@ Let's Encrypt production enforces per-account and per-registered-domain limits (
 
 | Environment | Recommendation |
 |---|---|
-| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/dev/kernel/values-dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./update.sh --acme-issuers`. |
+| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/clusters/<cluster>/kernel/values-dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./update.sh --acme-issuers`. |
 | **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `uninstall.sh -f` loops that re-issue everything. |
 | **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.desk.gentian.org` gets an edge cert — Universal SSL on `*.desk.gentian.org` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
 | **Switching issuer on a live cluster** | Patch operator Helm value, run `./update.sh --acme-issuers`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
