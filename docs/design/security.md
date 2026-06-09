@@ -302,7 +302,7 @@ adapter**) need extra configuration on staging clusters:
 | Mechanism | Purpose | Limitation |
 |---|---|---|
 | `gentian-staging-ca-tls` secret | PEM bundle (Mozilla CAs + LE staging intermediate) replicated into each `tenant-*` namespace by the operator | Works for `curl`, Python `requests`, and similar clients that honour `SSL_CERT_FILE` / `--cacert` |
-| `app-element` / `app-default` composition mounts | Mount `gentian-staging-ca-tls` and set `REQUESTS_CA_BUNDLE` on affected pods | **Insufficient for Synapse** — OIDC discovery uses Twisted `platformTrust()`, which ignores those environment variables |
+| `app-element` / `app-default` composition mounts | Mount `gentian-staging-ca-tls` (`ca.crt` + `truststore.jks`) and set `REQUESTS_CA_BUNDLE` on affected pods; append `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares OIDC or existing `javaOpts` | **Insufficient for Synapse** — OIDC discovery uses Twisted `platformTrust()`, which ignores those environment variables. **Required for Java OIDC apps** (e.g. XWiki) — the JVM ignores `SSL_CERT_FILE` |
 | `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (OIDC metadata fetch). **Staging only.** |
 
 **Synapse startup failure (staging):** if `opendesk-synapse` is in

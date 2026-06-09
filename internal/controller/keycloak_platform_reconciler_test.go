@@ -46,7 +46,7 @@ func TestReconcileKeycloakIDPEmbeddingIngressPatchesIngress(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Name: "id-proxy", Namespace: "gentian-dev"}, got); err != nil {
 		t.Fatalf("get ingress: %v", err)
 	}
-	want := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"})
+	want := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
 	if got.Annotations[nginxConfigurationSnippetAnnotation] != want {
 		t.Fatalf("snippet mismatch:\nwant:\n%s\ngot:\n%s", want, got.Annotations[nginxConfigurationSnippetAnnotation])
 	}

@@ -79,4 +79,7 @@ func TestEnsureStagingCASecretCreatesTargetSecret(t *testing.T) {
 	if len(got.Data["ca.crt"]) == 0 {
 		t.Fatal("expected non-empty ca.crt")
 	}
+	if len(got.Data[TrustStoreKey]) == 0 {
+		t.Fatal("expected non-empty truststore.jks")
+	}
 }

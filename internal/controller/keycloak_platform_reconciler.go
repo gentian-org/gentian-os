@@ -143,6 +143,10 @@ func (r *KeycloakPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&gentianov1alpha1.Tenant{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 		).
+		Watches(
+			&gentianov1alpha1.AppProfile{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+		).
 		Complete(r)
 }
 
@@ -157,23 +161,29 @@ func reconcileKeycloakIDPEmbeddingIngress(ctx context.Context, c client.Client, 
 	}
 
 	var effectiveDomains []string
+	var tenantNames []string
 	for i := range tenantList.Items {
 		if tenantList.Items[i].DeletionTimestamp != nil {
 			continue
 		}
 		if d := tenantList.Items[i].EffectiveDomain(kernelDomain, tenancyMode); d != "" {
 			effectiveDomains = append(effectiveDomains, d)
+			tenantNames = append(tenantNames, tenantList.Items[i].Name)
 		}
 	}
+	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, c, tenantList.Items)
+	if err != nil {
+		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
+	}
 
-	desiredSnippet := keycloakOIDCEmbeddingIngressSnippet(kernelDomain, effectiveDomains)
+	desiredSnippet := keycloakOIDCEmbeddingIngressSnippet(kernelDomain, effectiveDomains, oidcSubs, tenantNames)
 	if desiredSnippet == "" {
 		return nil
 	}
 
 	name := keycloakProxyIngressName()
 	existing := &networkingv1.Ingress{}
-	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: servicesNamespace}, existing)
+	err = c.Get(ctx, types.NamespacedName{Name: name, Namespace: servicesNamespace}, existing)
 	if errors.IsNotFound(err) {
 		log.FromContext(ctx).Info("Keycloak proxy ingress not found; IdP frame-ancestors will apply when Nubus is ready",
 			"ingress", name, "namespace", servicesNamespace)
@@ -211,25 +221,30 @@ func keycloakIngressFramePolicyApplied(ctx context.Context, c client.Client, ker
 		return false
 	}
 	var effectiveDomains []string
+	var tenantNames []string
 	for i := range tenantList.Items {
 		if tenantList.Items[i].DeletionTimestamp != nil {
 			continue
 		}
 		if d := tenantList.Items[i].EffectiveDomain(kernelDomain, tenancyMode); d != "" {
 			effectiveDomains = append(effectiveDomains, d)
+			tenantNames = append(tenantNames, tenantList.Items[i].Name)
 		}
 	}
-	desiredSnippet := keycloakOIDCEmbeddingIngressSnippet(kernelDomain, effectiveDomains)
+	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, c, tenantList.Items)
+	if err != nil {
+		return false
+	}
+	desiredSnippet := keycloakOIDCEmbeddingIngressSnippet(kernelDomain, effectiveDomains, oidcSubs, tenantNames)
 	if desiredSnippet == "" {
 		return true
 	}
 
 	existing := &networkingv1.Ingress{}
-	err := c.Get(ctx, types.NamespacedName{
+	if err = c.Get(ctx, types.NamespacedName{
 		Name:      keycloakProxyIngressName(),
 		Namespace: servicesNamespace,
-	}, existing)
-	if err != nil {
+	}, existing); err != nil {
 		return false
 	}
 	if existing.Annotations[nginxConfigurationSnippetAnnotation] != desiredSnippet {
@@ -247,6 +262,24 @@ func keycloakIngressFramePolicyApplied(ctx context.Context, c client.Client, ker
 	for _, d := range effectiveDomains {
 		if !strings.Contains(existing.Annotations[nginxConfigurationSnippetAnnotation], fmt.Sprintf("https://*.%s", d)) {
 			return false
+		}
+	}
+	for tenantName, subs := range oidcSubs {
+		effective := ""
+		for i, name := range tenantNames {
+			if name == tenantName && i < len(effectiveDomains) {
+				effective = effectiveDomains[i]
+				break
+			}
+		}
+		if effective == "" {
+			continue
+		}
+		for _, sub := range subs {
+			origin := fmt.Sprintf("https://%s.%s", sub, effective)
+			if !strings.Contains(existing.Annotations[nginxConfigurationSnippetAnnotation], origin) {
+				return false
+			}
 		}
 	}
 	return true

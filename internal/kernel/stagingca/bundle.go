@@ -75,7 +75,24 @@ func fetchPEM(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch %s: HTTP %d", url, resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeCertPEM(raw)
+}
+
+// normalizeCertPEM accepts PEM or DER (Let's Encrypt AIA serves DER) and
+// returns a PEM CERTIFICATE block.
+func normalizeCertPEM(raw []byte) ([]byte, error) {
+	if block, _ := pem.Decode(raw); block != nil && block.Type == "CERTIFICATE" {
+		return pem.EncodeToMemory(block), nil
+	}
+	cert, err := x509.ParseCertificate(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), nil
 }
 
 // EnsureStagingCASecret materializes gentian-staging-ca-tls in namespace when
@@ -108,6 +125,10 @@ func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, cert
 	if err != nil {
 		return false, err
 	}
+	trustStore, err := BuildTrustStoreJKS(bundle, TrustStorePassword)
+	if err != nil {
+		return false, fmt.Errorf("build truststore.jks: %w", err)
+	}
 
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -119,7 +140,10 @@ func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, cert
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{"ca.crt": bundle},
+		Data: map[string][]byte{
+			"ca.crt":         bundle,
+			TrustStoreKey:    trustStore,
+		},
 	}
 
 	existing := &corev1.Secret{}

@@ -33,19 +33,20 @@ const cryptpadSandboxSubDomain = "pad-sandbox"
 // operator must append frame-ancestors, not replace the upstream header.
 const cryptpadMainSubDomain = "pad"
 
-// keycloakSSOAppSubdomains are tenant app ingress prefixes that commonly embed
-// the shared IdP (id.<kernel>) during OIDC — e.g. Element chat framing Keycloak,
-// Synapse matrix handling the OIDC callback.
-var keycloakSSOAppSubdomains = []string{"chat", "matrix", "meet", "projects", "webmail", "pad"}
-
 // keycloakOIDCAncestorOrigins builds space-separated https origins for the
 // Keycloak proxy ingress frame-ancestors policy: kernel portal plus, per tenant
-// effective domain, a wildcard and explicit SSO app hosts.
-func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []string) string {
+// effective domain, a tenant wildcard and explicit OIDC app ingress hosts
+// discovered from installed AppProfiles (see collectOIDCIngressSubdomainsByTenant).
+func keycloakOIDCAncestorOrigins(
+	kernelDomain string,
+	tenantEffectiveDomains []string,
+	tenantOIDCSubdomains map[string][]string,
+	tenantNames []string,
+) string {
 	if kernelDomain == "" {
 		return ""
 	}
-	seen := make(map[string]struct{}, len(tenantEffectiveDomains)*(len(keycloakSSOAppSubdomains)+1)+1)
+	seen := make(map[string]struct{})
 	var origins []string
 	add := func(origin string) {
 		if origin == "" {
@@ -61,12 +62,16 @@ func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []s
 	// Kernel-zone apps (Nextcloud Files, ICS silent login, …) run on *.<kernelDomain>
 	// and may embed id.<kernel> in a nested iframe during OIDC — not under tenant zones.
 	add(fmt.Sprintf("https://*.%s", kernelDomain))
-	for _, effective := range tenantEffectiveDomains {
+	for i, effective := range tenantEffectiveDomains {
 		if effective == "" {
 			continue
 		}
 		add(fmt.Sprintf("https://*.%s", effective))
-		for _, sub := range keycloakSSOAppSubdomains {
+		var tenantName string
+		if i < len(tenantNames) {
+			tenantName = tenantNames[i]
+		}
+		for _, sub := range tenantOIDCSubdomains[tenantName] {
 			add(fmt.Sprintf("https://%s.%s", sub, effective))
 		}
 	}
@@ -84,12 +89,18 @@ proxy_hide_header Content-Security-Policy;`
 
 // keycloakOIDCEmbeddingIngressSnippet returns NGINX directives for the shared
 // Keycloak ingress so portal-embedded apps can frame OIDC login pages.
-func keycloakOIDCEmbeddingIngressSnippet(kernelDomain string, tenantEffectiveDomains []string) string {
+func keycloakOIDCEmbeddingIngressSnippet(
+	kernelDomain string,
+	tenantEffectiveDomains []string,
+	tenantOIDCSubdomains map[string][]string,
+	tenantNames []string,
+) string {
 	// Repeat hide directives in the location block; browsers enforce X-Frame-Options
 	// before CSP frame-ancestors, so SAMEORIGIN from Keycloak blocks broker endpoints
 	// even when frame-ancestors lists chat.<tenant>.
 	return keycloakOIDCIngressServerSnippet() + "\n" +
-		frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(kernelDomain, tenantEffectiveDomains))
+		frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(
+			kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames))
 }
 
 // portalEmbeddingIngressSnippet returns NGINX directives that allow the shared

@@ -18,7 +18,7 @@ func TestBuildRealmBrowserSecurityHeadersScript(t *testing.T) {
 }
 
 func TestKeycloakOIDCEmbeddingIngressSnippetStripsXFrameOptions(t *testing.T) {
-	snippet := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"})
+	snippet := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
 	if !strings.Contains(snippet, `proxy_hide_header X-Frame-Options`) {
 		t.Fatalf("expected X-Frame-Options hide in IdP snippet, got:\n%s", snippet)
 	}

@@ -14,6 +14,23 @@ provisioning:
           keyMapping:
             password: adminPassword
 
+# ACME staging: id.<kernel> uses LE staging certs; Node OIDC discovery needs the
+# gentian-staging-ca-tls bundle (see docs/design/security.md §9.1).
+extraVolumes:
+  - name: gentian-staging-ca
+    secret:
+      secretName: gentian-staging-ca-tls
+      defaultMode: 0444
+extraVolumeMounts:
+  - name: gentian-staging-ca
+    mountPath: /opt/staging-ca
+    readOnly: true
+extraEnvVars:
+  - name: REDIS_USER
+    value: default
+  - name: NODE_EXTRA_CA_CERTS
+    value: /opt/staging-ca/ca.crt
+
 ics:
   session:
     existingSecret:

@@ -31,18 +31,37 @@ docker run --rm alpine:3.20 cat /etc/ssl/certs/ca-certificates.crt >"$TMPDIR/bun
 AIA="$(openssl x509 -in "$TMPDIR/leaf.pem" -noout -text 2>/dev/null \
   | awk -F'URI:' '/CA Issuers - URI:/{print $2; exit}' | tr -d '[:space:]')" || true
 if [[ -n "$AIA" ]]; then
-  curl -fsSL "$AIA" -o "$TMPDIR/intermediate.pem"
+  curl -fsSL "$AIA" -o "$TMPDIR/intermediate.der"
+  # Let's Encrypt AIA serves DER; append as PEM so awk/keytool can import it.
+  openssl x509 -inform DER -in "$TMPDIR/intermediate.der" -out "$TMPDIR/intermediate.pem"
+  printf '\n' >>"$TMPDIR/bundle.crt"
   cat "$TMPDIR/intermediate.pem" >>"$TMPDIR/bundle.crt"
   echo "appended intermediate from $AIA"
 else
   echo "warning: no AIA on $LEAF_SECRET leaf; bundle is system CAs only" >&2
 fi
 
+# Java OIDC clients (XWiki, etc.) need a JKS truststore; curl/python use ca.crt.
+# keytool -importcert on a multi-cert PEM only imports the first certificate.
+awk '/BEGIN CERT/{n++}{print > "'"$TMPDIR"'/cert-" n ".pem"}' "$TMPDIR/bundle.crt"
+docker run --rm -v "$TMPDIR:/work" eclipse-temurin:17-jdk bash -ec '
+  rm -f /work/truststore.jks
+  n=0
+  for cert in /work/cert-*.pem; do
+    [[ -s "$cert" ]] || continue
+    keytool -importcert -noprompt -alias "staging-ca-${n}" \
+      -file "$cert" -keystore /work/truststore.jks -storetype JKS -storepass changeit
+    n=$((n + 1))
+  done
+  test -f /work/truststore.jks
+'
+
 if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
   kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE"
 fi
 kubectl create secret generic "$SECRET_NAME" \
   --namespace="$NAMESPACE" \
-  --from-file=ca.crt="$TMPDIR/bundle.crt"
+  --from-file=ca.crt="$TMPDIR/bundle.crt" \
+  --from-file=truststore.jks="$TMPDIR/truststore.jks"
 
-echo "secret/$SECRET_NAME updated in namespace $NAMESPACE"
+echo "secret/$SECRET_NAME updated in namespace $NAMESPACE (ca.crt + truststore.jks)"
