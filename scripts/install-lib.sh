@@ -370,7 +370,11 @@ load_env_file() {
 
     set -a
     # shellcheck disable=SC1090
-    source "${file}" || true
+    if ! source "${file}"; then
+        set +a
+        error "Failed to load ${label} from ${file}. Fix shell syntax in this file and retry."
+        return 1
+    fi
     set +a
 
     for var in "${!before[@]}"; do
@@ -392,7 +396,11 @@ load_env_file_override() {
 
     set -a
     # shellcheck disable=SC1090
-    source "${file}" || true
+    if ! source "${file}"; then
+        set +a
+        error "Failed to load ${label} from ${file}. Fix shell syntax in this file and retry."
+        return 1
+    fi
     set +a
 
     info "Loaded ${label} from ${file} (overrides prior values)."
@@ -403,77 +411,112 @@ load_env_file_override() {
 # failure. No cluster actions are taken.
 validate_config() {
     local errors=0 warnings=0
+    local deployments_root cluster stage
+    local cluster_settings_file stage_values_file
 
-    _req() {
-        local var="$1" hint="$2"
+    deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
+    cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
+    stage_values_file="${deployments_root}/clusters/${cluster}/kernel/values-${stage}.yaml"
+
+    _file_header() {
+        local file="$1" role="$2"
+        echo ""
+        echo "━━━ ${role} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if [[ -r "${file}" ]]; then
+            echo "  [FILE]     ${file}"
+        else
+            echo "  [ABSENT]   ${file}"
+        fi
+    }
+
+    _req_from() {
+        local var="$1" hint="$2" source_file="$3"
         if [[ -z "${!var:-}" ]]; then
-            echo "  [MISSING]  ${var}  — ${hint}"
+            echo "  [MISSING]  ${var}  — ${hint} (set in ${source_file})"
             (( errors++ )) || true
         else
             echo "  [OK]       ${var}"
         fi
     }
 
-    _opt() {
-        local var="$1" hint="$2"
+    _opt_from() {
+        local var="$1" hint="$2" source_file="$3"
         if [[ -z "${!var:-}" ]]; then
-            echo "  [WARN]     ${var}  — not set (${hint})"
+            echo "  [WARN]     ${var}  — not set (${hint}; set in ${source_file})"
             (( warnings++ )) || true
         else
             echo "  [OK]       ${var}"
         fi
     }
 
-    echo ""
-    echo "━━━ Required secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    _req MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets"
-    _req OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username"
-    _req OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token"
-    _req OD_SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)"
-    _req OD_SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)"
+    _file_header "${INSTALL_SECRETS_FILE}" "Secrets checks (install.secrets.env)"
+    _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
+    _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "${INSTALL_SECRETS_FILE}"
+    if [[ -z "${CF_ZONE_NAME:-}" ]]; then
+        echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset; set override in ${INSTALL_SECRETS_FILE})"
+    else
+        echo "  [OK]       CF_ZONE_NAME"
+    fi
+
+    _file_header "${cluster_settings_file}" "Cluster checks (cluster-settings.env)"
 
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel'"
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}"
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
-        _req EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)"
+        _req_from EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)" "${cluster_settings_file}"
     fi
 
-    echo ""
-    echo "━━━ Required config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
-        echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix (e.g. platform.example.com)"
+        echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix (e.g. platform.example.com; set in ${cluster_settings_file})"
         (( errors++ )) || true
     elif [[ ! "${KERNEL_DOMAIN}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
-        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$"
+        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$ (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       KERNEL_DOMAIN=${KERNEL_DOMAIN}"
     fi
     TENANCY_MODE="${TENANCY_MODE:-multi}"
     if [[ "${TENANCY_MODE}" != "multi" && "${TENANCY_MODE}" != "single" ]]; then
-        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single'"
+        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single' (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       TENANCY_MODE=${TENANCY_MODE}"
     fi
 
+    _opt_from NETWORK_MODE  "networking mode: tunnel (default) or static-ip" "${cluster_settings_file}"
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        _req_from NODE_IP   "required in static-ip mode" "${cluster_settings_file}"
+    else
+        echo "  [OK]       NODE_IP  (not required for NETWORK_MODE=${NETWORK_MODE:-tunnel})"
+    fi
+
+    _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
+    _opt_from LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address" "${INSTALL_CONFIG_FILE}"
+    _opt_from INGRESS_CLASS_NAME "defaults to 'nginx' if not set" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
+
     echo ""
-    echo "━━━ Optional / recommended config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    _opt LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address"
-    _opt INGRESS_CLASS_NAME "defaults to 'nginx' if not set"
-    _opt NETWORK_MODE       "networking mode: tunnel (default) or static-ip"
-    _opt NODE_IP            "required in static-ip mode; auto-detected otherwise"
-    _opt CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates"
-    _opt CF_ZONE_NAME       "Cloudflare zone — derived from KERNEL_DOMAIN if not set"
-    _opt GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps"
-    _opt GENTIAN_APPS_BRANCH     "defaults to 'main'"
-    _opt GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments"
-    _opt GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'"
+    echo "━━━ Deployment values reminder (values-${stage}.yaml) ━━━━━━━━━━━━━━━━━━━"
+    if [[ -r "${stage_values_file}" ]]; then
+        echo "  [FILE]     ${stage_values_file}"
+    else
+        echo "  [ABSENT]   ${stage_values_file}"
+    fi
+    echo "  [INFO]     cloudflare.zoneID and cloudflare.tunnelCNAME are set in this values file, not in install.env/install.secrets.env."
 
     echo ""
     echo "━━━ Config sources ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -481,6 +524,10 @@ validate_config() {
                                        || echo "  [ABSENT]   ${INSTALL_CONFIG_FILE}  (optional)"
     [[ -r "${INSTALL_SECRETS_FILE}" ]] && echo "  [FILE]     ${INSTALL_SECRETS_FILE}" \
                                        || echo "  [ABSENT]   ${INSTALL_SECRETS_FILE}  (optional, chmod 600)"
+    [[ -r "${cluster_settings_file}" ]] && echo "  [FILE]     ${cluster_settings_file}" \
+                                        || echo "  [ABSENT]   ${cluster_settings_file}  (cluster runtime settings)"
+    [[ -r "${stage_values_file}" ]] && echo "  [FILE]     ${stage_values_file}" \
+                                    || echo "  [ABSENT]   ${stage_values_file}  (operator values for this stage)"
     [[ -r "${INSTALL_SECRETS_CACHE}" ]] && echo "  [CACHE]    ${INSTALL_SECRETS_CACHE}" \
                                         || echo "  [NO CACHE] ${INSTALL_SECRETS_CACHE}"
 
@@ -810,6 +857,20 @@ save_install_state() {
 # =============================================================================
 load_deployments_cluster_settings() {
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
+
+    # Local developer layout often checks out sibling repos under the same
+    # parent directory (../gentian-deployments). Prefer that path when the
+    # default cache location does not exist.
+    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}" ]]; then
+        local sibling_repo
+        sibling_repo="$(cd "${SCRIPT_DIR}/.." && pwd)/gentian-deployments"
+        if [[ -d "${sibling_repo}" ]]; then
+            GENTIAN_DEPLOYMENTS_PATH="${sibling_repo}"
+            export GENTIAN_DEPLOYMENTS_PATH
+            info "Using sibling deployments repo at ${GENTIAN_DEPLOYMENTS_PATH}."
+        fi
+    fi
+
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
 
