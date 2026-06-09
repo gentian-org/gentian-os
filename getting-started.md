@@ -95,11 +95,11 @@ Or disable file loading entirely:
 
 Configure these files in order before the first install run:
 
-1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`: cluster runtime behavior and endpoints (`KERNEL_DOMAIN`, `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`, `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`: `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`, `EXTERNAL_SMTP_STARTTLS`).
+1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`: cluster runtime behavior and endpoints (`KERNEL_DOMAIN`, `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`, `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`: `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`, `EXTERNAL_SMTP_STARTTLS`). **This overrides `.install-state.env`** when both are present.
 
 1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, namespace defaults and policy defaults).
 
-1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: initial tenant inventory and `spec.apps`.
+1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you provision tenants).
 
 1. `install.secrets.env`: secrets only (master password, registry creds, SMTP creds, Cloudflare token).
 
