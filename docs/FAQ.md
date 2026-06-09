@@ -19,20 +19,40 @@ re-run `./install.sh`.
 
 ## How should I set up ingress?
 
-Gentian needs an ingress controller. For Infomaniak with `NETWORK_MODE=static-ip`,
-use `ingress-nginx` with a `LoadBalancer` service and point DNS to the external IP.
+Gentian always needs an ingress controller.
 
-### 1. Install ingress-nginx
+Choose one preparation path:
+
+- `NETWORK_MODE=static-ip` (CSP / public IP): ingress-nginx should be exposed as a `LoadBalancer` service.
+- `NETWORK_MODE=tunnel` (self-hosted behind tunnel/proxy): ingress-nginx should stay internal (no `LoadBalancer` required).
+
+### 1. Install ingress-nginx (common)
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
-helm install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx \
-  --create-namespace
 ```
 
-### 2. Get the external IP
+### 2A. CSP path (`NETWORK_MODE=static-ip`): use LoadBalancer
+
+Install (or upgrade) ingress-nginx with service type `LoadBalancer`:
+
+```bash
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.service.type=LoadBalancer
+```
+
+If already installed:
+
+```bash
+helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --set controller.service.type=LoadBalancer
+```
+
+Get the external IP:
 
 ```bash
 kubectl get svc -n ingress-nginx ingress-nginx-controller -w
@@ -42,21 +62,33 @@ When `EXTERNAL-IP` is assigned, set that value as `NODE_IP` in
 `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
 for `NETWORK_MODE=static-ip`.
 
-### 3. Configure DNS
+Configure DNS so `*.${KERNEL_DOMAIN}` points to the ingress external IP.
+For Cloudflare this is usually an `A` record (`*` and optionally `@`).
 
-Create/Update DNS records so `*.${KERNEL_DOMAIN}` points to that external IP.
-For Cloudflare this is usually an `A` record:
+### 2B. Self-hosted path (`NETWORK_MODE=tunnel`): keep ingress internal
 
-- Type: `A`
-- Name: `*` (and optionally `@`)
-- Content: `<ingress external IP>`
+Do not require a `LoadBalancer` service for ingress-nginx. Use internal ingress and
+expose traffic through your tunnel/proxy.
 
-### 4. Validate ingress path
+Optional explicit setting:
 
 ```bash
-kubectl get ingress -A
-kubectl get svc -n ingress-nginx ingress-nginx-controller -o wide
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.service.type=ClusterIP
 ```
 
-If you use `NETWORK_MODE=tunnel`, keep ingress internal and terminate exposure through
-your tunnel/proxy instead of binding DNS directly to the ingress external IP.
+In this mode, DNS points to your tunnel/proxy endpoint, not to an ingress external IP.
+
+### 3. Validate ingress service type and ingress resources
+
+```bash
+kubectl get svc -n ingress-nginx ingress-nginx-controller -o wide
+kubectl get ingress -A
+```
+
+Expected:
+
+- CSP/static-ip path: `TYPE=LoadBalancer` and an `EXTERNAL-IP` is assigned.
+- Self-hosted/tunnel path: `TYPE=ClusterIP` (or internal-only), and exposure is handled by the tunnel/proxy.
