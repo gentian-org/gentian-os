@@ -30,7 +30,7 @@ dc=swp-ldap,dc=internal
     ├── uid=app-<app>-<tenant>            ← per-app service bind accounts
     ├── cn=users_<tenant>                 ← UDM group: all tenant users (primary group)
     ├── cn=admins_<tenant>               ← UDM group: tenant admins
-    └── cn=managed-by-attribute-*        ← per-tenant app access groups (six groups)
+    └── cn=managed-by-attribute-*        ← per-tenant app access groups (eight groups)
 ```
 
 ### 1.2 Keycloak Realm Topology

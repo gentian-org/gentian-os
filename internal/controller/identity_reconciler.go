@@ -73,6 +73,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{}, err
 	}
 
+	if err := r.cleanupOrphanedOIDCClientJobs(ctx, tenant, oidcConfigs); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned OIDC client Jobs: %w", err)
+	}
+
 	// We must always provision the tenant Keycloak realm for app OIDC and the
 	// kernel IdP broker, even when no apps currently require OIDC clients.
 
@@ -113,7 +117,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	// Those groups must exist in LDAP (OU Job) and be imported into Keycloak
 	// (group-ldap-mapper sync) before client Jobs run — see docs/design/iam.md §1.3.
 	if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
-		ouDone, err := r.ldapOUJobComplete(ctx, tenant.Name)
+		ouDone, err := r.ldapManagedGroupsReady(ctx, tenant.Name)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -411,6 +415,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 				oidcBrowserFlowJobName(tenant.Name),
 				kernelAdminEnableJobName(tenant.Name), kernelLDAPSyncJobName(tenant.Name),
 				kcLDAPGroupSyncJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
+				mbaGroupsJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -1033,10 +1038,21 @@ func (r *TenantReconciler) ensureKCLDAPGroupSyncJob(ctx context.Context, tenant 
 		func() *batchv1.Job { return makeKCLDAPGroupSyncJob(tenant, keycloakRealmName(tenant)) })
 }
 
-// ldapOUJobComplete reports whether the UDM OU Job (managed-by-attribute groups) finished.
-func (r *TenantReconciler) ldapOUJobComplete(ctx context.Context, tenantName string) (bool, error) {
+// ldapManagedGroupsReady reports whether the UDM OU Job and the managed-by-attribute
+// group backfill Job have both completed successfully.
+func (r *TenantReconciler) ldapManagedGroupsReady(ctx context.Context, tenantName string) (bool, error) {
+	for _, jobName := range []string{ouJobName(tenantName), mbaGroupsJobName(tenantName)} {
+		done, err := r.kernelJobSucceeded(ctx, jobName)
+		if err != nil || !done {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (r *TenantReconciler) kernelJobSucceeded(ctx context.Context, jobName string) (bool, error) {
 	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: ouJobName(tenantName), Namespace: kernelNamespace}, job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		return false, nil
 	}

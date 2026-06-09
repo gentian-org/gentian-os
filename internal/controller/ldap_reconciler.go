@@ -97,6 +97,17 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
 	}
 
+	// Step 1a — managed-by-attribute-* groups (idempotent backfill for existing OUs).
+	mbaDone, err := r.ensureMBAGroupsJob(ctx, tenant, ouDN)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure LDAP managed-by-attribute groups Job: %w", err)
+	}
+	if !mbaDone {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse,
+			"ProvisioningMBAGroups", "Waiting for managed-by-attribute group Job to complete")
+		return ctrl.Result{RequeueAfter: ldapRequeueAfter}, nil
+	}
+
 	// Step 1b — tenant-scoped App User template with username@<tenant-domain> prefill.
 	appUserTemplateDone, err := r.ensureAppUserTemplateJob(ctx, tenant, ouDN)
 	if err != nil {
@@ -378,6 +389,27 @@ func (r *TenantReconciler) ensureOUJob(ctx context.Context, tenant *gentianov1al
 	return jobIsComplete(job), nil
 }
 
+// ensureMBAGroupsJob creates per-tenant managed-by-attribute-* groups when absent.
+// Idempotent: safe for existing tenants whose OU Job ran before new groups were added.
+// Returns true when the Job has completed successfully.
+func (r *TenantReconciler) ensureMBAGroupsJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
+	jobName := mbaGroupsJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makeMBAGroupsJob(tenant, ouDN))
+	}
+	if err != nil {
+		return false, err
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
 // ensureAdminPolicyJob creates the delegated-admin policy Job if absent.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
@@ -548,6 +580,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 				// Delete provisioning jobs so they are re-created on the next deploy.
 				r.deleteProvisioningJobs(ctx,
 					ouJobName(tenant.Name),
+					mbaGroupsJobName(tenant.Name),
 					appUserTemplateJobName(tenant.Name),
 					adminUserJobName(tenant.Name),
 					adminPolicyJobName(tenant.Name),
@@ -575,6 +608,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		// Admin user was never fully provisioned; nothing to lock.
 		r.deleteProvisioningJobs(ctx,
 			ouJobName(tenant.Name),
+			mbaGroupsJobName(tenant.Name),
 			appUserTemplateJobName(tenant.Name),
 			adminUserJobName(tenant.Name),
 			adminPolicyJobName(tenant.Name),
@@ -594,6 +628,7 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 			// re-runs it (ensures the OU is recreated if it was removed).
 			r.deleteProvisioningJobs(ctx,
 				ouJobName(tenant.Name),
+				mbaGroupsJobName(tenant.Name),
 				appUserTemplateJobName(tenant.Name),
 				adminUserJobName(tenant.Name),
 				adminPolicyJobName(tenant.Name),
@@ -634,6 +669,11 @@ func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov
 
 	ouDone, err := r.ensureOUJob(ctx, tenant, ouDN)
 	if err != nil || !ouDone {
+		return err
+	}
+
+	mbaDone, err := r.ensureMBAGroupsJob(ctx, tenant, ouDN)
+	if err != nil || !mbaDone {
 		return err
 	}
 
@@ -822,6 +862,31 @@ func makeLockOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
 						udmContainer("lock-users", buildLockOUScript(ouDN)),
+					},
+				},
+			},
+		},
+	}
+}
+
+func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mbaGroupsJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						udmContainer("provision-mba-groups", buildMBAGroupsScript(ouDN)),
 					},
 				},
 			},
@@ -1107,6 +1172,65 @@ func udmContainer(name, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
+// tenantManagedByAttributeGroupNames lists per-tenant cn=managed-by-attribute-* groups
+// created inside each tenant OU. Must stay aligned with internal/oidc/packs/opendesk.yaml
+// ldapGroup entries and openDesk Nubus portaltileGroup* references.
+var tenantManagedByAttributeGroupNames = []string{
+	"Groupware",
+	"Fileshare",
+	"FileshareAdmin",
+	"Videoconference",
+	"Livecollaboration",
+	"LivecollaborationAdmin",
+	"Projectmanagement",
+	"Knowledgemanagement",
+}
+
+func tenantManagedByAttributeGroupsShellList() string {
+	return strings.Join(tenantManagedByAttributeGroupNames, " ")
+}
+
+// buildMBAGroupsScript creates managed-by-attribute-* groups inside the tenant OU.
+// All UDM calls are idempotent (GET before POST).
+func buildMBAGroupsScript(ouDN string) string {
+	return fmt.Sprintf(`set -eu
+urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
+CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
+BASE_URL="${UDM_URL}/udm"
+OU_POS="%s"
+%s`,
+		ouDN, buildMBAGroupsScriptBody())
+}
+
+func buildMBAGroupsScriptBody() string {
+	return fmt.Sprintf(`for MBA_GROUP in %s; do
+  MBA_GRP_ENC=$(urlencode "cn=managed-by-attribute-${MBA_GROUP},${OU_POS}")
+  STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/groups/group/${MBA_GRP_ENC}")
+  if [ "${STATUS}" = "404" ]; then
+    POST_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" -X POST ${CREDS} \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      "${BASE_URL}/groups/group/" \
+      -d "{\"properties\":{\"name\":\"managed-by-attribute-${MBA_GROUP}\"},\"position\":\"${OU_POS}\"}")
+    if [ "${POST_STATUS}" = "201" ] || [ "${POST_STATUS}" = "200" ]; then
+      echo "group managed-by-attribute-${MBA_GROUP} created in ${OU_POS}"
+    elif [ "${POST_STATUS}" = "422" ]; then
+      echo "group managed-by-attribute-${MBA_GROUP} name conflict (global group exists); skipped"
+    else
+      echo "failed to create group managed-by-attribute-${MBA_GROUP} (HTTP ${POST_STATUS})" >&2
+      exit 1
+    fi
+  elif [ "${STATUS}" = "200" ]; then
+    echo "group managed-by-attribute-${MBA_GROUP} already exists in ${OU_POS}"
+  else
+    echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
+    exit 1
+  fi
+done`, tenantManagedByAttributeGroupsShellList())
+}
+
 // buildOUScript creates the tenant OU, users group, and admins group.
 // All UDM calls are idempotent (GET before POST).
 func buildOUScript(ouDN, tenantName string) string {
@@ -1218,32 +1342,7 @@ fi
 # Create per-tenant managed-by-attribute-* groups inside the tenant OU.
 # These replace the global cn=groups managed-by-attribute-* groups so that
 # app access control stays scoped to the tenant (one OU = one realm = one tenant).
-for MBA_GROUP in Groupware Fileshare FileshareAdmin Videoconference Livecollaboration LivecollaborationAdmin; do
-  MBA_GRP_ENC=$(urlencode "cn=managed-by-attribute-${MBA_GROUP},${OU_POS}")
-  STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
-    -H "Accept: application/json" \
-    "${BASE_URL}/groups/group/${MBA_GRP_ENC}")
-  if [ "${STATUS}" = "404" ]; then
-    POST_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" -X POST ${CREDS} \
-      -H "Content-Type: application/json" \
-      -H "Accept: application/json" \
-      "${BASE_URL}/groups/group/" \
-      -d "{\"properties\":{\"name\":\"managed-by-attribute-${MBA_GROUP}\"},\"position\":\"${OU_POS}\"}")
-    if [ "${POST_STATUS}" = "201" ] || [ "${POST_STATUS}" = "200" ]; then
-      echo "group managed-by-attribute-${MBA_GROUP} created in ${OU_POS}"
-    elif [ "${POST_STATUS}" = "422" ]; then
-      echo "group managed-by-attribute-${MBA_GROUP} name conflict (global group exists); skipped"
-    else
-      echo "failed to create group managed-by-attribute-${MBA_GROUP} (HTTP ${POST_STATUS})" >&2
-      exit 1
-    fi
-  elif [ "${STATUS}" = "200" ]; then
-    echo "group managed-by-attribute-${MBA_GROUP} already exists in ${OU_POS}"
-  else
-    echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
-    exit 1
-  fi
-done`,
+`+buildMBAGroupsScriptBody(),
 		ouDN, tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName)
@@ -2056,6 +2155,10 @@ func tenantUserMailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancy
 
 func ouJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-ou-%s", tenantName)
+}
+
+func mbaGroupsJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-mba-groups-%s", tenantName)
 }
 
 func bindAccountJobName(tenantName, appName string) string {

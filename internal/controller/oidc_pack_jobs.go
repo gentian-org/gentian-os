@@ -80,6 +80,40 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 	return configs, nil
 }
 
+// cleanupOrphanedOIDCClientJobs deletes Keycloak OIDC client provisioning Jobs for
+// apps no longer listed in tenant.Spec.Apps. Unlike App claims, client Jobs are not
+// removed automatically on app uninstall.
+func (r *TenantReconciler) cleanupOrphanedOIDCClientJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, desired []oidcAppConfig) error {
+	desiredApps := make(map[string]struct{}, len(desired))
+	for _, cfg := range desired {
+		desiredApps[cfg.profileName] = struct{}{}
+	}
+
+	prefix := clientJobName(tenant.Name, "")
+	jobList := &batchv1.JobList{}
+	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
+		return fmt.Errorf("list OIDC client Jobs for tenant %s: %w", tenant.Name, err)
+	}
+	for i := range jobList.Items {
+		job := &jobList.Items[i]
+		if !strings.HasPrefix(job.Name, prefix) {
+			continue
+		}
+		appName := job.Labels[appLabel]
+		if appName == "" {
+			appName = strings.TrimPrefix(job.Name, prefix)
+		}
+		if _, wanted := desiredApps[appName]; wanted {
+			continue
+		}
+		prop := metav1.DeletePropagationBackground
+		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete orphaned OIDC client Job %s: %w", job.Name, err)
+		}
+	}
+	return nil
+}
+
 func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (oidcAppConfig, error) {
 	profile := &gentianov1alpha1.AppProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {

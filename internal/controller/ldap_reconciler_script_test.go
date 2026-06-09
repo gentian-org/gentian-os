@@ -98,6 +98,23 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 	}
 }
 
+func TestBuildMBAGroupsScript_IncludesOpenDeskOIDCGroups(t *testing.T) {
+	t.Parallel()
+	script := buildMBAGroupsScript("ou=demo,${UDM_LDAP_BASE}")
+	for _, want := range []string{
+		"for MBA_GROUP in",
+		"Projectmanagement",
+		"Knowledgemanagement",
+		"Livecollaboration",
+		"Groupware",
+		"managed-by-attribute-${MBA_GROUP}",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected MBA groups script to contain %q", want)
+		}
+	}
+}
+
 func TestBuildOUDeleteScript_FailsOnNonSuccessHTTP(t *testing.T) {
 	t.Parallel()
 	script := buildOUDeleteScript("ou=test,dc=example,dc=com")
