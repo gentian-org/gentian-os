@@ -499,6 +499,9 @@ spec:
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
             {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
+            {{- /*   ${LDAP_HOST}        — UCS LDAP service (from cluster-config)  */}}
+            {{- /*   ${LDAP_BASE_DN}     — LDAP base DN (from cluster-config)     */}}
+            {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
@@ -516,6 +519,15 @@ spec:
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
+            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
+            {{- $ldapServer  := "nubus-dev-ldap-server.gentian-dev.svc.cluster.local" }}
+            {{- $ldapBaseDn  := "dc=swp-ldap,dc=internal" }}
+            {{- $smtpHost    := "postfix-dev.gentian-dev.svc.cluster.local" }}
+            {{- if gt (len $clusterCfgs) 0 }}
+            {{- $cc := index $clusterCfgs 0 }}
+            {{- $ldapServer = dig "data" "ldap.server" $ldapServer $cc }}
+            {{- $ldapBaseDn = dig "data" "ldap.baseDn"  $ldapBaseDn  $cc }}
+            {{- end }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
@@ -524,6 +536,9 @@ spec:
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
+            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
+            {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
             {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
             {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
             {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
