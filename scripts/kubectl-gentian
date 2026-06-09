@@ -987,6 +987,11 @@ wait_for_tenant_ready() {
   done
 }
 
+platform_kernel_job_logs() {
+  local job_name="${1}"
+  kubectl --request-timeout=5s logs -n platform-kernel "job/${job_name}" 2>/dev/null
+}
+
 ldap_admin_password_synced() {
   local tenant_name="${1}"
   local ldap_job="ldap-admin-user-${tenant_name}"
@@ -995,7 +1000,7 @@ ldap_admin_password_synced() {
   if [[ -z "${succeeded}" || "${succeeded}" == "0" ]]; then
     return 1
   fi
-  kubectl --request-timeout=5s logs -n platform-kernel "${ldap_job}" 2>/dev/null \
+  platform_kernel_job_logs "${ldap_job}" \
     | grep -qE 'TENANT_ADMIN_LDAP_PASSWORD_SYNCED|password synced via interim rotation|user admin-'"${tenant_name}"' password synced \(HTTP'
 }
 
@@ -1132,7 +1137,12 @@ rollback_deploy() {
 
   echo "failed to provision tenant, rolling back" >&2
 
-  argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}" || true
+  # Match `tenants undeploy`: deactivate in Git first so ArgoCD stops reconciling
+  # the Tenant CR, then delete the CR and let the operator run cleanup finalizers.
+  if is_instance_deployed "${instance}" "${env_name}"; then
+    echo "Removing activated tenant manifest from GitOps path..."
+    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" false "${tenant_name}"
+  fi
 
   if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
     ns_name="$(kubectl get tenant "${tenant_name}" \
@@ -1140,25 +1150,20 @@ rollback_deploy() {
     if [[ -z "${ns_name}" ]]; then
       ns_name="tenant-${tenant_name}"
     fi
+    echo "Deleting Tenant CR '${tenant_name}' and waiting for operator cleanup..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
-  fi
-
-  if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
     if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${instance}" "${env_name}"; then
       echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
       return 1
     fi
   fi
 
-  kubectl delete jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
-  argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}" || true
-
-  if kubectl get tenant "${tenant_name}" >/dev/null 2>&1; then
-    echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
+  if ! argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"; then
+    echo "rollback failed: tenant '${tenant_name}' was not fully removed" >&2
     return 1
   fi
 
-  echo "Rollback completed: tenant '${tenant_name}' removed from cluster (git manifest preserved)." >&2
+  echo "Rollback completed: tenant '${tenant_name}' removed from cluster and deactivated in Git (definition preserved under definitions/)." >&2
   return 1
 }
 
