@@ -61,9 +61,10 @@ Usage:
       Uninstall an app from a tenant by committing to gentian-deployments.
 
     kubectl gentian tenants list [--env <stage>]
-      List tenant instances under clusters/<cluster>/tenants/*/<stage>.
-      Shows ACTIVE (manifest present in git) and LIVE (Tenant CR in cluster).
-      Stage defaults to GENTIAN_DEPLOYMENTS_STAGE (dev).
+      List tenant instances under clusters/<cluster>/tenants/*/<stage> and
+      clusters/<cluster>/examples/*/<stage>.
+      ACTIVE=yes when a manifest exists under tenants/ (GitOps deploy path).
+      ACTIVE=no for examples-only templates. LIVE=yes when the Tenant CR exists.
 
     kubectl gentian tenants deploy <instance> [--env <stage>]
       Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/<stage>/.
@@ -1342,39 +1343,62 @@ apply_tenant_instance() {
   return ${rc}
 }
 
+tenant_collect_instance_names() {
+  local env_name="${1:-dev}"
+  local tenants_root examples_root stage
+  local tenant_dir instance
+
+  tenants_root="$(tenant_tenants_root)"
+  examples_root="$(tenant_examples_root)"
+  stage="$(tenant_stage_name "${env_name}")"
+
+  declare -A instances=()
+
+  for tenant_dir in "${tenants_root}"/* "${examples_root}"/*; do
+    [[ -d "${tenant_dir}" ]] || continue
+    instance="$(basename "${tenant_dir}")"
+    [[ "${instance}" == "components" ]] && continue
+    [[ -f "${tenant_dir}/${stage}/tenant.yaml" ]] || continue
+    instances["${instance}"]=1
+  done
+
+  if [[ ${#instances[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  printf '%s\n' "${!instances[@]}" | sort
+}
+
 cmd_tenant_list() {
   local env_name="${1:-dev}"
-  local tenants_root
-  local stage
+  local tenants_root examples_root stage
 
   ensure_repo
   ensure_env_layout "${env_name}"
 
   tenants_root="$(tenant_tenants_root)"
+  examples_root="$(tenant_examples_root)"
   stage="$(tenant_stage_name "${env_name}")"
 
   local found=0
   printf "%-24s %-10s %-8s %-18s\n" "INSTANCE" "ACTIVE" "LIVE" "TENANT_NAME"
   printf "%-24s %-10s %-8s %-18s\n" "--------" "------" "----" "-----------"
 
-  local tenant_dir
-  for tenant_dir in "${tenants_root}"/*; do
-    [[ -d "${tenant_dir}" ]] || continue
-
-    local instance_name
-    local active
-    local live
-    local tenant_file
-    local tenant_name
-
-    instance_name="$(basename "${tenant_dir}")"
-    [[ "${instance_name}" == "components" ]] && continue
-
-    tenant_file="${tenant_dir}/${stage}/tenant.yaml"
-    [[ -f "${tenant_file}" ]] || continue
+  local instance_name
+  while IFS= read -r instance_name; do
+    [[ -n "${instance_name}" ]] || continue
     found=1
 
-    active="yes"
+    local active live tenant_file tenant_name
+
+    tenant_file="${tenants_root}/${instance_name}/${stage}/tenant.yaml"
+    if [[ -f "${tenant_file}" ]]; then
+      active="yes"
+    else
+      active="no"
+      tenant_file="${examples_root}/${instance_name}/${stage}/tenant.yaml"
+    fi
+
     tenant_name="$(tenant_instance_name_from_patch "${tenant_file}")"
     if [[ -z "${tenant_name}" ]]; then
       tenant_name="${instance_name}"
@@ -1387,10 +1411,10 @@ cmd_tenant_list() {
     fi
 
     printf "%-24s %-10s %-8s %-18s\n" "${instance_name}" "${active}" "${live}" "${tenant_name}"
-  done
+  done < <(tenant_collect_instance_names "${env_name}")
 
   if [[ "${found}" -eq 0 ]]; then
-    echo "No tenant instances found under clusters/${DEPLOYMENTS_CLUSTER}/tenants/*/${stage}."
+    echo "No tenant templates found under clusters/${DEPLOYMENTS_CLUSTER}/tenants/*/${stage} or examples/*/${stage}."
   fi
 }
 

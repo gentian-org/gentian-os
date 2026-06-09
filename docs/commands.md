@@ -34,11 +34,15 @@ Live tenant manifests:
 - `clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml` (tenant instance)
 - `clusters/<cluster>/tenants/<tenant>/<stage>/kustomization.yaml` (tenant-scoped deployment entrypoint)
 
-List tenant instances in Git and whether they are currently deployed:
+List tenant templates (examples) and active GitOps manifests:
 
 ```bash
 kubectl gentian tenants list
 ```
+
+`ACTIVE=yes` when the instance has a manifest under `tenants/` (Argo deploy path).
+`ACTIVE=no` for examples-only templates under `examples/`. `LIVE=yes` when the
+Tenant CR exists on the cluster.
 
 Deploy a tenant (scaffolds from `examples/<tenant>/<stage>/` on first run):
 
