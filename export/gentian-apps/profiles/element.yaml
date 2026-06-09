@@ -341,4 +341,3 @@ spec:
       target: "http://synapse.{namespace}.svc/_matrix/"
       authMode: forward-bearer
       stripPrefix: true
-
