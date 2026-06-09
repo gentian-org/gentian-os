@@ -3,6 +3,7 @@
 package stagingca
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,11 +12,11 @@ import (
 
 func TestBuildTrustStoreJKSFromLeaf(t *testing.T) {
 	leaf := testLeafPEM(t)
-	bundle, err := BuildBundle(leaf)
+	bundle, err := BuildBundle(context.Background(), leaf)
 	if err != nil {
 		t.Fatalf("BuildBundle: %v", err)
 	}
-	jks, err := BuildTrustStoreJKS(bundle, TrustStorePassword)
+	jks, err := BuildTrustStoreJKS(bundle.CACrt, TrustStorePassword)
 	if err != nil {
 		t.Fatalf("BuildTrustStoreJKS: %v", err)
 	}
@@ -29,11 +30,11 @@ func TestBuildTrustStoreJKSKeytoolCompatible(t *testing.T) {
 		t.Skip("keytool not available")
 	}
 	leaf := testLeafPEM(t)
-	bundle, err := BuildBundle(leaf)
+	bundle, err := BuildBundle(context.Background(), leaf)
 	if err != nil {
 		t.Fatalf("BuildBundle: %v", err)
 	}
-	jks, err := BuildTrustStoreJKS(bundle, TrustStorePassword)
+	jks, err := BuildTrustStoreJKS(bundle.CACrt, TrustStorePassword)
 	if err != nil {
 		t.Fatalf("BuildTrustStoreJKS: %v", err)
 	}

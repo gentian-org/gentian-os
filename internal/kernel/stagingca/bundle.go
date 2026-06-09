@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,50 +25,115 @@ import (
 const (
 	// SecretName is replicated into each tenant namespace by the operator.
 	SecretName = "gentian-staging-ca-tls"
+	// NodeExtraCAKey holds the LE staging CA chain for NODE_EXTRA_CA_CERTS.
+	// Node.js appends this file to the default Mozilla trust store; it must
+	// contain the full staging issuer chain (not the server leaf or a duplicate
+	// Mozilla bundle). See docs/design/security.md §9.1.
+	NodeExtraCAKey = "node-extra-ca.crt"
 
 	DefaultCertManagerNS = "cert-manager"
 	DefaultLeafSecret    = "wildcard-kernel-tls"
+
+	mozillaCABundleURL = "https://curl.se/ca/cacert.pem"
+	maxStagingCAChain  = 8
 )
 
-// BuildBundle returns a PEM CA bundle from a leaf certificate plus its issuing
-// intermediate(s) fetched via AIA. Matches scripts/create-staging-ca-secret.sh.
-func BuildBundle(leafPEM []byte) ([]byte, error) {
+// Bundle holds the PEM material written to gentian-staging-ca-tls.
+type Bundle struct {
+	// CACrt is the Mozilla CA bundle plus the LE staging issuer chain (for
+	// curl --cacert, Java truststore, REQUESTS_CA_BUNDLE).
+	CACrt []byte
+	// NodeExtraCA is the LE staging issuer chain only (for NODE_EXTRA_CA_CERTS).
+	NodeExtraCA []byte
+}
+
+// BuildBundle returns trust bundles for ACME staging clusters. CACrt matches
+// scripts/create-staging-ca-secret.sh (system CAs + LE staging chain via AIA).
+// NodeExtraCA contains only the staging issuer chain for Node.js clients.
+func BuildBundle(ctx context.Context, leafPEM []byte) (*Bundle, error) {
 	if len(leafPEM) == 0 {
 		return nil, fmt.Errorf("empty leaf certificate")
 	}
-	bundle := append([]byte(nil), leafPEM...)
-	rest := leafPEM
-	for {
-		block, remaining := pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		rest = remaining
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse leaf certificate: %w", err)
-		}
-		for _, url := range cert.IssuingCertificateURL {
-			intermediate, err := fetchPEM(url)
-			if err != nil {
-				continue
-			}
-			if len(intermediate) > 0 {
-				bundle = append(bundle, '\n')
-				bundle = append(bundle, intermediate...)
-			}
-		}
-		break
+	stagingChain, err := fetchStagingCAChain(leafPEM)
+	if err != nil {
+		return nil, err
 	}
-	return bundle, nil
+	mozilla, err := loadMozillaCABundle(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load Mozilla CA bundle: %w", err)
+	}
+	caBundle := append(append([]byte(nil), mozilla...), stagingChain...)
+	return &Bundle{CACrt: caBundle, NodeExtraCA: stagingChain}, nil
 }
 
-func fetchPEM(url string) ([]byte, error) {
+func loadMozillaCABundle(ctx context.Context) ([]byte, error) {
+	for _, path := range []string{
+		"/etc/ssl/certs/ca-certificates.crt",
+		"/etc/pki/tls/certs/ca-bundle.crt",
+	} {
+		raw, err := os.ReadFile(path)
+		if err == nil && len(raw) > 1024 {
+			return raw, nil
+		}
+	}
+	return fetchPEMFromURL(ctx, mozillaCABundleURL)
+}
+
+// fetchStagingCAChain walks AIA from the server leaf and returns PEM blocks for
+// each issuing CA up to the staging root (excludes the server leaf itself).
+func fetchStagingCAChain(leafPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(leafPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("no leaf certificate in tls.crt")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse leaf certificate: %w", err)
+	}
+
+	var chain []byte
+	seen := map[string]struct{}{}
+	urls := leaf.IssuingCertificateURL
+	for step := 0; step < maxStagingCAChain && len(urls) > 0; step++ {
+		url := urls[0]
+		if _, ok := seen[url]; ok {
+			break
+		}
+		seen[url] = struct{}{}
+
+		issuerPEM, err := fetchPEMFromURL(context.Background(), url)
+		if err != nil {
+			break
+		}
+		chain = append(chain, issuerPEM...)
+
+		issuer, err := parseFirstCertificate(issuerPEM)
+		if err != nil {
+			break
+		}
+		if issuer.Subject.String() == issuer.Issuer.String() {
+			break
+		}
+		urls = issuer.IssuingCertificateURL
+	}
+	return chain, nil
+}
+
+func parseFirstCertificate(pemData []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(pemData)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("no PEM certificate")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
+func fetchPEMFromURL(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -121,11 +187,11 @@ func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, cert
 		return false, fmt.Errorf("leaf secret %s/%s has no tls.crt", certManagerNS, leafSecretName)
 	}
 
-	bundle, err := BuildBundle(leafPEM)
+	bundle, err := BuildBundle(ctx, leafPEM)
 	if err != nil {
 		return false, err
 	}
-	trustStore, err := BuildTrustStoreJKS(bundle, TrustStorePassword)
+	trustStore, err := BuildTrustStoreJKS(bundle.CACrt, TrustStorePassword)
 	if err != nil {
 		return false, fmt.Errorf("build truststore.jks: %w", err)
 	}
@@ -141,7 +207,8 @@ func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, cert
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"ca.crt":         bundle,
+			"ca.crt":         bundle.CACrt,
+			NodeExtraCAKey:   bundle.NodeExtraCA,
 			TrustStoreKey:    trustStore,
 		},
 	}
