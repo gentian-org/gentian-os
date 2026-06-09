@@ -36,6 +36,17 @@ spec:
     kind: AppProfile
     jsonPointers:
     - /metadata/annotations/argocd.argoproj.io~1tracking-id
+  # AppProfile CRD kubebuilder defaults (clusterIssuer, allowDynamicDatabaseCreation,
+  # browserProxy authMode/stripPrefix) are injected by the API server on write but
+  # absent from git source YAMLs — ignore to avoid perpetual OutOfSync.
+  - group: gentianos.io
+    kind: AppProfile
+    jqPathExpressions:
+    - .spec.ingress.clusterIssuer
+    - .spec.kernelRequirements.database.allowDynamicDatabaseCreation
+    - .spec.additionalIngresses[]?.clusterIssuer
+    - .spec.browserProxy[]?.authMode
+    - .spec.browserProxy[]?.stripPrefix
   syncPolicy:
     automated:
       prune: true
