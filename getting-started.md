@@ -66,7 +66,6 @@ them or store them in the config files below.
 | Variable | Default | Description |
 |---|---|---|
 | `LETSENCRYPT_EMAIL` | `admin@KERNEL_DOMAIN` | Let's Encrypt ACME contact |
-| `CF_API_TOKEN` | — | Cloudflare token for DNS-01 wildcard certificates |
 | `INSTALL_CLUSTER_INFRA` | `1` | Set `0` only when cert-manager/CNPG/Reloader are already managed |
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
 
@@ -99,9 +98,20 @@ Configure these files in order before the first install run:
 
 1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, namespace defaults and policy defaults).
 
+  Cloudflare specifics in `values-<stage>.yaml`:
+  - `cloudflare.zoneID`: required for operator DNS mutations when Cloudflare adapter is enabled.
+  - `cloudflare.tunnelCNAME`: required for proxied wildcard CNAME behavior.
+  - `cloudflare.apiTokenSecretRef.*`: secret reference metadata only (safe for Git).
+
 1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you deploy a definition).
 
 1. `install.secrets.env`: secrets only (master password, registry creds, SMTP creds, Cloudflare token).
+
+  Cloudflare secrets/derivation rules:
+  - `CF_API_TOKEN`: optional secret for kernel wildcard DNS-01 issuance (keep only in `install.secrets.env`).
+  - `CF_ZONE_NAME`: optional override used only for installer token verification.
+    If unset, installer derives zone from `KERNEL_DOMAIN` (last two labels).
+    Set it explicitly for compound public suffix domains (for example `example.co.uk`).
 
 1. `install.env`: installer-local behavior and repo selection (`GENTIAN_DEPLOYMENTS_CLUSTER`, `GENTIAN_DEPLOYMENTS_STAGE`, repo URLs/branches).
 
