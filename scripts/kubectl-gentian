@@ -670,9 +670,7 @@ tenant_undeploy_remove_from_git() {
     git add -A "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
   )
   git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
-  if ! apply_tenant_instance "${instance}" "${env_name}"; then
-    echo "WARNING: failed to apply tenant kustomization for '${instance}' after undeploy." >&2
-  fi
+  # Git path removed; ArgoCD prune (or the caller's delete/wait) drops the live CR.
   if [[ "${await_prune}" == "true" && -n "${tenant_name}" ]]; then
     argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"
   fi
@@ -1334,9 +1332,16 @@ argocd_refresh_await_prune() {
 apply_tenant_instance() {
   local instance="${1}"
   local env_name="${2:-dev}"
+  local stage_dir
   local output
 
-  output="$(kubectl apply -k "$(tenant_stage_dir "${instance}" "${env_name}")" 2>&1)"
+  stage_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+  if [[ ! -d "${stage_dir}" ]]; then
+    echo "ERROR: tenant stage directory not found: ${stage_dir}" >&2
+    return 1
+  fi
+
+  output="$(kubectl apply -k "${stage_dir}" 2>&1)"
   local rc=$?
 
   if [[ ${rc} -eq 0 ]]; then
