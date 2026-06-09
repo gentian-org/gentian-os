@@ -99,7 +99,7 @@ Configure these files in order before the first install run:
 
 1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, namespace defaults and policy defaults).
 
-1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you provision tenants).
+1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you deploy a definition).
 
 1. `install.secrets.env`: secrets only (master password, registry creds, SMTP creds, Cloudflare token).
 
@@ -242,23 +242,23 @@ kubectl gentian apps list
 
 ## Provision your first tenant
 
-Install completes with **no tenants** deployed. When you are ready, provision
-from the reference example under
+Install completes with **no tenants** deployed. Tenant definitions (such as
+`demo`) live under
 [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
-(`clusters/<cluster>/examples/demo/<stage>/`).
+at `clusters/<cluster>/definitions/<tenant>/<stage>/`.
 
 **Catalogue** (cluster-wide): `gentian-apps/profiles/` → ArgoCD app
 **`gentian-appprofiles`** (install step 15c). **Tenant apps** (per org):
-edit `spec.apps` in the live tenant manifest under
-`clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml` — the operator
+edit `spec.apps` in the tenant definition or deployed manifest under
+`definitions/` or `tenants/<tenant>/<stage>/tenant.yaml` — the operator
 creates `App` claims; Crossplane installs helm Releases. There is no ArgoCD
 Application per tenant app.
 
 ```bash
-# Example: demo tenant with Element (Jitsi is an Element sidecar)
-kubectl gentian tenants deploy demo   # scaffolds into tenants/ on first run
+# Deploy the demo tenant definition (Element; Jitsi is an Element sidecar)
+kubectl gentian tenants deploy demo
 
-# List all tenants
+# List definitions and whether each is deployed/live
 kubectl gentian tenants list
 ```
 

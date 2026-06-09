@@ -2774,7 +2774,7 @@ install_orchestrator() {
     info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"
     info "Monitor updater:   kubectl get imageupdater gentian-os -n argocd"
     info "Provision tenants: kubectl gentian tenants list"
-    info "                   kubectl gentian tenants deploy demo   # scaffolds from examples/ when ready"
+    info "                   kubectl gentian tenants deploy demo   # activate definition from definitions/"
 }
 
 # =============================================================================
@@ -3326,7 +3326,7 @@ print_summary() {
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  List tenants:    kubectl gentian tenants list"
         echo "  Provision tenant: kubectl gentian tenants deploy demo"
-        echo "                    (scaffolds from clusters/<cluster>/examples/demo/<stage>/ on first run)"
+        echo "                    (activates clusters/<cluster>/definitions/<tenant>/<stage>/ on first run)"
         echo "  Undeploy tenant: kubectl gentian tenants undeploy demo"
         echo "  List apps:       kubectl gentian apps list"
         echo "  Install apps:    kubectl gentian apps install <profile> --tenant <tenant>"

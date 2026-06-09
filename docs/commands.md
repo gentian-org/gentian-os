@@ -26,29 +26,32 @@ kubectl get tenants
 
 ## 3. Provision a Tenant
 
-Fresh installs leave `clusters/<cluster>/tenants/` empty. Reference examples
-(not auto-deployed) live under `clusters/<cluster>/examples/<tenant>/<stage>/`.
+Each cluster maintains tenant **definitions** under
+`clusters/<cluster>/definitions/<tenant>/<stage>/`. Fresh installs leave
+`clusters/<cluster>/tenants/` empty until a definition is deployed.
 
-Live tenant manifests:
+| Path | State |
+|------|--------|
+| `definitions/<tenant>/<stage>/` | Defined only (`ACTIVE=no` in list) |
+| `tenants/<tenant>/<stage>/` | Deployed to GitOps (`ACTIVE=yes`) |
 
-- `clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml` (tenant instance)
-- `clusters/<cluster>/tenants/<tenant>/<stage>/kustomization.yaml` (tenant-scoped deployment entrypoint)
-
-List tenant templates (examples) and active GitOps manifests:
+List all tenant definitions and deployment status:
 
 ```bash
 kubectl gentian tenants list
 ```
 
-`ACTIVE=yes` when the instance has a manifest under `tenants/` (Argo deploy path).
-`ACTIVE=no` for examples-only templates under `examples/`. `LIVE=yes` when the
-Tenant CR exists on the cluster.
+`ACTIVE=yes` when the definition is activated under `tenants/` (Argo sync path).
+`ACTIVE=no` when defined only under `definitions/`. `LIVE=yes` when the Tenant CR
+exists on the cluster.
 
-Deploy a tenant (scaffolds from `examples/<tenant>/<stage>/` on first run):
+Deploy a tenant definition:
 
 ```bash
 kubectl gentian tenants deploy demo
 ```
+
+If not yet under `tenants/`, deploy copies the definition from `definitions/` first.
 
 Deploy is transactional:
 

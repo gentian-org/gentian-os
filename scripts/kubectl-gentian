@@ -61,14 +61,14 @@ Usage:
       Uninstall an app from a tenant by committing to gentian-deployments.
 
     kubectl gentian tenants list [--env <stage>]
-      List tenant instances under clusters/<cluster>/tenants/*/<stage> and
-      clusters/<cluster>/examples/*/<stage>.
-      ACTIVE=yes when a manifest exists under tenants/ (GitOps deploy path).
-      ACTIVE=no for examples-only templates. LIVE=yes when the Tenant CR exists.
+      List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
+      ACTIVE=yes when deployed under tenants/<name>/<stage>/ (GitOps sync path).
+      ACTIVE=no when defined only under definitions/<name>/<stage>/.
+      LIVE=yes when the Tenant CR exists on the cluster.
 
     kubectl gentian tenants deploy <instance> [--env <stage>]
       Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/<stage>/.
-      If the manifest is missing, scaffolds from clusters/<cluster>/examples/<instance>/<stage>/.
+      If not yet deployed, copies the definition from definitions/<instance>/<stage>/.
 
     kubectl gentian tenants undeploy <instance> [--env <stage>] [--purge|-f]
       Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
@@ -691,16 +691,16 @@ tenant_tenants_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
 }
 
-tenant_examples_root() {
-  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/examples"
+tenant_definitions_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions"
 }
 
-tenant_example_stage_dir() {
+tenant_definition_stage_dir() {
   local instance="${1}"
   local env_name="${2:-}"
   local stage
   stage="$(tenant_stage_name "${env_name}")"
-  echo "$(tenant_examples_root)/${instance}/${stage}"
+  echo "$(tenant_definitions_root)/${instance}/${stage}"
 }
 
 write_tenant_stage_kustomization() {
@@ -715,39 +715,39 @@ components:
 EOF
 }
 
-scaffold_tenant_from_example() {
+scaffold_tenant_from_definition() {
   local instance="${1}"
   local env_name="${2:-dev}"
   local stage
-  local example_dir
+  local definition_dir
   local target_dir
 
   stage="$(tenant_stage_name "${env_name}")"
-  example_dir="$(tenant_example_stage_dir "${instance}" "${env_name}")"
+  definition_dir="$(tenant_definition_stage_dir "${instance}" "${env_name}")"
   target_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
 
-  if [[ ! -d "${example_dir}" ]]; then
-    echo "ERROR: tenant instance '${instance}' not found at ${target_dir}." >&2
-    echo "Expected layout: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${stage}/" >&2
-    echo "Copy an example from clusters/${DEPLOYMENTS_CLUSTER}/examples/<name>/${stage}/ or add one there." >&2
+  if [[ ! -d "${definition_dir}" ]]; then
+    echo "ERROR: tenant '${instance}' is not defined at ${definition_dir}." >&2
+    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/${instance}/${stage}/tenant.yaml" >&2
+    echo "Or an active deploy path: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${stage}/" >&2
     exit 1
   fi
 
-  if [[ ! -f "${example_dir}/tenant.yaml" ]]; then
-    echo "ERROR: example at ${example_dir} is missing tenant.yaml." >&2
+  if [[ ! -f "${definition_dir}/tenant.yaml" ]]; then
+    echo "ERROR: tenant definition at ${definition_dir} is missing tenant.yaml." >&2
     exit 1
   fi
 
   mkdir -p "${target_dir}"
-  cp "${example_dir}/tenant.yaml" "${target_dir}/tenant.yaml"
+  cp "${definition_dir}/tenant.yaml" "${target_dir}/tenant.yaml"
   write_tenant_stage_kustomization "${target_dir}"
 
   (
     cd "${DEPLOYMENTS_PATH}"
     git add "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
   )
-  git_commit_push "feat(${instance}): add tenant manifest for ${env_name}"
-  echo "Scaffolded tenant '${instance}' from examples/${instance}/${stage}/."
+  git_commit_push "feat(${instance}): deploy tenant definition for ${env_name}"
+  echo "Activated tenant '${instance}' from definitions/${instance}/${stage}/."
 }
 
 ensure_tenant_instance_dir() {
@@ -757,7 +757,7 @@ ensure_tenant_instance_dir() {
 
   dir="$(tenant_stage_dir "${instance}" "${env_name}")"
   if [[ ! -d "${dir}" ]]; then
-    scaffold_tenant_from_example "${instance}" "${env_name}"
+    scaffold_tenant_from_definition "${instance}" "${env_name}"
   fi
   tenant_instance_dir "${instance}" "${env_name}"
 }
@@ -1345,16 +1345,16 @@ apply_tenant_instance() {
 
 tenant_collect_instance_names() {
   local env_name="${1:-dev}"
-  local tenants_root examples_root stage
+  local tenants_root definitions_root stage
   local tenant_dir instance
 
   tenants_root="$(tenant_tenants_root)"
-  examples_root="$(tenant_examples_root)"
+  definitions_root="$(tenant_definitions_root)"
   stage="$(tenant_stage_name "${env_name}")"
 
   declare -A instances=()
 
-  for tenant_dir in "${tenants_root}"/* "${examples_root}"/*; do
+  for tenant_dir in "${tenants_root}"/* "${definitions_root}"/*; do
     [[ -d "${tenant_dir}" ]] || continue
     instance="$(basename "${tenant_dir}")"
     [[ "${instance}" == "components" ]] && continue
@@ -1371,13 +1371,13 @@ tenant_collect_instance_names() {
 
 cmd_tenant_list() {
   local env_name="${1:-dev}"
-  local tenants_root examples_root stage
+  local tenants_root definitions_root stage
 
   ensure_repo
   ensure_env_layout "${env_name}"
 
   tenants_root="$(tenant_tenants_root)"
-  examples_root="$(tenant_examples_root)"
+  definitions_root="$(tenant_definitions_root)"
   stage="$(tenant_stage_name "${env_name}")"
 
   local found=0
@@ -1396,7 +1396,7 @@ cmd_tenant_list() {
       active="yes"
     else
       active="no"
-      tenant_file="${examples_root}/${instance_name}/${stage}/tenant.yaml"
+      tenant_file="${definitions_root}/${instance_name}/${stage}/tenant.yaml"
     fi
 
     tenant_name="$(tenant_instance_name_from_patch "${tenant_file}")"
@@ -1414,7 +1414,7 @@ cmd_tenant_list() {
   done < <(tenant_collect_instance_names "${env_name}")
 
   if [[ "${found}" -eq 0 ]]; then
-    echo "No tenant templates found under clusters/${DEPLOYMENTS_CLUSTER}/tenants/*/${stage} or examples/*/${stage}."
+    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/*/${stage} or tenants/*/${stage}."
   fi
 }
 

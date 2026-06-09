@@ -106,7 +106,7 @@ This section matches a running dev cluster (e.g. kernel domain
 authoritative “today” view; §3’s diagram is the stable mental model.
 
 Fresh installs leave **no tenants** in Git or on the cluster until a cluster
-admin deploys manifests from `clusters/<cluster>/examples/` into `tenants/`.
+admin deploys a definition from `clusters/<cluster>/definitions/` into `tenants/`.
 
 **Two planes, one Git truth for tenants**
 
