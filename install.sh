@@ -1135,7 +1135,7 @@ deploy_nubus() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_pw
+    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_user portal_pw
 
     xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
@@ -1152,9 +1152,8 @@ print_summary_cp() {
     argocd_url=$(resolve_argocd_url 2>/dev/null)
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    portal_pw=$(kubectl get secret "nubus-${ENV:-dev}-stack-data-ums-administrator" \
-        -n "gentian-${ENV:-dev}" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    portal_user=$(resolve_portal_admin_email)
+    portal_pw=$(resolve_portal_admin_password)
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -1177,8 +1176,8 @@ print_summary_cp() {
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
     echo ""
     echo -e "${GREEN}  Portal / UMC admin:${NC}"
-    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}${NC}"
-    echo -e "${GREEN}    User : Administrator${NC}"
+    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}/login/${NC}"
+    echo -e "${GREEN}    User : ${portal_user:-administrator@${KERNEL_DOMAIN}}${NC}"
     echo -e "${GREEN}    Pass : ${portal_pw:-not available}${NC}"
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"

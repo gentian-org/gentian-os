@@ -3227,24 +3227,57 @@ verify_argocd_apps() {
 }
 
 # =============================================================================
+# Summary — portal admin credentials for install output
+# =============================================================================
+# Portal login uses Keycloak kernel realm LDAP with mailPrimaryAddress (iam.md §1.2),
+# not the LDAP uid "Administrator".
+resolve_portal_admin_email() {
+    local ns="gentian-${ENV:-dev}"
+    local release="nubus-${ENV:-dev}"
+    local ldap_pod email=""
+
+    ldap_pod=$(kubectl get pod -n "${ns}" \
+        -o jsonpath="{.items[?(@.metadata.name==\"${release}-ldap-server-primary-0\")].metadata.name}" \
+        2>/dev/null || true)
+    if [[ -n "${ldap_pod}" ]]; then
+        email=$(kubectl exec -n "${ns}" "${ldap_pod}" -c main -- \
+            ldapsearch -Y EXTERNAL -H ldapi:/// \
+            -b 'uid=Administrator,cn=users,dc=swp-ldap,dc=internal' mailPrimaryAddress 2>/dev/null \
+            | awk -F': ' '/^mailPrimaryAddress:/ {print $2; exit}' || true)
+    fi
+    if [[ -z "${email}" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        email="administrator@${KERNEL_DOMAIN}"
+    fi
+    echo "${email}"
+}
+
+resolve_portal_admin_password() {
+    local ns="gentian-${ENV:-dev}"
+    kubectl get secret nubus-credentials -n "${ns}" \
+        -o jsonpath='{.data.default-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true
+}
+
+# =============================================================================
 # Summary
 # =============================================================================
 print_summary() {
     local argocd_pw
     local argocd_url
     local cluster_admin_pw
+    local cluster_admin_user
     local keycloak_admin_pw
     local nubus_secret_ns
-    nubus_secret_ns="gentian-dev"
+    nubus_secret_ns="gentian-${ENV:-dev}"
 
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
-    cluster_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
-                        -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
+    cluster_admin_user=$(resolve_portal_admin_email)
+    cluster_admin_pw=$(resolve_portal_admin_password)
+    [[ -n "${cluster_admin_pw}" ]] || cluster_admin_pw="(not-ready)"
     keycloak_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
                         -o jsonpath='{.data.keycloak-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
     argocd_url=$(resolve_argocd_url)
-    portal_url="https://portal.${KERNEL_DOMAIN}"
+    portal_url="https://portal.${KERNEL_DOMAIN}/login/"
     keycloak_url="https://id.${KERNEL_DOMAIN}"
 
     echo ""
@@ -3260,7 +3293,7 @@ print_summary() {
         echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
         echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GREEN}║  Portal URL   : ${portal_url}${NC}"
-        echo -e "${GREEN}║  Portal login : Administrator / ${cluster_admin_pw}${NC}"
+        echo -e "${GREEN}║  Portal login : ${cluster_admin_user:-administrator@${KERNEL_DOMAIN}} / ${cluster_admin_pw}${NC}"
         echo -e "${GREEN}║  Keycloak URL : ${keycloak_url}${NC}"
         echo -e "${GREEN}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
         echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
@@ -3270,8 +3303,7 @@ print_summary() {
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "  Retrieve credentials later:"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.admin-password}' | base64 -d"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.keycloak-admin-password}' | base64 -d"
+        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.default-admin-password}' | base64 -d"
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  Provision tenant: kubectl gentian tenants list"
@@ -3286,7 +3318,7 @@ print_summary() {
         echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${YELLOW}║  Portal URL   : ${portal_url}${NC}"
-        echo -e "${YELLOW}║  Portal login : Administrator / ${cluster_admin_pw}${NC}"
+        echo -e "${YELLOW}║  Portal login : ${cluster_admin_user:-administrator@${KERNEL_DOMAIN}} / ${cluster_admin_pw}${NC}"
         echo -e "${YELLOW}║  Keycloak URL : ${keycloak_url}${NC}"
         echo -e "${YELLOW}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
         echo -e "${YELLOW}║  ArgoCD URL   : ${argocd_url}${NC}"
@@ -3306,8 +3338,7 @@ print_summary() {
         fi
         echo ""
         echo "  Retrieve credentials later:"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.admin-password}' | base64 -d"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.keycloak-admin-password}' | base64 -d"
+        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.default-admin-password}' | base64 -d"
         echo ""
         echo "  Re-run verification only:"
         echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"
