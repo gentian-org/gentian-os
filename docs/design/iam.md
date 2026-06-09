@@ -69,9 +69,12 @@ LDAP `group-ldap-mapper` on the tenant realm federation imports
 **Provisioning order (operator):** realm registration (including the group-mapper)
 runs first; the UDM OU Job creates per-tenant `managed-by-attribute-*` groups;
 a Keycloak **LDAP group sync** Job imports them into the tenant realm; only then
-do OpenDesk OIDC pack Jobs map each group to its client role. A final **LDAP user
-sync** runs after the admin user is unlocked in LDAP so portal login stays
-consistent with UDM `shadowExpire` handling.
+do OpenDesk OIDC pack Jobs map each group to its client role. If the
+`ldap-mba-groups` backfill Job completes after an earlier group sync (tenant
+upgrade or new OIDC packs), the identity reconciler deletes the stale sync Job
+and re-imports groups before client Jobs run. A final **LDAP user sync** runs
+after the admin user is unlocked in LDAP so portal login stays consistent with
+UDM `shadowExpire` handling.
 
 ## 2. Roles and User Templates
 

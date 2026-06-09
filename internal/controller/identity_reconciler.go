@@ -1033,9 +1033,50 @@ func makeKCLDAPFederationSyncJob(tenant *gentianov1alpha1.Tenant, jobName, conta
 }
 
 // ensureKCLDAPGroupSyncJob creates the pre-OIDC LDAP group import job.
+// If managed-by-attribute groups were backfilled after the last sync (e.g. tenant
+// upgrade or new OpenDesk OIDC packs), the completed sync Job is deleted so LDAP
+// groups are re-imported before OIDC client Jobs run.
 func (r *TenantReconciler) ensureKCLDAPGroupSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPGroupSyncJobName(tenant.Name),
+	jobName := kcLDAPGroupSyncJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if err == nil && jobIsComplete(job) {
+		stale, staleErr := r.kcLDAPGroupSyncStaleAfterManagedGroups(ctx, tenant.Name, job)
+		if staleErr != nil {
+			return false, staleErr
+		}
+		if stale {
+			prop := metav1.DeletePropagationBackground
+			if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil {
+				return false, delErr
+			}
+			return false, nil
+		}
+	}
+	if err != nil && !errors.IsNotFound(err) {
+		return false, err
+	}
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, jobName,
 		func() *batchv1.Job { return makeKCLDAPGroupSyncJob(tenant, keycloakRealmName(tenant)) })
+}
+
+// kcLDAPGroupSyncStaleAfterManagedGroups reports whether LDAP OU or managed-by-attribute
+// group Jobs finished after the last Keycloak LDAP group sync.
+func (r *TenantReconciler) kcLDAPGroupSyncStaleAfterManagedGroups(ctx context.Context, tenantName string, groupSync *batchv1.Job) (bool, error) {
+	for _, sourceName := range []string{ouJobName(tenantName), mbaGroupsJobName(tenantName)} {
+		source := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: kernelNamespace}, source)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if jobIsComplete(source) && jobCompletedAfter(groupSync, source) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ldapManagedGroupsReady reports whether the UDM OU Job and the managed-by-attribute
@@ -1359,6 +1400,27 @@ func jobIsComplete(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+func jobCompletionTime(job *batchv1.Job) *metav1.Time {
+	if job.Status.CompletionTime != nil {
+		return job.Status.CompletionTime
+	}
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
+			return &c.LastTransitionTime
+		}
+	}
+	return nil
+}
+
+func jobCompletedAfter(sync, source *batchv1.Job) bool {
+	syncTime := jobCompletionTime(sync)
+	sourceTime := jobCompletionTime(source)
+	if syncTime == nil || sourceTime == nil {
+		return false
+	}
+	return sourceTime.After(syncTime.Time)
 }
 
 func jobIsFailed(job *batchv1.Job) bool {
