@@ -25,6 +25,7 @@ func TestBuildPortalRealtimeLinksScript(t *testing.T) {
 		"swp.realtime_collaboration_demo",
 		"https://chat.demo.desk.gentian.org",
 		"cn=users_demo,${OU_POS}",
+		`-w "%{http_code}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
@@ -32,6 +33,9 @@ func TestBuildPortalRealtimeLinksScript(t *testing.T) {
 	}
 	if strings.Contains(script, `ensure_realtime_entry "swp.realtime_videoconference"`) {
 		t.Fatal("multi mode must not create legacy swp.realtime_videoconference entry")
+	}
+	if strings.Contains(script, `%%{http_code}`) {
+		t.Fatal("curl -w must use %{http_code}, not %%{http_code} (WriteString does not fmt-escape %)")
 	}
 	if strings.Contains(script, `s/=/=%3D/g`) {
 		t.Fatal("urlencode must not encode = in LDAP DNs; UDM REST paths require literal cn=/ou=")

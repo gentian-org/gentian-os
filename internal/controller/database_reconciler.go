@@ -330,7 +330,13 @@ if [ "${DB_EXISTS}" != "1" ]; then
   echo "database %s created"
 fi
 psql -c "GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";" postgres
-echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName)
+# openDesk XWiki uses PostgreSQL schema virtual_mode: tables live in a schema
+# matching the database name (e.g. demo_xwiki), not public.
+psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZATION \"%s\";"
+psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
+psql -c "ALTER ROLE \"%s\" SET search_path TO \"%s\", public;" postgres
+echo "schema %s ensured"
+echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, dbName, dbName)
 }
 
 // --- Status helpers ----------------------------------------------------------

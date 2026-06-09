@@ -2414,7 +2414,7 @@ ensure_realtime_entry() {`, tenantName)
   LINK="$2"
   ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
   ENTRY_ENC=$(urlencode "${ENTRY_DN}")
-  STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
+  STATUS=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" ${CREDS} \
     -H "Accept: application/json" \
     "${BASE_URL}/portals/entry/${ENTRY_ENC}")
   if [ "${STATUS}" = "404" ]; then

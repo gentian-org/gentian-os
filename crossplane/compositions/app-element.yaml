@@ -1244,7 +1244,13 @@ spec:
                         | grep -q 'CREATE DATABASE' \
                         && psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres \
                              -c "CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"" || true
-                      echo "[db-init] role ${ROLE} and database ${DBNAME} ensured"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
+                        -c "CREATE SCHEMA IF NOT EXISTS \"${DBNAME}\" AUTHORIZATION \"${ROLE}\";"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
+                        -c "GRANT ALL ON SCHEMA \"${DBNAME}\" TO \"${ROLE}\";"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
+                        -c "ALTER ROLE \"${ROLE}\" SET search_path TO \"${DBNAME}\", public;"
+                      echo "[db-init] role ${ROLE}, database ${DBNAME}, and schema ${DBNAME} ensured"
                       curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         -H 'Content-Type: application/json' \
