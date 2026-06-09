@@ -9,6 +9,11 @@ import (
 
 const nginxConfigurationSnippetAnnotation = "nginx.ingress.kubernetes.io/configuration-snippet"
 
+// keycloakProxyIngressName is the shared id.<kernel> ingress (Nubus extensions proxy).
+func keycloakProxyIngressName() string {
+	return envOrDefault("KEYCLOAK_PROXY_INGRESS_NAME", "nubus-dev-keycloak-extensions-proxy")
+}
+
 // substituteIngressAnnotationPlaceholders expands AppProfile ingress annotation
 // templates. ${TENANT_DOMAIN} is the tenant effective domain; ${KERNEL_DOMAIN} is
 // the cluster platform domain (portal, Keycloak, …).

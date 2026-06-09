@@ -367,9 +367,11 @@ frame-ancestors is still injected on each ingress according to its role.
 `chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
 Keycloak proxy ingress must allow both `https://portal.<kernel_domain>` and
 `https://*.<tenant-effective-domain>` (CSP allows only one `*.` label, so
-`https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). Baseline CSP
-lives in nubus Helm values; the operator converges the Keycloak proxy ingress
-annotation when tenants are added or removed.
+`https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). The
+**KeycloakPlatformReconciler** (gentian-os operator) owns `configuration-snippet`
+on the Keycloak proxy ingress and re-converges it when tenants change or Helm
+drifts; Nubus Helm values only strip upstream framing headers via
+`server-snippet`.
 
 ---
 

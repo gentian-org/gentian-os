@@ -98,6 +98,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.KeycloakPlatformReconciler{
+		Client:       mgr.GetClient(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "KeycloakPlatform")
+		os.Exit(1)
+	}
+
 	if err := (&controller.AppStoreReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

@@ -3152,6 +3152,81 @@ wait_for_setup_iam_job() {
 }
 
 # =============================================================================
+# 16a. Verify Keycloak iframe policy (portal-embedded OIDC)
+# =============================================================================
+# Waits for the gentian-os KeycloakPlatformReconciler to patch id.<kernel> ingress
+# and for browser-security Jobs to clear X-Frame-Options on Keycloak realms.
+verify_keycloak_iframe_policy() {
+    banner "Step 16a — Verifying Keycloak iframe policy"
+
+    local kernel_domain="${KERNEL_DOMAIN:-}"
+    if [[ -z "$kernel_domain" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping Keycloak iframe verification."
+        return 0
+    fi
+
+    local services_ns="${SERVICES_NAMESPACE:-gentian-dev}"
+    local kernel_ns="${KERNEL_NAMESPACE:-gentian-dev}"
+    local ingress_name="${KEYCLOAK_PROXY_INGRESS_NAME:-nubus-dev-keycloak-extensions-proxy}"
+    local timeout="${KEYCLOAK_FRAME_VERIFY_TIMEOUT:-300}"
+    local interval=10
+    local elapsed=0
+
+    info "Waiting for Keycloak ingress ${ingress_name} and operator frame-ancestors patch..."
+
+    while [[ $elapsed -lt $timeout ]]; do
+        local snippet=""
+        snippet=$(kubectl get ingress "$ingress_name" -n "$services_ns" \
+            -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/configuration-snippet}' \
+            2>/dev/null || true)
+
+        if [[ -n "$snippet" ]] \
+            && [[ "$snippet" == *"frame-ancestors"* ]] \
+            && [[ "$snippet" == *"https://portal.${kernel_domain}"* ]]; then
+            success "Keycloak ingress allows portal.${kernel_domain} in frame-ancestors."
+            break
+        fi
+
+        printf "  …waiting for Keycloak ingress CSP (%ds/%ds)\n" "$elapsed" "$timeout"
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    if [[ $elapsed -ge $timeout ]]; then
+        warn "Keycloak ingress frame-ancestors not converged within ${timeout}s."
+        warn "Portal-embedded OIDC (WinBox) may show Firefox iframe errors until the operator reconciles."
+        return 1
+    fi
+
+    local bs_jobs
+    bs_jobs=$(kubectl get jobs -n "$kernel_ns" \
+        -l 'gentianos.io/keycloak-browser-security=1' \
+        --no-headers 2>/dev/null | wc -l || echo 0)
+    if [[ "$bs_jobs" -gt 0 ]]; then
+        info "Waiting for Keycloak browser-security header jobs..."
+        elapsed=0
+        while [[ $elapsed -lt $timeout ]]; do
+            local incomplete
+            incomplete=$(kubectl get jobs -n "$kernel_ns" \
+                -l 'gentianos.io/keycloak-browser-security=1' \
+                --no-headers 2>/dev/null \
+                | awk '$2 !~ /1\/1/ {print}' | wc -l || echo 0)
+            if [[ "$incomplete" -eq 0 ]]; then
+                success "Keycloak browser-security header jobs completed."
+                return 0
+            fi
+            sleep "$interval"
+            elapsed=$((elapsed + interval))
+        done
+        warn "Keycloak browser-security jobs did not all complete within ${timeout}s."
+        return 1
+    fi
+
+    info "No browser-security jobs yet (no Tenant CRs?) — ingress CSP is ready."
+    return 0
+}
+
+# =============================================================================
 # 16. Verify ArgoCD Applications
 # =============================================================================
 # healthy when every Application is Synced+Healthy. Returns 0 on healthy,

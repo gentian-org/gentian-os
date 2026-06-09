@@ -1277,6 +1277,7 @@ main_cp() {
     # Step 16 — wait for async ArgoCD hooks / apps, then verify cluster health.
     wait_for_setup_iam_job || true
     verify_argocd_apps || true
+    verify_keycloak_iframe_policy || true
     reconcile_nextcloud_office || true  # Step 16b — richdocuments doc_format + WOPI (Collabora is wave 12)
 
     # Clear the persisted run-start epoch so the next install (after a future
