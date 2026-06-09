@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+{{- $webhook := .Values.webhook | default dict }}
+{{- $webhookEnabled := $webhook.enabled | default false }}
+{{- $webhookPort := $webhook.port | default 9443 }}
+{{- $imageDigest := .Values.image.digest | default "" }}
+{{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
+metadata:
+  name: {{ include "gentian-os.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "gentian-os.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ $imageTag }}{{- end }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /manager
+          args:
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --leader-elect
+            {{- if $webhookEnabled }}
+            - --enable-webhook
+            {{- end }}
+            {{- if .Values.leaderElectionNamespace }}
+            - --leader-election-namespace={{ .Values.leaderElectionNamespace }}
+            {{- end }}
+            - --zap-log-level={{ .Values.logLevel }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "gentian-os.fullname" . }}-config
+          env:
+            - name: BAO_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            - name: BAO_ROLE
+              value: {{ .Values.openbao.role | quote }}
+            - name: KERNEL_DOMAIN
+              value: {{ .Values.kernelDomain | quote }}
+            - name: TENANCY_MODE
+              value: {{ .Values.tenancyMode | default "multi" | quote }}
+            - name: TENANT_DNS01_CLUSTER_ISSUER
+              value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
+            - name: KERNEL_REALM
+              value: {{ .Values.kernelRealm | default "kernel" | quote }}
+            - name: LDAP_SERVER
+              value: {{ .Values.ldap.server | default "" | quote }}
+            - name: LDAP_BASE
+              value: {{ .Values.ldap.base | default "" | quote }}
+            - name: CLOUDFLARE_ZONE_ID
+              value: {{ .Values.cloudflare.zoneID | default "" | quote }}
+            - name: CLOUDFLARE_TUNNEL_CNAME
+              value: {{ .Values.cloudflare.tunnelCNAME | default "" | quote }}
+            {{- if .Values.cloudflare.apiTokenSecretRef.name }}
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: {{ .Values.cloudflare.apiTokenSecretRef.key | default "api-token" | quote }}
+            {{- end }}
+            - name: INFRA_NAMESPACE
+              value: {{ .Values.infraNamespace | quote }}
+            - name: SERVICES_NAMESPACE
+              value: {{ .Values.servicesNamespace | quote }}
+            - name: MEMCACHED_CHART_REPO
+              value: {{ .Values.memcached.chartRepo | quote }}
+            - name: MEMCACHED_CHART_NAME
+              value: {{ .Values.memcached.chartName | quote }}
+            - name: MEMCACHED_CHART_VERSION
+              value: {{ .Values.memcached.chartVersion | quote }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+            {{- if $webhookEnabled }}
+            - name: webhook
+              containerPort: {{ $webhookPort }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- if .Values.resources }}
+            {{- toYaml .Values.resources | nindent 12 }}
+            {{- else }}
+            {}
+            {{- end }}
+          {{- if $webhookEnabled }}
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $webhookEnabled }}
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
+      {{- end }}
+      terminationGracePeriodSeconds: 10

@@ -1,0 +1,50 @@
+# Kernel-level cert-manager ClusterIssuers (Let's Encrypt **staging**).
+#
+# Use for dev / reinstall loops: same ACME account limits as production, but
+# certificates are NOT trusted by browsers (Fake LE Intermediate X1).
+# Pair with ACME_ENV=staging in install.env and tenantDNS01ClusterIssuer:
+#   letsencrypt-staging-dns01-cloudflare
+#
+# Templated on:
+#   ${LETSENCRYPT_EMAIL}     — ACME account email
+#   ${INGRESS_CLASS_NAME}    — IngressClass for HTTP-01 challenges
+#
+# See docs/design/multi-tenancy.md §3 (ACME rate limits).
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging-http01
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ${LETSENCRYPT_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-staging-http01-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: ${INGRESS_CLASS_NAME}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging-dns01-cloudflare
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ${LETSENCRYPT_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-staging-dns01-cloudflare-account-key
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token

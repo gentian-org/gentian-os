@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  go:
+    name: Go — vet, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Install setup-envtest
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+      - name: Download envtest binaries
+        run: |
+          ASSETS=$(setup-envtest use --bin-dir /tmp/envtest-bins 1.32 -p path)
+          echo "KUBEBUILDER_ASSETS=${ASSETS}" >> "$GITHUB_ENV"
+
+      - name: go test
+        run: |
+          # internal/controller uses envtest whose watch goroutines are incompatible
+          # with the race detector; run it separately without -race.
+          go test $(go list ./... | grep -v 'internal/controller') -race -count=1
+          go test ./internal/controller/... -count=1 -parallel 8
+
+      - name: go build
+        run: go build ./...
+
+  generate:
+    name: Verify generated files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install controller-gen
+        run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
+
+      - name: Verify generated deepcopy and CRD YAML are up to date
+        run: make verify-gen
+
+  lint:
+    name: Lint — Go, YAML, shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11
+
+      - name: yamllint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_file: .yamllint.yml
+
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          # 92-gentian-tenant-acl.sh is a Python script mounted into
+          # nubus-ldap-server's entrypoint.d; its .sh extension is required
+          # for numbering order but its content is Python (SC1071).
+          ignore_paths: kernel/services/nubus/manifests/dev/patches
+
+  docker:
+    name: Docker build and push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/gentian-org/gentian-os
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  crossplane-unit:
+    name: Crossplane — unit tests (render + functions + schema)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install crossplane CLI
+        run: |
+          tmpdir="$(mktemp -d)"
+          (
+            cd "$tmpdir"
+            XP_VERSION=v2.2.1 bash "${GITHUB_WORKSPACE}/scripts/install-crossplane-cli.sh"
+            sudo mv crossplane /usr/local/bin/crossplane
+          )
+          crossplane version || true   # exits 1 when no cluster, CLI itself is OK
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION=v0.6.7
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          curl -sL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-${OS}-${ARCH}.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: Install Python test dependencies
+        run: pip install pytest
+
+      - name: Run crossplane unit tests
+        run: make test-unit

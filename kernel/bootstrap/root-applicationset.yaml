@@ -1,0 +1,24 @@
+---
+# Bootstrap Application: deploys all ApplicationSet manifests from appsets/ to the cluster.
+# ArgoCD syncs appsets/ as a plain directory — each YAML file becomes an ApplicationSet.
+# Adding a new app = add appsets/<app>.yaml. Removing one = delete the file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-appsets
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: kernel/appsets
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

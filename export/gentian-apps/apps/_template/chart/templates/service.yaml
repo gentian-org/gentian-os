@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gentian-app.fullname" . }}-api
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "gentian-app.name" . }}-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gentian-app.fullname" . }}-web
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "gentian-app.name" . }}-web
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http

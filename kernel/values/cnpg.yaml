@@ -1,0 +1,33 @@
+# =============================================================================
+# CloudNativePG operator — cluster-wide PostgreSQL manager
+# =============================================================================
+# Installs the CNPG operator, which manages:
+#   - Cluster CRs   (PostgreSQL instances)
+#   - Database CRs  (per-tenant database provisioning, used by gentian-os)
+#   - Pooler CRs    (pgBouncer connection pooling)
+#   - Backup / ScheduledBackup CRs
+#
+# CRDs are created by the chart (crds.create defaults to true).
+# =============================================================================
+
+# Operator resource constraints (single-replica cluster-operator)
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Pod security — drop all capabilities, run as non-root
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true

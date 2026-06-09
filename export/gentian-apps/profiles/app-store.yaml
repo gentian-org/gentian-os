@@ -1,0 +1,77 @@
+# AppProfile — Gentian App Store (tenant admin UI)
+#
+# First-party app built from gentian-apps/apps/app-store/.
+# Chart published to ghcr.io/gentian-org/charts/app-store.
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: app-store
+  labels:
+    gentianos.io/profile-name: app-store
+  annotations:
+    gentianos.io/platform-app: "true"
+spec:
+  displayName: "App Store"
+  description: "Browse the Gentian app catalogue and install or uninstall applications for your tenant."
+  logo: "data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjNEY0NkU1IiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMyAzaDE4djE4SDNWM3ptMiAyaDE0djE0SDVWNWptMiAyaDEwdjJIN1Y3em0wIDNoOHYySDd2LTJ6bTAgM2g2djJIN3YtMnoiLz48L3N2Zz4="
+
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: "app-store"
+        name: "App Store"
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://store.${TENANT_DOMAIN}/oauth/callback"
+    database:
+      engine: postgresql
+      databasePerTenant: true
+
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: app-store
+    version: "0.1.0"
+
+  deploymentMethod: crossplane
+
+  valueMapping:
+    oidc:
+      issuerKey: "oidc.issuer"
+      clientIdKey: "oidc.clientId"
+      clientSecretKey: "oidc.clientSecret"
+    database:
+      hostKey: "database.host"
+      portKey: "database.port"
+      nameKey: "database.name"
+      userKey: "database.user"
+      passwordKey: "database.password"
+
+  extraValues:
+    tenantId: "${TENANT_ID}"
+    tenantNamespace: "${TENANT_NAMESPACE}"
+    installMode: gitops
+    gentian:
+      deploymentsRepo: "https://github.com/gentian-org/gentian-deployments"
+      appsRepo: "https://github.com/gentian-org/gentian-apps"
+      appsBranch: main
+    ingress:
+      enabled: true
+      subDomain: store
+
+  ingress:
+    subDomain: store
+    serviceName: app-store-web
+    servicePort: 80
+    tlsEnabled: true
+
+  browserProxy:
+    - path: api
+      target: "http://app-store-api:8000/api"
+
+  portalTiles:
+    - name: app-store
+      displayName:
+        en_US: "App Store"
+        de_DE: "App Store"
+      linkTarget: embedded
+      allowedGroup: "Tenant Admins"

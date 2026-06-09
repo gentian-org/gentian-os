@@ -1,0 +1,32 @@
+# =============================================================================
+# Stakater Reloader — cluster-wide secret/configmap change detector
+# =============================================================================
+# Watches Deployments/StatefulSets annotated with:
+#   reloader.stakater.com/auto: "true"
+# and rolls them whenever a referenced Secret or ConfigMap changes.
+#
+# This prevents credential drift when Helm upgrades rotate secrets:
+# affected pods are automatically restarted to pick up the new values.
+# =============================================================================
+
+reloader:
+  # Watch all namespaces (we own the full cluster)
+  watchGlobally: true
+
+  # Only restart pods whose Deployment/StatefulSet has the auto annotation
+  # (i.e. opt-in per workload, not every pod in the cluster)
+  ignoreSecrets: false
+  ignoreConfigMaps: false
+
+  deployment:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    pod:
+      annotations:
+        # Reloader does not need to restart itself
+        reloader.stakater.com/auto: "false"

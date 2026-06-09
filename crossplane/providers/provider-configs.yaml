@@ -1,0 +1,52 @@
+---
+# ProviderConfig for provider-kubernetes.
+# Uses the in-cluster service account (default); no extra secret needed when
+# running inside the same cluster.
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: kubernetes
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+# ProviderConfig for provider-helm.
+# Deploys Helm releases into the local cluster using the pod's service account.
+apiVersion: helm.crossplane.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: kubernetes
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+# ProviderConfig for provider-vault (OpenBao-compatible).
+# provider-vault v3.x is Terraform/upjet-based and does not support
+# InjectedIdentity. A periodic token with the crossplane-write policy is
+# minted by install.sh (bootstrap_openbao_for_crossplane) and stored in
+# the openbao-crossplane-token Secret in crossplane-system.
+apiVersion: vault.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: openbao
+spec:
+  # Address of the OpenBao server reachable from within the cluster.
+  address: http://openbao.openbao.svc.cluster.local:8200
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: openbao-crossplane-token
+      key: credentials
+---
+# ProviderConfig for provider-http.
+# Authentication is per-Request (Basic auth header injected via ESO-managed secret).
+# source: None because there is no global token — each Request injects its own
+# Authorization header using the {{ secret-name:namespace:key }} syntax.
+apiVersion: http.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: udm
+spec:
+  credentials:
+    source: None

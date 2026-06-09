@@ -1,0 +1,58 @@
+---
+# IAM group: intercom-service (Pattern A — existingSecret supported)
+# keycloak-bootstrap managed via provider-keycloak (Pattern B: clients[*].secret).
+# Matrix generator: env list × app list  →  one Application per (env, app) pair.
+# Nubus is managed separately in 21-nubus.yaml (requires per-app ignoreDifferences).
+# To add an environment: add one entry to the env list.
+# To add an application:  add one entry to the app list.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-iam
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: intercom-service
+            chart: intercom-service
+            repoURL: registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
+            version: "2.19.5"
+            wave: "21"
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{.wave}}'
+    spec:
+      project: gentian
+      sources:
+      - repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        ref: values
+      - repoURL: '{{.repoURL}}'
+        chart: '{{.chart}}'
+        targetRevision: '{{.version}}'
+        helm:
+          valueFiles:
+          - $values/kernel/values/env/{{.env}}.yaml
+          - $values/kernel/services/{{.app}}/values/_base.yaml
+          - $values/kernel/services/{{.app}}/values/{{.env}}/values.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'gentian-{{.env}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true

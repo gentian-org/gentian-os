@@ -1,0 +1,47 @@
+package controller
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
+	t.Parallel()
+	script := buildAdminScript("gtn-demo")
+
+	if strings.Contains(script, "AUTH=\"-H") {
+		t.Fatalf("script should not construct AUTH as embedded shell arguments")
+	}
+	if strings.Contains(script, "${AUTH}") {
+		t.Fatalf("script should not expand ${AUTH} in curl calls")
+	}
+	if !strings.Contains(script, "AUTH_HEADER=\"Authorization: Bearer ${TOKEN}\"") {
+		t.Fatalf("script must define AUTH_HEADER")
+	}
+	if !strings.Contains(script, "curl -sf -H \"${AUTH_HEADER}\"") {
+		t.Fatalf("script must pass authorization via -H \"${AUTH_HEADER}\"")
+	}
+	if !strings.Contains(script, "INITIAL_TENANT_ADMIN realm=") {
+		t.Fatal("script must emit INITIAL_TENANT_ADMIN after password sync")
+	}
+	if strings.Contains(script, "password reset skipped") {
+		t.Fatal("script must always sync tenant admin password from OpenBao")
+	}
+	if !strings.Contains(script, "federationLink") {
+		t.Fatal("script must skip Keycloak reset-password for LDAP-federated users")
+	}
+	if !strings.Contains(script, "skip Keycloak user PUT") {
+		t.Fatal("script must skip Keycloak user PUT for LDAP-federated users")
+	}
+}
+
+func TestBuildOpendeskAdminEnableScript_LookupByEmail(t *testing.T) {
+	t.Parallel()
+	script := buildOpendeskAdminEnableScript("admin-demo@gentian.org", "kernel")
+	if !strings.Contains(script, `users?email=admin-demo@gentian.org&exact=true`) {
+		t.Fatal("kernel admin enable must look up federated user by portal email")
+	}
+	if strings.Contains(script, `users?username=admin-demo&exact=true`) {
+		t.Fatal("kernel admin enable must not look up by LDAP uid username")
+	}
+}

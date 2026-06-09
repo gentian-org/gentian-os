@@ -1,0 +1,253 @@
+# =============================================================================
+# Nubus dev — non-secret overrides
+# =============================================================================
+# Applied after _base.yaml. Provides env-specific connection strings and
+# resource sizes. All secret fields are in nubus-sensitive-values (ESO Secret).
+# =============================================================================
+
+# Cluster-wide env defaults (from values/env/dev.yaml)
+global:
+  storageClass: nfs-csi
+  imagePullSecrets:
+    - registry-credentials
+  certManagerClusterIssuer: letsencrypt-dns01-cloudflare
+
+nubusUmcServer:
+  smtp:
+    connection:
+      host: postfix-dev.gentian-dev.svc.cluster.local
+      port: 25
+      ssl: false
+      starttls: false
+    auth:
+      enabled: true
+  postgresql:
+    selfservice:
+      connection:
+        host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+        port: "5432"
+      auth:
+        existingSecret:
+          name: nubus-credentials
+          keyMapping:
+            password: pg-selfservice-password
+    authSession:
+      connection:
+        host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+        port: "5432"
+      auth:
+        existingSecret:
+          name: nubus-credentials
+          keyMapping:
+            password: pg-authsession-password
+
+keycloak:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-keycloak-password
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  extraVolumes:
+    - name: gentian-staging-ca
+      secret:
+        secretName: gentian-staging-ca-tls
+        defaultMode: 0444
+  extraVolumeMounts:
+    - name: gentian-staging-ca
+      mountPath: /opt/keycloak/certs
+      readOnly: true
+  extraEnvVars:
+    - name: KC_TRUSTSTORE_PATHS
+      value: /opt/keycloak/certs/ca.crt
+
+nubusGuardian:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-guardian-password
+
+nubusNotificationsApi:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-notifications-password
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+nubusKeycloakExtensions:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-keycloak-extensions-password
+  smtp:
+    connection:
+      host: postfix-dev.gentian-dev.svc.cluster.local
+      port: "25"
+      ssl: false
+      starttls: false
+    auth:
+      enabled: true
+  proxy:
+    ingress:
+      # Allow the Gentian portal and tenant app origins to embed Keycloak pages
+      # (OIDC login, check_session_iframe). Portal tiles load apps in an iframe;
+      # SSO then loads id.<kernel> inside the app iframe — the immediate parent
+      # is chat.<tenant>.<kernel>, not the portal. CSP only supports one *. label
+      # per host-source, so tenant apps need https://*.<tenant>.<kernel> here.
+      # The gentian-os operator converges this annotation for all Tenant CRs on
+      # reconcile; this file is the Helm baseline (demo tenant on dev clusters).
+      annotations:
+        # server-snippet: strip X-Frame-Options for broker /endpoint (microk8s may
+        # miss proxy_hide_header in location-only configuration-snippet).
+        nginx.ingress.kubernetes.io/server-snippet: |
+          proxy_hide_header X-Frame-Options;
+          proxy_hide_header Content-Security-Policy;
+        nginx.ingress.kubernetes.io/configuration-snippet: |
+          proxy_hide_header X-Frame-Options;
+          proxy_hide_header Content-Security-Policy;
+          add_header Content-Security-Policy "frame-ancestors 'self' https://portal.desk.gentian.org \
+            https://*.demo.desk.gentian.org https://chat.demo.desk.gentian.org \
+            https://matrix.demo.desk.gentian.org https://meet.demo.desk.gentian.org" always;
+
+nubusStackDataUms:
+  postgresql:
+    connection:
+      host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      port: "5432"
+    auth:
+      existingSecret:
+        name: nubus-credentials
+        keyMapping:
+          password: pg-keycloak-password
+  nubusUmcServer:
+    postgresql:
+      connection:
+        host: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+  nubusPortalConsumer:
+    objectStorage:
+      endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+  nubusPortalServer:
+    objectStorage:
+      endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+  stackDataContext:
+    smtpHost: postfix-dev.gentian-dev.svc.cluster.local
+    smtpPort: 25
+  templateContext:
+    # Dev tenant apps (demo) live on the tenant zone; contact-initiated calls use
+    # swp.realtime_* portal entries (also patched by gentian-os per tenant).
+    portalRealtimeCollaborationLinkBase: https://chat.demo.desk.gentian.org
+    portalRealtimeVideoconferenceLinkBase: https://meet.demo.desk.gentian.org
+    # Usernames and lastnames only — passwords injected via nubus-sensitive-values ESO secret
+    ldapSearchUsers:
+      - username: ldapsearch_keycloak
+        lastname: LDAP-Search-User
+      - username: ldapsearch_nextcloud
+        lastname: LDAP-Search-User
+      - username: ldapsearch_dovecot
+        lastname: LDAP-Search-User
+      - username: ldapsearch_element
+        lastname: LDAP-Search-User
+      - username: ldapsearch_ox
+        lastname: LDAP-Search-User
+      - username: ldapsearch_postfix
+        lastname: LDAP-Search-User
+      - username: ldapsearch_openproject
+        lastname: LDAP-Search-User
+      - username: ldapsearch_xwiki
+        lastname: LDAP-Search-User
+    # Enable portal tiles for apps deployed in dev. The _base.yaml defaults these to false
+    # because not all envs run them.
+    # Element tiles are per-tenant only (the AppProfile portalTiles section creates them
+    # at chat.<tenant-domain>). A kernel-level element tile would point to the non-existent
+    # chat.desk.gentian.org, so element is kept disabled here.
+    # Collabora is intentionally NOT enabled here: it is accessed through the
+    # Nextcloud file picker, not as a standalone portal tile. Enabling it adds a
+    # "+ Create new in Files" button in the Nubus portal that is meaningless for
+    # both regular users and tenant admins.
+    apps: {}
+
+nubusUdmListener:
+  nats:
+    auth:
+      enabled: true
+
+nubusProvisioning:
+  api:
+    nats:
+      auth:
+        enabled: true
+  dispatcher:
+    nats:
+      auth:
+        enabled: true
+  udmTransformer:
+    nats:
+      auth:
+        enabled: true
+  prefill:
+    nats:
+      auth:
+        enabled: true
+
+nubusPortalServer:
+  objectStorage:
+    endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+
+nubusPortalConsumer:
+  objectStorage:
+    endpoint: http://minio-dev.gentian-infra-dev.svc.cluster.local:9000
+
+nubusLdapServer:
+  ldapServer:
+    auth:
+      enabled: true
+  persistence:
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# The nubus umc-gateway sub-chart does not evaluate Helm tpl in extraVolumes
+# (unlike ldap-server and udm-listener). Use the literal release name so the
+# volume binds to the ConfigMap created by nubus-manifests-dev Kustomize.
+nubusUmcGateway:
+  extraVolumes:
+    - name: gentian-umc-template-default
+      configMap:
+        name: nubus-dev-umc-template-default
+        defaultMode: 0755

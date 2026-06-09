@@ -1,0 +1,38 @@
+# =============================================================================
+# cryptpad — provider-helm Release CR (Pattern B)
+#
+# Shared diagrams.net backend for the kernel Nextcloud instance at
+# files.desk.gentian.org. Public ingress: pad.desk.gentian.org (+ sandbox).
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: cryptpad-dev
+  annotations:
+    crossplane.io/external-name: cryptpad-dev
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  forProvider:
+    chart:
+      name: cryptpad
+      repository: oci://registry.opencode.de/bmi/opendesk/components/supplier/xwiki/charts-mirror
+      version: "0.0.21"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: true
+    waitTimeout: "10m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: cryptpad-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: cryptpad-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes

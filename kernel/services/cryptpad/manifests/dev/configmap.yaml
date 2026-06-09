@@ -1,0 +1,71 @@
+# =============================================================================
+# cryptpad — plain values ConfigMaps (Pattern B)
+#
+# Shared kernel service for diagrams.net editing from Nextcloud (openincryptpad).
+# Aligned with opendesk/helmfile/apps/cryptpad/values.yaml.gotmpl: diagram-only
+# pad types, restrictRegistration, enableEmbedding, no persistence.
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cryptpad-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    fullnameOverride: "cryptpad"
+
+    restrictRegistration: true
+    enableEmbedding: true
+    workloadStateful: false
+
+    application_config:
+      availablePadTypes:
+        - "diagram"
+
+    image:
+      repository: "registry.opencode.de/bmi/opendesk/components/supplier/xwiki/images-mirror/cryptpad"
+      tag: "version-2025.9.0@sha256:484492964391231863b21e8735e5b168230dcc6906b58f320526a46c78dfa53b"
+
+    ingress:
+      enabled: false
+
+    persistence:
+      enabled: false
+
+    podSecurityContext:
+      fsGroup: 4001
+
+    podAnnotations:
+      reloader.stakater.com/auto: "true"
+
+    config:
+      httpUnsafeOrigin: "https://pad.desk.gentian.org"
+      httpSafeOrigin: "https://pad-sandbox.desk.gentian.org"
+
+    resources:
+      limits:
+        cpu: "1"
+        memory: "1536Mi"
+      requests:
+        cpu: "100m"
+        memory: "512Mi"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cryptpad-dev-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    config:
+      maxWorkers: 4
+
+    replicaCount: 1
+
+    autoscaling:
+      enabled: false

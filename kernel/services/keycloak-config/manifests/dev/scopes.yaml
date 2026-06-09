@@ -1,0 +1,319 @@
+---
+# =============================================================================
+# scopes.yaml — Client scope, scope mappers, and intercom scope overrides
+# =============================================================================
+#
+# Contains:
+#   1. ClientScope: opendesk-openproject-scope (shared realm scope)
+#   2. ProtocolMappers attached to the scope (3 mappers)
+#   3. ClientDefaultScopes / ClientOptionalScopes for opendesk-intercom
+#      (intercom deviates from Keycloak defaults: offline_access in default,
+#       reduced optional scope list)
+# =============================================================================
+
+# ── opendesk-openproject-scope ────────────────────────────────────────────────
+# Realm-level client scope providing protocol mappers for OpenProject OIDC.
+# The OpenProject CLIENT is provisioned per-tenant by the orchestrator's
+# Identity reconciler; only this shared scope lives at kernel level.
+#
+# Import ID format for keycloak_openid_client_scope: {realm_id}/{scope_uuid}
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: opendesk-openproject-scope
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    name: opendesk-openproject-scope
+    description: Protocol mappers for OpenProject
+    # Protocol is implied by the CRD group `openidclient.keycloak.crossplane.io`
+    # (openid-connect). The provider's ClientScope schema has no `protocol` field.
+  providerConfigRef:
+    name: keycloak
+---
+# ── OpenProject scope — opendesk_useruuid ────────────────────────────────────
+# Import ID: {realm}/client-scope/{scope_uuid}/{mapper_uuid}
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: openproject-scope-opendesk-useruuid
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientScopeIdRef:
+      name: opendesk-openproject-scope
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OpenProject scope — opendesk_username ────────────────────────────────────
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: openproject-scope-opendesk-username
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientScopeIdRef:
+      name: opendesk-openproject-scope
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── OpenProject scope — opendeskProjectmanagementAdmin ───────────────────────
+# Maps the opendeskProjectmanagementAdmin LDAP attribute to the
+# openproject_admin claim.  Used by OpenProject's OIDC provider to grant
+# admin access automatically.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: openproject-scope-admin
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientScopeIdRef:
+      name: opendesk-openproject-scope
+    name: opendeskProjectmanagementAdmin
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: opendeskProjectmanagementAdmin
+      claim.name: openproject_admin
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-intercom — default scopes ───────────────────────────────────────
+# keycloak_openid_client_default_scopes does not support TF import; this CR
+# is created fresh and sets default scopes authoritatively (REPLACE semantics).
+# offline_access is moved from optional to default for ICS session persistence.
+#
+# forProvider.clientId = Keycloak UUID of opendesk-intercom client.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  name: intercom-default-scopes
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientIdRef:
+      name: opendesk-intercom
+    defaultScopes:
+      - profile
+      - email
+      - roles
+      - web-origins
+      - offline_access
+  providerConfigRef:
+    name: keycloak
+---
+# ── opendesk-intercom — optional scopes ──────────────────────────────────────
+# Explicit optional scope override for intercom.  offline_access was moved to
+# default scopes above; it must be removed from optional to avoid Keycloak
+# rejecting the conflict.  address, phone, microprofile-jwt, organization
+# remain as optional.
+#
+# keycloak_openid_client_optional_scopes does not support TF import.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  name: intercom-optional-scopes
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientIdRef:
+      name: opendesk-intercom
+    optionalScopes:
+      - address
+      - phone
+      - microprofile-jwt
+      - organization
+  providerConfigRef:
+    name: keycloak
+---
+# =============================================================================
+# opendesk-nextcloud-scope
+# =============================================================================
+# Realm-level client scope providing the OIDC claims required by Nextcloud's
+# user_oidc app.  Matches the opendesk reference implementation at
+# opendesk/helmfile/apps/nubus/values-opendesk-keycloak-bootstrap.yaml.gotmpl
+# (section opendesk-nextcloud-scope, lines ~263-311).
+#
+# The scope is assigned as a default scope on opendesk-nextcloud so the
+# opendesk_useruuid claim (Nextcloud mappingUid) is always present in tokens.
+# =============================================================================
+
+# ── opendesk-nextcloud-scope ──────────────────────────────────────────────────
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  name: opendesk-nextcloud-scope
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    name: opendesk-nextcloud-scope
+    description: "Scope for the claims required by openDesk's Nextcloud instance."
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — opendesk_useruuid ──────────────────────────────────────
+# Maps the LDAP entryUUID attribute to the opendesk_useruuid claim.
+# Nextcloud user_oidc uses this as mappingUid to identify users.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-opendesk-useruuid
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: opendesk_useruuid
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: entryUUID
+      claim.name: opendesk_useruuid
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — opendesk_username ──────────────────────────────────────
+# Maps the LDAP uid attribute to the opendesk_username claim.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-opendesk-username
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: opendesk_username
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: uid
+      claim.name: opendesk_username
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+---
+# ── Nextcloud scope — email ───────────────────────────────────────────────────
+# Maps the LDAP email attribute to the email claim.
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  name: nextcloud-scope-email
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientScopeIdRef:
+      name: opendesk-nextcloud-scope
+    name: email
+    protocol: openid-connect
+    protocolMapper: oidc-usermodel-attribute-mapper
+    config:
+      user.attribute: email
+      claim.name: email
+      jsonType.label: String
+      id.token.claim: "true"
+      access.token.claim: "true"
+      userinfo.token.claim: "true"
+      introspection.token.claim: "true"
+      multivalued: "false"
+  providerConfigRef:
+    name: keycloak
+
+---
+# ── opendesk-nextcloud — default scopes ──────────────────────────────────────
+# Authoritatively sets the default scopes for opendesk-nextcloud.
+# Includes opendesk-nextcloud-scope so that opendesk_useruuid is always
+# present in access/ID tokens (required for Nextcloud mappingUid lookup).
+#
+# Uses REPLACE semantics: lists ALL scopes that should be default.
+# keycloak_openid_client_default_scopes does not support TF import.
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  name: nextcloud-default-scopes
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    realmId: kernel
+    clientIdRef:
+      name: opendesk-nextcloud
+    defaultScopes:
+      - profile
+      - email
+      - roles
+      - web-origins
+      - acr
+      - basic
+      - opendesk-nextcloud-scope
+  providerConfigRef:
+    name: keycloak

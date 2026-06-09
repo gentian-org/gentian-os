@@ -1,0 +1,29 @@
+# MinIO dev — secrets + env-specific sizes (app defaults in _base.yaml)
+# auth.rootPassword removed — MinIO reads root credentials from the minio-credentials Secret
+# provisioned by ExternalSecret (ESO → OpenBao → gentian/dev/minio.root_password).
+# provisioning.users removed — MinIO reads provisioning users from minio-provisioning-users Secret
+# provisioned by ExternalSecret (ESO → OpenBao → gentian/dev/minio.*_password).
+auth:
+  existingSecret: minio-credentials
+  rootPasswordSecretKey: root-password
+persistence:
+  size: 10Gi
+provisioning:
+  resources:
+    limits:
+      cpu: "4"
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  usersExistingSecrets:
+    - minio-provisioning-users
+resources:
+  limits:
+    cpu: "4"
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+statefulset:
+  replicaCount: 1

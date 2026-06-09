@@ -1,0 +1,28 @@
+# =============================================================================
+# Nubus service aliases — ExternalName Services bridging opendesk's expected
+# hostnames to Gentian's env-prefixed service names.
+#
+# opendesk templates hard-code "ums-*" hostnames.  Gentian prefixes all nubus
+# services with "nubus-{env}-" (e.g. nubus-dev-portal-server).  These aliases
+# make the opendesk hard-coded names resolve to the correct in-cluster services
+# without patching upstream charts.
+# =============================================================================
+---
+# ums-portal-server → nubus-dev-portal-server
+# Used by: Nextcloud integration_swp app (centralNavigation.jsonUrl),
+#          OX AppSuite portal navigation sidebar.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ums-portal-server
+  namespace: gentian-dev
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  type: ExternalName
+  externalName: nubus-dev-portal-server.gentian-dev.svc.cluster.local
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80

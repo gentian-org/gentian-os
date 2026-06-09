@@ -1,0 +1,29 @@
+---
+# Manages cluster-wide resources in apps/_globals/ (non-recursive).
+# Currently: ClusterSecretStore/openbao (ESO → OpenBao bridge).
+# The ExternalSecrets in apps/_globals/secrets/dev/ are managed separately
+# by the globals-secrets-dev Application (via appsets/02-external-secrets.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-globals-cluster
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: kernel/services/_globals
+    directory:
+      recurse: false   # only picks up eso-cluster-secret-store.yaml; secrets/ subdir handled by globals-secrets-dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gentian-dev   # ClusterSecretStore is cluster-scoped; namespace is nominal
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true

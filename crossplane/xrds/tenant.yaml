@@ -1,0 +1,150 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xtenants.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XTenant
+    plural: xtenants
+  defaultCompositionRef:
+    name: tenant-default
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - displayName
+                - adminEmail
+                - kernelDomain
+              properties:
+                displayName:
+                  type: string
+                  description: >
+                    Human-readable name for this tenant / organisation.
+                domain:
+                  type: string
+                  description: >
+                    Optional custom app zone (e.g. "acme.com"). When omitted the
+                    tenant is served under "<name>.<kernelDomain>".
+                adminEmail:
+                  type: string
+                  description: Contact address for platform notifications.
+                kernelDomain:
+                  type: string
+                  description: >
+                    Cluster-wide platform DNS suffix (e.g. "desk.gentian.org").
+                    Injected by the TenantReconciler from its KernelDomain field.
+                isolation:
+                  type: object
+                  description: Workload isolation boundaries for this tenant.
+                  properties:
+                    mode:
+                      type: string
+                      description: Isolation strategy. Defaults to "namespace".
+                      default: namespace
+                    namespace:
+                      type: string
+                      description: >
+                        Override the target namespace name.
+                        Defaults to "tenant-{name}" when omitted.
+                    ldapOU:
+                      type: string
+                      description: LDAP OU path for this tenant's users and groups.
+                    keycloakRealm:
+                      type: string
+                      description: Keycloak realm name. Defaults to the tenant name.
+                    databasePrefix:
+                      type: string
+                      description: >
+                        Prefix for all database names (e.g. "acme_"). Defaults to
+                        "{name}_".
+                    s3Prefix:
+                      type: string
+                      description: >
+                        Prefix for all S3 bucket names (e.g. "acme-"). Defaults to
+                        "{name}-".
+                mail:
+                  type: object
+                  description: Mail stack configuration.
+                  properties:
+                    mode:
+                      type: string
+                      description: Mail delivery strategy. Defaults to "selfhosted".
+                      default: selfhosted
+                    domain:
+                      type: string
+                      description: Mail domain. Defaults to spec.domain.
+                    quotaPerUser:
+                      type: string
+                      description: Per-user mailbox storage quota (e.g. "5Gi").
+                    rateLimit:
+                      type: string
+                      description: Outbound email rate limit (e.g. "100/h").
+                    smtpCredentialsSecret:
+                      type: string
+                      description: >
+                        Name of a Secret in the kernel namespace containing SMTP
+                        relay credentials. Required when mode=external.
+                quotas:
+                  type: object
+                  description: Resource consumption limits for this tenant.
+                  properties:
+                    maxApps:
+                      type: integer
+                      description: Maximum number of apps this tenant may install.
+                    storage:
+                      type: string
+                      description: Total storage quota (e.g. "200Gi").
+                    cpu:
+                      type: string
+                      description: Total CPU request limit (e.g. "8").
+                    memory:
+                      type: string
+                      description: Total memory request limit (e.g. "16Gi").
+                deletionPolicy:
+                  type: string
+                  description: >
+                    Controls behaviour on XTenant deletion. "Retain" keeps
+                    persistent data; "Delete" removes everything.
+                  default: Retain
+                  enum:
+                    - Retain
+                    - Delete
+                apps:
+                  type: array
+                  description: Applications to install for this tenant.
+                  items:
+                    type: object
+                    required:
+                      - profile
+                    properties:
+                      profile:
+                        type: string
+                        description: Name of the AppProfile CR to install.
+                      variant:
+                        type: string
+                        description: >
+                          Optional Composition variant selector.  When set, the generated
+                          App claim uses spec.compositionRef.name: app-{variant} instead
+                          of the cluster default Composition.  Example: "ox" selects the
+                          app-ox Composition for OX App Suite.
+                      config:
+                        type: object
+                        description: Per-tenant overrides for this app.
+                        x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                namespace:
+                  type: string
+                  description: Resolved tenant namespace name.
+                phase:
+                  type: string
+                  description: Overall lifecycle phase (Provisioning, Ready, Degraded).

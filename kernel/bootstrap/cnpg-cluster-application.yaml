@@ -1,0 +1,50 @@
+---
+# Deploys the shared CNPG Cluster (postgres) and its ExternalSecrets
+# into the platform-kernel namespace.
+#
+# Depends on:
+#   - cnpg-application.yaml  (CNPG operator must be deployed first — CRDs needed)
+#   - 02-external-secrets.yaml  (ESO must be running for ExternalSecrets to sync)
+#   - globals-application.yaml  (ClusterSecretStore/openbao must exist)
+#
+# Managed resources:
+#   platform-kernel/Cluster/postgres
+#   platform-kernel/ExternalSecret/cnpg-superuser  → Secret/cnpg-superuser
+#   platform-kernel/ExternalSecret/postgres-admin  → Secret/postgres-admin
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-cluster-dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "14"   # after infra (wave 12–13), before kernel services (wave 30+)
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: kernel/services/postgresql/manifests/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-kernel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+  # ESO v1 CRD adds default fields server-side that are not in the manifest;
+  # ignore them so Argo doesn't perpetually report OutOfSync.
+  ignoreDifferences:
+  - group: external-secrets.io
+    kind: ExternalSecret
+    jsonPointers:
+    - /spec/target/deletionPolicy
+    jqPathExpressions:
+    - .spec.data[].remoteRef.conversionStrategy
+    - .spec.data[].remoteRef.decodingStrategy
+    - .spec.data[].remoteRef.metadataPolicy
+    - .spec.data[].remoteRef.nullBytePolicy

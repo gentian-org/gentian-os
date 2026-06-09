@@ -1,0 +1,27 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: harness
+spec:
+  compositeTypeRef:
+    apiVersion: harness.gentianos.io/v1alpha1
+    kind: XHarness
+  mode: Pipeline
+  pipeline:
+    - step: create-namespace
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: {{ .observed.composite.resource.metadata.name }}
+              labels:
+                gentianos.io/test-harness: {{ .observed.composite.resource.spec.testLabel }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: test-namespace

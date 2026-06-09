@@ -1,0 +1,35 @@
+tenantId: demo
+tenantNamespace: tenant-demo
+
+api:
+  image:
+    repository: ghcr.io/gentian-org/gentian-app-api
+    tag: "0.1.0"
+  replicaCount: 1
+  resources: {}
+
+web:
+  image:
+    repository: ghcr.io/gentian-org/gentian-app-web
+    tag: "0.1.0"
+  replicaCount: 1
+  resources: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  subDomain: app
+  tlsEnabled: true
+
+existingSecret:
+  name: gentian-app-secrets
+
+auth:
+  disabled: false
+
+installMode: gitops
+
+gentian:
+  deploymentsRepo: https://github.com/gentian-org/gentian-deployments
+  appsRepo: https://github.com/gentian-org/gentian-apps
+  appsBranch: main

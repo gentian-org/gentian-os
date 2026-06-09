@@ -1,0 +1,50 @@
+# =============================================================================
+# gentian-ui gentian-login — base values (all environments)
+#
+# The gentian-login pod serves the canonical login page at /login/. All users
+# (platform admin, tenant admins, end users) authenticate here via Keycloak OIDC;
+# after auth, base-router sends them to gentian-desktop or gentian-mobile.
+#
+# PWA: the login page registers sw.js (app-shell service worker) and links
+# /favicon/site.webmanifest so the app is installable on mobile and desktop.
+#
+# Branding: override branding.* below to apply tenant-specific name, logo,
+# and colour scheme without rebuilding the image (injected via ConfigMap).
+#
+# Chart source:   gentian-ui helm/gentian-login
+# Image:          ghcr.io/gentian-org/portal-frontend (same SPA, different path)
+# Image updates:  handled by the portal-frontend CI workflow (portal-frontend.yaml)
+# =============================================================================
+
+ingress:
+  enabled: true
+  host: "portal.desk.gentian.org"
+  ingressClassName: "nginx"
+  path: "/login"
+  pathType: "Prefix"
+  tls:
+    enabled: true
+    secretName: "wildcard-tls"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "128k"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "64k"
+
+# Tenant branding — rendered into /var/www/html/branding.json inside the pod.
+# The login page fetches this at runtime.  Leave fields empty to use defaults.
+branding:
+  name: "Gentian"
+  tagline: "Sign in to your workspace"
+  logoUrl: "/favicon/gentian-logo.png"
+  themeColor: "#262696"
+  accentColor: "#4A4AB3"
+  backgroundColor: "#F4F1EA"
+  cardColor: "#FFFFFF"
+  orgName: ""
+
+# Reuse the portal-frontend image — the same Vue SPA bundle contains the
+# standalone /login/index.html and sw.js built into the nginx webroot.
+# Tag is kept in sync with portal-frontend by the portal-frontend CI workflow.
+image:
+  registry: "ghcr.io"
+  repository: "gentian-org/portal-frontend"
+  tag: "e56485dc"

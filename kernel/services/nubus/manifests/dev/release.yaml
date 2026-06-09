@@ -1,0 +1,61 @@
+# =============================================================================
+# Nubus — provider-helm Release (Pattern B)
+#
+# Managed by provider-helm (Pattern B).
+# Sensitive values are injected via ESO-synced Secret (nubus-sensitive-values)
+# — they never appear in this file, in ArgoCD UI, or in Helm release history.
+#
+# Values merge order (last wins):
+#   1. nubus-base-values  ConfigMap  — app defaults (_base.yaml)
+#   2. nubus-dev-values   ConfigMap  — env-specific plain overrides (dev.yaml)
+#   3. nubus-sensitive-values Secret — all sensitive fields (ESO-synced)
+#
+# The ConfigMaps and patch ConfigMaps are managed by ArgoCD (nubus-manifests-dev
+# Application) via Kustomize configMapGenerator from values/ and patches/.
+# The Secret is created by ESO from crossplane/apps/nubus/externalsecrets.yaml.
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: nubus-dev
+  annotations:
+    # The Helm release name inside the cluster is nubus-dev.
+    # The nubusUdmListener extraVolumes reference '{{ .Release.Name }}-udm-listener-nats-patch'
+    # which resolves to nubus-dev-udm-listener-nats-patch — managed by ArgoCD.
+    crossplane.io/external-name: nubus-dev
+spec:
+  forProvider:
+    chart:
+      name: nubus
+      repository: oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror
+      version: "1.16.0"
+      # OCI registry credentials — Secret created by install.sh (deploy_nubus step).
+      # The Secret must contain 'username' and 'password' keys.
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    # wait=false: nubus has long-running init jobs; reconcile would time out otherwise.
+    wait: false
+    valuesFrom:
+      # 1. Base values (non-sensitive defaults, all environments)
+      - configMapKeyRef:
+          name: nubus-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      # 2. Dev-specific plain overrides (connection strings, resource limits)
+      - configMapKeyRef:
+          name: nubus-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      # 3. Sensitive values (ESO-synced from OpenBao identity/nubus + mail/postfix).
+      #    Merged LAST so secrets override any accidental non-secret defaults above.
+      - secretKeyRef:
+          name: nubus-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes

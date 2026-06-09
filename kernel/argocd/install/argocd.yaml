@@ -1,0 +1,12 @@
+# ArgoCD Installation
+# Version: v2.11.3 (latest stable)
+# Source: https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+---
+# Apply the official ArgoCD installation manifest
+# This is a reference file - actual installation uses the install script
+# which pulls the latest stable version from upstream

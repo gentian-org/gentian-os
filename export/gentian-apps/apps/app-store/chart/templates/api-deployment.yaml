@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gentian-app.fullname" . }}-api
+  labels:
+    app.kubernetes.io/name: {{ include "gentian-app.name" . }}-api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gentian-app.name" . }}-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "gentian-app.name" . }}-api
+    spec:
+      serviceAccountName: {{ include "gentian-app.fullname" . }}
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: TENANT_ID
+              value: {{ .Values.tenantId | quote }}
+            - name: TENANT_NAMESPACE
+              value: {{ .Values.tenantNamespace | quote }}
+            - name: INSTALL_MODE
+              value: {{ .Values.installMode | quote }}
+            - name: GENTIAN_APPS_REPO
+              value: {{ .Values.gentian.appsRepo | quote }}
+            - name: GENTIAN_APPS_BRANCH
+              value: {{ .Values.gentian.appsBranch | quote }}
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ .Values.gentian.deploymentsRepo | quote }}
+            - name: GENTIAN_DEPLOYMENTS_PATH
+              value: {{ .Values.gentian.deploymentsPath | quote }}
+            - name: AUTH_DISABLED
+              value: {{ ternary "true" "false" .Values.auth.disabled | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret.name }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+          {{- if .Values.gitOps.enabled }}
+          volumeMounts:
+            - name: deployments-checkout
+              mountPath: {{ .Values.gentian.deploymentsPath }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      {{- if .Values.gitOps.enabled }}
+      volumes:
+        - name: deployments-checkout
+          emptyDir: {}
+      initContainers:
+        - name: git-clone-deployments
+          image: alpine/git:2.45.2
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              if [ ! -d {{ .Values.gentian.deploymentsPath }}/.git ]; then
+                git clone "${GENTIAN_DEPLOYMENTS_REPO}" {{ .Values.gentian.deploymentsPath }}
+              fi
+          env:
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ .Values.gentian.deploymentsRepo | quote }}
+          volumeMounts:
+            - name: deployments-checkout
+              mountPath: {{ .Values.gentian.deploymentsPath }}
+      {{- end }}

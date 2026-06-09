@@ -1,0 +1,7 @@
+# =============================================================================
+# gentian-ui portal-frontend — dev environment overrides
+# =============================================================================
+# No dev-specific overrides needed at this time.
+# The portal-frontend is stateless (nginx serving static assets); all env-
+# specific settings (ingress host, TLS) are identical across environments and
+# live in _base.yaml.

@@ -1,0 +1,58 @@
+# =============================================================================
+# opendesk-postgresql — provider-helm Release CR (Pattern B)
+#
+# Managed by provider-helm (Pattern B).
+#
+# Values merge order (last wins):
+#   1. postgresql-base-values  ConfigMap  — non-secret defaults (_base.yaml)
+#   2. postgresql-dev-values   ConfigMap  — env-specific sizing (values-plain.yaml)
+#   3. postgresql-sensitive-values Secret — postgres.password + all job.users[]
+#                                           passwords (ESO-synced from OpenBao)
+#
+# Sensitive values (passwords) never appear in this file, in ArgoCD UI, or
+# in Helm release history.
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: opendesk-postgresql-dev
+  annotations:
+    # crossplane.io/external-name must match the Helm release name
+    # so provider-helm adopts the existing release rather than creating a new one.
+    crossplane.io/external-name: opendesk-postgresql-dev
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  forProvider:
+    chart:
+      name: postgresql
+      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql
+      version: "2.1.2"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-infra-dev
+    wait: true
+    waitTimeout: "5m"
+    valuesFrom:
+      # 1. Base values (non-secret defaults, all environments)
+      - configMapKeyRef:
+          name: postgresql-base-values
+          namespace: gentian-infra-dev
+          key: values.yaml
+          optional: false
+      # 2. Dev-specific plain overrides (sizing, resource limits)
+      - configMapKeyRef:
+          name: postgresql-dev-values
+          namespace: gentian-infra-dev
+          key: values.yaml
+          optional: false
+      # 3. Sensitive values (ESO-synced from OpenBao database/postgresql).
+      #    Includes postgres.password and the full job.users[] list with passwords.
+      #    Merged LAST so passwords override any placeholder values above.
+      - secretKeyRef:
+          name: postgresql-sensitive-values
+          namespace: gentian-infra-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes

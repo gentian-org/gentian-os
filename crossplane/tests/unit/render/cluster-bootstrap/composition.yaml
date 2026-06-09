@@ -1,0 +1,342 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: cluster-default
+  labels:
+    gentianos.io/composition: cluster
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XCluster
+  mode: Pipeline
+  pipeline:
+    - step: render-cluster-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec := $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+
+            {{- $openbaoServer    := default "http://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
+            {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
+            {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
+            {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
+            {{- $argoNs           := default "argocd" (dig "argocd" "namespace" "" $spec) }}
+            {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
+            {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
+            {{- $ingressClass     := default "public" (dig "certManager" "ingressClassName" "" $spec) }}
+            {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
+            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
+            {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
+
+            {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
+            {{- range list "platform-kernel" "gentian-system" }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: namespace-{{ . }}
+              name: {{ $name }}-ns-{{ . }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Namespace
+                  metadata:
+                    name: {{ . }}
+                    labels:
+                      gentianos.io/managed-by: crossplane
+                      gentianos.io/cluster: {{ $name }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
+            ---
+            apiVersion: mount.vault.upbound.io/v1alpha1
+            kind: SecretMount
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-mount
+              name: {{ $name }}-kv-mount
+            spec:
+              forProvider:
+                path: {{ $kvMount }}
+                type: kv
+                description: "KV v2 store for all Gentian OS secrets"
+                options:
+                  version: "2"
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── OpenBao policies ─────────────────────────────────────────── */}}
+            ---
+            apiVersion: policy.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-eso-read
+              name: {{ $name }}-policy-eso-read
+            spec:
+              forProvider:
+                name: eso-read
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/kernel/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
+                    capabilities = ["list"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/apps/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/*" {
+                    capabilities = ["list"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: policy.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-crossplane-write
+              name: {{ $name }}-policy-crossplane-write
+            spec:
+              forProvider:
+                name: crossplane-write
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/*" {
+                    capabilities = ["create", "read", "update", "delete"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/*" {
+                    capabilities = ["list", "read", "delete"]
+                  }
+                  path "auth/token/create" {
+                    capabilities = ["update"]
+                  }
+                  path "auth/token/lookup-self" {
+                    capabilities = ["read"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── OpenBao Kubernetes auth backend ──────────────────────────── */}}
+            ---
+            apiVersion: auth.vault.upbound.io/v1alpha1
+            kind: Backend
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+              name: {{ $name }}-auth-kubernetes
+            spec:
+              forProvider:
+                type: kubernetes
+                path: {{ $authMount }}
+                description: "Kubernetes service-account auth for Crossplane providers and ESO"
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: auth.vault.upbound.io/v1alpha1
+            kind: BackendConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-config
+              name: {{ $name }}-auth-k8s-config
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                kubernetesHost: {{ $k8sHost }}
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: auth.vault.upbound.io/v1alpha1
+            kind: BackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-eso
+              name: {{ $name }}-auth-role-eso
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: eso
+                boundServiceAccountNames:
+                  - {{ $esoSa }}
+                boundServiceAccountNamespaces:
+                  - {{ $esoNs }}
+                tokenPolicies:
+                  - eso-read
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: auth.vault.upbound.io/v1alpha1
+            kind: BackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-crossplane
+              name: {{ $name }}-auth-role-crossplane
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: crossplane-provider
+                boundServiceAccountNames:
+                  - crossplane-provider-vault
+                boundServiceAccountNamespaces:
+                  - crossplane-system
+                tokenPolicies:
+                  - crossplane-write
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── OpenBao KV seed paths (Observe+Create, never overwrite) ────── */}}
+            {{- /*
+                 These MRs adopt existing paths seeded by seed-openbao.sh and
+                 create them on first-run if absent. dataJsonSecretRef points at
+                 K8s Secrets in crossplane-system that contain the derived values.
+                 managementPolicies: ["Observe","Create"] ensures Crossplane never
+                 overwrites an existing secret version.
+            */}}
+            {{- $kvSeeds := list
+                  "database/postgresql"
+                  "database/mariadb"
+                  "cache/redis"
+                  "storage/minio"
+                  "identity/nubus"
+                  "identity/keycloak-bootstrap"
+                  "mail/postfix"
+            }}
+            {{- range $kvSeeds }}
+            {{- $safeName := . | replace "/" "-" }}
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-{{ $safeName }}
+              name: {{ $name }}-kv-{{ $safeName }}
+            spec:
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: {{ $kvMount }}
+                name: gentian-os/kernel/{{ . }}
+                dataJsonSecretRef:
+                  name: gentian-os-kernel-{{ $safeName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
+            {{- /* ── ArgoCD AppProject for tenant workloads ───────────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: argocd-appproject-tenants
+              name: {{ $name }}-appproject-tenants
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: AppProject
+                  metadata:
+                    name: gentianos-tenants
+                    namespace: {{ $argoNs }}
+                  spec:
+                    description: "Gentian OS — tenant workloads managed by Crossplane"
+                    sourceRepos:
+                      - "https://github.com/gentian-org/gentian-os"
+                      - "https://github.com/gentian-org/gentian-apps"
+                      - "https://github.com/gentian-org/gentian-deployments"
+                      - "registry.opencode.de/*"
+                      - "oci://registry.opencode.de/*"
+                      {{- range (default list (dig "argocd" "sourceRepos" list $spec)) }}
+                      - {{ . | quote }}
+                      {{- end }}
+                    destinations:
+                      - namespace: "tenant-*"
+                        server: "https://kubernetes.default.svc"
+                      - namespace: {{ $argoNs }}
+                        server: "https://kubernetes.default.svc"
+                    clusterResourceWhitelist:
+                      - group: ""
+                        kind: Namespace
+                      - group: "cert-manager.io"
+                        kind: ClusterIssuer
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── ESO ClusterSecretStore pointing at OpenBao ───────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: eso-cluster-secret-store
+              name: {{ $name }}-cluster-secret-store
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterSecretStore
+                  metadata:
+                    name: openbao
+                  spec:
+                    provider:
+                      vault:
+                        server: {{ $openbaoServer }}
+                        path: {{ $kvMount }}
+                        version: v2
+                        auth:
+                          kubernetes:
+                            mountPath: {{ $authMount }}
+                            role: eso
+                            serviceAccountRef:
+                              name: {{ $esoSa }}
+                              namespace: {{ $esoNs }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── cert-manager ClusterIssuers ─────────────────────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: cert-issuer-http01
+              name: {{ $name }}-cluster-issuer-http01
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: cert-manager.io/v1
+                  kind: ClusterIssuer
+                  metadata:
+                    name: letsencrypt-http01
+                  spec:
+                    acme:
+                      server: https://acme-v02.api.letsencrypt.org/directory
+                      email: {{ $letsencryptEmail }}
+                      privateKeySecretRef:
+                        name: letsencrypt-http01-account-key
+                      solvers:
+                        - http01:
+                            ingress:
+                              ingressClassName: {{ $ingressClass }}
+              providerConfigRef:
+                name: kubernetes

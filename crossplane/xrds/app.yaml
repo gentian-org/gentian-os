@@ -1,0 +1,98 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xapps.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XApp
+    plural: xapps
+  claimNames:
+    kind: App
+    plural: apps
+  defaultCompositionRef:
+    name: app-default
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - profileRef
+                - tenantNamespace
+              properties:
+                profileRef:
+                  type: object
+                  description: >
+                    Reference to the AppProfile that describes the app to install.
+                    The AppProfile must be cluster-scoped and already exist.
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: Name of the AppProfile (e.g. "openproject", "element").
+                tenantNamespace:
+                  type: string
+                  description: >
+                    Target namespace for this app's Helm release and ExternalSecret.
+                    Set by the operator from the owning Tenant's namespace
+                    (convention: "tenant-{tenant-name}").
+                domain:
+                  type: string
+                  description: >
+                    Effective tenant domain (vanity or derived from kernelDomain).
+                    Used for template substitution of ${TENANT_DOMAIN} in
+                    AppProfile.spec.extraValues. Set by the operator.
+                config:
+                  type: object
+                  description: Per-tenant overrides applied on top of the AppProfile defaults.
+                  properties:
+                    replicas:
+                      type: integer
+                      format: int32
+                      description: >
+                        Override the chart's replica count. When omitted the
+                        chart default or profile-level extraValues applies.
+                      minimum: 0
+                    extraValues:
+                      type: object
+                      description: >
+                        Arbitrary Helm values deep-merged over the profile's
+                        extraValues. Must not contain secrets.
+                      x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                releaseReady:
+                  type: boolean
+                  description: True when the provider-helm Release is Synced+Ready.
+                secretSynced:
+                  type: boolean
+                  description: True when the ExternalSecret has synced all sensitive values.
+---
+# Grant the Crossplane SA read access to AppProfiles so that the
+# function-extra-resources composition step can fetch the AppProfile referenced
+# by an XApp's spec.profileRef.name.  The crossplane ClusterRole is an
+# aggregated role; adding the aggregate-to-crossplane label here injects the
+# rule without patching the auto-generated role directly.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:appprofiles.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - appprofiles
+    verbs:
+      - get
+      - list
+      - watch

@@ -1,0 +1,48 @@
+{{- if .Values.grafana.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-dashboard
+  {{- if .Values.grafana.dashboards.namespace }}
+  namespace: {{ .Values.grafana.dashboards.namespace }}
+  {{- else }}
+  namespace: {{ .Release.Namespace }}
+  {{- end }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  gentian-os.json: |
+    {
+      "title": "Gentian OS Operator",
+      "uid": "gentian-os",
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "title": "Tenants Total",
+          "type": "stat",
+          "targets": [{"expr": "gentianos_tenants_total", "legendFormat": "Tenants"}]
+        },
+        {
+          "title": "Reconcile Errors",
+          "type": "timeseries",
+          "targets": [{"expr": "rate(gentianos_reconcile_errors_total[5m])", "legendFormat": "{{`{{controller}}`}}"}]
+        },
+        {
+          "title": "Provisioning Duration (p99)",
+          "type": "timeseries",
+          "targets": [{"expr": "histogram_quantile(0.99, rate(gentianos_provisioning_duration_seconds_bucket[5m]))", "legendFormat": "p99"}]
+        },
+        {
+          "title": "Integration Binding Status",
+          "type": "table",
+          "targets": [{"expr": "gentianos_integration_bindings_status", "legendFormat": "{{`{{contract}}`}} / {{`{{tenant}}`}}"}]
+        },
+        {
+          "title": "ExternalSecrets Sync Status",
+          "type": "table",
+          "targets": [{"expr": "gentianos_externalsecrets_sync_status", "legendFormat": "{{`{{tenant}}`}}"}]
+        }
+      ]
+    }
+{{- end }}

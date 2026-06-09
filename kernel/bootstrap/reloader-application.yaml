@@ -1,0 +1,49 @@
+---
+# Deploys Stakater Reloader — automatic pod restarter on Secret/ConfigMap changes.
+#
+# Chart: oci://ghcr.io/stakater/charts/reloader v2.2.9 (appVersion v1.4.14)
+# Repo registered in argocd namespace: ghcr-stakater (enableOCI=true, no auth needed)
+#
+# Purpose:
+#   Watches Deployments/StatefulSets annotated with reloader.stakater.com/auto: "true"
+#   and restarts them when any referenced Secret changes. This prevents credential
+#   drift in Nubus provisioning components after Helm upgrades rotate secrets.
+#
+# Safety guards:
+#   prune: false   — ArgoCD never auto-deletes the controller deployment
+#   finalizers: [] — removing this Application from Git does NOT cascade-delete
+#   selfHeal: true — drift in values.yaml is reconciled automatically
+#
+# To apply manually (bootstrap step, run once):
+#   kubectl apply -f argocd/repos/ghcr-stakater.yaml
+#   kubectl apply -f argocd/bootstrap/reloader-application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: argocd
+  finalizers: []   # intentionally empty — never cascade-delete the controller
+spec:
+  project: gentian
+  sources:
+  # Source 1: Reloader Helm chart from ghcr.io/stakater OCI registry
+  - repoURL: ghcr.io/stakater/charts
+    chart: reloader
+    targetRevision: "2.2.9"
+    helm:
+      valueFiles:
+      - $values/kernel/values/reloader.yaml
+  # Source 2: Values file from Git (referenced as $values by Source 1)
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: stakater-system
+  syncPolicy:
+    automated:
+      prune: false     # never auto-delete — Reloader watches cluster-wide
+      selfHeal: true   # drift is reconciled automatically
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

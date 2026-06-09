@@ -1,0 +1,5 @@
+# Allow shellcheck to follow `source` directives (equivalent to -x flag).
+# Without this, every `source <dynamic-path>` annotated with
+# `# shellcheck source=<rel-path>` generates an SC1091 note because shellcheck
+# cannot resolve the runtime path without explicit external-sources permission.
+external-sources=true

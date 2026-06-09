@@ -1,0 +1,44 @@
+# =============================================================================
+# Postfix dev — environment-specific non-secret overrides
+# =============================================================================
+# Secrets injected via provider-helm valuesFrom (Pattern B):
+#   postfix.relayHost.authentication.username.value  (Vault: postfix.relay_username)
+#   postfix.relayHost.authentication.password.value  (Vault: postfix.relay_password)
+#   postfix.staticAuthDB.password.value              (Vault: nubus.smtp_password)
+#   postfix.ldap.password.value                      (Vault: nubus.ldapsearch_postfix)
+# =============================================================================
+
+postfix:
+  # Hostname matches the Helm release name so the service DNS resolves
+  hostname: "postfix-dev"
+
+  # LDAP server for virtual alias lookups (dev)
+  ldap:
+    host: "nubus-dev-ldap-server-primary.gentian-dev.svc.cluster.local"
+
+  # Gmail relay for system messages (password reset, notifications).
+  # Set enabled: false to deliver directly to recipient MX (requires static public IP + MX record).
+  # Credentials injected via sensitive-values (Vault: gentian/dev/postfix relay_username / relay_password).
+  smtpSASLAuthEnable: "yes"
+  relayHost:
+    enabled: true
+    host: smtp.gmail.com
+    port: 587
+    disableMXLookup: true
+    authentication:
+      enabled: true
+      username:
+        value: "placeholder"  # overridden by sensitive-values
+      password:
+        value: "placeholder"  # overridden by sensitive-values
+
+  # Allow relay from cluster pod networks
+  relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

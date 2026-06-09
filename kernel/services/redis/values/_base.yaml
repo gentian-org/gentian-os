@@ -1,0 +1,60 @@
+# =============================================================================
+# Redis app-level defaults (all environments)
+# =============================================================================
+# Layer 2 of the values hierarchy (merged after values/env/{env}.yaml).
+# Secrets (auth.password) and env-specific sizes belong in {env}/values.yaml.
+# =============================================================================
+
+# Architecture — standalone for all envs; HA via Sentinel configurable in prod
+architecture: standalone
+
+# Image — OpenDesk-mirrored Bitnami redis
+image:
+  registry: registry.opencode.de
+  repository: bmi/opendesk/components/community/images-mirror/redis
+  tag: 7.4.3-debian-12-r0
+  pullPolicy: IfNotPresent
+
+# Master node configuration
+master:
+  # Reloader: restart this StatefulSet whenever redis-credentials changes.
+  # The Bitnami chart references auth.existingSecret (redis-credentials) via
+  # secretKeyRef, so Reloader auto-detects it and triggers a rolling restart
+  # when ESO refreshes the secret from Vault — keeping Redis in sync.
+  podAnnotations:
+    reloader.stakater.com/auto: "true"
+
+  containerSecurityContext:
+    privileged: false
+    readOnlyRootFilesystem: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
+  count: 1
+  persistence:
+    enabled: true
+    # storageClass from values/env/{env}.yaml
+  # resources and persistence.size overridden in {env}/values.yaml
+
+# Metrics disabled (no Prometheus stack in this deployment)
+metrics:
+  enabled: false
+
+# Replica disabled — standalone architecture
+replica:
+  replicaCount: 0
+
+# Sentinel disabled
+sentinel:
+  enabled: false
+
+# Global chart settings (storageClass/imagePullSecrets from values/env/{env}.yaml)
+global:
+  ingress:
+    enabled: false

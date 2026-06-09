@@ -1,0 +1,35 @@
+# =============================================================================
+# cryptpad — shared Ingress (main / httpUnsafeOrigin)
+#
+# Nextcloud (files.desk.gentian.org) embeds diagram editors here via openincryptpad.
+# Append frame-ancestors without replacing CryptPad's upstream CSP (see ingress_helpers).
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cryptpad
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+    nginx.org/websocket-services: "cryptpad"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header Content-Security-Policy "frame-ancestors 'self' https://files.desk.gentian.org https://portal.desk.gentian.org" always;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - pad.desk.gentian.org
+      secretName: wildcard-tls
+  rules:
+    - host: pad.desk.gentian.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cryptpad
+                port:
+                  number: 80

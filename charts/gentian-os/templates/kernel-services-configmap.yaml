@@ -1,0 +1,45 @@
+{{- $ks := .Values.kernelServices -}}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.turnHost $ks.turnCredentials }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-kernel-services
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    gentianos.io/config-type: kernel-services
+data:
+  {{- with .Values.kernelDomain }}
+  KERNEL_DOMAIN: {{ . | quote }}
+  {{- end }}
+  TENANCY_MODE: {{ .Values.tenancyMode | default "multi" | quote }}
+  {{- $issuer := .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
+  ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
+  {{- with $ks.s3Endpoint }}
+  S3_ENDPOINT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.mysqlHost }}
+  MYSQL_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.redisHost }}
+  REDIS_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnHost }}
+  TURN_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnPort }}
+  TURN_PORT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnTLSHost }}
+  TURN_TLS_HOST: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnTLSPort }}
+  TURN_TLS_PORT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnTransport }}
+  TURN_TRANSPORT: {{ . | quote }}
+  {{- end }}
+  {{- with $ks.turnCredentials }}
+  TURN_CREDENTIALS: {{ . | quote }}
+  {{- end }}
+{{- end }}

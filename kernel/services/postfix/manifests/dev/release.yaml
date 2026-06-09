@@ -1,0 +1,53 @@
+# =============================================================================
+# postfix — provider-helm Release CR (Pattern B)
+#
+# Managed by provider-helm (Pattern B).
+#
+# Values merge order (last wins):
+#   1. postfix-base-values     ConfigMap — non-secret defaults (_base.yaml)
+#   2. postfix-dev-values      ConfigMap — env overrides (relay host, sizing)
+#   3. postfix-sensitive-values Secret   — relay/SMTP/LDAP passwords
+#                                           (ESO-synced from OpenBao)
+#
+# Deployed in gentian-dev so the service DNS
+# `postfix-dev.gentian-dev.svc.cluster.local` referenced by the kernel
+# nubus values resolves correctly.  Without this Release the UMC
+# self-service module silently fails to send invitation/password mails.
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: postfix-dev
+  annotations:
+    crossplane.io/external-name: postfix-dev
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  forProvider:
+    chart:
+      name: postfix
+      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postfix
+      version: "5.2.0"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: true
+    waitTimeout: "5m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: postfix-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: postfix-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: postfix-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes

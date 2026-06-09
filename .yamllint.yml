@@ -1,0 +1,29 @@
+---
+extends: default
+
+# Exclude machine-generated files and files containing Go template syntax
+# (Go template actions {{ }} break yamllint's line-length and syntax checks)
+ignore: |
+  config/crd/
+  charts/gentian-os/crds/
+  charts/gentian-os/templates/
+  export/**/chart/templates/
+  export/gentian-apps/profiles/
+  kernel/manifests/flux-crds/
+  crossplane/compositions/
+  kernel/services/nextcloud-management/manifests/
+
+rules:
+  indentation:
+    spaces: 2
+    # Accept both indented (Helm/standard) and non-indented (ArgoCD/kubectl) sequences.
+    indent-sequences: whatever
+    check-multi-line-strings: false
+  line-length:
+    max: 160
+  # document-start (---) is optional for Helm values and Kubernetes overlay files
+  document-start: disable
+  # Comment alignment is not enforced — inline comments are used for documentation
+  comments-indentation: disable
+  truthy:
+    allowed-values: ["true", "false", "yes", "no", "on", "off"]

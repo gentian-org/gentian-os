@@ -1,0 +1,21 @@
+# Terraform / OpenTofu runtime artifacts
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+
+# Local installer credentials cache (install.sh)
+.install-secrets.env
+.install-state.env
+
+# Local operator-provided install config (templates are committed as *.template)
+install.env
+install.secrets.env
+install.env.backup
+install.secrets.env.backup
+
+# Go test binaries (produced by go test -c or go test -o)
+*.test
+__pycache__/

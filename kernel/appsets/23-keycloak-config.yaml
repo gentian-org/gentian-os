@@ -1,0 +1,88 @@
+---
+# Keycloak OIDC client configuration for the opendesk realm.
+#
+# Deploys Crossplane managed resources (Client, ProtocolMapper, ClientScope,
+# ClientDefaultScopes, ClientOptionalScopes) that fully manage the Keycloak
+# OIDC clients for the opendesk stack.  Replaces the keycloak-config-dev
+# provider-keycloak workspace.
+#
+# Architecture note:
+#   All resources are deployed to crossplane-system where provider-keycloak
+#   runs.  Existing Keycloak resources are imported via
+#   crossplane.io/external-name annotations (Upjet import mechanism).
+#
+# Wave 23: after nubus (wave 21) and udm (wave 22) so Keycloak is
+#          fully initialised with LDAP federation before client import.
+#          The ESO ExternalSecret (wave 0) and ProviderConfig (wave 1)
+#          are deployed first so the provider can authenticate.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-keycloak-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "23"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+  template:
+    metadata:
+      name: "keycloak-config-{{.env}}"
+      annotations:
+        argocd.argoproj.io/sync-wave: "23"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: "kernel/services/keycloak-config/manifests/{{.env}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: crossplane-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+          - CreateNamespace=false
+          - ServerSideApply=true
+      ignoreDifferences:
+        - group: external-secrets.io
+          kind: ExternalSecret
+          jqPathExpressions:
+            - .spec.refreshPolicy
+            - .spec.refreshInterval
+            - .spec.target.template.engineVersion
+            - .spec.target.template.mergePolicy
+            - .spec.target.deletionPolicy
+            - .spec.target.creationPolicy
+            - .spec.dataFrom[]?.find?.conversionStrategy
+            - .spec.data[]?.remoteRef?.nullBytePolicy
+        # Crossplane provider-keycloak resolves *Ref/*Selector and writes the
+        # resolved UUID back into spec.forProvider.{clientId,clientScopeId}.
+        # That round-trip drift is expected; ignore it so apps stay Synced.
+        - group: client.keycloak.crossplane.io
+          kind: ProtocolMapper
+          jqPathExpressions:
+            - .spec.forProvider.clientId
+            - .spec.forProvider.clientScopeId
+        - group: openidclient.keycloak.crossplane.io
+          kind: ClientDefaultScopes
+          jqPathExpressions:
+            - .spec.forProvider.clientId
+        - group: openidclient.keycloak.crossplane.io
+          kind: ClientOptionalScopes
+          jqPathExpressions:
+            - .spec.forProvider.clientId

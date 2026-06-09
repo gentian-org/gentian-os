@@ -1,0 +1,118 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xclusters.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XCluster
+    plural: xclusters
+  claimNames:
+    kind: Cluster
+    plural: clusters
+  defaultCompositionRef:
+    name: cluster-default
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - kernelDomain
+              properties:
+                kernelDomain:
+                  type: string
+                  description: >
+                    Cluster-wide platform DNS suffix, e.g. "desk.gentian.org".
+                    All kernel services are reachable under this domain.
+                ldapBaseDn:
+                  type: string
+                  description: >
+                    LDAP base DN derived from the kernel domain, e.g. "dc=gentian,dc=org".
+                    Defaults to a dc= decomposition of kernelDomain when omitted.
+                masterPasswordSecretRef:
+                  type: object
+                  description: >
+                    Reference to a Kubernetes Secret containing the master password
+                    used to derive all kernel credentials via HMAC-SHA256.
+                    The Secret must have a key named "master-password".
+                  required:
+                    - name
+                    - namespace
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                openbao:
+                  type: object
+                  description: OpenBao connection settings.
+                  properties:
+                    server:
+                      type: string
+                      description: >
+                        OpenBao service address reachable from within the cluster.
+                      default: "http://openbao.openbao.svc.cluster.local:8200"
+                    kvMount:
+                      type: string
+                      description: Path of the KV v2 secret engine mount.
+                      default: "secret"
+                    authMount:
+                      type: string
+                      description: Path of the Kubernetes auth backend.
+                      default: "kubernetes"
+                    kubernetesHost:
+                      type: string
+                      description: Kubernetes API server address seen from OpenBao.
+                      default: "https://kubernetes.default.svc"
+                argocd:
+                  type: object
+                  description: ArgoCD configuration.
+                  properties:
+                    namespace:
+                      type: string
+                      description: Namespace where ArgoCD is deployed.
+                      default: "argocd"
+                    sourceRepos:
+                      type: array
+                      description: Extra source repositories to allow in the tenants AppProject.
+                      items:
+                        type: string
+                eso:
+                  type: object
+                  description: External Secrets Operator configuration.
+                  properties:
+                    namespace:
+                      type: string
+                      description: Namespace where ESO is deployed.
+                      default: "external-secrets"
+                    serviceAccount:
+                      type: string
+                      description: ServiceAccount name used by ESO.
+                      default: "external-secrets"
+                certManager:
+                  type: object
+                  description: cert-manager configuration.
+                  properties:
+                    letsencryptEmail:
+                      type: string
+                      description: >
+                        ACME account e-mail for Let's Encrypt. Defaults to
+                        "admin@{kernelDomain}" when omitted.
+                    ingressClassName:
+                      type: string
+                      description: IngressClass for HTTP-01 challenges.
+                      default: "public"
+            status:
+              type: object
+              properties:
+                kernelNamespaces:
+                  type: array
+                  description: Namespaces provisioned by this Cluster XR.
+                  items:
+                    type: string

@@ -1,0 +1,47 @@
+---
+# Manages the OpenBao Helm release under ArgoCD.
+#
+# Safety guards:
+#   prune: false          — ArgoCD never auto-deletes the StatefulSet or PVC
+#   finalizers: []        — removing this Application from Git does NOT cascade-delete OpenBao
+#   ignoreDifferences     — /spec/volumeClaimTemplates is immutable after creation;
+#                           Helm keeps the declared template in the chart but k8s rejects
+#                           any attempt to change it, causing permanent OutOfSync noise.
+#
+# Adoption: if OpenBao is already installed via `helm install`, ArgoCD detects the
+# existing release and takes ownership without reinstalling. Verify with:
+#   argocd app get openbao
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao
+  namespace: argocd
+  finalizers: []   # intentionally empty — never cascade-delete secret storage
+spec:
+  project: gentian
+  sources:
+  # Source 1: OpenBao Helm chart from the official chart repository
+  - repoURL: https://openbao.github.io/openbao-helm
+    chart: openbao
+    targetRevision: "0.25.5"
+    helm:
+      valueFiles:
+      - $values/kernel/openbao/values.yaml
+  # Source 2: Values file from Git (referenced as $values by Source 1)
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated:
+      prune: false      # never auto-delete — PVC holds all vault data
+      selfHeal: true    # drift in values.yaml is reconciled automatically
+    syncOptions:
+    - CreateNamespace=true
+  ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jsonPointers:
+    - /spec/volumeClaimTemplates   # immutable after creation; Helm drift is expected and harmless

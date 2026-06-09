@@ -1,0 +1,175 @@
+# Default values for the Gentian OS operator.
+# Override in environment-specific files.
+
+replicaCount: 1
+
+# kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
+# Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
+# Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
+kernelDomain: ""
+
+# tenancyMode controls default tenant app URL shape when Tenant.spec.domain is unset:
+#   multi  — {sub}.{tenant}.{kernelDomain} (default, shared cluster)
+#   single — {sub}.{kernelDomain} (dedicated single-tenant cluster; one Tenant named "default")
+# Plumbed as TENANCY_MODE.
+tenancyMode: multi
+
+# tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
+# wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
+# write records in the zone containing effectiveDomain (platform zone for default
+# tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
+tenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare"
+
+# kernelRealm is the name of the shared Keycloak realm that holds all platform
+# users (synced via Nubus LDAP). Defaults to "kernel" when empty.
+# Plumbed into the operator as the KERNEL_REALM env var.
+kernelRealm: ""
+
+# LDAP configuration for per-tenant realm federation.
+# When ldap.server is empty the operator does not configure LDAP federation
+# for tenant Keycloak realms. Set both ldap.server and ldap.base to enable.
+ldap:
+  # LDAP connection URL including scheme and port, e.g.:
+  # ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389
+  server: ""
+  # LDAP base DN, e.g. dc=swp-ldap,dc=internal
+  base: ""
+
+# infraNamespace is the namespace hosting shared infrastructure (MariaDB, Redis,
+# MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
+infraNamespace: "gentian-infra-dev"
+
+# servicesNamespace is the namespace hosting platform services consumed by
+# tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
+servicesNamespace: "gentian-dev"
+
+# kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
+# Compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
+# and fetched by app-default.yaml via function-extra-resources.
+# Template variables substituted in AppProfile extraValues:
+#   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
+#   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
+#   ${REDIS_HOST}   — Redis primary hostname (no port)
+#   ${TURN_*}       — Shared TURN server settings for Element + Jitsi
+kernelServices:
+  s3Endpoint: ""
+  mysqlHost: ""
+  redisHost: ""
+  turnHost: ""
+  turnPort: "3478"
+  turnTLSHost: ""
+  turnTLSPort: "5349"
+  turnTransport: "udp"
+  turnCredentials: ""
+
+image:
+  repository: ghcr.io/gentian-org/gentian-os
+  pullPolicy: Always
+  # Overrides the image tag whose default is the chart appVersion.
+  # Ignored when image.digest is set.
+  tag: ""
+  # Immutable digest pin (format: sha256:...).
+  # When set, the chart renders image as <repository>@<digest>.
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Leader election namespace (defaults to the release namespace)
+leaderElectionNamespace: ""
+
+# Log level: debug, info, warn, error
+logLevel: info
+
+# Watched namespaces (empty = cluster-wide)
+watchNamespaces: []
+
+# Optional Cloudflare edge-DNS adapter. When all fields are set, the operator
+# ensures a proxied CNAME *.<effectiveDomain> per tenant so Total TLS can mint
+# edge certs for tenant app hostnames (e.g. meet.demo.desk.gentian.org) that
+# Universal SSL does not cover. Origin TLS is still issued by cert-manager in
+# the tenant namespace. Leave empty to disable (use grey-cloud DNS or passthrough).
+cloudflare:
+  # Cloudflare API token with DNS:Edit permission for the zone.
+  # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
+  apiTokenSecretRef:
+    # Name of the Secret containing the API token. Leave empty to disable.
+    name: ""
+    # Key inside the Secret (default: api-token).
+    key: "api-token"
+    # If set, an ExternalSecret is created to sync the token from OpenBao at this KV path.
+    # e.g. "gentian-os/kernel/dns/cloudflare"
+    openbaoPath: ""
+  # Cloudflare zone ID for the kernel domain.
+  zoneID: ""
+  # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
+  tunnelCNAME: ""
+
+# OpenBao / Vault integration
+openbao:
+  address: "http://openbao.openbao.svc.cluster.local:8200"
+  authPath: "kubernetes"
+  # Kubernetes auth role used by the operator to log in to OpenBao for the
+  # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
+  # policy (gentian-os-operator role, managed via Crossplane provider-vault).
+  # When BAO_ADDR is unset at runtime the operator skips seeding entirely
+  # (useful for envtest / local dev).
+  role: "gentian-os-operator"
+
+# ArgoCD integration
+argocd:
+  namespace: "argocd"
+  project: "default"
+
+# Memcached chart coordinates for tenant cache provisioning.
+# Changing these takes effect on the next operator redeploy without rebuilding.
+memcached:
+  chartRepo: "https://charts.bitnami.com/bitnami"
+  chartName: "memcached"
+  chartVersion: "7.4.1"
+
+# Operator defaults
+defaults:
+  isolation:
+    # Tenant isolation mode: namespace or vcluster
+    mode: "namespace"
+
+# Metrics and observability
+metrics:
+  serviceMonitor:
+    # Deploy a Prometheus ServiceMonitor for the operator metrics endpoint
+    enabled: true
+    interval: "30s"
+    scrapeTimeout: "10s"
+    # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
+    additionalLabels: {}
+
+# Admission webhook for Tenant create/update validation.
+webhook:
+  enabled: true
+  port: 9443
+  failurePolicy: Fail
+
+# Grafana dashboard
+grafana:
+  dashboards:
+    # Deploy a ConfigMap containing the Gentian OS Grafana dashboard
+    enabled: false
+    # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
+    namespace: ""

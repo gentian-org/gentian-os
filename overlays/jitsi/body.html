@@ -1,0 +1,630 @@
+<!--
+SPDX-FileCopyrightText: 2023 Bundesministerium des Innern und für Heimat, PG ZenDiS "Projektgruppe für Aufbau ZenDiS"
+SPDX-License-Identifier: Apache-2.0
+-->
+<script>
+  // ---------------------------------------------------------------------------
+  // This script manages OIDC flow.
+  // ---------------------------------------------------------------------------
+  let failedAttempt = 0;
+
+  function oidcRedirect() {
+    const qs = new URLSearchParams(window.location.search.substring(1));
+    qs.delete("oidc");
+
+    const path = encodeURIComponent(window.location.pathname);
+    const search = encodeURIComponent(qs.toString());
+
+    let hash = "config.prejoinConfig.enabled=false";
+    if (window.location.hash) {
+      hash = `${hash}&${window.location.hash.substring(1)}`;
+    }
+    hash = encodeURIComponent(hash);
+
+    window.top.location =
+      `/oidc/auth?path=${path}&search=${search}&hash=${hash}`;
+
+    try {
+      // remove react from DOM to prevent UI distortion
+      document.all.react.remove();
+    } catch {
+      // do nothing
+    }
+  }
+
+  function interceptLoginRequest() {
+    try {
+      // if conference is already started, dont wait for an auth request
+      if (APP.conference.isJoined()) return;
+
+      // check if login or IamHost button is created in DOM
+      const _button = document.getElementById("modal-dialog-ok-button");
+      if (!_button) throw ("button is not created yet");
+
+      let labelKey;
+      try {
+        labelKey = Object.values(_button)[0].return.memoizedProps.labelKey;
+      } catch {
+        // do nothing
+      }
+
+      if (labelKey === "dialog.login") {
+        // if this is a login screen, redirect to OIDC login page
+        oidcRedirect();
+      } else if (labelKey === "dialog.IamHost") {
+        // if this is an IamHost screen, redirect to OIDC login when clicked
+        _button.onclick = oidcRedirect;
+      }
+    } catch (e) {
+      failedAttempt += 1;
+
+      if (failedAttempt < 180) {
+        setTimeout(function () {
+          interceptLoginRequest();
+        }, 1000);
+      }
+    }
+  }
+
+  interceptLoginRequest();
+</script>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // This script customizes Jitsi UI if the room is created by Element Jitsi
+  // Widget. It senses the room created by Element by checking its name. The
+  // room created by Element has a special name format:
+  //
+  //   base32decode(room_name) should match RegExp("^(!.*:.*[.][a-z]*)$")
+  //   or
+  //   room_name should match RegExp("^(Jitsi[A-Z][a-z]{23})$")
+  // ---------------------------------------------------------------------------
+
+  function base32decode(s) {
+    const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const pad = "=";
+    const len = s.length;
+    const apad = a + pad;
+    let v, x, r = 0, bits = 0, c, o = "";
+
+    s = s.toUpperCase();
+
+    for (let i = 0; i < len; i += 1) {
+      v = apad.indexOf(s.charAt(i));
+      if (v >= 0 && v < 32) {
+        x = (x << 5) | v;
+        bits += 5;
+        if (bits >= 8) {
+          c = (x >> (bits - 8)) & 0xff;
+          o = o + String.fromCharCode(c);
+          bits -= 8;
+        }
+      }
+    }
+
+    // remaining bits are < 8
+    if (bits > 0) {
+      c = ((x << (8 - bits)) & 0xff) >> (8 - bits);
+      // Dont append a null terminator.
+      if (c !== 0) {
+        o = o + String.fromCharCode(c);
+      }
+    }
+
+    return o;
+  }
+
+  function updateUIforElement() {
+    try {
+      if (!APP.conference.isJoined()) throw new Error("not joined yet");
+
+      try {
+        const roomName =
+          APP.store.getState()["features/base/conference"].room;
+        const decoded = base32decode(roomName);
+        const reg1 = new RegExp("^(!.*:.*[.][a-z]*)$");
+        const reg2 = new RegExp("^(Jitsi[A-Z][a-z]{23})$");
+        if (!reg1.test(decoded) && !reg2.test(roomName)) {
+          throw new Error("not a Matrix room");
+        }
+
+        APP.store.getState()["features/toolbox"].toolbarButtons = [
+          "camera",
+          "closedcaptions",
+          "desktop",
+          "download",
+          "feedback",
+          "filmstrip",
+          "fullscreen",
+          "hangup",
+          "help",
+          "livestreaming",
+          "microphone",
+          "mute-everyone",
+          "mute-video-everyone",
+          "participants-pane",
+          "profile",
+          "raisehand",
+          "security",
+          "select-background",
+          "settings",
+          "shareaudio",
+          "shortcuts",
+          "stats",
+          "tileview",
+          "toggle-camera",
+          "videoquality",
+        ];
+      } catch {
+        // do nothing
+      }
+    } catch {
+      setTimeout(updateUIforElement, 1000);
+    }
+  }
+
+  updateUIforElement();
+</script>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // This script manages the OpenDesk menu in Jitsi. The menu will be activated
+  // if Jitsi is opened as a standalone application. It will not be activated if
+  // it is inside an iframe (such as inside Element chat).
+  //
+  // It uses the language of the browser while getting the navigation data.
+  //
+  // This script silently refreshes the portal session by using a hidden iframe
+  // and uses this session while fetching the navigation data.
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Get fallback URLs based on current hostname
+  // ---------------------------------------------------------------------------
+  function getFallbackUrls() {
+    try {
+      const host = window.location.hostname;
+      let portal = "https://portal.desk.gentian.org";
+      let ics = "https://ics.desk.gentian.org";
+
+      const parts = host.split(".");
+      if (parts.length >= 3 && parts[0] === "meet") {
+        if (parts[1] !== "desk" && parts.length >= 4) {
+          const clusterDomain = parts.slice(2).join(".");
+          portal = `https://portal.${clusterDomain}`;
+          ics = `https://ics.${clusterDomain}`;
+        } else {
+          const clusterDomain = parts.slice(1).join(".");
+          portal = `https://portal.${clusterDomain}`;
+          ics = `https://ics.${clusterDomain}`;
+        }
+      }
+      return { portal, ics };
+    } catch {
+      return {
+        portal: "https://portal.desk.gentian.org",
+        ics: "https://ics.desk.gentian.org"
+      };
+    }
+  }
+
+  const fallbacks = getFallbackUrls();
+  let ICS = fallbacks.ics;
+  let PORTAL = fallbacks.portal;
+  let ARE_LISTENERS_ADDED = false;
+
+  // ---------------------------------------------------------------------------
+  // Get the ICS URL from Jitsi setup and set it as a global variable.
+  // ---------------------------------------------------------------------------
+  async function setIcsUrl() {
+    try {
+      const url = "/static/url-ics";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("not ok");
+      const text = await res.text();
+      if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) {
+        throw new Error("invalid content");
+      }
+      ICS = text.trim();
+    } catch {
+      // Do nothing, keep fallback
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Get the portal URL from Jitsi setup and set it as a global variable.
+  // ---------------------------------------------------------------------------
+  async function setPortalUrl() {
+    try {
+      const url = "/static/url-portal";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("not ok");
+      const text = await res.text();
+      if (!text || text.includes("<html") || text.includes("<!DOCTYPE")) {
+        throw new Error("invalid content");
+      }
+      PORTAL = text.trim();
+    } catch {
+      // Do nothing, keep fallback
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add global listeners.
+  // ---------------------------------------------------------------------------
+  async function addListeners() {
+    try {
+      // Skip if listeners are already added.
+      if (ARE_LISTENERS_ADDED) return;
+
+      // Close menu if clicked somewhere else.
+      document.addEventListener("click", (event) => {
+        try {
+          // Skip if clicked to the menu button or to the menu.
+          const menuButton = document.getElementById("opendeskMenuButton");
+          if (menuButton && menuButton.contains(event.target)) return;
+
+          // Close menu if already visible.
+          const menu = document.getElementById("opendeskMenu");
+          if (menu && menu.style.display !== "none") _toggleMenu();
+        } catch {
+          // Do nothing
+        }
+      });
+
+      // Add Escape key listener to close the menu.
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          const menu = document.getElementById("opendeskMenu");
+          if (menu && menu.style.display !== "none") _toggleMenu();
+        }
+      });
+
+      // Dont add listeners again.
+      ARE_LISTENERS_ADDED = true;
+    } catch {
+      // Do nothing
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Get the navigation data
+  // ---------------------------------------------------------------------------
+  async function getNavigation() {
+    try {
+      // Get the browser language.
+      let lang = navigator.language || "de-DE";
+      if (lang === "de") lang = "de-DE";
+      if (lang === "en") lang = "en-US";
+
+      const url = `${ICS}/navigation.json?language=${lang}`;
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      return await res.json();
+    } catch {
+      return {};
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Toggle menu. It will be triggered after clicking the menu icon.
+  // ---------------------------------------------------------------------------
+  function _toggleMenu() {
+    try {
+      const menu = document.getElementById("opendeskMenu");
+      const button = document.getElementById("opendeskMenuButton");
+
+      const isHidden = menu.style.display !== "block";
+
+      if (isHidden) {
+        menu.style.display = "block";
+        button.setAttribute("aria-expanded", "true");
+      } else {
+        menu.style.display = "none";
+        button.setAttribute("aria-expanded", "false");
+      }
+    } catch {
+      // Do nothing
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Return the html content of the category (menu items of category)
+  // ---------------------------------------------------------------------------
+  function getCategoryItems(entries) {
+    try {
+      const container = document.createElement("div");
+
+      for (const entry of entries) {
+        const div = document.createElement("div");
+        div.style.cssText = `
+          display: flex;
+          align-items:center;
+          gap:16px;
+          padding:8px;
+          font-size:14px;
+        `;
+
+        const img = document.createElement("img");
+        img.src = entry.icon_url;
+        img.height = "20";
+        img.style.marginLeft = "12px";
+        img.alt = "";
+
+        const a = document.createElement("a");
+        a.href = entry.link;
+        a.target = entry.target;
+        a.style.cssText = `
+          text-decoration:none;
+          font-weight:normal;
+          color:#1F1F1F;
+        `;
+        a.textContent = entry.display_name;
+        a.setAttribute("role", "menuitem");
+
+        div.appendChild(img);
+        div.appendChild(a);
+        container.appendChild(div);
+      }
+
+      return container.innerHTML;
+    } catch {
+      return "";
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Return the hmtl content of the navigation menu
+  // ---------------------------------------------------------------------------
+  function getMenuItems(nav) {
+    try {
+      // Skip if no portal session (anonymous user).
+      const identifier = nav.categories?.[0]?.identifier;
+      if (!identifier || identifier === "swp.anonymous") {
+        throw new Error("no item");
+      }
+
+      const container = document.createElement("div");
+
+      for (const cat of nav.categories) {
+        // Category title in menu.
+        const titleDiv = document.createElement("div");
+        titleDiv.style.cssText = `
+          font-size:17px;
+          font-weight:700;
+          letter-spacing: 0.05em;
+          padding:16px 60px 4px 12px;
+        `;
+        titleDiv.textContent = cat.display_name;
+        container.appendChild(titleDiv);
+
+        // Category content (links) in menu.
+        const categoryItems = getCategoryItems(cat.entries);
+        container.insertAdjacentHTML("beforeend", categoryItems);
+      }
+
+      return container.innerHTML;
+    } catch {
+      return "";
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Create the navigation menu
+  // ---------------------------------------------------------------------------
+  function createNavigationMenu(nav) {
+    try {
+      const menuItems = getMenuItems(nav);
+      const menu = `
+        <button id="opendeskMenuButton" tabindex="0" onclick="_toggleMenu()"
+          aria-label="Toogle menu" style="background:none; border:none;"
+          aria-haspopup="true" aria-expanded="false"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" height="24px" width="24px"
+            viewBox="0 0 24 24" fill="#000000" style="margin:12px 8px;"
+          >
+            <path d="M0 0h24v24H0z" fill="none"/>
+            <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6
+              0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6
+              4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/>
+          </svg>
+          <div id="opendeskMenu" role="menu"
+            style="position:absolute; top:63px; left:8px; z-index:10;
+                   padding: 4px; background-color:white; color:#1F1F1F;
+                   border-radius: 4px; border: 1px solid; border-color:#e8e6e3;
+                   box-shadow: rgba(118, 131, 156, 0.6) 4px 4px 12px 0px;
+                   text-align:left; cursor: default; display:none;"
+          >${menuItems}</div>
+        </button>
+      `;
+
+      return menu;
+    } catch {
+      return "";
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Remove the header watermark. We dont want to see Jitsi's logo in the
+  // welcome screen since this screen has already a topbar and a logo inside
+  // this topbar.
+  // ---------------------------------------------------------------------------
+  function removeHeaderWatermark() {
+    try {
+      const elist = document.getElementsByClassName(
+        "header-watermark-container",
+      );
+      const el = elist?.[0];
+      if (el) el.remove();
+    } catch {
+      // Do nothing
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Create topbar
+  // ---------------------------------------------------------------------------
+  function createTopbar(nav) {
+    try {
+      // Remove topbar if already exists to prevent duplicated topbars.
+      const el = document.getElementById("opendeskTopbar");
+      if (el) el.remove();
+
+      // Create topbar
+      const topDiv = document.createElement("div");
+      topDiv.id = "opendeskTopbar";
+      topDiv.style.gap = "14px";
+      topDiv.style.height = "63px";
+      topDiv.style.display = "flex";
+      topDiv.style.alignItems = "center";
+      topDiv.style.backgroundColor = "white";
+      topDiv.innerHTML = `
+        <a href="${PORTAL}" tabindex="0" target="_blank"
+          aria-label="Show portal" style="margin-left:16px"
+        >
+          <img src="${PORTAL}/univention/portal/icons/logos/domain.svg"
+            style="width:82px; margin:16px 8px;"
+            alt="OpenDesk">
+        </a>
+      `;
+
+      // If the navigation data exists then add the navigation menu.
+      const identifier = nav.categories?.[0]?.identifier;
+      if (identifier && identifier !== "swp.anonymous") {
+        topDiv.innerHTML += createNavigationMenu(nav);
+      }
+
+      // If this is a welcome page then add topbar in the welcome div,
+      // otherwise add as the first elemenent.
+      const welcomeDiv = document.getElementById("welcome_page");
+      if (welcomeDiv) {
+        welcomeDiv.insertBefore(topDiv, welcomeDiv.firstChild);
+        removeHeaderWatermark();
+      } else {
+        document.body.insertBefore(topDiv, document.body.firstChild);
+      }
+    } catch {
+      // Do nothing
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Remove the hidden iframes after refreshing the portal session
+  // ---------------------------------------------------------------------------
+  function removeIframe() {
+    try {
+      const el = document.getElementById("opendeskIframeSilentLogin");
+      if (el) el.remove();
+    } catch {
+      // Do nothing
+    }
+
+    try {
+      const el = document.getElementById("opendeskIframeNavigation");
+      if (el) el.remove();
+    } catch {
+      // Do nothing
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Try refreshing the session and recreate topbar
+  // ---------------------------------------------------------------------------
+  function recreateTopbarAfterSilentLogin() {
+    try {
+      // Silent login inside a hidden iframe.
+      const iframeSilentLogin = document.createElement("iframe");
+      iframeSilentLogin.id = "opendeskIframeSilentLogin";
+      iframeSilentLogin.src = `${ICS}/silent`;
+      iframeSilentLogin.style.display = "none";
+      document.body.appendChild(iframeSilentLogin);
+
+      // Trigger the navigation iframe after the silent login is completed.
+      iframeSilentLogin.onload = () => {
+        // Navigation.json inside this hidden iframe is only to refresh the
+        // session. The silent login is not enough in some cases.
+        const iframeNavigation = document.createElement("iframe");
+        iframeNavigation.id = "opendeskIframeNavigation";
+        iframeNavigation.src = `${ICS}/navigation.json`;
+        iframeNavigation.style.display = "none";
+        document.body.appendChild(iframeNavigation);
+
+        // Get the navigation data and recreate topbar after the session is
+        // refreshed.
+        iframeNavigation.onload = async () => {
+          const nav = await getNavigation();
+          const identifier = nav.categories?.[0]?.identifier;
+          if (identifier && identifier !== "swp.anonymous") {
+            createTopbar(nav);
+          }
+        };
+      };
+    } catch {
+      // Do nothing
+    } finally {
+      // Wait a bit before removing the iframes.
+      setTimeout(removeIframe, 10000);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Remove topbar after joining the meeting. Topbar breaks Jitsi UI if it is
+  // visible during the session.
+  // ---------------------------------------------------------------------------
+  function removeTopbarAfterJoining() {
+    try {
+      // Dont continue if no Jitsi session yet.
+      if (!APP.conference.isJoined()) throw new Error("no session yet");
+
+      // Remove topbar since the session started.
+      const el = document.getElementById("opendeskTopbar");
+      if (el) el.remove();
+    } catch {
+      // Try again after a while.
+      setTimeout(removeTopbarAfterJoining, 1000);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Add topbar
+  // ---------------------------------------------------------------------------
+  async function addTopbar() {
+    try {
+      // Set the ICS URL as a global variable (ICS)
+      await setIcsUrl();
+      if (!ICS) throw new Error("unknown ics url");
+
+      // Set the portal URL as a global variable (PORTAL)
+      await setPortalUrl();
+      if (!PORTAL) throw new Error("unknown portal url");
+
+      // Add global listeners;
+      addListeners();
+
+      // Trigger the event listener which will remove topbar after joining the
+      // meeting. Dont show the toolbar during the meeting session.
+      removeTopbarAfterJoining();
+
+      // Create the topbar (initially without navigation data). We want the
+      // topbar immediately even the navigation data is not available yet.
+      createTopbar({});
+
+      // Recreate the topbar after silent login.
+      recreateTopbarAfterSilentLogin();
+    } catch {
+      // Do nothing
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Main
+  // ---------------------------------------------------------------------------
+  // Add topbar if this is a standalone window (not an iframe)
+  if (window.self === window.top && (!self.name || self.name === "tab_realtime_videoconference")) {
+    addTopbar();
+  }
+</script>

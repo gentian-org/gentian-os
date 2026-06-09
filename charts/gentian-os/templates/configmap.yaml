@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+data:
+  OPENBAO_ADDRESS: {{ .Values.openbao.address | quote }}
+  OPENBAO_AUTH_PATH: {{ .Values.openbao.authPath | quote }}
+  ARGOCD_NAMESPACE: {{ .Values.argocd.namespace | quote }}
+  ARGOCD_PROJECT: {{ .Values.argocd.project | quote }}
+  ISOLATION_MODE: {{ .Values.defaults.isolation.mode | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}

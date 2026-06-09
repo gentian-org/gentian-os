@@ -1,0 +1,101 @@
+# =============================================================================
+# Postfix (opendesk-postfix) app-level defaults (all environments)
+# =============================================================================
+# Mirrors the opendesk reference (values-postfix.yaml.gotmpl in opendesk helmfile).
+# By default no upstream relay is configured — relay is operator-configured
+# per environment in values/{env}/values-plain.yaml.
+#
+# Layer 2. {env}/values-plain.yaml provides:
+#   postfix.hostname          (should match release name, e.g. postfix-dev)
+#   postfix.ldap.host         (env-specific LDAP service)
+#   postfix.relayHost.*       (upstream SMTP relay, only if relay is needed)
+#   postfix.smtpSASLAuthEnable ("yes" when relay, "no" without relay)
+#   postfix.relayNets         (cluster pod CIDRs)
+#   resources
+# Secrets injected via provider-helm valuesFrom (Pattern B):
+#   postfix.relayHost.authentication.password.value  (Vault: postfix.relay_password)
+#   postfix.relayHost.authentication.username.value  (Vault: postfix.relay_username)
+#   postfix.staticAuthDB.password.value              (Vault: nubus.smtp_password)
+#   postfix.ldap.password.value                      (Vault: nubus.ldapsearch_postfix)
+# =============================================================================
+
+certificate:
+  request:
+    enabled: false
+
+containerSecurityContext:
+  allowPrivilegeEscalation: true
+  capabilities: {}
+  enabled: true
+  seccompProfile:
+    type: "RuntimeDefault"
+  readOnlyRootFilesystem: true
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0
+  privileged: true
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 101
+
+postfix:
+  # Outbound mail domain — matches the primary mail domain of the deployment
+  domain: desk.gentian.org
+  inetProtocols: "ipv4"
+  amavisHost: ""
+  amavisPortIn: ""
+  milterDefaultAction: "accept"
+  smtpdMilters: {}
+
+  # LDAP — host is env-specific (see values/{env}/values-plain.yaml)
+  # password injected via set_sensitive (Vault: nubus.ldapsearch_postfix)
+  ldap:
+    scheme: "ldap"
+    port: 389
+    baseDn: "dc=swp-ldap,dc=internal"
+    bindDn: "uid=ldapsearch_postfix,cn=users,dc=swp-ldap,dc=internal"
+
+  # No upstream relay configured in base — relay is operator-configured
+  # per environment. In env-specific values-plain.yaml, set:
+  #   relayHost.enabled: true / host / port / authentication
+  #   smtpSASLAuthEnable: "yes"
+  smtpSASLAuthEnable: "no"
+
+  # Internal SMTP auth — services (nubus, nextcloud) authenticate as
+  # "opendesk-system". Password injected via set_sensitive.
+  staticAuthDB:
+    enabled: true
+    username:
+      value: "opendesk-system"
+
+  # Allow unauthenticated relay from cluster pod networks.
+  # Set relayNets to your cluster pod CIDR in values/{env}/values-plain.yaml.
+  allowRelayNets: true
+
+  # SASL auth for incoming connections (always on)
+  smtpdSASLAuthEnable: "yes"
+  smtpdSASLType: "cyrus"
+  smtpdSASLPath: "smtpd"
+  smtpdSASLSecurityOptions: "noanonymous"
+  # noanonymous only — noplaintext would block PLAIN/LOGIN even over TLS.
+  # TLS is enforced via smtpTLSSecurityLevel=encrypt so PLAIN is safe here.
+  smtpSASLSecurityOptions: "noanonymous"
+
+  # TLS — matches opendesk reference defaults.
+  # smtpdTLSCertFile/smtpdKeyFile are only set in environments where
+  # cert-manager provisions a TLS certificate (certificate.request.enabled: true).
+  # Leave empty in dev (no certificate mounted).
+  smtpTLSSecurityLevel: "encrypt"
+  smtpdTLSSecurityLevel: "may"
+  minTLSVersion: "TLSv1.2"
+  smtpdTLSMandatoryCiphers: "medium"
+
+  # Relay-only mode — no local mailbox delivery (no Dovecot in our setup)
+  virtualMailboxDomains: []
+  ldapVirtualMailboxDomains: {}
+  ldapVirtualAliasMaps: {}
+  ldapTransportMaps: {}
+
+persistence:
+  size: 1Gi
