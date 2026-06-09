@@ -29,7 +29,7 @@ func TestBuildAdminPolicyScript_IdempotentRedeploy(t *testing.T) {
 		"uid=${ADMIN_USERNAME},${USERS_OU_POS}",
 		"grep -qF \"${ADMINS_GRP_DN}\"",
 		"grep -qF \"${ADMIN_DN}\"",
-		"TENANT_TEMPLATE_DN=\"cn=1 App User,cn=templates,${OU_POS}\"",
+		"TENANT_TEMPLATE_DN=\"cn=App User,cn=templates,${OU_POS}\"",
 		"tenant App User template ${TENANT_TEMPLATE_DN} is the UMC default",
 		"admin policy provisioning complete for ${ADMIN_USERNAME}",
 	} {
@@ -89,7 +89,8 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 		`"mailPrimaryAddress": "<username>@${MAIL_DOMAIN}"`,
 		"MAIL_DOMAIN=\"demo.desk.gentian.org\"",
 		"cn=templates,${OU_POS}",
-		`"name": "1 App User"`,
+		`"name": "App User"`,
+		"LEGACY_NUMBERED_TEMPLATE_DN=\"cn=1 App User",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected App User template script to contain %q", want)

@@ -1302,9 +1302,11 @@ TEMPLATES_POS="cn=templates,${OU_POS}"
 APP_USERS_DN="cn=App Users,cn=groups,${UDM_LDAP_BASE}"
 MAIL_DOMAIN="%s"
 MAIL_DOMAIN_CONTAINER="cn=domain,cn=mail,${UDM_LDAP_BASE}"
-# UDM uses the template "name" property ("1 App User") as the LDAP RDN cn.
-TEMPLATE_DN="cn=1 App User,${TEMPLATES_POS}"
+# UDM uses the template "name" property ("App User") as the LDAP RDN cn.
+TEMPLATE_DN="cn=App User,${TEMPLATES_POS}"
 TEMPLATE_ENC=$(urlencode "${TEMPLATE_DN}")
+LEGACY_NUMBERED_TEMPLATE_DN="cn=1 App User,${TEMPLATES_POS}"
+LEGACY_NUMBERED_ENC=$(urlencode "${LEGACY_NUMBERED_TEMPLATE_DN}")
 
 # Remove kernel App User template if present (app users are tenant-scoped only).
 KERNEL_APP_TEMPLATE_DN="cn=App User,cn=templates,cn=univention,${UDM_LDAP_BASE}"
@@ -1317,6 +1319,17 @@ if [ "${KERNEL_APP_STATUS}" = "200" ]; then
     -H "Accept: application/json" \
     "${BASE_URL}/settings/usertemplate/${KERNEL_APP_ENC}" || true
   echo "removed kernel App User template"
+fi
+
+# Remove numbered legacy template from an earlier Gentian release (cn=1 App User).
+LEGACY_NUMBERED_STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/settings/usertemplate/${LEGACY_NUMBERED_ENC}")
+if [ "${LEGACY_NUMBERED_STATUS}" = "200" ]; then
+  curl -sf --max-time 30 -X DELETE ${CREDS} \
+    -H "Accept: application/json" \
+    "${BASE_URL}/settings/usertemplate/${LEGACY_NUMBERED_ENC}" || true
+  echo "removed legacy numbered App User template"
 fi
 
 # Hide upstream openDesk templates so tenant admins only see Gentian templates.
@@ -1369,7 +1382,7 @@ fi
 TEMPLATE_BODY=$(cat <<EOF
 {
   "properties": {
-    "name": "1 App User",
+    "name": "App User",
     "description": "Standard user with access to apps; email prefill uses @${MAIL_DOMAIN}",
     "mailPrimaryAddress": "<username>@${MAIL_DOMAIN}",
     "opendeskFileshareEnabled": true,
@@ -1939,7 +1952,7 @@ fi
 # default points at the kernel template; tenant admins cannot read it (LDAP ACL
 # patch 11). UMC gateway patch 93 selects this template when it is the only
 # visible entry in the template picker.
-TENANT_TEMPLATE_DN="cn=1 App User,cn=templates,${OU_POS}"
+TENANT_TEMPLATE_DN="cn=App User,cn=templates,${OU_POS}"
 TENANT_TEMPLATE_ENC=$(urlencode "${TENANT_TEMPLATE_DN}")
 TEMPLATE_STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
 	-H "Accept: application/json" \

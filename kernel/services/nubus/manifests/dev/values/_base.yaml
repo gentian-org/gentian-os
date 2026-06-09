@@ -58,10 +58,10 @@ global:
             users:
               user:
                 add:
-                  # UMC matches add/default by template label. Tenant admins get "1 App User"
+                  # UMC matches add/default by template label. Tenant admins get "App User"
                   # via per-tenant templates; gateway patch 93 applies that default. Kernel LDAP
-                  # has no App User template (only "2 Admin User" for platform admins).
-                  default: "1 App User"
+                  # has no App User template (only "Admin User" for platform admins).
+                  default: "App User"
                 properties:
                   description:
                     syntax: TextArea
