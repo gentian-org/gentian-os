@@ -98,6 +98,17 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 	}
 }
 
+func TestBuildOUScript_PreservesCurlHTTPCodeFormat(t *testing.T) {
+	t.Parallel()
+	script := buildOUScript("ou=demo,${UDM_LDAP_BASE}", "demo")
+	if strings.Contains(script, "%!(MISSING)") {
+		t.Fatal("OU script contains corrupted fmt.Sprintf verbs")
+	}
+	if !strings.Contains(script, `%{http_code}`) {
+		t.Fatal("expected shell curl -w %{http_code} in OU script")
+	}
+}
+
 func TestBuildMBAGroupsScript_IncludesOpenDeskOIDCGroups(t *testing.T) {
 	t.Parallel()
 	script := buildMBAGroupsScript("ou=demo,${UDM_LDAP_BASE}")

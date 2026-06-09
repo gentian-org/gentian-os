@@ -1342,10 +1342,10 @@ fi
 # Create per-tenant managed-by-attribute-* groups inside the tenant OU.
 # These replace the global cn=groups managed-by-attribute-* groups so that
 # app access control stays scoped to the tenant (one OU = one realm = one tenant).
-`+buildMBAGroupsScriptBody(),
+`,
 		ouDN, tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName,
-		tenantName, tenantName, tenantName, tenantName)
+		tenantName, tenantName, tenantName, tenantName) + buildMBAGroupsScriptBody()
 }
 
 // buildBindAccountScript creates a service-account user that apps use as the LDAP bind DN.
@@ -2414,7 +2414,7 @@ ensure_realtime_entry() {`, tenantName)
   LINK="$2"
   ENTRY_DN="cn=${ENTRY_CN},cn=entry,cn=portals,cn=univention,${UDM_LDAP_BASE}"
   ENTRY_ENC=$(urlencode "${ENTRY_DN}")
-  STATUS=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" ${CREDS} \
+  STATUS=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" ${CREDS} \
     -H "Accept: application/json" \
     "${BASE_URL}/portals/entry/${ENTRY_ENC}")
   if [ "${STATUS}" = "404" ]; then
