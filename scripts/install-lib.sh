@@ -412,13 +412,12 @@ load_env_file_override() {
 validate_config() {
     local errors=0 warnings=0
     local deployments_root cluster stage
-    local cluster_settings_file stage_values_file
+    local cluster_settings_file
 
     deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
-    stage_values_file="${deployments_root}/clusters/${cluster}/kernel/values-${stage}.yaml"
 
     _file_header() {
         local file="$1" role="$2"
@@ -508,28 +507,6 @@ validate_config() {
     _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
-
-    echo ""
-    echo "━━━ Deployment values reminder (values-${stage}.yaml) ━━━━━━━━━━━━━━━━━━━"
-    if [[ -r "${stage_values_file}" ]]; then
-        echo "  [FILE]     ${stage_values_file}"
-    else
-        echo "  [ABSENT]   ${stage_values_file}"
-    fi
-    echo "  [INFO]     cloudflare.zoneID and cloudflare.tunnelCNAME are set in this values file, not in install.env/install.secrets.env."
-
-    echo ""
-    echo "━━━ Config sources ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    [[ -r "${INSTALL_CONFIG_FILE}" ]]  && echo "  [FILE]     ${INSTALL_CONFIG_FILE}" \
-                                       || echo "  [ABSENT]   ${INSTALL_CONFIG_FILE}  (optional)"
-    [[ -r "${INSTALL_SECRETS_FILE}" ]] && echo "  [FILE]     ${INSTALL_SECRETS_FILE}" \
-                                       || echo "  [ABSENT]   ${INSTALL_SECRETS_FILE}  (optional, chmod 600)"
-    [[ -r "${cluster_settings_file}" ]] && echo "  [FILE]     ${cluster_settings_file}" \
-                                        || echo "  [ABSENT]   ${cluster_settings_file}  (cluster runtime settings)"
-    [[ -r "${stage_values_file}" ]] && echo "  [FILE]     ${stage_values_file}" \
-                                    || echo "  [ABSENT]   ${stage_values_file}  (operator values for this stage)"
-    [[ -r "${INSTALL_SECRETS_CACHE}" ]] && echo "  [CACHE]    ${INSTALL_SECRETS_CACHE}" \
-                                        || echo "  [NO CACHE] ${INSTALL_SECRETS_CACHE}"
 
     echo ""
     if (( errors > 0 )); then
