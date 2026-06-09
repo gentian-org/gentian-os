@@ -243,22 +243,7 @@ CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 #
 # Cluster runtime vars (KERNEL_DOMAIN, MAIL_SERVICE_MODE, …) belong in
 # clusters/<cluster>/kernel/cluster-settings.env; .install-state.env keeps only
-# installer-local state (see CLUSTER_SETTINGS_VARS vs save_install_state).
-CLUSTER_SETTINGS_VARS=(
-    KERNEL_DOMAIN
-    TENANCY_MODE
-    NODE_IP
-    NETWORK_MODE
-    MAIL_SERVICE_MODE
-    EXTERNAL_SMTP_HOST
-    EXTERNAL_SMTP_PORT
-    EXTERNAL_SMTP_SSL
-    EXTERNAL_SMTP_STARTTLS
-    SECRET_MODE
-    MINIO_ENDPOINT
-    CNPG_HOST
-    STORAGE_CLASS
-)
+# installer-local state (see save_install_state).
 INPUT_HIERARCHY_VARS=(
     MASTER_PASSWORD
     OD_PRIVATE_REGISTRY_USERNAME
