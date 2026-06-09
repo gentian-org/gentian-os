@@ -555,6 +555,25 @@ spec:
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
 
+            {{- /* opendesk/Bitnami charts expect imagePullSecrets as a string list. */}}
+            {{- $rawImagePull := dig "imagePullSecrets" list $extraVals }}
+            {{- $imagePull := list }}
+            {{- range $entry := $rawImagePull }}
+            {{- if kindIs "string" $entry }}
+            {{- $imagePull = append $imagePull $entry }}
+            {{- else if kindIs "map" $entry }}
+            {{- $pullName := dig "name" "" $entry }}
+            {{- if $pullName }}{{- $imagePull = append $imagePull $pullName }}{{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if eq (len $imagePull) 0 }}
+            {{- $imagePull = list "registry-credentials" }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "imagePullSecrets" $imagePull
+                "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull))
+            ) }}
+
             {{- /* ── Jitsi: mount Gentian OIDC/JWT overlays over chart ConfigMaps ── */}}
             {{- if eq $app "jitsi" }}
             {{- if eq (len $jitsiOverlayData) 0 }}
