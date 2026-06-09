@@ -58,6 +58,9 @@ func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []s
 		origins = append(origins, origin)
 	}
 	add(fmt.Sprintf("https://portal.%s", kernelDomain))
+	// Kernel-zone apps (Nextcloud Files, ICS silent login, …) run on *.<kernelDomain>
+	// and may embed id.<kernel> in a nested iframe during OIDC — not under tenant zones.
+	add(fmt.Sprintf("https://*.%s", kernelDomain))
 	for _, effective := range tenantEffectiveDomains {
 		if effective == "" {
 			continue

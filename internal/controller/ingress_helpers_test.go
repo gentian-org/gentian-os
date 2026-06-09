@@ -135,6 +135,9 @@ func TestKeycloakOIDCEmbeddingIngressSnippet(t *testing.T) {
 	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
 		t.Fatalf("expected kernel portal origin, got:\n%s", snippet)
 	}
+	if !strings.Contains(snippet, "https://*.desk.gentian.org") {
+		t.Fatalf("expected kernel-zone wildcard for files/ics SSO, got:\n%s", snippet)
+	}
 	if !strings.Contains(snippet, "https://*.demo.desk.gentian.org") {
 		t.Fatalf("expected tenant wildcard origin, got:\n%s", snippet)
 	}

@@ -241,6 +241,9 @@ func keycloakIngressFramePolicyApplied(ctx context.Context, c client.Client, ker
 	if !strings.Contains(existing.Annotations[nginxConfigurationSnippetAnnotation], fmt.Sprintf("https://portal.%s", kernelDomain)) {
 		return false
 	}
+	if !strings.Contains(existing.Annotations[nginxConfigurationSnippetAnnotation], fmt.Sprintf("https://*.%s", kernelDomain)) {
+		return false
+	}
 	for _, d := range effectiveDomains {
 		if !strings.Contains(existing.Annotations[nginxConfigurationSnippetAnnotation], fmt.Sprintf("https://*.%s", d)) {
 			return false
