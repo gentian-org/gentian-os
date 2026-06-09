@@ -67,6 +67,7 @@ var ldapManualTestTenants = map[string]struct{}{
 func ldapBaseJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
 		"ldap-ou-",
+		"ldap-mba-groups-",
 		"ldap-app-user-template-",
 		"ldap-app-user-capabilities-",
 		"ldap-admin-user-",

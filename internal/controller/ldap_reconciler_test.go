@@ -48,6 +48,17 @@ func newLDAPProfile(name string) *gentianov1alpha1.AppProfile {
 	}
 }
 
+func markMBAGroupsComplete(t *testing.T, tenantName string) {
+	t.Helper()
+	jobName := "ldap-mba-groups-" + tenantName
+	waitFor(t, jobAppearTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, jobName, "platform-kernel")
+}
+
 func markAppUserTemplateComplete(t *testing.T, tenantName string) {
 	t.Helper()
 	jobName := "ldap-app-user-template-" + tenantName
@@ -99,6 +110,7 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-ou-noldap", "platform-kernel")
 
+	markMBAGroupsComplete(t, "noldap")
 	markAppUserTemplateComplete(t, "noldap")
 	markAppUserCapabilitiesComplete(t, "noldap")
 
@@ -215,6 +227,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-ou-bindtest", "platform-kernel")
 
+	markMBAGroupsComplete(t, "bindtest")
 	markAppUserTemplateComplete(t, "bindtest")
 	markAppUserCapabilitiesComplete(t, "bindtest")
 
@@ -250,7 +263,7 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 }
 
 // TestLDAP_CreatesAdminPolicyJobAfterOU verifies the provisioning chain:
-// OU → App User template → App User capabilities → admin-user → admin-policy → bind-accounts.
+// OU → MBA groups → App User template → App User capabilities → admin-user → admin-policy → bind-accounts.
 // Admin-user runs before admin-policy so the Nubus portal consumer groups
 // cache is populated before portal allowedGroups are updated.
 func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
@@ -291,7 +304,22 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 
 	markJobComplete(t, "ldap-ou-adminpolicy", "platform-kernel")
 
-	// App User template Job should appear after OU completion.
+	// MBA groups Job should appear after OU completion.
+	waitFor(t, tenantReadyTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ldap-mba-groups-adminpolicy", Namespace: "platform-kernel"}, j) == nil
+	})
+
+	// App User template Job must not exist before MBA groups completion.
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "ldap-app-user-template-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
+		t.Fatal("expected no App User template Job before MBA groups completion")
+	}
+
+	markJobComplete(t, "ldap-mba-groups-adminpolicy", "platform-kernel")
+
+	// App User template Job should appear after MBA groups completion.
 	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
@@ -382,6 +410,7 @@ func TestLDAP_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-ou-ldapready", "platform-kernel")
 
+	markMBAGroupsComplete(t, "ldapready")
 	markAppUserTemplateComplete(t, "ldapready")
 	markAppUserCapabilitiesComplete(t, "ldapready")
 
@@ -622,6 +651,7 @@ func TestLDAP_RetainPolicy_LocksUsers(t *testing.T) {
 	})
 	markJobComplete(t, "ldap-ou-ldaplocktest", "platform-kernel")
 
+	markMBAGroupsComplete(t, "ldaplocktest")
 	markAppUserTemplateComplete(t, "ldaplocktest")
 	markAppUserCapabilitiesComplete(t, "ldaplocktest")
 
