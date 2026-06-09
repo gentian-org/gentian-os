@@ -2567,6 +2567,7 @@ install_app_catalogue() {
 
     local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
     local plugin_dst="/usr/local/bin/kubectl-gentian"
+    local alias_dst="/usr/local/bin/gtnctl"
 
     # Idempotency: skip if destination is identical to source (no sudo needed).
     if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
@@ -2581,6 +2582,26 @@ install_app_catalogue() {
         else
             warn "Failed to install kubectl-gentian — install manually:"
             warn "  sudo install -m 755 ${plugin_src} ${plugin_dst}"
+        fi
+    fi
+
+    if [[ ! -x "${plugin_dst}" ]]; then
+        warn "Skipping gtnctl symlink — kubectl-gentian is not installed."
+        return 0
+    fi
+
+    if [[ -L "${alias_dst}" ]] && [[ "$(readlink -f "${alias_dst}")" == "$(readlink -f "${plugin_dst}")" ]]; then
+        success "gtnctl symlink already up-to-date at ${alias_dst}."
+    elif [[ -w /usr/local/bin ]]; then
+        ln -sf "${plugin_dst}" "${alias_dst}"
+        success "gtnctl symlink installed at ${alias_dst}."
+    else
+        info "Installing gtnctl symlink at ${alias_dst} (sudo required)..."
+        if sudo ln -sf "${plugin_dst}" "${alias_dst}"; then
+            success "gtnctl symlink installed at ${alias_dst}."
+        else
+            warn "Failed to install gtnctl symlink — install manually:"
+            warn "  sudo ln -sf ${plugin_dst} ${alias_dst}"
         fi
     fi
 }

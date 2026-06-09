@@ -6,6 +6,18 @@ For tenant-admin app lifecycle commands, see:
 
 - ../../gentian-deployments/README.md
 
+## CLI entry points
+
+`install.sh` installs the Gentian CLI as a kubectl plugin (`kubectl-gentian` in
+`/usr/local/bin`). A shorthand symlink `gtnctl` points at the same binary:
+
+```bash
+gtnctl tenants list    # same as kubectl gentian tenants list
+```
+
+Use `gtnctl` at the terminal if you prefer a shorter command. All examples below
+use the canonical `kubectl gentian` form for consistency in docs and scripts.
+
 ## 1. Install the OS (Cluster Admin)
 
 Run the shared installer from the OS repository:

@@ -1175,6 +1175,30 @@ else
 fi
 
 # =============================================================================
+# Remove host CLI tools (kubectl-gentian plugin + gtnctl symlink)
+# =============================================================================
+banner "Remove host CLI tools"
+
+_remove_host_cli() {
+    local path="$1"
+    if [[ ! -e "${path}" && ! -L "${path}" ]]; then
+        return 0
+    fi
+    if [[ -w /usr/local/bin ]]; then
+        rm -f "${path}"
+    elif sudo rm -f "${path}"; then
+        :
+    else
+        warn "Failed to remove ${path} — remove manually."
+        return 1
+    fi
+    success "Removed ${path}."
+}
+
+_remove_host_cli /usr/local/bin/gtnctl
+_remove_host_cli /usr/local/bin/kubectl-gentian
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""
