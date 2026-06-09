@@ -1182,6 +1182,10 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
+    echo -e "${GREEN}  Tenants: none — provision when ready:${NC}"
+    echo -e "${GREEN}    kubectl gentian tenants list${NC}"
+    echo -e "${GREEN}    kubectl gentian tenants deploy demo${NC}"
+    echo ""
     echo -e "${GREEN}  Gentian OS installation complete.${NC}"
     echo ""
 }

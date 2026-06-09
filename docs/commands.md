@@ -26,18 +26,21 @@ kubectl get tenants
 
 ## 3. Provision a Tenant
 
-Tenants are modeled in the deployments repository as:
+Fresh installs leave `clusters/<cluster>/tenants/` empty. Reference examples
+(not auto-deployed) live under `clusters/<cluster>/examples/<tenant>/<stage>/`.
+
+Live tenant manifests:
 
 - `clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml` (tenant instance)
 - `clusters/<cluster>/tenants/<tenant>/<stage>/kustomization.yaml` (tenant-scoped deployment entrypoint)
 
-List available tenant instances and whether they are currently deployed:
+List tenant instances in Git and whether they are currently deployed:
 
 ```bash
 kubectl gentian tenants list
 ```
 
-Deploy a specific tenant instance:
+Deploy a tenant (scaffolds from `examples/<tenant>/<stage>/` on first run):
 
 ```bash
 kubectl gentian tenants deploy demo

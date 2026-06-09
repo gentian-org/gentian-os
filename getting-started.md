@@ -242,17 +242,21 @@ kubectl gentian apps list
 
 ## Provision your first tenant
 
+Install completes with **no tenants** deployed. When you are ready, provision
+from the reference example under
+[`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
+(`clusters/<cluster>/examples/demo/<stage>/`).
+
 **Catalogue** (cluster-wide): `gentian-apps/profiles/` → ArgoCD app
 **`gentian-appprofiles`** (install step 15c). **Tenant apps** (per org):
-edit `spec.apps` in
-[`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
-(e.g. `clusters/pck-kulxwmm/tenants/demo/dev/tenant.yaml`), commit, and apply — the
-operator creates `App` claims; Crossplane installs helm Releases. There is
-no ArgoCD Application per tenant app.
+edit `spec.apps` in the live tenant manifest under
+`clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml` — the operator
+creates `App` claims; Crossplane installs helm Releases. There is no ArgoCD
+Application per tenant app.
 
 ```bash
-# Example: demo tenant with Element + Jitsi
-kubectl gentian tenants deploy demo
+# Example: demo tenant with Element (Jitsi is an Element sidecar)
+kubectl gentian tenants deploy demo   # scaffolds into tenants/ on first run
 
 # List all tenants
 kubectl gentian tenants list
@@ -315,12 +319,19 @@ The transit key is stored in your password manager (`gentian/openbao-transit`).
 
 ## Uninstalling
 
+By default, `./uninstall.sh` **undeploys all tenants first** (GitOps manifests
+removed from `gentian-deployments` and live `Tenant` CRs deleted from the
+cluster) so ArgoCD does not recreate them on the next install.
+
 ```bash
-# Safe mode — preserves PVC/PV data and OpenBao KV paths.
+# Safe mode — undeploy tenants, preserve PVC/PV data and OpenBao KV paths.
 ./uninstall.sh
 
-# Force mode — also deletes data namespaces and bound PVs (dev/test only).
+# Force mode — tenant undeploy uses --purge, then deletes data namespaces and bound PVs.
 ./uninstall.sh -f
+
+# Keep tenant workloads and Git manifests; only tear down Gentian OS kernel/infra.
+./uninstall.sh --keep-tenants
 
 # Also remove cert-manager, Reloader, CNPG (only if Gentian-managed).
 ./uninstall.sh -f --cluster-infra

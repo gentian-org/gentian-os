@@ -5,6 +5,7 @@
 # Reverses install.sh (Phase 1 + Phase 2 bootstrap) in reverse order.
 #
 # Default (safe) mode:
+#   - Undeploys all tenants (GitOps + in-cluster) unless --keep-tenants
 #   - Removes the Nubus provider-helm Release and associated Secrets/ConfigMaps
 #   - Removes the Cluster XR (waits for Crossplane GC)
 #   - Removes Crossplane resources (XRD, Composition, providers)
@@ -15,11 +16,13 @@
 #
 # Force mode (-f):
 #   - All safe-mode steps
+#   - Tenant undeploy uses --purge (destructive tenant data removal)
 #   - Also deletes data namespaces and bound PVs (full teardown)
 #
 # Usage:
 #   ./uninstall.sh            # safe teardown
 #   ./uninstall.sh -f         # full teardown (DESTROYS DATA)
+#   ./uninstall.sh --keep-tenants   # leave tenant CRs/namespaces and Git manifests
 #   ./uninstall.sh --cluster-infra  # also remove cert-manager/CNPG/reloader
 # =============================================================================
 
@@ -36,6 +39,7 @@ unset GENTIAN_INSTALL_LIB_ONLY
 MODE="safe"
 ENV="${ENV:-dev}"
 UNINSTALL_CLUSTER_INFRA=0
+UNINSTALL_KEEP_TENANTS=0
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
 GENTIAN_MANAGED_CERT_MANAGER="${GENTIAN_MANAGED_CERT_MANAGER:-0}"
 
@@ -45,16 +49,28 @@ if [[ -r "${INSTALL_STATE_FILE}" ]]; then
     source "${INSTALL_STATE_FILE}"
 fi
 
+# Deployments repo paths for tenant GitOps undeploy (install.env + plugin config).
+INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
+# shellcheck source=/dev/null
+[[ -r "${INSTALL_CONFIG_FILE}" ]] && source "${INSTALL_CONFIG_FILE}"
+# shellcheck source=/dev/null
+[[ -r "${HOME}/.gentian/config" ]] && source "${HOME}/.gentian/config"
+: "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
+: "${GENTIAN_DEPLOYMENTS_CLUSTER:=default-cluster}"
+: "${GENTIAN_DEPLOYMENTS_STAGE:=${ENV}}"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -f)                MODE="force" ;;
         --cluster-infra)   UNINSTALL_CLUSTER_INFRA=1 ;;
         --no-cluster-infra) UNINSTALL_CLUSTER_INFRA=0 ;;
+        --keep-tenants)    UNINSTALL_KEEP_TENANTS=1 ;;
         -h|--help)
-            echo "Usage: $0 [-f] [--cluster-infra]"
-            echo "  default        : safe uninstall (preserve PVC/PV data)"
-            echo "  -f             : force uninstall (delete namespaces + bound PVs)"
-            echo "  --cluster-infra: also remove cert-manager/reloader/CNPG"
+            echo "Usage: $0 [-f] [--keep-tenants] [--cluster-infra]"
+            echo "  default          : safe uninstall (preserve PVC/PV data)"
+            echo "  -f               : force uninstall (delete namespaces + bound PVs)"
+            echo "  --keep-tenants    : skip tenant undeploy (preserve tenant CRs, namespaces, Git manifests)"
+            echo "  --cluster-infra   : also remove cert-manager/reloader/CNPG"
             exit 0
             ;;
         *)
@@ -77,29 +93,61 @@ if [[ "${MODE}" == "force" ]]; then
 else
     echo -e "${CYAN}║     MODE: SAFE  (PVC/PV data preserved)                  ║${NC}"
 fi
+if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
+    echo -e "${CYAN}║     Tenants: KEEP (--keep-tenants)                       ║${NC}"
+else
+    echo -e "${CYAN}║     Tenants: undeploy all before kernel teardown         ║${NC}"
+fi
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 if [[ "${MODE}" == "force" ]]; then
-    warn "FORCE mode: this will permanently delete all Gentian OS data."
+    if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
+        warn "FORCE mode: this will permanently delete Gentian OS kernel/data infrastructure."
+        warn "Tenant workloads are preserved (--keep-tenants)."
+    else
+        warn "FORCE mode: this will permanently delete all Gentian OS data."
+        warn "All tenants will be undeployed with --purge before kernel teardown."
+    fi
     read -rp "  Type 'yes' to confirm: " confirm
     [[ "${confirm}" == "yes" ]] || { info "Aborted."; exit 0; }
 fi
 
+_git_tenant_instances() {
+    local tenants_root="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE}"
+    local tenant_dir instance
+
+    [[ -d "${tenants_root}" ]] || return 0
+
+    for tenant_dir in "${tenants_root}"/*; do
+        [[ -d "${tenant_dir}" ]] || continue
+        instance="$(basename "${tenant_dir}")"
+        [[ "${instance}" == "components" ]] && continue
+        [[ -f "${tenant_dir}/${stage}/tenant.yaml" ]] && echo "${instance}"
+    done
+}
+
+_live_tenant_names() {
+    kubectl get tenant --no-headers \
+        -o custom-columns='NAME:.metadata.name' 2>/dev/null \
+        | grep -v '^$' || true
+}
+
 # =============================================================================
-# Step 0 — Undeploy all live tenants
+# Step 0 — Undeploy all tenants (GitOps + in-cluster)
+#
+# Skipped when --keep-tenants is set.
 #
 # Two things must happen for a clean undeploy:
-#  a) GitOps layer  — remove the tenant from the gentian-deployments repo
-#     (kustomization.yaml + set deletionPolicy: Delete when force mode).
-#     This is done by `kubectl gentian tenants undeploy` which commits and
-#     pushes, so ArgoCD does not re-create the tenant on the next install.
-#  b) In-cluster layer — delete the Tenant CR and force-strip its finalizer
+#  a) GitOps layer  — remove each tenant manifest from gentian-deployments
+#     (deletionPolicy: Delete when force mode). `kubectl gentian tenants undeploy`
+#     commits and pushes so ArgoCD does not re-create tenants on the next install.
+#  b) In-cluster layer — delete each live Tenant CR and force-strip its finalizer
 #     if the operator is absent or stuck.
 #
-# We always attempt (a) first.  If the plugin is unavailable or the repo is
-# unreachable the in-cluster cleanup (b) still runs so the install is not
-# blocked by a stale Tenant CR.
+# Git manifests are discovered from the deployments repo; live CRs from the cluster.
+# Both are processed so uninstall is clean even when Git and cluster state diverge.
 #
 # Tenant CRs are managed by the gentian-os operator (gentian-system), which
 # runs a cleanup finalizer (gentianos.io/tenant-cleanup).  The operator must
@@ -109,7 +157,11 @@ fi
 # App CRs (apps.gentianos.io) live in each tenant namespace and are owned by
 # the operator; delete them first so the operator's GC loop has less work.
 # =============================================================================
-banner "Step 0 — Undeploy live tenants"
+if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
+    banner "Step 0 — Tenants (skipped)"
+    info "Keeping tenant CRs, namespaces, and Git manifests (--keep-tenants)."
+else
+banner "Step 0 — Undeploy all tenants"
 
 # The gentian-os operator registers a ValidatingWebhookConfiguration that
 # intercepts PATCH on Tenant CRs.  If the operator is not running its
@@ -122,41 +174,43 @@ if kubectl get validatingwebhookconfiguration gentian-os-tenant-validator &>/dev
         --ignore-not-found=true 2>/dev/null || true
 fi
 
-_live_tenants() {
-    kubectl get tenant --no-headers \
-        -o custom-columns='NAME:.metadata.name' 2>/dev/null \
-        | grep -v '^$' || true
-}
+mapfile -t GIT_TENANT_INSTANCES < <(_git_tenant_instances | sort -u)
+mapfile -t LIVE_TENANTS < <(_live_tenant_names | sort -u)
 
-mapfile -t LIVE_TENANTS < <(_live_tenants)
-
-if [[ ${#LIVE_TENANTS[@]} -eq 0 ]]; then
-    info "No live tenants found; skipping."
+if [[ ${#GIT_TENANT_INSTANCES[@]} -eq 0 && ${#LIVE_TENANTS[@]} -eq 0 ]]; then
+    info "No tenant manifests in Git and no live Tenant CRs; skipping."
 else
-    info "Found ${#LIVE_TENANTS[@]} live tenant(s): ${LIVE_TENANTS[*]}"
-
-    # 0a. GitOps layer: remove each tenant from the gentian-deployments repo.
-    #     In force mode also set deletionPolicy: Delete so ArgoCD does not
-    #     re-create the Tenant on the next install.
-    #     Best-effort: log a warning and continue if the plugin is absent or
-    #     the deployments repo is unreachable.
-    if command -v kubectl-gentian >/dev/null 2>&1; then
-        _undeploy_flags=""
-        [[ "${MODE}" == "force" ]] && _undeploy_flags="--purge"
-        for tenant_name in "${LIVE_TENANTS[@]}"; do
-            info "Removing ${tenant_name} from deployments repo${_undeploy_flags:+ (purge mode)}..."
-            # shellcheck disable=SC2086
-            if kubectl gentian tenants undeploy "${tenant_name}" ${_undeploy_flags} 2>&1; then
-                success "  Tenant ${tenant_name} removed from deployments repo."
-            else
-                warn "  kubectl gentian tenants undeploy failed for ${tenant_name} — continuing with in-cluster cleanup."
-            fi
-        done
-    else
-        warn "kubectl-gentian plugin not found; skipping GitOps undeploy. Tenant files in the deployments repo must be removed manually to prevent ArgoCD from re-creating them on the next install."
+    if [[ ${#GIT_TENANT_INSTANCES[@]} -gt 0 ]]; then
+        info "Git tenant instance(s): ${GIT_TENANT_INSTANCES[*]}"
+    fi
+    if [[ ${#LIVE_TENANTS[@]} -gt 0 ]]; then
+        info "Live Tenant CR(s): ${LIVE_TENANTS[*]}"
     fi
 
-    # 1. Delete App CRs for every tenant (namespaced; iterate over all namespaces)
+    # 0a. GitOps layer: remove each tenant manifest from gentian-deployments.
+    if [[ ${#GIT_TENANT_INSTANCES[@]} -gt 0 ]]; then
+        if command -v kubectl-gentian >/dev/null 2>&1; then
+            _undeploy_flags=""
+            [[ "${MODE}" == "force" ]] && _undeploy_flags="--purge"
+            for instance in "${GIT_TENANT_INSTANCES[@]}"; do
+                info "Removing ${instance} from deployments repo${_undeploy_flags:+ (purge mode)}..."
+                # shellcheck disable=SC2086
+                if kubectl gentian tenants undeploy "${instance}" ${_undeploy_flags} 2>&1; then
+                    success "  Tenant instance ${instance} removed from deployments repo."
+                else
+                    warn "  kubectl gentian tenants undeploy failed for ${instance} — continuing with in-cluster cleanup."
+                fi
+            done
+        else
+            warn "kubectl-gentian plugin not found; skipping GitOps undeploy."
+            warn "Remove clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants/*/${GENTIAN_DEPLOYMENTS_STAGE}/ manually to prevent ArgoCD from re-creating tenants on the next install."
+        fi
+    fi
+
+    mapfile -t LIVE_TENANTS < <(_live_tenant_names | sort -u)
+    if [[ ${#LIVE_TENANTS[@]} -eq 0 ]]; then
+        info "No live Tenant CRs remain; GitOps undeploy complete."
+    else
     for tenant_name in "${LIVE_TENANTS[@]}"; do
         local_deadline=$((SECONDS + 60))
         info "Deleting App CRs for tenant ${tenant_name}..."
@@ -218,6 +272,8 @@ else
     done
 
     success "All tenants undeployed."
+    fi
+fi
 fi
 
 # =============================================================================
@@ -1078,9 +1134,9 @@ for ns in "${namespaces_to_remove[@]}"; do
 done
 
 # =============================================================================
-# Step 12 — Remove tenant resources (force mode)
+# Step 12 — Remove tenant resources (force mode, unless --keep-tenants)
 # =============================================================================
-if [[ "${MODE}" == "force" ]]; then
+if [[ "${MODE}" == "force" && "${UNINSTALL_KEEP_TENANTS}" -eq 0 ]]; then
     banner "Step 12 — Remove tenant resources"
 
     if kubectl get crd tenants.gentianos.io >/dev/null 2>&1; then
@@ -1111,7 +1167,11 @@ if [[ "${MODE}" == "force" ]]; then
         done
     fi
 else
-    info "Skipping tenant resource removal (only enabled with -f)."
+    if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
+        info "Skipping tenant resource removal (--keep-tenants)."
+    else
+        info "Skipping tenant resource removal (only enabled with -f)."
+    fi
 fi
 
 # =============================================================================
@@ -1130,6 +1190,10 @@ else
     echo "  prevents Crossplane from deleting KV paths on XR deletion)."
 fi
 echo ""
+if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
+    echo "  Tenant CRs, namespaces, and Git manifests were preserved (--keep-tenants)."
+    echo ""
+fi
 if [[ "${MODE}" == "safe" ]]; then
     echo "  PVC/PV data is preserved (safe mode)."
     echo "  Re-run with -f to also remove namespaces and bound PVs."

@@ -67,6 +67,7 @@ Usage:
 
     kubectl gentian tenants deploy <instance> [--env <stage>]
       Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/<stage>/.
+      If the manifest is missing, scaffolds from clusters/<cluster>/examples/<instance>/<stage>/.
 
     kubectl gentian tenants undeploy <instance> [--env <stage>] [--purge|-f]
       Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
@@ -85,9 +86,9 @@ Examples:
   kubectl gentian apps install openproject --tenant gtn-demo
   kubectl gentian apps uninstall openproject --tenant gtn-demo
   kubectl gentian tenants list
-  kubectl gentian tenants deploy gtn-demo
-  kubectl gentian tenants undeploy gtn-demo
-  kubectl gentian tenants undeploy gtn-demo --purge   # or -f
+  kubectl gentian tenants deploy demo
+  kubectl gentian tenants undeploy demo
+  kubectl gentian tenants undeploy demo --purge   # or -f
 EOF
 }
 
@@ -687,6 +688,77 @@ tenant_stage_name() {
 
 tenant_tenants_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
+}
+
+tenant_examples_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/examples"
+}
+
+tenant_example_stage_dir() {
+  local instance="${1}"
+  local env_name="${2:-}"
+  local stage
+  stage="$(tenant_stage_name "${env_name}")"
+  echo "$(tenant_examples_root)/${instance}/${stage}"
+}
+
+write_tenant_stage_kustomization() {
+  local stage_dir="${1}"
+  cat > "${stage_dir}/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+components:
+- ../../components/tenant-defaults
+EOF
+}
+
+scaffold_tenant_from_example() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local stage
+  local example_dir
+  local target_dir
+
+  stage="$(tenant_stage_name "${env_name}")"
+  example_dir="$(tenant_example_stage_dir "${instance}" "${env_name}")"
+  target_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+
+  if [[ ! -d "${example_dir}" ]]; then
+    echo "ERROR: tenant instance '${instance}' not found at ${target_dir}." >&2
+    echo "Expected layout: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${stage}/" >&2
+    echo "Copy an example from clusters/${DEPLOYMENTS_CLUSTER}/examples/<name>/${stage}/ or add one there." >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${example_dir}/tenant.yaml" ]]; then
+    echo "ERROR: example at ${example_dir} is missing tenant.yaml." >&2
+    exit 1
+  fi
+
+  mkdir -p "${target_dir}"
+  cp "${example_dir}/tenant.yaml" "${target_dir}/tenant.yaml"
+  write_tenant_stage_kustomization "${target_dir}"
+
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
+  )
+  git_commit_push "feat(${instance}): add tenant manifest for ${env_name}"
+  echo "Scaffolded tenant '${instance}' from examples/${instance}/${stage}/."
+}
+
+ensure_tenant_instance_dir() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local dir
+
+  dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+  if [[ ! -d "${dir}" ]]; then
+    scaffold_tenant_from_example "${instance}" "${env_name}"
+  fi
+  tenant_instance_dir "${instance}" "${env_name}"
 }
 
 tenant_stage_dir() {
@@ -1333,7 +1405,7 @@ cmd_tenant_deploy() {
 
   ensure_repo
   ensure_env_layout "${env_name}"
-  tenant_instance_dir "${instance}" "${env_name}" >/dev/null
+  ensure_tenant_instance_dir "${instance}" "${env_name}" >/dev/null
 
   local patch
   local tenant_name

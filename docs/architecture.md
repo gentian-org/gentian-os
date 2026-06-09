@@ -102,8 +102,11 @@ A full dependency-graph walk for a single `Tenant` claim is in
 ### 3.1 How provisioning works on the cluster today
 
 This section matches a running dev cluster (e.g. kernel domain
-`desk.gentian.org`, demo tenant with Element + Jitsi). It is the
+`desk.gentian.org`, a provisioned tenant such as `demo` with Element). It is the
 authoritative “today” view; §3’s diagram is the stable mental model.
+
+Fresh installs leave **no tenants** in Git or on the cluster until a cluster
+admin deploys manifests from `clusters/<cluster>/examples/` into `tenants/`.
 
 **Two planes, one Git truth for tenants**
 
