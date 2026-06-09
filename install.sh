@@ -1221,10 +1221,11 @@ main_cp() {
     export INSTALL_START_EPOCH
     save_install_state
 
+    load_deployments_cluster_settings
+
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
     prompt_app_repos
-    load_deployments_cluster_settings
     prompt_credentials
     prompt_kernel_domain
     prompt_network_mode
