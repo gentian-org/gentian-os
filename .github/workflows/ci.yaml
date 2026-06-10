@@ -94,18 +94,22 @@ jobs:
   docker:
     name: Docker build and push
     runs-on: ubuntu-latest
+    needs: [go]
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
 
+      # GHCR login occasionally times out from GitHub-hosted runners; retry before failing.
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: nick-fields/retry@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          timeout_minutes: 2
+          max_attempts: 5
+          retry_wait_seconds: 20
+          command: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Extract metadata
         id: meta
