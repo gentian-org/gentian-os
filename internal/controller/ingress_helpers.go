@@ -87,7 +87,11 @@ func keycloakOIDCAncestorOrigins(
 const nginxServerSnippetAnnotation = "nginx.ingress.kubernetes.io/server-snippet"
 
 func keycloakOIDCIngressServerSnippet() string {
+	// proxy_hide_header alone is not always enough on microk8s ingress-nginx; an
+	// empty X-Frame-Options override prevents Keycloak SAMEORIGIN from blocking
+	// broker /endpoint callbacks in portal iframes (see keycloak_browser_security.go).
 	return `proxy_hide_header X-Frame-Options;
+add_header X-Frame-Options "" always;
 proxy_hide_header Content-Security-Policy;`
 }
 
@@ -140,6 +144,7 @@ func frameAncestorsIngressSnippetReplace(ancestorOrigins string) string {
 	// proxy_hide_header works on stock ingress-nginx (including microk8s builds
 	// that lack the headers-more module). more_clear_headers is not available there.
 	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
+add_header X-Frame-Options "" always;
 proxy_hide_header Content-Security-Policy;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
@@ -149,6 +154,7 @@ add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancesto
 // script-src/connect-src (sandbox must not gain 'unsafe-eval').
 func frameAncestorsIngressSnippetAppend(ancestorOrigins string) string {
 	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
+add_header X-Frame-Options "" always;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
 
