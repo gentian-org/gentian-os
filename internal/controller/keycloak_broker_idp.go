@@ -19,7 +19,7 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "1"
+const brokerIdentityProviderVersion = "2"
 
 func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
@@ -72,8 +72,41 @@ else
   echo "ERROR: kernel IdP update for realm ${REALM_NAME} failed (HTTP ${HTTP})" >&2
   exit 1
 fi
+` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
 `
 }
+
+const brokerKernelClientUsernameMapperShell = `
+# Kernel broker client must emit opendesk_username (LDAP uid) in tokens issued
+# during tenant→kernel broker login; otherwise tenant scope mappers see empty uid.
+BROKER_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" || echo "[]")
+if echo "${BROKER_M}" | grep -q '"name":"opendesk_username"'; then
+  echo "broker client opendesk_username mapper already on ${BROKER_CLIENT_ID}"
+else
+  curl -sf --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" \
+    -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+    -d '{"name":"opendesk_username","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"uid","claim.name":"opendesk_username","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true","multivalued":"false"}}'
+  echo "broker client opendesk_username mapper added on ${BROKER_CLIENT_ID}"
+fi
+`
+
+const brokerIdPUsernameImporterShell = `
+# Import opendesk_username from the kernel IdP into the tenant user's uid attribute
+# so opendesk-matrix-scope mappers can emit the claim for Synapse localpart mapping.
+IDP_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" || echo "[]")
+if echo "${IDP_M}" | grep -q '"name":"opendesk_username"'; then
+  echo "IdP mapper opendesk_username already in realm ${REALM_NAME}"
+else
+  curl -sf --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" \
+    -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+    -d '{"name":"opendesk_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","config":{"syncMode":"IMPORT","claim":"opendesk_username","user.attribute":"uid"}}'
+  echo "IdP mapper opendesk_username registered in realm ${REALM_NAME}"
+fi
+`
 
 const brokerResolveIDShell = `
 keycloak_json_id_by_attr "${BROKER_RESP}" "clientId" "${BROKER_CLIENT_ID}"

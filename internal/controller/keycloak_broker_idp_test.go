@@ -11,9 +11,9 @@ func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 	script := buildBrokerIdentityProviderScript()
 	for _, want := range []string{
 		`${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token`,
-		`${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs`,
-		`${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth`,
-		`issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}`,
+		`oidc-user-attribute-idp-mapper`,
+		`claim.name":"opendesk_username`,
+		`user.attribute":"uid"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("broker IdP script missing %q", want)

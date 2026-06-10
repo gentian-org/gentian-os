@@ -889,7 +889,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
       -d "${IDP_BODY}"
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
-
+` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
   # (No defaultProvider is set on the identity-provider-redirector execution.
   #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
   #  on mailPrimaryAddress). The kernel IdP registered above remains available
