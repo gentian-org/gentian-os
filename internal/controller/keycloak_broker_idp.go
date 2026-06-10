@@ -20,14 +20,14 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "4"
+const brokerIdentityProviderVersion = "5"
 
 // firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
 // kernel IdP logins to pre-provisioned LDAP users by email (no confirm/re-auth).
 const firstBrokerLoginFlowAlias = "first-broker-login-gentian"
 
 // brokerFirstLoginFlowJobVersion bumps when the auto-link flow script changes.
-const brokerFirstLoginFlowJobVersion = "1"
+const brokerFirstLoginFlowJobVersion = "2"
 
 func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
@@ -61,7 +61,7 @@ BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
   | sed 's/.*"value":"\([^"]*\)".*/\1/')
 
-IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
+IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
 if [ "${IDP_HTTP}" != "200" ]; then
   echo "ERROR: kernel IdP not found in realm ${REALM_NAME} (HTTP ${IDP_HTTP})" >&2
@@ -70,7 +70,7 @@ fi
 
 IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
 
-HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X PUT \
+HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -X PUT \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
   -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
   -d "${IDP_BODY}")

@@ -67,6 +67,8 @@ The kernel IdP uses a custom first-broker-login flow (`first-broker-login-gentia
 with **Detect existing broker user** + **Automatically set existing user** so
 LDAP-preprovisioned tenant users are linked by email without the default
 confirm/re-authenticate prompt (tenant users have no local Keycloak password).
+The provisioner job also clears stale `kernel` federated-identity links left
+from earlier manual linking attempts so auto-link does not hit duplicate-key errors.
 
 LDAP `group-ldap-mapper` on the tenant realm federation imports
 `managed-by-attribute-*` groups from the tenant OU so pack role mappings resolve.

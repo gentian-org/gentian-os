@@ -25,6 +25,12 @@ func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 	if strings.Contains(script, `${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token`) {
 		t.Fatal("broker IdP script must not use external URL for token exchange")
 	}
+	if strings.Contains(script, `%%{http_code}`) {
+		t.Fatal("broker IdP script must use %{http_code} in curl -w (raw Go string, not fmt.Sprintf)")
+	}
+	if !strings.Contains(script, `%{http_code}`) {
+		t.Fatal("broker IdP script must read HTTP status via curl -w %{http_code}")
+	}
 }
 
 func TestKeycloakProxyIngressBufferAnnotations(t *testing.T) {

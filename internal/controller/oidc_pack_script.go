@@ -294,5 +294,30 @@ for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
       -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
   fi
 done
-echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmName, firstBrokerLoginFlowAlias)
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"
+
+# Drop stale kernel IdP links left from the old confirm/re-auth flow or partial
+# links. Users re-link silently on the next broker login via auto-link.
+PAGE=0
+while true; do
+  USERS=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/users?first=${PAGE}&max=100" || echo "[]")
+  COUNT=$(printf '%%s' "${USERS}" | jq 'length')
+  if [ "${COUNT}" -eq 0 ]; then
+    break
+  fi
+  printf '%%s' "${USERS}" | jq -r '.[].id' | while read -r UID; do
+    [ -z "${UID}" ] && continue
+    HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/users/${UID}/federated-identity/kernel")
+    if [ "${HTTP}" = "204" ]; then
+      echo "removed stale kernel broker link for user ${UID}"
+    fi
+  done
+  PAGE=$((PAGE + 100))
+  if [ "${COUNT}" -lt 100 ]; then
+    break
+  fi
+done
+echo "kernel broker link purge finished for realm ${REALM}"`, realmName, firstBrokerLoginFlowAlias)
 }

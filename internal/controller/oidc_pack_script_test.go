@@ -101,6 +101,8 @@ func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 		`idp-detect-existing-broker-user`,
 		`idp-auto-link`,
 		`requirement\":\"REQUIRED`,
+		`federated-identity/kernel`,
+		`kernel broker link purge finished`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("first broker login script missing %q", want)
