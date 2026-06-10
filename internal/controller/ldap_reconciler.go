@@ -2113,7 +2113,10 @@ done
 echo "lock sweep complete for ${USERS_OU_POS}"`, ouDN)
 }
 
-// buildOUDeleteScript removes the tenant OU and all child entries.
+// buildOUDeleteScript removes all users under the tenant OU (subtree search),
+// then deletes the tenant OU recursively. A subtree user sweep is required because
+// UDM can return 404 for the OU container while orphaned user entries remain
+// (e.g. after Retain lock + partial cleanup).
 func buildOUDeleteScript(ouDN string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
@@ -2122,6 +2125,25 @@ BASE_URL="${UDM_URL}/udm"
 # OU_POS: ${UDM_LDAP_BASE} expands at runtime.
 OU_POS="%s"
 OU_ENC=$(urlencode "${OU_POS}")
+
+echo "deleting users under ${OU_POS} (subtree search)"
+USERS_JSON=$(curl -s --max-time 30 ${CREDS} \
+  -H "Accept: application/json" \
+  "${BASE_URL}/users/user/?position=${OU_ENC}&scope=sub")
+printf '%%s' "${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
+  if [ -n "${USER_DN}" ]; then
+    USER_ENC=$(urlencode "${USER_DN}")
+    HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
+      -H "Accept: application/json" \
+      "${BASE_URL}/users/user/${USER_ENC}")
+    echo "deleted user ${USER_DN} (HTTP ${HTTP})"
+    case "${HTTP}" in
+      200|204|404) ;;
+      *) echo "ERROR: user delete failed for ${USER_DN} (HTTP ${HTTP})" >&2; exit 1 ;;
+    esac
+  fi
+done
+echo "user subtree sweep complete for ${OU_POS}"
 
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE ${CREDS} \
   -H "Accept: application/json" \

@@ -132,6 +132,8 @@ func TestBuildOUDeleteScript_FailsOnNonSuccessHTTP(t *testing.T) {
 	for _, want := range []string{
 		`case "${HTTP}" in`,
 		`200|204|404) ;;`,
+		`scope=sub`,
+		`user subtree sweep complete`,
 		`exit 1`,
 	} {
 		if !strings.Contains(script, want) {

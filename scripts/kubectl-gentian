@@ -389,6 +389,24 @@ spec:
             *) OU_POS="\${OU_SPEC},\${UDM_LDAP_BASE}" ;;
           esac
           OU_ENC=\$(urlencode "\${OU_POS}")
+          echo "deleting users under \${OU_POS} (subtree search)"
+          USERS_JSON=\$(curl -s --max-time 30 \${CREDS} \\
+            -H "Accept: application/json" \\
+            "\${BASE_URL}/users/user/?position=\${OU_ENC}&scope=sub")
+          printf '%s' "\${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
+            if [ -n "\${USER_DN}" ]; then
+              USER_ENC=\$(urlencode "\${USER_DN}")
+              HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
+                -H "Accept: application/json" \\
+                "\${BASE_URL}/users/user/\${USER_ENC}")
+              echo "deleted user \${USER_DN} (HTTP \${HTTP})"
+              case "\${HTTP}" in
+                200|204|404) ;;
+                *) echo "ERROR: user delete failed for \${USER_DN} (HTTP \${HTTP})" >&2; exit 1 ;;
+              esac
+            fi
+          done
+          echo "user subtree sweep complete for \${OU_POS}"
           HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
             -H "Accept: application/json" \\
             "\${BASE_URL}/container/ou/\${OU_ENC}?cleanup=1&recursive=1")
@@ -471,6 +489,15 @@ spec:
             404) echo "OU absent (HTTP 404)" ;;
             *) echo "ERROR: tenant LDAP OU still present (HTTP \${HTTP})" >&2; exit 1 ;;
           esac
+          USERS_JSON=\$(curl -s --max-time 30 \${CREDS} \\
+            -H "Accept: application/json" \\
+            "\${BASE_URL}/users/user/?position=\${OU_ENC}&scope=sub")
+          if printf '%s' "\${USERS_JSON}" | grep -q '"dn"'; then
+            echo "ERROR: tenant users still present under \${OU_POS}" >&2
+            printf '%s' "\${USERS_JSON}" | grep -o '"dn": *"[^"]*"' >&2 || true
+            exit 1
+          fi
+          echo "No tenant users remain under \${OU_POS}"
         env:
         - name: UDM_URL
           valueFrom:
