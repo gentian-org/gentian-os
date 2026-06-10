@@ -261,6 +261,45 @@ assert_live_tenant_deletion_policy() {
   return 1
 }
 
+# After pushing deletionPolicy=Delete to Git, wait for ArgoCD to apply it before
+# kubectl delete. Otherwise selfHeal can revert the live CR to Retain while the
+# operator runs Retain cleanup (LDAP lock) instead of destructive delete.
+assert_argocd_tenant_delete_synced() {
+  local instance="${1}"
+  local env_name="${2}"
+  local tenant_name="${3}"
+  local timeout="${4:-120}"
+  local elapsed=0
+  local app_ns_name
+
+  app_ns_name="$(argocd_tenants_app_for_instance "${instance}" "${env_name}")"
+  if [[ -z "${app_ns_name}" ]]; then
+    return 0
+  fi
+
+  echo "Waiting for ArgoCD to sync deletionPolicy=Delete for '${tenant_name}'..."
+  argocd_trigger_sync_prune "${instance}" "${env_name}" || true
+
+  while (( elapsed < timeout )); do
+    if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
+      return 0
+    fi
+    local live_policy
+    live_policy="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+    if [[ "${live_policy}" == "Delete" ]]; then
+      return 0
+    fi
+    ensure_tenant_deletion_policy_live "${tenant_name}" "Delete" || true
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  echo "WARNING: ArgoCD did not stabilize deletionPolicy=Delete within ${timeout}s; continuing with live patch." >&2
+  ensure_tenant_deletion_policy_live "${tenant_name}" "Delete" || return 1
+  return 0
+}
+
 # Print a status line before kubectl wait (which is silent until it finishes).
 wait_with_message() {
   local message="${1}"
@@ -272,11 +311,20 @@ wait_with_message() {
 tenant_ldap_ou_from_resource() {
   local resource_file="${1}"
   local tenant_name="${2}"
+  local instance="${3:-${tenant_name}}"
   local ou=""
 
   if [[ -f "${resource_file}" ]]; then
     ou="$(grep -E '^[[:space:]]*ldapOU:' "${resource_file}" 2>/dev/null \
       | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
+  fi
+  if [[ -z "${ou}" ]]; then
+    local definition_file
+    definition_file="$(tenant_definition_stage_dir "${instance}" "${DEPLOYMENTS_STAGE}")/tenant.yaml"
+    if [[ -f "${definition_file}" ]]; then
+      ou="$(grep -E '^[[:space:]]*ldapOU:' "${definition_file}" 2>/dev/null \
+        | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
+    fi
   fi
   if [[ -z "${ou}" ]]; then
     ou="ou=${tenant_name}"
@@ -288,10 +336,11 @@ run_ldap_ou_delete_fallback() {
   local tenant_name="${1}"
   local resource_file="${2}"
   local force="${3:-false}"
+  local instance="${4:-${tenant_name}}"
   local ou_spec
   local job_name="ldap-ou-delete-${tenant_name}"
 
-  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
+  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}" "${instance}")"
   ou_spec="${ou_spec//\"/\\\"}"
   echo "Running LDAP OU delete for tenant '${tenant_name}' (${ou_spec})..."
 
@@ -370,10 +419,11 @@ EOF
 verify_ldap_ou_absent() {
   local tenant_name="${1}"
   local resource_file="${2}"
+  local instance="${3:-${tenant_name}}"
   local ou_spec
   local job_name="ldap-ou-verify-gone-${tenant_name}"
 
-  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
+  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}" "${instance}")"
   ou_spec="${ou_spec//\"/\\\"}"
 
   kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
@@ -443,6 +493,7 @@ EOF
 wait_for_purge_controller_cleanup() {
   local tenant_name="${1}"
   local resource_file="${2}"
+  local instance="${3:-${tenant_name}}"
   local ou_job="ldap-ou-delete-${tenant_name}"
   local lock_job="ldap-lock-${tenant_name}"
 
@@ -459,12 +510,12 @@ wait_for_purge_controller_cleanup() {
 
   # Always re-run OU delete on purge: idempotent (404 = already gone) and covers
   # cases where GitOps overwrote deletionPolicy=Delete before the controller ran.
-  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true; then
+  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true "${instance}"; then
     return 1
   fi
 
   echo "Verifying tenant LDAP OU is gone..."
-  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}"; then
+  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}" "${instance}"; then
     return 1
   fi
 
@@ -635,7 +686,7 @@ wait_for_tenant_delete() {
   fi
 
   if [[ "${purge}" == "true" ]]; then
-    if ! wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}"; then
+    if ! wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}" "${instance}"; then
       echo "ERROR: purge LDAP cleanup did not complete for tenant '${tenant_name}'." >&2
       return 1
     fi
@@ -1615,6 +1666,9 @@ cmd_tenant_undeploy_purge() {
       if ! apply_tenant_instance "${instance}" "${env_name}"; then
         echo "WARNING: failed to apply tenant manifest for '${instance}' before purge." >&2
       fi
+      if ! assert_argocd_tenant_delete_synced "${instance}" "${env_name}" "${tenant_name}" 120; then
+        exit 1
+      fi
       if ! assert_live_tenant_deletion_policy "${tenant_name}" "Delete" 180; then
         exit 1
       fi
@@ -1627,16 +1681,16 @@ cmd_tenant_undeploy_purge() {
     echo "Deleting tenant '${tenant_name}' with deletionPolicy=Delete..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
-    if is_instance_deployed "${instance}" "${env_name}"; then
-      tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" false "${tenant_name}"
-      argocd_trigger_sync_prune "${instance}" "${env_name}"
-    fi
-
     if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" true "${resource_file}" "${instance}" "${env_name}"; then
       exit 1
     fi
 
     purge_tenant_cluster_artifacts "${tenant_name}" "${ns_name}"
+
+    if is_instance_deployed "${instance}" "${env_name}"; then
+      tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" false "${tenant_name}"
+      argocd_trigger_sync_prune "${instance}" "${env_name}" || true
+    fi
   else
     echo "Tenant CR '${tenant_name}' is not present; purging orphaned cluster artifacts..."
     purge_tenant_cluster_artifacts "${tenant_name}" "${ns_name}"

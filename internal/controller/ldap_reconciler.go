@@ -572,6 +572,17 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
 		// OU recursive delete cascades all children including the admin user.
+		// If a Retain-path lock job ran due to a race (ArgoCD selfHeal), remove it
+		// and proceed with destructive OU deletion.
+		lockJobName := ldapLockJobName(tenant.Name)
+		lockJob := &batchv1.Job{}
+		if lockErr := r.Get(ctx, types.NamespacedName{Name: lockJobName, Namespace: kernelNamespace}, lockJob); lockErr == nil {
+			prop := metav1.DeletePropagationBackground
+			_ = r.Delete(ctx, lockJob, &client.DeleteOptions{PropagationPolicy: &prop})
+		} else if lockErr != nil && !errors.IsNotFound(lockErr) {
+			return lockErr
+		}
+
 		jobName := ouDeleteJobName(tenant.Name)
 		existing := &batchv1.Job{}
 		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
