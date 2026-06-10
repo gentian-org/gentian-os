@@ -824,6 +824,8 @@ if [ -n "${LDAP_SERVER:-}" ]; then
         "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${LDAP_ID}/sync?action=triggerFullSync" >/dev/null 2>&1 || true
     fi
   fi
+
+  ensure_ldap_uid_attribute_mapper "%s" "ldap"
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -889,6 +891,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
       -d "${IDP_BODY}"
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
+ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
 ` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
   # (No defaultProvider is set on the identity-provider-redirector execution.
   #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
@@ -896,10 +899,10 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	return keycloakShellJSONIDExtractor() + script
+	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + script
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
