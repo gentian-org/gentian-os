@@ -19,7 +19,7 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "2"
+const brokerIdentityProviderVersion = "3"
 
 func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
@@ -72,6 +72,8 @@ else
   echo "ERROR: kernel IdP update for realm ${REALM_NAME} failed (HTTP ${HTTP})" >&2
   exit 1
 fi
+` + ensureLDAPUIDAttributeMapperShell + `
+ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
 ` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
 `
 }
@@ -103,7 +105,7 @@ else
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" \
     -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    -d '{"name":"opendesk_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","config":{"syncMode":"IMPORT","claim":"opendesk_username","user.attribute":"uid"}}'
+    -d '{"name":"opendesk_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","identityProviderAlias":"kernel","config":{"syncMode":"IMPORT","claim":"opendesk_username","user.attribute":"uid"}}'
   echo "IdP mapper opendesk_username registered in realm ${REALM_NAME}"
 fi
 `
