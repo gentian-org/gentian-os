@@ -72,3 +72,44 @@ func TestCollectOIDCIngressSubdomainsByTenant(t *testing.T) {
 		}
 	}
 }
+
+func TestOIDCRedirectURISubdomain(t *testing.T) {
+	if got := oidcRedirectURISubdomain("https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback"); got != "matrix" {
+		t.Fatalf("expected matrix, got %q", got)
+	}
+	if got := oidcRedirectURISubdomain("https://chat.${TENANT_DOMAIN}/"); got != "chat" {
+		t.Fatalf("expected chat, got %q", got)
+	}
+	if got := oidcRedirectURISubdomain("not-a-url"); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+}
+
+func TestCollectOIDCIngressSubdomainsFromRedirectURI(t *testing.T) {
+	element := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "element"},
+		Spec: gentianov1alpha1.AppProfileSpec{
+			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "chat"},
+			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+				Identity: &gentianov1alpha1.IdentityRequirement{
+					OIDC: &gentianov1alpha1.OIDCClientSpec{
+						ClientID: "opendesk-synapse",
+						RedirectURIs: []string{
+							"https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback",
+						},
+					},
+				},
+			},
+		},
+	}
+	subs := oidcIngressSubdomainsFromProfile(element)
+	want := map[string]struct{}{"chat": {}, "matrix": {}}
+	if len(subs) != len(want) {
+		t.Fatalf("expected %d subdomains, got %v", len(want), subs)
+	}
+	for _, sub := range subs {
+		if _, ok := want[sub]; !ok {
+			t.Fatalf("unexpected subdomain %q", sub)
+		}
+	}
+}

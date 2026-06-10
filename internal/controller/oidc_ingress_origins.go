@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -95,7 +96,34 @@ func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.AppProfile) []st
 			subs = append(subs, ing.SubDomain)
 		}
 	}
+	if profile.Spec.KernelRequirements != nil &&
+		profile.Spec.KernelRequirements.Identity != nil &&
+		profile.Spec.KernelRequirements.Identity.OIDC != nil {
+		for _, uri := range profile.Spec.KernelRequirements.Identity.OIDC.RedirectURIs {
+			if sub := oidcRedirectURISubdomain(uri); sub != "" {
+				subs = append(subs, sub)
+			}
+		}
+	}
 	return subs
+}
+
+// oidcRedirectURISubdomain returns the hostname prefix from an OIDC redirect URI
+// template such as https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback.
+func oidcRedirectURISubdomain(uri string) string {
+	const prefix = "https://"
+	if !strings.HasPrefix(uri, prefix) {
+		return ""
+	}
+	host := strings.SplitN(strings.TrimPrefix(uri, prefix), "/", 2)[0]
+	if host == "" {
+		return ""
+	}
+	label := strings.SplitN(host, ".", 2)[0]
+	if label == "" || strings.Contains(label, "$") {
+		return ""
+	}
+	return label
 }
 
 func appProfileDeclaresOIDC(profile *gentianov1alpha1.AppProfile) bool {

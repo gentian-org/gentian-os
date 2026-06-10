@@ -59,8 +59,12 @@ func keycloakOIDCAncestorOrigins(
 		origins = append(origins, origin)
 	}
 	add(fmt.Sprintf("https://portal.%s", kernelDomain))
-	// Kernel-zone apps (Nextcloud Files, ICS silent login, …) run on *.<kernelDomain>
-	// and may embed id.<kernel> in a nested iframe during OIDC — not under tenant zones.
+	// Explicit kernel IdP + ICS origins (visible in curl checks; also covers browsers
+	// that treat 'self' / *.kernel wildcards differently in nested iframe chains).
+	add(fmt.Sprintf("https://id.%s", kernelDomain))
+	add(fmt.Sprintf("https://ics.%s", kernelDomain))
+	// Kernel-zone apps (Nextcloud Files, …) run on *.<kernelDomain> and may embed
+	// id.<kernel> in a nested iframe during OIDC — not under tenant zones.
 	add(fmt.Sprintf("https://*.%s", kernelDomain))
 	for i, effective := range tenantEffectiveDomains {
 		if effective == "" {
