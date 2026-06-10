@@ -111,6 +111,15 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningBrowserFlow", "Waiting for OIDC browser flow Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+		firstLoginDone, err := r.ensureBrokerFirstLoginFlowJob(ctx, tenant, realmName)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure broker first-login flow Job: %w", err)
+		}
+		if !firstLoginDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningBrokerFirstLogin", "Waiting for broker first-login flow Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	// OpenDesk OIDC packs map managed-by-attribute-* LDAP groups to client roles.
@@ -902,6 +911,8 @@ fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmNa
 		realmName, realmName, realmName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
+	script = strings.ReplaceAll(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`,
+		fmt.Sprintf(`\"firstBrokerLoginFlowAlias\":%q`, firstBrokerLoginFlowAlias))
 	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + script
 }
 

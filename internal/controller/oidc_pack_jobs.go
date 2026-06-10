@@ -186,6 +186,65 @@ func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string
 	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}
 }
 
+func (r *TenantReconciler) ensureBrokerFirstLoginFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
+	jobName := brokerFirstLoginFlowJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return false, r.Create(ctx, makeBrokerFirstLoginFlowJob(tenant, realmName))
+	}
+	if err != nil {
+		return false, err
+	}
+	if !brokerFirstLoginFlowJobCurrent(job) {
+		prop := metav1.DeletePropagationBackground
+		if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil && !errors.IsNotFound(delErr) {
+			return false, fmt.Errorf("delete stale broker first-login flow job %s: %w", jobName, delErr)
+		}
+		return false, r.Create(ctx, makeBrokerFirstLoginFlowJob(tenant, realmName))
+	}
+	if jobIsFailed(job) {
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		return false, nil
+	}
+	return jobIsComplete(job), nil
+}
+
+func brokerFirstLoginFlowJobCurrent(job *batchv1.Job) bool {
+	return job != nil && job.Labels["gentianos.io/keycloak-broker-first-login"] == brokerFirstLoginFlowJobVersion
+}
+
+func makeBrokerFirstLoginFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	ttl := int32(3600)
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      brokerFirstLoginFlowJobName(tenant.Name),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:                              tenant.Name,
+				managedByLabel:                           managedByValue,
+				"gentianos.io/keycloak-broker-first-login": brokerFirstLoginFlowJobVersion,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						keycloakContainer("provision-broker-first-login-flow", buildFirstBrokerLoginFlowScript(realmName)),
+					},
+				},
+			},
+		},
+	}
+}
+
+func brokerFirstLoginFlowJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-broker-first-login-%s", tenantName)
+}
+
 func (r *TenantReconciler) ensureOIDCBrowserFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
 	jobName := oidcBrowserFlowJobName(tenant.Name)
 	job := &batchv1.Job{}

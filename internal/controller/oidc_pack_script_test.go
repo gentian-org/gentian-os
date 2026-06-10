@@ -94,6 +94,20 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	}
 }
 
+func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
+	script := buildFirstBrokerLoginFlowScript("demo")
+	for _, want := range []string{
+		firstBrokerLoginFlowAlias,
+		`idp-detect-existing-broker-user`,
+		`idp-auto-link`,
+		`requirement\":\"REQUIRED`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("first broker login script missing %q", want)
+		}
+	}
+}
+
 func TestBuildOIDCBrowserFlowScript(t *testing.T) {
 	script := buildOIDCBrowserFlowScript("demo")
 	if !strings.Contains(script, "browser-kernel-idp") {

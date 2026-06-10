@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -19,7 +20,14 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "3"
+const brokerIdentityProviderVersion = "4"
+
+// firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
+// kernel IdP logins to pre-provisioned LDAP users by email (no confirm/re-auth).
+const firstBrokerLoginFlowAlias = "first-broker-login-gentian"
+
+// brokerFirstLoginFlowJobVersion bumps when the auto-link flow script changes.
+const brokerFirstLoginFlowJobVersion = "1"
 
 func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
@@ -30,7 +38,7 @@ func tenantBrokerIdPJobName(tenantName string) string {
 // so Keycloak does not hairpin through the public id.<kernel> URL during broker
 // code exchange; browser-facing issuer and authorizationUrl stay external.
 func buildBrokerIdentityProviderScript() string {
-	return keycloakShellJSONIDExtractor() + `
+	script := keycloakShellJSONIDExtractor() + `
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
@@ -76,6 +84,8 @@ fi
 ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
 ` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
 `
+	return strings.Replace(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`,
+		fmt.Sprintf(`\"firstBrokerLoginFlowAlias\":%q`, firstBrokerLoginFlowAlias), 1)
 }
 
 const brokerKernelClientUsernameMapperShell = `

@@ -250,3 +250,49 @@ curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "{\"browserFlow\":\"${FLOW_ALIAS}\"}" >/dev/null
 echo "realm ${REALM} browser flow set to ${FLOW_ALIAS}"`, realmName)
 }
+
+// buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
+// that links kernel IdP identities to existing LDAP users by email without prompting.
+// See Keycloak docs: "Detect existing user first login flow".
+func buildFirstBrokerLoginFlowScript(realmName string) string {
+	return fmt.Sprintf(`set -eu
+REALM=%q
+FLOW_ALIAS=%q
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+
+FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
+if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
+  echo "first broker login flow ${FLOW_ALIAS} already exists"
+else
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-link kernel IdP to LDAP users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+  echo "first broker login flow ${FLOW_ALIAS} created"
+fi
+
+for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
+  EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
+    | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
+  if [ -z "${EXEC_ID}" ]; then
+    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
+      -d "{\"provider\":\"${PROVIDER}\",\"requirement\":\"REQUIRED\"}"
+    EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
+      | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
+    echo "added ${PROVIDER} to ${FLOW_ALIAS}"
+  fi
+  if [ -n "${EXEC_ID}" ]; then
+    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
+      -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
+  fi
+done
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmName, firstBrokerLoginFlowAlias)
+}

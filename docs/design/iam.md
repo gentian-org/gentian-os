@@ -63,6 +63,11 @@ Once per tenant (when any OIDC app is installed), the reconciler also sets the
 realm browser flow to `browser-kernel-idp` (auto-redirect to the kernel IdP)
 so users are not prompted for a tenant-realm LDAP password after portal login.
 
+The kernel IdP uses a custom first-broker-login flow (`first-broker-login-gentian`)
+with **Detect existing broker user** + **Automatically set existing user** so
+LDAP-preprovisioned tenant users are linked by email without the default
+confirm/re-authenticate prompt (tenant users have no local Keycloak password).
+
 LDAP `group-ldap-mapper` on the tenant realm federation imports
 `managed-by-attribute-*` groups from the tenant OU so pack role mappings resolve.
 

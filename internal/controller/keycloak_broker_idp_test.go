@@ -10,6 +10,7 @@ import (
 func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 	script := buildBrokerIdentityProviderScript()
 	for _, want := range []string{
+		firstBrokerLoginFlowAlias,
 		`${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token`,
 		`user-attribute-ldap-mapper`,
 		`ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"`,
