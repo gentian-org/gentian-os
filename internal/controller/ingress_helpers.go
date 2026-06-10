@@ -86,6 +86,37 @@ func keycloakOIDCAncestorOrigins(
 // block (microk8s ingress sometimes misses proxy_hide_header in location only).
 const nginxServerSnippetAnnotation = "nginx.ingress.kubernetes.io/server-snippet"
 
+const (
+	nginxProxyBodySizeAnnotation       = "nginx.ingress.kubernetes.io/proxy-body-size"
+	nginxProxyBufferSizeAnnotation     = "nginx.ingress.kubernetes.io/proxy-buffer-size"
+	nginxProxyBuffersNumberAnnotation  = "nginx.ingress.kubernetes.io/proxy-buffers-number"
+	nginxProxyBusyBuffersSizeAnnotation = "nginx.ingress.kubernetes.io/proxy-busy-buffers-size"
+)
+
+// keycloakProxyIngressBufferAnnotations prevents nginx 502 "upstream sent too big
+// header" on broker /endpoint redirects (Keycloak sets large session cookies).
+var keycloakProxyIngressBufferAnnotations = map[string]string{
+	nginxProxyBodySizeAnnotation:        "128k",
+	nginxProxyBufferSizeAnnotation:      "64k",
+	nginxProxyBuffersNumberAnnotation:   "4",
+	nginxProxyBusyBuffersSizeAnnotation: "128k",
+}
+
+func ensureKeycloakProxyIngressBuffers(annotations map[string]string) {
+	for k, v := range keycloakProxyIngressBufferAnnotations {
+		annotations[k] = v
+	}
+}
+
+func keycloakProxyIngressBuffersApplied(annotations map[string]string) bool {
+	for k, v := range keycloakProxyIngressBufferAnnotations {
+		if annotations[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 func keycloakOIDCIngressServerSnippet() string {
 	// proxy_hide_header alone is not always enough on microk8s ingress-nginx; an
 	// empty X-Frame-Options override prevents Keycloak SAMEORIGIN from blocking

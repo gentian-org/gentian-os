@@ -56,6 +56,15 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
+	brokerReady, err := r.ensureAllBrokerIdentityProviderJobs(ctx)
+	if err != nil {
+		logger.Error(err, "Keycloak broker IdP jobs failed")
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+	}
+	if !brokerReady {
+		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
 	if !keycloakIngressFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -194,12 +203,14 @@ func reconcileKeycloakIDPEmbeddingIngress(ctx context.Context, c client.Client, 
 	}
 
 	desiredServerSnippet := keycloakOIDCIngressServerSnippet()
-	annotations := make(map[string]string, len(existing.Annotations)+2)
+	annotations := make(map[string]string, len(existing.Annotations)+6)
 	for k, v := range existing.Annotations {
 		annotations[k] = v
 	}
+	ensureKeycloakProxyIngressBuffers(annotations)
 	if annotations[nginxConfigurationSnippetAnnotation] == desiredSnippet &&
-		annotations[nginxServerSnippetAnnotation] == desiredServerSnippet {
+		annotations[nginxServerSnippetAnnotation] == desiredServerSnippet &&
+		keycloakProxyIngressBuffersApplied(annotations) {
 		return nil
 	}
 	annotations[nginxConfigurationSnippetAnnotation] = desiredSnippet
@@ -251,6 +262,9 @@ func keycloakIngressFramePolicyApplied(ctx context.Context, c client.Client, ker
 		return false
 	}
 	if existing.Annotations[nginxServerSnippetAnnotation] != keycloakOIDCIngressServerSnippet() {
+		return false
+	}
+	if !keycloakProxyIngressBuffersApplied(existing.Annotations) {
 		return false
 	}
 	if !strings.Contains(existing.Annotations[nginxConfigurationSnippetAnnotation], fmt.Sprintf("https://portal.%s", kernelDomain)) {
