@@ -76,6 +76,10 @@ Usage:
       permanently deletes all tenant data including LDAP users, databases,
       mail secrets, UMC releases, and other orchestrator-owned artifacts.
 
+    kubectl gentian tenants cleanup-ldap <instance> [--env <stage>]
+      Delete the tenant LDAP OU (recursive). Use after a failed purge left users
+      in UMC, or to repair LDAP without a live Tenant CR.
+
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
@@ -90,6 +94,7 @@ Examples:
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
   kubectl gentian tenants undeploy demo --purge   # or -f
+  kubectl gentian tenants cleanup-ldap demo
 EOF
 }
 
@@ -1722,6 +1727,39 @@ cmd_tenant_undeploy_purge() {
   echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
 }
 
+cmd_tenant_cleanup_ldap() {
+  local instance="${1:-}"
+  local env_name="${2:-dev}"
+
+  if [[ -z "${instance}" ]]; then
+    echo "ERROR: usage: kubectl gentian tenants cleanup-ldap <instance> [--env <env>]" >&2
+    exit 1
+  fi
+
+  ensure_repo
+  tenant_definition_stage_dir "${instance}" "${env_name}" >/dev/null
+
+  local resource_file tenant_name
+  resource_file="$(tenant_definition_stage_dir "${instance}" "${env_name}")/tenant.yaml"
+  if [[ ! -f "${resource_file}" ]]; then
+    resource_file="$(tenant_instance_resource_file "${instance}" "${env_name}")"
+  fi
+  tenant_name="${instance}"
+  if [[ -f "${resource_file}" ]]; then
+    tenant_name="$(tenant_instance_name_from_patch "${resource_file}")"
+    [[ -z "${tenant_name}" ]] && tenant_name="${instance}"
+  fi
+
+  echo "Deleting LDAP OU for tenant '${tenant_name}' (instance '${instance}')..."
+  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true "${instance}"; then
+    exit 1
+  fi
+  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}" "${instance}"; then
+    exit 1
+  fi
+  echo "Done. LDAP OU for tenant '${tenant_name}' is removed."
+}
+
 # ---------------------------------------------------------------------------
 # apps list
 # ---------------------------------------------------------------------------
@@ -1941,6 +1979,23 @@ case "${SUBCOMMAND}" in
           esac
         done
         cmd_tenant_undeploy "${TENANT_INSTANCE}" "${TENANT_ENV}" "${PURGE}"
+        ;;
+      cleanup-ldap)
+        TENANT_INSTANCE="${1:-}"
+        shift || true
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --env|-e)
+              TENANT_ENV="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_tenant_cleanup_ldap "${TENANT_INSTANCE}" "${TENANT_ENV}"
         ;;
       *)
         echo "ERROR: unknown tenants subcommand: ${TENANT_CMD}" >&2
