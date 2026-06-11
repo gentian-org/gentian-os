@@ -637,6 +637,14 @@ spec:
                 (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
                 (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
             }}
+            {{- /* Charts that render env from values.environment (e.g. OpenProject)   */}}
+            {{- /* ignore top-level extraEnvVars — merge staging CA paths there too. */}}
+            {{- $stagingEnvironment := dict
+                "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
+                "SSL_CERT_FILE" "/opt/gentian-staging-ca/ca.crt"
+                "DENO_CERT" "/opt/gentian-staging-ca/ca.crt"
+            }}
+            {{- $existingEnvironment := default dict (dig "environment" dict $extraVals) }}
             {{- $stagingJavaOpts := list
                 "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
                 "-Djavax.net.ssl.trustStoreType=JKS"
@@ -653,6 +661,7 @@ spec:
             {{- end }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
                 "extraEnvVars" (concat (default list (dig "extraEnvVars" list $extraVals)) $stagingEnv)
+                "environment" (mergeOverwrite $existingEnvironment $stagingEnvironment)
                 "extraVolumes" (concat (default list (dig "extraVolumes" list $extraVals)) (list $stagingVol))
                 "extraVolumeMounts" (concat (default list (dig "extraVolumeMounts" list $extraVals)) $stagingMounts)
             ) }}
