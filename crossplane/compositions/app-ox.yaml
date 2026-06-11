@@ -596,6 +596,7 @@ spec:
             {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
+            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
             {{- $kr            := default dict $pSpec.kernelRequirements }}
             {{- $identity      := default dict $kr.identity }}
             {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}
@@ -636,7 +637,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -726,11 +726,10 @@ spec:
                               name: {{ $app }}-ldap-init
                         containers:
                           - name: ldap-search-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -791,7 +790,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -873,11 +871,10 @@ spec:
                               name: {{ $app }}-s3-init
                         containers:
                           - name: s3-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl minio-client 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -935,7 +932,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -1030,11 +1026,10 @@ spec:
                               name: {{ $app }}-db-init
                         containers:
                           - name: database-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts

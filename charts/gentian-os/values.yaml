@@ -142,7 +142,7 @@ argocd:
 memcached:
   chartRepo: "https://charts.bitnami.com/bitnami"
   chartName: "memcached"
-  chartVersion: "7.4.1"
+  chartVersion: "8.6.1"
 
 # Operator defaults
 defaults:

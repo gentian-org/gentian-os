@@ -132,6 +132,7 @@ spec:
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
+            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
 
             {{- /* ── Load Jitsi OIDC overlay files (optional until install upserts CM) */}}
             {{- $jitsiOverlayRes  := dig "jitsiOidcOverlays" list $extraRes }}
@@ -624,30 +625,23 @@ spec:
             {{- $krStaging := default dict $pSpec.kernelRequirements }}
             {{- $identityStaging := default dict $krStaging.identity }}
             {{- $oidcStaging := default dict $identityStaging.oidc }}
-            {{- $stagingEnv := list
-                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/etc/ssl/certs/ca-certificates.crt")
-                (dict "name" "SSL_CERT_FILE" "value" "/etc/ssl/certs/ca-certificates.crt")
-                (dict "name" "DENO_CERT" "value" "/etc/ssl/certs/ca-certificates.crt")
-            }}
             {{- $stagingVol := dict
-                "name" "trusted-cert-secret-volume"
-                "secret" (dict
-                  "secretName" "gentian-staging-ca-tls"
-                  "items" (list
-                    (dict "key" "ca.crt" "path" "ca-certificates.crt")
-                    (dict "key" "truststore.jks" "path" "truststore.jks")
-                  )
-                )
+                "name" "gentian-staging-ca"
+                "secret" (dict "secretName" "gentian-staging-ca-tls")
             }}
             {{- $stagingMounts := list
-                (dict "name" "trusted-cert-secret-volume" "mountPath" "/etc/ssl/certs/ca-certificates.crt" "subPath" "ca-certificates.crt")
-                (dict "name" "trusted-cert-secret-volume" "mountPath" "/etc/ssl/certs/truststore.jks" "subPath" "truststore.jks")
+                (dict "name" "gentian-staging-ca" "mountPath" "/opt/gentian-staging-ca" "readOnly" true)
+            }}
+            {{- $stagingEnv := list
+                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
             }}
             {{- $existingJavaOpts := default list (dig "javaOpts" list $extraVals) }}
             {{- $needsJavaTrust := or (gt (len $existingJavaOpts) 0) $oidcStaging.clientId }}
             {{- if $needsJavaTrust }}
             {{- $existingJavaOpts = concat $existingJavaOpts (list
-                "-Djavax.net.ssl.trustStore=/etc/ssl/certs/truststore.jks"
+                "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
                 "-Djavax.net.ssl.trustStoreType=JKS"
                 "-Djavax.net.ssl.trustStorePassword=changeit"
             ) }}
@@ -893,7 +887,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -983,11 +976,10 @@ spec:
                               name: {{ $app }}-ldap-init
                         containers:
                           - name: ldap-search-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -1050,7 +1042,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -1132,11 +1123,10 @@ spec:
                               name: {{ $app }}-s3-init
                         containers:
                           - name: s3-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl minio-client 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -1196,7 +1186,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -1291,11 +1280,10 @@ spec:
                               name: {{ $app }}-db-init
                         containers:
                           - name: database-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts

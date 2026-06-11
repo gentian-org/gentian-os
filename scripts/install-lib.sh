@@ -1214,6 +1214,7 @@ data:
   mail.serviceMode: "${_mail_mode}"
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
+  appInit.image: "ghcr.io/gentian-org/gentian-app-init:${APP_INIT_IMAGE_TAG:-develop}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
 }

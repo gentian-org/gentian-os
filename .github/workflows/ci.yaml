@@ -130,6 +130,23 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Extract app-init metadata
+        id: app_init_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/gentian-org/gentian-app-init
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+
+      - name: Build and push app-init image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/app-init
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.app_init_meta.outputs.tags }}
+          labels: ${{ steps.app_init_meta.outputs.labels }}
+
   crossplane-unit:
     name: Crossplane — unit tests (render + functions + schema)
     runs-on: ubuntu-latest

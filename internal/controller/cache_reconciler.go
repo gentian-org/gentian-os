@@ -51,7 +51,7 @@ const (
 var (
 	memcachedChartRepo    = envOrDefault("MEMCACHED_CHART_REPO", "https://charts.bitnami.com/bitnami")
 	memcachedChartName    = envOrDefault("MEMCACHED_CHART_NAME", "memcached")
-	memcachedChartVersion = envOrDefault("MEMCACHED_CHART_VERSION", "7.4.1")
+	memcachedChartVersion = envOrDefault("MEMCACHED_CHART_VERSION", "8.6.1")
 )
 
 var argocdApplicationGVK = schema.GroupVersionKind{
@@ -181,6 +181,14 @@ func (r *TenantReconciler) ensureMemcachedApplication(ctx context.Context, tenan
 	}
 	if err != nil {
 		return false, err
+	}
+	currentRev, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "targetRevision")
+	if currentRev != memcachedChartVersion {
+		_ = unstructured.SetNestedField(obj.Object, memcachedChartVersion, "spec", "source", "targetRevision")
+		if err := r.Update(ctx, obj); err != nil {
+			return false, fmt.Errorf("update memcached chart version: %w", err)
+		}
+		return false, nil
 	}
 	return argocdApplicationIsHealthy(obj), nil
 }
