@@ -9,6 +9,12 @@ import (
 
 func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 	script := buildBrokerIdentityProviderScript()
+	if strings.Contains(script, `\"firstBrokerLoginFlowAlias\":`+`"`+firstBrokerLoginFlowAlias) {
+		t.Fatal("broker IdP script must not use Go-quoted alias inside shell JSON")
+	}
+	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"`+firstBrokerLoginFlowAlias+`\"`) {
+		t.Fatal("broker IdP script must embed firstBrokerLoginFlowAlias with shell-safe JSON escaping")
+	}
 	for _, want := range []string{
 		firstBrokerLoginFlowAlias,
 		`idp-detect-existing-broker-user`,
