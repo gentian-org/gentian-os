@@ -782,6 +782,95 @@ spec:
                 name: kubernetes
             {{- end }}
 
+            {{- /* ── OpenProject: seed OIDC auth provider before web pods start ── */}}
+            {{- /* OpenProject 16.x registers /auth/:provider from auth_providers DB  */}}
+            {{- /* rows. The chart seeder hook only runs on post-install (revision 1); */}}
+            {{- /* repeated Crossplane upgrades skip it, leaving /auth/keycloak → 404.  */}}
+            {{- if eq $app "openproject" }}
+            {{- $opKernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
+            {{- $opImg := dig "image" dict $extraVals }}
+            {{- $opImage := printf "%s/%s:%s" (dig "registry" "registry.opencode.de" $opImg) (dig "repository" "" $opImg) (dig "tag" "latest" $opImg) }}
+            {{- $opDbRole := printf "%s_%s" $tenant $app | replace "-" "_" }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-seed-job
+              name: {{ $xrName }}-oidc-seed-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-oidc-seed
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 3600
+                    backoffLimit: 5
+                    template:
+                      spec:
+                        restartPolicy: OnFailure
+                        containers:
+                          - name: oidc-seed
+                            image: {{ $opImage | quote }}
+                            command: ["/bin/bash", "-lc"]
+                            args:
+                              - |
+                                set -euo pipefail
+                                bundle exec rails runner 'if ActiveRecord::Base.connection.select_value("SELECT COUNT(*) FROM auth_providers").to_i == 0; EnvData::OpenIDConnect::ProviderSeeder.new.seed!; puts "OIDC auth provider seeded"; else puts "auth_providers already present — skipping"; end'
+                            env:
+                              - name: DATABASE_HOST
+                                value: {{ $cnpgHost | quote }}
+                              - name: DATABASE_PORT
+                                value: "5432"
+                              - name: DATABASE_URL
+                                value: {{ printf "postgresql://%s@%s:5432/%s" $opDbRole $cnpgHost $opDbRole | quote }}
+                              - name: OPENPROJECT_DB_PASSWORD
+                                valueFrom:
+                                  secretKeyRef:
+                                    name: {{ $secretName }}
+                                    key: db-password
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ISSUER
+                                value: {{ printf "https://id.%s/realms/%s" $opKernelDomain $tenant | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_HOST
+                                value: {{ printf "id.%s" $opKernelDomain | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_IDENTIFIER
+                                value: "opendesk-openproject"
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_DISPLAY__NAME
+                                value: "Keycloak"
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_SCOPE
+                                value: "[openid,opendesk-openproject-scope]"
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_AUTHORIZATION__ENDPOINT
+                                value: {{ printf "/realms/%s/protocol/openid-connect/auth" $tenant | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_TOKEN__ENDPOINT
+                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/token" $opKernelDomain $tenant | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_USERINFO__ENDPOINT
+                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/userinfo" $opKernelDomain $tenant | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_JWKS__URI
+                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/certs" $opKernelDomain $tenant | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_END__SESSION__ENDPOINT
+                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/logout" $opKernelDomain $tenant | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_POST__LOGOUT__REDIRECT__URI
+                                value: {{ printf "https://projects.%s/" $domain | quote }}
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ATTRIBUTE__MAP_LOGIN
+                                value: "opendesk_username"
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ATTRIBUTE__MAP_ADMIN
+                                value: "openproject_admin"
+                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_SECRET
+                                valueFrom:
+                                  secretKeyRef:
+                                    name: {{ $secretName }}
+                                    key: oidc-client-secret
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
             {{- $extraVals = $extraVals | toJson | fromJson }}
 
