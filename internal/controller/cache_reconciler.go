@@ -52,6 +52,7 @@ var (
 	memcachedChartRepo    = envOrDefault("MEMCACHED_CHART_REPO", "https://charts.bitnami.com/bitnami")
 	memcachedChartName    = envOrDefault("MEMCACHED_CHART_NAME", "memcached")
 	memcachedChartVersion = envOrDefault("MEMCACHED_CHART_VERSION", "8.6.1")
+	memcachedImageTag     = envOrDefault("MEMCACHED_IMAGE_TAG", "1.6.42")
 )
 
 var argocdApplicationGVK = schema.GroupVersionKind{
@@ -183,8 +184,11 @@ func (r *TenantReconciler) ensureMemcachedApplication(ctx context.Context, tenan
 		return false, err
 	}
 	currentRev, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "targetRevision")
-	if currentRev != memcachedChartVersion {
+	currentValues, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "helm", "values")
+	desiredValues := memcachedHelmValues()
+	if currentRev != memcachedChartVersion || currentValues != desiredValues {
 		_ = unstructured.SetNestedField(obj.Object, memcachedChartVersion, "spec", "source", "targetRevision")
+		_ = unstructured.SetNestedField(obj.Object, desiredValues, "spec", "source", "helm", "values")
 		if err := r.Update(ctx, obj); err != nil {
 			return false, fmt.Errorf("update memcached chart version: %w", err)
 		}
@@ -335,6 +339,7 @@ func buildMemcachedApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Un
 	_ = unstructured.SetNestedField(obj.Object, memcachedChartRepo, "spec", "source", "repoURL")
 	_ = unstructured.SetNestedField(obj.Object, memcachedChartName, "spec", "source", "chart")
 	_ = unstructured.SetNestedField(obj.Object, memcachedChartVersion, "spec", "source", "targetRevision")
+	_ = unstructured.SetNestedField(obj.Object, memcachedHelmValues(), "spec", "source", "helm", "values")
 	_ = unstructured.SetNestedField(obj.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
 	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "destination", "namespace")
 	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "prune")
@@ -443,6 +448,10 @@ func redisKeyPrefix(tenantName, appName string) string {
 // memcachedApplicationName returns the ArgoCD Application CR name for a tenant's Memcached instance.
 func memcachedApplicationName(tenantName string) string {
 	return fmt.Sprintf("memcached-%s", tenantName)
+}
+
+func memcachedHelmValues() string {
+	return fmt.Sprintf("image:\n  tag: %q\n", memcachedImageTag)
 }
 
 func redisACLJobName(tenantName, appName string) string {

@@ -39,6 +39,9 @@ ldap:
 # MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
 infraNamespace: "gentian-infra-dev"
 
+# openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
+openbaoNamespace: "openbao"
+
 # servicesNamespace is the namespace hosting platform services consumed by
 # tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
 servicesNamespace: "gentian-dev"
@@ -143,6 +146,8 @@ memcached:
   chartRepo: "https://charts.bitnami.com/bitnami"
   chartName: "memcached"
   chartVersion: "8.6.1"
+  # Pin a pullable tag; chart 7.4.1 referenced a removed bitnami/memcached digest.
+  imageTag: "1.6.42"
 
 # Operator defaults
 defaults:

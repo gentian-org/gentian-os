@@ -75,6 +75,7 @@ const (
 var (
 	infraNamespace    = envOrDefault("INFRA_NAMESPACE", "gentian-infra-dev")
 	servicesNamespace = envOrDefault("SERVICES_NAMESPACE", "gentian-dev")
+	openbaoNamespace  = envOrDefault("OPENBAO_NAMESPACE", "openbao")
 )
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been
@@ -1054,6 +1055,16 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 				{
 					NamespaceSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
+					},
+				},
+			},
+		},
+		{
+			// Allow egress to OpenBao for app init Jobs (ldap/db/s3 credential seeding).
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": openbaoNamespace},
 					},
 				},
 			},
