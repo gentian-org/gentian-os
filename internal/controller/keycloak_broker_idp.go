@@ -5,7 +5,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -20,7 +19,7 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "5"
+const brokerIdentityProviderVersion = "6"
 
 // firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
 // kernel IdP logins to pre-provisioned LDAP users by email (no confirm/re-auth).
@@ -38,7 +37,7 @@ func tenantBrokerIdPJobName(tenantName string) string {
 // so Keycloak does not hairpin through the public id.<kernel> URL during broker
 // code exchange; browser-facing issuer and authorizationUrl stay external.
 func buildBrokerIdentityProviderScript() string {
-	script := keycloakShellJSONIDExtractor() + `
+	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + fmt.Sprintf(`
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
@@ -56,21 +55,23 @@ TOKEN=$(curl -sf --max-time 30 \
 
 BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-` + brokerResolveIDShell + `
+%s
 BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
   | sed 's/.*"value":"\([^"]*\)".*/\1/')
 
-IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
+%s
+
+IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
 if [ "${IDP_HTTP}" != "200" ]; then
   echo "ERROR: kernel IdP not found in realm ${REALM_NAME} (HTTP ${IDP_HTTP})" >&2
   exit 1
 fi
 
-IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
+IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":%q,\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
 
-HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -X PUT \
+HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X PUT \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
   -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
   -d "${IDP_BODY}")
@@ -80,12 +81,10 @@ else
   echo "ERROR: kernel IdP update for realm ${REALM_NAME} failed (HTTP ${HTTP})" >&2
   exit 1
 fi
-` + ensureLDAPUIDAttributeMapperShell + `
 ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
-` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
-`
-	return strings.Replace(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`,
-		fmt.Sprintf(`\"firstBrokerLoginFlowAlias\":%q`, firstBrokerLoginFlowAlias), 1)
+%s%s
+`, brokerResolveIDShell, buildEnsureFirstBrokerLoginFlowShell(`"${REALM_NAME}"`), firstBrokerLoginFlowAlias,
+		brokerKernelClientUsernameMapperShell, brokerIdPUsernameImporterShell)
 }
 
 const brokerKernelClientUsernameMapperShell = `
@@ -165,6 +164,17 @@ func brokerIdPJobCurrent(job *batchv1.Job) bool {
 
 func (r *TenantReconciler) ensureBrokerIdentityProviderJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) error {
 	if r.KernelRealm == "" || r.KernelDomain == "" {
+		return nil
+	}
+	realmJob := &batchv1.Job{}
+	switch realmErr := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: kernelNamespace}, realmJob); {
+	case errors.IsNotFound(realmErr):
+		log.FromContext(ctx).Info("waiting for Keycloak realm job before broker IdP update", "tenant", tenant.Name)
+		return nil
+	case realmErr != nil:
+		return fmt.Errorf("get realm job for broker IdP gate: %w", realmErr)
+	case !jobIsComplete(realmJob):
+		log.FromContext(ctx).Info("waiting for Keycloak realm job to complete before broker IdP update", "tenant", tenant.Name)
 		return nil
 	}
 	kernelExternalURL := fmt.Sprintf("https://id.%s", r.KernelDomain)

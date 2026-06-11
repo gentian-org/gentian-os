@@ -96,9 +96,15 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 
 func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 	script := buildFirstBrokerLoginFlowScript("demo")
+	if path := os.Getenv("DUMP_FIRST_BROKER_LOGIN_SCRIPT"); path != "" {
+		if err := os.WriteFile(path, []byte(keycloakProvisionerBootstrap+script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, want := range []string{
 		firstBrokerLoginFlowAlias,
 		`idp-detect-existing-broker-user`,
+		`first broker login flow ${FLOW_ALIAS} ready`,
 		`idp-auto-link`,
 		`requirement\":\"REQUIRED`,
 		`federated-identity/kernel`,

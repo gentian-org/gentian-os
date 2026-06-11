@@ -911,8 +911,9 @@ fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmNa
 		realmName, realmName, realmName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	script = strings.ReplaceAll(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`,
-		fmt.Sprintf(`\"firstBrokerLoginFlowAlias\":%q`, firstBrokerLoginFlowAlias))
+	// Realm Job registers the kernel IdP with the built-in "first broker login" flow.
+	// The custom first-broker-login-gentian flow is created later (dedicated Job or
+	// broker-idp Job) before the IdP alias is switched — see docs/design/iam.md.
 	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + script
 }
 

@@ -251,18 +251,12 @@ curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
 echo "realm ${REALM} browser flow set to ${FLOW_ALIAS}"`, realmName)
 }
 
-// buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
-// that links kernel IdP identities to existing LDAP users by email without prompting.
-// See Keycloak docs: "Detect existing user first login flow".
-func buildFirstBrokerLoginFlowScript(realmName string) string {
-	return fmt.Sprintf(`set -eu
-REALM=%q
+// buildEnsureFirstBrokerLoginFlowShell creates the custom first-broker-login flow
+// when missing. Requires TOKEN and sets REALM from realmExpr (e.g. "demo" or "${REALM_NAME}").
+func buildEnsureFirstBrokerLoginFlowShell(realmExpr string) string {
+	return fmt.Sprintf(`
+REALM=%s
 FLOW_ALIAS=%q
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
@@ -294,7 +288,20 @@ for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
       -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
   fi
 done
-echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmExpr, firstBrokerLoginFlowAlias)
+}
+
+// buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
+// that links kernel IdP identities to existing LDAP users by email without prompting.
+// See Keycloak docs: "Detect existing user first login flow".
+func buildFirstBrokerLoginFlowScript(realmName string) string {
+	return fmt.Sprintf(`set -eu
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+%s
 
 # Drop stale kernel IdP links left from the old confirm/re-auth flow or partial
 # links. Users re-link silently on the next broker login via auto-link.
@@ -319,5 +326,5 @@ while true; do
     break
   fi
 done
-echo "kernel broker link purge finished for realm ${REALM}"`, realmName, firstBrokerLoginFlowAlias)
+echo "kernel broker link purge finished for realm ${REALM}"`, buildEnsureFirstBrokerLoginFlowShell(fmt.Sprintf("%q", realmName)))
 }

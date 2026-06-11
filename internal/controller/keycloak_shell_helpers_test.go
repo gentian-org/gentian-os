@@ -82,6 +82,13 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 		t.Fatal("realm script must not splice ldapIDBlock into the HTTP curl line")
 	}
 
+	if strings.Contains(script, firstBrokerLoginFlowAlias) {
+		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
+	}
+	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`) {
+		t.Fatal("realm script must use built-in first broker login flow for initial IdP registration")
+	}
+
 	path := t.TempDir() + "/realm.sh"
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
