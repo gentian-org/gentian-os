@@ -20,20 +20,14 @@ import (
 	"context"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
-
-var argocdAppGVK = schema.GroupVersionKind{
-	Group:   "argoproj.io",
-	Version: "v1alpha1",
-	Kind:    "Application",
-}
 
 // newRedisProfile creates a minimal AppProfile that requires a Redis cache.
 func newRedisProfile(name string) *gentianov1alpha1.AppProfile {
@@ -174,9 +168,9 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	}
 }
 
-// TestCache_CreatesMemcachedApplication verifies that a Tenant with a Memcached-requiring
-// app creates the ArgoCD Application CR in the argocd namespace.
-func TestCache_CreatesMemcachedApplication(t *testing.T) {
+// TestCache_CreatesMemcachedWorkload verifies that a Tenant with a Memcached-requiring
+// app creates a Deployment and Service named "memcached" in the tenant namespace.
+func TestCache_CreatesMemcachedWorkload(t *testing.T) {
 	t.Parallel()
 	profile := newMemcachedProfile("mc-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
@@ -198,27 +192,25 @@ func TestCache_CreatesMemcachedApplication(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	app := &unstructured.Unstructured{}
-	app.SetGroupVersionKind(argocdAppGVK)
+	dep := &appsv1.Deployment{}
+	svc := &corev1.Service{}
 	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "memcached-mccreate", Namespace: "argocd"}, app) == nil
+		depErr := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "memcached", Namespace: "tenant-mccreate"}, dep)
+		svcErr := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "memcached", Namespace: "tenant-mccreate"}, svc)
+		return depErr == nil && svcErr == nil
 	})
 
-	if app.GetLabels()["gentianos.io/tenant"] != "mccreate" {
-		t.Errorf("expected tenant label 'mccreate', got %q", app.GetLabels()["gentianos.io/tenant"])
+	if dep.GetLabels()["gentianos.io/tenant"] != "mccreate" {
+		t.Errorf("expected tenant label 'mccreate', got %q", dep.GetLabels()["gentianos.io/tenant"])
+	}
+	if len(dep.Spec.Template.Spec.Containers) == 0 || dep.Spec.Template.Spec.Containers[0].Name != "memcached" {
+		t.Errorf("expected memcached container in Deployment")
 	}
 
-	// Verify destination namespace points to the tenant namespace.
-	destNS, _, _ := unstructured.NestedString(app.Object, "spec", "destination", "namespace")
-	if destNS != "tenant-mccreate" {
-		t.Errorf("expected destination namespace 'tenant-mccreate', got %q", destNS)
-	}
-
-	// Verify chart reference is Bitnami Memcached.
-	chart, _, _ := unstructured.NestedString(app.Object, "spec", "source", "chart")
-	if chart != "memcached" {
-		t.Errorf("expected chart 'memcached', got %q", chart)
+	if svc.Spec.Ports[0].Port != 11211 {
+		t.Errorf("expected Service port 11211, got %d", svc.Spec.Ports[0].Port)
 	}
 }
 
@@ -320,10 +312,9 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "platform-kernel"}, job) == nil
 	})
 	waitFor(t, jobAppearTimeout, func() bool {
-		app := &unstructured.Unstructured{}
-		app.SetGroupVersionKind(argocdAppGVK)
+		dep := &appsv1.Deployment{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "memcached-cachedelete", Namespace: "argocd"}, app) == nil
+			types.NamespacedName{Name: "memcached", Namespace: "tenant-cachedelete"}, dep) == nil
 	})
 
 	// Delete the tenant.
@@ -345,12 +336,17 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 		t.Errorf("expected tenant label 'cachedelete', got %q", deleteJob.Labels["gentianos.io/tenant"])
 	}
 
-	// Memcached Application CR should be gone.
+	// Memcached Deployment and Service should be gone.
 	waitFor(t, jobAppearTimeout, func() bool {
-		app := &unstructured.Unstructured{}
-		app.SetGroupVersionKind(argocdAppGVK)
+		dep := &appsv1.Deployment{}
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "memcached-cachedelete", Namespace: "argocd"}, app)
+			types.NamespacedName{Name: "memcached", Namespace: "tenant-cachedelete"}, dep)
 		return err != nil // NotFound = success
+	})
+	waitFor(t, jobAppearTimeout, func() bool {
+		svc := &corev1.Service{}
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "memcached", Namespace: "tenant-cachedelete"}, svc)
+		return err != nil
 	})
 }

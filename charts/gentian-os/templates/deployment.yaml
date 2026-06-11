@@ -87,14 +87,8 @@ spec:
               value: {{ .Values.servicesNamespace | quote }}
             - name: OPENBAO_NAMESPACE
               value: {{ .Values.openbaoNamespace | quote }}
-            - name: MEMCACHED_CHART_REPO
-              value: {{ .Values.memcached.chartRepo | quote }}
-            - name: MEMCACHED_CHART_NAME
-              value: {{ .Values.memcached.chartName | quote }}
-            - name: MEMCACHED_CHART_VERSION
-              value: {{ .Values.memcached.chartVersion | quote }}
-            - name: MEMCACHED_IMAGE_TAG
-              value: {{ .Values.memcached.imageTag | quote }}
+            - name: MEMCACHED_IMAGE
+              value: {{ .Values.memcached.image | quote }}
           ports:
             - name: metrics
               containerPort: 8080

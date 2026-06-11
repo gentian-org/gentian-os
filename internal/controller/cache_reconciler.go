@@ -21,13 +21,16 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,24 +39,23 @@ import (
 )
 
 const (
-	conditionCacheReady   = "CacheReady"
-	redisProvisionerImage = "redis:7-alpine"
-	redisAdminSecret      = "redis-admin"
-	cacheRequeueAfter     = 2 * time.Second
-	argocdGroup           = "argoproj.io"
-	argocdVersion         = "v1alpha1"
-	argocdApplicationKind = "Application"
-	argocdNamespace       = "argocd"
+	conditionCacheReady      = "CacheReady"
+	redisProvisionerImage    = "redis:7-alpine"
+	redisAdminSecret         = "redis-admin"
+	cacheRequeueAfter        = 2 * time.Second
+	argocdGroup              = "argoproj.io"
+	argocdVersion            = "v1alpha1"
+	argocdApplicationKind    = "Application"
+	argocdNamespace          = "argocd"
+	memcachedServiceName     = "memcached"
+	memcachedDeploymentName  = "memcached"
+	memcachedPort            = int32(11211)
 )
 
-// Memcached chart coordinates — configurable via Helm values / env vars so
-// upgrades don't require an operator image rebuild.
-var (
-	memcachedChartRepo    = envOrDefault("MEMCACHED_CHART_REPO", "https://charts.bitnami.com/bitnami")
-	memcachedChartName    = envOrDefault("MEMCACHED_CHART_NAME", "memcached")
-	memcachedChartVersion = envOrDefault("MEMCACHED_CHART_VERSION", "8.6.1")
-	memcachedImageTag     = envOrDefault("MEMCACHED_IMAGE_TAG", "1.6.42")
-)
+// Memcached image — configurable via Helm values / env vars so upgrades don't
+// require an operator image rebuild. Uses the official Docker Hub image because
+// Bitnami chart images are not reliably pullable on all clusters.
+var memcachedImage = envOrDefault("MEMCACHED_IMAGE", "memcached:1.6.38-alpine")
 
 var argocdApplicationGVK = schema.GroupVersionKind{
 	Group:   argocdGroup,
@@ -62,8 +64,8 @@ var argocdApplicationGVK = schema.GroupVersionKind{
 }
 
 // ensureCache provisions per-app Redis ACL users (via redis-cli Job) and per-tenant
-// Memcached instances (via ArgoCD Application CR). CacheReady is set to True once all
-// Jobs complete and all Application CRs report Healthy.
+// Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
+// to True once all Jobs complete and Memcached reports ready replicas.
 func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant)
 	if err != nil {
@@ -89,11 +91,11 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 		}
 	}
 
-	// One Memcached ArgoCD Application CR per tenant (covers all apps needing Memcached).
+	// One Memcached Deployment per tenant (covers all apps needing Memcached).
 	if len(memcachedApps) > 0 {
-		done, err := r.ensureMemcachedApplication(ctx, tenant)
+		done, err := r.ensureMemcached(ctx, tenant, memcachedApps)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Memcached Application CR: %w", err)
+			return ctrl.Result{}, fmt.Errorf("ensure Memcached: %w", err)
 		}
 		if !done {
 			allDone = false
@@ -170,37 +172,77 @@ func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentia
 	return jobIsComplete(job), nil
 }
 
-// ensureMemcachedApplication creates (or checks health of) the ArgoCD Application CR
-// that deploys a per-tenant Memcached instance. Returns true when health=Healthy.
-func (r *TenantReconciler) ensureMemcachedApplication(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	appName := memcachedApplicationName(tenant.Name)
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(argocdApplicationGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: appName, Namespace: argocdNamespace}, obj)
+// ensureMemcached seeds per-app cache credentials, removes any legacy ArgoCD
+// Application CR from the Bitnami era, and ensures a Deployment + Service named
+// "memcached" in the tenant namespace. Returns true when the Deployment is ready.
+func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant, memcachedApps []string) (bool, error) {
+	if r.Seeder != nil {
+		for _, appName := range memcachedApps {
+			if _, err := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
+				Host: memcachedServiceName,
+				Port: fmt.Sprintf("%d", memcachedPort),
+			}); err != nil {
+				return false, fmt.Errorf("seed memcached cache for app %s: %w", appName, err)
+			}
+		}
+	}
+
+	if err := r.deleteLegacyMemcachedApplication(ctx, tenant.Name); err != nil {
+		return false, err
+	}
+
+	nsName := tenantNamespaceName(tenant)
+	svcKey := types.NamespacedName{Name: memcachedServiceName, Namespace: nsName}
+
+	dep := &appsv1.Deployment{}
+	depKey := types.NamespacedName{Name: memcachedDeploymentName, Namespace: nsName}
+	err := r.Get(ctx, depKey, dep)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, buildMemcachedApplication(tenant))
+		if err := r.Create(ctx, makeMemcachedDeployment(tenant)); err != nil {
+			return false, err
+		}
+		svc := &corev1.Service{}
+		if err := r.Get(ctx, svcKey, svc); errors.IsNotFound(err) {
+			if err := r.Create(ctx, makeMemcachedService(tenant)); err != nil && !errors.IsAlreadyExists(err) {
+				return false, err
+			}
+		} else if err != nil {
+			return false, err
+		}
+		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	currentRev, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "targetRevision")
-	currentValues, _, _ := unstructured.NestedString(obj.Object, "spec", "source", "helm", "values")
-	desiredValues := memcachedHelmValues()
-	if currentRev != memcachedChartVersion || currentValues != desiredValues {
-		_ = unstructured.SetNestedField(obj.Object, memcachedChartVersion, "spec", "source", "targetRevision")
-		_ = unstructured.SetNestedField(obj.Object, desiredValues, "spec", "source", "helm", "values")
-		if err := r.Update(ctx, obj); err != nil {
-			return false, fmt.Errorf("update memcached chart version: %w", err)
+
+	if len(dep.Spec.Template.Spec.Containers) > 0 && dep.Spec.Template.Spec.Containers[0].Image != memcachedImage {
+		dep.Spec.Template.Spec.Containers[0].Image = memcachedImage
+		if err := r.Update(ctx, dep); err != nil {
+			return false, fmt.Errorf("update memcached image: %w", err)
 		}
 		return false, nil
 	}
-	return argocdApplicationIsHealthy(obj), nil
+
+	svc := &corev1.Service{}
+	err = r.Get(ctx, svcKey, svc)
+	if errors.IsNotFound(err) {
+		if err := r.Create(ctx, makeMemcachedService(tenant)); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return deploymentIsReady(dep), nil
 }
 
 // deleteCache handles cache cleanup on tenant deletion.
 // DeletionPolicy=Delete:
 //   - Creates ACL DELUSER Jobs for per-app Redis users.
-//   - Deletes the ArgoCD Application CR so ArgoCD removes the Memcached deployment.
+//   - Deletes the Memcached Deployment and Service.
+//   - Removes any legacy ArgoCD Application CR.
 //
 // DeletionPolicy=Retain:
 //   - No-op — Redis keys and Memcached data are preserved for recovery.
@@ -230,29 +272,44 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		}
 	}
 
+	nsName := tenantNamespaceName(tenant)
+	prop := metav1.DeletePropagationBackground
+	deleteOpts := &client.DeleteOptions{PropagationPolicy: &prop}
+
 	if len(memcachedApps) > 0 {
-		appCR := &unstructured.Unstructured{}
-		appCR.SetGroupVersionKind(argocdApplicationGVK)
-		appCR.SetName(memcachedApplicationName(tenant.Name))
-		appCR.SetNamespace(argocdNamespace)
-		if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Memcached Application CR: %w", err)
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: memcachedDeploymentName, Namespace: nsName},
 		}
-	} else {
-		appCR := &unstructured.Unstructured{}
-		appCR.SetGroupVersionKind(argocdApplicationGVK)
-		appCR.SetName(memcachedApplicationName(tenant.Name))
-		appCR.SetNamespace(argocdNamespace)
-		if err := r.Get(ctx, types.NamespacedName{Name: appCR.GetName(), Namespace: appCR.GetNamespace()}, appCR); err == nil {
-			if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("delete Memcached Application CR: %w", err)
-			}
-		} else if !errors.IsNotFound(err) {
-			return fmt.Errorf("get Memcached Application CR: %w", err)
+		if err := r.Delete(ctx, dep, deleteOpts); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete Memcached Deployment: %w", err)
+		}
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: memcachedServiceName, Namespace: nsName},
+		}
+		if err := r.Delete(ctx, svc, deleteOpts); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete Memcached Service: %w", err)
 		}
 	}
+
+	if err := r.deleteLegacyMemcachedApplication(ctx, tenant.Name); err != nil {
+		return err
+	}
+
 	if pending {
 		return errDeleteJobPending
+	}
+	return nil
+}
+
+// deleteLegacyMemcachedApplication removes the pre-Inc-8 ArgoCD Application CR
+// (memcached-{tenant}) if it still exists from the Bitnami chart era.
+func (r *TenantReconciler) deleteLegacyMemcachedApplication(ctx context.Context, tenantName string) error {
+	appCR := &unstructured.Unstructured{}
+	appCR.SetGroupVersionKind(argocdApplicationGVK)
+	appCR.SetName(memcachedApplicationName(tenantName))
+	appCR.SetNamespace(argocdNamespace)
+	if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete legacy Memcached ArgoCD Application: %w", err)
 	}
 	return nil
 }
@@ -320,31 +377,89 @@ func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 	}
 }
 
-// --- ArgoCD Application CR constructor --------------------------------------
+// --- Memcached workload constructors -----------------------------------------
 
-// buildMemcachedApplication returns an ArgoCD Application CR that deploys a
-// Bitnami Memcached chart into the tenant's namespace. ArgoCD handles deployment
-// and lifecycle; the orchestrator only creates/deletes the Application CR.
-func buildMemcachedApplication(tenant *gentianov1alpha1.Tenant) *unstructured.Unstructured {
+func makeMemcachedDeployment(tenant *gentianov1alpha1.Tenant) *appsv1.Deployment {
 	nsName := tenantNamespaceName(tenant)
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(argocdApplicationGVK)
-	obj.SetName(memcachedApplicationName(tenant.Name))
-	obj.SetNamespace(argocdNamespace)
-	obj.SetLabels(map[string]string{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	})
-	_ = unstructured.SetNestedField(obj.Object, "default", "spec", "project")
-	_ = unstructured.SetNestedField(obj.Object, memcachedChartRepo, "spec", "source", "repoURL")
-	_ = unstructured.SetNestedField(obj.Object, memcachedChartName, "spec", "source", "chart")
-	_ = unstructured.SetNestedField(obj.Object, memcachedChartVersion, "spec", "source", "targetRevision")
-	_ = unstructured.SetNestedField(obj.Object, memcachedHelmValues(), "spec", "source", "helm", "values")
-	_ = unstructured.SetNestedField(obj.Object, "https://kubernetes.default.svc", "spec", "destination", "server")
-	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "destination", "namespace")
-	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "prune")
-	_ = unstructured.SetNestedField(obj.Object, true, "spec", "syncPolicy", "automated", "selfHeal")
-	return obj
+	replicas := int32(1)
+	podLabels := map[string]string{
+		"app.kubernetes.io/name":     "memcached",
+		"app.kubernetes.io/instance": memcachedDeploymentName,
+	}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      memcachedDeploymentName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":     "memcached",
+				"app.kubernetes.io/instance": memcachedDeploymentName,
+				tenantLabel:                  tenant.Name,
+				managedByLabel:               managedByValue,
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: podLabels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "memcached",
+							Image: memcachedImage,
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "memcached",
+									ContainerPort: memcachedPort,
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("32Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func makeMemcachedService(tenant *gentianov1alpha1.Tenant) *corev1.Service {
+	nsName := tenantNamespaceName(tenant)
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      memcachedServiceName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":     "memcached",
+				"app.kubernetes.io/instance": memcachedDeploymentName,
+				tenantLabel:                  tenant.Name,
+				managedByLabel:               managedByValue,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app.kubernetes.io/name":     "memcached",
+				"app.kubernetes.io/instance": memcachedDeploymentName,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "memcached",
+					Port:       memcachedPort,
+					TargetPort: intstr.FromInt32(memcachedPort),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+		},
+	}
 }
 
 // --- Container constructor ---------------------------------------------------
@@ -417,16 +532,16 @@ echo "done"`,
 	)
 }
 
-// --- Status helper -----------------------------------------------------------
+// --- Status helpers ----------------------------------------------------------
 
-// argocdApplicationIsHealthy returns true when the ArgoCD Application CR reports
-// status.health.status == "Healthy". Used to gate CacheReady=True for Memcached tenants.
-func argocdApplicationIsHealthy(obj *unstructured.Unstructured) bool {
-	status, found, err := unstructured.NestedString(obj.Object, "status", "health", "status")
-	if err != nil || !found {
+func deploymentIsReady(dep *appsv1.Deployment) bool {
+	if dep.Spec.Replicas == nil {
 		return false
 	}
-	return status == "Healthy"
+	desired := *dep.Spec.Replicas
+	return dep.Status.ReadyReplicas >= desired &&
+		dep.Status.UpdatedReplicas >= desired &&
+		dep.Status.AvailableReplicas >= desired
 }
 
 // --- Name helpers ------------------------------------------------------------
@@ -445,13 +560,9 @@ func redisKeyPrefix(tenantName, appName string) string {
 	return fmt.Sprintf("%s:%s:", tenantName, appName)
 }
 
-// memcachedApplicationName returns the ArgoCD Application CR name for a tenant's Memcached instance.
+// memcachedApplicationName returns the legacy ArgoCD Application CR name.
 func memcachedApplicationName(tenantName string) string {
 	return fmt.Sprintf("memcached-%s", tenantName)
-}
-
-func memcachedHelmValues() string {
-	return fmt.Sprintf("image:\n  tag: %q\n", memcachedImageTag)
 }
 
 func redisACLJobName(tenantName, appName string) string {

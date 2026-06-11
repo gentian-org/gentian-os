@@ -637,14 +637,19 @@ spec:
                 (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
                 (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
             }}
-            {{- $existingJavaOpts := default list (dig "javaOpts" list $extraVals) }}
-            {{- $needsJavaTrust := or (gt (len $existingJavaOpts) 0) $oidcStaging.clientId }}
-            {{- if $needsJavaTrust }}
-            {{- $existingJavaOpts = concat $existingJavaOpts (list
+            {{- $stagingJavaOpts := list
                 "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
                 "-Djavax.net.ssl.trustStoreType=JKS"
                 "-Djavax.net.ssl.trustStorePassword=changeit"
-            ) }}
+            }}
+            {{- $existingJavaOpts := default list (dig "javaOpts" list $extraVals) }}
+            {{- $needsJavaTrust := or (gt (len $existingJavaOpts) 0) $oidcStaging.clientId }}
+            {{- if $needsJavaTrust }}
+            {{- range $opt := $stagingJavaOpts }}
+            {{- if not (has $opt $existingJavaOpts) }}
+            {{- $existingJavaOpts = append $existingJavaOpts $opt }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
                 "extraEnvVars" (concat (default list (dig "extraEnvVars" list $extraVals)) $stagingEnv)
@@ -777,6 +782,9 @@ spec:
                 name: kubernetes
             {{- end }}
 
+            {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
+            {{- $extraVals = $extraVals | toJson | fromJson }}
+
             {{- /* ── Emit Helm Release ────────────────────────────────────────── */}}
             ---
             apiVersion: helm.crossplane.io/v1beta1
@@ -786,6 +794,7 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
               name: {{ $xrName }}-release
             spec:
+              rollbackLimit: 3
               forProvider:
                 chart:
                   repository: {{ $chart.repository }}
@@ -793,6 +802,7 @@ spec:
                   version: {{ $chart.version | quote }}
                 namespace: {{ $ns }}
                 wait: false
+                skipCRDs: true
                 {{- if gt (len $extraVals) 0 }}
                 values:
                   {{ toYaml $extraVals | nindent 18 }}
