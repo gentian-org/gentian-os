@@ -1132,11 +1132,11 @@ spec:
                               name: {{ $app }}-s3-init
                         containers:
                           - name: s3-init
-                            image: minio/mc:latest
+                            image: alpine:3.20
                             command:
                               - /bin/sh
                               - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - apk add -q --no-progress --no-cache curl jq openssl minio-client 2>/dev/null && exec /bin/sh /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
