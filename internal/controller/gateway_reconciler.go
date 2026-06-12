@@ -55,7 +55,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.ensureTenantWildcardEdgeDNS(ctx, effectiveDomain)
+	r.ensureTenantWildcardEdgeDNS(ctx, tenant, effectiveDomain)
 
 	desiredGW := buildTenantGateway(tenant, nsName, effectiveDomain, tlsSecret)
 	if err := ensureGatewayResource(ctx, r.Client, desiredGW); err != nil {

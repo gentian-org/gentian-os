@@ -22,6 +22,7 @@ const (
 	envoyGatewayInstallNamespace     = "envoy-gateway-system"
 	gatewayPlatformReconcileKey      = "gateway-platform"
 	conditionGatewayReady            = "GatewayReady"
+	conditionTunnelIngressReady      = "TunnelIngressReady"
 	operatorNamespace                = "gentian-system"
 	operatorConfigMapName            = "gentian-os-config"
 )

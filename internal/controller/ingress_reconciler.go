@@ -124,7 +124,7 @@ func (r *TenantReconciler) ensureIngress(ctx context.Context, tenant *gentianov1
 		return ctrl.Result{}, err
 	}
 
-	r.ensureTenantWildcardEdgeDNS(ctx, effectiveDomain)
+	r.ensureTenantWildcardEdgeDNS(ctx, tenant, effectiveDomain)
 
 	expectedIngresses := make(map[string]struct{}, len(ingressApps))
 	for _, ia := range ingressApps {
@@ -158,7 +158,7 @@ func (r *TenantReconciler) tenantDNS01ClusterIssuer() string {
 
 // ensureTenantWildcardEdgeDNS creates optional CSP edge DNS (e.g. Cloudflare
 // Total TLS) for *.<effectiveDomain>. Failures are logged and non-fatal.
-func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, effectiveDomain string) {
+func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
 	if r.CloudflareDNS == nil {
 		return
 	}
@@ -173,12 +173,23 @@ func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, effe
 	origin, err := kernelGatewayTunnelOrigin(ctx, r.Client)
 	if err != nil {
 		logger.Error(err, "resolve kernel gateway tunnel origin")
+		r.setCondition(tenant, conditionTunnelIngressReady, metav1.ConditionFalse, "OriginLookupFailed", err.Error())
 		return
 	}
+	tunnelOK := true
+	var tunnelMsg string
 	for _, host := range []string{wildcard, effectiveDomain} {
 		if err := r.CloudflareDNS.ensureTunnelIngress(ctx, host, origin); err != nil {
 			logger.Error(err, "ensure Cloudflare tunnel ingress", "host", host, "origin", origin)
+			tunnelOK = false
+			tunnelMsg = err.Error()
 		}
+	}
+	if tunnelOK {
+		r.setCondition(tenant, conditionTunnelIngressReady, metav1.ConditionTrue, "Programmed",
+			fmt.Sprintf("Cloudflare tunnel ingress configured for %q → %s", wildcard, origin))
+	} else {
+		r.setCondition(tenant, conditionTunnelIngressReady, metav1.ConditionFalse, "CloudflareTunnelSyncFailed", tunnelMsg)
 	}
 }
 

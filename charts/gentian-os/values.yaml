@@ -129,6 +129,12 @@ cloudflare:
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
   tunnelCNAME: ""
+  # Optional separate API token with Account → Cloudflare Tunnel → Edit for
+  # automated tenant public hostname routing in tunnel mode. When unset, the
+  # DNS token above is used (and must also hold tunnel permissions).
+  tunnelAPITokenSecretRef:
+    name: ""
+    key: "api-token"
 
 # OpenBao / Vault integration
 openbao:

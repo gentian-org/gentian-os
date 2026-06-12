@@ -15,25 +15,36 @@ import (
 
 const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
 
-// CloudflareDNSClient is an optional edge-DNS adapter for Cloudflare. It only
-// supports CNAME create/ensure/delete for *.<effectiveDomain> so Total TLS can
-// provision edge certificates for tenant app hostnames.
+// CloudflareDNSClient is an optional edge-DNS adapter for Cloudflare. It manages
+// proxied CNAME records for *.<effectiveDomain> and, in gateway+tunnel mode,
+// public hostname → origin mappings on the remotely-managed Cloudflare tunnel.
 type CloudflareDNSClient struct {
 	token       string
+	tunnelToken string // optional; falls back to token for tunnel configuration API
 	zoneID      string
 	tunnelCNAME string // e.g. <uuid>.cfargotunnel.com
 	accountID   string // lazily resolved from zone metadata
 	http        *http.Client
 }
 
-// NewCloudflareDNSClient creates a new CloudflareDNSClient with the given credentials.
-func NewCloudflareDNSClient(token, zoneID, tunnelCNAME string) *CloudflareDNSClient {
+// NewCloudflareDNSClient creates a CloudflareDNSClient. tunnelToken may be empty;
+// when set it is used for Cloudflare Tunnel configuration API calls (requires
+// Account → Cloudflare Tunnel → Edit), while token is used for DNS record API.
+func NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken string) *CloudflareDNSClient {
 	return &CloudflareDNSClient{
 		token:       token,
+		tunnelToken: tunnelToken,
 		zoneID:      zoneID,
 		tunnelCNAME: tunnelCNAME,
 		http:        &http.Client{},
 	}
+}
+
+func (c *CloudflareDNSClient) tunnelAPIToken() string {
+	if c.tunnelToken != "" {
+		return c.tunnelToken
+	}
+	return c.token
 }
 
 type cfDNSRecord struct {
@@ -184,7 +195,7 @@ func (c *CloudflareDNSClient) getTunnelConfig(ctx context.Context, accountID, tu
 	if err != nil {
 		return cfTunnelConfig{}, err
 	}
-	c.setHeaders(req)
+	c.setTunnelHeaders(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return cfTunnelConfig{}, err
@@ -196,7 +207,7 @@ func (c *CloudflareDNSClient) getTunnelConfig(ctx context.Context, accountID, tu
 		return cfTunnelConfig{}, fmt.Errorf("parse Cloudflare tunnel config response: %w", err)
 	}
 	if !result.Success {
-		return cfTunnelConfig{}, fmt.Errorf("cloudflare get tunnel config: %v", result.Errors)
+		return cfTunnelConfig{}, fmt.Errorf("cloudflare get tunnel config: %w", formatCloudflareErrors(result.Errors))
 	}
 	if len(result.Result.Config.Ingress) == 0 {
 		result.Result.Config.Ingress = []cfTunnelIngressRule{{Service: "http_status:404"}}
@@ -215,7 +226,7 @@ func (c *CloudflareDNSClient) putTunnelConfig(ctx context.Context, accountID, tu
 	if err != nil {
 		return err
 	}
-	c.setHeaders(req)
+	c.setTunnelHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -228,7 +239,7 @@ func (c *CloudflareDNSClient) putTunnelConfig(ctx context.Context, accountID, tu
 		return fmt.Errorf("parse Cloudflare tunnel config update response: %w", err)
 	}
 	if !result.Success {
-		return fmt.Errorf("cloudflare put tunnel config: %v", result.Errors)
+		return fmt.Errorf("cloudflare put tunnel config: %w", formatCloudflareErrors(result.Errors))
 	}
 	return nil
 }
@@ -371,4 +382,18 @@ func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord)
 
 func (c *CloudflareDNSClient) setHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
+}
+
+func (c *CloudflareDNSClient) setTunnelHeaders(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.tunnelAPIToken())
+}
+
+func formatCloudflareErrors(errors []cfError) error {
+	if len(errors) == 0 {
+		return fmt.Errorf("unknown error")
+	}
+	if errors[0].Code == 10000 {
+		return fmt.Errorf("%v (grant Account → Cloudflare Tunnel → Edit on the API token, or set CLOUDFLARE_TUNNEL_API_TOKEN)", errors)
+	}
+	return fmt.Errorf("%v", errors)
 }

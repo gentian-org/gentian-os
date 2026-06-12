@@ -223,9 +223,10 @@ func buildSeeder() *secrets.Seeder {
 // buildCloudflareDNSClient constructs a cloudflareDNSClient from environment
 // variables. Returns nil (feature disabled) if any required variable is absent.
 //
-//   CLOUDFLARE_API_TOKEN  – Cloudflare API token (DNS:Edit scope)
-//   CLOUDFLARE_ZONE_ID    – Cloudflare zone ID for the kernel domain
-//   CLOUDFLARE_TUNNEL_CNAME – tunnel target, e.g. <uuid>.cfargotunnel.com
+//   CLOUDFLARE_API_TOKEN        – Cloudflare API token (Zone:Read + DNS:Edit)
+//   CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare Tunnel → Edit
+//   CLOUDFLARE_ZONE_ID          – Cloudflare zone ID for the kernel domain
+//   CLOUDFLARE_TUNNEL_CNAME     – tunnel target, e.g. <uuid>.cfargotunnel.com
 func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
         token := os.Getenv("CLOUDFLARE_API_TOKEN")
         zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
@@ -234,6 +235,7 @@ func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
                 setupLog.Info("Cloudflare DNS management disabled (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID/CLOUDFLARE_TUNNEL_CNAME not set)")
                 return nil
         }
-        setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME)
-        return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME)
+        tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
+        setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME, "tunnel_api_token", tunnelToken != "")
+        return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken)
 }
