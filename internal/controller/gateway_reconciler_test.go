@@ -226,11 +226,30 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 }
 
+func TestKernelPortalServerDataRules(t *testing.T) {
+	t.Parallel()
+	rules := kernelPortalServerDataRules("nubus-dev-portal-server", 80)
+	var portalJSON *gatewayv1.HTTPRouteRule
+	for i := range rules {
+		if rules[i].Matches[0].Path != nil && rules[i].Matches[0].Path.Value != nil &&
+			*rules[i].Matches[0].Path.Value == "/univention/portal/portal.json" {
+			portalJSON = &rules[i]
+			break
+		}
+	}
+	if portalJSON == nil {
+		t.Fatal("missing portal.json route")
+	}
+	if portalJSON.BackendRefs[0].Name != "nubus-dev-portal-server" {
+		t.Fatalf("backend = %v", portalJSON.BackendRefs[0].Name)
+	}
+}
+
 func TestKernelUMCGatewayRules(t *testing.T) {
 	t.Parallel()
 	rules := kernelUMCGatewayRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 10 {
-		t.Fatalf("rule count = %d, want 10", len(rules))
+	if len(rules) != 12 {
+		t.Fatalf("rule count = %d, want 12", len(rules))
 	}
 	var oidc *gatewayv1.HTTPRouteRule
 	for i := range rules {

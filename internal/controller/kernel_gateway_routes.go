@@ -174,10 +174,7 @@ func kernelHTTPRouteSpecs(
 		{
 			name: kernelRoutePortalServer,
 			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(portalServerServiceName(), 80, "/univention/portal-server"),
-				kernelBackendRulePrefix(portalServerServiceName(), 80, "/univention/selfservice"),
-			},
+			rules: kernelPortalServerDataRules(portalServerServiceName(), 80),
 		},
 		{
 			name: kernelRoutePortalUMC,
@@ -254,13 +251,35 @@ func kernelHTTPRouteSpecs(
 	}
 }
 
+func kernelPortalServerDataRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	// Mirror portal-server ingress paths (portal.json, navigation.json, api/me).
+	exactPaths := []string{
+		"/univention/portal/portal.json",
+		"/univention/portal/navigation.json",
+		"/univention/selfservice/portal.json",
+		"/univention/selfservice/navigation.json",
+	}
+	rules := make([]gatewayv1.HTTPRouteRule, 0, len(exactPaths)+2)
+	for _, path := range exactPaths {
+		rules = append(rules, kernelBackendRuleExact(serviceName, port, path))
+	}
+	rules = append(rules,
+		kernelBackendRulePrefix(serviceName, port, "/univention/portal/api/v1/me"),
+		kernelBackendRulePrefix(serviceName, port, "/univention/portal-server"),
+	)
+	return rules
+}
+
 func kernelUMCGatewayRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	rules := []gatewayv1.HTTPRouteRule{
+		kernelBackendRuleExact(serviceName, port, "/univention/meta.json"),
+		kernelBackendRuleExact(serviceName, port, "/univention/languages.json"),
+	}
 	// Match Apache ProxyPassMatch in the umc-gateway image:
 	// ^/univention/((auth|saml|oidc|get|set|command|upload|logout|logout-sse)/?.*)$
 	prefixes := []string{
 		"auth", "saml", "oidc", "get", "set", "command", "upload", "logout", "logout-sse", "umc",
 	}
-	rules := make([]gatewayv1.HTTPRouteRule, 0, len(prefixes))
 	for _, segment := range prefixes {
 		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))
 	}
@@ -390,6 +409,27 @@ func kernelBackendRulePrefix(serviceName string, port int32, prefix string, filt
 	p := gatewayv1.PortNumber(port)
 	rule := gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
+		BackendRefs: []gatewayv1.HTTPBackendRef{
+			{
+				BackendRef: gatewayv1.BackendRef{
+					BackendObjectReference: gatewayv1.BackendObjectReference{
+						Name: gatewayv1.ObjectName(serviceName),
+						Port: &p,
+					},
+				},
+			},
+		},
+	}
+	if len(filters) > 0 {
+		rule.Filters = filters
+	}
+	return rule
+}
+
+func kernelBackendRuleExact(serviceName string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+	p := gatewayv1.PortNumber(port)
+	rule := gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(path)},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
 			{
 				BackendRef: gatewayv1.BackendRef{
