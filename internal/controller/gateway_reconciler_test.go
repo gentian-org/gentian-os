@@ -189,8 +189,8 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 13 {
-		t.Fatalf("spec count = %d, want 13", len(specs))
+	if len(specs) != 15 {
+		t.Fatalf("spec count = %d, want 15", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -231,6 +231,15 @@ func TestKernelPortalFrontendRewriteRules(t *testing.T) {
 	rules := kernelPortalFrontendRewriteRules("nubus-dev-portal-frontend", 80)
 	if len(rules) == 0 {
 		t.Fatal("expected rewrite rules")
+	}
+	if len(kernelPortalFrontendAssetRewriteRules("nubus-dev-portal-frontend", 80)) > 16 {
+		t.Fatal("asset rewrite route exceeds HTTPRoute rule limit")
+	}
+	if len(kernelPortalFrontendAppRewriteRules("nubus-dev-portal-frontend", 80)) > 16 {
+		t.Fatal("app rewrite route exceeds HTTPRoute rule limit")
+	}
+	if len(kernelPortalFrontendRules("nubus-dev-portal-frontend", 80)) > 16 {
+		t.Fatal("portal route exceeds HTTPRoute rule limit")
 	}
 	var cssRewrite *gatewayv1.HTTPRouteRule
 	for i := range rules {

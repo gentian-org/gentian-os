@@ -11,8 +11,8 @@ PORT="${GENTIAN_UMC_SERVER_PORT:-8090}"
 UPSTREAM="http://${SERVER}:${PORT}"
 
 if command -v ucr >/dev/null 2>&1; then
-  ucr set "umc/http/interface=${SERVER}"
-  ucr set "umc/http/port=${PORT}"
+  ucr set "umc/http/interface=${SERVER}" || true
+  ucr set "umc/http/port=${PORT}" || true
   ucr commit || true
 fi
 

@@ -19,6 +19,8 @@ import (
 const (
 	kernelRouteKeycloakIDP         = "kernel-idp"
 	kernelRoutePortal              = "kernel-portal"
+	kernelRoutePortalRewrites      = "kernel-portal-rewrite-assets"
+	kernelRoutePortalRewritesApp   = "kernel-portal-rewrite-app"
 	kernelRoutePortalLogin         = "kernel-portal-login"
 	kernelRoutePortalBaseRouter    = "kernel-portal-base-router"
 	kernelRoutePortalServer        = "kernel-portal-server"
@@ -193,6 +195,16 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 		{
+			name: kernelRoutePortalRewrites,
+			host: portalHost,
+			rules: kernelPortalFrontendAssetRewriteRules(portalFrontendServiceName(), 80),
+		},
+		{
+			name: kernelRoutePortalRewritesApp,
+			host: portalHost,
+			rules: kernelPortalFrontendAppRewriteRules(portalFrontendServiceName(), 80),
+		},
+		{
 			name: kernelRoutePortal,
 			host: portalHost,
 			rules: kernelPortalFrontendRules(portalFrontendServiceName(), 80),
@@ -246,24 +258,19 @@ func kernelHTTPRouteSpecs(
 }
 
 func kernelPortalFrontendRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	rules := []gatewayv1.HTTPRouteRule{
+	return []gatewayv1.HTTPRouteRule{
 		kernelRedirectRule("/univention/portal", "/univention/portal/", 301),
 		kernelRedirectRule("/univention/selfservice", "/univention/portal/", 301),
 		kernelRedirectRulePrefix("/univention/login", "/login/", 301),
-	}
-	rules = append(rules, kernelPortalFrontendRewriteRules(serviceName, port)...)
-	rules = append(rules,
 		kernelBackendRulePrefix(serviceName, port, "/univention/portal"),
 		kernelBackendRulePrefix(serviceName, port, "/univention/selfservice"),
 		kernelBackendRulePrefix(serviceName, port, "/"),
-	)
-	return rules
+	}
 }
 
-// kernelPortalFrontendRewriteRules mirrors nginx rewrite-target=/$2$3 from
-// kernel/services/gentian-portal/values/portal-frontend/_base.yaml so the SPA
-// assets are served from /css, /js, … instead of /univention/portal/css, …
-func kernelPortalFrontendRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+// kernelPortalFrontendAssetRewriteRules mirrors nginx rewrite-target=/$2$3 for
+// static asset paths. Split into a separate HTTPRoute to stay within the 16-rule limit.
+func kernelPortalFrontendAssetRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
 	assetSegments := []string{"css", "fonts", "i18n", "media", "js", "oidc", "custom"}
 	appPrefixes := []string{"portal", "selfservice"}
 	var rules []gatewayv1.HTTPRouteRule
@@ -281,6 +288,12 @@ func kernelPortalFrontendRewriteRules(serviceName string, port int32) []gatewayv
 		"/univention/portal/icons",
 		"/icons",
 	))
+	return rules
+}
+
+func kernelPortalFrontendAppRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	appPrefixes := []string{"portal", "selfservice"}
+	var rules []gatewayv1.HTTPRouteRule
 	for _, app := range appPrefixes {
 		rules = append(rules, kernelExactURLRewriteBackendRule(
 			serviceName, port,
@@ -299,6 +312,12 @@ func kernelPortalFrontendRewriteRules(serviceName string, port int32) []gatewayv
 		))
 	}
 	return rules
+}
+
+// kernelPortalFrontendRewriteRules returns all rewrite rules (used in tests).
+func kernelPortalFrontendRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	rules := kernelPortalFrontendAssetRewriteRules(serviceName, port)
+	return append(rules, kernelPortalFrontendAppRewriteRules(serviceName, port)...)
 }
 
 func kernelURLRewriteBackendRule(serviceName string, port int32, matchPrefix, replacePrefix string) gatewayv1.HTTPRouteRule {
