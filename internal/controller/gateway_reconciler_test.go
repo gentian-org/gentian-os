@@ -42,11 +42,20 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 1 {
-		t.Fatalf("listeners = %d", len(gw.Spec.Listeners))
+	if len(gw.Spec.Listeners) != 2 {
+		t.Fatalf("listeners = %d, want 2", len(gw.Spec.Listeners))
+	}
+	if gw.Spec.Listeners[0].Name != "https-wildcard" {
+		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
 	}
 	if gw.Spec.Listeners[0].Hostname == nil || string(*gw.Spec.Listeners[0].Hostname) != "*.desk.gentian.org" {
-		t.Fatalf("listener hostname = %v", gw.Spec.Listeners[0].Hostname)
+		t.Fatalf("wildcard listener hostname = %v", gw.Spec.Listeners[0].Hostname)
+	}
+	if gw.Spec.Listeners[1].Name != "https-apex" {
+		t.Fatalf("apex listener name = %q", gw.Spec.Listeners[1].Name)
+	}
+	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
+		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
 	}
 	if string(gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
 		t.Fatalf("tls secret = %q", gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name)
@@ -214,6 +223,36 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 	if got := *udm.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(udmRestAPIServicePort) {
 		t.Fatalf("udm port = %d, want %d", got, udmRestAPIServicePort)
+	}
+}
+
+func TestKernelPortalFrontendRewriteRules(t *testing.T) {
+	t.Parallel()
+	rules := kernelPortalFrontendRewriteRules("nubus-dev-portal-frontend", 80)
+	if len(rules) == 0 {
+		t.Fatal("expected rewrite rules")
+	}
+	var cssRewrite *gatewayv1.HTTPRouteRule
+	for i := range rules {
+		if len(rules[i].Matches) == 0 || rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
+			continue
+		}
+		if *rules[i].Matches[0].Path.Value == "/univention/portal/css" {
+			cssRewrite = &rules[i]
+			break
+		}
+	}
+	if cssRewrite == nil {
+		t.Fatal("missing /univention/portal/css rewrite rule")
+	}
+	if len(cssRewrite.Filters) != 1 || cssRewrite.Filters[0].URLRewrite == nil {
+		t.Fatalf("css rewrite filters = %+v", cssRewrite.Filters)
+	}
+	if cssRewrite.Filters[0].URLRewrite.Path == nil || cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch == nil {
+		t.Fatalf("css rewrite path = %+v", cssRewrite.Filters[0].URLRewrite.Path)
+	}
+	if *cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch != "/css" {
+		t.Fatalf("css replace prefix = %q", *cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch)
 	}
 }
 

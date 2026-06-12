@@ -195,14 +195,7 @@ func kernelHTTPRouteSpecs(
 		{
 			name: kernelRoutePortal,
 			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelRedirectRule("/univention/portal", "/univention/portal/", 301),
-				kernelRedirectRule("/univention/selfservice", "/univention/portal/", 301),
-				kernelRedirectRulePrefix("/univention/login", "/login/", 301),
-				kernelBackendRulePrefix(portalFrontendServiceName(), 80, "/univention/portal"),
-				kernelBackendRulePrefix(portalFrontendServiceName(), 80, "/univention/selfservice"),
-				kernelBackendRulePrefix(portalFrontendServiceName(), 80, "/"),
-			},
+			rules: kernelPortalFrontendRules(portalFrontendServiceName(), 80),
 		},
 		{
 			name: kernelRouteKernelApex,
@@ -250,6 +243,114 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 	}
+}
+
+func kernelPortalFrontendRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	rules := []gatewayv1.HTTPRouteRule{
+		kernelRedirectRule("/univention/portal", "/univention/portal/", 301),
+		kernelRedirectRule("/univention/selfservice", "/univention/portal/", 301),
+		kernelRedirectRulePrefix("/univention/login", "/login/", 301),
+	}
+	rules = append(rules, kernelPortalFrontendRewriteRules(serviceName, port)...)
+	rules = append(rules,
+		kernelBackendRulePrefix(serviceName, port, "/univention/portal"),
+		kernelBackendRulePrefix(serviceName, port, "/univention/selfservice"),
+		kernelBackendRulePrefix(serviceName, port, "/"),
+	)
+	return rules
+}
+
+// kernelPortalFrontendRewriteRules mirrors nginx rewrite-target=/$2$3 from
+// kernel/services/gentian-portal/values/portal-frontend/_base.yaml so the SPA
+// assets are served from /css, /js, … instead of /univention/portal/css, …
+func kernelPortalFrontendRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	assetSegments := []string{"css", "fonts", "i18n", "media", "js", "oidc", "custom"}
+	appPrefixes := []string{"portal", "selfservice"}
+	var rules []gatewayv1.HTTPRouteRule
+	for _, app := range appPrefixes {
+		for _, segment := range assetSegments {
+			rules = append(rules, kernelURLRewriteBackendRule(
+				serviceName, port,
+				fmt.Sprintf("/univention/%s/%s", app, segment),
+				fmt.Sprintf("/%s", segment),
+			))
+		}
+	}
+	rules = append(rules, kernelURLRewriteBackendRule(
+		serviceName, port,
+		"/univention/portal/icons",
+		"/icons",
+	))
+	for _, app := range appPrefixes {
+		rules = append(rules, kernelExactURLRewriteBackendRule(
+			serviceName, port,
+			fmt.Sprintf("/univention/%s/index.html", app),
+			"/index.html",
+		))
+		rules = append(rules, kernelExactURLRewriteBackendRule(
+			serviceName, port,
+			fmt.Sprintf("/univention/%s/sse-worker.js", app),
+			"/sse-worker.js",
+		))
+		rules = append(rules, kernelURLRewriteBackendRule(
+			serviceName, port,
+			fmt.Sprintf("/univention/%s/", app),
+			"/",
+		))
+	}
+	return rules
+}
+
+func kernelURLRewriteBackendRule(serviceName string, port int32, matchPrefix, replacePrefix string) gatewayv1.HTTPRouteRule {
+	replacement := replacePrefix
+	rule := kernelBackendRulePrefix(serviceName, port, matchPrefix)
+	rule.Filters = []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterURLRewrite,
+			URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
+				Path: &gatewayv1.HTTPPathModifier{
+					Type:               gatewayv1.PrefixMatchHTTPPathModifier,
+					ReplacePrefixMatch: &replacement,
+				},
+			},
+		},
+	}
+	return rule
+}
+
+func kernelExactURLRewriteBackendRule(serviceName string, port int32, matchPath, replacePath string) gatewayv1.HTTPRouteRule {
+	replacement := replacePath
+	pathType := gatewayv1.FullPathHTTPPathModifier
+	rule := gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(matchPath)},
+		BackendRefs: []gatewayv1.HTTPBackendRef{
+			{
+				BackendRef: gatewayv1.BackendRef{
+					BackendObjectReference: gatewayv1.BackendObjectReference{
+						Name: gatewayv1.ObjectName(serviceName),
+						Port: ptrPortNumber(port),
+					},
+				},
+			},
+		},
+		Filters: []gatewayv1.HTTPRouteFilter{
+			{
+				Type: gatewayv1.HTTPRouteFilterURLRewrite,
+				URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
+					Path: &gatewayv1.HTTPPathModifier{
+						Type:            pathType,
+						ReplaceFullPath: &replacement,
+					},
+				},
+			},
+		},
+	}
+	return rule
+}
+
+func ptrPortNumber(port int32) *gatewayv1.PortNumber {
+	p := gatewayv1.PortNumber(port)
+	return &p
 }
 
 func kernelBackendRule(serviceName string, port int32, filters []gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {

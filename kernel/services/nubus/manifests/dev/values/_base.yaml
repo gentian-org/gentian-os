@@ -614,6 +614,10 @@ nubusUmcGateway:
       configMap:
         name: '{{ .Release.Name }}-umc-template-default'
         defaultMode: 0755
+    - name: gentian-umc-gateway-upstream
+      configMap:
+        name: '{{ .Release.Name }}-umc-gateway-upstream'
+        defaultMode: 0755
   extraVolumeMounts:
     - name: gentian-umc-template-default
       mountPath: /entrypoint.d/93-gentian-umc-template-default.sh
@@ -621,6 +625,9 @@ nubusUmcGateway:
     - name: gentian-umc-template-default
       mountPath: /entrypoint.d/94-gentian-umc-template-picker.sh
       subPath: 94-gentian-umc-template-picker.sh
+    - name: gentian-umc-gateway-upstream
+      mountPath: /entrypoint.d/95-gentian-umc-gateway-upstream.sh
+      subPath: 95-gentian-umc-gateway-upstream.sh
   ingress:
     enableLoginPath: false
     certManager:

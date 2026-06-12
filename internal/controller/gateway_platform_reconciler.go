@@ -153,7 +153,29 @@ func buildKernelGateway(kernelDomain string) *gatewayv1.Gateway {
 	return buildGateway(KernelPublicGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
 		managedByLabel:       managedByValue,
 		"gentianos.io/scope": "kernel",
-	}, nil)
+	}, []gatewayv1.Listener{kernelApexListener(kernelDomain, kernelWildcardTLSSecretName)})
+}
+
+func kernelApexListener(kernelDomain, tlsSecret string) gatewayv1.Listener {
+	hostname := gatewayv1.Hostname(kernelDomain)
+	port := gatewayv1.PortNumber(443)
+	mode := gatewayv1.TLSModeTerminate
+	secretKind := gatewayv1.Kind("Secret")
+	return gatewayv1.Listener{
+		Name:     "https-apex",
+		Protocol: gatewayv1.HTTPSProtocolType,
+		Port:     port,
+		Hostname: &hostname,
+		TLS: &gatewayv1.GatewayTLSConfig{
+			Mode: &mode,
+			CertificateRefs: []gatewayv1.SecretObjectReference{
+				{
+					Kind: &secretKind,
+					Name: gatewayv1.ObjectName(tlsSecret),
+				},
+			},
+		},
+	}
 }
 
 func buildTenantGateway(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, tlsSecret string) *gatewayv1.Gateway {

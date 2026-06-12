@@ -1970,12 +1970,13 @@ print_gateway_tunnel_hints() {
         return 0
     fi
     local ns="gentian-${ENV:-dev}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
-    info "  in namespace ${ns}, not the microk8s/nginx ingress controller."
+    info "  in namespace ${envoy_ns}, not the microk8s/nginx ingress controller."
     info "  Discover the Service after kernel-public-gateway is Programmed:"
-    info "    kubectl get svc -n ${ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
-    info "  Typical origin: https://<envoy-svc>.${ns}.svc.cluster.local:443"
+    info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
+    info "  Typical origin: https://<envoy-svc>.${envoy_ns}.svc.cluster.local:443"
     info "  Verify: kubectl get gateway -n ${ns} kernel-public-gateway -o yaml | grep -A5 conditions"
 }
 
