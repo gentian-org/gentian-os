@@ -226,6 +226,30 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 }
 
+func TestKernelUMCGatewayRules(t *testing.T) {
+	t.Parallel()
+	rules := kernelUMCGatewayRules("nubus-dev-umc-gateway", 80)
+	if len(rules) != 10 {
+		t.Fatalf("rule count = %d, want 10", len(rules))
+	}
+	var oidc *gatewayv1.HTTPRouteRule
+	for i := range rules {
+		if rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
+			continue
+		}
+		if *rules[i].Matches[0].Path.Value == "/univention/oidc" {
+			oidc = &rules[i]
+			break
+		}
+	}
+	if oidc == nil {
+		t.Fatal("missing /univention/oidc rule")
+	}
+	if oidc.BackendRefs[0].Name != "nubus-dev-umc-gateway" {
+		t.Fatalf("backend = %v", oidc.BackendRefs[0].Name)
+	}
+}
+
 func TestKernelPortalFrontendRewriteRules(t *testing.T) {
 	t.Parallel()
 	rules := kernelPortalFrontendRewriteRules("nubus-dev-portal-frontend", 80)

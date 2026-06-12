@@ -182,10 +182,7 @@ func kernelHTTPRouteSpecs(
 		{
 			name: kernelRoutePortalUMC,
 			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(umcGatewayServiceName(), 80, "/univention/command"),
-				kernelBackendRulePrefix(umcGatewayServiceName(), 80, "/univention/umc"),
-			},
+			rules: kernelUMCGatewayRules(umcGatewayServiceName(), 80),
 		},
 		{
 			name: kernelRoutePortalUDM,
@@ -255,6 +252,19 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 	}
+}
+
+func kernelUMCGatewayRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	// Match Apache ProxyPassMatch in the umc-gateway image:
+	// ^/univention/((auth|saml|oidc|get|set|command|upload|logout|logout-sse)/?.*)$
+	prefixes := []string{
+		"auth", "saml", "oidc", "get", "set", "command", "upload", "logout", "logout-sse", "umc",
+	}
+	rules := make([]gatewayv1.HTTPRouteRule, 0, len(prefixes))
+	for _, segment := range prefixes {
+		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))
+	}
+	return rules
 }
 
 func kernelPortalFrontendRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {

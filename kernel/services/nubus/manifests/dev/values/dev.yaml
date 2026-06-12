@@ -11,6 +11,12 @@ global:
   imagePullSecrets:
     - registry-credentials
   certManagerClusterIssuer: letsencrypt-dns01-cloudflare
+  configUcr:
+    umc:
+      http:
+        # umc-gateway proxies /univention/{oidc,get,...} to the umc-server pod.
+        interface: nubus-dev-umc-server-0.gentian-dev.svc.cluster.local
+        port: "8090"
 
 nubusUmcServer:
   smtp:
