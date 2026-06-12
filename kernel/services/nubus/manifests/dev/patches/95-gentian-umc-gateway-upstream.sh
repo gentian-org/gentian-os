@@ -2,19 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # SPDX-FileCopyrightText: 2026 Gentian GmbH
 #
-# Point the UMC gateway Apache reverse proxy at the UMC server StatefulSet
-# instead of localhost:8090 (nothing listens there in the gateway pod).
+# Point the UMC gateway Apache reverse proxy at the umc-server StatefulSet.
+# umc/http/interface is the bind address for umc-server (0.0.0.0) and must not
+# be set to the server Service hostname — patch Apache only on the gateway pod.
 set -euo pipefail
 
 SERVER="${GENTIAN_UMC_SERVER_HOST:-nubus-dev-umc-server-0.gentian-dev.svc.cluster.local}"
 PORT="${GENTIAN_UMC_SERVER_PORT:-8090}"
 UPSTREAM="http://${SERVER}:${PORT}"
-
-if command -v ucr >/dev/null 2>&1; then
-  ucr set "umc/http/interface=${SERVER}" || true
-  ucr set "umc/http/port=${PORT}" || true
-  ucr commit || true
-fi
 
 APACHE="/etc/apache2/sites-available/univention.conf"
 if [[ -f "${APACHE}" ]]; then
