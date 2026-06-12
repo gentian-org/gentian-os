@@ -34,6 +34,7 @@ type KeycloakPlatformReconciler struct {
 	KernelDomain string
 	TenancyMode  string
 	KernelRealm  string
+	RoutingMode  string
 }
 
 func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -42,7 +43,12 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{}, nil
 	}
 
-	if err := reconcileKeycloakIDPEmbeddingIngress(ctx, r.Client, r.KernelDomain, r.TenancyMode); err != nil {
+	if isGatewayRoutingMode(r.RoutingMode) {
+		if err := reconcileKeycloakIDPGatewayRoute(ctx, r.Client, r.KernelDomain, r.TenancyMode); err != nil {
+			logger.Error(err, "Keycloak IdP HTTPRoute frame-ancestors reconcile failed")
+			return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		}
+	} else if err := reconcileKeycloakIDPEmbeddingIngress(ctx, r.Client, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "Keycloak IdP ingress frame-ancestors reconcile failed")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -65,7 +71,11 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
-	if !keycloakIngressFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
+	if isGatewayRoutingMode(r.RoutingMode) {
+		if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
+			return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+	} else if !keycloakIngressFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 

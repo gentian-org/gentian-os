@@ -1245,6 +1245,7 @@ main_cp() {
     prewarm_cluster             # Step 2
     install_cert_manager        # Step 3
     install_kernel_cert_resources  # Step 3b — ClusterIssuers
+    install_envoy_gateway       # Step 3c — Envoy Gateway (ROUTING_MODE=gateway)
     install_eso                 # Step 4
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────

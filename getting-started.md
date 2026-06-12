@@ -33,6 +33,7 @@ You need a running, reachable cluster. Both `install.sh` and
 - Kubernetes 1.26+
 - Default StorageClass available (configure per cluster in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`)
 - Ingress controller installed (for ingress setup guidance, see [docs/FAQ.md](docs/FAQ.md))
+- For Gateway API routing (`ROUTING_MODE=gateway`), Envoy Gateway is installed by `install.sh` Step 3c; see [docs/design/gateway.md](docs/design/gateway.md)
 - DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
 
 > `install.sh` provisions cert-manager, CloudNativePG, and Stakater Reloader
@@ -68,6 +69,9 @@ them or store them in the config files below.
 | `LETSENCRYPT_EMAIL` | `admin@KERNEL_DOMAIN` | Let's Encrypt ACME contact |
 | `INSTALL_CLUSTER_INFRA` | `1` | Set `0` only when cert-manager/CNPG/Reloader are already managed |
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
+| `ROUTING_MODE` | `ingress` | Set to `gateway` for Envoy Gateway + Gateway API edge routing |
+
+Configure `routingMode` in `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml` for the operator (preferred for cluster behavior).
 
 ### Config files
 
@@ -96,7 +100,7 @@ Configure these files in order before the first install run:
 
 1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`: cluster runtime behavior and endpoints (`KERNEL_DOMAIN`, `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`, `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`: `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`, `EXTERNAL_SMTP_STARTTLS`). **This overrides `.install-state.env`** when both are present.
 
-1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, namespace defaults and policy defaults).
+1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `routingMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, namespace defaults and policy defaults).
 
   Cloudflare specifics in `values-<stage>.yaml`:
   - `cloudflare.zoneID`: required for operator DNS mutations when Cloudflare adapter is enabled.

@@ -12,3 +12,4 @@ data:
   ARGOCD_PROJECT: {{ .Values.argocd.project | quote }}
   ISOLATION_MODE: {{ .Values.defaults.isolation.mode | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
+  ROUTING_MODE: {{ .Values.routingMode | default "ingress" | quote }}

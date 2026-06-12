@@ -265,29 +265,38 @@ func (r *TenantReconciler) ensureAppIngress(
 	return nil
 }
 
-func (r *TenantReconciler) deleteIngress(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
+	if isGatewayRoutingMode(r.RoutingMode) {
+		if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
+			return err
+		}
+		if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
+			return err
+		}
+	} else {
+		for _, app := range tenant.Spec.Apps {
+			profile := &gentianov1alpha1.AppProfile{}
+			if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+				if errors.IsNotFound(err) {
+					continue
+				}
+				return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			}
+			if profile.Spec.Ingress == nil {
 				continue
 			}
-			return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.Ingress == nil {
-			continue
-		}
-		ing := &networkingv1.Ingress{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      appIngressName(tenant.Name, app.Profile),
-				Namespace: nsName,
-			},
-		}
-		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete Ingress for app %s: %w", app.Profile, err)
+			ing := &networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      appIngressName(tenant.Name, app.Profile),
+					Namespace: nsName,
+				},
+			}
+			if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("delete Ingress for app %s: %w", app.Profile, err)
+			}
 		}
 	}
 

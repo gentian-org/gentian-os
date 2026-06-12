@@ -170,6 +170,9 @@ type TenantReconciler struct {
 	// meet.demo.desk.gentian.org). Nil when CLOUDFLARE_* env vars are unset;
 	// use DNS-only (grey cloud) or passthrough to origin in that case.
 	CloudflareDNS *CloudflareDNSClient
+	// RoutingMode selects the edge routing stack: ingress (nginx Ingress) or
+	// gateway (Gateway API + Envoy Gateway). Sourced from ROUTING_MODE.
+	RoutingMode string
 }
 
 // SetupWithManager registers the controller with the controller-manager.
@@ -451,8 +454,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 12. Ingress (per-app Ingress + per-tenant wildcard TLS; see ingress_reconciler.go)
-	if _, err := r.ensureIngress(ctx, tenant); err != nil {
+	// 12. Edge routing — Ingress (nginx) or Gateway API foundation.
+	if isGatewayRoutingMode(r.RoutingMode) {
+		if _, err := r.ensureGateway(ctx, tenant); err != nil {
+			r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+			_ = r.Status().Update(ctx, tenant)
+			return ctrl.Result{}, err
+		}
+	} else if _, err := r.ensureIngress(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionIngressReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, err
@@ -653,8 +662,8 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// Clean up Ingress and Certificate resources (ephemeral routing; always deleted).
-	if err := r.deleteIngress(ctx, tenant); err != nil {
+	// Clean up edge routing (Ingress or Gateway API), wildcard cert, and DNS.
+	if err := r.deleteEdgeRouting(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -1192,12 +1201,23 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 					},
 				},
 				{
-					// Allow ingress from the nginx ingress controller namespace so that
-					// the controller can proxy external HTTP/S traffic to tenant services.
+					// Allow ingress from the edge proxy namespace (nginx ingress controller
+					// or Envoy Gateway data plane when deployed cluster-wide).
 					From: []networkingv1.NetworkPolicyPeer{
 						{
 							NamespaceSelector: &metav1.LabelSelector{
 								MatchLabels: map[string]string{"kubernetes.io/metadata.name": ingressNamespace},
+							},
+						},
+					},
+				},
+				{
+					// Allow ingress from Envoy Gateway control/data namespaces when
+					// ROUTING_MODE=gateway (see docs/design/gateway.md §6).
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"kubernetes.io/metadata.name": envoyGatewayInstallNamespace},
 							},
 						},
 					},

@@ -17,16 +17,52 @@ kubectl get storageclass -o wide
 If needed, set a default StorageClass in your cluster (distribution-specific), then
 re-run `./install.sh`.
 
-## How should I set up ingress?
+## How should I set up edge routing?
 
-Gentian always needs an ingress controller.
+Gentian OS supports two edge stacks, selected by `ROUTING_MODE` / Helm `routingMode`:
+
+| Mode | Stack | Install |
+|---|---|---|
+| `ingress` (default) | ingress-nginx `Ingress` | Manual or pre-existing (see below) |
+| `gateway` | Gateway API + Envoy Gateway | `install.sh` Step 3c when `ROUTING_MODE=gateway` |
+
+See [design/gateway.md](design/gateway.md) for Gateway API topology (`gentian-envoy` GatewayClass, kernel and tenant Gateways).
+
+### Gateway API path (`ROUTING_MODE=gateway`)
+
+Set in `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`:
+
+```yaml
+routingMode: gateway
+```
+
+Fresh installs with `ROUTING_MODE=gateway` in `install.env` (or the same value from deployments values loaded at install time) install Envoy Gateway into `envoy-gateway-system` and verify Gateway API CRDs.
+
+Validate after install:
+
+```bash
+kubectl get gatewayclass gentian-envoy
+kubectl get gateway -A
+kubectl describe gateway kernel-public-gateway -n gentian-dev
+```
+
+Acceptance: GatewayClass `Accepted=True`; kernel Gateway reaches `Programmed=True` once `wildcard-tls` exists in the services namespace.
+
+Choose exposure by `NETWORK_MODE`:
+
+- `NETWORK_MODE=static-ip`: Envoy Gateway service type `LoadBalancer`
+- `NETWORK_MODE=tunnel`: Envoy Gateway stays `ClusterIP`; expose via tunnel/proxy
+
+### Ingress-nginx path (`ROUTING_MODE=ingress`)
+
+Gentian always needs an edge controller when using ingress mode.
 
 Choose one preparation path:
 
 - `NETWORK_MODE=static-ip` (CSP / public IP): ingress-nginx should be exposed as a `LoadBalancer` service.
 - `NETWORK_MODE=tunnel` (self-hosted behind tunnel/proxy): ingress-nginx should stay internal (no `LoadBalancer` required).
 
-### 1. Install ingress-nginx (common)
+### 1. Install ingress-nginx (ingress mode)
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx

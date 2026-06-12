@@ -14,6 +14,12 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE.
 tenancyMode: multi
 
+# routingMode selects the edge routing stack:
+#   ingress — ingress-nginx Ingress resources (legacy default)
+#   gateway — Gateway API + Envoy Gateway (see docs/design/gateway.md)
+# Plumbed as ROUTING_MODE.
+routingMode: ingress
+
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
 # write records in the zone containing effectiveDomain (platform zone for default

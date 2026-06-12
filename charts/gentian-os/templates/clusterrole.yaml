@@ -38,6 +38,16 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies", "ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Gateway API (edge routing when ROUTING_MODE=gateway)
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gateways/status", "httproutes", "httproutes/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["gateway.envoyproxy.io"]
+    resources: ["backendtrafficpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Batch
   - apiGroups: ["batch"]
     resources: ["jobs"]

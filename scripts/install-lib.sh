@@ -263,6 +263,7 @@ INPUT_HIERARCHY_VARS=(
     OPENBAO_INIT_FILE
     LETSENCRYPT_EMAIL
     INGRESS_CLASS_NAME
+    ROUTING_MODE
     GENTIAN_APPS_REPO
     GENTIAN_APPS_BRANCH
     GENTIAN_DEPLOYMENTS_REPO
@@ -285,6 +286,9 @@ INPUT_HIERARCHY_VARS=(
 TOFU_VERSION="1.9.0"
 BAO_VERSION="2.5.1"
 ESO_CHART_VERSION="2.4.1"
+ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-v1.2.5}"
+ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
 
 usage() {
     cat <<'EOF'
@@ -1158,12 +1162,22 @@ check_prereqs() {
             error "Set NODE_IP to the cluster node's actual public or reachable IP and re-run."
             exit 1
         fi
-        # Check that the ingress controller's LoadBalancer service actually has an external IP.
-        local lb_ip
-        lb_ip=$(kubectl get svc -A -l 'app.kubernetes.io/name=ingress-nginx' \
-            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        # Check that the edge LoadBalancer service has an external IP.
+        local lb_ip lb_label
+        if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+            lb_label='app.kubernetes.io/name=gateway-helm'
+            lb_ip=$(kubectl get svc -A -l "${lb_label}" \
+                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        else
+            lb_ip=$(kubectl get svc -A -l 'app.kubernetes.io/name=ingress-nginx' \
+                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        fi
         if [[ -z "$lb_ip" ]]; then
-            warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
+            if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+                warn "NETWORK_MODE=static-ip: Envoy Gateway LoadBalancer has no external IP yet."
+            else
+                warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
+            fi
             warn "  Make sure MetalLB (or a cloud LB) is configured with ${NODE_IP} before traffic can reach the cluster."
         else
             info "Ingress LoadBalancer external IP: ${lb_ip}"
@@ -1394,7 +1408,10 @@ create_namespaces() {
 
     local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        namespaces+=(stakater-system cnpg-system)
+        namespaces+=(stakater-system cnpg-system cert-manager)
+        if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+            namespaces+=("${ENVOY_GATEWAY_NAMESPACE}")
+        fi
     fi
 
     for ns in "${namespaces[@]}"; do
@@ -1792,6 +1809,70 @@ install_kernel_cert_resources() {
     else
         success "ClusterIssuers letsencrypt-http01 and letsencrypt-dns01-cloudflare applied."
     fi
+}
+
+# =============================================================================
+# 3c. Install Envoy Gateway (Gateway API edge stack)
+# =============================================================================
+install_envoy_gateway() {
+    if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
+        warn "Cluster infra disabled: skipping Envoy Gateway installation."
+        return
+    fi
+
+    : "${ROUTING_MODE:=ingress}"
+    export ROUTING_MODE
+    if [[ "${ROUTING_MODE}" != "gateway" ]]; then
+        info "ROUTING_MODE=${ROUTING_MODE}: skipping Envoy Gateway install."
+        return
+    fi
+
+    banner "Step 3c — Installing Envoy Gateway and Gateway API CRDs"
+
+    local ns="${ENVOY_GATEWAY_NAMESPACE}"
+    local chart_version="${ENVOY_GATEWAY_CHART_VERSION}"
+    local svc_type="ClusterIP"
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        svc_type="LoadBalancer"
+    fi
+
+    if helm status eg -n "${ns}" &>/dev/null; then
+        success "Envoy Gateway Helm release already present in ${ns}."
+    else
+        info "Installing Envoy Gateway ${chart_version} (service type ${svc_type})..."
+        helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
+            --version "${chart_version}" \
+            -n "${ns}" \
+            --create-namespace \
+            --set "config.envoyGateway.gateway.controllerName=${GENTIAN_GATEWAY_CONTROLLER_NAME}" \
+            --set deployment.replicas=1 \
+            --set "kubernetesService.type=${svc_type}" \
+            --wait --timeout 5m
+        success "Envoy Gateway installed in namespace ${ns}."
+    fi
+
+    info "Waiting for Envoy Gateway controller deployment..."
+    if ! kubectl rollout status -n "${ns}" deploy/envoy-gateway --timeout=180s >/dev/null 2>&1; then
+        warn "Envoy Gateway deployment not Ready within 180s (continuing)."
+    fi
+
+    info "Verifying Gateway API CRDs..."
+    local crd
+    for crd in \
+        gatewayclasses.gateway.networking.k8s.io \
+        gateways.gateway.networking.k8s.io \
+        httproutes.gateway.networking.k8s.io; do
+        if kubectl get crd "${crd}" &>/dev/null; then
+            kubectl wait --for=condition=Established "crd/${crd}" --timeout=120s >/dev/null 2>&1 \
+                || warn "CRD ${crd} not Established within 120s."
+        else
+            warn "Gateway API CRD ${crd} not found after Envoy Gateway install."
+        fi
+    done
+    success "Envoy Gateway and Gateway API CRDs ready (ROUTING_MODE=gateway)."
+    info "  GatewayClass: ${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+    info "  Controller:   ${GENTIAN_GATEWAY_CONTROLLER_NAME}"
+    info "  Status:       kubectl get gatewayclass,gateway -A"
 }
 
 # =============================================================================
@@ -3436,6 +3517,7 @@ print_summary() {
         echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${GREEN}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
+        echo -e "${GREEN}║  Routing mode : ${ROUTING_MODE:-ingress}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
         echo -e "${GREEN}║  Tenants      : none (provision when ready)              ║${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
@@ -3518,6 +3600,7 @@ main() {
     prewarm_cluster
     install_cert_manager
     install_kernel_cert_resources
+    install_envoy_gateway
     install_eso
     install_argocd
     setup_argocd_repos

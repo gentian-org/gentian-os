@@ -32,6 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -48,6 +50,7 @@ func init() {
 	utilruntime.Must(corev1.AddToScheme(scheme))
 	utilruntime.Must(networkingv1.AddToScheme(scheme))
 	utilruntime.Must(gentianov1alpha1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.Install(scheme))
 }
 
 func main() {
@@ -82,6 +85,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	routingMode := os.Getenv("ROUTING_MODE")
+	if routingMode == "" {
+		routingMode = controller.RoutingModeIngress
+	}
+	setupLog.Info("edge routing mode", "routing_mode", routingMode)
+
 	if err := (&controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
 		Scheme:                   mgr.GetScheme(),
@@ -93,6 +102,7 @@ func main() {
 		LDAPServer:               os.Getenv("LDAP_SERVER"),
 		LDAPBase:                 os.Getenv("LDAP_BASE"),
 		CloudflareDNS:            buildCloudflareDNSClient(),
+		RoutingMode:              routingMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
@@ -103,8 +113,19 @@ func main() {
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:  os.Getenv("TENANCY_MODE"),
 		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		RoutingMode:  routingMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KeycloakPlatform")
+		os.Exit(1)
+	}
+
+	if err := (&controller.GatewayPlatformReconciler{
+		Client:       mgr.GetClient(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		RoutingMode:  routingMode,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
 	}
 

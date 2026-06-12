@@ -169,6 +169,9 @@ func (r *TenantReconciler) removePerTenantUMCStack(ctx context.Context, tenant *
 
 func (r *TenantReconciler) ensureTenantPortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) error {
 	nsName := tenantNamespaceName(tenant)
+	if isGatewayRoutingMode(r.RoutingMode) {
+		return r.ensureTenantPortalRedirectGateway(ctx, tenant, nsName, effectiveDomain)
+	}
 	name := tenantPortalRedirectName(tenant.Name)
 	portalURL := kernelPortalURL(r.KernelDomain)
 	ingressClass := "public"
@@ -241,6 +244,11 @@ func (r *TenantReconciler) ensureTenantPortalRedirect(ctx context.Context, tenan
 		return r.Patch(ctx, existing, patch)
 	}
 	return nil
+}
+
+func (r *TenantReconciler) ensureTenantPortalRedirectGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	desired := buildTenantApexRedirectHTTPRoute(tenant, nsName, effectiveDomain, r.KernelDomain)
+	return ensureHTTPRouteResource(ctx, r.Client, desired)
 }
 
 func (r *TenantReconciler) firstServiceInNamespace(ctx context.Context, nsName string) (string, error) {
