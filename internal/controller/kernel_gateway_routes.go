@@ -314,6 +314,9 @@ func kernelUMCGatewayShellRules(serviceName string, port int32) []gatewayv1.HTTP
 	}
 	prefixes := []string{
 		"management", "js", "themes", "login", "server-overview", "self-service", "setup", "i18n",
+		// Portal/selfservice i18n JSON is served by umc-gateway Apache (empty.json fallback).
+		// Without these rules, kernel-portal-rewrite-assets sends them to portal-frontend (404 HTML).
+		"portal/i18n", "selfservice/i18n",
 	}
 	for _, segment := range prefixes {
 		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))

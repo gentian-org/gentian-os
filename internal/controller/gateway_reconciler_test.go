@@ -248,8 +248,8 @@ func TestKernelPortalServerDataRules(t *testing.T) {
 func TestKernelUMCGatewayShellRules(t *testing.T) {
 	t.Parallel()
 	rules := kernelUMCGatewayShellRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 9 {
-		t.Fatalf("rule count = %d, want 9", len(rules))
+	if len(rules) != 11 {
+		t.Fatalf("rule count = %d, want 11", len(rules))
 	}
 	if len(rules) > 16 {
 		t.Fatal("UMC shell route exceeds HTTPRoute rule limit")
