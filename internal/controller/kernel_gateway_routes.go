@@ -25,6 +25,7 @@ const (
 	kernelRoutePortalBaseRouter    = "kernel-portal-base-router"
 	kernelRoutePortalServer        = "kernel-portal-server"
 	kernelRoutePortalUMC           = "kernel-portal-umc"
+	kernelRoutePortalUMCShell      = "kernel-portal-umc-shell"
 	kernelRoutePortalUDM           = "kernel-portal-udm"
 	kernelRouteKernelApex          = "kernel-apex-redirect"
 	kernelRouteCryptpad            = "kernel-cryptpad"
@@ -182,6 +183,11 @@ func kernelHTTPRouteSpecs(
 			rules: kernelUMCGatewayRules(umcGatewayServiceName(), 80),
 		},
 		{
+			name: kernelRoutePortalUMCShell,
+			host: portalHost,
+			rules: kernelUMCGatewayShellRules(umcGatewayServiceName(), 80),
+		},
+		{
 			name: kernelRoutePortalUDM,
 			host: portalHost,
 			rules: []gatewayv1.HTTPRouteRule{
@@ -279,6 +285,22 @@ func kernelUMCGatewayRules(serviceName string, port int32) []gatewayv1.HTTPRoute
 	// ^/univention/((auth|saml|oidc|get|set|command|upload|logout|logout-sse)/?.*)$
 	prefixes := []string{
 		"auth", "saml", "oidc", "get", "set", "command", "upload", "logout", "logout-sse", "umc",
+	}
+	for _, segment := range prefixes {
+		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))
+	}
+	return rules
+}
+
+// kernelUMCGatewayShellRules routes the UMC web UI shell and static assets served by
+// umc-gateway Apache (management console, dojo/js, themes). Mirrors the nginx/dev
+// reverse-proxy locations for /univention/{js,management,theme.css,themes,...}.
+func kernelUMCGatewayShellRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
+	rules := []gatewayv1.HTTPRouteRule{
+		kernelBackendRuleExact(serviceName, port, "/univention/theme.css"),
+	}
+	prefixes := []string{
+		"management", "js", "themes", "server-overview", "self-service", "setup", "i18n",
 	}
 	for _, segment := range prefixes {
 		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))

@@ -189,8 +189,8 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 15 {
-		t.Fatalf("spec count = %d, want 15", len(specs))
+	if len(specs) != 16 {
+		t.Fatalf("spec count = %d, want 16", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -242,6 +242,30 @@ func TestKernelPortalServerDataRules(t *testing.T) {
 	}
 	if portalJSON.BackendRefs[0].Name != "nubus-dev-portal-server" {
 		t.Fatalf("backend = %v", portalJSON.BackendRefs[0].Name)
+	}
+}
+
+func TestKernelUMCGatewayShellRules(t *testing.T) {
+	t.Parallel()
+	rules := kernelUMCGatewayShellRules("nubus-dev-umc-gateway", 80)
+	if len(rules) != 8 {
+		t.Fatalf("rule count = %d, want 8", len(rules))
+	}
+	if len(rules) > 16 {
+		t.Fatal("UMC shell route exceeds HTTPRoute rule limit")
+	}
+	var management *gatewayv1.HTTPRouteRule
+	for i := range rules {
+		if rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
+			continue
+		}
+		if *rules[i].Matches[0].Path.Value == "/univention/management" {
+			management = &rules[i]
+			break
+		}
+	}
+	if management == nil {
+		t.Fatal("missing /univention/management rule")
 	}
 }
 
