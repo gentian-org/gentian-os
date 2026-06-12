@@ -265,7 +265,3 @@ func kernelCryptpadSandboxResponseFilters(kernelDomain string) []gatewayv1.HTTPR
 		},
 	}
 }
-
-func ptrString(s string) *string {
-	return &s
-}

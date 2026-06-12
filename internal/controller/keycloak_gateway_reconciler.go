@@ -58,7 +58,7 @@ func reconcileKeycloakIDPGatewayRoute(ctx context.Context, c client.Client, kern
 		return fmt.Errorf("get Keycloak IdP HTTPRoute: %w", err)
 	}
 	if len(existing.Spec.Rules) == 0 {
-		return fmt.Errorf("Keycloak IdP HTTPRoute %s has no rules", existing.Name)
+		return fmt.Errorf("keycloak IdP HTTPRoute %s has no rules", existing.Name)
 	}
 
 	desiredRule := existing.Spec.Rules[0]
