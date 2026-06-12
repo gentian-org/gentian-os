@@ -190,6 +190,31 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if string(idRoute.Spec.Hostnames[0]) != "id.desk.gentian.org" {
 		t.Fatalf("id host = %v", idRoute.Spec.Hostnames[0])
 	}
+	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(keycloakProxyServicePort) {
+		t.Fatalf("id backend port = %d, want %d", got, keycloakProxyServicePort)
+	}
+
+	var baseRouter, udm *gatewayv1.HTTPRoute
+	for i := range specs {
+		switch specs[i].name {
+		case kernelRoutePortalBaseRouter:
+			baseRouter = buildKernelHTTPRoute(specs[i])
+		case kernelRoutePortalUDM:
+			udm = buildKernelHTTPRoute(specs[i])
+		}
+	}
+	if baseRouter == nil {
+		t.Fatal("missing base-router spec")
+	}
+	if got := *baseRouter.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(baseRouterServicePort) {
+		t.Fatalf("base-router port = %d, want %d", got, baseRouterServicePort)
+	}
+	if udm == nil {
+		t.Fatal("missing udm spec")
+	}
+	if got := *udm.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(udmRestAPIServicePort) {
+		t.Fatalf("udm port = %d, want %d", got, udmRestAPIServicePort)
+	}
 }
 
 func TestKernelApexRedirectRule(t *testing.T) {

@@ -30,6 +30,10 @@ const (
 	kernelRouteNextcloud           = "kernel-nextcloud"
 	kernelRouteCollabora           = "kernel-collabora"
 	kernelRouteIntercom            = "kernel-intercom"
+
+	keycloakProxyServicePort = int32(8181)
+	baseRouterServicePort    = int32(8080)
+	udmRestAPIServicePort    = int32(9979)
 )
 
 type kernelHTTPRouteSpec struct {
@@ -147,7 +151,7 @@ func kernelHTTPRouteSpecs(
 			name: kernelRouteKeycloakIDP,
 			host: idHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(keycloakProxyServiceName(), 8080, keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)),
+				kernelBackendRule(keycloakProxyServiceName(), keycloakProxyServicePort, keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
@@ -162,7 +166,7 @@ func kernelHTTPRouteSpecs(
 			name: kernelRoutePortalBaseRouter,
 			host: portalHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(baseRouterServiceName(), 80, "/u/base-router"),
+				kernelBackendRulePrefix(baseRouterServiceName(), baseRouterServicePort, "/u/base-router"),
 			},
 		},
 		{
@@ -185,7 +189,7 @@ func kernelHTTPRouteSpecs(
 			name: kernelRoutePortalUDM,
 			host: portalHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(udmRestAPIServiceName(), 80, "/univention/udm"),
+				kernelBackendRulePrefix(udmRestAPIServiceName(), udmRestAPIServicePort, "/univention/udm"),
 			},
 		},
 		{

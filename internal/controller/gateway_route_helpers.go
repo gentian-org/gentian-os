@@ -163,9 +163,6 @@ func gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingressSubDo
 	}
 	modifier := gatewayv1.HTTPHeaderFilter{
 		Remove: []string{"X-Frame-Options"},
-		Set: []gatewayv1.HTTPHeader{
-			{Name: "X-Frame-Options", Value: ""},
-		},
 	}
 	switch policy.Mode {
 	case gatewayFrameAncestorsAppend:
@@ -173,10 +170,10 @@ func gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingressSubDo
 			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", policy.Origins)},
 		}
 	default:
-		modifier.Set = append(modifier.Set, gatewayv1.HTTPHeader{
+		modifier.Set = []gatewayv1.HTTPHeader{{
 			Name:  "Content-Security-Policy",
 			Value: fmt.Sprintf("frame-ancestors 'self' %s", policy.Origins),
-		})
+		}}
 	}
 	return []gatewayv1.HTTPRouteFilter{
 		{
@@ -226,7 +223,6 @@ func keycloakGatewayResponseFilters(kernelDomain string, tenantEffectiveDomains 
 	modifier := gatewayv1.HTTPHeaderFilter{
 		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
 		Set: []gatewayv1.HTTPHeader{
-			{Name: "X-Frame-Options", Value: ""},
 			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", origins)},
 		},
 	}
