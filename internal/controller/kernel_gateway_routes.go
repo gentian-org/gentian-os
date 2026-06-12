@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -43,10 +44,11 @@ const (
 )
 
 type kernelHTTPRouteSpec struct {
-	name   string
-	host   string
-	rules  []gatewayv1.HTTPRouteRule
-	policy map[string]interface{}
+	name         string
+	host         string
+	rules        []gatewayv1.HTTPRouteRule
+	policy       map[string]interface{}
+	clientPolicy map[string]interface{}
 }
 
 func kernelStage() string {
@@ -135,6 +137,11 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		if spec.policy != nil {
 			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec); err != nil {
 				return fmt.Errorf("ensure kernel BackendTrafficPolicy %s: %w", spec.name, err)
+			}
+		}
+		if spec.clientPolicy != nil {
+			if err := r.ensureKernelClientTrafficPolicy(ctx, spec); err != nil {
+				return fmt.Errorf("ensure kernel ClientTrafficPolicy %s: %w", spec.name, err)
 			}
 		}
 	}
@@ -251,7 +258,8 @@ func kernelHTTPRouteSpecs(
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRule("collabora", 9980, nil),
 			},
-			policy: collaboraBackendTrafficPolicySpec(),
+			policy:       collaboraBackendTrafficPolicySpec(),
+			clientPolicy: collaboraClientTrafficPolicySpec(),
 		},
 		{
 			name: kernelRouteIntercom,
@@ -648,8 +656,7 @@ func cryptpadBackendTrafficPolicySpec() map[string]interface{} {
 		},
 		"timeout": map[string]interface{}{
 			"http": map[string]interface{}{
-				"requestTimeout":  "3600s",
-				"responseTimeout": "3600s",
+				"requestTimeout": "3600s",
 			},
 		},
 	}
@@ -663,25 +670,21 @@ func collaboraBackendTrafficPolicySpec() map[string]interface{} {
 				"kind":  "HTTPRoute",
 			},
 		},
+		// Envoy Gateway v1.2.x CRD supports requestTimeout only (not responseTimeout/httpUpgrade).
 		"timeout": map[string]interface{}{
 			"http": map[string]interface{}{
-				"requestTimeout":  "600s",
-				"responseTimeout": "600s",
+				"requestTimeout": "600s",
 			},
 		},
-		// Collabora document editing uses WebSocket upgrades on /cool/ paths.
-		"httpUpgrade": []interface{}{
-			map[string]interface{}{"type": "websocket"},
-		},
-		// nginx upstream-hash-by=$arg_WOPISrc — sticky sessions per document.
-		"loadBalancer": map[string]interface{}{
-			"type": "ConsistentHash",
-			"consistentHash": map[string]interface{}{
-				"type": "QueryParams",
-				"queryParams": []interface{}{
-					map[string]interface{}{"name": "WOPISrc"},
-				},
-			},
+	}
+}
+
+func collaboraClientTrafficPolicySpec() map[string]interface{} {
+	return map[string]interface{}{
+		"path": map[string]interface{}{
+			// Collabora /cool/... WebSocket URLs embed encoded WOPI paths (%3A, %2F, …).
+			// Envoy default normalization rejects them with path_normalization_failed.
+			"escapedSlashesAction": "KeepUnchanged",
 		},
 	}
 }
@@ -704,6 +707,62 @@ func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(spec.host)},
 			Rules:     spec.rules,
+		},
+	}
+}
+
+var clientTrafficPolicyGVK = schema.GroupVersionKind{
+	Group:   "gateway.envoyproxy.io",
+	Version: "v1alpha1",
+	Kind:    "ClientTrafficPolicy",
+}
+
+func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicy(ctx context.Context, spec kernelHTTPRouteSpec) error {
+	if spec.clientPolicy == nil {
+		return nil
+	}
+	policySpec := cloneMap(spec.clientPolicy)
+	attachKernelClientTrafficPolicyTarget(policySpec, kernelCollaboraListenerName)
+
+	name := fmt.Sprintf("ctp-%s", spec.name)
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(clientTrafficPolicyGVK)
+	desired.SetName(name)
+	desired.SetNamespace(servicesNamespace)
+	desired.SetLabels(map[string]string{
+		managedByLabel:        managedByValue,
+		gatewayComponentLabel: gatewayComponentKernel,
+	})
+	if err := unstructured.SetNestedField(desired.Object, policySpec, "spec"); err != nil {
+		return err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(clientTrafficPolicyGVK)
+	err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: servicesNamespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		if err := unstructured.SetNestedField(existing.Object, policySpec, "spec"); err != nil {
+			return err
+		}
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+func attachKernelClientTrafficPolicyTarget(spec map[string]interface{}, sectionName string) {
+	spec["targetRefs"] = []interface{}{
+		map[string]interface{}{
+			"group":       gatewayv1.GroupName,
+			"kind":        "Gateway",
+			"name":        KernelPublicGatewayName,
+			"sectionName": sectionName,
 		},
 	}
 }

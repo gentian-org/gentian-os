@@ -45,8 +45,8 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 4 {
-		t.Fatalf("listeners = %d, want 4", len(gw.Spec.Listeners))
+	if len(gw.Spec.Listeners) != 5 {
+		t.Fatalf("listeners = %d, want 5", len(gw.Spec.Listeners))
 	}
 	if gw.Spec.Listeners[0].Name != "https-wildcard" {
 		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
@@ -60,11 +60,17 @@ func TestBuildKernelGateway(t *testing.T) {
 	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
 		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
 	}
-	if gw.Spec.Listeners[2].Name != "https-tenant-demo-wildcard" {
-		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[2].Name)
+	if gw.Spec.Listeners[2].Name != kernelCollaboraListenerName {
+		t.Fatalf("office listener name = %q", gw.Spec.Listeners[2].Name)
 	}
-	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[2].Hostname)
+	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "office.desk.gentian.org" {
+		t.Fatalf("office listener hostname = %v", gw.Spec.Listeners[2].Hostname)
+	}
+	if gw.Spec.Listeners[3].Name != "https-tenant-demo-wildcard" {
+		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[3].Name)
+	}
+	if gw.Spec.Listeners[3].Hostname == nil || string(*gw.Spec.Listeners[3].Hostname) != "*.demo.desk.gentian.org" {
+		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[3].Hostname)
 	}
 	if gw.Spec.Listeners[0].AllowedRoutes == nil || gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From == nil ||
 		*gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {

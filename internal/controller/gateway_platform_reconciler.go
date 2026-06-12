@@ -163,7 +163,15 @@ func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) err
 }
 
 func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
-	extraListeners := []gatewayv1.Listener{kernelApexListener(kernelDomain, kernelWildcardTLSSecretName)}
+	extraListeners := []gatewayv1.Listener{
+		kernelApexListener(kernelDomain, kernelWildcardTLSSecretName),
+		tlsListener(
+			kernelCollaboraListenerName,
+			gatewayv1.Hostname(fmt.Sprintf("office.%s", kernelDomain)),
+			kernelWildcardTLSSecretName,
+			servicesNamespace,
+		),
+	}
 	for i := range tenants {
 		tenant := &tenants[i]
 		if tenant.DeletionTimestamp != nil {

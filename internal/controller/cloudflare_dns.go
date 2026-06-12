@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
@@ -21,6 +22,7 @@ type CloudflareDNSClient struct {
 	token       string
 	zoneID      string
 	tunnelCNAME string // e.g. <uuid>.cfargotunnel.com
+	accountID   string // lazily resolved from zone metadata
 	http        *http.Client
 }
 
@@ -57,6 +59,210 @@ type cfCreateResponse struct {
 type cfError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type cfZoneResponse struct {
+	Success bool `json:"success"`
+	Result  struct {
+		Account struct {
+			ID string `json:"id"`
+		} `json:"account"`
+	} `json:"result"`
+	Errors []cfError `json:"errors"`
+}
+
+type cfTunnelConfigResponse struct {
+	Success bool `json:"success"`
+	Result  struct {
+		Config cfTunnelConfig `json:"config"`
+	} `json:"result"`
+	Errors []cfError `json:"errors"`
+}
+
+type cfTunnelConfig struct {
+	Ingress []cfTunnelIngressRule `json:"ingress"`
+}
+
+type cfTunnelIngressRule struct {
+	Hostname string `json:"hostname,omitempty"`
+	Service  string `json:"service"`
+}
+
+func parseTunnelID(tunnelCNAME string) string {
+	host := strings.TrimSpace(tunnelCNAME)
+	if i := strings.Index(host, "."); i > 0 {
+		return host[:i]
+	}
+	return host
+}
+
+// ensureTunnelIngress adds or updates a public hostname → service mapping on the
+// remotely-managed Cloudflare tunnel. Existing ingress rules are preserved.
+func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname, service string) error {
+	if hostname == "" || service == "" {
+		return nil
+	}
+	accountID, err := c.accountIDForZone(ctx)
+	if err != nil {
+		return err
+	}
+	tunnelID := parseTunnelID(c.tunnelCNAME)
+	if tunnelID == "" {
+		return fmt.Errorf("invalid tunnel CNAME %q", c.tunnelCNAME)
+	}
+
+	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
+	if err != nil {
+		return err
+	}
+	if ingressRuleIndex(config.Ingress, hostname) >= 0 {
+		for i := range config.Ingress {
+			if config.Ingress[i].Hostname == hostname && config.Ingress[i].Service == service {
+				return nil
+			}
+		}
+	}
+	config.Ingress = upsertTunnelIngress(config.Ingress, hostname, service)
+	return c.putTunnelConfig(ctx, accountID, tunnelID, config)
+}
+
+// deleteTunnelIngress removes a hostname from the tunnel ingress configuration.
+func (c *CloudflareDNSClient) deleteTunnelIngress(ctx context.Context, hostname string) error {
+	if hostname == "" {
+		return nil
+	}
+	accountID, err := c.accountIDForZone(ctx)
+	if err != nil {
+		return err
+	}
+	tunnelID := parseTunnelID(c.tunnelCNAME)
+	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
+	if err != nil {
+		return err
+	}
+	idx := ingressRuleIndex(config.Ingress, hostname)
+	if idx < 0 {
+		return nil
+	}
+	config.Ingress = append(config.Ingress[:idx], config.Ingress[idx+1:]...)
+	if len(config.Ingress) == 0 {
+		config.Ingress = []cfTunnelIngressRule{{Service: "http_status:404"}}
+	}
+	return c.putTunnelConfig(ctx, accountID, tunnelID, config)
+}
+
+func (c *CloudflareDNSClient) accountIDForZone(ctx context.Context) (string, error) {
+	if c.accountID != "" {
+		return c.accountID, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/zones/%s", cloudflareAPIBase, c.zoneID), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	var result cfZoneResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parse Cloudflare zone response: %w", err)
+	}
+	if !result.Success || result.Result.Account.ID == "" {
+		return "", fmt.Errorf("cloudflare zone lookup failed: %v", result.Errors)
+	}
+	c.accountID = result.Result.Account.ID
+	return c.accountID, nil
+}
+
+func (c *CloudflareDNSClient) getTunnelConfig(ctx context.Context, accountID, tunnelID string) (cfTunnelConfig, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/accounts/%s/cfd_tunnel/%s/configurations", cloudflareAPIBase, accountID, tunnelID), nil)
+	if err != nil {
+		return cfTunnelConfig{}, err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return cfTunnelConfig{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	var result cfTunnelConfigResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return cfTunnelConfig{}, fmt.Errorf("parse Cloudflare tunnel config response: %w", err)
+	}
+	if !result.Success {
+		return cfTunnelConfig{}, fmt.Errorf("cloudflare get tunnel config: %v", result.Errors)
+	}
+	if len(result.Result.Config.Ingress) == 0 {
+		result.Result.Config.Ingress = []cfTunnelIngressRule{{Service: "http_status:404"}}
+	}
+	return result.Result.Config, nil
+}
+
+func (c *CloudflareDNSClient) putTunnelConfig(ctx context.Context, accountID, tunnelID string, config cfTunnelConfig) error {
+	payload, err := json.Marshal(map[string]interface{}{"config": config})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		fmt.Sprintf("%s/accounts/%s/cfd_tunnel/%s/configurations", cloudflareAPIBase, accountID, tunnelID),
+		bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	var result cfTunnelConfigResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("parse Cloudflare tunnel config update response: %w", err)
+	}
+	if !result.Success {
+		return fmt.Errorf("cloudflare put tunnel config: %v", result.Errors)
+	}
+	return nil
+}
+
+func ingressRuleIndex(rules []cfTunnelIngressRule, hostname string) int {
+	for i := range rules {
+		if rules[i].Hostname == hostname {
+			return i
+		}
+	}
+	return -1
+}
+
+func upsertTunnelIngress(rules []cfTunnelIngressRule, hostname, service string) []cfTunnelIngressRule {
+	catchAllIdx := -1
+	for i := range rules {
+		if rules[i].Hostname == "" {
+			catchAllIdx = i
+			break
+		}
+	}
+	rule := cfTunnelIngressRule{Hostname: hostname, Service: service}
+	if idx := ingressRuleIndex(rules, hostname); idx >= 0 {
+		rules[idx] = rule
+		return rules
+	}
+	if catchAllIdx >= 0 {
+		out := make([]cfTunnelIngressRule, 0, len(rules)+1)
+		out = append(out, rules[:catchAllIdx]...)
+		out = append(out, rule)
+		out = append(out, rules[catchAllIdx:]...)
+		return out
+	}
+	return append(rules, rule)
 }
 
 // ensureCNAME creates a proxied CNAME record pointing hostname → target if one

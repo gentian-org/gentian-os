@@ -162,9 +162,23 @@ func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, effe
 	if r.CloudflareDNS == nil {
 		return
 	}
+	logger := ctrl.LoggerFrom(ctx)
 	wildcard := "*." + effectiveDomain
 	if err := r.CloudflareDNS.ensureCNAME(ctx, wildcard, r.CloudflareDNS.tunnelCNAME); err != nil {
-		ctrl.LoggerFrom(ctx).Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
+		logger.Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
+	}
+	if !isGatewayRoutingMode(r.RoutingMode) {
+		return
+	}
+	origin, err := kernelGatewayTunnelOrigin(ctx, r.Client)
+	if err != nil {
+		logger.Error(err, "resolve kernel gateway tunnel origin")
+		return
+	}
+	for _, host := range []string{wildcard, effectiveDomain} {
+		if err := r.CloudflareDNS.ensureTunnelIngress(ctx, host, origin); err != nil {
+			logger.Error(err, "ensure Cloudflare tunnel ingress", "host", host, "origin", origin)
+		}
 	}
 }
 
@@ -312,6 +326,13 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		wildcard := "*." + effectiveDomain
 		if err := r.CloudflareDNS.deleteCNAME(ctx, wildcard); err != nil {
 			ctrl.LoggerFrom(ctx).Error(err, "delete Cloudflare wildcard DNS CNAME", "host", wildcard)
+		}
+		if isGatewayRoutingMode(r.RoutingMode) {
+			for _, host := range []string{wildcard, effectiveDomain} {
+				if err := r.CloudflareDNS.deleteTunnelIngress(ctx, host); err != nil {
+					ctrl.LoggerFrom(ctx).Error(err, "delete Cloudflare tunnel ingress", "host", host)
+				}
+			}
 		}
 	}
 
