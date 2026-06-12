@@ -574,26 +574,6 @@ func kernelRedirectRule(path, target string, status int) gatewayv1.HTTPRouteRule
 	}
 }
 
-func kernelRedirectRulePrefix(pathPrefix, target string, status int) gatewayv1.HTTPRouteRule {
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	targetPath := target
-	return gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(pathPrefix)},
-		Filters: []gatewayv1.HTTPRouteFilter{
-			{
-				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-					Path: &gatewayv1.HTTPPathModifier{
-						Type:            pathType,
-						ReplaceFullPath: &targetPath,
-					},
-					StatusCode: &status,
-				},
-			},
-		},
-	}
-}
-
 func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302
