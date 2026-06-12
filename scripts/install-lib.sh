@@ -1876,6 +1876,110 @@ install_envoy_gateway() {
 }
 
 # =============================================================================
+# apply_kernel_gateway_overlays — gateway-mode Helm value overlays + legacy ingress
+# =============================================================================
+apply_kernel_gateway_overlays() {
+    local ns="gentian-${ENV:-dev}"
+    if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+        info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
+        kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud/manifests/dev/gateway-values-configmap.yaml" \
+            >/dev/null 2>&1 || true
+        kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud-notifypush/manifests/dev/gateway-values-configmap.yaml" \
+            >/dev/null 2>&1 || true
+        success "Kernel gateway Helm overlays applied (nextcloud, notifypush)."
+        info "  Nubus gateway overlay: ConfigMap nubus-gateway-values (created in deploy_nubus)."
+        info "  Portal/intercom: gateway.yaml valueFiles in ApplicationSets 20/22."
+        print_gateway_tunnel_hints || true
+    else
+        apply_kernel_legacy_ingress
+    fi
+}
+
+apply_kernel_legacy_ingress() {
+    local ns="gentian-${ENV:-dev}"
+    banner "Applying kernel legacy Ingress manifests (ROUTING_MODE=ingress)"
+    for dir in \
+        "${SCRIPT_DIR}/kernel/services/cryptpad/manifests/${ENV:-dev}/legacy-ingress" \
+        "${SCRIPT_DIR}/kernel/services/collabora/manifests/${ENV:-dev}/legacy-ingress"; do
+        if [[ -d "${dir}" ]]; then
+            info "Applying ${dir}..."
+            kubectl apply -f "${dir}/" >/dev/null 2>&1 || warn "Some legacy ingress manifests in ${dir} failed to apply."
+        fi
+    done
+    success "Kernel legacy Ingress manifests applied."
+}
+
+wait_for_gateway_platform() {
+    if [[ "${ROUTING_MODE:-ingress}" != "gateway" ]]; then
+        return 0
+    fi
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset; skipping gateway platform wait."
+        return 0
+    fi
+
+    banner "Waiting for kernel Gateway API platform (ROUTING_MODE=gateway)"
+    local ns="gentian-${ENV:-dev}"
+    local deadline=$(( SECONDS + 300 ))
+
+    info "Waiting for GatewayClass gentian-envoy (up to 300s)..."
+    while (( SECONDS < deadline )); do
+        if kubectl get gatewayclass gentian-envoy >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if ! kubectl get gatewayclass gentian-envoy >/dev/null 2>&1; then
+        warn "GatewayClass gentian-envoy not found after 300s."
+        warn "  Check operator logs: kubectl logs -n gentian-system deploy/gentian-os | grep gateway-platform"
+        return 1
+    fi
+    success "GatewayClass gentian-envoy present."
+
+    info "Waiting for Gateway kernel-public-gateway in ${ns} (up to 300s)..."
+    while (( SECONDS < deadline )); do
+        if kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if ! kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
+        warn "Gateway kernel-public-gateway not found after 300s."
+        return 1
+    fi
+    success "Gateway kernel-public-gateway present."
+
+    info "Waiting for kernel HTTPRoutes (up to 300s)..."
+    while (( SECONDS < deadline )); do
+        local count
+        count=$(kubectl get httproute -n "${ns}" -l 'gentianos.io/gateway-component=kernel-route' --no-headers 2>/dev/null | wc -l)
+        if [[ "${count}" -ge 4 ]]; then
+            success "Kernel HTTPRoutes reconciled (${count} routes)."
+            print_gateway_tunnel_hints
+            return 0
+        fi
+        sleep 5
+    done
+    warn "Expected kernel HTTPRoutes not ready after 300s."
+    warn "  kubectl get gateway,httproute -n ${ns}"
+    return 1
+}
+
+print_gateway_tunnel_hints() {
+    if [[ "${ROUTING_MODE:-ingress}" != "gateway" ]]; then
+        return 0
+    fi
+    local ns="gentian-${ENV:-dev}"
+    info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
+    info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
+    info "  in namespace ${ns}, not the microk8s/nginx ingress controller."
+    info "  Discover the Service after kernel-public-gateway is Programmed:"
+    info "    kubectl get svc -n ${ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
+    info "  Typical origin: https://<envoy-svc>.${ns}.svc.cluster.local:443"
+    info "  Verify: kubectl get gateway -n ${ns} kernel-public-gateway -o yaml | grep -A5 conditions"
+}
+
+# =============================================================================
 # 12b. Apply the kernel wildcard Certificate + ExternalSecret backing the
 # Cloudflare API token. Runs after seed_secrets so the OpenBao path
 # `secret/gentian-os/kernel/dns/cloudflare` is populated. Skipped silently
@@ -2856,6 +2960,7 @@ install_orchestrator() {
         --set argocd.namespace="argocd" \
         --set kernelDomain="${KERNEL_DOMAIN}" \
         --set tenancyMode="${TENANCY_MODE:-multi}" \
+        --set routingMode="${ROUTING_MODE:-ingress}" \
         --wait --timeout 5m
 
     info "Waiting for orchestrator CRDs to be Established..."

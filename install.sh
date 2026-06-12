@@ -850,6 +850,13 @@ deploy_nubus() {
         -n "${ns}" \
         --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/dev.yaml" \
         --dry-run=client -o yaml | kubectl apply -f -
+    if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+        info "Creating nubus gateway values ConfigMap (ROUTING_MODE=gateway)..."
+        kubectl create configmap nubus-gateway-values \
+            -n "${ns}" \
+            --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/gateway.yaml" \
+            --dry-run=client -o yaml | kubectl apply -f -
+    fi
 
     # ── NATS subject patch ConfigMap ──────────────────────────────────────────
     # Fixes LDAP_SUBJECT mismatch between udm-listener and udm-transformer
@@ -1273,6 +1280,8 @@ main_cp() {
     "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)
     deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
+    apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays + legacy ingress cleanup
+    wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
     bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
 
     # Step 16 — wait for async ArgoCD hooks / apps, then verify cluster health.

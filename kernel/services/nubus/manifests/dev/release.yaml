@@ -57,5 +57,11 @@ spec:
           namespace: gentian-dev
           key: sensitive-values.yaml
           optional: false
+      # 4. Gateway-mode overlay (optional; created by install when ROUTING_MODE=gateway)
+      - configMapKeyRef:
+          name: nubus-gateway-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: true
   providerConfigRef:
     name: kubernetes

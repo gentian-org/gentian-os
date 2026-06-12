@@ -21,6 +21,8 @@ const (
 	envoyGatewayInstallNamespace     = "envoy-gateway-system"
 	gatewayPlatformReconcileKey      = "gateway-platform"
 	conditionGatewayReady            = "GatewayReady"
+	operatorNamespace                = "gentian-system"
+	operatorConfigMapName            = "gentian-os-config"
 )
 
 func normalizeRoutingMode(mode string) string {

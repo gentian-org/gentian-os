@@ -58,6 +58,7 @@ spec:
             valueFiles:
               - "$values/kernel/services/gentian-portal/values/{{.chart}}/_base.yaml"
               - "$values/kernel/services/gentian-portal/values/{{.chart}}/{{.env}}/values.yaml"
+              - "$values/kernel/services/gentian-portal/values/{{.chart}}/gateway.yaml"
             releaseName: "gentian-portal-{{.chart}}-{{.env}}"
       destination:
         server: https://kubernetes.default.svc

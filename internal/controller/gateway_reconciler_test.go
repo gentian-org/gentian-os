@@ -180,8 +180,8 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 4 {
-		t.Fatalf("spec count = %d", len(specs))
+	if len(specs) != 13 {
+		t.Fatalf("spec count = %d, want 13", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -189,5 +189,17 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 	if string(idRoute.Spec.Hostnames[0]) != "id.desk.gentian.org" {
 		t.Fatalf("id host = %v", idRoute.Spec.Hostnames[0])
+	}
+}
+
+func TestKernelApexRedirectRule(t *testing.T) {
+	t.Parallel()
+	rule := kernelApexRedirectRule("desk.gentian.org")
+	if len(rule.Filters) != 1 || rule.Filters[0].RequestRedirect == nil {
+		t.Fatalf("rule = %+v", rule)
+	}
+	redirect := rule.Filters[0].RequestRedirect
+	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.desk.gentian.org" {
+		t.Fatalf("hostname = %v", redirect.Hostname)
 	}
 }
