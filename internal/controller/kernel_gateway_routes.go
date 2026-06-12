@@ -326,6 +326,9 @@ func kernelUMCGatewayShellRules(serviceName string, port int32) []gatewayv1.HTTP
 
 func kernelPortalFrontendRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
 	return []gatewayv1.HTTPRouteRule{
+		// Legacy nginx extraIngress entry-to-login: bare /univention paths → gentian-login.
+		kernelRedirectRule("/univention", "/login/", 301),
+		kernelRedirectRule("/univention/", "/login/", 301),
 		kernelRedirectRule("/univention/portal", "/univention/portal/", 301),
 		kernelRedirectRule("/univention/selfservice", "/univention/portal/", 301),
 		// Exact only: /univention/login/* Dojo modules must reach umc-gateway (see shell routes).
@@ -684,6 +687,20 @@ func collaboraBackendTrafficPolicySpec() map[string]interface{} {
 			"http": map[string]interface{}{
 				"requestTimeout":  "600s",
 				"responseTimeout": "600s",
+			},
+		},
+		// Collabora document editing uses WebSocket upgrades on /cool/ paths.
+		"httpUpgrade": []interface{}{
+			map[string]interface{}{"type": "websocket"},
+		},
+		// nginx upstream-hash-by=$arg_WOPISrc — sticky sessions per document.
+		"loadBalancer": map[string]interface{}{
+			"type": "ConsistentHash",
+			"consistentHash": map[string]interface{}{
+				"type": "QueryParams",
+				"queryParams": []interface{}{
+					map[string]interface{}{"name": "WOPISrc"},
+				},
 			},
 		},
 	}

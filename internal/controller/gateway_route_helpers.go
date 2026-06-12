@@ -46,6 +46,20 @@ func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
 	}
 }
 
+func kernelGatewayParentRef() gatewayv1.ParentReference {
+	ref := gatewayParentRef(KernelPublicGatewayName)
+	ns := gatewayv1.Namespace(servicesNamespace)
+	ref.Namespace = &ns
+	return ref
+}
+
+func tenantGatewayParentRefs(tenantName string) []gatewayv1.ParentReference {
+	return []gatewayv1.ParentReference{
+		gatewayParentRef(tenantGatewayName(tenantName)),
+		kernelGatewayParentRef(),
+	}
+}
+
 func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	t := gatewayv1.PathMatchPathPrefix
 	return gatewayv1.HTTPRouteMatch{
@@ -102,9 +116,7 @@ func buildAppHTTPRoute(
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					gatewayParentRef(tenantGatewayName(tenant.Name)),
-				},
+				ParentRefs: tenantGatewayParentRefs(tenant.Name),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
 			Rules:     []gatewayv1.HTTPRouteRule{rule},
@@ -127,9 +139,7 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					gatewayParentRef(tenantGatewayName(tenant.Name)),
-				},
+				ParentRefs: tenantGatewayParentRefs(tenant.Name),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(effectiveDomain)},
 			Rules: []gatewayv1.HTTPRouteRule{

@@ -32,7 +32,10 @@ func TestNormalizeRoutingMode(t *testing.T) {
 
 func TestBuildKernelGateway(t *testing.T) {
 	t.Parallel()
-	gw := buildKernelGateway("desk.gentian.org")
+	tenants := []gentianov1alpha1.Tenant{
+		{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+	}
+	gw := buildKernelGateway("desk.gentian.org", "multi", tenants)
 	if gw.Name != KernelPublicGatewayName {
 		t.Fatalf("name = %q", gw.Name)
 	}
@@ -42,8 +45,8 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 2 {
-		t.Fatalf("listeners = %d, want 2", len(gw.Spec.Listeners))
+	if len(gw.Spec.Listeners) != 4 {
+		t.Fatalf("listeners = %d, want 4", len(gw.Spec.Listeners))
 	}
 	if gw.Spec.Listeners[0].Name != "https-wildcard" {
 		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
@@ -56,6 +59,16 @@ func TestBuildKernelGateway(t *testing.T) {
 	}
 	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
 		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
+	}
+	if gw.Spec.Listeners[2].Name != "https-tenant-demo-wildcard" {
+		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[2].Name)
+	}
+	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "*.demo.desk.gentian.org" {
+		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[2].Hostname)
+	}
+	if gw.Spec.Listeners[0].AllowedRoutes == nil || gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From == nil ||
+		*gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
+		t.Fatalf("kernel gateway should allow cross-namespace routes, got %v", gw.Spec.Listeners[0].AllowedRoutes)
 	}
 	if string(gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
 		t.Fatalf("tls secret = %q", gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name)
@@ -122,8 +135,17 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "chat.demo.desk.gentian.org" {
 		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
 	}
+	if len(route.Spec.ParentRefs) != 2 {
+		t.Fatalf("parent refs = %d, want 2", len(route.Spec.ParentRefs))
+	}
 	if route.Spec.ParentRefs[0].Name != "tenant-demo-gateway" {
-		t.Fatalf("parent = %v", route.Spec.ParentRefs[0].Name)
+		t.Fatalf("tenant parent = %v", route.Spec.ParentRefs[0].Name)
+	}
+	if route.Spec.ParentRefs[1].Name != KernelPublicGatewayName {
+		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[1].Name)
+	}
+	if route.Spec.ParentRefs[1].Namespace == nil || string(*route.Spec.ParentRefs[1].Namespace) != servicesNamespace {
+		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[1].Namespace)
 	}
 	if len(route.Spec.Rules[0].Filters) == 0 {
 		t.Fatal("expected embedding response filters")
@@ -307,6 +329,24 @@ func TestKernelPortalFrontendRewriteRules(t *testing.T) {
 	}
 	if len(kernelPortalFrontendRules("nubus-dev-portal-frontend", 80)) > 16 {
 		t.Fatal("portal route exceeds HTTPRoute rule limit")
+	}
+	var univentionRedirect *gatewayv1.HTTPRouteRule
+	for _, rule := range kernelPortalFrontendRules("nubus-dev-portal-frontend", 80) {
+		if len(rule.Matches) == 0 || rule.Matches[0].Path == nil || rule.Matches[0].Path.Value == nil {
+			continue
+		}
+		if *rule.Matches[0].Path.Value == "/univention/" && len(rule.Filters) > 0 && rule.Filters[0].RequestRedirect != nil {
+			univentionRedirect = &rule
+			break
+		}
+	}
+	if univentionRedirect == nil {
+		t.Fatal("missing /univention/ redirect rule")
+	}
+	if univentionRedirect.Filters[0].RequestRedirect.Path == nil ||
+		univentionRedirect.Filters[0].RequestRedirect.Path.ReplaceFullPath == nil ||
+		*univentionRedirect.Filters[0].RequestRedirect.Path.ReplaceFullPath != "/login/" {
+		t.Fatalf("/univention/ redirect target = %v", univentionRedirect.Filters[0].RequestRedirect.Path)
 	}
 	var cssRewrite *gatewayv1.HTTPRouteRule
 	for i := range rules {

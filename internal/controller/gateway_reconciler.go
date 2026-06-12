@@ -61,6 +61,9 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	if err := ensureGatewayResource(ctx, r.Client, desiredGW); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure tenant Gateway: %w", err)
 	}
+	if err := ensureTenantKernelGatewayReferenceGrants(ctx, r.Client, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure kernel Gateway ReferenceGrants: %w", err)
+	}
 
 	expectedRoutes := make(map[string]struct{}, len(intents))
 	allRoutesReady := true

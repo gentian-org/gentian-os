@@ -145,70 +145,110 @@ func (r *GatewayPlatformReconciler) ensureGatewayClass(ctx context.Context) erro
 }
 
 func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) error {
-	desired := buildKernelGateway(r.KernelDomain)
+	tenantList := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenantList); err != nil {
+		return fmt.Errorf("list tenants for kernel Gateway: %w", err)
+	}
+	for i := range tenantList.Items {
+		tenant := &tenantList.Items[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		if err := ensureTenantKernelGatewayReferenceGrants(ctx, r.Client, tenant); err != nil {
+			return fmt.Errorf("ensure ReferenceGrants for tenant %s: %w", tenant.Name, err)
+		}
+	}
+	desired := buildKernelGateway(r.KernelDomain, r.TenancyMode, tenantList.Items)
 	return ensureGatewayResource(ctx, r.Client, desired)
 }
 
-func buildKernelGateway(kernelDomain string) *gatewayv1.Gateway {
+func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
+	extraListeners := []gatewayv1.Listener{kernelApexListener(kernelDomain, kernelWildcardTLSSecretName)}
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		effectiveDomain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
+		if effectiveDomain == "" {
+			continue
+		}
+		nsName := tenantNamespaceName(tenant)
+		tlsSecret := tenantWildcardSecretName(tenant.Name)
+		extraListeners = append(extraListeners,
+			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName, false),
+			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName, true),
+		)
+	}
 	return buildGateway(KernelPublicGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
 		managedByLabel:       managedByValue,
 		"gentianos.io/scope": "kernel",
-	}, []gatewayv1.Listener{kernelApexListener(kernelDomain, kernelWildcardTLSSecretName)})
+	}, gatewayBuildOptions{
+		allowCrossNamespaceRoutes: true,
+		extraListeners:            extraListeners,
+	})
 }
 
 func kernelApexListener(kernelDomain, tlsSecret string) gatewayv1.Listener {
-	hostname := gatewayv1.Hostname(kernelDomain)
+	return tlsListener("https-apex", gatewayv1.Hostname(kernelDomain), tlsSecret, servicesNamespace)
+}
+
+func tenantKernelGatewayListener(tenantName, effectiveDomain, tlsSecret, tlsSecretNamespace string, apex bool) gatewayv1.Listener {
+	name := fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
+	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", effectiveDomain))
+	if apex {
+		name = fmt.Sprintf("https-tenant-%s-apex", tenantName)
+		hostname = gatewayv1.Hostname(effectiveDomain)
+	}
+	return tlsListener(name, hostname, tlsSecret, tlsSecretNamespace)
+}
+
+func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretNamespace string) gatewayv1.Listener {
 	port := gatewayv1.PortNumber(443)
 	mode := gatewayv1.TLSModeTerminate
 	secretKind := gatewayv1.Kind("Secret")
+	ref := gatewayv1.SecretObjectReference{
+		Kind: &secretKind,
+		Name: gatewayv1.ObjectName(tlsSecret),
+	}
+	if tlsSecretNamespace != "" && tlsSecretNamespace != servicesNamespace {
+		ns := gatewayv1.Namespace(tlsSecretNamespace)
+		ref.Namespace = &ns
+	}
 	return gatewayv1.Listener{
-		Name:     "https-apex",
+		Name:     gatewayv1.SectionName(name),
 		Protocol: gatewayv1.HTTPSProtocolType,
 		Port:     port,
 		Hostname: &hostname,
 		TLS: &gatewayv1.GatewayTLSConfig{
 			Mode: &mode,
 			CertificateRefs: []gatewayv1.SecretObjectReference{
-				{
-					Kind: &secretKind,
-					Name: gatewayv1.ObjectName(tlsSecret),
-				},
+				ref,
 			},
 		},
 	}
+}
+
+type gatewayBuildOptions struct {
+	allowCrossNamespaceRoutes bool
+	extraListeners            []gatewayv1.Listener
 }
 
 func buildTenantGateway(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, tlsSecret string) *gatewayv1.Gateway {
 	return buildGateway(tenantGatewayName(tenant.Name), nsName, effectiveDomain, tlsSecret, map[string]string{
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
-	}, nil)
+	}, gatewayBuildOptions{})
 }
 
-func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, extraListeners []gatewayv1.Listener) *gatewayv1.Gateway {
+func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
 	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", domain))
-	port := gatewayv1.PortNumber(443)
-	mode := gatewayv1.TLSModeTerminate
-	secretKind := gatewayv1.Kind("Secret")
-
 	listeners := []gatewayv1.Listener{
-		{
-			Name:     "https-wildcard",
-			Protocol: gatewayv1.HTTPSProtocolType,
-			Port:     port,
-			Hostname: &hostname,
-			TLS: &gatewayv1.GatewayTLSConfig{
-				Mode: &mode,
-				CertificateRefs: []gatewayv1.SecretObjectReference{
-					{
-						Kind: &secretKind,
-						Name: gatewayv1.ObjectName(tlsSecret),
-					},
-				},
-			},
-		},
+		withAllowedRoutes(tlsListener("https-wildcard", hostname, tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
 	}
-	listeners = append(listeners, extraListeners...)
+	for i := range opts.extraListeners {
+		listeners = append(listeners, withAllowedRoutes(opts.extraListeners[i], opts.allowCrossNamespaceRoutes))
+	}
 
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -221,6 +261,19 @@ func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]s
 			Listeners:        listeners,
 		},
 	}
+}
+
+func withAllowedRoutes(listener gatewayv1.Listener, crossNamespace bool) gatewayv1.Listener {
+	from := gatewayv1.NamespacesFromSame
+	if crossNamespace {
+		from = gatewayv1.NamespacesFromAll
+	}
+	listener.AllowedRoutes = &gatewayv1.AllowedRoutes{
+		Namespaces: &gatewayv1.RouteNamespaces{
+			From: &from,
+		},
+	}
+	return listener
 }
 
 func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewayv1.Gateway) error {

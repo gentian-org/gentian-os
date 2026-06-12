@@ -262,3 +262,75 @@ func attachBackendTrafficPolicyTarget(spec map[string]interface{}, routeName str
 	}
 	ref["name"] = routeName
 }
+
+// ensureTenantKernelGatewayReferenceGrants allows tenant HTTPRoutes to attach to
+// kernel-public-gateway (single tunnel entry point) and lets that Gateway terminate
+// TLS with the tenant wildcard certificate.
+func ensureTenantKernelGatewayReferenceGrants(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) error {
+	nsName := tenantNamespaceName(tenant)
+	if err := ensureReferenceGrant(ctx, c, servicesNamespace, "allow-tenant-routes-"+tenant.Name, map[string]interface{}{
+		"from": []interface{}{
+			map[string]interface{}{
+				"group":     gatewayv1.GroupName,
+				"kind":      "HTTPRoute",
+				"namespace": nsName,
+			},
+		},
+		"to": []interface{}{
+			map[string]interface{}{
+				"group": gatewayv1.GroupName,
+				"kind":  "Gateway",
+				"name":  KernelPublicGatewayName,
+			},
+		},
+	}); err != nil {
+		return err
+	}
+	return ensureReferenceGrant(ctx, c, nsName, "allow-kernel-gateway-tls", map[string]interface{}{
+		"from": []interface{}{
+			map[string]interface{}{
+				"group":     gatewayv1.GroupName,
+				"kind":      "Gateway",
+				"namespace": servicesNamespace,
+			},
+		},
+		"to": []interface{}{
+			map[string]interface{}{
+				"group": "",
+				"kind":  "Secret",
+				"name":  tenantWildcardSecretName(tenant.Name),
+			},
+		},
+	})
+}
+
+func ensureReferenceGrant(ctx context.Context, c client.Client, namespace, name string, spec map[string]interface{}) error {
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(referenceGrantGVK)
+	desired.SetName(name)
+	desired.SetNamespace(namespace)
+	desired.SetLabels(map[string]string{
+		managedByLabel: managedByValue,
+	})
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(referenceGrantGVK)
+	err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, existing)
+	if errors.IsNotFound(err) {
+		return c.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+			return err
+		}
+		return c.Patch(ctx, existing, patch)
+	}
+	return nil
+}
