@@ -252,3 +252,7 @@ nubusUmcGateway:
       configMap:
         name: nubus-dev-umc-template-default
         defaultMode: 0755
+    - name: gentian-umc-gateway-upstream
+      configMap:
+        name: nubus-dev-umc-gateway-upstream
+        defaultMode: 0755
