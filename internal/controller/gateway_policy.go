@@ -26,6 +26,12 @@ var backendTrafficPolicyGVK = schema.GroupVersionKind{
 	Kind:    "BackendTrafficPolicy",
 }
 
+var referenceGrantGVK = schema.GroupVersionKind{
+	Group:   gatewayv1.GroupName,
+	Version: "v1beta1",
+	Kind:    "ReferenceGrant",
+}
+
 func (r *TenantReconciler) collectTenantIngressIntents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
 	var intents []ingressIntent
 	for _, app := range tenant.Spec.Apps {

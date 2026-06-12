@@ -33,6 +33,9 @@ const (
 	kernelRouteNextcloud           = "kernel-nextcloud"
 	kernelRouteCollabora           = "kernel-collabora"
 	kernelRouteIntercom            = "kernel-intercom"
+	kernelRouteArgoCD              = "kernel-argocd"
+
+	argocdServerServiceName = "argocd-server"
 
 	keycloakProxyServicePort = int32(8181)
 	baseRouterServicePort    = int32(8080)
@@ -116,6 +119,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, r.Client, tenantList.Items)
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
+	}
+	if err := r.ensureArgoCDReferenceGrant(ctx); err != nil {
+		return fmt.Errorf("ensure ArgoCD ReferenceGrant: %w", err)
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames)
@@ -254,6 +260,13 @@ func kernelHTTPRouteSpecs(
 				kernelBackendRule(intercomServiceName(), 8008, nil),
 			},
 		},
+		{
+			name: kernelRouteArgoCD,
+			host: fmt.Sprintf("argocd.%s", kernelDomain),
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
+			},
+		},
 	}
 }
 
@@ -300,7 +313,7 @@ func kernelUMCGatewayShellRules(serviceName string, port int32) []gatewayv1.HTTP
 		kernelBackendRuleExact(serviceName, port, "/univention/theme.css"),
 	}
 	prefixes := []string{
-		"management", "js", "themes", "server-overview", "self-service", "setup", "i18n",
+		"management", "js", "themes", "login", "server-overview", "self-service", "setup", "i18n",
 	}
 	for _, segment := range prefixes {
 		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))
@@ -312,7 +325,8 @@ func kernelPortalFrontendRules(serviceName string, port int32) []gatewayv1.HTTPR
 	return []gatewayv1.HTTPRouteRule{
 		kernelRedirectRule("/univention/portal", "/univention/portal/", 301),
 		kernelRedirectRule("/univention/selfservice", "/univention/portal/", 301),
-		kernelRedirectRulePrefix("/univention/login", "/login/", 301),
+		// Exact only: /univention/login/* Dojo modules must reach umc-gateway (see shell routes).
+		kernelRedirectRule("/univention/login", "/login/", 301),
 		kernelBackendRulePrefix(serviceName, port, "/univention/portal"),
 		kernelBackendRulePrefix(serviceName, port, "/univention/selfservice"),
 		kernelBackendRulePrefix(serviceName, port, "/"),
@@ -467,6 +481,71 @@ func kernelBackendRuleExact(serviceName string, port int32, path string, filters
 		rule.Filters = filters
 	}
 	return rule
+}
+
+func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) gatewayv1.HTTPRouteRule {
+	p := gatewayv1.PortNumber(port)
+	ns := gatewayv1.Namespace(namespace)
+	return gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+		BackendRefs: []gatewayv1.HTTPBackendRef{
+			{
+				BackendRef: gatewayv1.BackendRef{
+					BackendObjectReference: gatewayv1.BackendObjectReference{
+						Name:      gatewayv1.ObjectName(serviceName),
+						Namespace: &ns,
+						Port:      &p,
+					},
+				},
+			},
+		},
+	}
+}
+
+func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Context) error {
+	spec := map[string]interface{}{
+		"from": []interface{}{
+			map[string]interface{}{
+				"group":     gatewayv1.GroupName,
+				"kind":      "HTTPRoute",
+				"namespace": servicesNamespace,
+			},
+		},
+		"to": []interface{}{
+			map[string]interface{}{
+				"group": "",
+				"kind":  "Service",
+			},
+		},
+	}
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(referenceGrantGVK)
+	desired.SetName("allow-kernel-gateway-routes")
+	desired.SetNamespace(argocdNamespace)
+	desired.SetLabels(map[string]string{
+		managedByLabel: managedByValue,
+	})
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(referenceGrantGVK)
+	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: argocdNamespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+			return err
+		}
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
 }
 
 func kernelRedirectRule(path, target string, status int) gatewayv1.HTTPRouteRule {

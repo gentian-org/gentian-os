@@ -2350,6 +2350,9 @@ install_argocd() {
     # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
     # the Ingress is safe to create before the Secret exists.
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+            info "ROUTING_MODE=gateway: ArgoCD edge route is managed by the operator (kernel-argocd HTTPRoute)."
+        else
         info "Creating ArgoCD Ingress for argocd.${KERNEL_DOMAIN}..."
         kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
@@ -2379,6 +2382,7 @@ spec:
     secretName: wildcard-tls
 EOF
         success "ArgoCD Ingress created: https://argocd.${KERNEL_DOMAIN}"
+        fi
     fi
 
     # Print ArgoCD admin credentials early so the user sees them even if

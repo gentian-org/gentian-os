@@ -189,8 +189,8 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 16 {
-		t.Fatalf("spec count = %d, want 16", len(specs))
+	if len(specs) != 17 {
+		t.Fatalf("spec count = %d, want 17", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -248,8 +248,8 @@ func TestKernelPortalServerDataRules(t *testing.T) {
 func TestKernelUMCGatewayShellRules(t *testing.T) {
 	t.Parallel()
 	rules := kernelUMCGatewayShellRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 8 {
-		t.Fatalf("rule count = %d, want 8", len(rules))
+	if len(rules) != 9 {
+		t.Fatalf("rule count = %d, want 9", len(rules))
 	}
 	if len(rules) > 16 {
 		t.Fatal("UMC shell route exceeds HTTPRoute rule limit")
