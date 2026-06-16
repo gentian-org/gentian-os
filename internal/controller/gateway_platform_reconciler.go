@@ -31,9 +31,10 @@ import (
 // resources: the shared GatewayClass and kernel-public-gateway.
 type GatewayPlatformReconciler struct {
 	client.Client
-	KernelDomain string
-	TenancyMode  string
-	RoutingMode  string
+	KernelDomain  string
+	TenancyMode   string
+	RoutingMode   string
+	CloudflareDNS *CloudflareDNSClient
 }
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -56,6 +57,14 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 	}
 	if err := r.deleteSupersededKernelIngress(ctx); err != nil {
 		logger.Error(err, "delete superseded kernel Ingress resources")
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+	}
+	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.CloudflareDNS, r.KernelDomain); err != nil {
+		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+	}
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.RoutingMode); err != nil {
+		logger.Error(err, "reconcile CoreDNS kernel hairpin")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
@@ -95,6 +104,18 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return ok && cm.GetNamespace() == operatorNamespace && cm.GetName() == operatorConfigMapName
 	})
 
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		svc, ok := obj.(*corev1.Service)
+		if !ok {
+			return false
+		}
+		if svc.GetNamespace() != envoyGatewayInstallNamespace {
+			return false
+		}
+		return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
+			svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("gateway-platform").
 		For(&corev1.ConfigMap{}, builder.WithPredicates(configMapPredicate)).
@@ -106,6 +127,11 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&gentianov1alpha1.Tenant{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+		).
+		Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(envoyKernelServicePredicate),
 		).
 		Complete(r)
 }

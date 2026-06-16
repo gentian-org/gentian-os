@@ -223,7 +223,33 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	argocdApp := &unstructured.Unstructured{}
 	argocdApp.SetGroupVersionKind(argocdApplicationGVK)
 
-	return ctrl.NewControllerManagedBy(mgr).
+	mapAllTenants := func(ctx context.Context, _ client.Object) []reconcile.Request {
+		tenantList := &gentianov1alpha1.TenantList{}
+		if err := mgr.GetClient().List(ctx, tenantList); err != nil {
+			return nil
+		}
+		requests := make([]reconcile.Request, 0, len(tenantList.Items))
+		for _, t := range tenantList.Items {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: t.Name},
+			})
+		}
+		return requests
+	}
+
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		svc, ok := obj.(*corev1.Service)
+		if !ok {
+			return false
+		}
+		if svc.GetNamespace() != envoyGatewayInstallNamespace {
+			return false
+		}
+		return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
+			svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
+	})
+
+	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
 		Owns(&corev1.Namespace{}).
 		Watches(
@@ -253,8 +279,17 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&gentianov1alpha1.AppProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
-		).
-		Complete(r)
+		)
+
+	if isGatewayRoutingMode(r.RoutingMode) {
+		ctrlBuilder = ctrlBuilder.Watches(
+			&corev1.Service{},
+			handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(envoyKernelServicePredicate),
+		)
+	}
+
+	return ctrlBuilder.Complete(r)
 }
 
 // tenantEffectiveDomain returns the ingress/mail domain for tenant app hostnames.
@@ -1099,14 +1134,31 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 				},
 			},
 		},
-		{
+	}
+
+	if isGatewayRoutingMode(r.RoutingMode) {
+		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
+			// Allow egress to Envoy Gateway data plane so tenant pods can reach
+			// kernel and tenant public hostnames via CoreDNS hairpin overrides.
+			To: []networkingv1.NetworkPolicyPeer{
+				{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": envoyGatewayInstallNamespace},
+					},
+				},
+			},
+		})
+	}
+
+	egressRules = append(egressRules,
+		networkingv1.NetworkPolicyEgressRule{
 			// Allow DNS egress (kube-dns / CoreDNS)
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protocolUDP, Port: &dnsPort},
 				{Protocol: &protocolTCP, Port: &dnsPort},
 			},
 		},
-		{
+		networkingv1.NetworkPolicyEgressRule{
 			// Pre-DNAT rule: allow egress to the Kubernetes API ClusterIP:443.
 			// Covers CNIs that evaluate NetworkPolicy before kube-proxy DNAT.
 			To: []networkingv1.NetworkPolicyPeer{
@@ -1116,7 +1168,7 @@ func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gent
 				{Protocol: &protocolTCP, Port: &apiServerPort},
 			},
 		},
-	}
+	)
 
 	// Post-DNAT rules: one rule per API server endpoint address×port.
 	// Calico in iptables mode evaluates egress policy after kube-proxy DNAT, so

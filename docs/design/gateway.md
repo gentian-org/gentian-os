@@ -131,7 +131,9 @@ Tenant isolation is preserved in four layers:
 1. **Namespace-scoped Gateways and HTTPRoutes** for ownership boundaries.
 2. **Tenant-scoped TLS secrets** for certificate separation.
 3. **NetworkPolicies** allowing ingress from Envoy data-plane namespaces to
-   tenant workloads.
+   tenant workloads, and egress from tenant pods to the Envoy Gateway Service
+   ClusterIP (via namespace selector on `envoy-gateway-system`) so in-cluster
+   hairpin DNS overrides for kernel hostnames reach the programmed edge routes.
 4. **Identity and token exchange controls** at app/service layers via
    IntegrationBindings and OIDC policy.
 
@@ -193,3 +195,24 @@ The edge plane enforces:
 
 This makes routing and browser-facing security controls consistent across kernel
 services and tenant applications.
+
+---
+
+## 10. In-Cluster DNS Hairpin
+
+Pods that call kernel public hostnames (for example `https://id.<kernelDomain>/…`
+during Synapse OIDC bootstrap) cannot rely on external DNS or legacy nginx
+Ingress when `ROUTING_MODE=gateway`. Gentian OS reconciles a CoreDNS `hosts`
+override block (`# BEGIN gentian-hairpin`) so those names resolve to the
+current edge proxy ClusterIP:
+
+- **Gateway mode:** kernel Envoy Gateway Service in `envoy-gateway-system`
+- **Ingress mode:** `ingress-controller` Service in `ingress`
+
+The `mail.<kernelDomain>` entry is managed separately and continues to target
+the Dovecot Service ClusterIP (see [mail.md](mail.md)).
+
+The gateway-platform controller updates the hairpin block when the Envoy
+Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
+refreshed when the edge Service changes so egress to `envoy-gateway-system`
+stays allowed.

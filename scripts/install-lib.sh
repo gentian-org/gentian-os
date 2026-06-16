@@ -1955,6 +1955,7 @@ wait_for_gateway_platform() {
         count=$(kubectl get httproute -n "${ns}" -l 'gentianos.io/gateway-component=kernel-route' --no-headers 2>/dev/null | wc -l)
         if [[ "${count}" -ge 4 ]]; then
             success "Kernel HTTPRoutes reconciled (${count} routes)."
+            _reconcile_kernel_https_coredns_hairpin
             print_gateway_tunnel_hints
             return 0
         fi
@@ -1978,6 +1979,83 @@ print_gateway_tunnel_hints() {
     info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
     info "  Typical origin: https://<envoy-svc>.${envoy_ns}.svc.cluster.local:443"
     info "  Verify: kubectl get gateway -n ${ns} kernel-public-gateway -o yaml | grep -A5 conditions"
+}
+
+# Point CoreDNS kernel HTTPS hairpin entries at the Envoy Gateway ClusterIP.
+# mail.<kernelDomain> is left unchanged (Dovecot). The operator reconciles this
+# continuously; install/update runs it once so clusters recover before sync.
+_reconcile_kernel_https_coredns_hairpin() {
+    [[ "${ROUTING_MODE:-ingress}" == "gateway" ]] || return 0
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+
+    local services_ns="gentian-${ENV:-dev}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local mail_domain="mail.${KERNEL_DOMAIN}"
+    local edge_ip
+    edge_ip=$(kubectl get svc -n "${envoy_ns}" \
+        -l "gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway,gateway.envoyproxy.io/owning-gateway-namespace=${services_ns}" \
+        -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || true)
+    if [[ -z "${edge_ip}" ]]; then
+        warn "Envoy kernel Gateway Service not found; skipping CoreDNS hairpin update."
+        return 0
+    fi
+
+    local corefile patched
+    corefile=$(kubectl get configmap coredns -n kube-system \
+        -o jsonpath='{.data.Corefile}' 2>/dev/null || true)
+    if [[ -z "${corefile}" ]]; then
+        warn "CoreDNS ConfigMap not found; skipping kernel hairpin update."
+        return 0
+    fi
+    if ! echo "${corefile}" | grep -q "# BEGIN gentian-hairpin"; then
+        warn "CoreDNS Corefile has no gentian-hairpin block; operator will create it on sync."
+        return 0
+    fi
+
+    # Replace legacy ingress/nginx IPs for kernel HTTPS hosts; preserve mail entry.
+    patched=$(echo "${corefile}" | python3 -c '
+import re, sys
+corefile = sys.stdin.read()
+mail = sys.argv[1]
+edge = sys.argv[2]
+begin, end = "# BEGIN gentian-hairpin", "# END gentian-hairpin"
+i, j = corefile.find(begin), corefile.find(end)
+if i < 0 or j < i:
+    sys.stdout.write(corefile)
+    sys.exit(0)
+block = corefile[i:j + len(end)]
+lines = []
+for line in block.splitlines():
+    stripped = line.strip()
+    if stripped in (begin, end) or not stripped:
+        lines.append(line)
+        continue
+    parts = stripped.split()
+    if len(parts) >= 2 and parts[1] == mail:
+        lines.append(line)
+        continue
+    if len(parts) >= 2 and re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
+        indent = line[: len(line) - len(line.lstrip())]
+        lines.append(f"{indent}{edge} {parts[1]}")
+        continue
+    lines.append(line)
+new_block = "\n".join(lines)
+sys.stdout.write(corefile[:i] + new_block + corefile[j + len(end):])
+' "${mail_domain}" "${edge_ip}")
+
+    if [[ "${corefile}" == "${patched}" ]]; then
+        info "CoreDNS kernel hairpin already points at Envoy (${edge_ip})."
+        return 0
+    fi
+
+    info "Reconciling CoreDNS kernel hairpin → Envoy ${edge_ip}"
+    local patch_json
+    patch_json=$(printf '%s' "${patched}" | python3 -c \
+        'import sys,json; print(json.dumps({"data":{"Corefile":sys.stdin.read()}}))')
+    kubectl patch configmap coredns -n kube-system --type=merge -p "${patch_json}" >/dev/null
+    kubectl rollout restart deployment coredns -n kube-system >/dev/null 2>&1 || true
+    kubectl rollout status deployment coredns -n kube-system --timeout=60s >/dev/null 2>&1 || true
+    success "CoreDNS kernel hairpin updated → ${edge_ip}"
 }
 
 # =============================================================================
