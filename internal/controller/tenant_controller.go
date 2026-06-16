@@ -489,15 +489,9 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 12. Edge routing — Ingress (nginx) or Gateway API foundation.
-	if isGatewayRoutingMode(r.RoutingMode) {
-		if _, err := r.ensureGateway(ctx, tenant); err != nil {
-			r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-			_ = r.Status().Update(ctx, tenant)
-			return ctrl.Result{}, err
-		}
-	} else if _, err := r.ensureIngress(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionIngressReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+	// 12. Edge routing — Gateway API (Envoy Gateway).
+	if _, err := r.ensureGateway(ctx, tenant); err != nil {
+		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, err
 	}
@@ -545,12 +539,8 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
 	}
 
-	// 14e. Keycloak IdP ingress — allow portal-embedded tenant apps to frame OIDC.
-	// Non-blocking; baseline CSP is also in nubus Helm values (see ingress_helpers).
-	if err := r.ensureKeycloakIDPEmbeddingIngress(ctx); err != nil {
-		logger.Error(err, "ensure Keycloak IdP frame-ancestors (non-blocking, will retry)")
-	}
-	// 14f. Disable Keycloak X-Frame-Options on kernel + tenant realms (broker /endpoint).
+	// 14e. Keycloak browser security headers on kernel + tenant realms (broker /endpoint).
+	// IdP frame-ancestors for portal-embedded OIDC is owned by KeycloakPlatformReconciler.
 	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
 		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
 	}

@@ -4,9 +4,10 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
-	networkingv1 "k8s.io/api/networking/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -15,39 +16,59 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func TestReconcileKeycloakIDPEmbeddingIngressPatchesIngress(t *testing.T) {
-	t.Setenv("KEYCLOAK_PROXY_INGRESS_NAME", "id-proxy")
+func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	t.Setenv("SERVICES_NAMESPACE", "gentian-dev")
 
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "demo"
 	tenant.Spec.Domain = "demo.desk.gentian.org"
 
-	ing := &networkingv1.Ingress{
+	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "id-proxy",
+			Name:      kernelKeycloakHTTPRouteName(),
 			Namespace: "gentian-dev",
-			Annotations: map[string]string{
-				nginxConfigurationSnippetAnnotation: "stale",
-			},
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Rules: []gatewayv1.HTTPRouteRule{{
+				BackendRefs: []gatewayv1.HTTPBackendRef{{
+					BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{
+							Name: "nubus-dev-keycloak-proxy",
+						},
+					},
+				}},
+			}},
 		},
 	}
 
 	scheme := runtime.NewScheme()
-	_ = networkingv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
 	_ = gentianov1alpha1.AddToScheme(scheme)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, ing).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, route).Build()
 
-	if err := reconcileKeycloakIDPEmbeddingIngress(context.Background(), c, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti); err != nil {
+	if err := reconcileKeycloakIDPGatewayRoute(context.Background(), c, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	got := &networkingv1.Ingress{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "id-proxy", Namespace: "gentian-dev"}, got); err != nil {
-		t.Fatalf("get ingress: %v", err)
+	got := &gatewayv1.HTTPRoute{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: kernelKeycloakHTTPRouteName(), Namespace: "gentian-dev"}, got); err != nil {
+		t.Fatalf("get HTTPRoute: %v", err)
 	}
-	want := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if got.Annotations[nginxConfigurationSnippetAnnotation] != want {
-		t.Fatalf("snippet mismatch:\nwant:\n%s\ngot:\n%s", want, got.Annotations[nginxConfigurationSnippetAnnotation])
+	if len(got.Spec.Rules) != 1 || len(got.Spec.Rules[0].Filters) == 0 {
+		t.Fatalf("expected frame-ancestors filters on Keycloak IdP HTTPRoute, got %+v", got.Spec.Rules)
+	}
+	modifier := got.Spec.Rules[0].Filters[0].ResponseHeaderModifier
+	if modifier == nil {
+		t.Fatal("expected ResponseHeaderModifier filter")
+	}
+	var csp string
+	for _, h := range modifier.Set {
+		if h.Name == "Content-Security-Policy" {
+			csp = h.Value
+			break
+		}
+	}
+	if csp == "" || !strings.Contains(csp, "https://portal.desk.gentian.org") || !strings.Contains(csp, "https://*.demo.desk.gentian.org") {
+		t.Fatalf("unexpected CSP: %q", csp)
 	}
 }

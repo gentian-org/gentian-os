@@ -352,11 +352,8 @@ by default browsers block iframe embedding unless the embedded page explicitly
 permits it. The gentian-os controller injects this on every edge route it
 creates:
 
-- **`ROUTING_MODE=gateway`:** Envoy `BackendTrafficPolicy` /
-  `HTTPRoute` `ResponseHeaderModifier` filters (see
-  [design/gateway.md](design/gateway.md)).
-- **`ROUTING_MODE=ingress` (legacy):** NGINX `configuration-snippet` on
-  `Ingress`.
+- Envoy `BackendTrafficPolicy` / `HTTPRoute` `ResponseHeaderModifier` filters
+  (see [design/gateway.md](design/gateway.md)).
 
 For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single

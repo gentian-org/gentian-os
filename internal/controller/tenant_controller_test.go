@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -116,6 +117,9 @@ func TestMain(m *testing.M) {
 	if err := networkingv1.AddToScheme(scheme.Scheme); err != nil {
 		panic(err)
 	}
+	if err := gatewayv1.Install(scheme.Scheme); err != nil {
+		panic(err)
+	}
 
 	env := &envtest.Environment{
 		CRDDirectoryPaths: []string{
@@ -144,7 +148,7 @@ func TestMain(m *testing.M) {
 		KernelDomain:             "desk.gentian.org",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
-		RoutingMode:              controller.RoutingModeIngress,
+		RoutingMode:              controller.RoutingModeGateway,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

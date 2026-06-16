@@ -19,10 +19,10 @@ func TestNormalizeRoutingMode(t *testing.T) {
 		in, want string
 	}{
 		{"", RoutingModeGateway},
-		{"ingress", RoutingModeIngress},
+		{"ingress", RoutingModeGateway},
 		{"GATEWAY", RoutingModeGateway},
 		{" gateway ", RoutingModeGateway},
-		{"nginx", RoutingModeIngress},
+		{"nginx", RoutingModeGateway},
 	}
 	for _, tc := range tests {
 		if got := normalizeRoutingMode(tc.in); got != tc.want {

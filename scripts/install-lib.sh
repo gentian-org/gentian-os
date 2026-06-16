@@ -1185,8 +1185,8 @@ check_prereqs() {
     fi
 
     if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        warn "ROUTING_MODE=${ROUTING_MODE} is legacy ingress-nginx mode and will be removed in a future release."
-        warn "  Prefer routingMode: gateway in gentian-deployments and ROUTING_MODE=gateway in install.env."
+        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
+        exit 1
     fi
 
     success "All pre-flight checks passed."
@@ -1828,8 +1828,8 @@ install_envoy_gateway() {
     : "${ROUTING_MODE:=gateway}"
     export ROUTING_MODE
     if [[ "${ROUTING_MODE}" != "gateway" ]]; then
-        info "ROUTING_MODE=${ROUTING_MODE}: skipping Envoy Gateway install."
-        return
+        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
+        exit 1
     fi
 
     banner "Step 3c — Installing Envoy Gateway and Gateway API CRDs"
@@ -1881,38 +1881,22 @@ install_envoy_gateway() {
 }
 
 # =============================================================================
-# apply_kernel_gateway_overlays — gateway-mode Helm value overlays + legacy ingress
+# apply_kernel_gateway_overlays — gateway-mode Helm value overlays
 # =============================================================================
 apply_kernel_gateway_overlays() {
-    local ns="gentian-${ENV:-dev}"
-    if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-        info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
-        kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud/manifests/dev/gateway-values-configmap.yaml" \
-            >/dev/null 2>&1 || true
-        kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud-notifypush/manifests/dev/gateway-values-configmap.yaml" \
-            >/dev/null 2>&1 || true
-        success "Kernel gateway Helm overlays applied (nextcloud, notifypush)."
-        info "  Nubus gateway overlay: ConfigMap nubus-gateway-values (created in deploy_nubus)."
-        info "  Portal/intercom: gateway.yaml valueFiles in ApplicationSets 20/22."
-        print_gateway_tunnel_hints || true
-    else
-        apply_kernel_legacy_ingress
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
+        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
+        exit 1
     fi
-}
-
-apply_kernel_legacy_ingress() {
-    local ns="gentian-${ENV:-dev}"
-    warn "ROUTING_MODE=ingress is legacy and scheduled for removal; use ROUTING_MODE=gateway."
-    banner "Applying kernel legacy Ingress manifests (ROUTING_MODE=ingress, deprecated)"
-    for dir in \
-        "${SCRIPT_DIR}/kernel/services/cryptpad/manifests/${ENV:-dev}/legacy-ingress" \
-        "${SCRIPT_DIR}/kernel/services/collabora/manifests/${ENV:-dev}/legacy-ingress"; do
-        if [[ -d "${dir}" ]]; then
-            info "Applying ${dir}..."
-            kubectl apply -f "${dir}/" >/dev/null 2>&1 || warn "Some legacy ingress manifests in ${dir} failed to apply."
-        fi
-    done
-    success "Kernel legacy Ingress manifests applied."
+    info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud/manifests/dev/gateway-values-configmap.yaml" \
+        >/dev/null 2>&1 || true
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud-notifypush/manifests/dev/gateway-values-configmap.yaml" \
+        >/dev/null 2>&1 || true
+    success "Kernel gateway Helm overlays applied (nextcloud, notifypush)."
+    info "  Nubus gateway overlay: ConfigMap nubus-gateway-values (created in deploy_nubus)."
+    info "  Portal/intercom: gateway.yaml valueFiles in ApplicationSets 20/22."
+    print_gateway_tunnel_hints || true
 }
 
 wait_for_gateway_platform() {

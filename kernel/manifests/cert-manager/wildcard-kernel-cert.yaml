@@ -4,7 +4,7 @@
 # seed-openbao has populated `secret/gentian-os/kernel/dns/cloudflare`.
 # Covers kernel UIs only (*.<KERNEL_DOMAIN>). Tenant app TLS uses a
 # separate per-tenant wildcard in each tenant-* namespace — see
-# internal/controller/ingress_reconciler.go and docs/design/multi-tenancy.md §3.
+# internal/controller/tenant_edge_tls.go and docs/design/multi-tenancy.md §3.
 #
 # Templated on:
 #   ${KERNEL_DOMAIN}           — single platform-wide DNS suffix (e.g. desk.gentian.org)

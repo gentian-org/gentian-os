@@ -9,9 +9,7 @@ import (
 )
 
 const (
-	// RoutingModeIngress selects legacy ingress-nginx Ingress resources (deprecated).
-	RoutingModeIngress = "ingress"
-	// RoutingModeGateway selects Gateway API + Envoy Gateway for edge routing.
+	// RoutingModeGateway is the only supported edge routing stack.
 	RoutingModeGateway = "gateway"
 
 	GentianGatewayClassName        = "gentian-envoy"
@@ -29,17 +27,15 @@ const (
 
 func normalizeRoutingMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case RoutingModeIngress, "nginx":
-		return RoutingModeIngress
-	case RoutingModeGateway:
+	case RoutingModeGateway, "ingress", "nginx", "":
 		return RoutingModeGateway
 	default:
 		return RoutingModeGateway
 	}
 }
 
-func isGatewayRoutingMode(mode string) bool {
-	return normalizeRoutingMode(mode) == RoutingModeGateway
+func isGatewayRoutingMode(string) bool {
+	return true
 }
 
 func tenantGatewayName(tenantName string) string {

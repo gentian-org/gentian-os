@@ -22,8 +22,6 @@ import (
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func TestIsUMCFrontendIngress(t *testing.T) {
@@ -166,24 +164,5 @@ func TestKeycloakOIDCEmbeddingIngressSnippet(t *testing.T) {
 	}
 	if !strings.Contains(snippet, `proxy_hide_header Content-Security-Policy`) {
 		t.Fatal("Keycloak IdP ingress must replace upstream CSP (not append)")
-	}
-}
-
-func TestBuildAppIngressInjectsKernelPortalCSP(t *testing.T) {
-	tenant := &gentianov1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
-	}
-	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain:   "meet",
-		ServiceName: "jitsi-web",
-		ServicePort: 80,
-		Annotations: map[string]string{
-			nginxConfigurationSnippetAnnotation: `more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.${TENANT_DOMAIN}";`,
-		},
-	}
-	ing := buildAppIngress(tenant, "tenant-demo", "jitsi", ingress, "meet.demo.desk.gentian.org", "tenant-demo-wildcard-tls", "demo.desk.gentian.org", "desk.gentian.org")
-	snippet := ing.Annotations[nginxConfigurationSnippetAnnotation]
-	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
-		t.Fatalf("expected kernel portal CSP, got:\n%s", snippet)
 	}
 }

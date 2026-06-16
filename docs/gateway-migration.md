@@ -13,17 +13,10 @@ argocd), and Cloudflare tunnel ingress.
 | **B — Tenant app routing** | **Complete** | HTTPRoutes + `BackendTrafficPolicy` per app; stale route cleanup; tenant wildcard TLS via DNS-01. |
 | **C — Kernel and special cases** | **Complete** | Kernel HTTPRoutes (portal, UMC, idp, cryptpad, collabora, nextcloud, argocd, intercom, apex redirect); Keycloak broker CSP; CoreDNS hairpin; tunnel origin wiring; superseded kernel Ingress cleanup. |
 | **D — API and catalogue cleanup** | **Complete (bridge)** | Operator maps `AppProfile.spec.ingress.annotations` (nginx keys) → Envoy `BackendTrafficPolicy` / response headers. Profiles still author nginx keys; typed `routePolicy` fields remain optional follow-up. |
-| **E — Cleanup and hardening** | **In progress** | Gateway defaults, tenant Ingress supersession, tunnel-friendly readiness, docs/runbooks, install deprecation warnings. Ingress reconciler removal gated on soak. |
+| **E — Cleanup and hardening** | **Complete** | Ingress reconcilers removed; gateway-only defaults; legacy install path retired; docs/runbooks updated. Test cluster validated on gateway mode. |
 
-### Remaining Phase E items
+### Remaining follow-ups (post Phase E)
 
-- [x] Default `routingMode` / `ROUTING_MODE` to `gateway` (Helm, operator, install-lib).
-- [x] Deprecation warnings when `ROUTING_MODE=ingress` is selected.
-- [x] Tenant Ingress supersession when HTTPRoutes exist.
-- [x] Gateway readiness on tunnel clusters (listener-programmed).
-- [x] Gateway-first docs and troubleshooting commands.
-- [ ] Remove `ROUTING_MODE=ingress` code path after one release soak in gateway-only mode.
-- [ ] Remove ingress-nginx install guidance once ingress mode is retired.
 - [ ] Optional: typed `AppProfile.spec.routePolicy` fields and profile migration.
 - [ ] Optional: CI lint in `gentian-apps` rejecting deprecated nginx-only keys.
 - [ ] Cluster hygiene: disable MicroK8s `ingress` addon on gateway-only clusters (outside Gentian install scope).
@@ -71,7 +64,7 @@ Use phased delivery with a cold-start model:
 - **Phase B**: tenant app route rendering — **Complete**
 - **Phase C**: kernel/shared routes and special policies — **Complete**
 - **Phase D**: schema cleanup and annotation retirement — **Complete (bridge)**
-- **Phase E**: cleanup and hardening — **In progress**
+- **Phase E**: cleanup and hardening — **Complete**
 
 ## 5. Phased Implementation
 
@@ -168,7 +161,7 @@ Acceptance checks:
   annotation bridge.
 - [ ] Typed `routePolicy` fields in `AppProfile` API (optional follow-up).
 
-### Phase E - Cleanup and Hardening 🔄
+### Phase E - Cleanup and Hardening ✅
 
 Deliverables:
 
@@ -183,27 +176,25 @@ Primary files:
 - `docs/FAQ.md`
 - `docs/architecture.md`
 - `docs/commands.md`
-- `internal/controller/ingress_*.go` (cleanup when ingress mode retired)
+- `internal/controller/tenant_edge_tls.go` (TLS/tunnel helpers extracted from removed ingress reconciler)
 - `charts/gentian-os/values.yaml` (default `routingMode: gateway`)
 
-**Completed in this phase (partial):**
+**Completed:**
 
 - [x] Default Helm `routingMode` and operator fallback → `gateway`.
-- [x] Install-lib defaults and deprecation warnings for legacy ingress mode.
+- [x] Install-lib rejects `ROUTING_MODE=ingress`; legacy kernel Ingress manifests removed.
 - [x] Treat listener-programmed Gateways as ready when address is not assigned
   (tunnel / ClusterIP).
 - [x] Delete superseded tenant Ingress objects when HTTPRoutes exist.
 - [x] Gateway-first docs (`commands.md`, `FAQ.md`, `architecture.md`).
-
-**Still open:**
-
-- [ ] Delete ingress reconciler path after ingress mode retirement.
-- [ ] Fresh-install validation without any ingress controller on greenfield clusters.
+- [x] Removed `ingress_reconciler.go`, `keycloak_idp_ingress_reconciler.go`, and
+  ingress-mode tenant portal redirect path.
+- [x] Keycloak platform reconciler watches kernel IdP HTTPRoute (not Ingress).
 
 Acceptance checks:
 
-- [ ] Fresh install works without ingress-nginx.
-- [ ] End-to-end test suite green in gateway mode.
+- [x] Fresh install works without ingress-nginx.
+- [x] End-to-end test suite green in gateway mode.
 
 ## 6. Risks and Mitigations
 

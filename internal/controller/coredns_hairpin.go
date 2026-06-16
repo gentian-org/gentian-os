@@ -21,7 +21,6 @@ const (
 	coreDNSDeployment    = "coredns"
 	hairpinBeginMarker    = "# BEGIN gentian-hairpin"
 	hairpinEndMarker      = "# END gentian-hairpin"
-	ingressServiceName    = "ingress-controller"
 )
 
 // kernelHTTPSHairpinHosts returns kernel hostnames that tenant and kernel pods
@@ -174,38 +173,25 @@ func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	return append(lines, newLine)
 }
 
-func kernelEdgeClusterIP(ctx context.Context, c client.Client, routingMode string) (string, error) {
-	if isGatewayRoutingMode(routingMode) {
-		list := &corev1.ServiceList{}
-		if err := c.List(ctx, list,
-			client.InNamespace(envoyGatewayInstallNamespace),
-			client.MatchingLabels{
-				"gateway.envoyproxy.io/owning-gateway-name":      KernelPublicGatewayName,
-				"gateway.envoyproxy.io/owning-gateway-namespace": servicesNamespace,
-			},
-		); err != nil {
-			return "", fmt.Errorf("list kernel Envoy Gateway service: %w", err)
-		}
-		if len(list.Items) == 0 {
-			return "", fmt.Errorf("kernel Envoy Gateway service not found")
-		}
-		ip := list.Items[0].Spec.ClusterIP
-		if ip == "" {
-			return "", fmt.Errorf("kernel Envoy Gateway service has no ClusterIP")
-		}
-		return ip, nil
+func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string, error) {
+	list := &corev1.ServiceList{}
+	if err := c.List(ctx, list,
+		client.InNamespace(envoyGatewayInstallNamespace),
+		client.MatchingLabels{
+			"gateway.envoyproxy.io/owning-gateway-name":      KernelPublicGatewayName,
+			"gateway.envoyproxy.io/owning-gateway-namespace": servicesNamespace,
+		},
+	); err != nil {
+		return "", fmt.Errorf("list kernel Envoy Gateway service: %w", err)
 	}
-
-	svc := &corev1.Service{}
-	if err := c.Get(ctx, types.NamespacedName{
-		Name: ingressServiceName, Namespace: ingressNamespace,
-	}, svc); err != nil {
-		return "", fmt.Errorf("get ingress controller service: %w", err)
+	if len(list.Items) == 0 {
+		return "", fmt.Errorf("kernel Envoy Gateway service not found")
 	}
-	if svc.Spec.ClusterIP == "" {
-		return "", fmt.Errorf("ingress controller service has no ClusterIP")
+	ip := list.Items[0].Spec.ClusterIP
+	if ip == "" {
+		return "", fmt.Errorf("kernel Envoy Gateway service has no ClusterIP")
 	}
-	return svc.Spec.ClusterIP, nil
+	return ip, nil
 }
 
 func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, routingMode string) error {
