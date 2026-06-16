@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -69,23 +68,6 @@ func (r *TenantReconciler) ensureIntegrationBindings(ctx context.Context, tenant
 	r.setCondition(tenant, conditionBindingsReady, metav1.ConditionTrue,
 		"Provisioned", "All integration bindings are provisioned")
 	return ctrl.Result{}, nil
-}
-
-// ensureIntegrationBinding creates or updates a single IntegrationBinding CR.
-func (r *TenantReconciler) ensureIntegrationBinding(ctx context.Context, desired *gentianov1alpha1.IntegrationBinding) error {
-	existing := &gentianov1alpha1.IntegrationBinding{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
-		existing.Spec = desired.Spec
-		return r.Update(ctx, existing)
-	}
-	return nil
 }
 
 // gcStaleIntegrationBindings deletes IntegrationBinding CRs in the tenant namespace

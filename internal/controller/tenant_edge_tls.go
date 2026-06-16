@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -38,23 +37,6 @@ func (r *TenantReconciler) tenantDNS01ClusterIssuer() string {
 		return r.TenantDNS01ClusterIssuer
 	}
 	return defaultDNS01ClusterIssuer
-}
-
-func (r *TenantReconciler) ensureTenantWildcardCertificate(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName, certName, secretName, domain string,
-) error {
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(certManagerCertGVK)
-	if err := r.Get(ctx, client.ObjectKey{Name: certName, Namespace: nsName}, existing); err != nil {
-		if !errors.IsNotFound(err) {
-			return err
-		}
-		desired := buildTenantWildcardCertificate(tenant, nsName, certName, secretName, domain, r.tenantDNS01ClusterIssuer())
-		return r.Create(ctx, desired)
-	}
-	return nil
 }
 
 func buildTenantWildcardCertificate(

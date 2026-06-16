@@ -192,9 +192,7 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	if err != nil {
 		return nil, err
 	}
-	for i := range edgeObjects {
-		objects = append(objects, edgeObjects[i])
-	}
+	objects = append(objects, edgeObjects...)
 
 	return objects, nil
 }

@@ -164,10 +164,6 @@ func nginxDurationAnnotation(annotations map[string]string, key string) string {
 	return raw
 }
 
-func (r *TenantReconciler) ensureHTTPRouteResource(ctx context.Context, desired *gatewayv1.HTTPRoute) error {
-	return ensureHTTPRouteResource(ctx, r.Client, desired)
-}
-
 func ensureHTTPRouteResource(ctx context.Context, c client.Client, desired *gatewayv1.HTTPRoute) error {
 	existing := &gatewayv1.HTTPRoute{}
 	err := c.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
