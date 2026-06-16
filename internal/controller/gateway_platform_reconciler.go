@@ -59,7 +59,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "delete superseded kernel Ingress resources")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.CloudflareDNS, r.KernelDomain); err != nil {
+	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.CloudflareDNS, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}

@@ -167,6 +167,9 @@ func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tena
 	if err := r.CloudflareDNS.ensureCNAME(ctx, wildcard, r.CloudflareDNS.tunnelCNAME); err != nil {
 		logger.Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
 	}
+	if err := r.CloudflareDNS.ensureCNAME(ctx, effectiveDomain, r.CloudflareDNS.tunnelCNAME); err != nil {
+		logger.Error(err, "ensure Cloudflare apex DNS CNAME", "host", effectiveDomain)
+	}
 	if !isGatewayRoutingMode(r.RoutingMode) {
 		return
 	}

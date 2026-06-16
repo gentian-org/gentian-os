@@ -94,9 +94,43 @@ type cfTunnelConfig struct {
 	Ingress []cfTunnelIngressRule `json:"ingress"`
 }
 
+type cfTunnelOriginRequest struct {
+	MatchSNItoHost bool `json:"matchSNItoHost,omitempty"`
+	NoTLSVerify    bool `json:"noTLSVerify,omitempty"`
+}
+
 type cfTunnelIngressRule struct {
-	Hostname string `json:"hostname,omitempty"`
-	Service  string `json:"service"`
+	Hostname      string                `json:"hostname,omitempty"`
+	Service       string                `json:"service"`
+	OriginRequest *cfTunnelOriginRequest `json:"originRequest,omitempty"`
+}
+
+func tunnelIngressRuleForService(hostname, service string) cfTunnelIngressRule {
+	rule := cfTunnelIngressRule{Hostname: hostname, Service: service}
+	if strings.HasPrefix(strings.ToLower(service), "https://") {
+		rule.OriginRequest = &cfTunnelOriginRequest{
+			MatchSNItoHost: true,
+			NoTLSVerify:    true, // cluster origin certs may be staging or not chain to public roots from cloudflared
+		}
+	}
+	return rule
+}
+
+func tunnelIngressRulesEqual(a, b cfTunnelIngressRule) bool {
+	if a.Hostname != b.Hostname || a.Service != b.Service {
+		return false
+	}
+	return tunnelOriginRequestEqual(a.OriginRequest, b.OriginRequest)
+}
+
+func tunnelOriginRequestEqual(a, b *cfTunnelOriginRequest) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.MatchSNItoHost == b.MatchSNItoHost && a.NoTLSVerify == b.NoTLSVerify
 }
 
 func parseTunnelID(tunnelCNAME string) string {
@@ -126,14 +160,15 @@ func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname,
 	if err != nil {
 		return err
 	}
-	if ingressRuleIndex(config.Ingress, hostname) >= 0 {
-		for i := range config.Ingress {
-			if config.Ingress[i].Hostname == hostname && config.Ingress[i].Service == service {
-				return nil
-			}
+	desired := tunnelIngressRuleForService(hostname, service)
+	if idx := ingressRuleIndex(config.Ingress, hostname); idx >= 0 {
+		if tunnelIngressRulesEqual(config.Ingress[idx], desired) {
+			return nil
 		}
+		config.Ingress[idx] = desired
+		return c.putTunnelConfig(ctx, accountID, tunnelID, config)
 	}
-	config.Ingress = upsertTunnelIngress(config.Ingress, hostname, service)
+	config.Ingress = upsertTunnelIngress(config.Ingress, desired)
 	return c.putTunnelConfig(ctx, accountID, tunnelID, config)
 }
 
@@ -253,7 +288,7 @@ func ingressRuleIndex(rules []cfTunnelIngressRule, hostname string) int {
 	return -1
 }
 
-func upsertTunnelIngress(rules []cfTunnelIngressRule, hostname, service string) []cfTunnelIngressRule {
+func upsertTunnelIngress(rules []cfTunnelIngressRule, rule cfTunnelIngressRule) []cfTunnelIngressRule {
 	catchAllIdx := -1
 	for i := range rules {
 		if rules[i].Hostname == "" {
@@ -261,8 +296,7 @@ func upsertTunnelIngress(rules []cfTunnelIngressRule, hostname, service string) 
 			break
 		}
 	}
-	rule := cfTunnelIngressRule{Hostname: hostname, Service: service}
-	if idx := ingressRuleIndex(rules, hostname); idx >= 0 {
+	if idx := ingressRuleIndex(rules, rule.Hostname); idx >= 0 {
 		rules[idx] = rule
 		return rules
 	}
@@ -276,18 +310,26 @@ func upsertTunnelIngress(rules []cfTunnelIngressRule, hostname, service string) 
 	return append(rules, rule)
 }
 
-// ensureCNAME creates a proxied CNAME record pointing hostname → target if one
-// does not already exist. Idempotent: if a record with the exact same content
-// already exists, it is left unchanged.
+// ensureCNAME creates or updates a proxied CNAME record pointing hostname → target.
+// Idempotent: if a record with the exact same content already exists, it is left unchanged.
 func (c *CloudflareDNSClient) ensureCNAME(ctx context.Context, hostname, target string) error {
 	existing, err := c.listRecords(ctx, hostname)
 	if err != nil {
 		return err
 	}
 	for _, r := range existing {
-		if r.Type == "CNAME" && r.Content == target && r.Proxied {
+		if r.Type != "CNAME" {
+			continue
+		}
+		if r.Content == target && r.Proxied {
 			return nil // already correct
 		}
+		return c.updateRecord(ctx, r.ID, cfDNSRecord{
+			Type:    "CNAME",
+			Name:    hostname,
+			Content: target,
+			Proxied: true,
+		})
 	}
 	return c.createRecord(ctx, cfDNSRecord{
 		Type:    "CNAME",
@@ -376,6 +418,35 @@ func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord)
 	}
 	if !result.Success {
 		return fmt.Errorf("cloudflare create DNS record: %v", result.Errors)
+	}
+	return nil
+}
+
+func (c *CloudflareDNSClient) updateRecord(ctx context.Context, id string, rec cfDNSRecord) error {
+	payload, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		fmt.Sprintf("%s/zones/%s/dns_records/%s", cloudflareAPIBase, c.zoneID, id),
+		bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	var result cfCreateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("parse Cloudflare update response: %w", err)
+	}
+	if !result.Success {
+		return fmt.Errorf("cloudflare update DNS record: %v", result.Errors)
 	}
 	return nil
 }

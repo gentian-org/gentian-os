@@ -120,10 +120,11 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:       mgr.GetClient(),
-		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
-		RoutingMode:  routingMode,
+		Client:        mgr.GetClient(),
+		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:   os.Getenv("TENANCY_MODE"),
+		RoutingMode:   routingMode,
+		CloudflareDNS: buildCloudflareDNSClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
