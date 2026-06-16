@@ -70,7 +70,7 @@ spec:
     #   2. opendesk-synapse      (Matrix homeserver) — hardcoded chart ref
     #   3. opendesk-synapse-create-account (UVS bootstrap Job)
     #   4. opendesk-matrix-user-verification-service (Jitsi hybrid_matrix_token)
-    #   5. opendesk-synapse-web  (nginx proxy + ingress for matrix.{domain})
+    #   5. opendesk-synapse-web  (nginx proxy; matrix edge via additionalIngresses)
     #
     # Shares the same ExternalSecret and set[] entries as app-default since
     # both opendesk-element and opendesk-synapse use identical value paths
@@ -740,23 +740,11 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- /* ── Release 5: opendesk-synapse-web (nginx proxy + ingress) ── */}}
-            {{- /* Serves matrix.{domain} → `/_matrix` and `/_synapse` paths.   */}}
+            {{- /* ── Release 5: opendesk-synapse-web (nginx proxy, no chart ingress) */}}
+            {{- /* matrix.{domain} edge routing is AppProfile additionalIngresses   */}}
+            {{- /* (operator HTTPRoute in gateway mode, Ingress in ingress mode).   */}}
             {{- /* No secrets needed — it only proxies to the synapse service.   */}}
-            {{- $synapseWebIngress := dict
-                "enabled"          true
-                "ingressClassName" "nginx"
-                "pathType"         "Prefix"
-                "tls" (dict
-                  "enabled"    true
-                  "secretName" "wildcard-tls"
-                )
-              }}
-            {{- if $kernelDomain }}
-            {{- $_ := set $synapseWebIngress "annotations" (dict
-              "nginx.ingress.kubernetes.io/configuration-snippet" (printf "proxy_hide_header X-Frame-Options;\nadd_header X-Frame-Options \"\" always;\nproxy_hide_header Content-Security-Policy;\nadd_header Content-Security-Policy \"frame-ancestors 'self' https://portal.%s\" always;" $kernelDomain)
-            ) }}
-            {{- end }}
+            {{- $synapseWebIngress := dict "enabled" false }}
             {{- $synapseWebVals := dict
                 "global"           $globalVals
                 "fullnameOverride" "synapse-web"
