@@ -19,12 +19,14 @@ spec:
       serviceAccountName: umc-gateway-upstream-patcher
       containers:
         - name: patch
-          image: bitnami/kubectl:1.32.3
+          image: alpine:3.19
           command:
-            - bash
+            - sh
             - -c
             - |
               set -euo pipefail
+              wget -qO /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.32.3/bin/linux/amd64/kubectl"
+              chmod +x /usr/local/bin/kubectl
               DEPLOY=nubus-dev-umc-gateway
               NS=gentian-dev
               if ! kubectl get deployment "$DEPLOY" -n "$NS" >/dev/null 2>&1; then
