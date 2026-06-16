@@ -188,6 +188,16 @@ imperative `ensure*` for overlapping resources.
 
 **Goal:** One Keycloak/LDAP owner per tenant; retire operator Jobs for realm lifecycle.
 
+**Status:** 🔄 In progress — see [design/tenant-identity-composition.md](design/tenant-identity-composition.md).
+
+| Sub-phase | Scope | Status |
+|-----------|-------|--------|
+| C2a | LDAP OU + MBA groups Job → Composition | ⬜ |
+| C2b | LDAP admin user/policy/bind Jobs | ⬜ |
+| C2c | Keycloak realm Jobs | ⬜ |
+| C2d | OIDC client consolidation (operator vs app Composition MRs) | ⬜ |
+| C2e | OIDC pack Jobs | ⬜ |
+
 | Task | Action |
 |------|--------|
 | C2.1 | Extend `tenant-default` (or new `tenant-identity` Composition patch) with Keycloak **Realm** MRs once `provider-keycloak` supports drift-safe realm lifecycle — **or** move existing realm Jobs into Composition pipeline as gated init Jobs |
@@ -392,8 +402,8 @@ Update this table as phases complete.
 | Phase | Description | Status |
 |-------|-------------|--------|
 | C0 | Kernel `XCluster` structural provisioning | ✅ Done |
-| C1 | Deduplicate tenant shell (namespace, limits, policy, App claims) | ✅ Done (verify on cluster) |
-| C2 | Identity & LDAP in Compositions | ⬜ Not started |
+| C1 | Deduplicate tenant shell (namespace, limits, policy, App claims) | ✅ Done |
+| C2 | Identity & LDAP in Compositions | 🔄 In progress |
 | C3 | Data plane, edge, mail, bindings | ⬜ Not started |
 | C4 | Thin operator + P3/P4 cutover | ⬜ Not started |
 | P2 e2e | Pattern B kernel chart verification script | ⬜ Stub |

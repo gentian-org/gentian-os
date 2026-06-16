@@ -43,6 +43,7 @@ tracker live in [crossplane-convergence.md](crossplane-convergence.md).
 | Topic | Where documented |
 |-------|------------------|
 | Crossplane convergence / Phase 3b | [crossplane-convergence.md](crossplane-convergence.md) |
+| Tenant identity & LDAP (Phase C2) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
 | Per-app HTTP-01 issuers on `AppProfile` | [architecture.md](architecture.md) §6.1 (future); operator uses DNS-01 wildcard today |
 | IntegrationBindings in Crossplane | [design/app-catalogue.md](design/app-catalogue.md) §8b |
 | Gentian shell `browserProxy` / `/api/apps/…` | [gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md) (north star) |
