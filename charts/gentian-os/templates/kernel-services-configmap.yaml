@@ -1,5 +1,9 @@
 {{- $ks := .Values.kernelServices -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.turnHost $ks.turnCredentials }}
+{{- $keycloakInternal := $ks.keycloakInternalURL -}}
+{{- if not $keycloakInternal -}}
+{{- $keycloakInternal = printf "http://nubus-dev-keycloak.%s.svc.cluster.local:8080" (.Values.servicesNamespace | default "gentian-dev") -}}
+{{- end -}}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,6 +19,7 @@ data:
   TENANCY_MODE: {{ .Values.tenancyMode | default "multi" | quote }}
   {{- $issuer := .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
   ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
+  KEYCLOAK_INTERNAL_URL: {{ $keycloakInternal | quote }}
   {{- with $ks.s3Endpoint }}
   S3_ENDPOINT: {{ . | quote }}
   {{- end }}

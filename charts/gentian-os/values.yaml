@@ -60,10 +60,14 @@ servicesNamespace: "gentian-dev"
 #   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
 #   ${REDIS_HOST}   — Redis primary hostname (no port)
 #   ${TURN_*}       — Shared TURN server settings for Element + Jitsi
+#   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path); Synapse uses this
+#                           for token/userinfo/JWKS while the browser keeps https://id.*
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
+  # Empty → http://nubus-dev-keycloak.<servicesNamespace>.svc.cluster.local:8080
+  keycloakInternalURL: ""
   turnHost: ""
   turnPort: "3478"
   turnTLSHost: ""

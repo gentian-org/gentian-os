@@ -532,10 +532,16 @@ spec:
                  enabled, startup loads JWKS over Twisted HTTPS to id.<kernel> which fails
                  on ACME staging hairpin (curl -k works; Twisted load_jwks times out).
                  Emit a single additionalConfiguration oidc_providers entry with
-                 discover:false, explicit https endpoints, use_insecure_ssl (staging),
-                 user_profile_method:userinfo_endpoint (skip startup JWKS fetch), and
-                 strip homeserver.oidc so the chart does not emit a duplicate block. */}}
+                 discover:false, public https authorization_endpoint (browser), in-cluster
+                 http token/userinfo/jwks when KEYCLOAK_INTERNAL_URL is set, use_insecure_ssl
+                 (staging fallback), user_profile_method:userinfo_endpoint, and strip
+                 homeserver.oidc so the chart does not emit a duplicate block. */}}
             {{- $publicIdBase := printf "https://id.%s/realms/%s" $kernelDomain $tenant }}
+            {{- $keycloakInternal := dig "KEYCLOAK_INTERNAL_URL" "" $ksCMDataStaging }}
+            {{- $serverIdBase := $publicIdBase }}
+            {{- if $keycloakInternal }}
+            {{- $serverIdBase = printf "%s/realms/%s" $keycloakInternal $tenant }}
+            {{- end }}
             {{- $profileOidc := dig "oidc" dict (dig "homeserver" dict $confVals) }}
             {{- $matrixLocalpart := default "opendesk_username" (dig "matrixIdLocalpart" "opendesk_username" $profileOidc) }}
             {{- $oidcScopes := default (list "openid" "opendesk-matrix-scope") (dig "scopes" list $profileOidc) }}
@@ -546,9 +552,9 @@ spec:
                 "discover" false
                 "scopes" $oidcScopes
                 "authorization_endpoint" (printf "%s/protocol/openid-connect/auth" $publicIdBase)
-                "token_endpoint" (printf "%s/protocol/openid-connect/token" $publicIdBase)
-                "userinfo_endpoint" (printf "%s/protocol/openid-connect/userinfo" $publicIdBase)
-                "jwks_uri" (printf "%s/protocol/openid-connect/certs" $publicIdBase)
+                "token_endpoint" (printf "%s/protocol/openid-connect/token" $serverIdBase)
+                "userinfo_endpoint" (printf "%s/protocol/openid-connect/userinfo" $serverIdBase)
+                "jwks_uri" (printf "%s/protocol/openid-connect/certs" $serverIdBase)
                 "user_profile_method" "userinfo_endpoint"
                 "skip_verification" true
                 "allow_existing_users" true
