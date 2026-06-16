@@ -2084,10 +2084,6 @@ func ldapLockJobName(tenantName string) string {
 	return fmt.Sprintf("ldap-lock-%s", tenantName)
 }
 
-func adminUserDeleteJobName(tenantName string) string {
-	return fmt.Sprintf("ldap-admin-user-delete-%s", tenantName)
-}
-
 func portalEntryJobName(tenantName, appName string) string {
 	return fmt.Sprintf("ldap-portal-entry-%s-%s", tenantName, appName)
 }

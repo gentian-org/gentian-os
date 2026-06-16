@@ -44,6 +44,12 @@ var appClaimGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
+var appClaimListGVK = schema.GroupVersionKind{
+	Group:   "gentianos.io",
+	Version: "v1alpha1",
+	Kind:    "AppList",
+}
+
 // startXTenantShellSimulator applies tenant shell resources when the operator
 // creates an XTenant composite. Envtest has no Crossplane; this mimics
 // tenant-default Composition behaviour for controller integration tests.
@@ -94,6 +100,32 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 		createIfMissing(ctx, c, tenantshell.NetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts))
 		simulateAppClaims(ctx, c, tenantName, nsName, spec)
 	}
+	simulateXTenantDeletionCascade(ctx, c, list.Items)
+}
+
+func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, activeXTenants []unstructured.Unstructured) {
+	active := make(map[string]struct{}, len(activeXTenants))
+	for i := range activeXTenants {
+		active[activeXTenants[i].GetName()] = struct{}{}
+	}
+
+	claimList := &unstructured.UnstructuredList{}
+	claimList.SetGroupVersionKind(appClaimListGVK)
+	if err := c.List(ctx, claimList, client.MatchingLabels{
+		"gentianos.io/managed-by": "crossplane",
+	}); err != nil {
+		return
+	}
+	for i := range claimList.Items {
+		claim := &claimList.Items[i]
+		tenantName := claim.GetLabels()[tenantshell.TenantLabel]
+		if tenantName == "" {
+			continue
+		}
+		if _, ok := active[tenantName]; !ok {
+			_ = client.IgnoreNotFound(c.Delete(ctx, claim))
+		}
+	}
 }
 
 func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
@@ -124,6 +156,7 @@ func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
 
 func simulateAppClaims(ctx context.Context, c client.Client, tenantName, nsName string, spec map[string]interface{}) {
 	apps, _, _ := unstructured.NestedSlice(spec, "apps")
+	desired := make(map[string]struct{}, len(apps))
 	kd, _, _ := unstructured.NestedString(spec, "kernelDomain")
 	domain, ok, _ := unstructured.NestedString(spec, "domain")
 	if !ok || domain == "" {
@@ -138,6 +171,7 @@ func simulateAppClaims(ctx context.Context, c client.Client, tenantName, nsName 
 		if profile == "" {
 			continue
 		}
+		desired[profile] = struct{}{}
 		key := types.NamespacedName{Name: profile, Namespace: nsName}
 		existing := &unstructured.Unstructured{}
 		existing.SetGroupVersionKind(appClaimGVK)
@@ -169,6 +203,28 @@ func simulateAppClaims(ctx context.Context, c client.Client, tenantName, nsName 
 			map[string]interface{}{"type": "Ready", "status": "True", "reason": "Simulated", "message": "envtest"},
 		}, "status", "conditions")
 		_ = c.Create(ctx, claim)
+	}
+
+	claimList := &unstructured.UnstructuredList{}
+	claimList.SetGroupVersionKind(appClaimListGVK)
+	if err := c.List(ctx, claimList,
+		client.InNamespace(nsName),
+		client.MatchingLabels{
+			tenantshell.TenantLabel:   tenantName,
+			"gentianos.io/managed-by": "crossplane",
+		},
+	); err != nil {
+		return
+	}
+	for i := range claimList.Items {
+		claim := &claimList.Items[i]
+		appName := claim.GetLabels()["gentianos.io/app"]
+		if appName == "" {
+			continue
+		}
+		if _, ok := desired[appName]; !ok {
+			_ = client.IgnoreNotFound(c.Delete(ctx, claim))
+		}
 	}
 }
 

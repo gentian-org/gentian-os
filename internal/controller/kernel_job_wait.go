@@ -25,43 +25,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// kernelJobState describes a Batch Job in platform-kernel for C2 convergence.
-type kernelJobState int
-
-const (
-	kernelJobPending kernelJobState = iota
-	kernelJobComplete
-	kernelJobFailed
-)
-
 // waitForProvisioningJob returns true when a Crossplane-owned provisioning Job
 // in platform-kernel has completed successfully.
 func (r *TenantReconciler) waitForProvisioningJob(ctx context.Context, jobName string) (bool, error) {
-	state, err := r.waitForKernelJob(ctx, jobName)
-	if err != nil {
-		return false, err
-	}
-	return state == kernelJobComplete, nil
-}
-
-// waitForKernelJob returns the completion state of a Job in platform-kernel.
-// Used while migrating provisioning Jobs from the operator to Crossplane Compositions.
-func (r *TenantReconciler) waitForKernelJob(ctx context.Context, jobName string) (kernelJobState, error) {
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
-		return kernelJobPending, nil
+		return false, nil
 	}
 	if err != nil {
-		return kernelJobPending, err
+		return false, err
 	}
 	if jobIsFailed(job) {
 		prop := metav1.DeletePropagationBackground
 		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return kernelJobFailed, nil
+		return false, nil
 	}
-	if jobIsComplete(job) {
-		return kernelJobComplete, nil
-	}
-	return kernelJobPending, nil
+	return jobIsComplete(job), nil
 }

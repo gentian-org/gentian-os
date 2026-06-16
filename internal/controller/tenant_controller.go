@@ -64,16 +64,11 @@ const (
 	conditionNamespaceReady = "NamespaceReady"
 )
 
-// infraNamespace and servicesNamespace are read from env vars at process
-// startup so that staging/prod deployments can override them without rebuilding
-// the operator. Defaults match the dev install layout.
-// Inject via INFRA_NAMESPACE / SERVICES_NAMESPACE in the operator Deployment
-// (see charts/gentian-os/templates/deployment.yaml).
-var (
-	infraNamespace    = envOrDefault("INFRA_NAMESPACE", "gentian-infra-dev")
-	servicesNamespace = envOrDefault("SERVICES_NAMESPACE", "gentian-dev")
-	openbaoNamespace  = envOrDefault("OPENBAO_NAMESPACE", "openbao")
-)
+// servicesNamespace is read from an env var at process startup so that
+// staging/prod deployments can override it without rebuilding the operator.
+// Default matches the dev install layout. Inject via SERVICES_NAMESPACE in the
+// operator Deployment (see charts/gentian-os/templates/deployment.yaml).
+var servicesNamespace = envOrDefault("SERVICES_NAMESPACE", "gentian-dev")
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been
 // created but has not yet completed. reconcileDelete treats this as a signal to
