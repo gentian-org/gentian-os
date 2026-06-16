@@ -163,6 +163,7 @@ func TestMain(m *testing.M) {
 	testClient = mgr.GetClient()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	startXTenantShellSimulator(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
 
 	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.

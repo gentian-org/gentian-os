@@ -1212,6 +1212,14 @@ upsert_gentian_cluster_config() {
     local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
     local _storage_class="${STORAGE_CLASS:-}"
     local _mail_mode="${MAIL_SERVICE_MODE:-external}"
+    local _routing_mode="${ROUTING_MODE:-gateway}"
+    local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
+    local _services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local _openbao_ns="${OPENBAO_NAMESPACE:-openbao}"
+    local _kube_api_cidr=""
+    if _kube_api_ip="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null)"; then
+        [[ -n "${_kube_api_ip}" ]] && _kube_api_cidr="${_kube_api_ip}/32"
+    fi
 
     info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>})..."
     kubectl apply -f - <<EOF
@@ -1234,6 +1242,11 @@ data:
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
   appInit.image: "ghcr.io/gentian-org/gentian-app-init:${APP_INIT_IMAGE_TAG:-develop}"
+  network.infraNamespace: "${_infra_ns}"
+  network.servicesNamespace: "${_services_ns}"
+  network.openbaoNamespace: "${_openbao_ns}"
+  network.routingMode: "${_routing_mode}"
+  network.kubeApiServerCidr: "${_kube_api_cidr}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
 }

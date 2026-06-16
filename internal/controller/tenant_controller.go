@@ -25,17 +25,14 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -388,48 +385,22 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	nsName := tenantNamespaceName(tenant)
 	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName)
 
-	// Phase 3: Ensure the XTenant composite exists so the Crossplane Composition
-	// can provision the tenant namespace, networking, OpenBao policy, and App
-	// claims declaratively. This runs alongside the existing imperative steps
-	// below; the two paths are idempotent and will gradually converge in Phase 3b
-	// as imperative steps are migrated into the Composition.
+	// Crossplane tenant-default Composition owns namespace scaffolding, quotas,
+	// limits, network policy, OpenBao policy, and App claims (C1 convergence).
 	if err := r.ensureTenantXR(ctx, tenant); err != nil {
-		logger.Error(err, "ensure XTenant composite (non-blocking, will retry)")
-		// Non-fatal: log the error and continue with imperative provisioning.
-	}
-
-	// 1. Namespace
-	if err := r.ensureNamespace(ctx, tenant, nsName); err != nil {
-		r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, err
 	}
+	if res, err := r.waitForTenantShell(ctx, tenant, nsName); res.RequeueAfter > 0 || err != nil {
+		_ = r.Status().Update(ctx, tenant)
+		return res, err
+	}
 
-	// 1b. Replicate kernel registry-credentials Secret into the tenant namespace
-	// so charts pulling from private registries (e.g. registry.opencode.de) work
-	// without per-tenant ExternalSecret boilerplate.
+	// Replicate cluster bootstrap secrets into the tenant namespace until C1.2
+	// moves these into tenant-default.
 	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
-
-	// 1c. Replicate gentian-staging-ca-tls for ACME staging dev clusters so
-	// in-cluster OIDC clients (Synapse, Jitsi adapter) trust id.<kernel-domain>.
 	if err := r.ensureStagingCaTrust(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// 2. ResourceQuota
-	if err := r.ensureResourceQuota(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// 3. LimitRange
-	if err := r.ensureLimitRange(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// 4. NetworkPolicy
-	if err := r.ensureNetworkPolicy(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -782,69 +753,14 @@ func (r *TenantReconciler) deleteOwnedResourcesInNamespace(ctx context.Context, 
 	return nil
 }
 
-// ensureNamespace creates or updates the tenant namespace.
-func (r *TenantReconciler) ensureNamespace(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	desired := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-	}
-
-	existing := &corev1.Namespace{}
-	err := r.Get(ctx, types.NamespacedName{Name: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	// If the namespace is still being terminated (e.g. from a prior undeploy via
-	// Crossplane cascade), block until it is fully gone. Returning an error here
-	// causes the reconciler to requeue, which is preferable to the opaque
-	// "unable to create new content in namespace … because it is being terminated"
-	// errors that surface later when we try to create Secrets inside it.
-	if existing.DeletionTimestamp != nil {
-		return fmt.Errorf("namespace %q is still terminating; will retry", nsName)
-	}
-
-	// Ensure the tenant label is present (idempotent patch)
-	if existing.Labels[tenantLabel] != tenant.Name {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if existing.Labels == nil {
-			existing.Labels = map[string]string{}
-		}
-		existing.Labels[tenantLabel] = tenant.Name
-		existing.Labels[managedByLabel] = managedByValue
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
 // ensureRegistryCredentials replicates the kernel-managed `registry-credentials`
-// dockerconfigjson Secret from the services namespace (where ESO materialises it
-// from OpenBao) into the tenant namespace, so that tenant pods using charts
-// pinned to private registries (e.g. registry.opencode.de for the
-// opendesk-element-web image) can pull their images.
-//
-// This is the persistent, DRY fix: every tenant namespace gets pull access
-// automatically, without each AppProfile or each tenant having to declare a
-// per-tenant ExternalSecret.
-//
-// The replicated Secret is owned by the operator (overwritten on drift) and
-// labelled with the tenant so it is cleaned up with the namespace.
+// Secret from the services namespace into the tenant namespace.
 func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	const secretName = "registry-credentials"
 
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: servicesNamespace}, source); err != nil {
 		if errors.IsNotFound(err) {
-			// Soft-fail: if the kernel secret does not exist yet, skip without
-			// error. The operator will retry on the next reconcile.
 			return nil
 		}
 		return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
@@ -886,9 +802,7 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 }
 
 // ensureStagingCaTrust bootstraps gentian-staging-ca-tls in the services namespace
-// from the kernel wildcard leaf cert (ACME staging), then replicates it into the
-// tenant namespace for openDesk in-cluster OIDC clients (Synapse, Jitsi adapter).
-// No-op on production clusters where the leaf secret is absent.
+// and replicates it into the tenant namespace for in-cluster OIDC clients.
 func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	const secretName = stagingca.SecretName
 
@@ -940,352 +854,6 @@ func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gen
 	return nil
 }
 
-// ensureResourceQuota creates or updates a ResourceQuota in the tenant namespace.
-func (r *TenantReconciler) ensureResourceQuota(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	rl := buildResourceList(tenant.Spec.Quotas)
-	if len(rl) == 0 {
-		return nil
-	}
-
-	desired := &corev1.ResourceQuota{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tenant-quota",
-			Namespace: nsName,
-			Labels:    map[string]string{tenantLabel: tenant.Name, managedByLabel: managedByValue},
-		},
-		Spec: corev1.ResourceQuotaSpec{Hard: rl},
-	}
-
-	existing := &corev1.ResourceQuota{}
-	err := r.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	if !equality.Semantic.DeepEqual(existing.Spec.Hard, desired.Spec.Hard) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec.Hard = desired.Spec.Hard
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
-// ensureLimitRange creates or updates a LimitRange with sensible per-container defaults.
-func (r *TenantReconciler) ensureLimitRange(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	desired := &corev1.LimitRange{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tenant-limits",
-			Namespace: nsName,
-			Labels:    map[string]string{tenantLabel: tenant.Name, managedByLabel: managedByValue},
-		},
-		Spec: corev1.LimitRangeSpec{
-			Limits: []corev1.LimitRangeItem{
-				{
-					Type: corev1.LimitTypeContainer,
-					Default: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("500m"),
-						corev1.ResourceMemory: resource.MustParse("512Mi"),
-					},
-					DefaultRequest: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("100m"),
-						corev1.ResourceMemory: resource.MustParse("128Mi"),
-					},
-					Max: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("4"),
-						corev1.ResourceMemory: resource.MustParse("8Gi"),
-					},
-				},
-			},
-		},
-	}
-
-	existing := &corev1.LimitRange{}
-	err := r.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	if !equality.Semantic.DeepEqual(existing.Spec.Limits, desired.Spec.Limits) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec.Limits = desired.Spec.Limits
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
-// ensureNetworkPolicy creates or updates the tenant isolation NetworkPolicy.
-// - Allows all egress to the platform-kernel namespace and DNS.
-// - Denies ingress from other tenant namespaces.
-// - Allows ingress from within the same namespace (intra-tenant).
-func (r *TenantReconciler) ensureNetworkPolicy(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	protocolTCP := corev1.ProtocolTCP
-	protocolUDP := corev1.ProtocolUDP
-	dnsPort := intstr.FromInt32(53)
-	apiServerPort := intstr.FromInt32(443)
-
-	// Resolve the Kubernetes API server ClusterIP from the well-known "kubernetes"
-	// service in the default namespace. We use an ipBlock rule (not a namespace
-	// selector) because the ClusterIP is a virtual IP — it is not backed by a pod
-	// and therefore cannot be matched by a namespaceSelector or podSelector.
-	kubeAPISvc := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, kubeAPISvc); err != nil {
-		return fmt.Errorf("failed to look up kubernetes ClusterIP: %w", err)
-	}
-	kubeAPIServerCIDR := kubeAPISvc.Spec.ClusterIP + "/32"
-
-	// Also resolve the actual API server Endpoints (the real host IP + port that
-	// kube-proxy DNATs ClusterIP traffic to). Calico in iptables mode enforces
-	// egress NetworkPolicy AFTER kube-proxy performs DNAT, so by the time the
-	// packet reaches the Calico filter chain the destination is already the
-	// endpoint IP:port, not the ClusterIP:443. We need rules for both so the
-	// policy works regardless of where in the iptables pipeline Calico hooks.
-	//
-	// The EndpointSlice is created by kube-controller-manager and may be absent
-	// in environments that don't run it (e.g. envtest, edge clusters). When not
-	// found, skip the post-DNAT rules — the ClusterIP rule above is sufficient
-	// for CNIs that evaluate NetworkPolicy before kube-proxy DNAT.
-	kubeAPIEndpts := &discoveryv1.EndpointSlice{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, kubeAPIEndpts); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to look up kubernetes endpoints: %w", err)
-		}
-		// EndpointSlice absent — proceed without post-DNAT rules.
-		kubeAPIEndpts = nil
-	}
-
-	// Start with the static egress rules.
-	egressRules := []networkingv1.NetworkPolicyEgressRule{
-		{
-			// Allow all egress to platform-kernel namespace
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
-					},
-				},
-			},
-		},
-		{
-			// Allow egress to the shared infra namespace (MariaDB, Redis, MinIO).
-			// See infraNamespace constant — TODO: make configurable per environment.
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
-					},
-				},
-			},
-		},
-		{
-			// Allow egress to the services namespace (Nubus/Keycloak OIDC, UDM
-			// provisioning API for ox-connector). See servicesNamespace constant.
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
-					},
-				},
-			},
-		},
-		{
-			// Allow egress to OpenBao for app init Jobs (ldap/db/s3 credential seeding).
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"kubernetes.io/metadata.name": openbaoNamespace},
-					},
-				},
-			},
-		},
-		{
-			// Allow egress within the same tenant namespace
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{tenantLabel: tenant.Name},
-					},
-				},
-			},
-		},
-		{
-			// Allow egress to the nginx ingress controller namespace so that
-			// tenant pods can reach services via their ingress URLs internally.
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"kubernetes.io/metadata.name": ingressNamespace},
-					},
-				},
-			},
-		},
-	}
-
-	if isGatewayRoutingMode(r.RoutingMode) {
-		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
-			// Allow egress to Envoy Gateway data plane so tenant pods can reach
-			// kernel and tenant public hostnames via CoreDNS hairpin overrides.
-			To: []networkingv1.NetworkPolicyPeer{
-				{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{"kubernetes.io/metadata.name": envoyGatewayInstallNamespace},
-					},
-				},
-			},
-		})
-	}
-
-	egressRules = append(egressRules,
-		networkingv1.NetworkPolicyEgressRule{
-			// Allow DNS egress (kube-dns / CoreDNS)
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolUDP, Port: &dnsPort},
-				{Protocol: &protocolTCP, Port: &dnsPort},
-			},
-		},
-		networkingv1.NetworkPolicyEgressRule{
-			// Pre-DNAT rule: allow egress to the Kubernetes API ClusterIP:443.
-			// Covers CNIs that evaluate NetworkPolicy before kube-proxy DNAT.
-			To: []networkingv1.NetworkPolicyPeer{
-				{IPBlock: &networkingv1.IPBlock{CIDR: kubeAPIServerCIDR}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolTCP, Port: &apiServerPort},
-			},
-		},
-	)
-
-	// Post-DNAT rules: one rule per API server endpoint address×port.
-	// Calico in iptables mode evaluates egress policy after kube-proxy DNAT, so
-	// the destination seen by Calico is the real endpoint IP:port, not the ClusterIP.
-	// EndpointSlice ports are at the slice level (shared by all endpoints).
-	// kubeAPIEndpts is nil when the EndpointSlice was not found (see above).
-	if kubeAPIEndpts != nil {
-		for _, ep := range kubeAPIEndpts.Endpoints {
-			for _, addr := range ep.Addresses {
-				for _, port := range kubeAPIEndpts.Ports {
-					if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP {
-						continue
-					}
-					if port.Port == nil {
-						continue
-					}
-					endpointPort := intstr.FromInt32(*port.Port)
-					egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
-						To: []networkingv1.NetworkPolicyPeer{
-							{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
-						},
-						Ports: []networkingv1.NetworkPolicyPort{
-							{Protocol: &protocolTCP, Port: &endpointPort},
-						},
-					})
-				}
-			}
-		}
-	}
-
-	desired := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tenant-isolation",
-			Namespace: nsName,
-			Labels:    map[string]string{tenantLabel: tenant.Name, managedByLabel: managedByValue},
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{}, // applies to all pods in namespace
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{
-					// Allow ingress from pods within the same tenant namespace
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{tenantLabel: tenant.Name},
-							},
-						},
-					},
-				},
-				{
-					// Allow ingress from the kernel namespace
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": kernelNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow ingress from the shared infra namespace (MariaDB, Redis, MinIO)
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": infraNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow ingress from the services namespace (Nextcloud, Nubus/Keycloak, etc.)
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": servicesNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow ingress from the edge proxy namespace (nginx ingress controller
-					// or Envoy Gateway data plane when deployed cluster-wide).
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": ingressNamespace},
-							},
-						},
-					},
-				},
-				{
-					// Allow ingress from Envoy Gateway control/data namespaces when
-					// ROUTING_MODE=gateway (see docs/design/gateway.md §6).
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{"kubernetes.io/metadata.name": envoyGatewayInstallNamespace},
-							},
-						},
-					},
-				},
-			},
-			Egress: egressRules,
-		},
-	}
-
-	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec = desired.Spec
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
 // setCondition upserts a metav1.Condition on the Tenant status.
 func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condType string, status metav1.ConditionStatus, reason, message string) {
 	now := metav1.Now()
@@ -1316,30 +884,11 @@ func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condTyp
 }
 
 // tenantNamespaceName returns the namespace name for the tenant.
-// Uses spec.isolation.namespace if set, otherwise "tenant-{name}".
 func tenantNamespaceName(tenant *gentianov1alpha1.Tenant) string {
 	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.Namespace != "" {
 		return tenant.Spec.Isolation.Namespace
 	}
 	return fmt.Sprintf("tenant-%s", tenant.Name)
-}
-
-// buildResourceList converts TenantQuotas to a corev1.ResourceList.
-func buildResourceList(q *gentianov1alpha1.TenantQuotas) corev1.ResourceList {
-	if q == nil {
-		return nil
-	}
-	rl := corev1.ResourceList{}
-	if q.Storage != nil {
-		rl[corev1.ResourceRequestsStorage] = *q.Storage
-	}
-	if q.CPU != nil {
-		rl[corev1.ResourceLimitsCPU] = *q.CPU
-	}
-	if q.Memory != nil {
-		rl[corev1.ResourceLimitsMemory] = *q.Memory
-	}
-	return rl
 }
 
 // ── Phase 3: XTenant helpers ─────────────────────────────────────────────────
@@ -1351,8 +900,12 @@ func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov
 	xr := &unstructured.Unstructured{}
 	xr.SetGroupVersionKind(xTenantGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, xr)
+	desired, buildErr := r.buildXTenant(ctx, tenant)
+	if buildErr != nil {
+		return buildErr
+	}
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, buildXTenant(tenant, r.KernelDomain))
+		return r.Create(ctx, desired)
 	}
 	if err != nil {
 		return err
@@ -1361,7 +914,6 @@ func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov
 	// fields (compositionRef, resourceRefs, managementPolicies, etc.) are not
 	// overwritten. We build the desired state, then merge-patch just the fields
 	// that differ.
-	desired := buildXTenant(tenant, r.KernelDomain)
 	patch := client.MergeFrom(xr.DeepCopy())
 	desiredSpec, _ := desired.Object["spec"].(map[string]interface{})
 	if specMap, ok := xr.Object["spec"].(map[string]interface{}); ok {
@@ -1404,7 +956,7 @@ func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1
 
 // buildXTenant constructs an XTenant composite object from a Tenant's spec.
 // The XTenant is cluster-scoped; its name matches the Tenant name.
-func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstructured.Unstructured {
+func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*unstructured.Unstructured, error) {
 	xr := &unstructured.Unstructured{}
 	xr.SetGroupVersionKind(xTenantGVK)
 	xr.SetName(tenant.Name)
@@ -1416,7 +968,7 @@ func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstruc
 	spec := map[string]interface{}{
 		"displayName":  tenant.Spec.DisplayName,
 		"adminEmail":   tenant.Spec.AdminEmail,
-		"kernelDomain": kernelDomain,
+		"kernelDomain": r.KernelDomain,
 	}
 	if tenant.Spec.Domain != "" {
 		spec["domain"] = tenant.Spec.Domain
@@ -1450,9 +1002,37 @@ func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstruc
 		}
 	}
 
+	if tenant.Spec.Quotas != nil {
+		quotas := map[string]interface{}{}
+		if tenant.Spec.Quotas.Storage != nil {
+			quotas["storage"] = tenant.Spec.Quotas.Storage.String()
+		}
+		if tenant.Spec.Quotas.CPU != nil {
+			quotas["cpu"] = tenant.Spec.Quotas.CPU.String()
+		}
+		if tenant.Spec.Quotas.Memory != nil {
+			quotas["memory"] = tenant.Spec.Quotas.Memory.String()
+		}
+		if tenant.Spec.Quotas.MaxApps > 0 {
+			quotas["maxApps"] = int64(tenant.Spec.Quotas.MaxApps)
+		}
+		if len(quotas) > 0 {
+			spec["quotas"] = quotas
+		}
+	}
+
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		entry := map[string]interface{}{"profile": app.Profile}
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err == nil {
+			if profile.Spec.CompositionRef != "" {
+				variant := strings.TrimPrefix(profile.Spec.CompositionRef, "app-")
+				if variant != "" {
+					entry["variant"] = variant
+				}
+			}
+		}
 		if app.Config != nil {
 			cfg := map[string]interface{}{}
 			if app.Config.Replicas != nil {
@@ -1467,5 +1047,5 @@ func buildXTenant(tenant *gentianov1alpha1.Tenant, kernelDomain string) *unstruc
 	spec["apps"] = apps
 
 	_ = unstructured.SetNestedField(xr.Object, spec, "spec")
-	return xr
+	return xr, nil
 }

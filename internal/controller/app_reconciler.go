@@ -10,8 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+See the License for the permissions and limitations under the License.
 */
 
 package controller
@@ -27,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -36,31 +34,19 @@ const (
 	conditionAppsReady = "AppsReady"
 )
 
-// appClaimGVK is the GVK for the namespace-scoped App claim created by the
-// App XRD. The operator creates one claim per (tenant, app-profile) pair in
-// the tenant's namespace. Crossplane reconciles the claim into a Release and
-// ExternalSecret via the App Composition.
+// appClaimGVK is the GVK for namespace-scoped App claims reconciled by Crossplane.
 var appClaimGVK = schema.GroupVersionKind{
 	Group:   "gentianos.io",
 	Version: "v1alpha1",
 	Kind:    "App",
 }
 
-// ensureAppDeployment creates or reconciles one App claim per app declared in
-// ensureAppDeployment reconciles the App claims for all apps declared in
-// tenant.Spec.Apps, and cleans up claims for apps removed from the spec.
-//
-// One App claim is created per tenant in the tenant namespace.
-//
-// Returns a non-zero RequeueAfter when any claim is not yet Ready.
+// ensureAppDeployment seeds OpenBao app secrets and watches Crossplane-owned App
+// claims for readiness. Claim creation is owned by tenant-default Composition (C1).
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	desiredApps := make(map[string]struct{}, len(tenant.Spec.Apps))
-	for _, app := range tenant.Spec.Apps {
-		desiredApps[app.Profile] = struct{}{}
-	}
-
 	if len(tenant.Spec.Apps) == 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "NoAppsConfigured", "No applications are configured for this tenant")
+		return ctrl.Result{}, nil
 	}
 
 	allReady := true
@@ -76,35 +62,28 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 
-		// Seed app-internal secrets into OpenBao before the Composition reads
-		// them. SeedAppSecret is idempotent; repeated calls are safe.
 		if err := r.seedAppSecrets(ctx, tenant, app.Profile, profile); err != nil {
 			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", app.Profile, err)
 		}
 
-		ready, err := r.ensureAppClaim(ctx, tenant, app, profile)
+		ready, err := r.waitForAppClaimReady(ctx, tenant, app.Profile)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure App claim for %s: %w", app.Profile, err)
+			return ctrl.Result{}, fmt.Errorf("wait for App claim %s: %w", app.Profile, err)
 		}
 		if !ready {
 			allReady = false
 		}
 	}
 
-	if err := r.cleanupOrphanedAppCRs(ctx, tenant, desiredApps); err != nil {
-		return ctrl.Result{}, fmt.Errorf("cleanup orphaned App claims: %w", err)
-	}
-
-	if len(tenant.Spec.Apps) > 0 && !allReady {
+	if !allReady {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", "Waiting for App claims to become Ready")
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
-	if len(tenant.Spec.Apps) > 0 {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All App claims are Ready")
-	}
+	r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All App claims are Ready")
 	return ctrl.Result{}, nil
 }
+
 // seedAppSecrets writes each AppProfile.spec.appSecrets entry into OpenBao at
 // …/internal/{name} with key "value". No-op when Seeder is nil or the profile
 // declares no app-secrets. Repeated calls are idempotent.
@@ -134,170 +113,25 @@ func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov
 	return nil
 }
 
-// cleanupOrphanedAppCRs lists all App claims managed by this operator for the
-// given tenant, and deletes any whose app label is not in desiredApps. Crossplane
-// cascades deletion to the composed ExternalSecret and Release via ownerRefs.
-func (r *TenantReconciler) cleanupOrphanedAppCRs(ctx context.Context, tenant *gentianov1alpha1.Tenant, desiredApps map[string]struct{}) error {
-	labelSelector := client.MatchingLabels{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	}
-
-	claimList := &unstructured.UnstructuredList{}
-	claimList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   appClaimGVK.Group,
-		Version: appClaimGVK.Version,
-		Kind:    appClaimGVK.Kind + "List",
-	})
+// waitForAppClaimReady returns true when the Crossplane-managed App claim exists
+// and its Ready condition is True.
+func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (bool, error) {
 	nsName := tenantNamespaceName(tenant)
-	if err := r.List(ctx, claimList, client.InNamespace(nsName), labelSelector); err != nil {
-		return fmt.Errorf("list App claims: %w", err)
-	}
-	for i := range claimList.Items {
-		appName := claimList.Items[i].GetLabels()[appLabel]
-		if appName == "" {
-			continue
-		}
-		if _, desired := desiredApps[appName]; !desired {
-			if err := r.Delete(ctx, &claimList.Items[i]); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("delete orphaned App claim %s: %w", claimList.Items[i].GetName(), err)
-			}
-		}
-	}
-	return nil
-}
-
-// ensureAppClaim creates (or checks readiness of) the App claim for a single
-// app within a tenant. Returns true when the claim's Ready condition is True.
-func (r *TenantReconciler) ensureAppClaim(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	app gentianov1alpha1.TenantApp,
-	profile *gentianov1alpha1.AppProfile,
-) (bool, error) {
-	claimName := app.Profile
-	nsName := tenantNamespaceName(tenant)
-
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: claimName, Namespace: nsName}, obj)
+	err := r.Get(ctx, types.NamespacedName{Name: profileName, Namespace: nsName}, obj)
 	if errors.IsNotFound(err) {
-		desired := buildAppClaim(tenant, app, r.KernelDomain, r.TenancyMode, profile)
-		return false, r.Create(ctx, desired)
+		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-
-	// Propagate domain changes: if the tenant's effective domain differs from
-	// what the claim has, patch it so TENANT_DOMAIN substitutions stay correct.
-	effectiveDomain := r.tenantEffectiveDomain(tenant)
-	currentDomain, _, _ := unstructured.NestedString(obj.Object, "spec", "domain")
-	if effectiveDomain != "" && currentDomain != effectiveDomain {
-		patch := obj.DeepCopy()
-		_ = unstructured.SetNestedField(patch.Object, effectiveDomain, "spec", "domain")
-		if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
-			return false, fmt.Errorf("patch App claim %s domain: %w", claimName, err)
-		}
-	}
-
-	// Propagate compositionRef changes: if the AppProfile's compositionRef has
-	// changed since the claim was created, update the claim so Crossplane uses
-	// the correct composition. This covers the case where an AppProfile is
-	// updated after the initial claim creation.
-	if profile != nil && profile.Spec.CompositionRef != "" {
-		currentRef, _, _ := unstructured.NestedString(obj.Object, "spec", "compositionRef", "name")
-		if currentRef != profile.Spec.CompositionRef {
-			patch := obj.DeepCopy()
-			_ = unstructured.SetNestedField(patch.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
-			if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
-				return false, fmt.Errorf("patch App claim %s compositionRef: %w", claimName, err)
-			}
-		}
-	}
-
-	currentPolicy, _, _ := unstructured.NestedString(obj.Object, "spec", "compositionUpdatePolicy")
-	if currentPolicy != "Automatic" {
-		patch := obj.DeepCopy()
-		_ = unstructured.SetNestedField(patch.Object, "Automatic", "spec", "compositionUpdatePolicy")
-		if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
-			return false, fmt.Errorf("patch App claim %s compositionUpdatePolicy: %w", claimName, err)
-		}
-	}
-
 	return appClaimIsReady(obj), nil
 }
 
-// buildAppClaim constructs the App claim for a tenant app. The claim is placed
-// in the tenant namespace so tenant-admin RBAC applies. Crossplane reconciles
-// the claim through the App Composition which creates an ExternalSecret and a
-// provider-helm Release in the same namespace.
-func buildAppClaim(
-	tenant *gentianov1alpha1.Tenant,
-	app gentianov1alpha1.TenantApp,
-	kernelDomain, tenancyMode string,
-	profile *gentianov1alpha1.AppProfile,
-) *unstructured.Unstructured {
-	nsName := tenantNamespaceName(tenant)
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(appClaimGVK)
-	obj.SetName(app.Profile)
-	obj.SetNamespace(nsName)
-	obj.SetLabels(map[string]string{
-		tenantLabel:    tenant.Name,
-		appLabel:       app.Profile,
-		managedByLabel: managedByValue,
-	})
-
-	_ = unstructured.SetNestedField(obj.Object, app.Profile, "spec", "profileRef", "name")
-	_ = unstructured.SetNestedField(obj.Object, nsName, "spec", "tenantNamespace")
-
-	if profile != nil && profile.Spec.CompositionRef != "" {
-		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
-	}
-
-	// Pick up new app-element (and other) composition revisions automatically so
-	// OIDC/routing fixes reach existing tenants without manual XApp revision pins.
-	_ = unstructured.SetNestedField(obj.Object, "Automatic", "spec", "compositionUpdatePolicy")
-
-	if domain := tenant.EffectiveDomain(kernelDomain, tenancyMode); domain != "" {
-		_ = unstructured.SetNestedField(obj.Object, domain, "spec", "domain")
-	}
-
-	if app.Config != nil {
-		if app.Config.Replicas != nil {
-			_ = unstructured.SetNestedField(obj.Object, int64(*app.Config.Replicas), "spec", "config", "replicas")
-		}
-	}
-
-	return obj
-}
-
-// deleteAppDeployment removes all App claims created for the tenant's apps.
-// Crossplane cascades deletion to the composed ExternalSecret and Release via
-// ownerReferences, so no manual cleanup of those resources is needed.
-func (r *TenantReconciler) deleteAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	labelSelector := client.MatchingLabels{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	}
-
-	nsName := tenantNamespaceName(tenant)
-	claimList := &unstructured.UnstructuredList{}
-	claimList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   appClaimGVK.Group,
-		Version: appClaimGVK.Version,
-		Kind:    appClaimGVK.Kind + "List",
-	})
-	if err := r.List(ctx, claimList, client.InNamespace(nsName), labelSelector); err != nil {
-		return fmt.Errorf("list App claims for tenant %s: %w", tenant.Name, err)
-	}
-	for i := range claimList.Items {
-		if err := r.Delete(ctx, &claimList.Items[i]); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete App claim %s: %w", claimList.Items[i].GetName(), err)
-		}
-	}
+// deleteAppDeployment is a no-op under C1: App claims are owned by the XTenant
+// Composition and deleted via deleteXTenant cascade.
+func (r *TenantReconciler) deleteAppDeployment(_ context.Context, _ *gentianov1alpha1.Tenant) error {
 	return nil
 }
 

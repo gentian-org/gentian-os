@@ -167,7 +167,8 @@ without migrating `keycloak-config` and tenant client creation first.
 
 - Single reconcile owner: finish **Phase 3b** — move identity, LDAP,
   ingress, and mail into `tenant-default` / app Compositions so only
-  Crossplane + one operator “orchestrator” remain.  
+  Crossplane + one operator “orchestrator” remain. Step-by-step plan:
+  [crossplane-convergence.md](crossplane-convergence.md).  
 - App catalogue via OCI artefact + `Cluster` XR instead of a separate
   ArgoCD Application (still one sync path).  
 - Replace point-to-point `IntegrationBinding` Jobs with composition
