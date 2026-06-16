@@ -34,12 +34,30 @@ spec:
                 exit 0
               fi
               # Idempotent: ensure prepare-config runs gentian upstream patch after UCR commit.
-              kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p='[
-                {"op":"add","path":"/spec/template/spec/initContainers/1/volumeMounts/-","value":{"name":"gentian-umc-gateway-upstream","mountPath":"/entrypoint.d/95-gentian-umc-gateway-upstream.sh","subPath":"95-gentian-umc-gateway-upstream.sh"}}
+              apk add --no-cache jq >/dev/null
+              kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p '[
+                {
+                  "op": "add",
+                  "path": "/spec/template/spec/initContainers/1/volumeMounts/-",
+                  "value": {
+                    "name": "gentian-umc-gateway-upstream",
+                    "mountPath": "/entrypoint.d/95-gentian-umc-gateway-upstream.sh",
+                    "subPath": "95-gentian-umc-gateway-upstream.sh"
+                  }
+                }
               ]' 2>/dev/null || true
-              kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p='[
-                {"op":"replace","path":"/spec/template/spec/initContainers/1/command/2","value":"/entrypoint.d/50-entrypoint.sh\nbash /entrypoint.d/95-gentian-umc-gateway-upstream.sh\nsed -i '\''s|RequestHeader set X-UMC-HTTPS %{HTTPS}s|RequestHeader set X-UMC-HTTPS on|g'\'' /etc/apache2/sites-available/univention.conf\necho \"Listen 8080\" > /etc/apache2/ports.conf\nsed -e \"s,<VirtualHost \\\\*:80>,<VirtualHost *:8080>,g\" -i /etc/apache2/sites-available/000-default.conf\ncat /etc/apache2/sites-available/000-default.conf\n"}
-              ]'
+              INIT_CMD=$(cat <<'CMD'
+              /entrypoint.d/50-entrypoint.sh
+              bash /entrypoint.d/95-gentian-umc-gateway-upstream.sh
+              sed -i 's|RequestHeader set X-UMC-HTTPS %{HTTPS}s|RequestHeader set X-UMC-HTTPS on|g' /etc/apache2/sites-available/univention.conf
+              echo "Listen 8080" > /etc/apache2/ports.conf
+              sed -e "s,<VirtualHost \*:80>,<VirtualHost *:8080>,g" -i /etc/apache2/sites-available/000-default.conf
+              cat /etc/apache2/sites-available/000-default.conf
+              CMD
+              )
+              CMD_PATCH=$(jq -n --arg cmd "$INIT_CMD" \
+                '[{op: "replace", path: "/spec/template/spec/initContainers/1/command/2", value: $cmd}]')
+              kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p "$CMD_PATCH"
               kubectl rollout status deployment/"$DEPLOY" -n "$NS" --timeout=180s
 ---
 apiVersion: v1
