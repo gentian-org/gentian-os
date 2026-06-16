@@ -1,2 +1,16 @@
+# Gateway mode disables chart Ingress (Envoy HTTPRoute is reconciled by gentian-os).
+# The intercom chart sets BASE_URL from ingress.host when ingress.enabled=true; when
+# false it falls back to http://intercom-service-<env>:8008. Browser OIDC silent login
+# (Nordeck Element banner, Jitsi portal session refresh) needs the public ICS origin.
 ingress:
   enabled: false
+
+extraEnvVars:
+  - name: REDIS_USER
+    value: default
+  - name: NODE_EXTRA_CA_CERTS
+    value: /opt/staging-ca/node-extra-ca.crt
+  - name: BASE_URL
+    value: https://ics.desk.gentian.org
+  - name: INTERCOM_URL
+    value: https://ics.desk.gentian.org
