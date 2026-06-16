@@ -27,10 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -64,9 +62,21 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 
 	// --- S3 buckets (MinIO) ---
 	for _, appName := range s3Apps {
-		done, err := r.ensureS3BucketJob(ctx, tenant, appName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure S3 bucket Job for app %s: %w", appName, err)
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", appName, err)
+		}
+		var done bool
+		if appUsesCrossplaneS3Init(profile) {
+			done, err = r.waitForTenantNamespaceJob(ctx, tenant, appCompositionInitJobName(appName, "s3-init"))
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("wait for s3-init Job for app %s: %w", appName, err)
+			}
+		} else {
+			done, err = r.ensureS3BucketJob(ctx, tenant, appName)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("ensure S3 bucket Job for app %s: %w", appName, err)
+			}
 		}
 		if !done {
 			allDone = false
@@ -116,56 +126,14 @@ func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *genti
 	return s3Apps, nil
 }
 
-// ensureS3BucketJob creates (or checks) the MinIO bucket setup Job for one app.
-// Returns true when the Job has completed successfully.
+// ensureS3BucketJob waits for the Crossplane-owned MinIO bucket Job.
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	jobName := s3BucketJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: derive the per-app S3 credentials and persist them under
-		// the canonical OpenBao path before creating the bucket Job. The
-		// bucket Job itself runs with admin credentials; provisioning a
-		// MinIO user that matches these derived keys is out of scope for
-		// this increment.
-		if r.Seeder != nil {
-			if _, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-				Bucket: s3BucketName(tenant, appName),
-			}); seedErr != nil {
-				return false, fmt.Errorf("seed s3: %w", seedErr)
-			}
-		}
-		return false, r.Create(ctx, makeS3BucketJob(tenant, appName))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, s3BucketJobName(tenant.Name, appName))
 }
 
-// ensureNextcloudGroupJob creates (or checks) the Nextcloud group setup Job.
-// One group per tenant covers all WebDAV-requiring apps. Returns true when done.
+// ensureNextcloudGroupJob waits for the Crossplane-owned Nextcloud group Job.
 func (r *TenantReconciler) ensureNextcloudGroupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	jobName := nextcloudGroupJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeNextcloudGroupJob(tenant))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, nextcloudGroupJobName(tenant.Name))
 }
 
 // deleteStorage handles storage cleanup on tenant deletion.

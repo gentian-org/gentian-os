@@ -35,7 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -136,105 +135,27 @@ func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentian
 	return redisApps, memcachedApps, nil
 }
 
-// ensureRedisACLJob creates (or checks completion of) the Redis ACL SETUSER Job for
-// a single app. Returns true when the Job has completed successfully.
+// ensureRedisACLJob waits for the Crossplane-owned Redis ACL Job.
 func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	jobName := redisACLJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: derive the per-app Redis ACL password and persist it under
-		// the canonical OpenBao path before creating the redis-cli Job. The
-		// Job receives the same value via REDIS_USER_PASSWORD so the live ACL
-		// and OpenBao stay in lockstep. When Seeder is nil the Job falls back
-		// to using the admin password (legacy behaviour).
-		userPassword := ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
-				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "redis-master", kernelNamespace),
-				Port: "6379",
-			})
-			if seedErr != nil {
-				return false, fmt.Errorf("seed cache: %w", seedErr)
-			}
-			userPassword = creds.Password
-		}
-		return false, r.Create(ctx, makeRedisACLJob(tenant, appName, userPassword))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, redisACLJobName(tenant.Name, appName))
 }
 
-// ensureMemcached seeds per-app cache credentials, removes any legacy ArgoCD
-// Application CR from the Bitnami era, and ensures a Deployment + Service named
-// "memcached" in the tenant namespace. Returns true when the Deployment is ready.
+// ensureMemcached waits for the Crossplane-provisioned Memcached Deployment.
 func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant, memcachedApps []string) (bool, error) {
-	if r.Seeder != nil {
-		for _, appName := range memcachedApps {
-			if _, err := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
-				Host: memcachedServiceName,
-				Port: fmt.Sprintf("%d", memcachedPort),
-			}); err != nil {
-				return false, fmt.Errorf("seed memcached cache for app %s: %w", appName, err)
-			}
-		}
-	}
-
 	if err := r.deleteLegacyMemcachedApplication(ctx, tenant.Name); err != nil {
 		return false, err
 	}
 
 	nsName := tenantNamespaceName(tenant)
-	svcKey := types.NamespacedName{Name: memcachedServiceName, Namespace: nsName}
-
 	dep := &appsv1.Deployment{}
 	depKey := types.NamespacedName{Name: memcachedDeploymentName, Namespace: nsName}
 	err := r.Get(ctx, depKey, dep)
 	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, makeMemcachedDeployment(tenant)); err != nil {
-			return false, err
-		}
-		svc := &corev1.Service{}
-		if err := r.Get(ctx, svcKey, svc); errors.IsNotFound(err) {
-			if err := r.Create(ctx, makeMemcachedService(tenant)); err != nil && !errors.IsAlreadyExists(err) {
-				return false, err
-			}
-		} else if err != nil {
-			return false, err
-		}
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-
-	if len(dep.Spec.Template.Spec.Containers) > 0 && dep.Spec.Template.Spec.Containers[0].Image != memcachedImage {
-		dep.Spec.Template.Spec.Containers[0].Image = memcachedImage
-		if err := r.Update(ctx, dep); err != nil {
-			return false, fmt.Errorf("update memcached image: %w", err)
-		}
-		return false, nil
-	}
-
-	svc := &corev1.Service{}
-	err = r.Get(ctx, svcKey, svc)
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, makeMemcachedService(tenant)); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
 	return deploymentIsReady(dep), nil
 }
 

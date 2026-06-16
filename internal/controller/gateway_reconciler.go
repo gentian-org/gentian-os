@@ -49,41 +49,22 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 		return ctrl.Result{}, fmt.Errorf("no effective domain available for tenant %s", tenant.Name)
 	}
 
-	wildcardCertName := tenantWildcardCertName(tenant.Name)
-	tlsSecret := tenantWildcardSecretName(tenant.Name)
-	if err := r.ensureTenantWildcardCertificate(ctx, tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure tenant wildcard certificate: %w", err)
-	}
 	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.ensureTenantWildcardEdgeDNS(ctx, tenant, effectiveDomain)
 
-	desiredGW := buildTenantGateway(tenant, nsName, effectiveDomain, tlsSecret)
-	if err := ensureGatewayResource(ctx, r.Client, desiredGW); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure tenant Gateway: %w", err)
-	}
 	if err := ensureTenantKernelGatewayReferenceGrants(ctx, r.Client, tenant); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure kernel Gateway ReferenceGrants: %w", err)
 	}
 
 	expectedRoutes := make(map[string]struct{}, len(intents))
-	allRoutesReady := true
-	var notReadyReason string
-
 	for _, intent := range intents {
-		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress, host, effectiveDomain, r.KernelDomain)
+		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress,
+			ingressHost(intent.appProfile, intent.ingress, effectiveDomain), effectiveDomain, r.KernelDomain)
 		expectedRoutes[route.Name] = struct{}{}
-		if err := r.ensureHTTPRouteResource(ctx, route); err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure HTTPRoute for app %s: %w", intent.appProfile, err)
-		}
 		if err := r.ensureAppBackendTrafficPolicyWithRoute(ctx, tenant, nsName, intent.appProfile, intent.ingress); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure BackendTrafficPolicy for app %s: %w", intent.appProfile, err)
-		}
-		if ok, reason := httpRouteProgrammed(ctx, r.Client, route); !ok {
-			allRoutesReady = false
-			notReadyReason = reason
 		}
 	}
 
@@ -95,15 +76,15 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	message := fmt.Sprintf("Gateway provisioned for %d app(s) on %q (tenant-zone-wildcard)", len(intents), effectiveDomain)
-	if programmed, reason := gatewayProgrammed(ctx, r.Client, desiredGW); !programmed {
-		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, reason, message)
-		return ctrl.Result{RequeueAfter: requeueGatewayAfter}, nil
+	ready, reason, err := r.waitForTenantEdgeResources(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-	if !allRoutesReady {
-		if notReadyReason == "" {
-			notReadyReason = "AwaitingHTTPRoutes"
+	if !ready {
+		if reason == "" {
+			reason = "AwaitingEdgeResources"
 		}
-		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, notReadyReason, message)
+		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, reason, message)
 		return ctrl.Result{RequeueAfter: requeueGatewayAfter}, nil
 	}
 

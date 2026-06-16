@@ -227,6 +227,25 @@ imperative `ensure*` for overlapping resources.
 | C3.3 | Move `ensureMail`, `ensureOffice` into kernel-facing Compositions or gated tenant steps |
 | C3.4 | Implement IntegrationBindings in Composition pipeline ([app-catalogue.md](design/app-catalogue.md) §8b) |
 
+**Implementation (C3.1–C3.2, C3.4):**
+
+The C2 **ConfigMap manifest bridge** is extended:
+
+| ConfigMap key | Contents |
+|---------------|----------|
+| `jobs.json` | Batch Jobs: pg-role, mariadb-setup, s3-bucket, nc-group, redis-acl (plus C2 identity/LDAP jobs) |
+| `objects.json` | CNPG Database CRs, Memcached Deployment/Service, IntegrationBindings, Certificate/Gateway/HTTPRoutes |
+
+`tenant-default` renders both keys as `kubernetes.crossplane.io/Object` MRs. The operator **seeds credentials** and **writes the ConfigMap**; reconcilers **wait only** (no direct Create of those resources).
+
+**App-owned init Jobs:** When an `AppProfile` has `compositionRef` and `databasePerTenant` / `bucketPerTenant`, the app Composition owns `{app}-db-init` / `{app}-s3-init` in the tenant namespace. The operator skips the legacy kernel jobs and waits on those instead.
+
+**Operator exceptions (still imperative):**
+
+- Gateway: DNS records, ReferenceGrants, BackendTrafficPolicy, stale route/Ingress cleanup (C3.2 partial).
+- IntegrationBindings: garbage collection of stale bindings (C3.4).
+- Mail / office: unchanged (`ensureMail`, `ensureOffice`) — C3.3 deferred.
+
 **Exit criteria:**
 
 - Tenant with Element: chat ingress, DB, TURN secrets, Synapse Release all Ready via Crossplane graph.
@@ -404,7 +423,7 @@ Update this table as phases complete.
 | C0 | Kernel `XCluster` structural provisioning | ✅ Done |
 | C1 | Deduplicate tenant shell (namespace, limits, policy, App claims) | ✅ Done |
 | C2 | Identity & LDAP in Compositions | ✅ Complete |
-| C3 | Data plane, edge, mail, bindings | ⬜ Not started |
+| C3 | Data plane, edge, mail, bindings | 🟡 C3.1–C3.2, C3.4 done; C3.3 (mail/office) deferred |
 | C4 | Thin operator + P3/P4 cutover | ⬜ Not started |
 | P2 e2e | Pattern B kernel chart verification script | ⬜ Stub |
 | P3 e2e | Tenant shadow deployment script | ⬜ Stub |

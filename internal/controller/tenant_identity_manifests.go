@@ -36,24 +36,33 @@ const (
 	tenantProvisioningJobsDataKey    = "jobs.json"
 )
 
-func tenantProvisioningJobsConfigMapName(tenantName string) string {
+func tenantProvisioningConfigMapName(tenantName string) string {
 	return "tenant-" + tenantName + "-provisioning-jobs"
 }
 
-// ensureTenantProvisioningManifests writes the Batch Job manifests that Crossplane
-// applies via tenant-default (Phase C2). The operator seeds credentials and
-// updates this ConfigMap; it does not create Jobs directly.
+// ensureTenantProvisioningManifests writes Batch Job and Kubernetes object manifests
+// that Crossplane applies via tenant-default (Phases C2–C3). The operator seeds
+// credentials and updates this ConfigMap; it does not create those resources directly.
 func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	jobs, err := r.buildTenantProvisioningJobs(ctx, tenant)
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
 	}
-	payload, err := serializeProvisioningJobs(jobs)
+	jobsPayload, err := serializeProvisioningJobs(jobs)
 	if err != nil {
 		return fmt.Errorf("serialize tenant provisioning jobs: %w", err)
 	}
 
-	name := tenantProvisioningJobsConfigMapName(tenant.Name)
+	objects, err := r.buildTenantProvisioningObjects(ctx, tenant)
+	if err != nil {
+		return fmt.Errorf("build tenant provisioning objects: %w", err)
+	}
+	objectsPayload, err := serializeProvisioningObjects(objects)
+	if err != nil {
+		return fmt.Errorf("serialize tenant provisioning objects: %w", err)
+	}
+
+	name := tenantProvisioningConfigMapName(tenant.Name)
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -65,7 +74,8 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 			},
 		},
 		Data: map[string]string{
-			tenantProvisioningJobsDataKey: payload,
+			tenantProvisioningJobsDataKey:    jobsPayload,
+			tenantProvisioningObjectsDataKey: objectsPayload,
 		},
 	}
 
@@ -77,16 +87,23 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	if err != nil {
 		return err
 	}
-	if existing.Data != nil && existing.Data[tenantProvisioningJobsDataKey] == payload {
+	if existing.Data != nil &&
+		existing.Data[tenantProvisioningJobsDataKey] == jobsPayload &&
+		existing.Data[tenantProvisioningObjectsDataKey] == objectsPayload {
 		return nil
 	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	if existing.Data == nil {
 		existing.Data = map[string]string{}
 	}
-	existing.Data[tenantProvisioningJobsDataKey] = payload
+	existing.Data[tenantProvisioningJobsDataKey] = jobsPayload
+	existing.Data[tenantProvisioningObjectsDataKey] = objectsPayload
 	existing.Labels = desired.Labels
 	return r.Patch(ctx, existing, patch)
+}
+
+func (r *TenantReconciler) buildTenantProvisioningObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {
+	return r.buildDataPlaneObjects(ctx, tenant)
 }
 
 func serializeProvisioningJobs(jobs []batchv1.Job) (string, error) {
@@ -132,6 +149,12 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 		return nil, err
 	}
 	jobs = append(jobs, identityJobs...)
+
+	dataJobs, err := r.buildDataPlaneJobs(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	jobs = append(jobs, dataJobs...)
 	return jobs, nil
 }
 

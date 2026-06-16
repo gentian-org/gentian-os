@@ -22,14 +22,15 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const tenantProvisioningJobsConfigType = "tenant-provisioning-jobs"
 
-// startTenantProvisioningJobSimulator creates Batch Jobs from the operator's
+// startTenantProvisioningJobSimulator creates Batch Jobs and other K8s objects from the operator's
 // tenant-*-provisioning-jobs ConfigMap. Envtest has no Crossplane; this mimics
-// tenant-default identity Job Objects for controller integration tests.
+// tenant-default Job/Object MRs for controller integration tests.
 func startTenantProvisioningJobSimulator(ctx context.Context, c client.Client) {
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)
@@ -67,6 +68,25 @@ func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 				job.Namespace = "platform-kernel"
 			}
 			createIfMissing(ctx, c, &job)
+		}
+
+		objectsPayload := cm.Data["objects.json"]
+		if objectsPayload == "" {
+			continue
+		}
+		var rawObjects []json.RawMessage
+		if err := json.Unmarshal([]byte(objectsPayload), &rawObjects); err != nil {
+			continue
+		}
+		for _, raw := range rawObjects {
+			obj := &unstructured.Unstructured{}
+			if err := json.Unmarshal(raw, &obj.Object); err != nil {
+				continue
+			}
+			if obj.GetNamespace() == "" {
+				obj.SetNamespace("platform-kernel")
+			}
+			createIfMissing(ctx, c, obj)
 		}
 	}
 }

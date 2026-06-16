@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -18,53 +19,22 @@ import (
 
 const (
 	conditionBindingsReady = "BindingsReady"
+	bindingsRequeueAfter   = 2 * time.Second
 )
 
-// ensureIntegrationBindings creates or reconciles IntegrationBinding CRs for a
-// tenant. For every app whose AppProfile declares an OptionalIntegration, the
-// reconciler checks whether the named provider app is also in the tenant's app
-// list. When both sides are present, an IntegrationBinding is created in the
-// tenant namespace and kept in sync. Stale bindings (provider removed from the
-// tenant) are garbage-collected via a label scan.
+// ensureIntegrationBindings waits for Crossplane-provisioned IntegrationBinding
+// CRs and garbage-collects stale bindings (C3.4).
 func (r *TenantReconciler) ensureIntegrationBindings(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	nsName := tenantNamespaceName(tenant)
 
-	// Build a fast lookup set of app profile names present in the tenant.
-	presentApps := make(map[string]struct{}, len(tenant.Spec.Apps))
-	for _, app := range tenant.Spec.Apps {
-		presentApps[app.Profile] = struct{}{}
+	desiredList, err := r.collectDesiredIntegrationBindings(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
-	// Collect a map of desired bindings: bindingName -> desired IntegrationBinding.
-	desired := map[string]*gentianov1alpha1.IntegrationBinding{}
-
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		for _, integration := range profile.Spec.OptionalIntegrations {
-			// Determine the provider app: use explicit Provider field if set,
-			// otherwise match any app in the tenant that declares this contract.
-			providerApp := ""
-			if integration.Provider != "" {
-				if _, ok := presentApps[integration.Provider]; ok {
-					providerApp = integration.Provider
-				}
-			} else {
-				// Scan other apps in the tenant for a matching Provides contract.
-				providerApp = r.findProviderInTenant(ctx, tenant, integration.Contract, presentApps, app.Profile)
-			}
-			if providerApp == "" {
-				continue // provider not present; skip
-			}
-			name := integrationBindingName(tenant.Name, app.Profile, integration.Contract)
-			ib := buildIntegrationBinding(name, nsName, tenant.Name, app.Profile, providerApp, integration)
-			desired[name] = ib
-		}
+	desired := make(map[string]*gentianov1alpha1.IntegrationBinding, len(desiredList))
+	for _, ib := range desiredList {
+		desired[ib.Name] = ib
 	}
 
 	if len(desired) == 0 {
@@ -73,16 +43,27 @@ func (r *TenantReconciler) ensureIntegrationBindings(ctx context.Context, tenant
 		return ctrl.Result{}, r.gcStaleIntegrationBindings(ctx, nsName, desired)
 	}
 
-	// Create or update each desired binding.
+	allReady := true
 	for _, ib := range desired {
-		if err := r.ensureIntegrationBinding(ctx, ib); err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure IntegrationBinding %s: %w", ib.Name, err)
+		existing := &gentianov1alpha1.IntegrationBinding{}
+		err := r.Get(ctx, types.NamespacedName{Name: ib.Name, Namespace: ib.Namespace}, existing)
+		if errors.IsNotFound(err) {
+			allReady = false
+			continue
+		}
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("get IntegrationBinding %s: %w", ib.Name, err)
 		}
 	}
 
-	// Garbage-collect bindings that are no longer desired.
 	if err := r.gcStaleIntegrationBindings(ctx, nsName, desired); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if !allReady {
+		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse,
+			"Provisioning", "Waiting for integration bindings to be provisioned")
+		return ctrl.Result{RequeueAfter: bindingsRequeueAfter}, nil
 	}
 
 	r.setCondition(tenant, conditionBindingsReady, metav1.ConditionTrue,

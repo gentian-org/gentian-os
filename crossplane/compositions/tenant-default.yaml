@@ -70,6 +70,8 @@ spec:
             {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
             {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
             {{- $jobs      := fromJson $jobsJSON }}
+            {{- $objectsJSON := dig "data" "objects.json" "[]" $provCM }}
+            {{- $objects     := fromJson $objectsJSON }}
             {{- $infraNs     := default "gentian-infra-dev" (dig "network.infraNamespace" "" $ccData) }}
             {{- $servicesNs  := default "gentian-dev" (dig "network.servicesNamespace" "" $ccData) }}
             {{- $openbaoNs   := default "openbao" (dig "network.openbaoNamespace" "" $ccData) }}
@@ -296,6 +298,22 @@ spec:
               forProvider:
                 manifest:
                   {{- $job | toYaml | nindent 18 }}
+            {{- end }}
+
+            {{- range $obj := $objects }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-obj-{{ $obj.metadata.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: obj-{{ $obj.metadata.name }}
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  {{- $obj | toYaml | nindent 18 }}
             {{- end }}
 
             {{- range $app := dig "apps" list $spec }}
