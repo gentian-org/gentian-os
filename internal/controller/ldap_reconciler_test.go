@@ -82,10 +82,9 @@ func markAppUserCapabilitiesComplete(t *testing.T, tenantName string) {
 }
 
 // TestLDAP_NoLDAPApps verifies that a Tenant with no LDAP-requiring apps:
-//   - still has LDAPReady=True with reason NoLDAPRequired (no blocking)
-//   - Phase=Ready is reached without waiting for any LDAP Jobs
+//   - still reaches Phase=Ready (LDAP bind for Keycloak is provisioned when LDAPBase is set)
+//   - sets LDAPReady=True with reason Provisioned once the keycloak bind Job completes
 //   - the OU/template Jobs ARE created via ensureLDAPBase (non-blocking base provisioning)
-//   - no bind-account Jobs are created
 func TestLDAP_NoLDAPApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -139,8 +138,8 @@ func TestLDAP_NoLDAPApps(t *testing.T) {
 	if ldapCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected LDAPReady=True, got %v", ldapCond.Status)
 	}
-	if ldapCond.Reason != "NoLDAPRequired" {
-		t.Errorf("expected reason NoLDAPRequired, got %q", ldapCond.Reason)
+	if ldapCond.Reason != "Provisioned" {
+		t.Errorf("expected reason Provisioned (keycloak bind is always provisioned when LDAPBase is set), got %q", ldapCond.Reason)
 	}
 
 	// ensureLDAPBase must have fired the OU Job even though no LDAP apps are installed.

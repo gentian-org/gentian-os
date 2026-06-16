@@ -553,12 +553,13 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 		t.Fatalf("create tenant: %v", err)
 	}
 
-	// Wait until the realm Job is created.
+	// Wait until the realm Job is created and completes (Retain delete requires a provisioned realm).
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-identretain", Namespace: "platform-kernel"}, j) == nil
 	})
+	markJobComplete(t, "keycloak-realm-identretain", "platform-kernel")
 
 	// Delete the tenant.
 	if err := testClient.Delete(context.Background(), tenant); err != nil {

@@ -50,7 +50,7 @@ var testClient client.Client
 // envtestWaitTimeout is the default poll deadline for controller envtest waits.
 // Tests share one manager; under t.Parallel() load on CI runners, shorter
 // deadlines flake when many tenants reconcile and extra Keycloak/LDAP Jobs run.
-const envtestWaitTimeout = 30 * time.Second
+const envtestWaitTimeout = 45 * time.Second
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
 const tenantReadyTimeout = envtestWaitTimeout
@@ -138,22 +138,44 @@ func shouldAutoCompleteProvisioningJob(jobName string) bool {
 		return false
 	}
 	if _, manual := dataPlaneManualTestTenants[tenant]; manual {
-		return false
+		switch {
+		case strings.HasPrefix(jobName, "redis-acl-"):
+			return false
+		case strings.HasPrefix(jobName, "pg-role-"):
+			return false
+		case strings.HasPrefix(jobName, "mariadb-setup-"):
+			return false
+		case strings.HasPrefix(jobName, "s3-bucket-"):
+			return false
+		}
 	}
 	return true
 }
 
-func deleteRetainJobTenant(jobName string) (tenant string, ok bool) {
-	for _, prefix := range []string{"keycloak-realm-disable-", "ldap-lock-"} {
+func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
+	for _, prefix := range []string{
+		"keycloak-realm-delete-",
+		"keycloak-realm-disable-",
+		"ldap-ou-delete-",
+		"ldap-lock-",
+		"mariadb-delete-",
+		"s3-delete-",
+		"nc-group-delete-",
+		"redis-acl-delete-",
+	} {
 		if strings.HasPrefix(jobName, prefix) {
-			return strings.TrimPrefix(jobName, prefix), true
+			rest := strings.TrimPrefix(jobName, prefix)
+			if idx := strings.Index(rest, "-"); idx > 0 {
+				return rest[:idx], true
+			}
+			return rest, true
 		}
 	}
 	return "", false
 }
 
-func shouldAutoCompleteDeleteRetainJob(jobName string) bool {
-	tenant, ok := deleteRetainJobTenant(jobName)
+func shouldAutoCompleteDeleteCleanupJob(jobName string) bool {
+	tenant, ok := deleteCleanupJobTenant(jobName)
 	if !ok {
 		return false
 	}
@@ -327,9 +349,15 @@ func TestMain(m *testing.M) {
 					autoKeycloak := strings.HasPrefix(name, "keycloak-")
 					autoLDAP := shouldAutoCompleteLDAPJob(name)
 					autoProv := shouldAutoCompleteProvisioningJob(name)
-					autoDeleteRetain := shouldAutoCompleteDeleteRetainJob(name)
-					if !autoKeycloak && !autoLDAP && !autoProv && !autoDeleteRetain {
+					autoDeleteCleanup := shouldAutoCompleteDeleteCleanupJob(name)
+					if !autoKeycloak && !autoLDAP && !autoProv && !autoDeleteCleanup {
 						continue
+					}
+					if autoDeleteCleanup && strings.Contains(name, "realm-disable") {
+						// identretain asserts disable Job creation before completion.
+						if strings.Contains(name, "identretain") {
+							continue
+						}
 					}
 					if autoKeycloak && (strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant")) {
 						// These tests control Keycloak job timing or test deletion flows.
