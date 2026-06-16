@@ -986,6 +986,62 @@ spec:
                 name: kubernetes
             {{- end }}
 
+            {{- /* Sidecar Keycloak Client (e.g. opendesk-jitsi) — no standalone AppProfile */}}
+            {{- $scKr := default dict $sidecar.kernelRequirements }}
+            {{- $scIdentity := default dict $scKr.identity }}
+            {{- $scOidcCl := default dict $scIdentity.oidc }}
+            {{- if $scOidcCl.clientId }}
+            {{- $scRedirects := list }}
+            {{- range $uri := (default list $scOidcCl.redirectUris) }}
+            {{- $scRedirects = append $scRedirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $scPostLogout := list }}
+            {{- range $uri := (default list $scOidcCl.postLogoutRedirectUris) }}
+            {{- $scPostLogoutUri := $uri | replace "${TENANT_DOMAIN}" $domain | replace "${TENANT_ID}" $tenant }}
+            {{- if $kernelDomain }}{{ $scPostLogoutUri = $scPostLogoutUri | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
+            {{- $scPostLogout = append $scPostLogout $scPostLogoutUri }}
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-keycloak-client
+              name: {{ $tenant }}-{{ $scAppKey }}-keycloak-client
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                clientId: {{ $scOidcCl.clientId | quote }}
+                name: {{ default $scOidcCl.clientId $scOidcCl.name | quote }}
+                realmId: {{ $tenant }}
+                accessType: {{ default "PUBLIC" $scOidcCl.accessType | quote }}
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: {{ default false $scOidcCl.directAccessGrantsEnabled }}
+                serviceAccountsEnabled: false
+                {{- if $scRedirects }}
+                validRedirectUris:
+                  {{ toYaml $scRedirects | nindent 18 }}
+                {{- end }}
+                webOrigins:
+                  - "+"
+                {{- if $scPostLogout }}
+                validPostLogoutRedirectUris:
+                  {{ toYaml $scPostLogout | nindent 18 }}
+                {{- end }}
+                {{- if and $scOidcCl.backchannelLogoutUrl (ne $scOidcCl.backchannelLogoutUrl "") }}
+                backchannelLogoutUrl: {{ $scOidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
+                backchannelLogoutSessionRequired: true
+                {{- end }}
+                {{- if eq (default "PUBLIC" $scOidcCl.accessType) "CONFIDENTIAL" }}
+                clientSecretSecretRef:
+                  name: {{ $scXrName }}-oidc-client-creds
+                  namespace: crossplane-system
+                  key: client-secret
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release

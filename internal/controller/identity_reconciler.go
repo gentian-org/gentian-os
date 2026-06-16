@@ -147,9 +147,9 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 
 	allDone := true
 	for _, cfg := range oidcConfigs {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: cfg.profileName}, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", cfg.profileName, err)
+		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
+		if err != nil {
+			return ctrl.Result{}, err
 		}
 		if crossplaneOwnsOIDCClient(profile, cfg) {
 			continue

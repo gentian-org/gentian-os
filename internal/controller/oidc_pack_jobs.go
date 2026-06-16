@@ -21,6 +21,7 @@ import (
 // oidcAppConfig holds resolved OIDC settings for one tenant app profile.
 type oidcAppConfig struct {
 	profileName  string
+	parentProfile string // set for sidecars (e.g. element-jitsi → parent element)
 	clientID     string
 	redirectURIs []string
 	pack         *oidc.Pack
@@ -150,9 +151,10 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(_ context.Context, tenant
 	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
 
 	cfg := oidcAppConfig{
-		profileName:  profileName,
-		clientID:     clientID,
-		redirectURIs: redirects,
+		profileName:   profileName,
+		parentProfile: parentProfile,
+		clientID:      clientID,
+		redirectURIs:  redirects,
 	}
 	if pack, templates, ok, err := oidc.PackForClient(clientID); err != nil {
 		return oidcAppConfig{}, err
@@ -161,6 +163,21 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(_ context.Context, tenant
 		cfg.templates = templates
 	}
 	return cfg, nil
+}
+
+// getOIDCOwnerProfile returns the AppProfile that owns an OIDC config. Sidecar
+// configs (element-jitsi) live on the parent profile (element); there is no
+// standalone AppProfile for sidecars (openDesk pattern).
+func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppConfig) (*gentianov1alpha1.AppProfile, error) {
+	ownerName := cfg.profileName
+	if cfg.parentProfile != "" {
+		ownerName = cfg.parentProfile
+	}
+	profile := &gentianov1alpha1.AppProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: ownerName}, profile); err != nil {
+		return nil, fmt.Errorf("get AppProfile %s: %w", ownerName, err)
+	}
+	return profile, nil
 }
 
 func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain, tenancyMode string) []string {
