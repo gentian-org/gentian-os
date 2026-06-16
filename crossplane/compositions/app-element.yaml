@@ -527,6 +527,65 @@ spec:
             ) }}
             {{- $confVals = mergeOverwrite $confVals (dict "additionalConfiguration" $addConf) }}
             {{- end }}
+            {{- /* opendesk-synapse renders oidc_providers from configuration.homeserver.oidc
+                 only; discover/endpoint fields in that block are ignored. With discover
+                 enabled, startup loads JWKS over Twisted HTTPS to id.<kernel> which fails
+                 on ACME staging hairpin (curl -k works; Twisted load_jwks times out).
+                 Emit a single additionalConfiguration oidc_providers entry with
+                 discover:false, explicit https endpoints, use_insecure_ssl (staging),
+                 user_profile_method:userinfo_endpoint (skip startup JWKS fetch), and
+                 strip homeserver.oidc so the chart does not emit a duplicate block. */}}
+            {{- $publicIdBase := printf "https://id.%s/realms/%s" $kernelDomain $tenant }}
+            {{- $profileOidc := dig "oidc" dict (dig "homeserver" dict $confVals) }}
+            {{- $matrixLocalpart := default "opendesk_username" (dig "matrixIdLocalpart" "opendesk_username" $profileOidc) }}
+            {{- $oidcScopes := default (list "openid" "opendesk-matrix-scope") (dig "scopes" list $profileOidc) }}
+            {{- $addConf := dig "additionalConfiguration" dict $confVals }}
+            {{- $oidcProvider := dict
+                "idp_id" "oidc"
+                "idp_name" "OIDC"
+                "discover" false
+                "scopes" $oidcScopes
+                "authorization_endpoint" (printf "%s/protocol/openid-connect/auth" $publicIdBase)
+                "token_endpoint" (printf "%s/protocol/openid-connect/token" $publicIdBase)
+                "userinfo_endpoint" (printf "%s/protocol/openid-connect/userinfo" $publicIdBase)
+                "jwks_uri" (printf "%s/protocol/openid-connect/certs" $publicIdBase)
+                "user_profile_method" "userinfo_endpoint"
+                "skip_verification" true
+                "allow_existing_users" true
+                "user_mapping_provider" (dict "config" (dict
+                    "subject_template" "{{ "{{ user.opendesk_useruuid }}" }}"
+                    "display_name_template" "{{ "{{ user.name }}" }}"
+                    "localpart_template" (printf "{{ \"{{ user.%s }}\" }}" $matrixLocalpart)
+                    "email_template" "{{ "{{ user.email }}" }}"
+                ))
+                "backchannel_logout_enabled" true
+                "backchannel_logout_ignore_sub" true
+            }}
+            {{- $addConf = mergeOverwrite $addConf (dict "oidc_providers" (list $oidcProvider)) }}
+            {{- $confVals = mergeOverwrite $confVals (dict "additionalConfiguration" $addConf) }}
+            {{- $hsSyn := omit (dig "homeserver" dict $confVals) "oidc" }}
+            {{- $confVals = mergeOverwrite $confVals (dict "homeserver" $hsSyn) }}
+            {{- $synOidcRelSet := list }}
+            {{- range $entry := $synapseRelSet }}
+            {{- if not (contains "configuration.homeserver.oidc" ($entry.name | default "")) }}
+            {{- $synOidcRelSet = append $synOidcRelSet $entry }}
+            {{- end }}
+            {{- end }}
+            {{- if $vm.oidc }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $synOidcRelSet = append $synOidcRelSet (dict "name" "configuration.additionalConfiguration.oidc_providers[0].issuer"
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $synOidcRelSet = append $synOidcRelSet (dict "name" "configuration.additionalConfiguration.oidc_providers[0].client_id"
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $synOidcRelSet = append $synOidcRelSet (dict "name" "configuration.additionalConfiguration.oidc_providers[0].client_secret"
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
+            {{- end }}
+            {{- end }}
+            {{- $synapseRelSet = $synOidcRelSet }}
             {{- $synapseVals := dict
                 "global"           $globalVals
                 "configuration"    $confVals

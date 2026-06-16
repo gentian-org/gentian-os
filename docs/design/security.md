@@ -304,14 +304,18 @@ adapter**) need extra configuration on staging clusters:
 | `gentian-staging-ca-tls` secret | PEM bundle (Mozilla CAs + LE staging issuer chain) replicated into each `tenant-*` namespace by the operator | Works for `curl`, Python `requests`, and similar clients that honour `SSL_CERT_FILE` / `--cacert` |
 | `gentian-staging-ca-tls` → `node-extra-ca.crt` | LE staging issuer chain only (intermediate through root, via AIA) | **`NODE_EXTRA_CA_CERTS` for Node.js** (intercom-service / ICS). Node appends this file to the default Mozilla store; do not point it at `ca.crt` (duplicate Mozilla CAs break verification) |
 | `app-element` / `app-default` composition mounts | Mount `gentian-staging-ca-tls` (`ca.crt` + `truststore.jks`); set `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` via `extraEnvVars` **and** merge the same keys into `values.environment` for charts that only render env from that map (e.g. **OpenProject**); append `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares OIDC or existing `javaOpts` | **Insufficient for Synapse** — OIDC discovery uses Twisted `platformTrust()`, which ignores those environment variables. **Required for Java OIDC apps** (e.g. XWiki) — the JVM ignores `SSL_CERT_FILE`. **Required for Ruby OIDC apps** (OpenProject) — the chart ignores top-level `extraEnvVars`; `SSL_CERT_FILE` must land in `environment` |
-| `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (OIDC metadata fetch). **Staging only.** |
+| `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (token/userinfo calls). **Insufficient alone** — also set `discover: false`, explicit https OIDC endpoints, and `user_profile_method: userinfo_endpoint` to skip startup JWKS fetch. **Staging only.** |
+| `app-element` Synapse `additionalConfiguration.oidc_providers` | `discover: false` with explicit `https://id.<kernel>/realms/<tenant>/…` endpoints; `user_profile_method: userinfo_endpoint`; public `issuer`/client credentials via Helm `set[]` | Avoids Twisted OIDC discovery/JWKS init against staging LE certs on the Envoy hairpin path. Chart-generated `homeserver.oidc` is stripped so only one `oidc_providers` block is emitted. |
 
 **Synapse startup failure (staging):** if `opendesk-synapse` is in
 `CrashLoopBackOff` with `Error while initialising OIDC provider 'oidc'` and a
-timeout fetching `/.well-known/openid-configuration`, the usual cause on a
-staging cluster is TLS verification of `id.<kernel-domain>`, not a wrong issuer
-URL. `skip_verification` on the OIDC provider only skips *metadata validation*
-after a successful HTTPS fetch; it does not disable TLS certificate checks.
+timeout fetching JWKS or `/.well-known/openid-configuration`, the usual cause
+is Twisted HTTPS to `id.<kernel-domain>` on a staging/gateway cluster — not a
+wrong issuer URL. `skip_verification` only skips *metadata validation* after a
+successful HTTPS fetch; it does not disable TLS certificate checks. The
+`app-element` composition disables discovery, sets explicit https endpoints,
+`user_profile_method: userinfo_endpoint` (skip startup JWKS load), and
+`use_insecure_ssl_client_just_for_testing_do_not_use` for runtime token calls.
 
 Bootstrap / refresh staging trust:
 
