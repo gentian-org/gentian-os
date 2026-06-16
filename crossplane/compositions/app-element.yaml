@@ -600,23 +600,9 @@ spec:
                 "replicaCount"     1
                 "federation" (dict "ingress" (dict "enabled" false))
             }}
-            {{- if $acmeStaging }}
-            {{- $synapseVals = mergeOverwrite $synapseVals (dict
-                "extraEnvVars" (list
-                  (dict "name" "REQUESTS_CA_BUNDLE" "value" "/etc/ssl/certs/ca-certificates.crt")
-                  (dict "name" "SSL_CERT_FILE" "value" "/etc/ssl/certs/ca-certificates.crt")
-                )
-                "extraVolumes" (list
-                  (dict "name" "trusted-cert-secret-volume" "secret" (dict
-                    "secretName" "gentian-staging-ca-tls"
-                    "items" (list (dict "key" "ca.crt" "path" "ca-certificates.crt"))
-                  ))
-                )
-                "extraVolumeMounts" (list
-                  (dict "name" "trusted-cert-secret-volume" "mountPath" "/etc/ssl/certs/ca-certificates.crt" "subPath" "ca-certificates.crt")
-                )
-            ) }}
-            {{- end }}
+            {{- /* Staging CA env/volume mounts omitted for Synapse: the chart already
+                 sets SSL_CERT_DIR and duplicate extraEnvVars break StatefulSet patches.
+                 OIDC token exchange uses KEYCLOAK_INTERNAL_URL (plain HTTP). */}}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release

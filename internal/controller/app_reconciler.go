@@ -216,6 +216,15 @@ func (r *TenantReconciler) ensureAppClaim(
 		}
 	}
 
+	currentPolicy, _, _ := unstructured.NestedString(obj.Object, "spec", "compositionUpdatePolicy")
+	if currentPolicy != "Automatic" {
+		patch := obj.DeepCopy()
+		_ = unstructured.SetNestedField(patch.Object, "Automatic", "spec", "compositionUpdatePolicy")
+		if err := r.Patch(ctx, patch, client.MergeFrom(obj)); err != nil {
+			return false, fmt.Errorf("patch App claim %s compositionUpdatePolicy: %w", claimName, err)
+		}
+	}
+
 	return appClaimIsReady(obj), nil
 }
 
@@ -247,6 +256,10 @@ func buildAppClaim(
 	if profile != nil && profile.Spec.CompositionRef != "" {
 		_ = unstructured.SetNestedField(obj.Object, profile.Spec.CompositionRef, "spec", "compositionRef", "name")
 	}
+
+	// Pick up new app-element (and other) composition revisions automatically so
+	// OIDC/routing fixes reach existing tenants without manual XApp revision pins.
+	_ = unstructured.SetNestedField(obj.Object, "Automatic", "spec", "compositionUpdatePolicy")
 
 	if domain := tenant.EffectiveDomain(kernelDomain, tenancyMode); domain != "" {
 		_ = unstructured.SetNestedField(obj.Object, domain, "spec", "domain")

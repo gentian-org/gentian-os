@@ -152,6 +152,10 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 	if domain != "single-app.example.com" {
 		t.Errorf("expected spec.domain single-app.example.com, got %q", domain)
 	}
+	policy, _, _ := unstructured.NestedString(claim.Object, "spec", "compositionUpdatePolicy")
+	if policy != "Automatic" {
+		t.Errorf("expected spec.compositionUpdatePolicy Automatic, got %q", policy)
+	}
 }
 
 // TestApps_MultipleApps verifies that a Tenant with 3 apps creates 3 separate
