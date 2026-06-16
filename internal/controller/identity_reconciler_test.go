@@ -402,10 +402,10 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	}
 }
 
-// TestIdentity_CreatesAdminJobAfterRealm verifies that the reconciler creates a
-// tenant admin provisioning Job after the realm Job completes, before moving on
-// to OIDC client Jobs. The admin Job must carry TENANT_ADMIN_USERNAME and
-// TENANT_ADMIN_PASSWORD env vars.
+// TestIdentity_CreatesAdminJobAfterRealm verifies that under C2 the reconciler
+// waits for the realm Job before advancing to admin and OIDC client steps. Jobs
+// are materialized together from the tenant provisioning ConfigMap; ordering is
+// enforced via IdentityReady condition reasons, not Job creation timing.
 func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app-admin")
@@ -428,28 +428,21 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	// Realm Job should be created first.
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-realm-admintest", Namespace: "platform-kernel"}, j) == nil
 	})
-
-	// Admin Job must NOT exist yet (realm not complete).
-	adminJob := &batchv1.Job{}
-	if testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob) == nil {
-		t.Error("admin Job should not exist before realm Job completes")
-	}
+	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningRealm")
 
 	markJobComplete(t, "keycloak-realm-admintest", "platform-kernel")
+	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningAdmin")
 
-	// Now the admin Job should appear.
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob) == nil
-	})
-
+	adminJob := &batchv1.Job{}
+	if err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob); err != nil {
+		t.Fatalf("get admin Job: %v", err)
+	}
 	if adminJob.Labels["gentianos.io/tenant"] != "admintest" {
 		t.Errorf("expected tenant label admintest, got %q", adminJob.Labels["gentianos.io/tenant"])
 	}
@@ -465,27 +458,16 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 		t.Error("expected TENANT_ADMIN_PASSWORD env var in admin Job")
 	}
 
-	// Client Job must NOT exist yet (admin job pending).
-	clientJob := &batchv1.Job{}
-	if testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil {
-		t.Error("client Job should not exist before admin Job completes")
-	}
-
 	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
+	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningBrowserFlow")
 
-	// OIDC browser-flow Job should appear; client Job must still wait.
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-oidc-browser-admintest", Namespace: "platform-kernel"}, j) == nil
 	})
-	if testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil {
-		t.Error("client Job should not exist before OIDC browser flow Job completes")
-	}
-
 	markJobComplete(t, "keycloak-oidc-browser-admintest", "platform-kernel")
+	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningBrokerFirstLogin")
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
@@ -493,8 +475,9 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-broker-first-login-admintest", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-broker-first-login-admintest", "platform-kernel")
+	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningClients")
 
-	// Client Job should now be created.
+	clientJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil

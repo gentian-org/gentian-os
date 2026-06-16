@@ -65,6 +65,25 @@ var ldapManualTestTenants = map[string]struct{}{
 	"bindtest":    {},
 }
 
+// dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
+// manually in reconciler tests (redis/pg/mariadb/s3/nc-group assertions).
+var dataPlaneManualTestTenants = map[string]struct{}{
+	"cacheready":   {},
+	"storageready": {},
+	"mariaready":   {},
+	"dbcreate":     {},
+	"rolejob":      {},
+	"dbready":      {},
+	"dbdelete":     {},
+	"nc-always":    {},
+	"nccreate":     {},
+}
+
+// deleteRetainManualTestTenants lists tenants that assert Retain cleanup Job creation.
+var deleteRetainManualTestTenants = map[string]struct{}{
+	"identretain": {},
+}
+
 func ldapBaseJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
 		"ldap-ou-",
@@ -88,6 +107,76 @@ func shouldAutoCompleteLDAPJob(jobName string) bool {
 	}
 	_, manual := ldapManualTestTenants[tenant]
 	return !manual
+}
+
+func provisioningJobTenant(jobName string) (tenant string, ok bool) {
+	for _, prefix := range []string{
+		"ldap-bind-",
+		"redis-acl-",
+		"pg-role-",
+		"mariadb-setup-",
+		"s3-bucket-",
+		"nc-group-",
+	} {
+		if strings.HasPrefix(jobName, prefix) {
+			rest := strings.TrimPrefix(jobName, prefix)
+			if idx := strings.Index(rest, "-"); idx > 0 {
+				return rest[:idx], true
+			}
+			return rest, true
+		}
+	}
+	return "", false
+}
+
+func shouldAutoCompleteProvisioningJob(jobName string) bool {
+	tenant, ok := provisioningJobTenant(jobName)
+	if !ok {
+		return false
+	}
+	if _, manual := ldapManualTestTenants[tenant]; manual {
+		return false
+	}
+	if _, manual := dataPlaneManualTestTenants[tenant]; manual {
+		return false
+	}
+	return true
+}
+
+func deleteRetainJobTenant(jobName string) (tenant string, ok bool) {
+	for _, prefix := range []string{"keycloak-realm-disable-", "ldap-lock-"} {
+		if strings.HasPrefix(jobName, prefix) {
+			return strings.TrimPrefix(jobName, prefix), true
+		}
+	}
+	return "", false
+}
+
+func shouldAutoCompleteDeleteRetainJob(jobName string) bool {
+	tenant, ok := deleteRetainJobTenant(jobName)
+	if !ok {
+		return false
+	}
+	_, manual := deleteRetainManualTestTenants[tenant]
+	return !manual
+}
+
+// waitForTenantConditionReason polls until the tenant has a status condition
+// with the given type and reason (C2: reconciler gates on conditions, not Job creation order).
+func waitForTenantConditionReason(t *testing.T, tenantName, condType, reason string) {
+	t.Helper()
+	waitFor(t, jobAppearTimeout, func() bool {
+		tenant := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, tenant); err != nil {
+			return false
+		}
+		for _, c := range tenant.Status.Conditions {
+			if c.Type == condType && c.Reason == reason {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func markJobSucceeded(job *batchv1.Job) {
@@ -237,7 +326,9 @@ func TestMain(m *testing.M) {
 					name := j.Name
 					autoKeycloak := strings.HasPrefix(name, "keycloak-")
 					autoLDAP := shouldAutoCompleteLDAPJob(name)
-					if !autoKeycloak && !autoLDAP {
+					autoProv := shouldAutoCompleteProvisioningJob(name)
+					autoDeleteRetain := shouldAutoCompleteDeleteRetainJob(name)
+					if !autoKeycloak && !autoLDAP && !autoProv && !autoDeleteRetain {
 						continue
 					}
 					if autoKeycloak && (strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant")) {

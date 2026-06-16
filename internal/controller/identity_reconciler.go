@@ -282,6 +282,10 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 		rj := &batchv1.Job{}
 		switch err := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: kernelNamespace}, rj); {
 		case err == nil:
+			if !jobIsComplete(rj) {
+				// Manifest exists but Crossplane never finished provisioning the realm.
+				return nil
+			}
 			// Realm was provisioned; proceed to create the disable job.
 		case errors.IsNotFound(err):
 			return nil

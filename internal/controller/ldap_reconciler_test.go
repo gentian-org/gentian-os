@@ -262,10 +262,9 @@ func TestLDAP_CreatesBindAccountJobAfterOUComplete(t *testing.T) {
 	}
 }
 
-// TestLDAP_CreatesAdminPolicyJobAfterOU verifies the provisioning chain:
-// OU → MBA groups → App User template → App User capabilities → admin-user → admin-policy → bind-accounts.
-// Admin-user runs before admin-policy so the Nubus portal consumer groups
-// cache is populated before portal allowedGroups are updated.
+// TestLDAP_CreatesAdminPolicyJobAfterOU verifies the LDAP provisioning chain
+// under C2: the reconciler advances through LDAPReady condition reasons as each
+// Crossplane-owned Job completes (OU → MBA → template → capabilities → admin-user → admin-policy → bind).
 func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	t.Parallel()
 	profile := newLDAPProfile("ldap-app2b")
@@ -288,94 +287,30 @@ func TestLDAP_CreatesAdminPolicyJobAfterOU(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	// Wait for OU Job.
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "ldap-ou-adminpolicy", Namespace: "platform-kernel"}, j) == nil
 	})
-
-	// Admin-user Job must not exist before OU completion.
-	job := &batchv1.Job{}
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no admin-user Job before OU completion")
-	}
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningOU")
 
 	markJobComplete(t, "ldap-ou-adminpolicy", "platform-kernel")
-
-	// MBA groups Job should appear after OU completion.
-	waitFor(t, tenantReadyTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-mba-groups-adminpolicy", Namespace: "platform-kernel"}, j) == nil
-	})
-
-	// App User template Job must not exist before MBA groups completion.
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-app-user-template-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no App User template Job before MBA groups completion")
-	}
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningMBAGroups")
 
 	markJobComplete(t, "ldap-mba-groups-adminpolicy", "platform-kernel")
-
-	// App User template Job should appear after MBA groups completion.
-	waitFor(t, tenantReadyTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-app-user-template-adminpolicy", Namespace: "platform-kernel"}, j) == nil
-	})
-
-	// Admin-user Job must not exist before App User template completion.
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no admin-user Job before App User template completion")
-	}
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningAppUserTemplate")
 
 	markJobComplete(t, "ldap-app-user-template-adminpolicy", "platform-kernel")
-
-	// App User capabilities Job should appear after App User template completion.
-	waitFor(t, tenantReadyTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-app-user-capabilities-adminpolicy", Namespace: "platform-kernel"}, j) == nil
-	})
-
-	// Admin-user Job must not exist before App User capabilities completion.
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no admin-user Job before App User capabilities completion")
-	}
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningAppUserCapabilities")
 
 	markJobComplete(t, "ldap-app-user-capabilities-adminpolicy", "platform-kernel")
-
-	// Admin-user Job should appear after App User capabilities completion.
-	waitFor(t, tenantReadyTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-admin-user-adminpolicy", Namespace: "platform-kernel"}, j) == nil
-	})
-
-	// Admin-policy Job must not exist before admin-user completion.
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-admin-policy-adminpolicy", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no admin-policy Job before admin-user completion")
-	}
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningAdminUser")
 
 	markJobComplete(t, "ldap-admin-user-adminpolicy", "platform-kernel")
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningAdminPolicy")
 
-	// Admin-policy Job should appear after admin-user completion.
-	waitFor(t, tenantReadyTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ldap-admin-policy-adminpolicy", Namespace: "platform-kernel"}, j) == nil
-	})
-
-	// Bind account Job should not exist until admin-policy is complete.
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "ldap-bind-adminpolicy-ldap-app2b", Namespace: "platform-kernel"}, job); err == nil {
-		t.Fatal("expected no bind account Job before admin-policy completion")
-	}
+	markJobComplete(t, "ldap-admin-policy-adminpolicy", "platform-kernel")
+	waitForTenantConditionReason(t, "adminpolicy", "LDAPReady", "ProvisioningBindAccounts")
 }
 
 // TestLDAP_SetsReadyWhenAllJobsDone verifies that LDAPReady=True and Phase=Ready
