@@ -19,11 +19,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -173,25 +171,4 @@ func (r *TenantReconciler) ensureTenantPortalRedirect(ctx context.Context, tenan
 func (r *TenantReconciler) ensureTenantPortalRedirectGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
 	desired := buildTenantApexRedirectHTTPRoute(tenant, nsName, effectiveDomain, r.KernelDomain)
 	return ensureHTTPRouteResource(ctx, r.Client, desired)
-}
-
-func (r *TenantReconciler) firstServiceInNamespace(ctx context.Context, nsName string) (string, error) {
-	list := &corev1.ServiceList{}
-	if err := r.List(ctx, list, client.InNamespace(nsName)); err != nil {
-		return "", err
-	}
-	for i := range list.Items {
-		name := list.Items[i].Name
-		if strings.HasPrefix(name, "umc-") {
-			continue
-		}
-		return name, nil
-	}
-	return "", nil
-}
-
-func ingressSpecEqual(a, b *networkingv1.Ingress) bool {
-	return equality.Semantic.DeepEqual(a.Spec, b.Spec) &&
-		equality.Semantic.DeepEqual(a.Annotations, b.Annotations) &&
-		equality.Semantic.DeepEqual(a.Labels, b.Labels)
 }

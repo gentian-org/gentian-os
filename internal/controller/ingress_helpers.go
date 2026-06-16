@@ -9,20 +9,6 @@ import (
 
 const nginxConfigurationSnippetAnnotation = "nginx.ingress.kubernetes.io/configuration-snippet"
 
-// keycloakProxyIngressName is the shared id.<kernel> ingress (Nubus extensions proxy).
-func keycloakProxyIngressName() string {
-	return envOrDefault("KEYCLOAK_PROXY_INGRESS_NAME", "nubus-dev-keycloak-extensions-proxy")
-}
-
-// substituteIngressAnnotationPlaceholders expands AppProfile ingress annotation
-// templates. ${TENANT_DOMAIN} is the tenant effective domain; ${KERNEL_DOMAIN} is
-// the cluster platform domain (portal, Keycloak, …).
-func substituteIngressAnnotationPlaceholders(s, effectiveDomain, kernelDomain string) string {
-	s = strings.ReplaceAll(s, "${TENANT_DOMAIN}", effectiveDomain)
-	s = strings.ReplaceAll(s, "${KERNEL_DOMAIN}", kernelDomain)
-	return s
-}
-
 // cryptpadSandboxSubDomain is the additional CryptPad ingress hostname prefix for
 // httpSafeOrigin (client-side crypto isolation). That origin is framed by the
 // main CryptPad host (pad.<tenant>), not by the kernel portal.
@@ -83,13 +69,11 @@ func keycloakOIDCAncestorOrigins(
 }
 
 // keycloakOIDCIngressServerSnippet strips upstream framing headers at the server
-// block (microk8s ingress sometimes misses proxy_hide_header in location only).
-const nginxServerSnippetAnnotation = "nginx.ingress.kubernetes.io/server-snippet"
-
+// block (legacy nginx ingress sometimes missed proxy_hide_header in location only).
 const (
-	nginxProxyBodySizeAnnotation       = "nginx.ingress.kubernetes.io/proxy-body-size"
-	nginxProxyBufferSizeAnnotation     = "nginx.ingress.kubernetes.io/proxy-buffer-size"
-	nginxProxyBuffersNumberAnnotation  = "nginx.ingress.kubernetes.io/proxy-buffers-number"
+	nginxProxyBodySizeAnnotation        = "nginx.ingress.kubernetes.io/proxy-body-size"
+	nginxProxyBufferSizeAnnotation      = "nginx.ingress.kubernetes.io/proxy-buffer-size"
+	nginxProxyBuffersNumberAnnotation   = "nginx.ingress.kubernetes.io/proxy-buffers-number"
 	nginxProxyBusyBuffersSizeAnnotation = "nginx.ingress.kubernetes.io/proxy-busy-buffers-size"
 )
 
