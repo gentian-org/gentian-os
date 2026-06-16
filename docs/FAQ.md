@@ -56,7 +56,10 @@ Choose exposure by `NETWORK_MODE`:
 - `NETWORK_MODE=static-ip`: Envoy Gateway service type `LoadBalancer`
 - `NETWORK_MODE=tunnel`: Envoy Gateway stays `ClusterIP`; expose via tunnel/proxy
 
-### Ingress-nginx path (`ROUTING_MODE=ingress`, legacy)
+### Ingress-nginx path (`ROUTING_MODE=ingress`, legacy — scheduled for removal)
+
+> **Deprecated.** New clusters should use `ROUTING_MODE=gateway`. This section
+> remains for existing ingress-nginx deployments only.
 
 Gentian always needs an edge controller when using ingress mode.
 

@@ -850,7 +850,7 @@ deploy_nubus() {
         -n "${ns}" \
         --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/dev.yaml" \
         --dry-run=client -o yaml | kubectl apply -f -
-    if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+    if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
         info "Creating nubus gateway values ConfigMap (ROUTING_MODE=gateway)..."
         kubectl create configmap nubus-gateway-values \
             -n "${ns}" \

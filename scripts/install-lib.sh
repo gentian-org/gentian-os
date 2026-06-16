@@ -1164,7 +1164,7 @@ check_prereqs() {
         fi
         # Check that the edge LoadBalancer service has an external IP.
         local lb_ip lb_label
-        if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
             lb_label='app.kubernetes.io/name=gateway-helm'
             lb_ip=$(kubectl get svc -A -l "${lb_label}" \
                 -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
@@ -1173,7 +1173,7 @@ check_prereqs() {
                 -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         fi
         if [[ -z "$lb_ip" ]]; then
-            if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+            if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
                 warn "NETWORK_MODE=static-ip: Envoy Gateway LoadBalancer has no external IP yet."
             else
                 warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
@@ -1182,6 +1182,11 @@ check_prereqs() {
         else
             info "Ingress LoadBalancer external IP: ${lb_ip}"
         fi
+    fi
+
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
+        warn "ROUTING_MODE=${ROUTING_MODE} is legacy ingress-nginx mode and will be removed in a future release."
+        warn "  Prefer routingMode: gateway in gentian-deployments and ROUTING_MODE=gateway in install.env."
     fi
 
     success "All pre-flight checks passed."
@@ -1409,7 +1414,7 @@ create_namespaces() {
     local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         namespaces+=(stakater-system cnpg-system cert-manager)
-        if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
             namespaces+=("${ENVOY_GATEWAY_NAMESPACE}")
         fi
     fi
@@ -1820,7 +1825,7 @@ install_envoy_gateway() {
         return
     fi
 
-    : "${ROUTING_MODE:=ingress}"
+    : "${ROUTING_MODE:=gateway}"
     export ROUTING_MODE
     if [[ "${ROUTING_MODE}" != "gateway" ]]; then
         info "ROUTING_MODE=${ROUTING_MODE}: skipping Envoy Gateway install."
@@ -1880,7 +1885,7 @@ install_envoy_gateway() {
 # =============================================================================
 apply_kernel_gateway_overlays() {
     local ns="gentian-${ENV:-dev}"
-    if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+    if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
         info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
         kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud/manifests/dev/gateway-values-configmap.yaml" \
             >/dev/null 2>&1 || true
@@ -1897,7 +1902,8 @@ apply_kernel_gateway_overlays() {
 
 apply_kernel_legacy_ingress() {
     local ns="gentian-${ENV:-dev}"
-    banner "Applying kernel legacy Ingress manifests (ROUTING_MODE=ingress)"
+    warn "ROUTING_MODE=ingress is legacy and scheduled for removal; use ROUTING_MODE=gateway."
+    banner "Applying kernel legacy Ingress manifests (ROUTING_MODE=ingress, deprecated)"
     for dir in \
         "${SCRIPT_DIR}/kernel/services/cryptpad/manifests/${ENV:-dev}/legacy-ingress" \
         "${SCRIPT_DIR}/kernel/services/collabora/manifests/${ENV:-dev}/legacy-ingress"; do
@@ -1910,7 +1916,7 @@ apply_kernel_legacy_ingress() {
 }
 
 wait_for_gateway_platform() {
-    if [[ "${ROUTING_MODE:-ingress}" != "gateway" ]]; then
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
         return 0
     fi
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
@@ -1967,7 +1973,7 @@ wait_for_gateway_platform() {
 }
 
 print_gateway_tunnel_hints() {
-    if [[ "${ROUTING_MODE:-ingress}" != "gateway" ]]; then
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
         return 0
     fi
     local ns="gentian-${ENV:-dev}"
@@ -1985,7 +1991,7 @@ print_gateway_tunnel_hints() {
 # mail.<kernelDomain> is left unchanged (Dovecot). The operator reconciles this
 # continuously; install/update runs it once so clusters recover before sync.
 _reconcile_kernel_https_coredns_hairpin() {
-    [[ "${ROUTING_MODE:-ingress}" == "gateway" ]] || return 0
+    [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
     local services_ns="gentian-${ENV:-dev}"
@@ -2428,7 +2434,7 @@ install_argocd() {
     # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
     # the Ingress is safe to create before the Secret exists.
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
-        if [[ "${ROUTING_MODE:-ingress}" == "gateway" ]]; then
+        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
             info "ROUTING_MODE=gateway: ArgoCD edge route is managed by the operator (kernel-argocd HTTPRoute)."
         else
         info "Creating ArgoCD Ingress for argocd.${KERNEL_DOMAIN}..."
@@ -3043,7 +3049,7 @@ install_orchestrator() {
         --set argocd.namespace="argocd" \
         --set kernelDomain="${KERNEL_DOMAIN}" \
         --set tenancyMode="${TENANCY_MODE:-multi}" \
-        --set routingMode="${ROUTING_MODE:-ingress}" \
+        --set routingMode="${ROUTING_MODE:-gateway}" \
         --wait --timeout 5m
 
     info "Waiting for orchestrator CRDs to be Established..."
@@ -3705,7 +3711,7 @@ print_summary() {
         echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${GREEN}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
-        echo -e "${GREEN}║  Routing mode : ${ROUTING_MODE:-ingress}${NC}"
+        echo -e "${GREEN}║  Routing mode : ${ROUTING_MODE:-gateway}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
         echo -e "${GREEN}║  Tenants      : none (provision when ready)              ║${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"

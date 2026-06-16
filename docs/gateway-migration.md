@@ -13,14 +13,19 @@ argocd), and Cloudflare tunnel ingress.
 | **B — Tenant app routing** | **Complete** | HTTPRoutes + `BackendTrafficPolicy` per app; stale route cleanup; tenant wildcard TLS via DNS-01. |
 | **C — Kernel and special cases** | **Complete** | Kernel HTTPRoutes (portal, UMC, idp, cryptpad, collabora, nextcloud, argocd, intercom, apex redirect); Keycloak broker CSP; CoreDNS hairpin; tunnel origin wiring; superseded kernel Ingress cleanup. |
 | **D — API and catalogue cleanup** | **Complete (bridge)** | Operator maps `AppProfile.spec.ingress.annotations` (nginx keys) → Envoy `BackendTrafficPolicy` / response headers. Profiles still author nginx keys; typed `routePolicy` fields remain optional follow-up. |
-| **E — Cleanup and hardening** | **In progress** | Default routing mode → gateway; tenant Ingress supersession; tunnel-friendly Gateway readiness; docs/runbooks updated. Legacy ingress reconciler code retained for `ROUTING_MODE=ingress` until removal gate. |
+| **E — Cleanup and hardening** | **In progress** | Gateway defaults, tenant Ingress supersession, tunnel-friendly readiness, docs/runbooks, install deprecation warnings. Ingress reconciler removal gated on soak. |
 
 ### Remaining Phase E items
 
-- [ ] Remove `ROUTING_MODE=ingress` code path (`ingress_reconciler.go`, legacy kernel Ingress manifests) after one release soak in gateway-only mode.
-- [ ] Remove ingress-nginx install guidance as a co-equal path in FAQ once ingress mode is retired.
-- [ ] Optional: typed `AppProfile.spec.routePolicy` fields and profile migration (currently served by annotation bridge).
-- [ ] Optional: CI lint in `gentian-apps` rejecting deprecated nginx-only keys once typed fields exist.
+- [x] Default `routingMode` / `ROUTING_MODE` to `gateway` (Helm, operator, install-lib).
+- [x] Deprecation warnings when `ROUTING_MODE=ingress` is selected.
+- [x] Tenant Ingress supersession when HTTPRoutes exist.
+- [x] Gateway readiness on tunnel clusters (listener-programmed).
+- [x] Gateway-first docs and troubleshooting commands.
+- [ ] Remove `ROUTING_MODE=ingress` code path after one release soak in gateway-only mode.
+- [ ] Remove ingress-nginx install guidance once ingress mode is retired.
+- [ ] Optional: typed `AppProfile.spec.routePolicy` fields and profile migration.
+- [ ] Optional: CI lint in `gentian-apps` rejecting deprecated nginx-only keys.
 - [ ] Cluster hygiene: disable MicroK8s `ingress` addon on gateway-only clusters (outside Gentian install scope).
 
 ---
@@ -184,6 +189,7 @@ Primary files:
 **Completed in this phase (partial):**
 
 - [x] Default Helm `routingMode` and operator fallback → `gateway`.
+- [x] Install-lib defaults and deprecation warnings for legacy ingress mode.
 - [x] Treat listener-programmed Gateways as ready when address is not assigned
   (tunnel / ClusterIP).
 - [x] Delete superseded tenant Ingress objects when HTTPRoutes exist.

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// RoutingModeIngress selects ingress-nginx Ingress resources for edge routing.
+	// RoutingModeIngress selects legacy ingress-nginx Ingress resources (deprecated).
 	RoutingModeIngress = "ingress"
 	// RoutingModeGateway selects Gateway API + Envoy Gateway for edge routing.
 	RoutingModeGateway = "gateway"
@@ -29,10 +29,12 @@ const (
 
 func normalizeRoutingMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case RoutingModeIngress, "nginx":
+		return RoutingModeIngress
 	case RoutingModeGateway:
 		return RoutingModeGateway
 	default:
-		return RoutingModeIngress
+		return RoutingModeGateway
 	}
 }
 
