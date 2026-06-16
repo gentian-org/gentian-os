@@ -559,10 +559,10 @@ spec:
                 "skip_verification" true
                 "allow_existing_users" true
                 "user_mapping_provider" (dict "config" (dict
-                    "subject_template" "{{ "{{ user.opendesk_useruuid }}" }}"
-                    "display_name_template" "{{ "{{ user.name }}" }}"
-                    "localpart_template" (printf "{{ \"{{ user.%s }}\" }}" $matrixLocalpart)
-                    "email_template" "{{ "{{ user.email }}" }}"
+                    "subject_template" `{{ user.opendesk_useruuid }}`
+                    "display_name_template" `{{ user.name }}`
+                    "localpart_template" (printf `{{ user.%s }}` $matrixLocalpart)
+                    "email_template" `{{ user.email }}`
                 ))
                 "backchannel_logout_enabled" true
                 "backchannel_logout_ignore_sub" true
