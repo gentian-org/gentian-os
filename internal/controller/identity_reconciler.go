@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -148,6 +147,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 
 	allDone := true
 	for _, cfg := range oidcConfigs {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: cfg.profileName}, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", cfg.profileName, err)
+		}
+		if crossplaneOwnsOIDCClient(profile, cfg) {
+			continue
+		}
 		done, err := r.ensureOIDCClientJob(ctx, tenant, realmName, cfg)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OIDC Job for app %s: %w", cfg.profileName, err)
@@ -241,147 +247,19 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	return ctrl.Result{}, nil
 }
 
-// ensureRealmJob creates the Keycloak realm Job if absent.
-// Returns true when the Job has completed successfully.
+// ensureRealmJob waits for the Crossplane-owned Keycloak realm Job.
 func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	jobName := realmJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Delete any stale cleanup jobs so the next undeploy creates a fresh one.
-		r.deleteProvisioningJobs(ctx, realmDeleteJobName(tenant.Name), realmDisableJobName(tenant.Name))
-
-		// B.3: Seed the keycloak LDAP bind password and pass it to the realm job
-		// so the realm script can register the LDAP User Storage Provider.
-		// Seeder is deterministic — calling SeedLDAP here and in ensureLDAP yields
-		// the same password, keeping LDAP and Keycloak in sync.
-		var ldap *realmLDAPParams
-		if r.LDAPBase != "" && r.LDAPServer != "" && r.Seeder != nil {
-			ouDN := tenantConcreteOUDN(tenant, r.LDAPBase)
-			bindDN := fmt.Sprintf("uid=app-keycloak-%s,%s", tenant.Name, ouDN)
-			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, "keycloak", secrets.LDAPCreds{
-				BindDN: bindDN,
-				BaseDN: ouDN,
-			})
-			if seedErr != nil {
-				return false, fmt.Errorf("seed keycloak ldap: %w", seedErr)
-			}
-			ldap = &realmLDAPParams{
-				server:   r.LDAPServer,
-				bindDN:   bindDN,
-				bindPW:   creds.BindPassword,
-				usersDN:  "ou=users," + ouDN,
-				groupsDN: ouDN,
-			}
-		}
-		var broker *realmBrokerParams
-		if r.KernelRealm != "" && r.KernelDomain != "" {
-			broker = &realmBrokerParams{
-				kernelRealm:       r.KernelRealm,
-				kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
-			}
-		}
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName, r.KernelDomain, ldap, broker))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil // recreated on next reconcile
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, realmJobName(tenant.Name))
 }
 
-// ensureAdminJob creates (or re-creates on failure) the Job that provisions a
-// tenant-scoped realm-admin user in the tenant's Keycloak realm. The user is
-// assigned the built-in realm-management/realm-admin composite role so they
-// can manage users, groups, clients, and sessions within their realm only —
-// zero visibility into other realms.
-//
-// The admin password is derived from the master via Seeder.SeedTenantAdmin and
-// stored write-once at gentian-os/tenants/<tenant>/admin in OpenBao. The
-// provision Job always syncs that canonical password into Keycloak (including
-// redeploys after deletionPolicy=Retain) and emits INITIAL_TENANT_ADMIN once.
-//
-// When Seeder is nil (envtest / staged rollout) a placeholder password is
-// used so the Job is still created and the test flow can proceed.
+// ensureAdminJob waits for the Crossplane-owned tenant realm-admin Job.
 func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	jobName := adminJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		var creds secrets.TenantAdminCreds
-		if r.Seeder != nil {
-			creds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
-			if err != nil {
-				return false, fmt.Errorf("seed tenant admin: %w", err)
-			}
-			log.FromContext(ctx).Info(
-				"Initial tenant admin credentials (printed once)",
-				"tenant", tenant.Name,
-				"realm", realmName,
-				"username", creds.Username,
-				"password", creds.Password,
-				"retrieveCommand", fmt.Sprintf("bao kv get -mount=secret -field=password gentian-os/tenants/%s/admin", tenant.Name),
-			)
-		} else {
-			creds = secrets.TenantAdminCreds{Username: "admin", Password: "placeholder"}
-		}
-		return false, r.Create(ctx, makeAdminJob(tenant, realmName, creds))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, adminJobName(tenant.Name))
 }
 
-// ensureClientJob creates the OIDC client Job for one app if absent.
-// Returns true when the Job has completed successfully.
+// ensureClientJob waits for the Crossplane-owned OIDC client Job for one app.
 func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string) (bool, error) {
-	jobName := clientJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: seed the per-app OIDC secret into OpenBao *before* creating
-		// the provisioning Job so the Job can apply the derived client secret
-		// to Keycloak (POST on create, PUT on update). When the Seeder is nil
-		// (envtest / staged rollout) we fall back to the legacy behaviour of
-		// letting Keycloak auto-generate the secret.
-		clientSecret := ""
-		if r.Seeder != nil {
-			// OIDC issuer URL stays on the kernel domain so it is stable
-			// across vanity-domain changes (see docs/architecture.md §2.5).
-			// Falls back to tenant.Spec.Domain when KERNEL_DOMAIN is unset
-			// (envtest / staged rollout).
-			issuerHost := tenant.Spec.Domain
-			if r.KernelDomain != "" {
-				issuerHost = r.KernelDomain
-			}
-			issuer := fmt.Sprintf("https://id.%s/realms/%s", issuerHost, realmName)
-			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, clientID)
-			if seedErr != nil {
-				return false, fmt.Errorf("seed oidc: %w", seedErr)
-			}
-			clientSecret = creds.ClientSecret
-		}
-		return false, r.Create(ctx, makeClientJob(tenant, realmName, appName, clientID, redirectURIs, clientSecret))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, clientJobName(tenant.Name, appName))
 }
 
 // deleteIdentity handles identity cleanup on tenant deletion.
@@ -641,21 +519,7 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, ker
 // making the Keycloak re-enable durable against subsequent LDAP federation
 // imports.
 func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminEmail string) (bool, error) {
-	jobName := kernelAdminEnableJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, kernelAdminEnableJobName(tenant.Name))
 }
 
 // keycloakContainer returns a Container spec that runs a shell script via the
@@ -1123,21 +987,8 @@ func (r *TenantReconciler) kernelJobSucceeded(ctx context.Context, jobName strin
 	return jobIsComplete(job), nil
 }
 
-func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, makeJob func() *batchv1.Job) (bool, error) {
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeJob())
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, _ func() *batchv1.Job) (bool, error) {
+	return r.waitForProvisioningJob(ctx, jobName)
 }
 
 // ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and

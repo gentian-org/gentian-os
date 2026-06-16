@@ -352,188 +352,47 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 	}
 
 	jobName := portalEntryJobName(tenant.Name, pa.AppName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		tenantDomain := r.tenantEffectiveDomain(tenant)
-		return false, r.Create(ctx, makePortalEntryJob(tenant, ouDN, pa, tenantDomain))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, jobName)
 }
 
-// ensureOUJob creates the UDM OU + groups Job if absent.
+// ensureOUJob waits for the Crossplane-owned UDM OU + groups Job.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensureOUJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	jobName := ouJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeOUJob(tenant, ouDN))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, ouJobName(tenant.Name))
 }
 
-// ensureMBAGroupsJob creates per-tenant managed-by-attribute-* groups when absent.
-// Idempotent: safe for existing tenants whose OU Job ran before new groups were added.
-// Returns true when the Job has completed successfully.
+// ensureMBAGroupsJob waits for the Crossplane-owned managed-by-attribute groups Job.
 func (r *TenantReconciler) ensureMBAGroupsJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	jobName := mbaGroupsJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeMBAGroupsJob(tenant, ouDN))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, mbaGroupsJobName(tenant.Name))
 }
 
-// ensureAdminPolicyJob creates the delegated-admin policy Job if absent.
-// Returns true when the Job has completed successfully.
+// ensureAdminPolicyJob waits for the Crossplane-owned delegated-admin policy Job.
 func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	jobName := adminPolicyJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeAdminPolicyJob(tenant, ouDN))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, adminPolicyJobName(tenant.Name))
 }
 
-// ensureAppUserCapabilitiesJob backfills opendesk*Enabled on existing tenant users.
-// Returns true when the Job has completed successfully.
+// ensureAppUserCapabilitiesJob waits for the Crossplane-owned App User capabilities Job.
 func (r *TenantReconciler) ensureAppUserCapabilitiesJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	jobName := appUserCapabilitiesJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeAppUserCapabilitiesJob(tenant, ouDN))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, appUserCapabilitiesJobName(tenant.Name))
 }
 
-// ensureAppUserTemplateJob creates the tenant-scoped App User UDM template if absent.
-// Returns true when the Job has completed successfully.
+// ensureAppUserTemplateJob waits for the Crossplane-owned App User template Job.
 func (r *TenantReconciler) ensureAppUserTemplateJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	jobName := appUserTemplateJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		mailDomain := tenantUserMailDomain(tenant, r.KernelDomain, r.TenancyMode)
-		if mailDomain == "" {
-			return false, fmt.Errorf("tenant %q has no effective domain for App User mail prefill", tenant.Name)
-		}
-		return false, r.Create(ctx, makeAppUserTemplateJob(tenant, ouDN, mailDomain))
+	mailDomain := tenantUserMailDomain(tenant, r.KernelDomain, r.TenancyMode)
+	if mailDomain == "" {
+		return false, fmt.Errorf("tenant %q has no effective domain for App User mail prefill", tenant.Name)
 	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, appUserTemplateJobName(tenant.Name))
 }
 
-// ensureAdminUserJob creates the UDM users/user Job for the tenant admin if absent.
-// The admin is added to admins_<tenant> so the UMC delegated admin policy takes effect.
-// Returns true when the Job has completed successfully.
+// ensureAdminUserJob waits for the Crossplane-owned UDM tenant admin user Job.
 func (r *TenantReconciler) ensureAdminUserJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, creds secrets.TenantAdminCreds) (bool, error) {
-	jobName := adminUserJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Delete any stale cleanup jobs so the next undeploy creates fresh ones.
-		r.deleteProvisioningJobs(ctx,
-			adminUserDeleteJobName(tenant.Name),
-			ouDeleteJobName(tenant.Name),
-			ldapLockJobName(tenant.Name),
-		)
-		return false, r.Create(ctx, makeAdminUserJob(tenant, ouDN, creds))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, adminUserJobName(tenant.Name))
 }
 
-// ensureBindAccountJob creates the UDM bind account Job for one app if absent.
-// Returns true when the Job has completed successfully.
+// ensureBindAccountJob waits for the Crossplane-owned UDM bind account Job.
 func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN, appName string) (bool, error) {
-	jobName := bindAccountJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: derive the per-app LDAP bind password and persist it under
-		// the canonical OpenBao path before creating the UDM Job. The Job
-		// receives the same value via BIND_PW so live LDAP and OpenBao stay
-		// in lockstep. When Seeder is nil the Job falls back to a local random.
-		bindPassword := ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, appName, secrets.LDAPCreds{
-				BindDN: fmt.Sprintf("uid=app-%s-%s,%s", appName, tenant.Name, ouDN),
-				BaseDN: ouDN,
-			})
-			if seedErr != nil {
-				return false, fmt.Errorf("seed ldap: %w", seedErr)
-			}
-			bindPassword = creds.BindPassword
-		}
-		return false, r.Create(ctx, makeBindAccountJob(tenant, ouDN, appName, bindPassword))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, bindAccountJobName(tenant.Name, appName))
 }
 
 // deleteLDAP handles LDAP cleanup on tenant deletion.
@@ -667,6 +526,9 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 // Admin user runs before policy for the same reason as in ensureLDAP: the
 // portal groups cache must be populated before portal allowedGroups are set.
 func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.LDAPBase == "" {
+		return nil
+	}
 	ldapApps, err := r.collectLDAPApps(ctx, tenant)
 	if err != nil {
 		return err
@@ -2259,22 +2121,7 @@ func (r *TenantReconciler) ensurePortalRealtimeLinksJob(
 	tenant *gentianov1alpha1.Tenant,
 	ouDN, meetURL, chatURL string,
 ) (bool, error) {
-	jobName := portalRealtimeLinksJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	includeLegacy := gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) == gentianov1alpha1.TenancyModeSingle
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makePortalRealtimeLinksJob(tenant, ouDN, meetURL, chatURL, includeLegacy))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, portalRealtimeLinksJobName(tenant.Name))
 }
 
 func makePortalRealtimeLinksJob(tenant *gentianov1alpha1.Tenant, ouDN, meetURL, chatURL string, includeLegacy bool) *batchv1.Job {

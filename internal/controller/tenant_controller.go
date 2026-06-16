@@ -385,8 +385,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	nsName := tenantNamespaceName(tenant)
 	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName)
 
+	// Phase C2: operator seeds credentials and publishes Job manifests; Crossplane
+	// tenant-default applies the Jobs declaratively.
+	if err := r.ensureTenantProvisioningManifests(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Crossplane tenant-default Composition owns namespace scaffolding, quotas,
-	// limits, network policy, OpenBao policy, and App claims (C1 convergence).
+	// limits, network policy, OpenBao policy, identity Jobs, and App claims.
 	if err := r.ensureTenantXR(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

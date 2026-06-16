@@ -30,6 +30,20 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
+            - kind: ConfigMap
+              into: provisioningJobs
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: tenant-provisioning-jobs
+                  - key: gentianos.io/tenant
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: metadata.name
 
     # ── Step 2: Render composed resources (C1 owner for tenant shell) ─────────
     - step: render-tenant-resources
@@ -52,6 +66,10 @@ spec:
             {{- $ccList   := dig "clusterConfig" list $extraRes }}
             {{- $cc       := ternary (index $ccList 0) dict (gt (len $ccList) 0) }}
             {{- $ccData   := dig "data" dict $cc }}
+            {{- $provList  := dig "provisioningJobs" list $extraRes }}
+            {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
+            {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
+            {{- $jobs      := fromJson $jobsJSON }}
             {{- $infraNs     := default "gentian-infra-dev" (dig "network.infraNamespace" "" $ccData) }}
             {{- $servicesNs  := default "gentian-dev" (dig "network.servicesNamespace" "" $ccData) }}
             {{- $openbaoNs   := default "openbao" (dig "network.openbaoNamespace" "" $ccData) }}
@@ -263,6 +281,22 @@ spec:
                   path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/*" {
                     capabilities = ["list", "delete"]
                   }
+
+            {{- range $job := $jobs }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-job-{{ $job.metadata.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: job-{{ $job.metadata.name }}
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  {{- $job | toYaml | nindent 18 }}
+            {{- end }}
 
             {{- range $app := dig "apps" list $spec }}
             ---

@@ -149,6 +149,8 @@ func TestMain(m *testing.M) {
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,
+		LDAPBase:                 "dc=swp-ldap,dc=internal",
+		LDAPServer:               "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -164,6 +166,7 @@ func TestMain(m *testing.M) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	startXTenantShellSimulator(ctx, testClient)
+	startTenantProvisioningJobSimulator(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
 
 	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
@@ -184,8 +187,10 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
-			"ldapBase":          []byte("dc=swp-ldap,dc=internal"),
+			"url":       []byte("http://nubus-dev-ldap-server.gentian-dev.svc.cluster.local/univention/"),
+			"password":  []byte("test-ldap-password"),
+			"ldapBase":  []byte("dc=swp-ldap,dc=internal"),
+			"ldapHost":  []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
 			"ldapsearchDovecot": []byte("test-ldap-password"),
 		},
 	}); err != nil {

@@ -190,25 +190,13 @@ func (r *TenantReconciler) ensureBrokerFirstLoginFlowJob(ctx context.Context, te
 	jobName := brokerFirstLoginFlowJobName(tenant.Name)
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeBrokerFirstLoginFlowJob(tenant, realmName))
-	}
-	if err != nil {
-		return false, err
-	}
-	if !brokerFirstLoginFlowJobCurrent(job) {
+	if err == nil && !brokerFirstLoginFlowJobCurrent(job) {
 		prop := metav1.DeletePropagationBackground
 		if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil && !errors.IsNotFound(delErr) {
 			return false, fmt.Errorf("delete stale broker first-login flow job %s: %w", jobName, delErr)
 		}
-		return false, r.Create(ctx, makeBrokerFirstLoginFlowJob(tenant, realmName))
 	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, jobName)
 }
 
 func brokerFirstLoginFlowJobCurrent(job *batchv1.Job) bool {
@@ -246,21 +234,7 @@ func brokerFirstLoginFlowJobName(tenantName string) string {
 }
 
 func (r *TenantReconciler) ensureOIDCBrowserFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	jobName := oidcBrowserFlowJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeOIDCBrowserFlowJob(tenant, realmName))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, oidcBrowserFlowJobName(tenant.Name))
 }
 
 func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
@@ -271,34 +245,7 @@ func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gent
 }
 
 func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
-	jobName := clientJobName(tenant.Name, cfg.profileName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		clientSecret := ""
-		if r.Seeder != nil && !cfg.pack.PublicClient {
-			issuerHost := tenant.Spec.Domain
-			if r.KernelDomain != "" {
-				issuerHost = r.KernelDomain
-			}
-			issuer := fmt.Sprintf("https://id.%s/realms/%s", issuerHost, realmName)
-			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
-			if seedErr != nil {
-				return false, fmt.Errorf("seed oidc: %w", seedErr)
-			}
-			clientSecret = creds.ClientSecret
-		}
-		return false, r.Create(ctx, makeOIDCPackJob(tenant, realmName, cfg, clientSecret))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, clientJobName(tenant.Name, cfg.profileName))
 }
 
 func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret string) *batchv1.Job {

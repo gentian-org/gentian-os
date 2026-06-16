@@ -26,7 +26,32 @@ Jobs** (same scripts, new owner).
 | **C2d** | Per-app OIDC client Jobs where app Composition emits Client MR | Drop operator `ensureOIDCClientJob` for those apps |
 | **C2e** | OIDC pack Jobs | Pack Jobs in tenant Composition or dedicated pack Composition |
 
-## Script bundle strategy
+**Status:** ✅ Implemented via ConfigMap manifest bridge — operator writes
+`tenant-{name}-provisioning-jobs`; `tenant-default` emits kubernetes.crossplane.io
+Object MRs; operator `ensureIdentity` / `ensureLDAP` / `ensureLDAPBase` wait only.
+
+| Sub-phase | Scope | Status |
+|-----------|-------|--------|
+| C2a | LDAP OU + MBA groups Job → Composition | ✅ |
+| C2b | LDAP admin user/policy/bind Jobs | ✅ |
+| C2c | Keycloak realm Jobs | ✅ |
+| C2d | OIDC client consolidation (operator vs app Composition MRs) | ✅ |
+| C2e | OIDC pack Jobs | ✅ |
+
+## Implementation (C2)
+
+The operator publishes rendered Batch Job manifests to ConfigMap
+`tenant-{name}-provisioning-jobs` in `platform-kernel` (label
+`gentianos.io/config-type: tenant-provisioning-jobs`). Crossplane
+`tenant-default` fetches that ConfigMap and emits
+`kubernetes.crossplane.io/Object` MRs. The operator seeds OpenBao credentials
+before updating the ConfigMap and waits for Job completion via
+`waitForProvisioningJob` — it no longer calls `Job.Create` for identity/LDAP.
+
+Future refinement: extract inline scripts to `crossplane/scripts/tenant-identity/`
+and gate Job waves with `function-sequencer`.
+
+## Script bundle strategy (future)
 
 LDAP and Keycloak Jobs share large shell scripts built in Go today
 (`ldap_reconciler.go`, `identity_reconciler.go`). C2 extracts them to:
