@@ -5,6 +5,7 @@ resources:
   - service-aliases.yaml
   - release.yaml
   - setup-iam-templates-job.yaml
+  - umc-gateway-upstream-postsync-job.yaml
 
 configMapGenerator:
   - name: nubus-base-values

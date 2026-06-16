@@ -1,0 +1,84 @@
+# PostSync hook: the upstream nubus umc-gateway chart runs 50-entrypoint.sh in the
+# prepare-config init container but never executes gentian entrypoint.d hooks.
+# Without this patch Apache proxies /univention/oidc to 0.0.0.0:8090 (503) and
+# sets X-UMC-HTTPS from %{HTTPS}s (off behind TLS-terminating ingress → http redirect_uri).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: umc-gateway-upstream-postsync
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: umc-gateway-upstream-patcher
+      containers:
+        - name: patch
+          image: bitnami/kubectl:1.32.3
+          command:
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              DEPLOY=nubus-dev-umc-gateway
+              NS=gentian-dev
+              if ! kubectl get deployment "$DEPLOY" -n "$NS" >/dev/null 2>&1; then
+                echo "deployment $DEPLOY not found; skipping"
+                exit 0
+              fi
+              # Idempotent: ensure prepare-config runs gentian upstream patch after UCR commit.
+              kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p='[
+                {"op":"add","path":"/spec/template/spec/initContainers/1/volumeMounts/-","value":{"name":"gentian-umc-gateway-upstream","mountPath":"/entrypoint.d/95-gentian-umc-gateway-upstream.sh","subPath":"95-gentian-umc-gateway-upstream.sh"}}
+              ]' 2>/dev/null || true
+              kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p='[
+                {"op":"replace","path":"/spec/template/spec/initContainers/1/command/2","value":"/entrypoint.d/50-entrypoint.sh\nbash /entrypoint.d/95-gentian-umc-gateway-upstream.sh\nsed -i '\''s|RequestHeader set X-UMC-HTTPS %{HTTPS}s|RequestHeader set X-UMC-HTTPS on|g'\'' /etc/apache2/sites-available/univention.conf\necho \"Listen 8080\" > /etc/apache2/ports.conf\nsed -e \"s,<VirtualHost \\\\*:80>,<VirtualHost *:8080>,g\" -i /etc/apache2/sites-available/000-default.conf\ncat /etc/apache2/sites-available/000-default.conf\n"}
+              ]'
+              kubectl rollout status deployment/"$DEPLOY" -n "$NS" --timeout=180s
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: umc-gateway-upstream-patcher
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "9"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: umc-gateway-upstream-patcher
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "9"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["nubus-dev-umc-gateway"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: umc-gateway-upstream-patcher
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "9"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: umc-gateway-upstream-patcher
+subjects:
+  - kind: ServiceAccount
+    name: umc-gateway-upstream-patcher
+    namespace: gentian-dev
