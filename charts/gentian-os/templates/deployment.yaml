@@ -63,7 +63,7 @@ spec:
             - name: TENANCY_MODE
               value: {{ .Values.tenancyMode | default "multi" | quote }}
             - name: ROUTING_MODE
-              value: {{ .Values.routingMode | default "ingress" | quote }}
+              value: {{ .Values.routingMode | default "gateway" | quote }}
             - name: TENANT_DNS01_CLUSTER_ISSUER
               value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM

@@ -46,6 +46,6 @@ Choose exposure by `NETWORK_MODE`:
 - `NETWORK_MODE=static-ip`: Envoy Gateway service type `LoadBalancer`
 - `NETWORK_MODE=tunnel`: Envoy Gateway stays `ClusterIP`; expose via tunnel/proxy
 
-> **Note:** `ROUTING_MODE=ingress` (ingress-nginx) was removed in Phase E of the
-> [gateway migration](gateway-migration.md). Existing clusters must migrate to
-> gateway mode before upgrading.
+> **Note:** `ROUTING_MODE=ingress` (ingress-nginx) is no longer supported.
+> All clusters must use `ROUTING_MODE=gateway`. See
+> [design/gateway.md](design/gateway.md).

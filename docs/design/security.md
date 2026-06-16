@@ -282,7 +282,7 @@ path is replaced — see [app-profile-guide.md](../../gentian-apps/app-profile-g
 
 ## 9. TLS and certificates
 
-Gentian OS terminates TLS at the ingress layer using cert-manager DNS-01
+Gentian OS terminates TLS at the edge (Envoy Gateway listeners) using cert-manager DNS-01
 wildcards. Kernel hosts (`portal.<kernel>`, `id.<kernel>`) and each tenant app
 zone (`*.<tenant>.<kernel>`) receive separate certificates. See
 [multi-tenancy.md](multi-tenancy.md) §3 for DNS-01 layout and ACME rate-limit

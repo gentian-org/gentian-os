@@ -201,13 +201,10 @@ services and tenant applications.
 ## 10. In-Cluster DNS Hairpin
 
 Pods that call kernel public hostnames (for example `https://id.<kernelDomain>/…`
-during Synapse OIDC bootstrap) cannot rely on external DNS or legacy nginx
-Ingress when `ROUTING_MODE=gateway`. Gentian OS reconciles a CoreDNS `hosts`
-override block (`# BEGIN gentian-hairpin`) so those names resolve to the
-current edge proxy ClusterIP:
-
-- **Gateway mode:** kernel Envoy Gateway Service in `envoy-gateway-system`
-- **Ingress mode:** `ingress-controller` Service in `ingress`
+during Synapse OIDC bootstrap) cannot rely on external DNS alone. Gentian OS
+reconciles a CoreDNS `hosts` override block (`# BEGIN gentian-hairpin`) so those
+names resolve to the kernel Envoy Gateway Service ClusterIP in
+`envoy-gateway-system`.
 
 The `mail.<kernelDomain>` entry is managed separately and continues to target
 the Dovecot Service ClusterIP (see [mail.md](mail.md)).

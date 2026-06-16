@@ -24,7 +24,7 @@ func TestPatchHairpinCorefile_UpdatesKernelHostsPreservesMail(t *testing.T) {
 		t.Fatal("expected hairpin patch to change Corefile")
 	}
 	if strings.Contains(patched, "10.152.183.197") {
-		t.Fatalf("expected legacy ingress IP to be replaced, got:\n%s", patched)
+		t.Fatalf("expected edge proxy IP to be replaced, got:\n%s", patched)
 	}
 	if !strings.Contains(patched, "10.152.183.36 id.desk.gentian.org") {
 		t.Fatalf("expected id host to point at Envoy IP, got:\n%s", patched)

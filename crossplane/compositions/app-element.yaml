@@ -733,7 +733,7 @@ spec:
 
             {{- /* ── Release 5: opendesk-synapse-web (nginx proxy, no chart ingress) */}}
             {{- /* matrix.{domain} edge routing is AppProfile additionalIngresses   */}}
-            {{- /* (operator HTTPRoute in gateway mode, Ingress in ingress mode).   */}}
+            {{- /* Edge route owned by gentian-os operator (HTTPRoute). */}}
             {{- /* No secrets needed — it only proxies to the synapse service.   */}}
             {{- $synapseWebIngress := dict "enabled" false }}
             {{- $synapseWebVals := dict

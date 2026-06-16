@@ -1,4 +1,4 @@
-# Gateway API foundation manifests (Phase A)
+# Gateway API foundation manifests (gentian-envoy GatewayClass).
 #
 # GatewayClass is reconciled by the gentian-os operator when ROUTING_MODE=gateway.
 # Envoy Gateway must be installed first (install.sh Step 3c).

@@ -310,8 +310,8 @@ For each tenant with edge-routed apps, the **gentian-os controller** ensures:
 
 1. One cert-manager `Certificate` per tenant for `*.<effectiveDomain>` and
    `<effectiveDomain>` (DNS-01), stored as `tenant-{name}-wildcard-tls`.
-2. One Gateway API `HTTPRoute` per app host (when `ROUTING_MODE=gateway`) or one
-   Kubernetes `Ingress` per app (legacy ingress mode):
+2. One Gateway API `HTTPRoute` per app host, referencing the tenant Gateway
+   listener TLS secret:
    `{subDomain}.{effectiveDomain}` → `Service:{servicePort}`, all referencing
    that TLS secret on the tenant Gateway listener or Ingress TLS block.
 
@@ -375,8 +375,8 @@ Keycloak proxy route must allow both `https://portal.<kernel_domain>` and
 `https://*.<tenant-effective-domain>` (CSP allows only one `*.` label, so
 `https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). The
 **KeycloakPlatformReconciler** (gentian-os operator) owns frame-ancestors policy
-on the Keycloak HTTPRoute (gateway mode) or proxy Ingress (legacy mode) and
-re-converges it when tenants change or Helm drifts; Nubus Helm values only strip
+on the Keycloak IdP HTTPRoute and re-converges it when tenants change or Helm
+drifts; Nubus Helm values only strip
 upstream framing headers via `server-snippet`.
 
 ---

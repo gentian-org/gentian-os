@@ -1280,7 +1280,7 @@ main_cp() {
     "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)
     deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
-    apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays + legacy ingress cleanup
+    apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays
     wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
     bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
 

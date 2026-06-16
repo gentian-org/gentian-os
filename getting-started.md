@@ -32,8 +32,7 @@ You need a running, reachable cluster. Both `install.sh` and
 **Requirements:**
 - Kubernetes 1.26+
 - Default StorageClass available (configure per cluster in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`)
-- Ingress controller installed (for ingress setup guidance, see [docs/FAQ.md](docs/FAQ.md))
-- For Gateway API routing (`ROUTING_MODE=gateway`), Envoy Gateway is installed by `install.sh` Step 3c; see [docs/design/gateway.md](docs/design/gateway.md)
+- Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 3c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/FAQ.md](docs/FAQ.md))
 - DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
 
 > `install.sh` provisions cert-manager, CloudNativePG, and Stakater Reloader
@@ -69,7 +68,7 @@ them or store them in the config files below.
 | `LETSENCRYPT_EMAIL` | `admin@KERNEL_DOMAIN` | Let's Encrypt ACME contact |
 | `INSTALL_CLUSTER_INFRA` | `1` | Set `0` only when cert-manager/CNPG/Reloader are already managed |
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
-| `ROUTING_MODE` | `gateway` | Gateway API + Envoy Gateway edge routing (default). Set to `ingress` for legacy ingress-nginx. |
+| `ROUTING_MODE` | `gateway` | Gateway API + Envoy Gateway edge routing (required) |
 
 Configure `routingMode` in `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml` for the operator (preferred for cluster behavior).
 
@@ -530,7 +529,7 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 ## Further reading
 
 - [Architecture](docs/architecture.md) — full system design
-- [FAQ](docs/FAQ.md) — quick operational answers (ingress setup, storage class)
+- [FAQ](docs/FAQ.md) — quick operational answers (edge routing, storage class)
 - [Design docs](docs/design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
 - [docs/commands.md](docs/commands.md) — reference for day-2 kubectl commands
 - [Roadmap](docs/roadmap.md) — planned features (rotation, SOC 2 hardening)

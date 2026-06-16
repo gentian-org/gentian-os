@@ -14,9 +14,7 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE.
 tenancyMode: multi
 
-# routingMode selects the edge routing stack:
-#   gateway — Gateway API + Envoy Gateway (default; see docs/design/gateway.md)
-#   ingress — ingress-nginx Ingress resources (legacy)
+# routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
 # Plumbed as ROUTING_MODE.
 routingMode: gateway
 

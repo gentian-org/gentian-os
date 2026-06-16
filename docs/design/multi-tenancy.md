@@ -53,7 +53,7 @@ in either mode.
 | **Kernel** | `KERNEL_DOMAIN` | `portal.desk.gentian.org`, `id.desk.gentian.org` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
 | **Tenant apps** | `effectiveDomain` | `meet.demo.desk.gentian.org` (multi) or `meet.desk.gentian.org` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
 
-**Effective domain** (same for ingress, mail, OIDC redirect URIs to apps):
+**Effective domain** (same for edge routing, mail, OIDC redirect URIs to apps):
 
 - If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
 - Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat OpenDesk-style URLs).
@@ -67,11 +67,12 @@ creates per-tenant UDM entries `swp.realtime_videoconference_<tenant>` and
 LDAP OU, so each user receives URLs for their tenant zone. In `single` mode, legacy
 OpenDesk entry names (`swp.realtime_videoconference`) are also maintained.
 
-The gentian-os operator creates, for every tenant with ingress-enabled apps:
+The gentian-os operator creates, for every tenant with edge-routed apps:
 
 1. One cert-manager `Certificate` with `dnsNames: [*.effectiveDomain, effectiveDomain]`.
 2. Secret `tenant-{name}-wildcard-tls` in the tenant namespace.
-3. One `Ingress` per app, all referencing that secret.
+3. One Gateway API `HTTPRoute` per app host, attached to the tenant Gateway and
+   `kernel-public-gateway`, all using that TLS secret on the tenant listener.
 
 The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant namespaces. It does not cover `meet.demo.desk.gentian.org` (only one DNS label under the kernel domain).
 
@@ -86,7 +87,7 @@ The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant na
 
 Wildcard certificates require **DNS-01**. The operator uses a single cluster-wide issuer name, configurable via `TENANT_DNS01_CLUSTER_ISSUER` (Helm: `tenantDNS01ClusterIssuer`, default `letsencrypt-dns01-cloudflare`). That `ClusterIssuer` must use a cert-manager DNS webhook matching your provider (Cloudflare, Route53, Azure DNS, Google Cloud DNS, etc.) and must be able to write `_acme-challenge` records in the zone that contains `effectiveDomain`.
 
-`AppProfile.spec.ingress.clusterIssuer` is **not** used for tenant ingress today; it is reserved for future per-app overrides.
+`AppProfile.spec.ingress.clusterIssuer` is **not** used for tenant edge TLS today; it is reserved for future per-app overrides.
 
 ### Edge TLS (optional, CSP-specific)
 
@@ -99,8 +100,8 @@ Origin and edge are separate: cert-manager in the tenant namespace is the portab
 ### Customer vanity domains (`spec.domain`)
 
 - **OIDC issuer** stays at `https://id.<kernel_domain>/realms/<tenant>` — app URL changes do not invalidate tokens.
-- **DNS:** Customer points `*.acme.com` (or per-host records) at the platform ingress/tunnel.
-- **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token). If the customer will not grant DNS API access, a future tier can use HTTP-01 per hostname or BYO certificates — still the same Ingress host naming.
+- **DNS:** Customer points `*.acme.com` (or per-host records) at the platform edge proxy/tunnel.
+- **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token). If the customer will not grant DNS API access, a future tier can use HTTP-01 per hostname or BYO certificates — still the same HTTPRoute host naming.
 
 ### Kernel DNS credential
 
