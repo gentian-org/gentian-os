@@ -87,7 +87,7 @@ func main() {
 
 	routingMode := os.Getenv("ROUTING_MODE")
 	if routingMode == "" {
-		routingMode = controller.RoutingModeIngress
+		routingMode = controller.RoutingModeGateway
 	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 

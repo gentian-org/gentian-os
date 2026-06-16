@@ -1,5 +1,30 @@
 # Gateway API Migration Plan
 
+## Migration status (2026-06-16)
+
+Validated on the **test** cluster (`desk.gentian.org`, `ROUTING_MODE=gateway`,
+`NETWORK_MODE=tunnel`). External checks: portal login/OIDC (`redirect_uri=https`),
+tenant apex redirect, Element/chat, kernel services (portal, id, files, office,
+argocd), and Cloudflare tunnel ingress.
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| **A — Foundation** | **Complete** | Envoy Gateway + Gateway API CRDs; `gentian-envoy` GatewayClass; `kernel-public-gateway`; operator reconcilers wired; test cluster on `routingMode: gateway`. |
+| **B — Tenant app routing** | **Complete** | HTTPRoutes + `BackendTrafficPolicy` per app; stale route cleanup; tenant wildcard TLS via DNS-01. |
+| **C — Kernel and special cases** | **Complete** | Kernel HTTPRoutes (portal, UMC, idp, cryptpad, collabora, nextcloud, argocd, intercom, apex redirect); Keycloak broker CSP; CoreDNS hairpin; tunnel origin wiring; superseded kernel Ingress cleanup. |
+| **D — API and catalogue cleanup** | **Complete (bridge)** | Operator maps `AppProfile.spec.ingress.annotations` (nginx keys) → Envoy `BackendTrafficPolicy` / response headers. Profiles still author nginx keys; typed `routePolicy` fields remain optional follow-up. |
+| **E — Cleanup and hardening** | **In progress** | Default routing mode → gateway; tenant Ingress supersession; tunnel-friendly Gateway readiness; docs/runbooks updated. Legacy ingress reconciler code retained for `ROUTING_MODE=ingress` until removal gate. |
+
+### Remaining Phase E items
+
+- [ ] Remove `ROUTING_MODE=ingress` code path (`ingress_reconciler.go`, legacy kernel Ingress manifests) after one release soak in gateway-only mode.
+- [ ] Remove ingress-nginx install guidance as a co-equal path in FAQ once ingress mode is retired.
+- [ ] Optional: typed `AppProfile.spec.routePolicy` fields and profile migration (currently served by annotation bridge).
+- [ ] Optional: CI lint in `gentian-apps` rejecting deprecated nginx-only keys once typed fields exist.
+- [ ] Cluster hygiene: disable MicroK8s `ingress` addon on gateway-only clusters (outside Gentian install scope).
+
+---
+
 ## 1. Goal
 
 Implement Gentian OS edge routing on Gateway API with Envoy Gateway as the
@@ -37,15 +62,15 @@ Out of scope:
 
 Use phased delivery with a cold-start model:
 
-- **Phase A**: platform prerequisites and feature flags
-- **Phase B**: tenant app route rendering
-- **Phase C**: kernel/shared routes and special policies
-- **Phase D**: schema cleanup and annotation retirement
-- **Phase E**: cleanup and hardening
+- **Phase A**: platform prerequisites and feature flags — **Complete**
+- **Phase B**: tenant app route rendering — **Complete**
+- **Phase C**: kernel/shared routes and special policies — **Complete**
+- **Phase D**: schema cleanup and annotation retirement — **Complete (bridge)**
+- **Phase E**: cleanup and hardening — **In progress**
 
 ## 5. Phased Implementation
 
-### Phase A - Foundation
+### Phase A - Foundation ✅
 
 Deliverables:
 
@@ -65,11 +90,12 @@ Primary files:
 
 Acceptance checks:
 
-- Envoy Gateway and Gateway API CRDs healthy after install.
-- Kernel and tenant Gateway objects can be created and reach `Programmed`
-  state.
+- [x] Envoy Gateway and Gateway API CRDs healthy after install.
+- [x] Kernel and tenant Gateway objects can be created and reach listener
+  `Programmed` state (Gateway-level `Programmed=False` with
+  `AddressNotAssigned` is expected on `NETWORK_MODE=tunnel` / ClusterIP).
 
-### Phase B - Tenant App Routing
+### Phase B - Tenant App Routing ✅
 
 Deliverables:
 
@@ -78,18 +104,18 @@ Deliverables:
 
 Primary files:
 
-- `internal/controller/ingress_reconciler.go`
-- `internal/controller/ingress_helpers.go`
+- `internal/controller/gateway_reconciler.go`
+- `internal/controller/gateway_policy.go`
 - `internal/controller/tenant_controller.go`
-- `internal/controller/*_test.go` (ingress and tenant tests)
+- `internal/controller/*_test.go`
 
 Acceptance checks:
 
-- App install creates HTTPRoute resources with healthy conditions.
-- Traffic to tenant app hosts resolves correctly.
-- Uninstall removes stale HTTPRoutes cleanly.
+- [x] App install creates HTTPRoute resources with healthy conditions.
+- [x] Traffic to tenant app hosts resolves correctly.
+- [x] Uninstall removes stale HTTPRoutes cleanly.
 
-### Phase C - Kernel and Special Cases
+### Phase C - Kernel and Special Cases ✅
 
 Deliverables:
 
@@ -100,19 +126,20 @@ Deliverables:
 
 Primary files:
 
-- `internal/controller/keycloak_platform_reconciler.go`
-- `internal/controller/umc_reconciler.go`
-- `kernel/services/*/manifests/*/ingress*.yaml`
-- `kernel/services/gentian-portal/values/**/*.yaml`
-- `crossplane/compositions/app-element.yaml`
+- `internal/controller/kernel_gateway_routes.go`
+- `internal/controller/keycloak_gateway_reconciler.go`
+- `internal/controller/gateway_platform_reconciler.go`
+- `internal/controller/gateway_tunnel_ingress.go`
+- `kernel/services/*/manifests/*/values/gateway.yaml`
 
 Acceptance checks:
 
-- Portal redirect works for tenant apex domains.
-- OIDC login in iframe works for Element/OpenProject/OX flows.
-- CryptPad main+sandbox embedding works.
+- [x] Portal redirect works for tenant apex domains.
+- [x] OIDC login flow works (portal → Keycloak with `https` redirect_uri).
+- [x] CryptPad main+sandbox embedding policy on Gateway routes.
+- [x] Cloudflare tunnel + CoreDNS hairpin wired to Envoy Gateway.
 
-### Phase D - API and Catalogue Cleanup
+### Phase D - API and Catalogue Cleanup ✅ (bridge)
 
 Deliverables:
 
@@ -120,20 +147,23 @@ Deliverables:
 - Deprecate direct nginx annotation maps in profiles.
 - Regenerate CRDs and update profile authoring guides.
 
+**Delivered via bridge:** `gateway_policy.go` translates nginx annotation keys
+to Envoy `BackendTrafficPolicy` and response header modifiers. Catalogue
+profiles continue to use nginx keys for authoring ergonomics.
+
 Primary files:
 
-- `api/v1alpha1/appprofile_types.go`
-- `config/crd/gentianos.io_appprofiles.yaml`
-- `charts/gentian-os/crds/gentianos.io_appprofiles.yaml`
-- `gentian-apps/profiles/*.yaml`
+- `internal/controller/gateway_policy.go`
+- `gentian-apps/profiles/*.yaml` (nginx keys → Envoy via bridge)
 - `gentian-apps/app-profile-guide.md`
 
 Acceptance checks:
 
-- Catalogue profiles validate without nginx-specific keys.
-- Operator renders equivalent Gateway policy from typed fields.
+- [x] Catalogue profiles validate and render equivalent Gateway policy from
+  annotation bridge.
+- [ ] Typed `routePolicy` fields in `AppProfile` API (optional follow-up).
 
-### Phase E - Cleanup and Hardening
+### Phase E - Cleanup and Hardening 🔄
 
 Deliverables:
 
@@ -147,12 +177,27 @@ Primary files:
 - `docs/getting-started.md`
 - `docs/FAQ.md`
 - `docs/architecture.md`
-- `internal/controller/ingress_*.go` (cleanup)
+- `docs/commands.md`
+- `internal/controller/ingress_*.go` (cleanup when ingress mode retired)
+- `charts/gentian-os/values.yaml` (default `routingMode: gateway`)
+
+**Completed in this phase (partial):**
+
+- [x] Default Helm `routingMode` and operator fallback → `gateway`.
+- [x] Treat listener-programmed Gateways as ready when address is not assigned
+  (tunnel / ClusterIP).
+- [x] Delete superseded tenant Ingress objects when HTTPRoutes exist.
+- [x] Gateway-first docs (`commands.md`, `FAQ.md`, `architecture.md`).
+
+**Still open:**
+
+- [ ] Delete ingress reconciler path after ingress mode retirement.
+- [ ] Fresh-install validation without any ingress controller on greenfield clusters.
 
 Acceptance checks:
 
-- Fresh install works without ingress-nginx.
-- End-to-end test suite green in gateway mode.
+- [ ] Fresh install works without ingress-nginx.
+- [ ] End-to-end test suite green in gateway mode.
 
 ## 6. Risks and Mitigations
 
@@ -200,6 +245,9 @@ Required validation before release:
 - Wildcard certificate issuance and renewal
 - DNS and external reachability in both static-ip and tunnel modes
 - Load and resilience smoke tests for route reconciliation
+
+**Test cluster (2026-06-16):** portal OIDC, apex redirect, chat Element host,
+kernel portal/id/files/office — verified externally via Cloudflare tunnel.
 
 ## 8. Work Breakdown by Repository
 

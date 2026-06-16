@@ -5,8 +5,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -88,6 +90,9 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.deleteSupersededTenantIngress(ctx, tenant, nsName, intents, effectiveDomain); err != nil {
+		return ctrl.Result{}, fmt.Errorf("delete superseded tenant Ingress: %w", err)
+	}
 
 	message := fmt.Sprintf("Gateway provisioned for %d app(s) on %q (tenant-zone-wildcard)", len(intents), effectiveDomain)
 	if programmed, reason := gatewayProgrammed(ctx, r.Client, desiredGW); !programmed {
@@ -129,6 +134,11 @@ func gatewayProgrammed(ctx context.Context, c client.Client, gw *gatewayv1.Gatew
 			if cond.Status == metav1.ConditionTrue {
 				return true, cond.Reason
 			}
+			// ClusterIP/tunnel clusters may never assign a Gateway address; listeners
+			// can still be programmed and serve traffic via tunnel or in-cluster paths.
+			if cond.Reason == "AddressNotAssigned" && gatewayListenersProgrammed(current) {
+				return true, "ListenersProgrammed"
+			}
 			reason := cond.Reason
 			if reason == "" {
 				reason = "NotProgrammed"
@@ -137,4 +147,77 @@ func gatewayProgrammed(ctx context.Context, c client.Client, gw *gatewayv1.Gatew
 		}
 	}
 	return false, "AwaitingProgrammed"
+}
+
+func gatewayListenersProgrammed(gw *gatewayv1.Gateway) bool {
+	if len(gw.Status.Listeners) == 0 {
+		return false
+	}
+	for _, listener := range gw.Status.Listeners {
+		programmed := false
+		for _, cond := range listener.Conditions {
+			if cond.Type == string(gatewayv1.GatewayConditionProgrammed) &&
+				cond.Status == metav1.ConditionTrue {
+				programmed = true
+				break
+			}
+		}
+		if !programmed {
+			return false
+		}
+	}
+	return true
+}
+
+// deleteSupersededTenantIngress removes chart- or legacy-managed Ingress objects
+// whose hostnames are now served by operator-managed HTTPRoutes.
+func (r *TenantReconciler) deleteSupersededTenantIngress(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	intents []ingressIntent,
+	effectiveDomain string,
+) error {
+	if len(intents) == 0 || effectiveDomain == "" {
+		return nil
+	}
+
+	hosts := make(map[string]struct{}, len(intents))
+	for _, intent := range intents {
+		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
+		if host != "" {
+			hosts[strings.ToLower(host)] = struct{}{}
+		}
+	}
+
+	list := &networkingv1.IngressList{}
+	if err := r.List(ctx, list, client.InNamespace(nsName)); err != nil {
+		return fmt.Errorf("list tenant Ingress resources: %w", err)
+	}
+
+	logger := ctrl.LoggerFrom(ctx)
+	for i := range list.Items {
+		ing := &list.Items[i]
+		if isUMCFrontendIngress(ing) {
+			continue
+		}
+		if !tenantIngressSupersededByGateway(ing, hosts) {
+			continue
+		}
+		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete superseded tenant Ingress %s: %w", ing.Name, err)
+		}
+		logger.Info("deleted legacy tenant Ingress superseded by Gateway API",
+			"ingress", ing.Name, "tenant", tenant.Name)
+	}
+	return nil
+}
+
+func tenantIngressSupersededByGateway(ing *networkingv1.Ingress, hosts map[string]struct{}) bool {
+	for _, rule := range ing.Spec.Rules {
+		if _, ok := hosts[strings.ToLower(rule.Host)]; ok {
+			return true
+		}
+	}
+	return false
 }

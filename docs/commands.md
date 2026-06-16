@@ -222,6 +222,32 @@ kubectl get integrationbindings -A
 kubectl describe application -n argocd gentian-os
 ```
 
+### Gateway API edge routing (`ROUTING_MODE=gateway`)
+
+```bash
+# Platform Gateways and routes
+kubectl get gatewayclass gentian-envoy
+kubectl get gateway -A
+kubectl get httproute -A -l app.kubernetes.io/managed-by=gentian-os
+kubectl describe gateway kernel-public-gateway -n gentian-dev
+
+# Envoy data plane
+kubectl get pods -n envoy-gateway-system
+kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway
+
+# Tenant edge status
+kubectl get tenant -o custom-columns=NAME:.metadata.name,GATEWAY:.status.conditions[?(@.type==\"GatewayReady\")].status,TUNNEL:.status.conditions[?(@.type==\"TunnelIngressReady\")].status
+
+# Envoy policies attached to routes
+kubectl get backendtrafficpolicy -n tenant-demo
+kubectl get backendtrafficpolicy -n gentian-dev -l app.kubernetes.io/managed-by=gentian-os
+```
+
+On `NETWORK_MODE=tunnel`, `Gateway.status.conditions[Programmed]` may be
+`False` (`AddressNotAssigned`) while listener conditions are `Programmed=True`
+and traffic reaches Envoy via Cloudflare tunnel. Check `TunnelIngressReady` on
+the Tenant and external curl to the public hostname.
+
 ## 9. Kernel Mail Stack (Dovecot + Postfix)
 
 **Two knobs:** `MAIL_SERVICE_MODE` in

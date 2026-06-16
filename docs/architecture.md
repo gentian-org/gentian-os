@@ -306,12 +306,14 @@ issuance flow — are in
 
 ### 6.1 TLS certificate provisioning
 
-For each tenant with ingress-enabled apps, the **gentian-os controller** ensures:
+For each tenant with edge-routed apps, the **gentian-os controller** ensures:
 
 1. One cert-manager `Certificate` per tenant for `*.<effectiveDomain>` and
    `<effectiveDomain>` (DNS-01), stored as `tenant-{name}-wildcard-tls`.
-2. One Kubernetes `Ingress` per app: `{subDomain}.{effectiveDomain}` →
-   `Service:{servicePort}`, all referencing that TLS secret.
+2. One Gateway API `HTTPRoute` per app host (when `ROUTING_MODE=gateway`) or one
+   Kubernetes `Ingress` per app (legacy ingress mode):
+   `{subDomain}.{effectiveDomain}` → `Service:{servicePort}`, all referencing
+   that TLS secret on the tenant Gateway listener or Ingress TLS block.
 
 `effectiveDomain` is `Tenant.spec.domain` when set; otherwise it follows
 `TENANCY_MODE` (`multi` → `<tenant>.<kernelDomain>`; `single` →
@@ -321,8 +323,8 @@ For each tenant with ingress-enabled apps, the **gentian-os controller** ensures
 per-host HTTP-01 mode; the operator does not read it today.
 
 The **kernel** wildcard (`*.<kernelDomain>`, DNS-01 at install) covers
-platform hostnames only (`portal`, `id`, Argo CD, …) and is never
-replicated into tenant namespaces.
+platform hostnames only (`portal`, `id`, Argo CD, …) on
+`kernel-public-gateway` and is never replicated into tenant namespaces.
 
 When traffic is proxied through Cloudflare, an optional operator adapter
 ensures `*.<effectiveDomain>` CNAME records so Total TLS can mint edge
@@ -347,9 +349,16 @@ Gentian OS sidesteps most browser CORS restrictions by design:
 
 The remaining app-side requirement is the **`frame-ancestors` CSP header**:
 by default browsers block iframe embedding unless the embedded page explicitly
-permits it. The gentian-os controller injects this as an NGINX
-`configuration-snippet` on every `Ingress` it creates. For standard
-AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
+permits it. The gentian-os controller injects this on every edge route it
+creates:
+
+- **`ROUTING_MODE=gateway`:** Envoy `BackendTrafficPolicy` /
+  `HTTPRoute` `ResponseHeaderModifier` filters (see
+  [design/gateway.md](design/gateway.md)).
+- **`ROUTING_MODE=ingress` (legacy):** NGINX `configuration-snippet` on
+  `Ingress`.
+
+For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single
 `frame-ancestors 'self' https://portal.<kernel_domain>` policy — many charts
 only emit `frame-ancestors 'self'`, and **appending** a second CSP header
@@ -357,21 +366,21 @@ leaves both active so browsers still block the portal iframe. CryptPad
 (`pad` / `pad-sandbox` subdomains) **appends** a second header instead so
 upstream `script-src` without `'unsafe-eval'` stays intact. Per-tenant portal hostnames are not used;
 tenants authenticate via the kernel portal. CryptPad's additional
-`pad-sandbox.<tenant>` ingress instead allows `https://pad.<tenant>` and
+`pad-sandbox.<tenant>` route instead allows `https://pad.<tenant>` and
 `https://portal.<kernel_domain>` because CSP checks the full ancestor chain when
 the portal embeds CryptPad in a window and CryptPad embeds the sandbox. Apps with
-extra NGINX snippet needs (e.g. CryptPad `sub_filter`) keep those lines;
-frame-ancestors is still injected on each ingress according to its role.
+extra edge snippet needs (e.g. CryptPad `sub_filter`) keep those lines;
+frame-ancestors is still injected on each route according to its role.
 
 **IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
 `chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
-Keycloak proxy ingress must allow both `https://portal.<kernel_domain>` and
+Keycloak proxy route must allow both `https://portal.<kernel_domain>` and
 `https://*.<tenant-effective-domain>` (CSP allows only one `*.` label, so
 `https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). The
-**KeycloakPlatformReconciler** (gentian-os operator) owns `configuration-snippet`
-on the Keycloak proxy ingress and re-converges it when tenants change or Helm
-drifts; Nubus Helm values only strip upstream framing headers via
-`server-snippet`.
+**KeycloakPlatformReconciler** (gentian-os operator) owns frame-ancestors policy
+on the Keycloak HTTPRoute (gateway mode) or proxy Ingress (legacy mode) and
+re-converges it when tenants change or Helm drifts; Nubus Helm values only strip
+upstream framing headers via `server-snippet`.
 
 ---
 

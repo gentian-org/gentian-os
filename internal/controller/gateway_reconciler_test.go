@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -17,7 +18,7 @@ func TestNormalizeRoutingMode(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
-		{"", RoutingModeIngress},
+		{"", RoutingModeGateway},
 		{"ingress", RoutingModeIngress},
 		{"GATEWAY", RoutingModeGateway},
 		{" gateway ", RoutingModeGateway},
@@ -118,6 +119,61 @@ func TestGatewayProgrammed(t *testing.T) {
 	ok, reason := gatewayProgrammed(t.Context(), c, gw)
 	if !ok || reason != "Programmed" {
 		t.Fatalf("expected programmed gateway, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
+	t.Parallel()
+	scheme := runtime.NewScheme()
+	if err := gatewayv1.Install(scheme); err != nil {
+		t.Fatalf("install gateway scheme: %v", err)
+	}
+
+	gw := buildTenantGateway(
+		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+		"tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls",
+	)
+	gw.Status.Conditions = []metav1.Condition{
+		{
+			Type:   string(gatewayv1.GatewayConditionProgrammed),
+			Status: metav1.ConditionFalse,
+			Reason: "AddressNotAssigned",
+		},
+	}
+	gw.Status.Listeners = []gatewayv1.ListenerStatus{
+		{
+			Name: "https-wildcard",
+			Conditions: []metav1.Condition{
+				{Type: string(gatewayv1.GatewayConditionProgrammed), Status: metav1.ConditionTrue, Reason: "Programmed"},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gw).Build()
+	ok, reason := gatewayProgrammed(t.Context(), c, gw)
+	if !ok || reason != "ListenersProgrammed" {
+		t.Fatalf("expected listeners-programmed gateway, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestTenantIngressSupersededByGateway(t *testing.T) {
+	t.Parallel()
+	hosts := map[string]struct{}{"matrix.demo.desk.gentian.org": {}}
+	ing := &networkingv1.Ingress{
+		Spec: networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{{Host: "matrix.demo.desk.gentian.org"}},
+		},
+	}
+	if !tenantIngressSupersededByGateway(ing, hosts) {
+		t.Fatal("expected matrix host ingress to be superseded")
+	}
+	other := &networkingv1.Ingress{
+		Spec: networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{{Host: "other.demo.desk.gentian.org"}},
+		},
+	}
+	if tenantIngressSupersededByGateway(other, hosts) {
+		t.Fatal("unexpected supersession for unrelated host")
 	}
 }
 

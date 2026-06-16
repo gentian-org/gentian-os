@@ -69,7 +69,7 @@ them or store them in the config files below.
 | `LETSENCRYPT_EMAIL` | `admin@KERNEL_DOMAIN` | Let's Encrypt ACME contact |
 | `INSTALL_CLUSTER_INFRA` | `1` | Set `0` only when cert-manager/CNPG/Reloader are already managed |
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
-| `ROUTING_MODE` | `ingress` | Set to `gateway` for Envoy Gateway + Gateway API edge routing |
+| `ROUTING_MODE` | `gateway` | Gateway API + Envoy Gateway edge routing (default). Set to `ingress` for legacy ingress-nginx. |
 
 Configure `routingMode` in `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml` for the operator (preferred for cluster behavior).
 

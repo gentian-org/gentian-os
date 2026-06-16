@@ -15,10 +15,10 @@ kernelDomain: ""
 tenancyMode: multi
 
 # routingMode selects the edge routing stack:
-#   ingress — ingress-nginx Ingress resources (legacy default)
-#   gateway — Gateway API + Envoy Gateway (see docs/design/gateway.md)
+#   gateway — Gateway API + Envoy Gateway (default; see docs/design/gateway.md)
+#   ingress — ingress-nginx Ingress resources (legacy)
 # Plumbed as ROUTING_MODE.
-routingMode: ingress
+routingMode: gateway
 
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
