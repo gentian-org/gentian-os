@@ -144,6 +144,7 @@ func TestMain(m *testing.M) {
 		KernelDomain:             "desk.gentian.org",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
+		RoutingMode:              controller.RoutingModeIngress,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
