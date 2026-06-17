@@ -13,8 +13,8 @@ func TestAppUsesCrossplaneS3Init(t *testing.T) {
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
-				Storage: &gentianov1alpha1.StorageRequirements{
-					S3: &gentianov1alpha1.S3Requirements{BucketPerTenant: true},
+				Storage: &gentianov1alpha1.StorageRequirement{
+					S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
 				},
 			},
 		},
@@ -30,7 +30,7 @@ func TestAppUsesCrossplaneS3Init(t *testing.T) {
 	}
 
 	nonCrossplane := *openproject
-	nonCrossplane.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodHelm
+	nonCrossplane.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodArgoCD
 	if appUsesCrossplaneS3Init(&nonCrossplane) {
 		t.Fatal("expected non-crossplane app to skip composition s3-init")
 	}
