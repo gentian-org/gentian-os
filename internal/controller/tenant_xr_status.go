@@ -32,6 +32,15 @@ import (
 
 const conditionCrossplaneReady = "CrossplaneReady"
 
+func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bool {
+	for _, c := range tenant.Status.Conditions {
+		if c.Type == condType && c.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 // aggregateCrossplaneStatus maps XTenant readiness onto Tenant.status.conditions so
 // operators can correlate Tenant Ready with the Crossplane composite graph.
 func (r *TenantReconciler) aggregateCrossplaneStatus(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {

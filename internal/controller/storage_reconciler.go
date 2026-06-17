@@ -44,8 +44,8 @@ const (
 // ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
 // KernelRequirements.Storage.S3. Each pathway creates a Job in the kernel namespace;
 // StorageReady is set to True once all Jobs complete.
-// Note: per-tenant Nextcloud groups are provisioned separately via ensureNextcloudGroup,
-// which runs for every tenant regardless of installed apps.
+// Note: per-tenant Nextcloud groups are provisioned via the manifest bridge
+// (nc-group Job in jobs.json) and applied by tenant-default.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	s3Apps, err := r.collectStorageApps(ctx, tenant)
 	if err != nil {
@@ -94,19 +94,8 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 	return ctrl.Result{}, nil
 }
 
-// ensureNextcloudGroup provisions the per-tenant Nextcloud group on every reconcile.
-// Nextcloud is a kernel file-storage service, available to every tenant regardless of
-// installed apps. This step does NOT block Phase=Ready — it runs concurrently alongside
-// app provisioning (like mail). If Nextcloud is not yet deployed, the Job will pend
-// and be retried on the next reconcile cycle.
-func (r *TenantReconciler) ensureNextcloudGroup(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	_, err := r.ensureNextcloudGroupJob(ctx, tenant)
-	return err
-}
-
 // collectStorageApps returns the app profile names that require an S3 bucket.
-// WebDAV/Files requirements are no longer tracked here — Nextcloud group
-// provisioning happens unconditionally via ensureNextcloudGroup.
+// Per-tenant Nextcloud groups are provisioned via the manifest bridge (nc-group Job).
 func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (s3Apps []string, err error) {
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
@@ -129,11 +118,6 @@ func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *genti
 // ensureS3BucketJob waits for the Crossplane-owned MinIO bucket Job.
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, s3BucketJobName(tenant.Name, appName))
-}
-
-// ensureNextcloudGroupJob waits for the Crossplane-owned Nextcloud group Job.
-func (r *TenantReconciler) ensureNextcloudGroupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.waitForProvisioningJob(ctx, tenant.Name, nextcloudGroupJobName(tenant.Name))
 }
 
 // deleteStorage handles storage cleanup on tenant deletion.
@@ -166,7 +150,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 	}
 
 	// Always delete the Nextcloud group — provisioned for every tenant
-	// unconditionally by ensureNextcloudGroup.
+	// Nextcloud group delete Job (manifest bridge owns nc-group provisioning).
 	ncDeleteJobName := nextcloudGroupDeleteJobName(tenant.Name)
 	existingNC := &batchv1.Job{}
 	if err := r.Get(ctx, types.NamespacedName{Name: ncDeleteJobName, Namespace: kernelNamespace}, existingNC); errors.IsNotFound(err) {

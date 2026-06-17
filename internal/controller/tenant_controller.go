@@ -501,14 +501,6 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 
-		if err := r.ensureNextcloudGroup(ctx, tenant); err != nil {
-			logger.Error(err, "ensure Nextcloud group (non-blocking, will retry)")
-		}
-
-		if err := r.ensureLDAPBase(ctx, tenant); err != nil {
-			logger.Error(err, "ensure LDAP base (non-blocking, will retry)")
-		}
-
 		if err := r.ensureUMC(ctx, tenant); err != nil {
 			logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
 		}
@@ -529,11 +521,13 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
 		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
+	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
 	// Note: mailResult, officeResult, and appsResult are intentionally excluded
 	// from the provisioning flag. Apps are converged asynchronously (like mail
 	// and office) and do not block Phase=Ready. AppsReady tracks state
 	// independently and the reconciler requeues until all App claims are Ready.
-	if provisioning {
+	// Phase=Ready also requires CrossplaneReady (XTenant composite Ready).
+	if provisioning || !crossplaneReady {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 	} else {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
@@ -571,6 +565,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return officeResult, nil
 		}
 		return appsResult, nil
+	}
+	if !crossplaneReady {
+		logger.Info("tenant operator paths ready; waiting for Crossplane XTenant Ready", "tenant", tenant.Name)
+		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}
 	// Infrastructure is ready. Requeue for mail, office, or apps if still converging.
 	if mailResult.RequeueAfter > 0 {

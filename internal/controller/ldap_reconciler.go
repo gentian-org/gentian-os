@@ -52,10 +52,8 @@ const (
 // Jobs run in the kernel namespace and are idempotent (check-before-create).
 // Returns a non-zero RequeueAfter while Jobs are still running.
 //
-// Steps 1-3 (OU, admin user, admin policy, bind accounts) are handled
-// non-blocking by ensureLDAPBase for tenants with no LDAP-requiring apps.
-// When LDAP apps are present, this function handles all steps and blocks
-// Phase=Ready until complete. Step 4 (per-app bind accounts) is app-gated.
+// Steps 1-3 (OU, admin user, admin policy, bind accounts) are owned by the
+// manifest bridge and waited on here when LDAP apps (or Keycloak federation) apply.
 //
 // Admin user must run BEFORE admin policy: the policy job updates the portal
 // entry allowedGroups, and the Nubus portal consumer's groups cache must
@@ -66,8 +64,7 @@ const (
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	ouDN := tenantOUDN(tenant)
 
-	// Short-circuit when no app requires LDAP. ensureLDAPBase (non-blocking)
-	// handles OU+admin provisioning for these tenants independently.
+	// When no app requires LDAP federation, skip unless Keycloak LDAP is configured.
 	ldapApps, err := r.collectLDAPApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -515,95 +512,6 @@ func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alp
 		return err
 	}
 	return errDeleteJobPending
-}
-
-// ensureLDAPBase provisions the LDAP OU, admin user, and delegated-admin
-// policy for tenants that have no LDAP-requiring apps. This is a non-blocking
-// best-effort step identical in purpose to ensureNextcloudGroup: it does not
-// affect Phase=Ready. For tenants WITH LDAP apps, ensureLDAP already handles
-// all steps so this function is a no-op to avoid duplicate Job creation.
-// Sequence: OU → App User template → admin-user → admin-policy (each step waits for the previous).
-// Admin user runs before policy for the same reason as in ensureLDAP: the
-// portal groups cache must be populated before portal allowedGroups are set.
-func (r *TenantReconciler) ensureLDAPBase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if r.LDAPBase == "" {
-		return nil
-	}
-	ldapApps, err := r.collectLDAPApps(ctx, tenant)
-	if err != nil {
-		return err
-	}
-	// ensureLDAP already handles these steps when LDAP apps are present.
-	if len(ldapApps) > 0 {
-		return nil
-	}
-
-	ouDN := tenantOUDN(tenant)
-
-	ouDone, err := r.ensureOUJob(ctx, tenant, ouDN)
-	if err != nil || !ouDone {
-		return err
-	}
-
-	mbaDone, err := r.ensureMBAGroupsJob(ctx, tenant, ouDN)
-	if err != nil || !mbaDone {
-		return err
-	}
-
-	templateDone, err := r.ensureAppUserTemplateJob(ctx, tenant, ouDN)
-	if err != nil || !templateDone {
-		return err
-	}
-
-	capsDone, err := r.ensureAppUserCapabilitiesJob(ctx, tenant, ouDN)
-	if err != nil || !capsDone {
-		return err
-	}
-
-	var adminCreds secrets.TenantAdminCreds
-	if r.Seeder != nil {
-		adminCreds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
-		if err != nil {
-			return fmt.Errorf("seed tenant admin for LDAP base: %w", err)
-		}
-	} else {
-		adminCreds = secrets.TenantAdminCreds{Username: "admin-" + tenant.Name, Password: "placeholder"}
-	}
-	userDone, err := r.ensureAdminUserJob(ctx, tenant, ouDN, adminCreds)
-	if err != nil || !userDone {
-		return err
-	}
-
-	policyDone, err := r.ensureAdminPolicyJob(ctx, tenant, ouDN)
-	if err != nil || !policyDone {
-		return err
-	}
-
-	// Also provision per-tenant portal entries for dedicated apps with central-navigation:nubus.
-	portalApps, err := r.collectDedicatedPortalApps(ctx, tenant)
-	if err != nil {
-		return fmt.Errorf("collect dedicated portal apps: %w", err)
-	}
-	expectedTiles := make(map[string]struct{}, len(portalApps))
-	for _, pa := range portalApps {
-		expectedTiles[pa.AppName] = struct{}{}
-	}
-	// Remove portal entries that were provisioned previously but are no longer expected.
-	if _, err := r.deleteStalePortalEntriesForTenant(ctx, tenant, expectedTiles); err != nil {
-		return fmt.Errorf("delete stale portal entries: %w", err)
-	}
-	for _, pa := range portalApps {
-		done, err := r.ensurePortalEntryJob(ctx, tenant, ouDN, pa)
-		if err != nil {
-			return fmt.Errorf("ensure portal entry Job for app %s: %w", pa.AppName, err)
-		}
-		if done {
-			if trackErr := r.addProvisionedPortalTile(ctx, tenant, pa.AppName); trackErr != nil {
-				return trackErr
-			}
-		}
-	}
-	return nil
 }
 
 // --- Portal tile annotation helpers -----------------------------------------

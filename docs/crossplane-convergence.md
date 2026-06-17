@@ -93,24 +93,25 @@ running `./update.sh`.
 
 ---
 
-## 2. Cluster readiness audit (2026-06-17)
+## 2. Cluster readiness audit (2026-06-17, updated)
 
 Audit of the **test/dev cluster** (`demo` tenant, kernel domain `desk.gentian.org`):
 
 | Check | Result | Notes |
 |-------|--------|-------|
 | Manifest bridge CM | ✅ | `tenant-demo-provisioning-jobs` has `jobs.json` + `objects.json` |
-| Crossplane Object MRs | ✅ | 84 managed resources for composite `demo` |
-| App claims (single owner) | ✅ | One `App` per profile; no duplicate operator-created claims |
-| `XTenant` Ready | ❌ | `Ready=False` (`Creating`) — `openproject` app added ~15m ago |
-| `Tenant CrossplaneReady` | ❌ | `False` — follows XTenant |
-| `Tenant Phase` | `Provisioning` | `CacheReady=False`, `GatewayReady=False`, `AppsReady=False` |
-| P4 cutover (`make e2e-p4`) | ❌ | Times out waiting for XTenant Ready (expected while openproject converges) |
-| Broker IdP Job in manifest | ❌ | `keycloak-broker-idp-demo` created by `KeycloakPlatformReconciler`, **not** in `jobs.json` |
+| Crossplane Object MRs | ✅ | 63 managed resources for composite `demo` |
+| App claims (single owner) | ✅ | One `App` per profile; operator does not duplicate claims |
+| Broker IdP Job in manifest | ✅ | `keycloak-broker-idp-demo` in `jobs.json` (wait-only in operator) |
+| `XTenant` Ready | ✅ | Composite Ready |
+| `Tenant CrossplaneReady` | ✅ | `True` — follows XTenant |
+| `Tenant Phase` | ✅ | `Ready` (gated on operator paths **and** `CrossplaneReady`) |
+| P4 cutover (`make e2e-p4`) | ✅ | All checks pass on stable app set (Element) |
+| Intercom ICS (Element Nordeck) | ✅ | `gateway.yaml` extraEnvVars override in-cluster `BASE_URL` |
 
-**Conclusion:** **Not ready to remove legacy operator code paths.** Wait until `demo`
-(and other live tenants) pass `make e2e-p4` with `XTenant Ready=True` and
-`CrossplaneReady=True` on a stable app set before deleting dead reconciler code.
+**Conclusion:** **Ready to continue C4.5 dead-code removal** incrementally (duplicate shared-kernel
+wait paths removed; deletion Jobs and mail/office remain operator-owned). Run `make e2e-p4` after
+each trim on live tenants.
 
 ---
 
@@ -120,16 +121,16 @@ Tracked here for visibility; detailed rationale and priority in [roadmap.md](roa
 
 | # | Item | Owner / area | Status |
 |---|------|--------------|--------|
-| 1 | **Remove dead operator code** — Job `Create` paths, deletion imperatives superseded by XR cascade, trim wait-wrapper surface after P4 green on all clusters | Operator | Blocked on cluster P4 |
+| 1 | **Remove dead operator code** — duplicate shared-kernel waits, deletion imperatives superseded by XR cascade where safe | Operator | **In progress** (nc-group / LDAP-base duplicate calls removed) |
 | 2 | **Broker IdP Job in manifest bridge** — `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | Operator / identity | ✅ Done |
 | 3 | **P2 e2e — Pattern B kernel charts** | Tests | ✅ Done |
 | 4 | **`tenant-default` render goldens** | Tests | ✅ Done |
 | 5 | **Gateway edge (operator remainder)** — DNS records, ReferenceGrants, BackendTrafficPolicy, stale route/Ingress cleanup | Operator / edge | Partial (objects in CM; policies still operator) |
 | 6 | **Composition ordering** — `function-sequencer` to gate app Compositions on tenant identity Ready | Crossplane | Not started |
 | 7 | **`provider-keycloak` consolidation** — drift-safe tenant Realm MRs vs operator Jobs | Keycloak | Blocked upstream |
-| 8 | **Gate `Phase=Ready` on `CrossplaneReady`** — optional stricter readiness semantics | Operator | Not started |
-| 9 | **Doc sync** — `architecture.md` §3.1, Makefile e2e comments | Docs | In progress |
-| 10 | **XTenant / App schema unit tests** — extend `test-unit-schema` beyond cluster fixtures | Tests | Not started |
+| 8 | **Gate `Phase=Ready` on `CrossplaneReady`** — stricter readiness semantics | Operator | ✅ Done |
+| 9 | **Doc sync** — `architecture.md` §3.1, Makefile e2e comments | Docs | ✅ Done |
+| 10 | **XTenant / App schema unit tests** — extend `test-unit-schema` beyond cluster fixtures | Tests | ✅ Done |
 
 Mail and office provisioning are **out of scope** for this list — tracked separately
 in [roadmap.md](roadmap.md).
@@ -149,6 +150,8 @@ make test-unit
 | `make test-unit-render` | Composition render golden files under `crossplane/tests/unit/render/` |
 | `make test-unit-functions` | Crossplane function pipeline behaviour |
 | `make test-unit-schema` | XRD/claim YAML validates against kubeconform |
+
+Add fixtures under `crossplane/tests/unit/schema/valid/` and `invalid/` (Cluster, XTenant, App).
 
 Add `crossplane/tests/unit/render/tenant-default/` with `xr.yaml`, `composition.yaml`,
 `expected.yaml` when extending tenant Compositions; run `make test-unit-render-update`.

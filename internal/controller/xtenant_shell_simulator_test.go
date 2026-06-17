@@ -104,8 +104,40 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 		}
 		createIfMissing(ctx, c, tenantshell.NetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts))
 		simulateAppClaims(ctx, c, tenantName, nsName, spec)
+		patchXTenantReady(ctx, c, xr)
 	}
 	simulateXTenantDeletionCascade(ctx, c, list.Items)
+}
+
+func patchXTenantReady(ctx context.Context, c client.Client, xr *unstructured.Unstructured) {
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(xr.GroupVersionKind())
+	if err := c.Get(ctx, types.NamespacedName{Name: xr.GetName()}, current); err != nil {
+		return
+	}
+	conditions, _, _ := unstructured.NestedSlice(current.Object, "status", "conditions")
+	for _, raw := range conditions {
+		cond, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if typ, _ := cond["type"].(string); typ == "Ready" {
+			if status, _ := cond["status"].(string); status == string(metav1.ConditionTrue) {
+				return
+			}
+		}
+	}
+	now := metav1.Now()
+	_ = unstructured.SetNestedSlice(current.Object, []interface{}{
+		map[string]interface{}{
+			"type":               "Ready",
+			"status":             string(metav1.ConditionTrue),
+			"reason":             "Available",
+			"message":            "Simulated tenant shell Ready",
+			"lastTransitionTime": now.Format(time.RFC3339),
+		},
+	}, "status", "conditions")
+	_ = c.Status().Update(ctx, current)
 }
 
 func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, activeXTenants []unstructured.Unstructured) {

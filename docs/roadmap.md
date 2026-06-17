@@ -10,14 +10,14 @@ Crossplane + operator model see [crossplane-convergence.md](crossplane-convergen
 
 | Item | Notes |
 |------|-------|
-| **Remove dead operator code** | After all clusters pass `make e2e-p4`. Drop imperative Job `Create` paths, trim deletion helpers superseded by XR cascade. **Blocked:** test cluster `demo` not Ready while `openproject` converges (2026-06-17 audit). |
+| **Remove dead operator code** | Incremental C4.5 trim after P4 green — duplicate `ensureLDAPBase` / `ensureNextcloudGroup` calls removed; deletion Jobs still operator-owned | In progress |
 | **Broker IdP in manifest bridge** | `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | ✅ Done |
 | **P2 e2e — Pattern B kernel** | `p2-pattern-b.sh` | ✅ Done |
 | **`tenant-default` render goldens** | `crossplane/tests/unit/render/tenant-default/` | ✅ Done |
-| **Gateway edge remainder** | DNS (Cloudflare), ReferenceGrants, BackendTrafficPolicy, stale route cleanup — still operator-owned; cert/Gateway/HTTPRoutes already in manifest bridge. |
+| **Gateway edge remainder** | DNS (Cloudflare), ReferenceGrants, BackendTrafficPolicy, stale route cleanup — still operator-owned; cert/Gateway/HTTPRoutes in manifest bridge. |
 | **`function-sequencer`** | Gate app Compositions on tenant identity/LDAP Ready instead of operator wait ordering. |
-| **`Phase=Ready` vs `CrossplaneReady`** | Optionally require both before marking tenant Ready. |
-| **XTenant / App schema tests** | Extend `make test-unit-schema` beyond cluster fixtures. |
+| **`Phase=Ready` vs `CrossplaneReady`** | `Phase=Ready` requires operator paths and `CrossplaneReady=True`. | ✅ Done |
+| **XTenant / App schema tests** | `crossplane/tests/unit/schema/valid|invalid/` fixtures | ✅ Done |
 
 Open-item tracker with cluster audit: [crossplane-convergence.md §3](crossplane-convergence.md).
 

@@ -126,7 +126,7 @@ Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
 4. **Wait-only ensures** — identity/LDAP Jobs, databases, storage, cache, gateway objects, IntegrationBindings  
 5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
 6. **Shared-kernel extensions** — portal/UMC convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
-7. **Status** — per-step conditions plus `CrossplaneReady` from `XTenant` Ready
+7. **Status** — per-step conditions; `CrossplaneReady` from `XTenant` Ready; **`Phase=Ready` requires both operator paths and `CrossplaneReady`**
 
 Crossplane owns creation; the operator seeds secrets, drives the ConfigMap, and waits
 for composed resources to become Ready.
