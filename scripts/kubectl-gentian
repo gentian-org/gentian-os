@@ -1131,18 +1131,28 @@ wait_for_app_ready() {
 }
 
 # _app_lingering_pods returns app pods still running or terminating — not Completed
-# Job pods left in Succeeded phase (e.g. db-init, s3-init).
+# Job pods left in Succeeded phase (e.g. db-init, s3-init). Job pods whose owning
+# Job was already removed (orphans after Crossplane teardown) are ignored.
 _app_lingering_pods() {
   local ns_name="${1}"
   local app_name="${2}"
-  kubectl --request-timeout=5s get pods -n "${ns_name}" \
-    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null \
-    | awk -v app="${app_name}" '
-        index($1, app) &&
-        $2 != "Succeeded" &&
-        $2 != "Completed" {
-          print $1
-        }'
+  local pod phase job_name
+
+  while read -r pod phase; do
+    [[ -z "${pod}" ]] && continue
+    [[ "${phase}" == "Succeeded" || "${phase}" == "Completed" ]] && continue
+    [[ "${pod}" != *"${app_name}"* ]] && continue
+
+    job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+      -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
+    if [[ -n "${job_name}" ]] \
+        && ! kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" &>/dev/null; then
+      continue
+    fi
+
+    echo "${pod}"
+  done < <(kubectl --request-timeout=5s get pods -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null || true)
 }
 
 wait_for_app_uninstalled() {

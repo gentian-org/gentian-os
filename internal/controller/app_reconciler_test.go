@@ -20,6 +20,8 @@ import (
 	"context"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -419,4 +421,111 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 		types.NamespacedName{Name: "foreign-no-app-label", Namespace: "tenant-skip-noapp"}, check); err != nil {
 		t.Errorf("expected foreign claim without app label to survive orphan cleanup, got error: %v", err)
 	}
+}
+
+// TestApps_CleanupOrphanedAppWorkload verifies that Jobs and orphan Job pods for
+// apps removed from spec.apps are deleted during app reconciliation.
+func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
+	t.Parallel()
+	profile := newAppProfile("keep-app", nil)
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Orphan App Workload",
+			Domain:      "orphanwl.example.com",
+			AdminEmail:  "admin@orphanwl.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "keep-app"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	nsName := "tenant-orphan-app-wl"
+	waitFor(t, tenantReadyTimeout, func() bool {
+		return testClient.Get(context.Background(), types.NamespacedName{Name: nsName}, &corev1.Namespace{}) == nil
+	})
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "openproject-oidc-seed",
+			Namespace: nsName,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "gentian-os",
+				"gentianos.io/tenant":          tenant.Name,
+				"gentianos.io/app":             "openproject",
+			},
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{{
+						Name:  "seed",
+						Image: "pause:3.9",
+					}},
+				},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), job); err != nil {
+		t.Fatalf("create orphaned app Job: %v", err)
+	}
+
+	controller := true
+	orphanPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "openproject-oidc-seed-orphan",
+			Namespace: nsName,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "batch/v1",
+				Kind:       "Job",
+				Name:       "openproject-oidc-seed",
+				UID:        "00000000-0000-0000-0000-000000000001",
+				Controller: &controller,
+			}},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "seed",
+				Image: "pause:3.9",
+			}},
+		},
+	}
+	if err := testClient.Create(context.Background(), orphanPod); err != nil {
+		t.Fatalf("create orphaned Job pod: %v", err)
+	}
+
+	for {
+		updated := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenant.Name}, updated); err != nil {
+			t.Fatalf("get tenant: %v", err)
+		}
+		updated.Spec.DisplayName = "Orphan App Workload Updated"
+		if err := testClient.Update(context.Background(), updated); err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			t.Fatalf("update tenant: %v", err)
+		}
+		break
+	}
+
+	waitFor(t, tenantReadyTimeout, func() bool {
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "openproject-oidc-seed", Namespace: nsName}, &batchv1.Job{})
+		return apierrors.IsNotFound(err)
+	})
+
+	waitFor(t, tenantReadyTimeout, func() bool {
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "openproject-oidc-seed-orphan", Namespace: nsName}, &corev1.Pod{})
+		return apierrors.IsNotFound(err)
+	})
 }

@@ -808,6 +808,7 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-seed-job
               name: {{ $xrName }}-oidc-seed-job
             spec:
+              deletionPolicy: Delete
               forProvider:
                 manifest:
                   apiVersion: batch/v1
@@ -821,6 +822,7 @@ spec:
                       gentianos.io/app: {{ $app }}
                   spec:
                     ttlSecondsAfterFinished: 3600
+                    activeDeadlineSeconds: 1800
                     backoffLimit: 5
                     template:
                       spec:
@@ -833,7 +835,14 @@ spec:
                               - |
                                 set -euo pipefail
                                 export PGPASSWORD="${OPENPROJECT_DB_PASSWORD}"
+                                max_attempts=120
+                                attempt=0
                                 until bundle exec rails runner 'exit(ActiveRecord::Base.connection.table_exists?(:auth_providers) ? 0 : 1)' 2>/dev/null; do
+                                  attempt=$((attempt + 1))
+                                  if (( attempt >= max_attempts )); then
+                                    echo "[oidc-seed] timed out waiting for OpenProject DB migrations (auth_providers)"
+                                    exit 1
+                                  fi
                                   echo "[oidc-seed] waiting for OpenProject DB migrations (auth_providers)..."
                                   sleep 15
                                 done

@@ -20,12 +20,15 @@ import (
 	"fmt"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -44,6 +47,10 @@ var appClaimGVK = schema.GroupVersionKind{
 // ensureAppDeployment seeds OpenBao app secrets and watches Crossplane-owned App
 // claims for readiness. Claim creation is owned by tenant-default Composition.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	if err := r.cleanupOrphanedAppWorkload(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned app workload: %w", err)
+	}
+
 	if len(tenant.Spec.Apps) == 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "NoAppsConfigured", "No applications are configured for this tenant")
 		return ctrl.Result{}, nil
@@ -132,6 +139,67 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 // deleteAppDeployment is a no-op under C1: App claims are owned by the XTenant
 // Composition and deleted via deleteXTenant cascade.
 func (r *TenantReconciler) deleteAppDeployment(_ context.Context, _ *gentianov1alpha1.Tenant) error {
+	return nil
+}
+
+// cleanupOrphanedAppWorkload removes tenant-namespace Jobs and orphan Job pods for
+// apps no longer listed in tenant.Spec.Apps. Crossplane deletes App claims on
+// uninstall, but composition Jobs (e.g. openproject-oidc-seed) can leave pods
+// running when the owning Job disappears first.
+func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	desired := make(map[string]struct{}, len(tenant.Spec.Apps))
+	for _, app := range tenant.Spec.Apps {
+		desired[app.Profile] = struct{}{}
+	}
+
+	nsName := tenantNamespaceName(tenant)
+	prop := metav1.DeletePropagationBackground
+
+	jobList := &batchv1.JobList{}
+	if err := r.List(ctx, jobList,
+		client.InNamespace(nsName),
+		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name},
+	); err != nil {
+		return fmt.Errorf("list app Jobs in %s: %w", nsName, err)
+	}
+	for i := range jobList.Items {
+		job := &jobList.Items[i]
+		appName := job.Labels[appLabel]
+		if appName == "" {
+			continue
+		}
+		if _, wanted := desired[appName]; wanted {
+			continue
+		}
+		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete orphaned app Job %s: %w", job.Name, err)
+		}
+	}
+
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(nsName)); err != nil {
+		return fmt.Errorf("list pods in %s: %w", nsName, err)
+	}
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		for _, ref := range pod.OwnerReferences {
+			if ref.Kind != "Job" {
+				continue
+			}
+			job := &batchv1.Job{}
+			err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: nsName}, job)
+			if !errors.IsNotFound(err) {
+				continue
+			}
+			if err := r.Delete(ctx, pod, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("delete orphaned Job pod %s: %w", pod.Name, err)
+			}
+			break
+		}
+	}
 	return nil
 }
 
