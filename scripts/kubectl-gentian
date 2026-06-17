@@ -149,6 +149,34 @@ tenant_file() {
   echo "${candidates}" | head -n1
 }
 
+# Parse .../tenants/<instance>/<stage>/... from a tenant YAML path.
+tenant_instance_stage_from_file() {
+  local file="${1}"
+  if [[ "${file}" =~ /tenants/([^/]+)/([^/]+)/ ]]; then
+    echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+  fi
+}
+
+# Apply a tenant manifest change committed to git. Prefer ArgoCD sync so
+# selfHeal does not revert a premature kubectl apply from a stale revision.
+apply_tenant_manifest_from_git() {
+  local file="${1}"
+  local parsed instance env_name
+
+  parsed="$(tenant_instance_stage_from_file "${file}")"
+  instance="${parsed%% *}"
+  env_name="${parsed#* }"
+
+  if [[ -n "${instance}" && -n "${env_name}" ]] \
+      && [[ -n "$(argocd_tenants_app_for_instance "${instance}" "${env_name}")" ]]; then
+    argocd_trigger_sync_prune "${instance}" "${env_name}"
+    return 0
+  fi
+
+  echo "Applying tenant manifest directly (no ArgoCD app for Git sync)..."
+  kubectl apply -f "${file}"
+}
+
 git_commit_push() {
   local message="${1}"
 
@@ -2098,8 +2126,7 @@ cmd_install() {
   )
   git_commit_push "feat(${tenant}): install ${app}"
 
-  # Apply the updated Tenant CR so the operator reconciles immediately.
-  kubectl apply -f "${file}"
+  apply_tenant_manifest_from_git "${file}"
 
   if ! wait_for_app_ready "${tenant}" "${app}" 900; then
     echo "ERROR: app '${app}' did not become Ready on tenant '${tenant}'." >&2
@@ -2145,8 +2172,7 @@ cmd_uninstall() {
   )
   git_commit_push "feat(${tenant}): uninstall ${app}"
 
-  # Apply the updated Tenant CR so the operator reconciles immediately.
-  kubectl apply -f "${file}"
+  apply_tenant_manifest_from_git "${file}"
 
   if ! wait_for_app_uninstalled "${tenant}" "${app}" 900; then
     echo "ERROR: app '${app}' was not fully removed from tenant '${tenant}'." >&2
