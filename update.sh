@@ -113,8 +113,8 @@ Options:
                            login: SUBTREE on the LDAP base, mailPrimaryAddress
                            as username. Idempotent (see ldap-federation-patch.yaml).
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
-                           repository. Run after committing composition changes
-                           so the cluster picks them up without a full reinstall.
+                           repository (tenant-default manifest bridge, app-*).
+                           Run after convergence (C3/C4) changes; included in --all.
   --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.
@@ -1058,6 +1058,7 @@ op_argocd_bootstrap() {
             -e "s|%STAGE%|${stage}|g" \
             "${tmpl}" | kubectl apply -f -
         success "gentian-os Application manifest updated."
+        release_gentian_os_helm_bootstrap "gentian-system"
     else
         warn "Template not found: ${tmpl}"
     fi

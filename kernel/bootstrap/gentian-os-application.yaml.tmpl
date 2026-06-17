@@ -63,6 +63,34 @@ spec:
     jsonPointers:
     - /metadata/annotations
     - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+    # Phase 1 helm bootstrap + Phase 2 Argo SSA leave kube-defaulted Deployment
+    # fields on the live object that the Helm chart omits (same pattern as
+    # gentian-portal ApplicationSet). Without these, gentian-os stays OutOfSync
+    # while Healthy and install Step 16 times out every run.
+    jqPathExpressions:
+    - .spec.progressDeadlineSeconds
+    - .spec.revisionHistoryLimit
+    - .spec.strategy
+    - .spec.template.metadata.creationTimestamp
+    - .spec.template.spec.dnsPolicy
+    - .spec.template.spec.restartPolicy
+    - .spec.template.spec.schedulerName
+    - .spec.template.spec.terminationGracePeriodSeconds
+    - .spec.template.spec.serviceAccount
+    - .spec.template.spec.serviceAccountName
+    - .spec.template.spec.containers[].imagePullPolicy
+    - .spec.template.spec.containers[].resources
+    - .spec.template.spec.containers[].terminationMessagePath
+    - .spec.template.spec.containers[].terminationMessagePolicy
+    - .spec.template.spec.containers[].livenessProbe.failureThreshold
+    - .spec.template.spec.containers[].livenessProbe.successThreshold
+    - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].readinessProbe.failureThreshold
+    - .spec.template.spec.containers[].readinessProbe.successThreshold
+    - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+    - .spec.template.spec.volumes[].secret.defaultMode
   # Crossplane enriches gentianos.io XRD-owned CRDs with additional printer
   # columns and its own spec properties (compositionRef, resourceRefs, etc.)
   # after the initial install. Ignore spec.versions drift so ArgoCD does not

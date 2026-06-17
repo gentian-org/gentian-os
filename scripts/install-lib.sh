@@ -2970,6 +2970,14 @@ install_appprofiles_sync() {
 # Without Phase 2, argocd-image-updater reports "no ImageUpdater CRs to
 # process" and image updates require manual kubectl rollout restart.
 # =============================================================================
+release_gentian_os_helm_bootstrap() {
+    local ns="${1:-gentian-system}"
+    if kubectl get secret -n "$ns" -l "owner=helm,name=gentian-os" --no-headers 2>/dev/null | grep -q .; then
+        info "Removing bootstrap Helm release metadata (ArgoCD owns gentian-os now)..."
+        kubectl delete secret -n "$ns" -l "owner=helm,name=gentian-os" --ignore-not-found
+    fi
+}
+
 install_orchestrator() {
     banner "Step 15 — gentian-os orchestrator (CRDs + operator + ArgoCD handoff)"
 
@@ -3084,6 +3092,10 @@ install_orchestrator() {
     info "  deployments stage:  ${stage}"
     kubectl apply -f "$rendered"
     rm -f "$rendered"
+
+    release_gentian_os_helm_bootstrap "$ns"
+    kubectl annotate application gentian-os -n argocd \
+        "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
     success "Phase 2 complete: gentian-os Application and gentian-tenants ApplicationSet registered with ArgoCD."
     success "  Image updates are now fully automatic via argocd-image-updater."
@@ -3486,8 +3498,9 @@ wait_for_setup_iam_job() {
 # =============================================================================
 # 16a. Verify Keycloak iframe policy (portal-embedded OIDC)
 # =============================================================================
-# Waits for the gentian-os KeycloakPlatformReconciler to patch id.<kernel> ingress
-# and for browser-security Jobs to clear X-Frame-Options on Keycloak realms.
+# Waits for the gentian-os KeycloakPlatformReconciler to patch id.<kernel>
+# HTTPRoute (ROUTING_MODE=gateway) and for browser-security Jobs to clear
+# X-Frame-Options on Keycloak realms.
 verify_keycloak_iframe_policy() {
     banner "Step 16a — Verifying Keycloak iframe policy"
 
@@ -3499,33 +3512,33 @@ verify_keycloak_iframe_policy() {
 
     local services_ns="${SERVICES_NAMESPACE:-gentian-dev}"
     local kernel_ns="${KERNEL_NAMESPACE:-gentian-dev}"
-    local ingress_name="${KEYCLOAK_PROXY_INGRESS_NAME:-nubus-dev-keycloak-extensions-proxy}"
+    local route_name="${KEYCLOAK_IDP_HTTPROUTE_NAME:-kernel-idp}"
     local timeout="${KEYCLOAK_FRAME_VERIFY_TIMEOUT:-300}"
     local interval=10
     local elapsed=0
 
-    info "Waiting for Keycloak ingress ${ingress_name} and operator frame-ancestors patch..."
+    info "Waiting for Keycloak HTTPRoute ${route_name} and operator frame-ancestors patch..."
 
     while [[ $elapsed -lt $timeout ]]; do
-        local snippet=""
-        snippet=$(kubectl get ingress "$ingress_name" -n "$services_ns" \
-            -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/configuration-snippet}' \
+        local csp=""
+        csp=$(kubectl get httproute "$route_name" -n "$services_ns" \
+            -o jsonpath='{range .spec.rules[0].filters[*]}{.responseHeaderModifier.set[*].value}{"\n"}{end}' \
             2>/dev/null || true)
 
-        if [[ -n "$snippet" ]] \
-            && [[ "$snippet" == *"frame-ancestors"* ]] \
-            && [[ "$snippet" == *"https://portal.${kernel_domain}"* ]]; then
-            success "Keycloak ingress allows portal.${kernel_domain} in frame-ancestors."
+        if [[ -n "$csp" ]] \
+            && [[ "$csp" == *"frame-ancestors"* ]] \
+            && [[ "$csp" == *"https://portal.${kernel_domain}"* ]]; then
+            success "Keycloak HTTPRoute allows portal.${kernel_domain} in frame-ancestors."
             break
         fi
 
-        printf "  …waiting for Keycloak ingress CSP (%ds/%ds)\n" "$elapsed" "$timeout"
+        printf "  …waiting for Keycloak HTTPRoute CSP (%ds/%ds)\n" "$elapsed" "$timeout"
         sleep "$interval"
         elapsed=$((elapsed + interval))
     done
 
     if [[ $elapsed -ge $timeout ]]; then
-        warn "Keycloak ingress frame-ancestors not converged within ${timeout}s."
+        warn "Keycloak HTTPRoute frame-ancestors not converged within ${timeout}s."
         warn "Portal-embedded OIDC (WinBox) may show Firefox iframe errors until the operator reconciles."
         return 1
     fi
@@ -3554,7 +3567,7 @@ verify_keycloak_iframe_policy() {
         return 1
     fi
 
-    info "No browser-security jobs yet (no Tenant CRs?) — ingress CSP is ready."
+    info "No browser-security jobs yet (no Tenant CRs?) — HTTPRoute CSP is ready."
     return 0
 }
 
@@ -3602,6 +3615,13 @@ verify_argocd_apps() {
         synced=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.sync.status=="Synced")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
+        # Bootstrap operator: kube-defaulted Deployment fields (Application
+        # ignoreDifferences) can leave gentian-os OutOfSync while Healthy.
+        if kubectl get application gentian-os -n argocd \
+                -o jsonpath='{.status.sync.status}{" "}{.status.health.status}' 2>/dev/null \
+                | grep -qx 'OutOfSync Healthy'; then
+            synced=$((synced + 1))
+        fi
         healthy=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
