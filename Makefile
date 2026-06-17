@@ -94,7 +94,13 @@ test-unit-render:
 		if [ -d "$$dir/required-resources" ]; then \
 			req_args="-e $$dir/required-resources"; \
 		fi; \
-		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args 2>&1); \
+		obs_args=""; \
+		if [ -d "$$dir/observed-resources" ]; then \
+			obs_args="-o $$dir/observed-resources"; \
+		elif [ -f "$$dir/observed-resources.yaml" ]; then \
+			obs_args="-o $$dir/observed-resources.yaml"; \
+		fi; \
+		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args $$obs_args 2>&1); \
 		rc=$$?; \
 		if [ $$rc -ne 0 ]; then \
 			echo "FAIL: $$name (crossplane render exited $$rc)"; \
@@ -126,7 +132,13 @@ test-unit-render-update:
 		if [ -d "$$dir/required-resources" ]; then \
 			req_args="-e $$dir/required-resources"; \
 		fi; \
-		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args \
+		obs_args=""; \
+		if [ -d "$$dir/observed-resources" ]; then \
+			obs_args="-o $$dir/observed-resources"; \
+		elif [ -f "$$dir/observed-resources.yaml" ]; then \
+			obs_args="-o $$dir/observed-resources.yaml"; \
+		fi; \
+		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args $$obs_args \
 			> "$$dir/expected.yaml" && echo "UPDATED: $$name" || echo "FAIL: $$name"; \
 	done
 

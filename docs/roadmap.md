@@ -6,20 +6,24 @@ Crossplane + operator model see [crossplane-convergence.md](crossplane-convergen
 
 ---
 
-## Crossplane & operator (remaining)
+## Crossplane & operator (convergence — complete)
 
-| Item | Notes |
-|------|-------|
-| **Remove dead operator code** | Incremental C4.5 trim after P4 green — duplicate `ensureLDAPBase` / `ensureNextcloudGroup` calls removed; deletion Jobs still operator-owned | In progress |
-| **Broker IdP in manifest bridge** | `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | ✅ Done |
-| **P2 e2e — Pattern B kernel** | `p2-pattern-b.sh` | ✅ Done |
-| **`tenant-default` render goldens** | `crossplane/tests/unit/render/tenant-default/` | ✅ Done |
-| **Gateway edge remainder** | Cloudflare DNS and stale route/Ingress cleanup stay operator-owned; Certificate, Gateway, HTTPRoutes, ReferenceGrants, and BackendTrafficPolicy are in the manifest bridge. |
-| **`function-sequencer`** | Gate app Compositions on tenant identity/LDAP Ready instead of operator wait ordering. |
-| **`Phase=Ready` vs `CrossplaneReady`** | `Phase=Ready` requires operator paths and `CrossplaneReady=True`. | ✅ Done |
-| **XTenant / App schema tests** | `crossplane/tests/unit/schema/valid|invalid/` fixtures | ✅ Done |
+The Crossplane convergence programme ([crossplane-convergence.md §3](crossplane-convergence.md))
+is **closed**. All provision-path resources are owned by Crossplane via the manifest bridge;
+the operator seeds secrets, writes the ConfigMap, and waits.
 
-Open-item tracker with cluster audit: [crossplane-convergence.md §3](crossplane-convergence.md).
+| Item | Status |
+|------|--------|
+| Manifest bridge (jobs + objects) | ✅ Done |
+| Broker IdP in manifest bridge | ✅ Done |
+| Gateway edge (Crossplane-owned policies) | ✅ Done |
+| `function-sequencer` (App claims after identity/LDAP Jobs) | ✅ Done |
+| `Phase=Ready` gated on `CrossplaneReady` | ✅ Done |
+| P2 e2e, render goldens, schema unit tests | ✅ Done |
+| Dead operator provision-path Creates removed | ✅ Done |
+
+**Still operator-owned by design:** tenant deletion Jobs, mail/office, portal/UMC,
+Keycloak browser-security header Jobs. Not part of the convergence programme.
 
 ---
 
@@ -27,8 +31,7 @@ Open-item tracker with cluster audit: [crossplane-convergence.md §3](crossplane
 
 Kernel-facing mail (Postfix/Dovecot virtual domains, tenant mail secrets) and
 Collabora/office integration remain **operator-owned** today. Moving them into
-kernel or tenant Compositions is planned as a **separate workstream** — not part
-of the Crossplane convergence open-items list.
+kernel or tenant Compositions is planned as a **separate workstream**.
 
 See [design/mail.md](design/mail.md) and operator `ensureMail` / `ensureOffice`.
 
@@ -53,15 +56,17 @@ formal control mapping and evidence collection are **planned**.
 
 ---
 
-## Keycloak / `provider-keycloak` consolidation
+## Keycloak / `provider-keycloak` consolidation (deferred)
+
+**Status:** Deferred — blocked on upstream `provider-keycloak` Realm support for
+browser-flow tuning, LDAP federation sync, OIDC pack role mappings, and kernel
+IdP brokering.
 
 Today **kernel** OIDC clients are Crossplane MRs (`kernel/services/keycloak-config/`);
 **per-tenant** realms and many app clients are manifest-bridge Jobs (Crossplane
 Object MRs); some app clients use Composition Client MRs when `compositionRef`
 is set. Mid-term: migrate tenant realm lifecycle to drift-safe **`provider-keycloak`
-Realm MRs** once upstream supports the required browser-flow, LDAP federation,
-and broker settings — or retire MR-based paths only after a single owner is
-chosen for all Keycloak objects.
+Realm MRs** once upstream supports the required settings.
 
 ---
 
@@ -69,7 +74,7 @@ chosen for all Keycloak objects.
 
 | Topic | Where documented |
 |-------|------------------|
-| Converged architecture & open items | [crossplane-convergence.md](crossplane-convergence.md) |
+| Converged architecture & closed convergence items | [crossplane-convergence.md](crossplane-convergence.md) |
 | Tenant identity & LDAP (manifest bridge) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
 | Per-app HTTP-01 issuers on `AppProfile` | [architecture.md](architecture.md) §6.1 (future); operator uses DNS-01 wildcard today |
 | IntegrationBindings in Crossplane | [design/app-catalogue.md](design/app-catalogue.md) §8b |

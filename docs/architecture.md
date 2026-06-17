@@ -159,8 +159,6 @@ Crossplane (manifest-bridge Jobs and app Composition MRs).
 
 **Future directions** (see [roadmap.md](roadmap.md))
 
-- Move remaining gateway DNS/policies into Crossplane  
-- `function-sequencer` gating for app Compositions on tenant identity Ready  
 - App catalogue via OCI artefact + `Cluster` XR instead of a separate ArgoCD Application  
 - Drift-safe `provider-keycloak` Realm MRs for tenant realms
 

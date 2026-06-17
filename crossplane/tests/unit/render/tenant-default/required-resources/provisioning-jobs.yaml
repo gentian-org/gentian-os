@@ -7,5 +7,57 @@ metadata:
     gentianos.io/config-type: tenant-provisioning-jobs
     gentianos.io/tenant: render-fixture
 data:
-  jobs.json: "[]"
+  # Minimal identity/LDAP Jobs so function-sequencer rules (job-keycloak-.* / job-ldap-.*
+  # before app-.*) have matching prerequisites in render goldens.
+  jobs.json: |
+    [
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "keycloak-realm-render-fixture",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "render-fixture"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "ldap-ou-render-fixture",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "render-fixture"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
   objects.json: "[]"

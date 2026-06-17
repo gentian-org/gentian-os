@@ -52,7 +52,7 @@ info "Applying providers (function-go-templating, provider-kubernetes, provider-
 kubectl apply -f "${REPO_ROOT}/providers/providers.yaml"
 
 info "Waiting for providers to become Healthy (timeout: ${TIMEOUT_PROVIDERS})..."
-for provider in function-go-templating provider-kubernetes provider-vault; do
+for provider in function-go-templating function-extra-resources function-auto-ready function-sequencer provider-kubernetes provider-vault; do
   info "  Waiting for: ${provider}"
   kubectl wait "function.pkg.crossplane.io/${provider}" \
     --for=condition=Healthy --timeout="${TIMEOUT_PROVIDERS}" 2>/dev/null \

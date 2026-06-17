@@ -43,12 +43,13 @@ client Jobs; the app Composition emits Keycloak Client MRs instead.
 - On tenant **delete**, imperative cleanup Jobs may still run until XR cascade
   fully replaces them ([roadmap.md](../roadmap.md))
 
-## Composition ordering (planned)
+## Composition ordering
 
-App Compositions that emit `ldap-search-init` or Keycloak Client MRs should gate
-on tenant identity/LDAP Ready using composition pipeline **`function-sequencer`**
-or observe composed Job Object status before rendering app resources. Today,
-ordering is enforced by the operator wait sequence.
+App Compositions that emit `ldap-search-init` or Keycloak Client MRs are gated in
+`tenant-default` by **`function-sequencer`**: App claims are withheld until
+Keycloak identity Jobs (`job-keycloak-.*`) and LDAP Jobs (`job-ldap-.*`) from
+the manifest bridge are Ready. The operator still waits on Job completion and
+maps status to `IdentityReady` / `LDAPReady`.
 
 ## Script bundle (future)
 

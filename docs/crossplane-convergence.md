@@ -1,6 +1,6 @@
 # Crossplane Convergence — Architecture & Open Items
 
-**Status:** Converged architecture in production; remaining work tracked below.
+**Status:** Crossplane convergence complete (2026-06). Deferred work tracked in [roadmap.md](roadmap.md).
 
 This document describes **how tenant and kernel provisioning work today** — Crossplane
 owns infrastructure lifecycle; the operator orchestrates the human-facing `Tenant` API.
@@ -64,6 +64,8 @@ Each `Tenant` reconcile:
 
 Crossplane **`tenant-default`** emits: Namespace, LimitRange, ResourceQuota, NetworkPolicy,
 OpenBao policy, provisioning Jobs/Objects from the manifest bridge, App claims.
+`function-sequencer` (after `function-auto-ready`) gates App claims until tenant shell,
+Keycloak identity Jobs, and LDAP Jobs are Ready.
 
 App Compositions (`app-default`, `app-element`, `app-ox`, …) emit: ExternalSecrets,
 Helm Releases, Keycloak Client MRs, per-app init Jobs.
@@ -109,31 +111,34 @@ Audit of the **test/dev cluster** (`demo` tenant, kernel domain `desk.gentian.or
 | P4 cutover (`make e2e-p4`) | ✅ | All checks pass on stable app set (Element) |
 | Intercom ICS (Element Nordeck) | ✅ | `gateway.yaml` extraEnvVars override in-cluster `BASE_URL` |
 
-**Conclusion:** **Ready to continue C4.5 dead-code removal** incrementally (duplicate shared-kernel
-wait paths removed; deletion Jobs and mail/office remain operator-owned). Run `make e2e-p4` after
-each trim on live tenants.
+**Conclusion:** Convergence items **#1–#10 are closed**. Provision paths are wait-only via the
+manifest bridge; operator-owned Create paths that remain (deletion Jobs, mail/office, portal/UMC,
+browser-security) are intentional and tracked outside this list. Run `make e2e-p4` after operator
+changes on live tenants.
 
 ---
 
-## 3. Open items
+## 3. Convergence items (closed)
 
-Tracked here for visibility; detailed rationale and priority in [roadmap.md](roadmap.md).
+All items below are **complete** for the Crossplane convergence programme. Item **#7** is
+**deferred** to the Keycloak track in [roadmap.md](roadmap.md) (blocked on upstream
+`provider-keycloak` Realm support).
 
 | # | Item | Owner / area | Status |
 |---|------|--------------|--------|
-| 1 | **Remove dead operator code** — duplicate shared-kernel waits, deletion imperatives superseded by XR cascade where safe | Operator | **In progress** (nc-group / LDAP-base duplicate calls removed) |
+| 1 | **Remove dead operator code** — duplicate provision-path Creates removed; wait-only via manifest bridge | Operator | ✅ Done |
 | 2 | **Broker IdP Job in manifest bridge** — `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | Operator / identity | ✅ Done |
 | 3 | **P2 e2e — Pattern B kernel charts** | Tests | ✅ Done |
 | 4 | **`tenant-default` render goldens** | Tests | ✅ Done |
-| 5 | **Gateway edge (operator remainder)** — Cloudflare DNS, stale route/Ingress cleanup; ReferenceGrants and BackendTrafficPolicy in manifest bridge | Operator / edge | ✅ Done (DNS + cleanup operator; K8s policies Crossplane) |
-| 6 | **Composition ordering** — `function-sequencer` to gate app Compositions on tenant identity Ready | Crossplane | Not started |
-| 7 | **`provider-keycloak` consolidation** — drift-safe tenant Realm MRs vs operator Jobs | Keycloak | Blocked upstream |
+| 5 | **Gateway edge (operator remainder)** — Cloudflare DNS, stale route/Ingress cleanup; ReferenceGrants and BackendTrafficPolicy in manifest bridge | Operator / edge | ✅ Done |
+| 6 | **Composition ordering** — `function-sequencer` gates App claims on identity/LDAP Jobs Ready | Crossplane | ✅ Done |
+| 7 | **`provider-keycloak` consolidation** — drift-safe tenant Realm MRs vs operator Jobs | Keycloak | ⏸ Deferred (blocked upstream) |
 | 8 | **Gate `Phase=Ready` on `CrossplaneReady`** — stricter readiness semantics | Operator | ✅ Done |
 | 9 | **Doc sync** — `architecture.md` §3.1, Makefile e2e comments | Docs | ✅ Done |
 | 10 | **XTenant / App schema unit tests** — extend `test-unit-schema` beyond cluster fixtures | Tests | ✅ Done |
 
-Mail and office provisioning are **out of scope** for this list — tracked separately
-in [roadmap.md](roadmap.md).
+**Intentionally operator-owned** (not part of this programme): tenant deletion Jobs, mail/office
+provisioning, portal/UMC convergence, Keycloak browser-security header Jobs. See [roadmap.md](roadmap.md).
 
 ---
 
