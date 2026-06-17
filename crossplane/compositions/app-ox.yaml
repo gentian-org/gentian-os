@@ -91,6 +91,30 @@ spec:
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
 
+            {{- /* Tenant domain — used for Keycloak redirect URIs and extraValues. */}}
+            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+
+            {{- /* Load cluster-config ConfigMap for init Jobs and LDAP defaults. */}}
+            {{- $ccRes      := dig "clusterConfig" list $extraRes }}
+            {{- $ccCM       := default dict (index $ccRes 0) }}
+            {{- $ccData     := dig "data" dict $ccCM }}
+            {{- $clusterCfgs := $ccRes }}
+            {{- $ldapBaseDn    := dig "ldap.baseDn"    "dc=swp-ldap,dc=internal" $ccData }}
+            {{- $udmUrl        := dig "udm.url"        "" $ccData }}
+            {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
+            {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
+            {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
+            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
+            {{- $ldapServer  := "nubus-dev-ldap-server.gentian-dev.svc.cluster.local" }}
+            {{- $ldapBindDn  := "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal" }}
+            {{- if gt (len $clusterCfgs) 0 }}
+            {{- $cc := index $clusterCfgs 0 }}
+            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
+            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
+            {{- $ccLdapBindDn := dig "data" "ldap.bindDn" "" $cc }}
+            {{- if $ccLdapBindDn }}{{- $ldapBindDn = $ccLdapBindDn }}{{- end }}
+            {{- end }}
+
             {{- /* ── ExternalSecret data[] entries (same logic as app-default) ─ */}}
             {{- $esData := list }}
 
@@ -367,7 +391,6 @@ spec:
 
             {{- $extraVals := dict }}
             {{- if $pSpec.extraValues }}
-            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
@@ -382,20 +405,6 @@ spec:
             {{- if $s3Endpoint }}{{ $raw = $raw | replace "${S3_ENDPOINT}" $s3Endpoint }}{{ end }}
             {{- if $mysqlHost  }}{{ $raw = $raw | replace "${MYSQL_HOST}"  $mysqlHost  }}{{ end }}
             {{- if $redisHost  }}{{ $raw = $raw | replace "${REDIS_HOST}"  $redisHost  }}{{ end }}
-            {{- /* Substitute LDAP connection details from gentian-cluster-config ConfigMap. */}}
-            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
-            {{- $ldapServer  := "nubus-dev-ldap-server.gentian-dev.svc.cluster.local" }}
-            {{- $ldapBaseDn  := "dc=swp-ldap,dc=internal" }}
-            {{- $ldapBindDn  := "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal" }}
-            {{- if gt (len $clusterCfgs) 0 }}
-            {{- $cc := index $clusterCfgs 0 }}
-            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
-            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
-            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
-            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
-            {{- $ccLdapBindDn := dig "data" "ldap.bindDn" "" $cc }}
-            {{- if $ccLdapBindDn }}{{- $ldapBindDn = $ccLdapBindDn }}{{- end }}
-            {{- end }}
             {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
             {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
             {{- $raw = $raw | replace "${LDAP_BIND_DN}" $ldapBindDn }}
@@ -591,16 +600,6 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
-            {{- $ccData        := dict }}
-            {{- if gt (len $clusterCfgs) 0 }}
-            {{- $ccData = dig "data" dict (index $clusterCfgs 0) }}
-            {{- end }}
-            {{- $udmUrl        := dig "udm.url"        "" $ccData }}
-            {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
-            {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
-            {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
-            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
-            {{- $kr            := default dict $pSpec.kernelRequirements }}
             {{- $identity      := default dict $kr.identity }}
             {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}
             {{- if and $ldapReqs.search $ldapBaseDn $udmUrl }}
