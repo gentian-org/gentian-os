@@ -213,7 +213,7 @@ func (r *TenantReconciler) ensureBrokerFirstLoginFlowJob(ctx context.Context, te
 			return false, fmt.Errorf("delete stale broker first-login flow job %s: %w", jobName, delErr)
 		}
 	}
-	return r.waitForProvisioningJob(ctx, jobName)
+	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
 }
 
 func brokerFirstLoginFlowJobCurrent(job *batchv1.Job) bool {
@@ -251,7 +251,7 @@ func brokerFirstLoginFlowJobName(tenantName string) string {
 }
 
 func (r *TenantReconciler) ensureOIDCBrowserFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, oidcBrowserFlowJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, oidcBrowserFlowJobName(tenant.Name))
 }
 
 func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
@@ -262,7 +262,7 @@ func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gent
 }
 
 func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
-	return r.waitForProvisioningJob(ctx, clientJobName(tenant.Name, cfg.profileName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
 func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret string) *batchv1.Job {

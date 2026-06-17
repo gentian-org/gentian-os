@@ -259,17 +259,17 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 
 // ensureRealmJob waits for the Crossplane-owned Keycloak realm Job.
 func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, realmJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 }
 
 // ensureAdminJob waits for the Crossplane-owned tenant realm-admin Job.
 func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, adminJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, adminJobName(tenant.Name))
 }
 
 // ensureClientJob waits for the Crossplane-owned OIDC client Job for one app.
 func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, clientJobName(tenant.Name, appName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, appName))
 }
 
 // deleteIdentity handles identity cleanup on tenant deletion.
@@ -533,7 +533,7 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, ker
 // making the Keycloak re-enable durable against subsequent LDAP federation
 // imports.
 func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminEmail string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, kernelAdminEnableJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, kernelAdminEnableJobName(tenant.Name))
 }
 
 // keycloakContainer returns a Container spec that runs a shell script via the
@@ -1004,7 +1004,7 @@ func (r *TenantReconciler) kernelJobSucceeded(ctx context.Context, jobName strin
 }
 
 func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, _ func() *batchv1.Job) (bool, error) {
-	return r.waitForProvisioningJob(ctx, jobName)
+	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
 }
 
 // ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and

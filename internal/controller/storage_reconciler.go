@@ -128,12 +128,12 @@ func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *genti
 
 // ensureS3BucketJob waits for the Crossplane-owned MinIO bucket Job.
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, s3BucketJobName(tenant.Name, appName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, s3BucketJobName(tenant.Name, appName))
 }
 
 // ensureNextcloudGroupJob waits for the Crossplane-owned Nextcloud group Job.
 func (r *TenantReconciler) ensureNextcloudGroupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.waitForProvisioningJob(ctx, nextcloudGroupJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, nextcloudGroupJobName(tenant.Name))
 }
 
 // deleteStorage handles storage cleanup on tenant deletion.

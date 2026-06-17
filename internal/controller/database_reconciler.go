@@ -151,7 +151,7 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 
 // ensureRoleJob waits for the Crossplane-owned psql role Job.
 func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, roleJobName(tenant.Name, appName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, roleJobName(tenant.Name, appName))
 }
 
 // deleteDatabase handles database cleanup on tenant deletion.

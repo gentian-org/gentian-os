@@ -99,7 +99,7 @@ func (r *TenantReconciler) collectMariaDBApps(ctx context.Context, tenant *genti
 
 // ensureMariaDBSetupJob waits for the Crossplane-owned MariaDB setup Job.
 func (r *TenantReconciler) ensureMariaDBSetupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, mariadbSetupJobName(tenant.Name, appName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, mariadbSetupJobName(tenant.Name, appName))
 }
 
 // deleteMariaDB handles MariaDB cleanup on tenant deletion.

@@ -163,9 +163,9 @@ func (r *TenantReconciler) ensureBrokerIdentityProviderJob(ctx context.Context, 
 	if r.KernelRealm == "" || r.KernelDomain == "" {
 		return true, nil
 	}
-	realmDone, err := r.waitForProvisioningJob(ctx, realmJobName(tenant.Name))
+	realmDone, err := r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 	if err != nil || !realmDone {
 		return false, err
 	}
-	return r.waitForProvisioningJob(ctx, tenantBrokerIdPJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, tenantBrokerIdPJobName(tenant.Name))
 }

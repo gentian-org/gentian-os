@@ -352,28 +352,28 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 	}
 
 	jobName := portalEntryJobName(tenant.Name, pa.AppName)
-	return r.waitForProvisioningJob(ctx, jobName)
+	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
 }
 
 // ensureOUJob waits for the Crossplane-owned UDM OU + groups Job.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensureOUJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, ouJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, ouJobName(tenant.Name))
 }
 
 // ensureMBAGroupsJob waits for the Crossplane-owned managed-by-attribute groups Job.
 func (r *TenantReconciler) ensureMBAGroupsJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, mbaGroupsJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, mbaGroupsJobName(tenant.Name))
 }
 
 // ensureAdminPolicyJob waits for the Crossplane-owned delegated-admin policy Job.
 func (r *TenantReconciler) ensureAdminPolicyJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, adminPolicyJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, adminPolicyJobName(tenant.Name))
 }
 
 // ensureAppUserCapabilitiesJob waits for the Crossplane-owned App User capabilities Job.
 func (r *TenantReconciler) ensureAppUserCapabilitiesJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, appUserCapabilitiesJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, appUserCapabilitiesJobName(tenant.Name))
 }
 
 // ensureAppUserTemplateJob waits for the Crossplane-owned App User template Job.
@@ -382,17 +382,17 @@ func (r *TenantReconciler) ensureAppUserTemplateJob(ctx context.Context, tenant 
 	if mailDomain == "" {
 		return false, fmt.Errorf("tenant %q has no effective domain for App User mail prefill", tenant.Name)
 	}
-	return r.waitForProvisioningJob(ctx, appUserTemplateJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, appUserTemplateJobName(tenant.Name))
 }
 
 // ensureAdminUserJob waits for the Crossplane-owned UDM tenant admin user Job.
 func (r *TenantReconciler) ensureAdminUserJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, creds secrets.TenantAdminCreds) (bool, error) {
-	return r.waitForProvisioningJob(ctx, adminUserJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, adminUserJobName(tenant.Name))
 }
 
 // ensureBindAccountJob waits for the Crossplane-owned UDM bind account Job.
 func (r *TenantReconciler) ensureBindAccountJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN, appName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, bindAccountJobName(tenant.Name, appName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, bindAccountJobName(tenant.Name, appName))
 }
 
 // deleteLDAP handles LDAP cleanup on tenant deletion.
@@ -2117,7 +2117,7 @@ func (r *TenantReconciler) ensurePortalRealtimeLinksJob(
 	tenant *gentianov1alpha1.Tenant,
 	ouDN, meetURL, chatURL string,
 ) (bool, error) {
-	return r.waitForProvisioningJob(ctx, portalRealtimeLinksJobName(tenant.Name))
+	return r.waitForProvisioningJob(ctx, tenant.Name, portalRealtimeLinksJobName(tenant.Name))
 }
 
 func makePortalRealtimeLinksJob(tenant *gentianov1alpha1.Tenant, ouDN, meetURL, chatURL string, includeLegacy bool) *batchv1.Job {

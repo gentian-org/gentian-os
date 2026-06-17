@@ -137,7 +137,7 @@ func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentian
 
 // ensureRedisACLJob waits for the Crossplane-owned Redis ACL Job.
 func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, redisACLJobName(tenant.Name, appName))
+	return r.waitForProvisioningJob(ctx, tenant.Name, redisACLJobName(tenant.Name, appName))
 }
 
 // ensureMemcached waits for the Crossplane-provisioned Memcached Deployment.
