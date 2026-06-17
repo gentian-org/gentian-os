@@ -1,0 +1,20 @@
+# ROUTING_MODE=gateway overlay for intercom-service (merged last via helm.valuesFrom).
+# Rendered at install/update time with envsubst and KERNEL_DOMAIN from cluster-settings.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: intercom-gateway-values
+  namespace: gentian-${ENV}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    extraEnvVars:
+      - name: REDIS_USER
+        value: default
+      - name: NODE_EXTRA_CA_CERTS
+        value: /opt/staging-ca/node-extra-ca.crt
+      - name: BASE_URL
+        value: https://ics.${KERNEL_DOMAIN}
+      - name: INTERCOM_URL
+        value: https://ics.${KERNEL_DOMAIN}

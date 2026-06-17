@@ -1921,10 +1921,112 @@ apply_kernel_gateway_overlays() {
         >/dev/null 2>&1 || true
     kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud-notifypush/manifests/dev/gateway-values-configmap.yaml" \
         >/dev/null 2>&1 || true
-    success "Kernel gateway Helm overlays applied (nextcloud, notifypush)."
+    apply_intercom_gateway_values || true
+    success "Kernel gateway Helm overlays applied (nextcloud, notifypush, intercom)."
     info "  Nubus gateway overlay: ConfigMap nubus-gateway-values (created in deploy_nubus)."
-    info "  Portal/intercom: gateway.yaml valueFiles in ApplicationSets 20/22."
+    info "  Intercom BASE_URL overlay: ConfigMap intercom-gateway-values (KERNEL_DOMAIN)."
     print_gateway_tunnel_hints || true
+}
+
+# apply_intercom_gateway_values renders intercom public BASE_URL from KERNEL_DOMAIN.
+apply_intercom_gateway_values() {
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping intercom gateway values ConfigMap."
+        return 0
+    fi
+    local tmpl="${SCRIPT_DIR}/kernel/services/intercom-service/manifests/dev/gateway-values-configmap.yaml.tmpl"
+    if [[ ! -f "$tmpl" ]]; then
+        warn "Missing ${tmpl} — skipping intercom gateway values."
+        return 0
+    fi
+    export ENV="${ENV:-dev}"
+    export KERNEL_DOMAIN
+    envsubst '${ENV} ${KERNEL_DOMAIN}' < "$tmpl" | kubectl apply -f -
+}
+
+# verify_intercom_ics checks ICS silent-login prerequisites for portal-embedded Element.
+# Symptom when broken: Nordeck loading screen flicker; intercom logs repeat
+# "Error verifying ICS OIDC access_token" / "Silent login, logged in false".
+verify_intercom_ics() {
+    banner "Step 16b — Verifying intercom / ICS (Element Nordeck banner)"
+
+    local kernel_domain="${KERNEL_DOMAIN:-}"
+    if [[ -z "$kernel_domain" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping intercom verification."
+        return 0
+    fi
+
+    local services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local deploy="intercom-service-${ENV:-dev}"
+    local timeout="${INTERCOM_VERIFY_TIMEOUT:-300}"
+    local interval=10
+    local elapsed=0
+
+    info "Waiting for ${deploy} in ${services_ns}..."
+    while [[ $elapsed -lt $timeout ]]; do
+        if kubectl get deployment "$deploy" -n "$services_ns" >/dev/null 2>&1; then
+            break
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+    if ! kubectl get deployment "$deploy" -n "$services_ns" >/dev/null 2>&1; then
+        warn "Deployment ${deploy} not found — skipping intercom verification."
+        return 0
+    fi
+
+    local base_url
+    base_url=$(kubectl get deployment "$deploy" -n "$services_ns" \
+        -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\t"}{.value}{"\n"}{end}' \
+        2>/dev/null | awk -F'\t' '$1=="BASE_URL"{print $2; exit}')
+    local want_base="https://ics.${kernel_domain}"
+    if [[ "$base_url" != "$want_base" ]]; then
+        warn "intercom BASE_URL=${base_url:-<unset>} (want ${want_base})."
+        warn "  Re-run install/update to apply intercom-gateway-values ConfigMap, then sync intercom-service-${ENV:-dev}."
+    else
+        success "intercom BASE_URL=${base_url}"
+    fi
+
+    local silent_loc
+    silent_loc=$(curl -fsSI "https://ics.${kernel_domain}/silent" 2>/dev/null | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\r' || true)
+    if [[ -n "$silent_loc" && "$silent_loc" == *intercom-service*":8008"* ]]; then
+        warn "ICS /silent still redirects with in-cluster redirect_uri — BASE_URL misconfigured."
+        return 1
+    fi
+    if [[ -n "$silent_loc" && "$silent_loc" == *"redirect_uri=https%3A%2F%2Fics.${kernel_domain}"* ]]; then
+        success "ICS /silent uses public redirect_uri."
+    fi
+
+    info "Checking intercom Redis connectivity..."
+    elapsed=0
+    while [[ $elapsed -lt $timeout ]]; do
+        local logs
+        logs=$(kubectl logs -n "$services_ns" "deployment/${deploy}" --tail=200 2>/dev/null || true)
+        if [[ "$logs" == *"Redis connected"* ]]; then
+            success "intercom logged Redis connected."
+            if [[ "$logs" == *"Redis error"* || "$logs" == *"ENOTFOUND"*redis* ]]; then
+                warn "intercom also reports Redis errors in recent logs — check REDIS_HOST and restart."
+                return 1
+            fi
+            if [[ "$logs" == *"Error verifying ICS OIDC access_token"* ]]; then
+                warn "intercom is rejecting stale ICS session tokens (Nordeck navigation loop)."
+                warn "  Clear browser cookies for ics.${kernel_domain}, reload portal, reopen Element."
+                warn "  If it persists in Firefox, try Ctrl/Cmd+click Element (top-level tab)."
+            fi
+            return 0
+        fi
+        if [[ "$logs" == *"Redis error"* || "$logs" == *"ENOTFOUND"*redis* ]]; then
+            warn "intercom cannot reach Redis — Element Nordeck banner will flicker until Redis is reachable."
+            warn "  kubectl logs -n ${services_ns} deployment/${deploy} | grep -i redis"
+            return 1
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    warn "intercom did not log 'Redis connected' within ${timeout}s."
+    warn "  Try: kubectl rollout restart deployment/${deploy} -n ${services_ns}"
+    return 1
 }
 
 wait_for_gateway_platform() {

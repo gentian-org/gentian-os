@@ -1079,6 +1079,8 @@ op_argocd_bootstrap() {
             "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
     verify_argocd_apps || true
+    apply_intercom_gateway_values || true
+    verify_intercom_ics || true
 }
 
 # =============================================================================

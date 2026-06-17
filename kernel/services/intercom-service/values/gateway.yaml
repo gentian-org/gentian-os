@@ -2,15 +2,9 @@
 # The intercom chart sets BASE_URL from ingress.host when ingress.enabled=true; when
 # false it falls back to http://intercom-service-<env>:8008. Browser OIDC silent login
 # (Nordeck Element banner, Jitsi portal session refresh) needs the public ICS origin.
+#
+# Public BASE_URL / INTERCOM_URL are injected from the cluster-scoped ConfigMap
+# intercom-gateway-values (rendered from manifests/dev/gateway-values-configmap.yaml.tmpl
+# at install/update time with KERNEL_DOMAIN). Do not hardcode the kernel domain here.
 ingress:
   enabled: false
-
-extraEnvVars:
-  - name: REDIS_USER
-    value: default
-  - name: NODE_EXTRA_CA_CERTS
-    value: /opt/staging-ca/node-extra-ca.crt
-  - name: BASE_URL
-    value: https://ics.desk.gentian.org
-  - name: INTERCOM_URL
-    value: https://ics.desk.gentian.org

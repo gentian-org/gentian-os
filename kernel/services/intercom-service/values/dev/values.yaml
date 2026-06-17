@@ -25,15 +25,9 @@ extraVolumeMounts:
   - name: gentian-staging-ca
     mountPath: /opt/staging-ca
     readOnly: true
-extraEnvVars:
-  - name: REDIS_USER
-    value: default
-  # Node appends this file to the default Mozilla trust store. Must be the LE
-  # staging issuer chain only (see gentian-staging-ca-tls node-extra-ca.crt).
-  - name: NODE_EXTRA_CA_CERTS
-    value: /opt/staging-ca/node-extra-ca.crt
 
 ics:
+  logLevel: DEBUG
   session:
     existingSecret:
       name: intercom-credentials
@@ -57,7 +51,9 @@ ics:
         keyMapping:
           sharedSecret: portal-shared-secret
   redis:
-    host: redis-dev-headless.gentian-infra-dev.svc.cluster.local
+    # Use the master Service (stable ClusterIP DNS), not headless — intercom fails
+    # silently when Redis DNS is not yet resolvable at pod start (Element Nordeck loop).
+    host: redis-dev-master.gentian-infra-dev.svc.cluster.local
     auth:
       existingSecret:
         name: intercom-credentials

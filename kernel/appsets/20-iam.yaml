@@ -48,6 +48,11 @@ spec:
           - $values/kernel/services/{{.app}}/values/_base.yaml
           - $values/kernel/services/{{.app}}/values/{{.env}}/values.yaml
           - $values/kernel/services/{{.app}}/values/gateway.yaml
+          valuesFrom:
+          - kind: ConfigMap
+            name: intercom-gateway-values
+            valuesKey: values.yaml
+            optional: true
       destination:
         server: https://kubernetes.default.svc
         namespace: 'gentian-{{.env}}'
