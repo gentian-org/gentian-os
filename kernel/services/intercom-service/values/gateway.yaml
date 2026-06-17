@@ -14,7 +14,7 @@ extraEnvVars:
     value: default
   - name: NODE_EXTRA_CA_CERTS
     value: /opt/staging-ca/node-extra-ca.crt
-  - name: BASE_URL
-    value: https://ics.desk.gentian.org
-  - name: INTERCOM_URL
-    value: https://ics.desk.gentian.org
+  # BASE_URL / INTERCOM_URL come from intercom-gateway-values ConfigMap (valuesFrom,
+  # merged last in kernel/appsets/20-iam.yaml). install.sh/update.sh render that
+  # ConfigMap from KERNEL_DOMAIN and run verify_intercom_ics — do not hardcode the
+  # kernel domain here or other clusters regress to in-cluster BASE_URL flicker.

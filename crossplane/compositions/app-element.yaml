@@ -1468,3 +1468,26 @@ spec:
     - step: automatically-detect-ready-composed-resources
       functionRef:
         name: function-auto-ready
+
+    # ── Step 4: Gate Helm releases until OIDC pack scopes are attached ─────────
+    # provider-keycloak Client sync can strip opendesk-matrix-scope from
+    # opendesk-synapse; ClientDefaultScopes re-attaches it. Without sequencing,
+    # Element loads while scopes are missing → invalid_scope SSO loop (loading
+    # screen flicker). Nordeck ICS banner flicker is a separate kernel issue.
+    - step: sequence-element-oidc-scopes
+      functionRef:
+        name: function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        resetCompositeReadiness: true
+        rules:
+          - sequence:
+            - .*-keycloak-client
+            - .*-keycloak-default-scopes
+          - sequence:
+            - .*-keycloak-default-scopes
+            - .*-synapse-release
+          - sequence:
+            - .*-keycloak-default-scopes
+            - .*-release
