@@ -1941,7 +1941,7 @@ apply_intercom_gateway_values() {
     fi
     export ENV="${ENV:-dev}"
     export KERNEL_DOMAIN
-    envsubst '${ENV} ${KERNEL_DOMAIN}' < "$tmpl" | kubectl apply -f -
+    envsubst "\${ENV} \${KERNEL_DOMAIN}" < "$tmpl" | kubectl apply -f -
 }
 
 # verify_intercom_ics checks ICS silent-login prerequisites for portal-embedded Element.
