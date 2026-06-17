@@ -703,6 +703,7 @@ if [ -n "${LDAP_SERVER:-}" ]; then
   fi
 
   ensure_ldap_uid_attribute_mapper "%s" "ldap"
+  ensure_ldap_email_attribute_mapper "%s" "ldap"
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -776,13 +777,13 @@ ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
   #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
 	// Realm Job registers the kernel IdP with the built-in "first broker login" flow.
 	// The custom first-broker-login-gentian flow is created later (dedicated Job or
 	// broker-idp Job) before the IdP alias is switched — see docs/design/iam.md.
-	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + script
+	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + ensureLDAPEmailAttributeMapperShell + script
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
@@ -844,12 +845,13 @@ echo "Keycloak LDAP group sync complete for realm ${REALM}: ${RESULT}"
 	}
 	if syncUsers {
 		steps += `
+ensure_ldap_email_attribute_mapper "${REALM}" "ldap"
 RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
 echo "Keycloak LDAP user sync complete for realm ${REALM}: ${RESULT}"
 `
 	}
-	return fmt.Sprintf(`set -eu
+	return keycloakShellJSONIDExtractor() + ensureLDAPEmailAttributeMapperShell + fmt.Sprintf(`set -eu
 REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \

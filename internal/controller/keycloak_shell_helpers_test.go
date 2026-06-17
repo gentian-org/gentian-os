@@ -74,6 +74,15 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, `keycloak_json_id_by_attr "${LDAP_COMPONENTS}" "name" "ldap"`) {
 		t.Fatal("expected quoted LDAP_COMPONENTS JSON for keycloak_json_id_by_attr")
 	}
+	if !strings.Contains(script, `ensure_ldap_uid_attribute_mapper "demo" "ldap"`) {
+		t.Fatal("expected uid ldap mapper helper invocation in realm script")
+	}
+	if !strings.Contains(script, "ensure_ldap_email_attribute_mapper") {
+		t.Fatal("expected email ldap mapper helper in realm script")
+	}
+	if !strings.Contains(script, "mailPrimaryAddress") {
+		t.Fatal("expected mailPrimaryAddress in realm script email mapper")
+	}
 	if !strings.Contains(script, `"${KEYCLOAK_URL}/admin/realms/demo")`) {
 		t.Fatal("realm script must not corrupt HTTP realm URL with misplaced format args")
 	}
