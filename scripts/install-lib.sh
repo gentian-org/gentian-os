@@ -3111,6 +3111,20 @@ install_app_catalogue() {
         return 0
     fi
 
+    # Mirror to ~/.local/bin when present — it often precedes /usr/local/bin in PATH.
+    local user_bin="${HOME}/.local/bin"
+    local user_plugin_dst="${user_bin}/kubectl-gentian"
+    local user_alias_dst="${user_bin}/gtnctl"
+    if [[ -d "${user_bin}" ]]; then
+        if [[ -w "${user_bin}" ]]; then
+            install -m 755 "$plugin_src" "$user_plugin_dst"
+            ln -sf "${user_plugin_dst}" "${user_alias_dst}"
+            success "kubectl-gentian also installed to ${user_plugin_dst} (gtnctl)."
+        else
+            warn "~/.local/bin is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
+        fi
+    fi
+
     if [[ -L "${alias_dst}" ]] && [[ "$(readlink -f "${alias_dst}")" == "$(readlink -f "${plugin_dst}")" ]]; then
         success "gtnctl symlink already up-to-date at ${alias_dst}."
     elif [[ -w /usr/local/bin ]]; then

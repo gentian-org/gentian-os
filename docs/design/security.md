@@ -104,7 +104,7 @@ Properties:
    regenerated from the master password without backup restoration.
 
 The master password itself is written to
-`gentian-os/kernel/master-password` in OpenBao by `seed-openbao.sh`
+`gentian-os/kernel/internal/master-password` in OpenBao by `seed-openbao.sh`
 so that Composition init Jobs can derive per-app credentials at
 app-install time without requiring the operator to be present.
 

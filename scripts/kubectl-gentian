@@ -60,6 +60,7 @@ Usage:
 
   kubectl gentian apps uninstall <app> --tenant <tenant>
       Uninstall an app from a tenant by committing to gentian-deployments.
+      Blocks until the Crossplane App claim and workload pods are gone.
 
     kubectl gentian tenants list [--env <stage>]
       List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
@@ -986,6 +987,45 @@ print_tenant_admin_login_instructions() {
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 
+# _app_failed_workload_pods prints pod names that are genuinely failed — not init
+# Job pods still within backoff retries.
+_app_failed_workload_pods() {
+  local ns_name="${1}"
+  local app_name="${2}"
+  local line pod reason job_name failed backoff job_failed
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] && continue
+    pod="${line%% *}"
+    reason="${line#* }"
+    [[ "${reason}" != @(CrashLoopBackOff|Error|ImagePullBackOff|CreateContainerConfigError) ]] && continue
+    job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+      -o jsonpath='{.metadata.labels.job-name}' 2>/dev/null || true)"
+    if [[ -n "${job_name}" ]]; then
+      if ! kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" &>/dev/null; then
+        printf '%s\n' "${pod}"
+        continue
+      fi
+      job_failed="$(kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)"
+      if [[ "${job_failed}" == "True" ]]; then
+        printf '%s\n' "${pod}"
+        continue
+      fi
+      failed="$(kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" \
+        -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)"
+      backoff="$(kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" \
+        -o jsonpath='{.spec.backoffLimit}' 2>/dev/null || echo 6)"
+      if [[ "${failed:-0}" -ge "${backoff:-6}" ]]; then
+        printf '%s\n' "${pod}"
+      fi
+      continue
+    fi
+    printf '%s\n' "${pod}"
+  done < <(kubectl --request-timeout=5s get pods -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null \
+    | awk -v app="${app_name}" 'index($1, app) {print}')
+}
+
 wait_for_app_ready() {
   local tenant_name="${1}"
   local app_name="${2}"
@@ -997,6 +1037,21 @@ wait_for_app_ready() {
   echo "Waiting for app '${app_name}' on tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
 
   while true; do
+    local crash_pods=""
+    crash_pods="$(_app_failed_workload_pods "${ns_name}" "${app_name}")"
+    if [[ -n "${crash_pods}" ]]; then
+      echo "App '${app_name}' has unhealthy pod(s) in ${ns_name}:" >&2
+      printf '%s\n' "${crash_pods}" | sed 's/^/  - /' >&2
+      local first_crash
+      first_crash="$(printf '%s\n' "${crash_pods}" | sed -n '1p')"
+      if [[ -n "${first_crash}" ]]; then
+        echo "Recent logs from pod '${first_crash}':" >&2
+        kubectl --request-timeout=5s logs -n "${ns_name}" "pod/${first_crash}" --tail=20 2>/dev/null | sed 's/^/    /' >&2 || true
+        kubectl --request-timeout=5s logs -n "${ns_name}" "pod/${first_crash}" --previous --tail=20 2>/dev/null | sed 's/^/    (previous) /' >&2 || true
+      fi
+      return 1
+    fi
+
     local failed_jobs=""
     failed_jobs="$(kubectl --request-timeout=5s get jobs -n "${ns_name}" \
       -o jsonpath="{range .items[?(@.status.failed>0)]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null \
@@ -1040,6 +1095,80 @@ wait_for_app_ready() {
         echo "  Last App claim message: ${message}" >&2
       fi
       kubectl --request-timeout=5s get pods -n "${ns_name}" 2>/dev/null | grep -E "${app_name}|NAME" >&2 || true
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
+# _app_lingering_pods returns app pods still running or terminating — not Completed
+# Job pods left in Succeeded phase (e.g. db-init, s3-init).
+_app_lingering_pods() {
+  local ns_name="${1}"
+  local app_name="${2}"
+  kubectl --request-timeout=5s get pods -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null \
+    | awk -v app="${app_name}" '
+        index($1, app) &&
+        $2 != "Succeeded" &&
+        $2 != "Completed" {
+          print $1
+        }'
+}
+
+wait_for_app_uninstalled() {
+  local tenant_name="${1}"
+  local app_name="${2}"
+  local timeout_secs="${3:-900}"
+  local ns_name="tenant-${tenant_name}"
+  local start last_progress_at=0
+  start="$(date +%s)"
+
+  echo "Waiting for app '${app_name}' to be removed from tenant '${tenant_name}' (timeout: ${timeout_secs}s)..."
+
+  while true; do
+    if kubectl get app "${app_name}" -n "${ns_name}" &>/dev/null; then
+      local message
+      message="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+        -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.message}{end}' 2>/dev/null || true)"
+      local now elapsed
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      if (( elapsed - last_progress_at >= 30 )); then
+        echo "  app '${app_name}' claim still present (elapsed: ${elapsed}s) ${message:-}"
+        last_progress_at="${elapsed}"
+      fi
+    else
+      local lingering_pods lingering_releases
+      lingering_pods="$(_app_lingering_pods "${ns_name}" "${app_name}")"
+      lingering_releases="$(kubectl --request-timeout=5s get release.helm.crossplane.io -n "${ns_name}" -o name 2>/dev/null \
+        | sed 's|.*/||' | awk -v app="${app_name}" 'index($0, app) {print}' || true)"
+      if [[ -z "${lingering_pods}" && -z "${lingering_releases}" ]]; then
+        local now_done
+        now_done="$(date +%s)"
+        echo "App '${app_name}' removed from tenant '${tenant_name}' after $((now_done - start))s."
+        return 0
+      fi
+      local now elapsed
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      if (( elapsed - last_progress_at >= 30 )); then
+        echo "  app claim gone; waiting for workloads to finish terminating (elapsed: ${elapsed}s)"
+        [[ -n "${lingering_pods}" ]] && echo "    pods: $(printf '%s' "${lingering_pods}" | tr '\n' ' ')"
+        [[ -n "${lingering_releases}" ]] && echo "    releases: $(printf '%s' "${lingering_releases}" | tr '\n' ' ')"
+        last_progress_at="${elapsed}"
+      fi
+    fi
+
+    local now elapsed
+    now="$(date +%s)"
+    elapsed=$((now - start))
+    if (( elapsed >= timeout_secs )); then
+      echo "Timed out waiting for app '${app_name}' to be removed from tenant '${tenant_name}'." >&2
+      kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" 2>/dev/null >&2 || true
+      kubectl --request-timeout=5s get pods,release.helm.crossplane.io -n "${ns_name}" 2>/dev/null \
+        | grep -E "${app_name}|NAME" >&2 || true
       return 1
     fi
 
@@ -2019,7 +2148,14 @@ cmd_uninstall() {
   # Apply the updated Tenant CR so the operator reconciles immediately.
   kubectl apply -f "${file}"
 
-  echo "Done. Tenant '${tenant}' updated — operator will deprovision '${app}'."
+  if ! wait_for_app_uninstalled "${tenant}" "${app}" 900; then
+    echo "ERROR: app '${app}' was not fully removed from tenant '${tenant}'." >&2
+    echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
+    echo "  Inspect: kubectl get pods,release.helm.crossplane.io -n tenant-${tenant} | grep ${app}" >&2
+    exit 1
+  fi
+
+  echo "Done. App '${app}' is uninstalled from tenant '${tenant}'."
 }
 
 # ---------------------------------------------------------------------------

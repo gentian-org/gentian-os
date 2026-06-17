@@ -1211,7 +1211,7 @@ spec:
                       else
                         MASTER=$(curl -sf \
                           -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                           | jq -r '.data.data.value')
                         PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
@@ -1370,7 +1370,7 @@ spec:
                       else
                         MASTER=$(curl -sf \
                           -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                           | jq -r '.data.data.value')
                         PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')

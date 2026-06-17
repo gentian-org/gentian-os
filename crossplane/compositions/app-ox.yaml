@@ -655,7 +655,7 @@ spec:
                       else
                         MASTER=$(curl -sf \
                           -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                           | jq -r '.data.data.value')
                         PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
@@ -790,6 +790,8 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
+                      MC=mc
+                      command -v "${MC}" >/dev/null 2>&1 || MC=mcli
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -802,7 +804,7 @@ spec:
                         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/storage/minio")
                       ROOT_USER=$(echo "${MINIO}" | jq -r '.data.data.root_user')
                       ROOT_PASS=$(echo "${MINIO}" | jq -r '.data.data.root_password')
-                      mc alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
+                      ${MC} alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
                       EXISTING=$(curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
@@ -810,8 +812,8 @@ spec:
                       if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
                         EXISTING_ACCESS=$(echo "${EXISTING}" | jq -r '.data.data."access-key" // empty')
                         SECRET_KEY=$(echo "${EXISTING}" | jq -r '.data.data."secret-key"')
-                        if [ "${EXISTING_ACCESS}" = "${ACCESS_KEY}" ] && mc admin user info minio "${ACCESS_KEY}" >/dev/null 2>&1; then
-                          mc mb --ignore-existing "minio/${BUCKET}"
+                        if [ "${EXISTING_ACCESS}" = "${ACCESS_KEY}" ] && ${MC} admin user info minio "${ACCESS_KEY}" >/dev/null 2>&1; then
+                          ${MC} mb --ignore-existing "minio/${BUCKET}"
                           echo "[s3-init] credential and MinIO user already present for ${TENANT}/${APP} — skipping"
                           exit 0
                         fi
@@ -828,20 +830,22 @@ spec:
                         else
                           MASTER=$(curl -sf \
                             -H "X-Vault-Token: ${BAO_TOKEN}" \
-                            "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                            "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                             | jq -r '.data.data.value')
                           SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
                             | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
                         fi
                       fi
-                      mc mb --ignore-existing "minio/${BUCKET}"
+                      ${MC} mb --ignore-existing "minio/${BUCKET}"
                       echo "[s3-init] bucket ${BUCKET} ensured"
-                      mc admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"
+                      ${MC} admin user remove minio "${ACCESS_KEY}" >/dev/null 2>&1 || true
+                      ${MC} admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"
                       echo "[s3-init] MinIO user ${ACCESS_KEY} created"
                       printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/%s"]},"Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' \
                         "${ACCESS_KEY}" "${BUCKET}" "${BUCKET}" > /tmp/policy.json
-                      mc admin policy create minio "${ACCESS_KEY}-policy" /tmp/policy.json
-                      mc admin policy attach minio "${ACCESS_KEY}-policy" --user "${ACCESS_KEY}"
+                      ${MC} admin policy rm minio "${ACCESS_KEY}-policy" >/dev/null 2>&1 || true
+                      ${MC} admin policy create minio "${ACCESS_KEY}-policy" /tmp/policy.json
+                      ${MC} admin policy attach minio "${ACCESS_KEY}-policy" --user "${ACCESS_KEY}"
                       echo "[s3-init] bucket policy attached"
                       curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
@@ -968,7 +972,7 @@ spec:
                       else
                         MASTER=$(curl -sf \
                           -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                           | jq -r '.data.data.value')
                         PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')

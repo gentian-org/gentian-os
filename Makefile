@@ -28,10 +28,12 @@ all: generate build test
 build:
 	go build ./...
 
-## Install the kubectl-gentian plugin to ~/.local/bin
+## Install the kubectl-gentian plugin to ~/.local/bin (gtnctl symlink)
 install-plugin:
+	install -d $(HOME)/.local/bin
 	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
-	@echo "Installed kubectl-gentian to $(HOME)/.local/bin/kubectl-gentian"
+	ln -sf $(HOME)/.local/bin/kubectl-gentian $(HOME)/.local/bin/gtnctl
+	@echo "Installed kubectl-gentian and gtnctl to $(HOME)/.local/bin"
 
 ## Run unit tests
 # internal/controller uses envtest whose watch goroutines conflict with -race;

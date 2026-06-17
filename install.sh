@@ -343,9 +343,10 @@ POLICY
     # use this policy to provision per-tenant/app credentials in OpenBao on
     # first app install (ldap, s3, database).
     bao policy write app-init - <<POLICY
-path "${_kv_mount}/data/gentian-os/kernel/master-password"           { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/internal/master-password"   { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/kernel/identity/nubus"            { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/kernel/database/cnpg"             { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/storage/minio"             { capabilities = ["read"] }
 path "${_kv_mount}/metadata/gentian-os/kernel/database/cnpg"         { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/ldap"            { capabilities = ["create", "read", "update"] }
 path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/ldap"        { capabilities = ["read"] }
