@@ -1071,10 +1071,15 @@ deploy_nubus() {
             [[ -n "$sdu_job" ]] || sleep 5
         done
 
+        # Patch TTL early so failed retry pods are garbage-collected even if
+        # install is interrupted before finalize_stack_data_ums_job runs.
+        finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
+
         info "Waiting for stack-data-ums job '${sdu_job}' to complete (up to 10m)..."
         if kubectl wait "job/${sdu_job}" -n "${sdu_ns}" \
                 --for=condition=Complete --timeout=600s 2>/dev/null; then
             success "  stack-data-ums job completed successfully."
+            finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
             return 0
         fi
 
@@ -1106,9 +1111,7 @@ deploy_nubus() {
             info "  Reapplying stack-data-ums job..."
             kubectl delete job "${sdu_job}" -n "${sdu_ns}" \
                 --ignore-not-found=true 2>/dev/null || true
-            helm get manifest "${release_name}" -n "${sdu_ns}" 2>/dev/null \
-                | awk "/# Source:.*nubusStackDataUms.*job-load-data-ums/{found=1} found{print} found && /^---/{found=0; exit}" \
-                | kubectl apply -n "${sdu_ns}" -f - 2>/dev/null || true
+            apply_stack_data_ums_job_from_helm "${release_name}" "${sdu_ns}" || true
 
             info "  Waiting for reapplied stack-data-ums job to complete (up to 10m)..."
             sdu_deadline=$((SECONDS + 600))
@@ -1126,6 +1129,7 @@ deploy_nubus() {
             if kubectl wait "job/${new_job}" -n "${sdu_ns}" \
                     --for=condition=Complete --timeout=600s 2>/dev/null; then
                 success "  stack-data-ums job succeeded after UDM restart."
+                finalize_stack_data_ums_job "${sdu_ns}" "${new_job}"
             else
                 warn "  stack-data-ums still failing after UDM restart."
                 warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${new_job} --tail=40"

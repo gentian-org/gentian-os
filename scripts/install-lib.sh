@@ -3468,7 +3468,58 @@ reconcile_nextcloud_office() {
 
 
 # =============================================================================
-# Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
+# stack-data-ums job helpers
+#
+# The upstream nubusStackDataUms chart does not set ttlSecondsAfterFinished on
+# its data-loader Job.  A failed retry pod (Error) is left behind even when the
+# Job eventually succeeds — noisy during install verification.
+# =============================================================================
+STACK_DATA_UMS_JOB_TTL_SECONDS="${STACK_DATA_UMS_JOB_TTL_SECONDS:-600}"
+
+_find_stack_data_ums_job() {
+    local release_name="$1" ns="$2"
+    kubectl get jobs -n "${ns}" --no-headers \
+        -o custom-columns=NAME:.metadata.name 2>/dev/null \
+        | grep "^${release_name}-stack-data-ums-" | tail -1 || true
+}
+
+apply_stack_data_ums_job_from_helm() {
+    local release_name="$1" ns="$2"
+    local ttl="${STACK_DATA_UMS_JOB_TTL_SECONDS}"
+
+    helm get all "${release_name}" -n "${ns}" 2>/dev/null \
+        | python3 -c "
+import sys, yaml
+
+ttl = int('${ttl}')
+for section in sys.stdin.read().split('---'):
+    if 'stack-data-ums' not in section or 'kind: \"Job\"' not in section:
+        continue
+    doc = yaml.safe_load(section)
+    if not doc or doc.get('kind') != 'Job':
+        continue
+    spec = doc.setdefault('spec', {})
+    spec['ttlSecondsAfterFinished'] = ttl
+    print('---')
+    print(yaml.dump(doc, default_flow_style=False).rstrip())
+    break
+" \
+        | kubectl apply -n "${ns}" -f - 2>/dev/null
+}
+
+finalize_stack_data_ums_job() {
+    local ns="$1" job_name="$2"
+    local ttl="${STACK_DATA_UMS_JOB_TTL_SECONDS}"
+
+    [[ -n "${job_name}" ]] || return 0
+
+    kubectl patch job "${job_name}" -n "${ns}" --type=merge \
+        -p "{\"spec\":{\"ttlSecondsAfterFinished\":${ttl}}}" \
+        2>/dev/null || true
+    kubectl delete pods -n "${ns}" -l "job-name=${job_name}" \
+        --field-selector=status.phase=Failed \
+        --ignore-not-found=true 2>/dev/null || true
+}
 
 # =============================================================================
 # wait_for_setup_iam_job — wait for nubus-dev-setup-iam-templates (ArgoCD hook)

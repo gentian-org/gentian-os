@@ -1211,16 +1211,7 @@ op_nubus_recover() {
         return 0
     fi
 
-    helm get all "${release_name}" -n "${ns}" 2>/dev/null \
-        | python3 -c "
-import sys
-for section in sys.stdin.read().split('---'):
-    if 'stack-data-ums' in section and 'kind: \"Job\"' in section:
-        print('---')
-        print(section.strip())
-        break
-" \
-        | kubectl apply -n "${ns}" -f - >/dev/null || {
+    apply_stack_data_ums_job_from_helm "${release_name}" "${ns}" >/dev/null || {
         warn "Failed to apply stack-data-ums job — is the nubus Helm release deployed?"
         warn "  helm list -n ${ns}"
         return 1
@@ -1246,6 +1237,7 @@ for section in sys.stdin.read().split('---'):
     if kubectl wait "job/${new_job}" -n "${ns}" \
             --for=condition=Complete --timeout=600s 2>/dev/null; then
         success "stack-data-ums job completed — portal stack should recover within a few minutes."
+        finalize_stack_data_ums_job "${ns}" "${new_job}"
         info "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=portal-consumer"
     else
         warn "stack-data-ums job did not complete within 10m."
