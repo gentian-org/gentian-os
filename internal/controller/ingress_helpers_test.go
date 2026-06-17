@@ -81,6 +81,20 @@ more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal
 	}
 }
 
+func TestCryptpadSandboxFrameAncestorOrigins(t *testing.T) {
+	t.Parallel()
+	origins := cryptpadSandboxFrameAncestorOrigins("desk.gentian.org", "demo.desk.gentian.org")
+	for _, want := range []string{
+		"https://pad.demo.desk.gentian.org",
+		"https://portal.desk.gentian.org",
+		"https://files.desk.gentian.org",
+	} {
+		if !strings.Contains(origins, want) {
+			t.Fatalf("origins = %q, missing %q", origins, want)
+		}
+	}
+}
+
 func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
 	annotations := map[string]string{}
 	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
@@ -90,6 +104,9 @@ func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
 	}
 	if !strings.Contains(got, "https://portal.desk.gentian.org") {
 		t.Fatal("sandbox ingress must allow kernel portal in frame-ancestors for nested portal→pad→sandbox")
+	}
+	if !strings.Contains(got, "https://files.desk.gentian.org") {
+		t.Fatal("sandbox ingress must allow kernel Nextcloud Files (openincryptpad direct embed)")
 	}
 }
 

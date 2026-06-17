@@ -245,6 +245,9 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	if !strings.Contains(policy.Origins, "https://pad.demo.desk.gentian.org") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
+	if !strings.Contains(policy.Origins, "https://files.desk.gentian.org") {
+		t.Fatalf("sandbox origins must include kernel Files host, got %q", policy.Origins)
+	}
 }
 
 func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {

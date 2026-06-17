@@ -138,16 +138,61 @@ func portalEmbeddingIngressSnippetAppend(kernelDomain string) string {
 	return frameAncestorsIngressSnippetAppend(portalOrigin)
 }
 
-// cryptpadSandboxIngressSnippet allows the main CryptPad origin and the shared
-// kernel portal to embed the sandbox iframe. CSP frame-ancestors checks the full
-// ancestor chain: portal → pad.<tenant> → pad-sandbox.<tenant> when the portal
-// opens CryptPad in an embedded window; pad alone is sufficient in a top-level tab.
-func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string {
-	origins := fmt.Sprintf("https://pad.%s", effectiveDomain)
-	if kernelDomain != "" {
-		origins += fmt.Sprintf(" https://portal.%s", kernelDomain)
+// cryptpadSandboxFrameAncestorOrigins lists https origins allowed to embed
+// pad-sandbox.<padDomain>. Shared by kernel HTTPRoutes, tenant AppProfile
+// ingress snippets, and Gateway API response filters (DRY embedding policy).
+//
+// Nextcloud Files (files.<kernelDomain>) may iframe the sandbox directly via
+// openincryptpad, not only via pad.<padDomain>. With CryptPad's upstream CSP
+// still present, the appended frame-ancestors policy must allow every direct
+// parent — browsers enforce all CSP headers.
+func cryptpadSandboxFrameAncestorOrigins(kernelDomain, padDomain string) string {
+	var origins []string
+	add := func(origin string) {
+		if origin != "" {
+			origins = append(origins, origin)
+		}
 	}
-	return frameAncestorsIngressSnippetAppend(origins)
+	add(padOrigin(padDomain))
+	add(kernelPortalOrigin(kernelDomain))
+	add(kernelFilesOrigin(kernelDomain))
+	return strings.Join(origins, " ")
+}
+
+// cryptpadKernelMainFrameAncestorOrigins lists embedders for the shared kernel
+// CryptPad service at pad.<kernelDomain> (diagrams.net from Nextcloud Files).
+func cryptpadKernelMainFrameAncestorOrigins(kernelDomain string) string {
+	return strings.Join([]string{
+		kernelFilesOrigin(kernelDomain),
+		kernelPortalOrigin(kernelDomain),
+	}, " ")
+}
+
+func kernelPortalOrigin(kernelDomain string) string {
+	if kernelDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://portal.%s", kernelDomain)
+}
+
+func kernelFilesOrigin(kernelDomain string) string {
+	if kernelDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://files.%s", kernelDomain)
+}
+
+func padOrigin(padDomain string) string {
+	if padDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://pad.%s", padDomain)
+}
+
+// cryptpadSandboxIngressSnippet allows pad, portal, and kernel Nextcloud Files
+// to embed the CryptPad sandbox iframe (append mode — preserve upstream script-src).
+func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string {
+	return frameAncestorsIngressSnippetAppend(cryptpadSandboxFrameAncestorOrigins(kernelDomain, effectiveDomain))
 }
 
 // frameAncestorsIngressSnippetReplace clears upstream X-Frame-Options and
