@@ -17,8 +17,6 @@
 #   kubectl delete tenant "${SHADOW_TENANT}" --wait=false
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-
 SHADOW_TENANT="${SHADOW_TENANT:-shadow-e2e}"
 TIMEOUT_XTENANT="${TIMEOUT_XTENANT:-25m}"
 TIMEOUT_CM="${TIMEOUT_CM:-5m}"

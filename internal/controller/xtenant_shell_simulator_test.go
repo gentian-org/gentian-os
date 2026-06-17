@@ -19,7 +19,9 @@ import (
 	"context"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,6 +84,9 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 	}
 	for i := range list.Items {
 		xr := &list.Items[i]
+		if xr.GetDeletionTimestamp() != nil {
+			continue
+		}
 		tenantName := xr.GetName()
 		spec, _, _ := unstructured.NestedMap(xr.Object, "spec")
 		if spec == nil {
@@ -106,7 +111,11 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, activeXTenants []unstructured.Unstructured) {
 	active := make(map[string]struct{}, len(activeXTenants))
 	for i := range activeXTenants {
-		active[activeXTenants[i].GetName()] = struct{}{}
+		xr := &activeXTenants[i]
+		if xr.GetDeletionTimestamp() != nil {
+			continue
+		}
+		active[xr.GetName()] = struct{}{}
 	}
 
 	claimList := &unstructured.UnstructuredList{}
@@ -124,6 +133,35 @@ func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, active
 		}
 		if _, ok := active[tenantName]; !ok {
 			_ = client.IgnoreNotFound(c.Delete(ctx, claim))
+		}
+	}
+
+	simulateXTenantShellTeardown(ctx, c, active)
+}
+
+func simulateXTenantShellTeardown(ctx context.Context, c client.Client, activeTenants map[string]struct{}) {
+	nsList := &corev1.NamespaceList{}
+	if err := c.List(ctx, nsList, client.MatchingLabels{
+		tenantshell.ManagedByLabel: tenantshell.ManagedByValue,
+	}); err != nil {
+		return
+	}
+	for i := range nsList.Items {
+		ns := &nsList.Items[i]
+		tenantName := ns.GetLabels()[tenantshell.TenantLabel]
+		if tenantName == "" {
+			continue
+		}
+		if _, ok := activeTenants[tenantName]; ok {
+			continue
+		}
+		nsName := ns.GetName()
+		for _, obj := range []client.Object{
+			&corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: "tenant-limits", Namespace: nsName}},
+			&corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: "tenant-quota", Namespace: nsName}},
+			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "tenant-isolation", Namespace: nsName}},
+		} {
+			_ = client.IgnoreNotFound(c.Delete(ctx, obj))
 		}
 	}
 }
