@@ -3121,7 +3121,7 @@ install_app_catalogue() {
             ln -sf "${user_plugin_dst}" "${user_alias_dst}"
             success "kubectl-gentian also installed to ${user_plugin_dst} (gtnctl)."
         else
-            warn "~/.local/bin is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
+            warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
         fi
     fi
 
