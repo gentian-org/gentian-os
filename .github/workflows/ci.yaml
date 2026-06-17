@@ -162,8 +162,11 @@ jobs:
           cache: true
 
       - name: Install crossplane CLI
+        env:
+          GOTOOLCHAIN: auto
         run: |
           tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
           (
             cd "$tmpdir"
             XP_VERSION=v2.2.1 bash "${GITHUB_WORKSPACE}/scripts/install-crossplane-cli.sh"

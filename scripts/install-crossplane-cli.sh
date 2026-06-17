@@ -121,12 +121,17 @@ install_via_go() {
 	if [ "${use_legacy_host}" = false ]; then
 		mod="github.com/crossplane/cli/v2/cmd/crossplane"
 	fi
-	local gopath
+	local gopath gomodcache
 	gopath=$(mktemp -d)
-	if ! GOPATH="${gopath}" GOBIN="$(pwd)" go install "${mod}@${XP_VERSION}"; then
+	gomodcache="${gopath}/modcache"
+	mkdir -p "${gomodcache}"
+	if ! GOPATH="${gopath}" GOMODCACHE="${gomodcache}" GOBIN="$(pwd)" GOTOOLCHAIN=auto \
+		go install "${mod}@${XP_VERSION}"; then
+		chmod -R u+w "${gopath}" 2>/dev/null || true
 		rm -rf "${gopath}"
 		return 1
 	fi
+	chmod -R u+w "${gopath}" 2>/dev/null || true
 	rm -rf "${gopath}"
 	if [ -f crank ] && [ ! -f crossplane ]; then
 		mv -f crank crossplane
@@ -137,10 +142,19 @@ install_via_go() {
 
 rm -f crossplane
 
-if install_from_releases; then
-	echo "crossplane CLI v${_ver} downloaded ($(pwd)/crossplane)"
-	exit 0
-fi
+attempt=1
+max_attempts=3
+while [ "${attempt}" -le "${max_attempts}" ]; do
+	if install_from_releases; then
+		echo "crossplane CLI v${_ver} downloaded ($(pwd)/crossplane)"
+		exit 0
+	fi
+	if [ "${attempt}" -lt "${max_attempts}" ]; then
+		echo "Crossplane CLI: release download failed (attempt ${attempt}/${max_attempts}), retrying..." >&2
+		sleep 2
+	fi
+	attempt=$((attempt + 1))
+done
 
 echo "Crossplane CLI: release download failed, trying go install..." >&2
 if install_via_go; then
