@@ -77,6 +77,8 @@ spec:
             {{- $openbaoNs   := default "openbao" (dig "network.openbaoNamespace" "" $ccData) }}
             {{- $routingMode := default "gateway" (dig "network.routingMode" "" $ccData) }}
             {{- $kubeApiCIDR := dig "network.kubeApiServerCidr" "" $ccData }}
+            {{- $kubeApiEndpointIP := dig "network.kubeApiServerEndpointIp" "" $ccData }}
+            {{- $kubeApiEndpointPort := dig "network.kubeApiServerEndpointPort" "" $ccData }}
             {{- $quotas      := default dict (dig "quotas" dict $spec) }}
 
             ---
@@ -262,6 +264,15 @@ spec:
                         ports:
                           - protocol: TCP
                             port: 443
+                      {{- end }}
+                      {{- /* Post-DNAT apiserver endpoint (MicroK8s/k3s often :16443). */}}
+                      {{- if and $kubeApiEndpointIP $kubeApiEndpointPort }}
+                      - to:
+                          - ipBlock:
+                              cidr: {{ printf "%s/32" $kubeApiEndpointIP | quote }}
+                        ports:
+                          - protocol: TCP
+                            port: {{ $kubeApiEndpointPort }}
                       {{- end }}
 
             ---

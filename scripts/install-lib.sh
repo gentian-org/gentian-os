@@ -1217,11 +1217,24 @@ upsert_gentian_cluster_config() {
     local _services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
     local _openbao_ns="${OPENBAO_NAMESPACE:-openbao}"
     local _kube_api_cidr=""
+    local _kube_api_endpoint_ip=""
+    local _kube_api_endpoint_port=""
     if _kube_api_ip="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null)"; then
         [[ -n "${_kube_api_ip}" ]] && _kube_api_cidr="${_kube_api_ip}/32"
     fi
+    # Calico/Cilium evaluate egress against the post-DNAT apiserver endpoint, not
+    # only the kubernetes Service ClusterIP. Tenant bootstrap Jobs (e.g. Matrix UVS)
+    # need this endpoint reachable from isolated tenant namespaces.
+    _kube_api_endpoint_ip="$(kubectl get endpoints kubernetes -n default \
+        -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+    _kube_api_endpoint_port="$(kubectl get endpoints kubernetes -n default \
+        -o jsonpath='{.subsets[0].ports[?(@.name=="https")].port}' 2>/dev/null || true)"
+    if [[ -z "${_kube_api_endpoint_port}" ]]; then
+        _kube_api_endpoint_port="$(kubectl get endpoints kubernetes -n default \
+            -o jsonpath='{.subsets[0].ports[0].port}' 2>/dev/null || true)"
+    fi
 
-    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>})..."
+    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>}, kubeApi=${_kube_api_endpoint_ip}:${_kube_api_endpoint_port:-<unset>})..."
     kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -1247,6 +1260,8 @@ data:
   network.openbaoNamespace: "${_openbao_ns}"
   network.routingMode: "${_routing_mode}"
   network.kubeApiServerCidr: "${_kube_api_cidr}"
+  network.kubeApiServerEndpointIp: "${_kube_api_endpoint_ip}"
+  network.kubeApiServerEndpointPort: "${_kube_api_endpoint_port}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
 }
