@@ -90,6 +90,42 @@ graph TD
 | **gentian-os operator** | Orchestration: reconciles `Tenant` CRs, seeds OpenBao secrets, writes the manifest bridge ConfigMap, patches `XTenant`, waits on composed resources, aggregates status. | Does not create duplicate shell resources or App claims; shared-kernel side effects (portal, Cloudflare DNS, stale gateway cleanup) remain operator-owned — see [roadmap.md](roadmap.md). |
 | **OpenBao + ESO** | Single secret store, synced into Kubernetes Secrets that Helm charts consume via `existingSecret` references. | Secrets never touch Git or appear in CR specs. |
 
+### 3.0 Who does what (tenant install)
+
+Three control planes, one Git truth. ArgoCD applies declarations; the
+operator orchestrates tenant intent; Crossplane materialises infrastructure.
+
+```mermaid
+flowchart TD
+    git["Git<br/>gentian-os · gentian-apps · gentian-deployments"]
+
+    ac["ArgoCD<br/>sync manifests · drift · rollback"]
+    tcr["Tenant CR · AppProfiles · Crossplane XRDs / Compositions"]
+
+    op1["Operator<br/>seed OpenBao secrets"]
+    op2["Operator<br/>write manifest bridge ConfigMap"]
+    op3["Operator<br/>patch XTenant spec"]
+
+    xp1["Crossplane tenant-default<br/>namespace · Vault policy · Jobs · App claims"]
+    xp2["Crossplane app-* compositions<br/>ExternalSecret · helm Release"]
+
+    op4["Operator<br/>wait on Jobs/MRs · portal/DNS · Tenant.status"]
+
+    git --> ac
+    ac --> tcr
+    tcr --> op1 --> op2 --> op3
+    op3 --> xp1
+    xp1 --> xp2
+    xp1 --> op4
+    xp2 --> op4
+```
+
+| Step | Owner | Does *not* do |
+|---|---|---|
+| **ArgoCD** | Pull Git; apply kernel YAML, catalogue, `Tenant` CRs, Crossplane packages | Run provisioning logic; create `App` claims or Helm releases per tenant |
+| **Operator** | Seed secrets; drive manifest bridge; patch `XTenant`; wait; shared-kernel side-effects; aggregate `Tenant.status` | Duplicate shell resources or `App` claims (Crossplane creates those) |
+| **Crossplane** | Reconcile `XTenant` + `App` claims into MRs (Jobs, Objects, ESO, `provider-helm` Releases) | Sync Git; interpret `Tenant.spec.apps` without the operator bridge |
+
 **Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
 work for *every* Kubernetes resource, not just MRs. Crossplane's
 reconcile loop handles the slow, eventually-consistent external APIs
