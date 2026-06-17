@@ -1942,6 +1942,26 @@ apply_intercom_gateway_values() {
     export ENV="${ENV:-dev}"
     export KERNEL_DOMAIN
     envsubst "\${ENV} \${KERNEL_DOMAIN}" < "$tmpl" | kubectl apply -f -
+    sync_intercom_argocd_app || true
+}
+
+# sync_intercom_argocd_app refreshes the intercom Helm release after gateway overlay
+# changes. Argo CD ApplicationSet valuesFrom is not always propagated to existing
+# Applications; gateway.yaml carries BASE_URL in git, but a hard refresh ensures
+# the Deployment picks up extraEnvVars after install/update.
+sync_intercom_argocd_app() {
+    local app="intercom-service-${ENV:-dev}"
+    if ! kubectl get application "$app" -n argocd >/dev/null 2>&1; then
+        return 0
+    fi
+    info "Refreshing Argo CD app ${app} (intercom BASE_URL / ICS)..."
+    if command -v argocd >/dev/null 2>&1; then
+        argocd app sync "$app" --force --grpc-web >/dev/null 2>&1 || true
+    else
+        kubectl annotate application "$app" -n argocd \
+            argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+    fi
+    kubectl rollout status "deployment/${app}" -n "${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}" --timeout=180s >/dev/null 2>&1 || true
 }
 
 # verify_intercom_ics checks ICS silent-login prerequisites for portal-embedded Element.
@@ -1979,13 +1999,34 @@ verify_intercom_ics() {
     base_url=$(kubectl get deployment "$deploy" -n "$services_ns" \
         -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\t"}{.value}{"\n"}{end}' \
         2>/dev/null | awk -F'\t' '$1=="BASE_URL"{print $2; exit}')
+    if [[ -z "$base_url" ]]; then
+        base_url=$(kubectl get deployment "$deploy" -n "$services_ns" \
+            -o jsonpath='{range .spec.template.spec.containers[0].envFrom[*]}{.secretRef.name}{"\n"}{end}' \
+            2>/dev/null | head -1)
+        if [[ -n "$base_url" ]]; then
+            base_url=$(kubectl get secret "$base_url" -n "$services_ns" \
+                -o jsonpath='{.data.BASE_URL}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        fi
+    fi
     local want_base="https://ics.${kernel_domain}"
     if [[ "$base_url" != "$want_base" ]]; then
         warn "intercom BASE_URL=${base_url:-<unset>} (want ${want_base})."
-        warn "  Re-run install/update to apply intercom-gateway-values ConfigMap, then sync intercom-service-${ENV:-dev}."
+        warn "  Sync intercom-service-${ENV:-dev} in Argo CD or re-run install/update (gateway.yaml extraEnvVars)."
+        return 1
     else
         success "intercom BASE_URL=${base_url}"
     fi
+
+    local node_ca
+    node_ca=$(kubectl get deployment "$deploy" -n "$services_ns" \
+        -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\t"}{.value}{"\n"}{end}' \
+        2>/dev/null | awk -F'\t' '$1=="NODE_EXTRA_CA_CERTS"{print $2; exit}')
+    if [[ "$node_ca" != "/opt/staging-ca/node-extra-ca.crt" ]]; then
+        warn "intercom NODE_EXTRA_CA_CERTS=${node_ca:-<unset>} (want /opt/staging-ca/node-extra-ca.crt)."
+        warn "  OIDC discovery against id.${kernel_domain} will fail on LE staging certs."
+        return 1
+    fi
+    success "intercom NODE_EXTRA_CA_CERTS=${node_ca}"
 
     local silent_loc
     silent_loc=$(curl -fsSI "https://ics.${kernel_domain}/silent" 2>/dev/null | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\r' || true)
