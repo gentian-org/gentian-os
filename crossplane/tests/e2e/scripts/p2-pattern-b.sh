@@ -11,7 +11,6 @@
 #   - KUBECONFIG pointing at the dev cluster
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SERVICES_NS="${SERVICES_NAMESPACE:-gentian-dev}"
 TIMEOUT_RELEASE="${TIMEOUT_RELEASE:-15m}"
 
