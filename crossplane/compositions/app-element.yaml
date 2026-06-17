@@ -113,6 +113,13 @@ spec:
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
             {{- $kr            := default dict $pSpec.kernelRequirements }}
             {{- $identity      := default dict $kr.identity }}
+            {{- /* OpenDesk OIDC pack scopes: manifest-bridge Jobs create the ClientScope;
+                 ClientDefaultScopes below re-attaches them after provider-keycloak Client sync. */}}
+            {{- $oidcPackDefaultScopes := dict
+                "opendesk-synapse" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-matrix-scope")
+                "opendesk-jitsi" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-jitsi-scope")
+            }}
+            {{- $oidcPackFullScopeAllowed := dict "opendesk-synapse" false "opendesk-jitsi" true }}
 
             {{- /* ── Build ExternalSecret data[] entries (identical to app-default) ── */}}
             {{- $esData := list }}
@@ -416,6 +423,9 @@ spec:
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
+                {{- if hasKey $oidcPackFullScopeAllowed $oidcCl.clientId }}
+                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcCl.clientId }}
+                {{- end }}
                 {{- if $redirects }}
                 validRedirectUris:
                   {{ toYaml $redirects | nindent 18 }}
@@ -438,6 +448,25 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+            {{- if hasKey $oidcPackDefaultScopes $oidcCl.clientId }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-default-scopes
+              name: {{ $tenant }}-{{ $app }}-keycloak-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                defaultScopes:
+                  {{ toYaml (index $oidcPackDefaultScopes $oidcCl.clientId) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- /* Browser flow (kernel IdP auto-redirect) is provisioned once per    */}}
             {{- /* tenant realm by the gentian-os identity reconciler, not per app.   */}}
             {{- end }}
@@ -1018,6 +1047,9 @@ spec:
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $scOidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
+                {{- if hasKey $oidcPackFullScopeAllowed $scOidcCl.clientId }}
+                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $scOidcCl.clientId }}
+                {{- end }}
                 {{- if $scRedirects }}
                 validRedirectUris:
                   {{ toYaml $scRedirects | nindent 18 }}
@@ -1040,6 +1072,25 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+            {{- if hasKey $oidcPackDefaultScopes $scOidcCl.clientId }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-keycloak-default-scopes
+              name: {{ $tenant }}-{{ $scAppKey }}-keycloak-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $scAppKey }}-keycloak-client
+                defaultScopes:
+                  {{ toYaml (index $oidcPackDefaultScopes $scOidcCl.clientId) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
 
             ---
