@@ -77,3 +77,29 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-job-keycloak-admin-render-fixture
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-admin-render-fixture
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-job-ldap-bind-render-fixture-keycloak
+  annotations:
+    crossplane.io/composition-resource-name: job-ldap-bind-render-fixture-keycloak
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

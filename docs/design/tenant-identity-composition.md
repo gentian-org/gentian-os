@@ -47,8 +47,9 @@ client Jobs; the app Composition emits Keycloak Client MRs instead.
 
 App Compositions that emit `ldap-search-init` or Keycloak Client MRs are gated in
 `tenant-default` by **`function-sequencer`**: App claims are withheld until
-Keycloak identity Jobs (`job-keycloak-.*`) and LDAP Jobs (`job-ldap-.*`) from
-the manifest bridge are Ready. The operator still waits on Job completion and
+Keycloak identity Jobs (realm first, then `job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*`)
+and LDAP Jobs (OU first, then `job-ldap-(admin|app|bind|mba|portal)-.*`) from the
+manifest bridge are Ready. The operator still waits on Job completion and
 maps status to `IdentityReady` / `LDAPReady`.
 
 ## Script bundle

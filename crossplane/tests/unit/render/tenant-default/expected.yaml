@@ -42,6 +42,41 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: job-keycloak-admin-render-fixture
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-job-keycloak-admin-render-fixture
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        labels:
+          gentianos.io/tenant: render-fixture
+        name: keycloak-admin-render-fixture
+        namespace: platform-kernel
+      spec:
+        template:
+          spec:
+            containers:
+            - image: ghcr.io/gentian-org/gentian-app-init:develop
+              name: provision
+            restartPolicy: Never
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: job-keycloak-realm-render-fixture
   labels:
     crossplane.io/composite: render-fixture
@@ -77,10 +112,10 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: job-ldap-ou-render-fixture
+    crossplane.io/composition-resource-name: job-ldap-bind-render-fixture-keycloak
   labels:
     crossplane.io/composite: render-fixture
-  name: render-fixture-job-ldap-ou-render-fixture
+  name: render-fixture-job-ldap-bind-render-fixture-keycloak
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -96,7 +131,7 @@ spec:
       metadata:
         labels:
           gentianos.io/tenant: render-fixture
-        name: ldap-ou-render-fixture
+        name: ldap-bind-render-fixture-keycloak
         namespace: platform-kernel
       spec:
         template:

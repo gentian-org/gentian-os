@@ -380,16 +380,19 @@ spec:
             - networkpolicy
             - vault-policy
           # Keycloak realm before other identity Jobs; identity before App Compositions.
+          # job-keycloak-(admin|…)-.* deliberately excludes job-keycloak-realm-* —
+          # realm matches both patterns if the broad job-keycloak-.* form is used.
           - sequence:
             - job-keycloak-realm-.*
-            - job-keycloak-.*
+            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
           - sequence:
-            - job-keycloak-.*
+            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
             - app-.*
           # LDAP OU before remaining LDAP Jobs; LDAP before App Compositions.
+          # job-ldap-(admin|…)-.* excludes job-ldap-ou-* for the same reason.
           - sequence:
             - job-ldap-ou-.*
-            - job-ldap-.*
+            - job-ldap-(admin|app|bind|mba|portal)-.*
           - sequence:
-            - job-ldap-.*
+            - job-ldap-(admin|app|bind|mba|portal)-.*
             - app-.*
