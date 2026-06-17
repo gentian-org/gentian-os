@@ -316,9 +316,11 @@ spec:
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
-              name: {{ $tenant }}-obj-{{ $obj.metadata.name }}
+              # Include kind in the Object name — multiple resources can share
+              # metadata.name (e.g. memcached Deployment + Service).
+              name: {{ $tenant }}-obj-{{ lower $obj.kind }}-{{ $obj.metadata.name }}
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: obj-{{ $obj.metadata.name }}
+                gotemplating.fn.crossplane.io/composition-resource-name: obj-{{ lower $obj.kind }}-{{ $obj.metadata.name }}
             spec:
               providerConfigRef:
                 name: kubernetes

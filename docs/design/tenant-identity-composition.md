@@ -1,103 +1,64 @@
-# Tenant Identity & LDAP — Composition Migration (Phase C2)
+# Tenant Identity & LDAP — Crossplane Manifest Bridge
 
-Companion to [crossplane-convergence.md](../crossplane-convergence.md) Phase C2.
+Companion to [crossplane-convergence.md](../crossplane-convergence.md).
 
-## Goal
+## Overview
 
-Move tenant **Keycloak realm** and **LDAP (UDM)** provisioning from operator-created
-Batch Jobs in `platform-kernel` into the `XTenant` / `tenant-default` Composition
-pipeline, then retire `ensureIdentity`, `ensureLDAP`, and `ensureLDAPBase` in Go.
+Tenant **Keycloak realm** and **LDAP (UDM)** provisioning run as Batch Jobs in
+`platform-kernel`, owned by Crossplane via the **manifest bridge**:
 
-## Why not provider-keycloak Realms yet?
+1. Operator seeds OpenBao credentials and builds Job manifests in Go
+2. Operator writes ConfigMap `tenant-{name}-provisioning-jobs` (`jobs.json`)
+3. `tenant-default` emits `kubernetes.crossplane.io/Object` MRs for each Job
+4. Operator **waits** for Job completion via `waitForProvisioningJob` — no direct `Job.Create` on the provision path
+
+Details: [design/iam.md](iam.md).
+
+## Why not `provider-keycloak` Realms yet?
 
 Kernel OIDC clients already use `provider-keycloak` MRs. **Tenant realms** still
 require browser-flow tuning, LDAP federation sync, OIDC pack role mappings, and
 kernel IdP brokering — logic that lives in shell Jobs today. Until upstream
-supports drift-safe Realm MRs for those settings, C2 uses **Composition-emitted
-Jobs** (same scripts, new owner).
+supports drift-safe Realm MRs for those settings, Jobs remain the source of truth,
+with Crossplane as the owner (Object MRs).
 
-## Sub-phases
+## Jobs in the manifest bridge
 
-| Sub-phase | Operator steps retired | Composition deliverable |
-|-----------|------------------------|-------------------------|
-| **C2a** | `ensureOUJob` (OU + MBA groups script) | `ldap-ou-{tenant}` Job Object in `platform-kernel` |
-| **C2b** | Admin user, admin policy, bind accounts, portal tiles | Sequential Job Objects gated on C2a Ready |
-| **C2c** | `ensureIdentity` realm/admin/browser/broker Jobs | Keycloak curl Jobs in `platform-kernel` |
-| **C2d** | Per-app OIDC client Jobs where app Composition emits Client MR | Drop operator `ensureOIDCClientJob` for those apps |
-| **C2e** | OIDC pack Jobs | Pack Jobs in tenant Composition or dedicated pack Composition |
+| Job family | Examples |
+|------------|----------|
+| LDAP | `ldap-ou-{tenant}`, admin user/policy, bind accounts, portal entries, MBA groups |
+| Keycloak | realm, admin, browser-flow, broker-first-login, OIDC clients/packs, ldap-sync |
+| Kernel SSO | opendesk admin enable, kernel LDAP sync |
 
-**Status:** ✅ Implemented via ConfigMap manifest bridge — operator writes
-`tenant-{name}-provisioning-jobs`; `tenant-default` emits kubernetes.crossplane.io
-Object MRs; operator `ensureIdentity` / `ensureLDAP` / `ensureLDAPBase` wait only.
+**Exception (resolved):** `keycloak-broker-idp-{tenant}` is included in the manifest bridge when a kernel realm is configured.
 
-| Sub-phase | Scope | Status |
-|-----------|-------|--------|
-| C2a | LDAP OU + MBA groups Job → Composition | ✅ |
-| C2b | LDAP admin user/policy/bind Jobs | ✅ |
-| C2c | Keycloak realm Jobs | ✅ |
-| C2d | OIDC client consolidation (operator vs app Composition MRs) | ✅ |
-| C2e | OIDC pack Jobs | ✅ |
+When an app `AppProfile` has `compositionRef`, the operator skips duplicate OIDC
+client Jobs; the app Composition emits Keycloak Client MRs instead.
 
-## Implementation (C2)
+## Operator role
 
-The operator publishes rendered Batch Job manifests to ConfigMap
-`tenant-{name}-provisioning-jobs` in `platform-kernel` (label
-`gentianos.io/config-type: tenant-provisioning-jobs`). Crossplane
-`tenant-default` fetches that ConfigMap and emits
-`kubernetes.crossplane.io/Object` MRs. The operator seeds OpenBao credentials
-before updating the ConfigMap and waits for Job completion via
-`waitForProvisioningJob` — it no longer calls `Job.Create` for identity/LDAP.
+- Seed OpenBao credentials before updating the ConfigMap
+- Patch `XTenant`; wait for composed Job Objects Ready
+- Map Job/MR status → `Tenant.status.conditions` (`IdentityReady`, `LDAPReady`)
+- On tenant **delete**, imperative cleanup Jobs may still run until XR cascade
+  fully replaces them ([roadmap.md](../roadmap.md))
 
-Future refinement: extract inline scripts to `crossplane/scripts/tenant-identity/`
-and gate Job waves with `function-sequencer`.
+## Composition ordering (planned)
 
-## Script bundle strategy (future)
+App Compositions that emit `ldap-search-init` or Keycloak Client MRs should gate
+on tenant identity/LDAP Ready using composition pipeline **`function-sequencer`**
+or observe composed Job Object status before rendering app resources. Today,
+ordering is enforced by the operator wait sequence.
+
+## Script bundle (future)
 
 LDAP and Keycloak Jobs share large shell scripts built in Go today
-(`ldap_reconciler.go`, `identity_reconciler.go`). C2 extracts them to:
-
-```
-crossplane/scripts/tenant-identity/
-├── ldap-ou-provision.sh      # OU + users/admins groups + ou=users + templates + MBA groups
-├── ldap-admin-user.sh
-├── ldap-admin-policy.sh
-├── ldap-bind-account.sh      # templated per app via env APP_NAME
-├── keycloak-realm.sh
-├── keycloak-realm-admin.sh
-└── ...
-```
-
-Installed once per cluster as ConfigMap `gentian-tenant-identity-scripts` in
-`platform-kernel` (ArgoCD sync from `crossplane/manifests/`). Compositions mount
-scripts by name; Jobs use the same env injection as today (`udm-admin`,
-`keycloak-admin` Secrets).
-
-## Composition ordering
-
-```mermaid
-flowchart LR
-  Shell[C1 shell resources]
-  LDAP[C2a LDAP OU Job]
-  LDAPRest[C2b LDAP admin/bind]
-  KC[C2c Keycloak realm Jobs]
-  Apps[App claims]
-
-  Shell --> LDAP --> LDAPRest --> KC --> Apps
-```
-
-App Compositions that emit `ldap-search-init` or Keycloak Client MRs **gate on**
-`XTenant` identity/LDAP Ready (C2.5) — use composition pipeline `function-sequencer`
-or observe composed Job Object status before rendering app resources.
-
-## Operator role after C2
-
-- Seed OpenBao credentials still required before Jobs run.
-- Patch `XTenant`; wait for composed Job Objects Ready.
-- Map Job/MR status → `Tenant.status.conditions` (`IdentityReady`, `LDAPReady`).
-- No direct Job `Create` in Go.
+(`ldap_reconciler.go`, `identity_reconciler.go`). A future refinement extracts
+them to `crossplane/scripts/tenant-identity/` as a cluster ConfigMap mounted by
+Composition Jobs.
 
 ## Testing
 
-1. Unit: render golden tests for new `tenant-default` pipeline steps.
-2. Cluster: provision throwaway tenant; verify single `ldap-ou-{name}` Job owner.
-3. Regression: existing `demo` tenant — idempotent Jobs must not recreate realm/LDAP.
+- Unit: `go test ./internal/controller/...`
+- E2E tenant: `make e2e-p3` (shadow), `make e2e-p4` (cutover)
+- Manual: `kubectl get jobs -n platform-kernel -l gentianos.io/tenant=<name>`

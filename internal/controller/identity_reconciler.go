@@ -62,7 +62,7 @@ type realmBrokerParams struct {
 }
 
 // ensureIdentity provisions a Keycloak realm and OIDC clients for the tenant.
-// It creates idempotent Kubernetes Jobs in the kernel namespace that call the
+// It waits for Crossplane-owned Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	realmName := keycloakRealmName(tenant)
@@ -238,6 +238,16 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !kcLDAPSyncDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"SyncingKCLDAP", "Waiting for Keycloak LDAP sync Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+
+		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure broker IdP Job: %w", err)
+		}
+		if !brokerIdPDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningBrokerIdP", "Waiting for broker IdP Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
 	}

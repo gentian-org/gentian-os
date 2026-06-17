@@ -1,0 +1,236 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: render-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: app-element, limitrange, namespace, and 2 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: gentianos.io/v1alpha1
+kind: App
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: app-element
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    crossplane.io/composite: render-fixture
+    gentianos.io/app: element
+    gentianos.io/managed-by: crossplane
+    gentianos.io/tenant: render-fixture
+  name: element
+  namespace: tenant-render-fixture
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  compositionUpdatePolicy: Automatic
+  domain: render-fixture.desk.gentian.org
+  profileRef:
+    name: element
+  tenantNamespace: tenant-render-fixture
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: limitrange
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-limitrange
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: LimitRange
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: render-fixture
+        name: tenant-limits
+        namespace: tenant-render-fixture
+      spec:
+        limits:
+        - default:
+            cpu: 500m
+            memory: 512Mi
+          defaultRequest:
+            cpu: 100m
+            memory: 128Mi
+          max:
+            cpu: "4"
+            memory: 8Gi
+          type: Container
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-namespace
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/managed-by: crossplane
+          gentianos.io/tenant: render-fixture
+        name: tenant-render-fixture
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: networkpolicy
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-networkpolicy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: render-fixture
+        name: tenant-isolation
+        namespace: tenant-render-fixture
+      spec:
+        egress:
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: platform-kernel
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: gentian-infra-dev
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: gentian-dev
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: openbao
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                gentianos.io/tenant: render-fixture
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: ingress
+        - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: envoy-gateway-system
+        - ports:
+          - port: 53
+            protocol: UDP
+          - port: 53
+            protocol: TCP
+        - ports:
+          - port: 443
+            protocol: TCP
+          to:
+          - ipBlock:
+              cidr: 10.96.0.0/12
+        ingress:
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                gentianos.io/tenant: render-fixture
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: platform-kernel
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: gentian-infra-dev
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: gentian-dev
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: ingress
+        - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: envoy-gateway-system
+        podSelector: {}
+        policyTypes:
+        - Ingress
+        - Egress
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-tenant-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    name: tenant-render-fixture
+    policy: |
+      path "secret/data/gentian-os/tenants/render-fixture/*" {
+        capabilities = ["create", "read", "update", "delete", "list"]
+      }
+      path "secret/metadata/gentian-os/tenants/render-fixture/*" {
+        capabilities = ["list", "delete"]
+      }
+  providerConfigRef:
+    name: openbao

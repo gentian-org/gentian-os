@@ -8,11 +8,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -162,81 +158,14 @@ func brokerIdPJobCurrent(job *batchv1.Job) bool {
 	return job != nil && job.Labels["gentianos.io/keycloak-broker-idp"] == brokerIdentityProviderVersion
 }
 
-func (r *TenantReconciler) ensureBrokerIdentityProviderJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) error {
-	if r.KernelRealm == "" || r.KernelDomain == "" {
-		return nil
-	}
-	realmJob := &batchv1.Job{}
-	switch realmErr := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: kernelNamespace}, realmJob); {
-	case errors.IsNotFound(realmErr):
-		log.FromContext(ctx).Info("waiting for Keycloak realm job before broker IdP update", "tenant", tenant.Name)
-		return nil
-	case realmErr != nil:
-		return fmt.Errorf("get realm job for broker IdP gate: %w", realmErr)
-	case !jobIsComplete(realmJob):
-		log.FromContext(ctx).Info("waiting for Keycloak realm job to complete before broker IdP update", "tenant", tenant.Name)
-		return nil
-	}
-	kernelExternalURL := fmt.Sprintf("https://id.%s", r.KernelDomain)
-	jobName := tenantBrokerIdPJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, kernelExternalURL))
-	}
-	if err != nil {
-		return fmt.Errorf("get broker IdP job %s: %w", jobName, err)
-	}
-	if !brokerIdPJobCurrent(job) {
-		prop := metav1.DeletePropagationBackground
-		if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil && !errors.IsNotFound(delErr) {
-			return fmt.Errorf("delete stale broker IdP job %s: %w", jobName, delErr)
-		}
-		return r.Create(ctx, makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, kernelExternalURL))
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return r.Create(ctx, makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, kernelExternalURL))
-	}
-	if !jobIsComplete(job) {
-		log.FromContext(ctx).Info("waiting for Keycloak broker IdP job", "job", jobName, "realm", realmName)
-	}
-	return nil
-}
-
-func (r *KeycloakPlatformReconciler) ensureAllBrokerIdentityProviderJobs(ctx context.Context) (bool, error) {
+// ensureBrokerIdentityProviderJob waits for the Crossplane-owned broker IdP refresh Job.
+func (r *TenantReconciler) ensureBrokerIdentityProviderJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	if r.KernelRealm == "" || r.KernelDomain == "" {
 		return true, nil
 	}
-	tr := &TenantReconciler{
-		Client:       r.Client,
-		KernelRealm:  r.KernelRealm,
-		KernelDomain: r.KernelDomain,
+	realmDone, err := r.waitForProvisioningJob(ctx, realmJobName(tenant.Name))
+	if err != nil || !realmDone {
+		return false, err
 	}
-	tenantList := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenantList); err != nil {
-		return false, fmt.Errorf("list tenants for broker IdP jobs: %w", err)
-	}
-	for i := range tenantList.Items {
-		tenant := &tenantList.Items[i]
-		if tenant.DeletionTimestamp != nil {
-			continue
-		}
-		realm := keycloakRealmName(tenant)
-		if err := tr.ensureBrokerIdentityProviderJob(ctx, tenant, realm); err != nil {
-			return false, err
-		}
-		job := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: tenantBrokerIdPJobName(tenant.Name), Namespace: kernelNamespace}, job); err != nil {
-			if errors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-		if !jobIsComplete(job) {
-			return false, nil
-		}
-	}
-	return true, nil
+	return r.waitForProvisioningJob(ctx, tenantBrokerIdPJobName(tenant.Name))
 }

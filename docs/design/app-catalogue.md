@@ -312,8 +312,10 @@ changes, no operator rebuilds.
 Move contract wiring from operator-only reconciliation into the App /
 tenant Composition pipeline: gate on both sides Ready, write OpenBao
 paths, apply NetworkPolicy patches, and surface status on
-`IntegrationBinding` without separate imperative Jobs. This aligns with
-the Phase 3b goal in [architecture.md](../architecture.md) §3.1.
+`IntegrationBinding` without separate imperative Jobs. See
+[crossplane-convergence.md](../crossplane-convergence.md) — bindings are
+already emitted via the manifest bridge; full Composition-only wiring
+remains on the [roadmap.md](../roadmap.md).
 
 ## 8. Future Direction: Broadcast Contracts
 

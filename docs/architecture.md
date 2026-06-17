@@ -86,8 +86,8 @@ graph TD
 | Tool | Role | Boundary |
 |---|---|---|
 | **ArgoCD** | Deployment plane: pulls Git, syncs all manifests, shows drift, supports rollback. | Never provisions infrastructure. |
-| **Crossplane** | Provisioning plane: composes `Cluster` and per-tenant **`App`** claims into managed resources (helm `Release`, ESO, …). | Does not replace the gentian-os operator for identity, LDAP, ingress, or tenant namespace lifecycle. |
-| **gentian-os operator** | Orchestration: reconciles `Tenant` CRs, provisions kernel functions via Jobs/CRs, creates `App` claims and `IntegrationBindings`. | Tenant apps deploy via Crossplane helm `Release`, not ArgoCD `Application` per app. |
+| **Crossplane** | Provisioning plane: composes `XCluster`, `XTenant`, and per-tenant **`App`** claims into managed resources (namespace shell, helm `Release`, ESO, init Jobs, …). | Owns tenant infrastructure lifecycle via Compositions. |
+| **gentian-os operator** | Orchestration: reconciles `Tenant` CRs, seeds OpenBao secrets, writes the manifest bridge ConfigMap, patches `XTenant`, waits on composed resources, aggregates status. | Does not create duplicate shell resources or App claims; shared-kernel side effects (portal, DNS policies) remain operator-owned — see [crossplane-convergence.md](crossplane-convergence.md). |
 | **OpenBao + ESO** | Single secret store, synced into Kubernetes Secrets that Helm charts consume via `existingSecret` references. | Secrets never touch Git or appear in CR specs. |
 
 **Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
@@ -115,64 +115,54 @@ admin deploys a definition from `clusters/<cluster>/definitions/` into `tenants/
 | **Deployment** | ArgoCD | Syncs `gentian-os` kernel manifests, Crossplane XRDs/compositions, `gentian-deployments` env config, and the **`gentian-appprofiles`** Application (install step **15c**) — not per-tenant app installs |
 | **Provisioning** | Crossplane + **gentian-os operator** | Operator reconciles each `Tenant`; Crossplane reconciles each `App` claim into `ExternalSecret` + helm `Release` |
 
-**Tenant lifecycle (operator-led)**  
+**Tenant lifecycle**  
 Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
-`spec.apps: [element]`) triggers the operator in order:
+`spec.apps: [element]`) triggers the operator orchestration loop described in
+[crossplane-convergence.md](crossplane-convergence.md):
 
-1. Namespace `tenant-{name}`, quota, limit range, network policy, registry pull secret; replicate `gentian-staging-ca-tls` on ACME staging clusters  
-2. Keycloak **realm** via Jobs in `platform-kernel` (realm → admin → browser-flow)  
-3. LDAP OU, `managed-by-attribute-*` groups, and bind accounts via UDM REST Jobs (`dc=swp-ldap,dc=internal` on dev)  
-4. Keycloak **LDAP group sync** → OpenDesk **OIDC pack** client Jobs (maps `managed-by-attribute-*` → client roles per `internal/oidc/packs/opendesk.yaml`)  
-5. Post-unlock **LDAP user sync** and kernel admin re-enable  
-6. Per-app databases, object storage, cache where required  
-7. Mail secrets / virtual-domain registration when `spec.mail.mode` needs kernel mail (see [design/mail.md](design/mail.md))  
-8. **`App` claim per `spec.apps` entry** — created by the operator (authoritative today)  
-9. Per-tenant DNS-01 wildcard cert + per-app `Ingress` (`chat.demo.desk.gentian.org`, …)  
-10. **`IntegrationBinding`** CRs when two installed apps match a contract in `spec.apps`
+1. **OpenBao seeding** — credentials before Compositions reconcile  
+2. **Manifest bridge** — operator writes `tenant-{name}-provisioning-jobs` (`jobs.json`, `objects.json`)  
+3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry)  
+4. **Wait-only ensures** — identity/LDAP Jobs, databases, storage, cache, gateway objects, IntegrationBindings  
+5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
+6. **Shared-kernel extensions** — portal/UMC convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
+7. **Status** — per-step conditions plus `CrossplaneReady` from `XTenant` Ready
 
-In parallel, the operator also ensures an **`XTenant`** composite
-(`tenant-default` Composition). That path renders namespace, limits,
-network policy, OpenBao policy, and **duplicate `App` claims** from the
-same `spec.apps` list. The two paths are idempotent today; imperative
-steps are **not** yet fully retired into the Composition (Phase 3b).
+Crossplane owns creation; the operator seeds secrets, drives the ConfigMap, and waits
+for composed resources to become Ready.
 
 **App install flow** — not ArgoCD per app  
 Catalogue entries live in **`gentian-apps/profiles/`** and reach the
 cluster only via ArgoCD Application **`gentian-appprofiles`**. Installing
 for a tenant means appending a profile name to **`Tenant.spec.apps`** in
-`gentian-deployments`; the operator materialises namespace-scoped
-`App` claims; Crossplane deploys charts via **`provider-helm` `Release`**
-MRs. There is no third “app-of-apps” source for tenant apps.
+`gentian-deployments`; Crossplane creates namespace-scoped **`App` claims**
+via `tenant-default`; app Compositions deploy charts via **`provider-helm`
+`Release`** MRs. There is no third “app-of-apps” source for tenant apps.
 
 **Identity / Keycloak — two mechanisms**
 
 | Scope | Mechanism today | Git location |
 |---|---|---|
 | **Kernel / shared realm clients** (portal, static integrations) | **`provider-keycloak`** `Client` / scope MRs | `kernel/services/keycloak-config/` |
-| **Per-tenant realms and OIDC clients** | Operator **shell Jobs** (`curl` + admin API) | Reconciler in `gentian-os` |
+| **Per-tenant realms and OIDC clients** | Crossplane **Object Jobs** via manifest bridge (operator wait-only) | `tenant-{name}-provisioning-jobs` → `tenant-default` |
+| **Kernel IdP broker refresh** | Crossplane Object Job via manifest bridge (`keycloak-broker-idp-{tenant}`) | `jobs.json` → `tenant-default` |
 
-Some app Compositions (`app-default`, `app-element`, `app-ox`) also emit
-`openidclient.keycloak.crossplane.io/Client` MRs for chart-specific
-clients. That overlaps with operator Jobs for the same tenant — both
-exist today; consolidation is planned (see [roadmap.md](roadmap.md)).
+App Compositions (`app-default`, `app-element`, `app-ox`) emit
+`openidclient.keycloak.crossplane.io/Client` MRs when `compositionRef` is set;
+the operator skips duplicate OIDC client Jobs for those apps.
 
 **Mid-term direction for `provider-keycloak`:** Prefer managing **all**
 Keycloak objects (kernel + tenant + app clients) as Crossplane MRs once
 realm lifecycle is declarative and drift-safe. Until then, keep the
-provider for kernel `keycloak-config` and treat operator Jobs as the
-source of truth for tenant realms. **Do not remove** `provider-keycloak`
-without migrating `keycloak-config` and tenant client creation first.
+provider for kernel `keycloak-config`; tenant realms and clients are owned by
+Crossplane (manifest-bridge Jobs and app Composition MRs).
 
-**Simpler / more future-proof alternatives (not implemented)**
+**Future directions** (see [roadmap.md](roadmap.md))
 
-- Single reconcile owner: finish **Phase 3b** — move identity, LDAP,
-  ingress, and mail into `tenant-default` / app Compositions so only
-  Crossplane + one operator “orchestrator” remain. Step-by-step plan:
-  [crossplane-convergence.md](crossplane-convergence.md).  
-- App catalogue via OCI artefact + `Cluster` XR instead of a separate
-  ArgoCD Application (still one sync path).  
-- Replace point-to-point `IntegrationBinding` Jobs with composition
-  steps gated on `App` Ready (see app-catalogue §8b).
+- Move remaining gateway DNS/policies into Crossplane  
+- `function-sequencer` gating for app Compositions on tenant identity Ready  
+- App catalogue via OCI artefact + `Cluster` XR instead of a separate ArgoCD Application  
+- Drift-safe `provider-keycloak` Realm MRs for tenant realms
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
 documented in [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §2.

@@ -1,0 +1,15 @@
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: render-fixture
+  annotations:
+    crossplane.io/external-name: render-fixture
+spec:
+  displayName: Render Fixture
+  adminEmail: admin-render@gentian.org
+  kernelDomain: desk.gentian.org
+  apps:
+    - name: element
+      profile: element
+  compositeDeletePolicy: Background
+  resourceRefs: []

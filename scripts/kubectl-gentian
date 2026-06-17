@@ -56,6 +56,7 @@ Usage:
 
   kubectl gentian apps install <app> --tenant <tenant>
       Install an app for a tenant by committing to gentian-deployments.
+      Blocks until the Crossplane App claim is Ready (or reports failed Jobs).
 
   kubectl gentian apps uninstall <app> --tenant <tenant>
       Uninstall an app from a tenant by committing to gentian-deployments.
@@ -985,6 +986,67 @@ print_tenant_admin_login_instructions() {
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 
+wait_for_app_ready() {
+  local tenant_name="${1}"
+  local app_name="${2}"
+  local timeout_secs="${3:-900}"
+  local ns_name="tenant-${tenant_name}"
+  local start last_progress_at=0
+  start="$(date +%s)"
+
+  echo "Waiting for app '${app_name}' on tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
+
+  while true; do
+    local failed_jobs=""
+    failed_jobs="$(kubectl --request-timeout=5s get jobs -n "${ns_name}" \
+      -o jsonpath="{range .items[?(@.status.failed>0)]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null \
+      | awk -v app="${app_name}" '$0 ~ "^" app "-" || index($0, app) {print}' || true)"
+    if [[ -n "${failed_jobs}" ]]; then
+      echo "App '${app_name}' has failed Job(s) in ${ns_name}:" >&2
+      printf '%s\n' "${failed_jobs}" | sed 's/^/  - /' >&2
+      local first_failed
+      first_failed="$(printf '%s\n' "${failed_jobs}" | sed -n '1p')"
+      if [[ -n "${first_failed}" ]]; then
+        echo "Recent logs from failed Job '${first_failed}':" >&2
+        kubectl --request-timeout=5s logs -n "${ns_name}" "job/${first_failed}" --tail=20 2>/dev/null | sed 's/^/    /' >&2 || true
+      fi
+      return 1
+    fi
+
+    local ready_status message
+    ready_status="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
+    message="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.message}{end}' 2>/dev/null || true)"
+
+    if [[ "${ready_status}" == "True" ]]; then
+      local now_ready
+      now_ready="$(date +%s)"
+      echo "App '${app_name}' is Ready after $((now_ready - start))s."
+      return 0
+    fi
+
+    local now elapsed
+    now="$(date +%s)"
+    elapsed=$((now - start))
+    if (( elapsed - last_progress_at >= 30 )); then
+      echo "  app '${app_name}' not Ready yet (elapsed: ${elapsed}s) ${message:-}"
+      last_progress_at="${elapsed}"
+    fi
+
+    if (( elapsed >= timeout_secs )); then
+      echo "Timed out waiting for app '${app_name}' to become Ready." >&2
+      if [[ -n "${message}" ]]; then
+        echo "  Last App claim message: ${message}" >&2
+      fi
+      kubectl --request-timeout=5s get pods -n "${ns_name}" 2>/dev/null | grep -E "${app_name}|NAME" >&2 || true
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
 wait_for_tenant_ready() {
   local tenant_name="${1}"
   local timeout_secs="${2:-600}"
@@ -1857,7 +1919,14 @@ cmd_install() {
   # Apply the updated Tenant CR so the operator reconciles immediately.
   kubectl apply -f "${file}"
 
-  echo "Done. Tenant '${tenant}' updated — operator will provision '${app}'."
+  if ! wait_for_app_ready "${tenant}" "${app}" 900; then
+    echo "ERROR: app '${app}' did not become Ready on tenant '${tenant}'." >&2
+    echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
+    echo "  Inspect: kubectl get pods -n tenant-${tenant} | grep ${app}" >&2
+    exit 1
+  fi
+
+  echo "Done. App '${app}' is installed and Ready on tenant '${tenant}'."
 }
 
 # ---------------------------------------------------------------------------

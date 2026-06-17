@@ -1,54 +1,26 @@
-# Crossplane Convergence — Migration Plan
+# Crossplane Convergence — Architecture & Open Items
 
-**Status:** Active plan — C3 complete (C3.3 deferred); C4 in progress  
-**Supersedes:** fragmented notes in [architecture.md](architecture.md) §3.1 (“Phase 3b”)
-and e2e script stubs (`p2`–`p4`).
+**Status:** Converged architecture in production; remaining work tracked below.
 
-This document is the **single checklist** for moving tenant and kernel provisioning
-from a dual-path model (Go operator + Crossplane in parallel) to a **clean architecture**
-where Crossplane owns infrastructure lifecycle and the operator orchestrates the
-human-facing `Tenant` API.
+This document describes **how tenant and kernel provisioning work today** — Crossplane
+owns infrastructure lifecycle; the operator orchestrates the human-facing `Tenant` API.
+For planned follow-ups see [roadmap.md](roadmap.md).
 
 ---
 
-## 1. Why converge?
+## 1. Architecture
 
-Gentian OS is designed around an OS analogy: **CRDs are syscalls**, **Crossplane is the
-kernel**, **Compositions are libc**, **ArgoCD is init** ([architecture.md](architecture.md) §2).
-That model only holds when each resource has **one reconcile owner**.
-
-Today, applying a `Tenant` starts **two provisioning paths**:
-
-| Path | Owner | What it does |
-|------|-------|--------------|
-| **Imperative** | `gentian-os` operator | ~15 sequential `ensure*` steps: namespace, identity Jobs, LDAP Jobs, DB/storage/cache, App claims, Gateway, bindings, mail, … |
-| **Declarative** | `XTenant` → `tenant-default` Composition | Namespace, LimitRange, NetworkPolicy, OpenBao policy, **duplicate App claims** |
-
-The paths are idempotent today, but duplication creates real costs:
-
-- **Drift ambiguity** — hand-edited namespace labels or NetworkPolicy rules: which owner wins?
-- **Keycloak triple ownership** — operator Jobs, `provider-keycloak` Client MRs in app Compositions, and kernel `keycloak-config` MRs overlap ([roadmap.md](roadmap.md)).
-- **Harder debugging** — failures may surface on `Tenant.status`, `XTenant.status`, or individual MRs.
-- **Slower catalogue evolution** — new apps require Go changes *and* Composition templates until convergence completes.
-
-Convergence delivers:
-
-1. **Single owner per resource** — Crossplane MRs/Object wrappers for K8s and external API state.
-2. **Git-visible desired state** — tenant infra expressed as XR spec + Composition pipeline, not hidden in Go.
-3. **Composable testing** — render golden tests and e2e phases replace monolithic operator integration tests.
-4. **Clean deletion** — `deleteXTenant` cascades composed resources; fewer orphan Jobs and CRs.
-5. **Thin operator** — Go code validates, seeds secrets, patches `XTenant`, aggregates status onto `Tenant`.
-
----
-
-## 2. Target architecture (steady state)
+Gentian OS follows the model in [architecture.md](architecture.md) §2: **CRDs are
+syscalls**, **Crossplane is the kernel**, **Compositions are libc**, **ArgoCD is init**.
+Each Kubernetes or external resource has **one reconcile owner**.
 
 ```mermaid
 flowchart TB
   Git[gentian-deployments<br/>Tenant YAML]
   AC[ArgoCD]
   Tenant[Tenant CR]
-  Op[Operator — orchestrator only]
+  Op[Operator — orchestrator]
+  CM[tenant-*-provisioning-jobs<br/>ConfigMap manifest bridge]
   XR[XTenant composite]
   TComp[tenant-default Composition]
   AComp[app-* Compositions]
@@ -57,7 +29,9 @@ flowchart TB
   Git --> AC
   AC --> Tenant
   Tenant --> Op
-  Op -->|patch spec, seed secrets, validate| XR
+  Op -->|seed secrets, write CM, patch XR| CM
+  Op --> XR
+  CM --> TComp
   XR --> TComp
   TComp --> AComp
   TComp --> MRs
@@ -71,225 +45,104 @@ flowchart TB
 |-------|------|----------------|
 | **Deployment** | ArgoCD | Sync platform manifests, XRDs, Compositions, AppProfiles, `Tenant` CRs from Git |
 | **Provisioning** | Crossplane | Materialise `XCluster`, `XTenant`, `App` claims into MRs (namespace, secrets policy, Helm Releases, Keycloak Clients, init Jobs) |
-| **Orchestration** | Operator | Preflight (`AppProfile` exists, tenancy constraints), OpenBao seeding before Composition reads paths, create/patch/delete `XTenant`, map conditions → `Tenant.status` |
+| **Orchestration** | Operator | Preflight, OpenBao seeding, manifest bridge (`jobs.json` / `objects.json`), create/patch/delete `XTenant`, wait on composed resources, map conditions → `Tenant.status` |
 | **Secrets** | OpenBao + ESO | Single store; never in Git or CR specs ([design/security.md](design/security.md)) |
 
-### What the operator should **not** do at steady state
+### Operator reconcile loop
 
-- Create or update Namespace, ResourceQuota, LimitRange, NetworkPolicy (owned by `tenant-default`).
-- Create duplicate `App` claims (owned by `tenant-default` or a dedicated Composition step).
-- Run parallel Keycloak realm/client Jobs when `provider-keycloak` MRs or Composition init Jobs own the same objects.
+Each `Tenant` reconcile:
 
-### What may remain operator-owned permanently
+1. **Validate** — `AppProfile` exists, tenancy constraints
+2. **Seed secrets** — OpenBao paths before Compositions read them
+3. **Manifest bridge** — write `tenant-{name}-provisioning-jobs` ConfigMap
+4. **Patch `XTenant`** — fatal on failure
+5. **Wait for shell** — Crossplane-provisioned namespace
+6. **Bootstrap side-effects** — registry-credentials, staging-CA replication (permanent operator concern)
+7. **Wait-only ensures** — identity, LDAP, database, storage, cache, apps, gateway, bindings
+8. **Shared-kernel extensions** — portal/UMC, LDAP base, Nextcloud group, browser-security Jobs (see [roadmap.md](roadmap.md); skipped when `TENANT_CROSSPLANE_ONLY=true`)
+9. **Status aggregation** — `XTenant` Ready → `CrossplaneReady` condition
 
-Some concerns cross-cut shared kernel services and are awkward as pure Composition steps:
+Crossplane **`tenant-default`** emits: Namespace, LimitRange, ResourceQuota, NetworkPolicy,
+OpenBao policy, provisioning Jobs/Objects from the manifest bridge, App claims.
 
-- **Preflight gates** — missing `AppProfile`, tenancy mode constraints.
-- **OpenBao seeding** — HKDF-derived credentials before Compositions reconcile (`Seeder` / `seedAppSecrets`).
-- **Cluster bootstrap artefacts** — replicating `registry-credentials`, staging CA trust into tenant namespaces (unless moved to `tenant-default`).
-- **Status aggregation** — human-facing `Tenant.status.conditions` from XR + MR readiness.
-- **Shared-kernel side effects** — Nextcloud group registration, portal/UMC convergence (may stay as lightweight Jobs until kernel Compositions exist).
+App Compositions (`app-default`, `app-element`, `app-ox`, …) emit: ExternalSecrets,
+Helm Releases, Keycloak Client MRs, per-app init Jobs.
 
----
-
-## 3. Current state
-
-### 3.1 Kernel bootstrap (install.sh)
-
-| Step | Status | Owner today |
-|------|--------|-------------|
-| Crossplane core + providers | ✅ Done | `install.sh` Steps 0–0c |
-| `XCluster` / `cluster-default` | ✅ Done | Crossplane (`apply_cluster_xr`) |
-| Pattern B kernel charts (Nubus, Postfix, Dovecot, Nextcloud, …) | ✅ Mostly done | `provider-helm` Release CRs under `kernel/services/` |
-| Operator + AppProfiles | ✅ Done | `install.sh` Steps 15–15c |
-
-### 3.2 Tenant provisioning (orchestrator + Crossplane)
-
-When a `Tenant` is applied, the operator orchestrates and Crossplane materialises:
-
-| # | Operator step | Crossplane owner? | Notes |
-|---|---------------|-------------------|-------|
-| — | `ensureTenantProvisioningManifests` | ✅ (via CM) | Writes `tenant-*-provisioning-jobs` (`jobs.json`, `objects.json`) |
-| — | `ensureTenantXR` | — | Creates/patches `XTenant`; **fatal** on failure |
-| — | `waitForTenantShell` | — | Waits for Crossplane-provisioned namespace |
-| 1b | `ensureRegistryCredentials` | ❌ | Operator side-effect until C1.2 |
-| 1c | `ensureStagingCaTrust` | ❌ | Operator side-effect until C1.2 |
-| 5–10 | `ensureIdentity` … `ensureCache` | ✅ | **Wait-only** — Jobs/objects applied by `tenant-default` |
-| 11 | `ensureAppDeployment` | ✅ App claims | Seeds secrets + watches readiness only |
-| 12 | `ensureGateway` | ✅ partial | Objects via CM; DNS/ReferenceGrants still operator |
-| 13 | `ensureIntegrationBindings` | ✅ | Objects via CM; stale-binding GC operator |
-| 14–14e | mail, office, UMC, … | ❌ | Skipped when `TENANT_CROSSPLANE_ONLY=true` (C4.4) |
-| — | `aggregateCrossplaneStatus` | — | Maps `XTenant` Ready → `CrossplaneReady` condition (C4.1) |
-
-`tenant-default` emits: Namespace, LimitRange, ResourceQuota, NetworkPolicy, OpenBao Policy,
-provisioning Jobs/Objects from the manifest bridge, App claims.
-
-App Compositions (`app-default`, `app-element`, `app-ox`, …) already emit: ExternalSecrets,
-Helm Releases, Keycloak Client MRs, per-app LDAP-search init Jobs.
-
-### 3.3 E2E migration ladder
-
-| Make target | Script | Status |
-|-------------|--------|--------|
-| `make e2e-p0` | `p0-crossplane-install.sh` | ✅ Implemented |
-| `make e2e-p1` | `p1-kernel-dev.sh` | ✅ Implemented (Cluster XR spot-checks) |
-| `make e2e-p2` | `p2-pattern-b.sh` | ⬜ Stub — Pattern B kernel chart verification |
-| `make e2e-p3` | `p3-tenant-shadow.sh` | ✅ Implemented |
-| `make e2e-p4` | `p4-tenant-cutover.sh` | ✅ Implemented |
-
----
-
-## 4. Convergence phases
-
-Work is ordered so each phase **removes duplication** before migrating hard problems
-(identity, LDAP). Do not skip phases — partial convergence increases overlap.
-
-### Phase C0 — Kernel structural (done)
-
-**Goal:** `XCluster` provisions kernel namespaces, ESO store, cert issuers, KV seed paths.
-
-**Exit criteria:** `make e2e-p1` passes on a fresh dev cluster after `install.sh`.
-
----
-
-### Phase C1 — Deduplicate tenant shell resources
-
-**Goal:** `tenant-default` is the sole owner of namespace scaffolding; operator stops
-imperative `ensure*` for overlapping resources.
-
-| Task | Action | Status |
-|------|--------|--------|
-| C1.1 | Add ResourceQuota to `tenant-default` (mirror operator quotas from `Tenant.spec`) | ✅ |
-| C1.2 | Add registry-credentials + staging-CA replication to `tenant-default` **or** document as permanent operator side-effect | ✅ (operator retains; documented) |
-| C1.3 | Align NetworkPolicy rules between operator and Composition (single spec) | ✅ |
-| C1.4 | Remove operator calls: `ensureNamespace`, `ensureLimitRange`, `ensureNetworkPolicy`, `ensureResourceQuota` | ✅ |
-| C1.5 | Remove operator `ensureAppDeployment` claim creation; keep `seedAppSecrets` in operator | ✅ |
-| C1.6 | Make `ensureTenantXR` **fatal** on failure | ✅ |
-
-**Exit criteria:**
-
-- New tenant: exactly one Namespace, LimitRange, NetworkPolicy, one App claim per profile.
-- `kubectl get managed -l crossplane.io/composite=<tenant>` shows all shell MRs Ready.
-- Operator reconcile log contains no “ensure namespace” paths.
-
----
-
-### Phase C2 — Identity & LDAP in Compositions
-
-**Goal:** One Keycloak/LDAP owner per tenant; retire operator Jobs for realm lifecycle.
-
-**Status:** ✅ Complete — see [design/tenant-identity-composition.md](design/tenant-identity-composition.md).
-
-| Sub-phase | Scope | Status |
-|-----------|-------|--------|
-| C2a | LDAP OU + MBA groups Job → Composition | ✅ |
-| C2b | LDAP admin user/policy/bind Jobs | ✅ |
-| C2c | Keycloak realm Jobs | ✅ |
-| C2d | OIDC client consolidation (operator vs app Composition MRs) | ✅ |
-| C2e | OIDC pack Jobs | ✅ |
-
-| Task | Action |
-|------|--------|
-| C2.1 | Extend `tenant-default` (or new `tenant-identity` Composition patch) with Keycloak **Realm** MRs once `provider-keycloak` supports drift-safe realm lifecycle — **or** move existing realm Jobs into Composition pipeline as gated init Jobs |
-| C2.2 | Move tenant LDAP OU / `managed-by-attribute-*` groups / bind accounts into Composition init Jobs (same UDM REST logic as operator today) |
-| C2.3 | Consolidate OIDC clients: pick **one** of operator Jobs vs app Composition Client MRs vs tenant Composition pack clients ([roadmap.md](roadmap.md)) |
-| C2.4 | Remove `ensureIdentity`, `ensureLDAP`, `ensureLDAPBase` from operator |
-| C2.5 | Gate app Compositions on tenant identity Ready (composition function or `spec.crossplane.io/crossplane-resource-status`) |
-
-**Exit criteria:**
-
-- Single Keycloak realm per tenant; no duplicate client definitions.
-- LDAP OU exists before any app ldap-search-init Job runs.
-- Operator identity/LDAP conditions derived from `XTenant` / composed Job MR status.
-
-**Blocker:** Do not remove operator identity Jobs until `provider-keycloak` realm lifecycle is declarative and drift-safe, or Composition Jobs reach parity with current Job semantics (browser flow, LDAP federation sync, OIDC pack role mappings).
-
----
-
-### Phase C3 — Data plane & edge
-
-**Goal:** Tenant-scoped DB, storage, cache, ingress owned by Compositions.
-
-**Status:** ✅ Complete for C3.1–C3.2 and C3.4; C3.3 (mail/office) deferred to kernel Compositions.
-
-| Task | Action |
-|------|--------|
-| C3.1 | Move `ensureDatabase`, `ensureMariaDB`, `ensureStorage`, `ensureCache` into `tenant-default` or per-app Compositions (prefer app-owned when only one app consumes the resource) |
-| C3.2 | Move `ensureGateway` (wildcard cert, HTTPRoutes) into `tenant-default` or a dedicated `tenant-edge` Composition |
-| C3.3 | Move `ensureMail`, `ensureOffice` into kernel-facing Compositions or gated tenant steps |
-| C3.4 | Implement IntegrationBindings in Composition pipeline ([app-catalogue.md](design/app-catalogue.md) §8b) |
-
-**Implementation (C3.1–C3.2, C3.4):**
-
-The C2 **ConfigMap manifest bridge** is extended:
+### Manifest bridge
 
 | ConfigMap key | Contents |
 |---------------|----------|
-| `jobs.json` | Batch Jobs: pg-role, mariadb-setup, s3-bucket, nc-group, redis-acl (plus C2 identity/LDAP jobs) |
-| `objects.json` | CNPG Database CRs, Memcached Deployment/Service, IntegrationBindings, Certificate/Gateway/HTTPRoutes |
+| `jobs.json` | Batch Jobs: identity/LDAP, pg-role, mariadb-setup, s3-bucket, nc-group, redis-acl |
+| `objects.json` | CNPG Database CRs, Memcached, IntegrationBindings, Certificate/Gateway/HTTPRoutes |
 
-`tenant-default` renders both keys as `kubernetes.crossplane.io/Object` MRs. The operator **seeds credentials** and **writes the ConfigMap**; reconcilers **wait only** (no direct Create of those resources).
+The operator **seeds credentials** and **writes the ConfigMap**; reconcilers **wait only**
+(no direct `Create` of those resources). `tenant-default` renders both keys as
+`kubernetes.crossplane.io/Object` MRs.
 
-**App-owned init Jobs:** When an `AppProfile` has `compositionRef` and `databasePerTenant` / `bucketPerTenant`, the app Composition owns `{app}-db-init` / `{app}-s3-init` in the tenant namespace. The operator skips the legacy kernel jobs and waits on those instead.
+When an `AppProfile` has `compositionRef` and `databasePerTenant` / `bucketPerTenant`,
+the app Composition owns `{app}-db-init` / `{app}-s3-init`; the operator waits on those
+instead of legacy kernel jobs.
 
-**Operator exceptions (still imperative):**
+### Feature flag: Crossplane-only mode
 
-- Gateway: DNS records, ReferenceGrants, BackendTrafficPolicy, stale route/Ingress cleanup (C3.2 partial).
-- IntegrationBindings: garbage collection of stale bindings (C3.4).
-- Mail / office: unchanged (`ensureMail`, `ensureOffice`) — C3.3 deferred.
-
-**Exit criteria:**
-
-- Tenant with Element: chat ingress, DB, TURN secrets, Synapse Release all Ready via Crossplane graph.
-- No operator-managed Batch Jobs except documented permanent exceptions.
-
----
-
-### Phase C4 — Thin operator & cutover
-
-**Goal:** Operator is orchestrator only; existing production tenants migrated.
-
-| Task | Action | Status |
-|------|--------|--------|
-| C4.1 | Operator reconcile loop: validate → seed secrets → patch `XTenant` → aggregate status → handle finalizers | ✅ |
-| C4.2 | Implement `make e2e-p3` (shadow tenant — Crossplane graph on test cluster) | ✅ |
-| C4.3 | Implement `make e2e-p4` (cutover — verify existing tenant end-to-end) | ✅ |
-| C4.4 | Document rollback: `TENANT_CROSSPLANE_ONLY` feature flag | ✅ |
-| C4.5 | Remove dead operator code paths after all clusters pass P4 | ⬜ Deferred |
-
-**C4.1 implementation:**
-
-Reconcile phases are structured as: orchestration (manifest bridge + XR) → bootstrap
-side-effects (registry, staging CA) → wait-only ensures → optional kernel extensions →
-status aggregation (`CrossplaneReady` from `XTenant.status`).
-
-**C4.4 rollback flag:**
-
-Set `tenantProvisioning.crossplaneOnly: true` in the operator Helm values (env
-`TENANT_CROSSPLANE_ONLY=true`) to skip shared-kernel side effects (mail, office,
-portal/UMC, Nextcloud group, LDAP base helpers) and validate Crossplane-only
-provisioning. Leave `false` (default) for normal production behaviour. Re-enable
-imperative paths by setting the flag back to `false` and running `./update.sh`.
-
-**Exit criteria:**
-
-- `Tenant` Ready ⇔ `XTenant` Ready ⇔ all composed MRs Ready.
-- P3 and P4 e2e scripts pass on dev/test cluster.
-- No duplicate resource creation in audit (`kubectl get … -l gentianos.io/tenant=<name>`).
+Set `tenantProvisioning.crossplaneOnly: true` in operator Helm values (env
+`TENANT_CROSSPLANE_ONLY=true`) to skip shared-kernel side effects (portal/UMC,
+Nextcloud group, LDAP base helpers, browser-security Jobs). Default is `false`
+(normal production). Re-enable side effects by setting the flag back to `false` and
+running `./update.sh`.
 
 ---
 
-## 5. How to test
+## 2. Cluster readiness audit (2026-06-17)
 
-### 5.1 Unit tests (no cluster)
+Audit of the **test/dev cluster** (`demo` tenant, kernel domain `desk.gentian.org`):
 
-Run before every Composition change:
+| Check | Result | Notes |
+|-------|--------|-------|
+| Manifest bridge CM | ✅ | `tenant-demo-provisioning-jobs` has `jobs.json` + `objects.json` |
+| Crossplane Object MRs | ✅ | 84 managed resources for composite `demo` |
+| App claims (single owner) | ✅ | One `App` per profile; no duplicate operator-created claims |
+| `XTenant` Ready | ❌ | `Ready=False` (`Creating`) — `openproject` app added ~15m ago |
+| `Tenant CrossplaneReady` | ❌ | `False` — follows XTenant |
+| `Tenant Phase` | `Provisioning` | `CacheReady=False`, `GatewayReady=False`, `AppsReady=False` |
+| P4 cutover (`make e2e-p4`) | ❌ | Times out waiting for XTenant Ready (expected while openproject converges) |
+| Broker IdP Job in manifest | ❌ | `keycloak-broker-idp-demo` created by `KeycloakPlatformReconciler`, **not** in `jobs.json` |
+
+**Conclusion:** **Not ready to remove legacy operator code paths.** Wait until `demo`
+(and other live tenants) pass `make e2e-p4` with `XTenant Ready=True` and
+`CrossplaneReady=True` on a stable app set before deleting dead reconciler code.
+
+---
+
+## 3. Open items
+
+Tracked here for visibility; detailed rationale and priority in [roadmap.md](roadmap.md).
+
+| # | Item | Owner / area | Status |
+|---|------|--------------|--------|
+| 1 | **Remove dead operator code** — Job `Create` paths, deletion imperatives superseded by XR cascade, trim wait-wrapper surface after P4 green on all clusters | Operator | Blocked on cluster P4 |
+| 2 | **Broker IdP Job in manifest bridge** — `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | Operator / identity | ✅ Done |
+| 3 | **P2 e2e — Pattern B kernel charts** | Tests | ✅ Done |
+| 4 | **`tenant-default` render goldens** | Tests | ✅ Done |
+| 5 | **Gateway edge (operator remainder)** — DNS records, ReferenceGrants, BackendTrafficPolicy, stale route/Ingress cleanup | Operator / edge | Partial (objects in CM; policies still operator) |
+| 6 | **Composition ordering** — `function-sequencer` to gate app Compositions on tenant identity Ready | Crossplane | Not started |
+| 7 | **`provider-keycloak` consolidation** — drift-safe tenant Realm MRs vs operator Jobs | Keycloak | Blocked upstream |
+| 8 | **Gate `Phase=Ready` on `CrossplaneReady`** — optional stricter readiness semantics | Operator | Not started |
+| 9 | **Doc sync** — `architecture.md` §3.1, Makefile e2e comments | Docs | In progress |
+| 10 | **XTenant / App schema unit tests** — extend `test-unit-schema` beyond cluster fixtures | Tests | Not started |
+
+Mail and office provisioning are **out of scope** for this list — tracked separately
+in [roadmap.md](roadmap.md).
+
+---
+
+## 4. How to test
+
+### Unit tests (no cluster)
 
 ```bash
 make test-unit
 ```
-
-This runs:
 
 | Target | What it verifies |
 |--------|------------------|
@@ -297,142 +150,54 @@ This runs:
 | `make test-unit-functions` | Crossplane function pipeline behaviour |
 | `make test-unit-schema` | XRD/claim YAML validates against kubeconform |
 
-**When adding tenant convergence:**
+Add `crossplane/tests/unit/render/tenant-default/` with `xr.yaml`, `composition.yaml`,
+`expected.yaml` when extending tenant Compositions; run `make test-unit-render-update`.
 
-1. Add `crossplane/tests/unit/render/tenant-default/` with `xr.yaml`, `composition.yaml`, `expected.yaml`.
-2. Run `make test-unit-render-update` locally to regenerate goldens, commit the diff.
-3. Extend schema tests if `XTenant` spec fields change.
+### E2E tests (dev cluster)
 
-### 5.2 E2E tests (dev cluster)
-
-Prerequisites: reachable cluster, `KUBECONFIG` set, OpenBao running, master password Secret in `crossplane-system`.
+Prerequisites: reachable cluster, `KUBECONFIG`, OpenBao, master password Secret in
+`crossplane-system`.
 
 ```bash
-make install-tools   # crossplane CLI, kubeconform
-
-# Kernel structural provisioning
-make e2e-p0
-make e2e-p1
-
-# Pattern B kernel charts (implement script first)
-make e2e-p2
-
-# Tenant shadow + cutover (C4)
-make e2e-p3
-make e2e-p4
+make install-tools
+make e2e-p0    # Crossplane core
+make e2e-p1    # XCluster structural
+make e2e-p2    # Pattern B kernel Helm Releases
+make e2e-p3    # Shadow tenant
+make e2e-p4    # Existing tenant cutover (default: demo)
 ```
 
-#### P1 — kernel (implemented)
+**P3** — throwaway tenant: manifest bridge, XTenant Ready, Object MRs, `CrossplaneReady`.
 
-Verifies: providers Healthy, `XCluster dev-cluster` Ready, namespaces `platform-kernel` /
-`gentian-system`, ESO ClusterSecretStore, cert-manager ClusterIssuer, KV seed MRs.
+**P4** — live tenant: single-owner App claims, Crossplane graph healthy, optional HTTPS
+smoke (`RUN_SMOKE=1`).
 
-#### P2 — Pattern B kernel (to implement)
-
-Suggested checks when implementing `p2-pattern-b.sh`:
-
-- All `Release.helm.crossplane.io` under `kernel/services/*/manifests/` Synced + Ready.
-- No plaintext secrets in Release `spec.values` (only `valuesFrom` / ConfigMap refs).
-- Nubus, Postfix, Dovecot pods Running in kernel namespace.
-
-#### P3 — tenant shadow (implemented)
-
-Verifies a throwaway tenant converges via the Crossplane graph:
-
-```bash
-make e2e-p3
-# SHADOW_TENANT=shadow-e2e SKIP_CLEANUP=1 make e2e-p3  # leave tenant for inspection
-```
-
-Checks: provisioning ConfigMap (`jobs.json` + `objects.json`), XTenant Ready,
-Crossplane Object MRs, `Tenant.status.conditions[CrossplaneReady]`.
-
-#### P4 — tenant cutover (implemented)
-
-Verifies an existing tenant (default `demo`) is fully converged:
-
-```bash
-make e2e-p4
-TENANT=demo RUN_SMOKE=1 make e2e-p4  # optional HTTPS smoke
-```
-
-### 5.3 Manual verification checklist
-
-Use after each convergence phase on a real cluster:
+### Manual verification
 
 ```bash
 TENANT=demo
 
-# Single owner — no duplicate App claims
-kubectl get app -n tenant-${TENANT} -l gentianos.io/managed-by
-
-# Crossplane graph healthy
+kubectl get app -n tenant-${TENANT}
 kubectl get xtenant ${TENANT}
 kubectl get managed -l crossplane.io/composite=${TENANT}
-
-# Tenant status reflects XR
-kubectl get tenant ${TENANT} -o jsonpath='{.status.conditions[*].type}{"\n"}'
-
-# App installed via Composition
+kubectl get tenant ${TENANT} -o jsonpath='{range .status.conditions[*]}{.type}={.status}{" "}{end}{"\n"}'
 kubectl get release.helm.crossplane.io -n tenant-${TENANT}
-kubectl get externalsecret -n tenant-${TENANT}
-
-# Identity (post-C2): realm exists, no orphan Jobs
-kubectl get jobs -n platform-kernel -l gentianos.io/tenant=${TENANT}
 ```
 
-### 5.4 Operator integration tests
-
-Go controller tests in `internal/controller/` cover imperative paths today.
-As operator code is removed, add tests that:
-
-- Mock `XTenant` status and assert `Tenant.status` aggregation.
-- Verify `ensureTenantXR` patch semantics (no overwrite of Crossplane-managed fields).
-- Verify finalizer + `deleteXTenant` cascade behaviour.
-
-Run: `go test ./internal/controller/...`
+Operator integration tests: `go test ./internal/controller/...`
 
 ---
 
-## 6. Risks and mitigations
-
-| Risk | Mitigation |
-|------|------------|
-| Partial migration increases triple ownership (Keycloak) | Complete C1 before C2; feature-flag imperative steps per concern |
-| Composition ordering bugs | Use `function-auto-ready`; explicit pipeline steps; P3 shadow tenant before P4 |
-| NetworkPolicy drift between paths | Diff operator vs Composition specs in C1.3 before removing operator path |
-| Secret seeding race | Operator seeds before patching `XTenant`; document in Composition comments |
-| Cutover breaks live tenant | P4 on dev first; keep operator fallback flag one release cycle |
-| OpenBao paths deleted on XR delete | KV uses `managementPolicies: [Observe, Create]` — document in runbooks ([getting-started.md](../getting-started.md)) |
-
----
-
-## 7. Related documents
+## 5. Related documents
 
 | Topic | Document |
 |-------|----------|
 | Platform overview | [architecture.md](architecture.md) §3.1 |
+| Tenant identity & LDAP | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
 | App install flow | [design/app-catalogue.md](design/app-catalogue.md) |
-| IntegrationBindings future | [design/app-catalogue.md](design/app-catalogue.md) §8b |
+| IntegrationBindings | [design/app-catalogue.md](design/app-catalogue.md) §8b |
 | Keycloak consolidation | [roadmap.md](roadmap.md) |
+| Planned work index | [roadmap.md](roadmap.md) |
 | Secret patterns | [design/security.md](design/security.md) §7 |
 | Gateway / ingress | [design/gateway.md](design/gateway.md) |
 | Bootstrap install | [getting-started.md](../getting-started.md) |
-| Planned features index | [roadmap.md](roadmap.md) |
-
----
-
-## 8. Progress tracker
-
-Update this table as phases complete.
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| C0 | Kernel `XCluster` structural provisioning | ✅ Done |
-| C1 | Deduplicate tenant shell (namespace, limits, policy, App claims) | ✅ Done |
-| C2 | Identity & LDAP in Compositions | ✅ Complete |
-| C3 | Data plane, edge, mail, bindings | ✅ C3.1–C3.2, C3.4 done; C3.3 (mail/office) deferred |
-| C4 | Thin operator + P3/P4 cutover | 🟡 C4.1–C4.4 done; C4.5 deferred until P4 green on all clusters |
-| P2 e2e | Pattern B kernel chart verification script | ⬜ Stub |
-| P3 e2e | Tenant shadow deployment script | ✅ Implemented |
-| P4 e2e | Tenant cutover script | ✅ Implemented |

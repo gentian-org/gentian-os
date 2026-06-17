@@ -795,32 +795,45 @@ spec:
                         -H 'Content-Type: application/json' \
                         -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
                         | jq -r '.auth.client_token')
-                      EXISTING=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
-                        2>/dev/null || echo '{}')
-                      if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
-                        echo "[s3-init] credential already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
+                      ACCESS_KEY="${TENANT}-${APP}"
+                      BUCKET="${TENANT}-${APP}"
                       MINIO=$(curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/storage/minio")
                       ROOT_USER=$(echo "${MINIO}" | jq -r '.data.data.root_user')
                       ROOT_PASS=$(echo "${MINIO}" | jq -r '.data.data.root_password')
-                      if [ "${SECRET_MODE}" = "random" ]; then
-                        SECRET_KEY=$(openssl rand -hex 32)
-                      else
-                        MASTER=$(curl -sf \
-                          -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
-                          | jq -r '.data.data.value')
-                        SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
-                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
-                      fi
-                      ACCESS_KEY="${TENANT}-${APP}"
-                      BUCKET="${TENANT}-${APP}"
                       mc alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
+                      EXISTING=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
+                        2>/dev/null || echo '{}')
+                      if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
+                        EXISTING_ACCESS=$(echo "${EXISTING}" | jq -r '.data.data."access-key" // empty')
+                        SECRET_KEY=$(echo "${EXISTING}" | jq -r '.data.data."secret-key"')
+                        if [ "${EXISTING_ACCESS}" = "${ACCESS_KEY}" ] && mc admin user info minio "${ACCESS_KEY}" >/dev/null 2>&1; then
+                          mc mb --ignore-existing "minio/${BUCKET}"
+                          echo "[s3-init] credential and MinIO user already present for ${TENANT}/${APP} — skipping"
+                          exit 0
+                        fi
+                        if [ "${EXISTING_ACCESS}" != "${ACCESS_KEY}" ]; then
+                          echo "[s3-init] OpenBao access-key mismatch (got ${EXISTING_ACCESS}, want ${ACCESS_KEY}) — re-provisioning"
+                          SECRET_KEY=""
+                        else
+                          echo "[s3-init] OpenBao credential present but MinIO user ${ACCESS_KEY} missing — re-provisioning"
+                        fi
+                      fi
+                      if [ -z "${SECRET_KEY:-}" ]; then
+                        if [ "${SECRET_MODE}" = "random" ]; then
+                          SECRET_KEY=$(openssl rand -hex 32)
+                        else
+                          MASTER=$(curl -sf \
+                            -H "X-Vault-Token: ${BAO_TOKEN}" \
+                            "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                            | jq -r '.data.data.value')
+                          SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
+                            | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                        fi
+                      fi
                       mc mb --ignore-existing "minio/${BUCKET}"
                       echo "[s3-init] bucket ${BUCKET} ensured"
                       mc admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"

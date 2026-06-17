@@ -56,15 +56,6 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
-	brokerReady, err := r.ensureAllBrokerIdentityProviderJobs(ctx)
-	if err != nil {
-		logger.Error(err, "Keycloak broker IdP jobs failed")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
-	}
-	if !brokerReady {
-		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
-	}
-
 	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}

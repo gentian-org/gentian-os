@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-render-fixture-provisioning-jobs
+  namespace: platform-kernel
+  labels:
+    gentianos.io/config-type: tenant-provisioning-jobs
+    gentianos.io/tenant: render-fixture
+data:
+  jobs.json: "[]"
+  objects.json: "[]"

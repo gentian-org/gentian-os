@@ -279,6 +279,11 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeKCLDAPSyncJob(tenant, realmName))
 	}
 
+	if r.KernelRealm != "" && r.KernelDomain != "" {
+		kernelExternalURL := fmt.Sprintf("https://id.%s", r.KernelDomain)
+		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, kernelExternalURL))
+	}
+
 	return jobs, nil
 }
 

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: crossplane-system
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  network.infraNamespace: gentian-infra-dev
+  network.servicesNamespace: gentian-dev
+  network.openbaoNamespace: openbao
+  network.routingMode: gateway
+  network.kubeApiServerCidr: "10.96.0.0/12"
+  network.kubeApiServerEndpointIp: "10.96.0.1"

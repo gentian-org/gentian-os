@@ -90,7 +90,11 @@ test-unit-render:
 			echo "SKIP: $$name (no expected.yaml — run 'make test-unit-render-update' to generate)"; \
 			continue; \
 		fi; \
-		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" 2>&1); \
+		req_args=""; \
+		if [ -d "$$dir/required-resources" ]; then \
+			req_args="-e $$dir/required-resources"; \
+		fi; \
+		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args 2>&1); \
 		rc=$$?; \
 		if [ $$rc -ne 0 ]; then \
 			echo "FAIL: $$name (crossplane render exited $$rc)"; \
@@ -118,7 +122,11 @@ test-unit-render-update:
 			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
 			continue; \
 		fi; \
-		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" \
+		req_args=""; \
+		if [ -d "$$dir/required-resources" ]; then \
+			req_args="-e $$dir/required-resources"; \
+		fi; \
+		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args \
 			> "$$dir/expected.yaml" && echo "UPDATED: $$name" || echo "FAIL: $$name"; \
 	done
 
@@ -201,11 +209,11 @@ e2e-p0-clean:
 	kubectl delete clusterrolebinding crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
 	@echo "Done."
 
-## P1 — Kernel provisioning via Cluster XR (dev only) — not yet implemented
+## P1 — Kernel provisioning via Cluster XR (dev cluster)
 e2e-p1:
 	@crossplane/tests/e2e/scripts/p1-kernel-dev.sh
 
-## P2 — Migrate Pattern B charts to provider-helm (dev only) — not yet implemented
+## P2 — Pattern B kernel Helm Releases (dev cluster)
 e2e-p2:
 	@crossplane/tests/e2e/scripts/p2-pattern-b.sh
 

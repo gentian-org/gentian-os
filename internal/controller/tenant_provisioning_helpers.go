@@ -53,7 +53,7 @@ func (r *TenantReconciler) waitForTenantNamespaceJob(ctx context.Context, tenant
 }
 
 func appUsesCrossplaneDBInit(profile *gentianov1alpha1.AppProfile) bool {
-	if profile == nil || profile.Spec.CompositionRef == "" {
+	if profile == nil || profile.Spec.DeploymentMethod != gentianov1alpha1.DeploymentMethodCrossplane {
 		return false
 	}
 	kr := profile.Spec.KernelRequirements
@@ -67,7 +67,7 @@ func appUsesCrossplaneDBInit(profile *gentianov1alpha1.AppProfile) bool {
 }
 
 func appUsesCrossplaneS3Init(profile *gentianov1alpha1.AppProfile) bool {
-	if profile == nil || profile.Spec.CompositionRef == "" {
+	if profile == nil || profile.Spec.DeploymentMethod != gentianov1alpha1.DeploymentMethodCrossplane {
 		return false
 	}
 	kr := profile.Spec.KernelRequirements
