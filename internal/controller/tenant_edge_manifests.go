@@ -25,8 +25,8 @@ import (
 )
 
 // buildTenantEdgeObjects returns Gateway API edge resources owned by Crossplane
-// (Phase C3.2). BackendTrafficPolicy and ReferenceGrants remain operator-managed
-// side effects in ensureGateway until provider support stabilises.
+// (Phase C3.2): Certificate, Gateway, HTTPRoutes, ReferenceGrants, and
+// BackendTrafficPolicy. Cloudflare DNS and stale-resource cleanup stay in ensureGateway.
 func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {
 	if !isGatewayRoutingMode(r.RoutingMode) {
 		return nil, nil
@@ -56,12 +56,16 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	gw := buildTenantGateway(tenant, nsName, effectiveDomain, tlsSecret)
 	gw.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("Gateway"))
 	objects = append(objects, gw)
+	objects = append(objects, buildTenantReferenceGrantObjects(tenant)...)
 
 	for _, intent := range intents {
 		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
 		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress, host, effectiveDomain, r.KernelDomain)
 		route.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("HTTPRoute"))
 		objects = append(objects, route)
+		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
+			objects = append(objects, btp)
+		}
 	}
 
 	return objects, nil

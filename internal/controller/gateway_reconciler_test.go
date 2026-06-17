@@ -7,6 +7,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -270,6 +271,56 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 	conn, ok := spec["connection"].(map[string]interface{})
 	if !ok || conn["bufferLimit"] != "128m" {
 		t.Fatalf("bufferLimit = %v", conn["bufferLimit"])
+	}
+}
+
+func TestBuildTenantReferenceGrantObjects(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	objects := buildTenantReferenceGrantObjects(tenant)
+	if len(objects) != 2 {
+		t.Fatalf("object count = %d, want 2", len(objects))
+	}
+	if objects[0].GetName() != "allow-tenant-routes-demo" {
+		t.Fatalf("services RG name = %q", objects[0].GetName())
+	}
+	if objects[0].GetNamespace() != servicesNamespace {
+		t.Fatalf("services RG namespace = %q", objects[0].GetNamespace())
+	}
+	if objects[1].GetName() != "allow-kernel-gateway-tls" {
+		t.Fatalf("tenant RG name = %q", objects[1].GetName())
+	}
+	if objects[1].GetNamespace() != "tenant-demo" {
+		t.Fatalf("tenant RG namespace = %q", objects[1].GetNamespace())
+	}
+}
+
+func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			"nginx.ingress.kubernetes.io/proxy-read-timeout": "600",
+		},
+	}
+	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "element", ingress)
+	if obj == nil {
+		t.Fatal("expected BackendTrafficPolicy object")
+	}
+	if obj.GetName() != "btp-demo-element" {
+		t.Fatalf("name = %q", obj.GetName())
+	}
+	refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "targetRefs")
+	if len(refs) != 1 {
+		t.Fatalf("targetRefs = %v", refs)
+	}
+	ref, _ := refs[0].(map[string]interface{})
+	if ref["name"] != "httproute-demo-element" {
+		t.Fatalf("target route = %v", ref["name"])
+	}
+
+	if buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "plain", &gentianov1alpha1.IngressSpec{}) != nil {
+		t.Fatal("expected nil for ingress without policy annotations")
 	}
 }
 

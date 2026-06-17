@@ -175,15 +175,7 @@ func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) err
 	if err := r.List(ctx, tenantList); err != nil {
 		return fmt.Errorf("list tenants for kernel Gateway: %w", err)
 	}
-	for i := range tenantList.Items {
-		tenant := &tenantList.Items[i]
-		if tenant.DeletionTimestamp != nil {
-			continue
-		}
-		if err := ensureTenantKernelGatewayReferenceGrants(ctx, r.Client, tenant); err != nil {
-			return fmt.Errorf("ensure ReferenceGrants for tenant %s: %w", tenant.Name, err)
-		}
-	}
+	// Tenant ReferenceGrants are owned by Crossplane via each tenant's manifest bridge.
 	desired := buildKernelGateway(r.KernelDomain, r.TenancyMode, tenantList.Items)
 	return ensureGatewayResource(ctx, r.Client, desired)
 }

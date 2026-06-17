@@ -55,58 +55,29 @@ func (r *TenantReconciler) collectTenantIngressIntents(ctx context.Context, tena
 	return intents, nil
 }
 
-func (r *TenantReconciler) ensureAppBackendTrafficPolicyWithRoute(
-	ctx context.Context,
+func buildAppBackendTrafficPolicyObject(
 	tenant *gentianov1alpha1.Tenant,
 	nsName, appProfile string,
 	ingress *gentianov1alpha1.IngressSpec,
-) error {
+) *unstructured.Unstructured {
 	spec := backendTrafficPolicySpecFromIngressAnnotations(ingress.Annotations)
 	if spec == nil {
-		return r.deleteBackendTrafficPolicy(ctx, nsName, appBackendTrafficPolicyName(tenant.Name, appProfile))
+		return nil
 	}
 	attachBackendTrafficPolicyTarget(spec, appHTTPRouteName(tenant.Name, appProfile))
 
-	name := appBackendTrafficPolicyName(tenant.Name, appProfile)
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(backendTrafficPolicyGVK)
-	desired.SetName(name)
-	desired.SetNamespace(nsName)
-	desired.SetLabels(map[string]string{
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(backendTrafficPolicyGVK)
+	obj.SetName(appBackendTrafficPolicyName(tenant.Name, appProfile))
+	obj.SetNamespace(nsName)
+	obj.SetLabels(map[string]string{
 		tenantLabel:           tenant.Name,
 		appLabel:              appProfile,
 		managedByLabel:        managedByValue,
 		gatewayComponentLabel: gatewayComponentApp,
 	})
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return err
-	}
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(backendTrafficPolicyGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
-func (r *TenantReconciler) deleteBackendTrafficPolicy(ctx context.Context, nsName, name string) error {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(backendTrafficPolicyGVK)
-	obj.SetName(name)
-	obj.SetNamespace(nsName)
-	return client.IgnoreNotFound(r.Delete(ctx, obj))
+	_ = unstructured.SetNestedField(obj.Object, spec, "spec")
+	return obj
 }
 
 func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]string) map[string]interface{} {
@@ -211,18 +182,44 @@ func (r *TenantReconciler) deleteStaleHTTPRoutesForTenant(
 	return nil
 }
 
+func (r *TenantReconciler) deleteStaleBackendTrafficPoliciesForTenant(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	expected map[string]struct{},
+) error {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   backendTrafficPolicyGVK.Group,
+		Version: backendTrafficPolicyGVK.Version,
+		Kind:    backendTrafficPolicyGVK.Kind + "List",
+	})
+	if err := r.List(ctx, list,
+		client.InNamespace(nsName),
+		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
+	); err != nil {
+		return fmt.Errorf("list tenant BackendTrafficPolicies for stale cleanup: %w", err)
+	}
+	for i := range list.Items {
+		name := list.Items[i].GetName()
+		if expected != nil {
+			if _, wanted := expected[name]; wanted {
+				continue
+			}
+		}
+		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete stale BackendTrafficPolicy %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (r *TenantReconciler) deleteTenantHTTPRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, nil); err != nil {
 		return err
 	}
-	intents, err := r.collectTenantIngressIntents(ctx, tenant)
-	if err != nil {
+	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, nil); err != nil {
 		return err
-	}
-	for _, intent := range intents {
-		if err := r.deleteBackendTrafficPolicy(ctx, nsName, appBackendTrafficPolicyName(tenant.Name, intent.appProfile)); err != nil {
-			return err
-		}
 	}
 	apex := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: tenantApexRedirectRouteName(tenant.Name), Namespace: nsName}}
 	return client.IgnoreNotFound(r.Delete(ctx, apex))
@@ -259,74 +256,91 @@ func attachBackendTrafficPolicyTarget(spec map[string]interface{}, routeName str
 	ref["name"] = routeName
 }
 
-// ensureTenantKernelGatewayReferenceGrants allows tenant HTTPRoutes to attach to
-// kernel-public-gateway (single tunnel entry point) and lets that Gateway terminate
-// TLS with the tenant wildcard certificate.
-func ensureTenantKernelGatewayReferenceGrants(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) error {
-	nsName := tenantNamespaceName(tenant)
-	if err := ensureReferenceGrant(ctx, c, servicesNamespace, "allow-tenant-routes-"+tenant.Name, map[string]interface{}{
-		"from": []interface{}{
-			map[string]interface{}{
-				"group":     gatewayv1.GroupName,
-				"kind":      "HTTPRoute",
-				"namespace": nsName,
-			},
-		},
-		"to": []interface{}{
-			map[string]interface{}{
-				"group": gatewayv1.GroupName,
-				"kind":  "Gateway",
-				"name":  KernelPublicGatewayName,
-			},
-		},
-	}); err != nil {
-		return err
-	}
-	return ensureReferenceGrant(ctx, c, nsName, "allow-kernel-gateway-tls", map[string]interface{}{
-		"from": []interface{}{
-			map[string]interface{}{
-				"group":     gatewayv1.GroupName,
-				"kind":      "Gateway",
-				"namespace": servicesNamespace,
-			},
-		},
-		"to": []interface{}{
-			map[string]interface{}{
-				"group": "",
-				"kind":  "Secret",
-				"name":  tenantWildcardSecretName(tenant.Name),
-			},
-		},
-	})
+type referenceGrantIntent struct {
+	namespace string
+	name      string
+	spec      map[string]interface{}
 }
 
-func ensureReferenceGrant(ctx context.Context, c client.Client, namespace, name string, spec map[string]interface{}) error {
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(referenceGrantGVK)
-	desired.SetName(name)
-	desired.SetNamespace(namespace)
-	desired.SetLabels(map[string]string{
-		managedByLabel: managedByValue,
-	})
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return err
+// tenantKernelGatewayReferenceGrantIntents allows tenant HTTPRoutes to attach to
+// kernel-public-gateway and lets that Gateway terminate TLS with the tenant wildcard certificate.
+func tenantKernelGatewayReferenceGrantIntents(tenant *gentianov1alpha1.Tenant) []referenceGrantIntent {
+	nsName := tenantNamespaceName(tenant)
+	return []referenceGrantIntent{
+		{
+			namespace: servicesNamespace,
+			name:      "allow-tenant-routes-" + tenant.Name,
+			spec: map[string]interface{}{
+				"from": []interface{}{
+					map[string]interface{}{
+						"group":     gatewayv1.GroupName,
+						"kind":      "HTTPRoute",
+						"namespace": nsName,
+					},
+				},
+				"to": []interface{}{
+					map[string]interface{}{
+						"group": gatewayv1.GroupName,
+						"kind":  "Gateway",
+						"name":  KernelPublicGatewayName,
+					},
+				},
+			},
+		},
+		{
+			namespace: nsName,
+			name:      "allow-kernel-gateway-tls",
+			spec: map[string]interface{}{
+				"from": []interface{}{
+					map[string]interface{}{
+						"group":     gatewayv1.GroupName,
+						"kind":      "Gateway",
+						"namespace": servicesNamespace,
+					},
+				},
+				"to": []interface{}{
+					map[string]interface{}{
+						"group": "",
+						"kind":  "Secret",
+						"name":  tenantWildcardSecretName(tenant.Name),
+					},
+				},
+			},
+		},
 	}
+}
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
+func buildReferenceGrantObject(namespace, name string, spec map[string]interface{}, labels map[string]string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(referenceGrantGVK)
+	obj.SetName(name)
+	obj.SetNamespace(namespace)
+	obj.SetLabels(labels)
+	_ = unstructured.SetNestedField(obj.Object, spec, "spec")
+	return obj
+}
+
+func buildTenantReferenceGrantObjects(tenant *gentianov1alpha1.Tenant) []client.Object {
+	labels := map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
 	}
-	if err != nil {
-		return err
+	var objects []client.Object
+	for _, intent := range tenantKernelGatewayReferenceGrantIntents(tenant) {
+		objects = append(objects, buildReferenceGrantObject(intent.namespace, intent.name, intent.spec, labels))
 	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
+	return objects
+}
+
+func deleteTenantReferenceGrants(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) error {
+	for _, intent := range tenantKernelGatewayReferenceGrantIntents(tenant) {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(referenceGrantGVK)
+		obj.SetName(intent.name)
+		obj.SetNamespace(intent.namespace)
+		if err := c.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete ReferenceGrant %s/%s: %w", intent.namespace, intent.name, err)
 		}
-		return c.Patch(ctx, existing, patch)
 	}
 	return nil
 }

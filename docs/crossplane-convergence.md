@@ -73,7 +73,7 @@ Helm Releases, Keycloak Client MRs, per-app init Jobs.
 | ConfigMap key | Contents |
 |---------------|----------|
 | `jobs.json` | Batch Jobs: identity/LDAP, pg-role, mariadb-setup, s3-bucket, nc-group, redis-acl |
-| `objects.json` | CNPG Database CRs, Memcached, IntegrationBindings, Certificate/Gateway/HTTPRoutes |
+| `objects.json` | CNPG Database CRs, Memcached, IntegrationBindings, Certificate/Gateway/HTTPRoutes, ReferenceGrants, BackendTrafficPolicy |
 
 The operator **seeds credentials** and **writes the ConfigMap**; reconcilers **wait only**
 (no direct `Create` of those resources). `tenant-default` renders both keys as
@@ -125,7 +125,7 @@ Tracked here for visibility; detailed rationale and priority in [roadmap.md](roa
 | 2 | **Broker IdP Job in manifest bridge** — `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | Operator / identity | ✅ Done |
 | 3 | **P2 e2e — Pattern B kernel charts** | Tests | ✅ Done |
 | 4 | **`tenant-default` render goldens** | Tests | ✅ Done |
-| 5 | **Gateway edge (operator remainder)** — DNS records, ReferenceGrants, BackendTrafficPolicy, stale route/Ingress cleanup | Operator / edge | Partial (objects in CM; policies still operator) |
+| 5 | **Gateway edge (operator remainder)** — Cloudflare DNS, stale route/Ingress cleanup; ReferenceGrants and BackendTrafficPolicy in manifest bridge | Operator / edge | ✅ Done (DNS + cleanup operator; K8s policies Crossplane) |
 | 6 | **Composition ordering** — `function-sequencer` to gate app Compositions on tenant identity Ready | Crossplane | Not started |
 | 7 | **`provider-keycloak` consolidation** — drift-safe tenant Realm MRs vs operator Jobs | Keycloak | Blocked upstream |
 | 8 | **Gate `Phase=Ready` on `CrossplaneReady`** — stricter readiness semantics | Operator | ✅ Done |

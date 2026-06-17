@@ -14,7 +14,7 @@ Crossplane + operator model see [crossplane-convergence.md](crossplane-convergen
 | **Broker IdP in manifest bridge** | `keycloak-broker-idp-{tenant}` in `jobs.json`; operator wait-only | ✅ Done |
 | **P2 e2e — Pattern B kernel** | `p2-pattern-b.sh` | ✅ Done |
 | **`tenant-default` render goldens** | `crossplane/tests/unit/render/tenant-default/` | ✅ Done |
-| **Gateway edge remainder** | DNS (Cloudflare), ReferenceGrants, BackendTrafficPolicy, stale route cleanup — still operator-owned; cert/Gateway/HTTPRoutes in manifest bridge. |
+| **Gateway edge remainder** | Cloudflare DNS and stale route/Ingress cleanup stay operator-owned; Certificate, Gateway, HTTPRoutes, ReferenceGrants, and BackendTrafficPolicy are in the manifest bridge. |
 | **`function-sequencer`** | Gate app Compositions on tenant identity/LDAP Ready instead of operator wait ordering. |
 | **`Phase=Ready` vs `CrossplaneReady`** | `Phase=Ready` requires operator paths and `CrossplaneReady=True`. | ✅ Done |
 | **XTenant / App schema tests** | `crossplane/tests/unit/schema/valid|invalid/` fixtures | ✅ Done |

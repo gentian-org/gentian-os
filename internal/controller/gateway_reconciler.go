@@ -17,8 +17,10 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ensureGateway reconciles Gateway API edge resources for a tenant when
-// ROUTING_MODE=gateway: tenant Gateway, wildcard TLS, HTTPRoutes, and policies.
+// ensureGateway handles operator-only gateway edge work when ROUTING_MODE=gateway:
+// Cloudflare DNS, stale route/policy cleanup, legacy Ingress removal, and readiness waits.
+// Kubernetes edge objects (Gateway, HTTPRoutes, ReferenceGrants, BackendTrafficPolicy)
+// are owned by Crossplane via the manifest bridge.
 func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if !isGatewayRoutingMode(r.RoutingMode) {
 		return ctrl.Result{}, nil
@@ -37,6 +39,9 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 		if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := deleteTenantReferenceGrants(ctx, r.Client, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("delete tenant ReferenceGrants: %w", err)
+		}
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue,
 			"NoGatewayConfigured", "No apps require gateway provisioning")
 		return ctrl.Result{}, nil
@@ -54,21 +59,21 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 	r.ensureTenantWildcardEdgeDNS(ctx, tenant, effectiveDomain)
 
-	if err := ensureTenantKernelGatewayReferenceGrants(ctx, r.Client, tenant); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure kernel Gateway ReferenceGrants: %w", err)
-	}
-
 	expectedRoutes := make(map[string]struct{}, len(intents))
+	expectedPolicies := make(map[string]struct{})
 	for _, intent := range intents {
 		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress,
 			ingressHost(intent.appProfile, intent.ingress, effectiveDomain), effectiveDomain, r.KernelDomain)
 		expectedRoutes[route.Name] = struct{}{}
-		if err := r.ensureAppBackendTrafficPolicyWithRoute(ctx, tenant, nsName, intent.appProfile, intent.ingress); err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure BackendTrafficPolicy for app %s: %w", intent.appProfile, err)
+		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
+			expectedPolicies[btp.GetName()] = struct{}{}
 		}
 	}
 
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, expectedPolicies); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.deleteSupersededTenantIngress(ctx, tenant, nsName, intents, effectiveDomain); err != nil {

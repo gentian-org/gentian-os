@@ -119,6 +119,9 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 	if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 		return err
 	}
+	if err := deleteTenantReferenceGrants(ctx, r.Client, tenant); err != nil {
+		return fmt.Errorf("delete tenant ReferenceGrants: %w", err)
+	}
 
 	wildcardCert := &unstructured.Unstructured{}
 	wildcardCert.SetGroupVersionKind(certManagerCertGVK)
