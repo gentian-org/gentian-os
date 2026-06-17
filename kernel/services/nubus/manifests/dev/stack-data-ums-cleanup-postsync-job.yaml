@@ -18,12 +18,14 @@ spec:
       serviceAccountName: stack-data-ums-cleanup
       containers:
         - name: cleanup
-          image: bitnami/kubectl:1.32.3
+          image: alpine:3.19
           command:
             - sh
             - -c
             - |
               set -euo pipefail
+              wget -qO /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.32.3/bin/linux/amd64/kubectl"
+              chmod +x /usr/local/bin/kubectl
               NS=gentian-dev
               PREFIX=nubus-dev-stack-data-ums-
               TTL=600
