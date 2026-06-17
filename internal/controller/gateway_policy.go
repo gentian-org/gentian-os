@@ -11,6 +11,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -198,6 +199,9 @@ func (r *TenantReconciler) deleteStaleBackendTrafficPoliciesForTenant(
 		client.InNamespace(nsName),
 		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
 	); err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil
+		}
 		return fmt.Errorf("list tenant BackendTrafficPolicies for stale cleanup: %w", err)
 	}
 	for i := range list.Items {
