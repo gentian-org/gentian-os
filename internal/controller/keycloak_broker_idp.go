@@ -154,10 +154,6 @@ func makeBrokerIdentityProviderJob(tenantName, realmName, kernelRealm, kernelExt
 	}
 }
 
-func brokerIdPJobCurrent(job *batchv1.Job) bool {
-	return job != nil && job.Labels["gentianos.io/keycloak-broker-idp"] == brokerIdentityProviderVersion
-}
-
 // ensureBrokerIdentityProviderJob waits for the Crossplane-owned broker IdP refresh Job.
 func (r *TenantReconciler) ensureBrokerIdentityProviderJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	if r.KernelRealm == "" || r.KernelDomain == "" {
