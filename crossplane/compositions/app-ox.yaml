@@ -389,9 +389,12 @@ spec:
             {{- $ldapBindDn  := "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal" }}
             {{- if gt (len $clusterCfgs) 0 }}
             {{- $cc := index $clusterCfgs 0 }}
-            {{- $ldapServer  = dig "data" "ldap.server" $ldapServer $cc }}
-            {{- $ldapBaseDn  = dig "data" "ldap.baseDn"  $ldapBaseDn  $cc }}
-            {{- $ldapBindDn  = dig "data" "ldap.bindDn"  $ldapBindDn  $cc }}
+            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
+            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
+            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
+            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
+            {{- $ccLdapBindDn := dig "data" "ldap.bindDn" "" $cc }}
+            {{- if $ccLdapBindDn }}{{- $ldapBindDn = $ccLdapBindDn }}{{- end }}
             {{- end }}
             {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
             {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}

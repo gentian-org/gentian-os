@@ -1207,6 +1207,17 @@ upsert_gentian_cluster_config() {
     export NODE_IP
 
     local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
+    local _ldap_base_dn="${LDAP_BASE_DN:-}"
+    if [[ -z "${_ldap_base_dn}" ]]; then
+        _ldap_base_dn="$(kubectl get cluster dev-cluster -n crossplane-system \
+            -o jsonpath='{.spec.ldapBaseDn}' 2>/dev/null || true)"
+    fi
+    if [[ -z "${_ldap_base_dn}" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        _ldap_base_dn="$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')"
+    fi
+    if [[ -z "${_ldap_base_dn}" ]]; then
+        _ldap_base_dn="dc=swp-ldap,dc=internal"
+    fi
     local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
     local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
     local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
@@ -1234,7 +1245,7 @@ upsert_gentian_cluster_config() {
             -o jsonpath='{.subsets[0].ports[0].port}' 2>/dev/null || true)"
     fi
 
-    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>}, kubeApi=${_kube_api_endpoint_ip}:${_kube_api_endpoint_port:-<unset>})..."
+    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, ldap.baseDn=${_ldap_base_dn}, node.ip=${NODE_IP:-<unset>}, kubeApi=${_kube_api_endpoint_ip}:${_kube_api_endpoint_port:-<unset>})..."
     kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -1246,7 +1257,7 @@ metadata:
     gentianos.io/config-type: cluster-config
 data:
   ldap.server: "${_ldap_server}"
-  ldap.baseDn: "${LDAP_BASE_DN:-}"
+  ldap.baseDn: "${_ldap_base_dn}"
   udm.url: "${_udm_url}"
   minio.endpoint: "${_minio_endpoint}"
   cnpg.host: "${_cnpg_host}"

@@ -526,8 +526,10 @@ spec:
             {{- $smtpHost    := "postfix-dev.gentian-dev.svc.cluster.local" }}
             {{- if gt (len $clusterCfgs) 0 }}
             {{- $cc := index $clusterCfgs 0 }}
-            {{- $ldapServer = dig "data" "ldap.server" $ldapServer $cc }}
-            {{- $ldapBaseDn = dig "data" "ldap.baseDn"  $ldapBaseDn  $cc }}
+            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
+            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
+            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
+            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
             {{- end }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
