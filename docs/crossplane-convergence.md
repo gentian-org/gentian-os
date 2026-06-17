@@ -1,6 +1,6 @@
 # Crossplane Convergence — Migration Plan
 
-**Status:** Active plan (partially implemented)  
+**Status:** Active plan — C3 complete (C3.3 deferred); C4 in progress  
 **Supersedes:** fragmented notes in [architecture.md](architecture.md) §3.1 (“Phase 3b”)
 and e2e script stubs (`p2`–`p4`).
 
@@ -103,36 +103,26 @@ Some concerns cross-cut shared kernel services and are awkward as pure Compositi
 | Pattern B kernel charts (Nubus, Postfix, Dovecot, Nextcloud, …) | ✅ Mostly done | `provider-helm` Release CRs under `kernel/services/` |
 | Operator + AppProfiles | ✅ Done | `install.sh` Steps 15–15c |
 
-### 3.2 Tenant provisioning (dual path)
+### 3.2 Tenant provisioning (orchestrator + Crossplane)
 
-When a `Tenant` is applied, the operator runs (in order):
+When a `Tenant` is applied, the operator orchestrates and Crossplane materialises:
 
-| # | Operator step | Also in `tenant-default`? | Notes |
-|---|---------------|---------------------------|-------|
-| — | `ensureTenantXR` | — | Creates/patches `XTenant`; **fatal** on failure (C1) |
+| # | Operator step | Crossplane owner? | Notes |
+|---|---------------|-------------------|-------|
+| — | `ensureTenantProvisioningManifests` | ✅ (via CM) | Writes `tenant-*-provisioning-jobs` (`jobs.json`, `objects.json`) |
+| — | `ensureTenantXR` | — | Creates/patches `XTenant`; **fatal** on failure |
 | — | `waitForTenantShell` | — | Waits for Crossplane-provisioned namespace |
 | 1b | `ensureRegistryCredentials` | ❌ | Operator side-effect until C1.2 |
 | 1c | `ensureStagingCaTrust` | ❌ | Operator side-effect until C1.2 |
-| 1 | ~~`ensureNamespace`~~ | ✅ | **Removed** — owned by `tenant-default` |
-| 2 | ~~`ensureResourceQuota`~~ | ✅ | **Removed** — owned by `tenant-default` |
-| 3 | ~~`ensureLimitRange`~~ | ✅ | **Removed** — owned by `tenant-default` |
-| 4 | ~~`ensureNetworkPolicy`~~ | ✅ | **Removed** — owned by `tenant-default` |
-| 5 | `ensureIdentity` | ❌ | Keycloak realm + OIDC pack Jobs |
-| 6 | `ensureLDAP` | ❌ | UDM REST Jobs (OU, groups, bind accounts) |
-| 7 | `ensureDatabase` | ❌ | CloudNativePG + psql Jobs |
-| 8 | `ensureMariaDB` | ❌ | MariaDB Jobs |
-| 9 | `ensureStorage` | ❌ | MinIO buckets, Nextcloud groups |
-| 10 | `ensureCache` | ❌ | Redis ACL, Memcached |
-| 11 | `ensureAppDeployment` | ✅ App claims | **Seeds secrets + watches readiness only**; claims owned by Composition |
-| 12 | `ensureGateway` | ❌ | Gateway API / DNS-01 certs / HTTPRoutes |
-| 13 | `ensureIntegrationBindings` | ❌ | Operator Jobs ([app-catalogue.md](design/app-catalogue.md) §8b) |
-| 14 | `ensureMail` | ❌ | Shared Postfix/Dovecot registration |
-| 14b | `ensureOffice` | ❌ | Shared Collabora WOPI |
-| 14c–14e | Nextcloud group, LDAP base, UMC, Keycloak headers | ❌ | Non-blocking convergence helpers |
+| 5–10 | `ensureIdentity` … `ensureCache` | ✅ | **Wait-only** — Jobs/objects applied by `tenant-default` |
+| 11 | `ensureAppDeployment` | ✅ App claims | Seeds secrets + watches readiness only |
+| 12 | `ensureGateway` | ✅ partial | Objects via CM; DNS/ReferenceGrants still operator |
+| 13 | `ensureIntegrationBindings` | ✅ | Objects via CM; stale-binding GC operator |
+| 14–14e | mail, office, UMC, … | ❌ | Skipped when `TENANT_CROSSPLANE_ONLY=true` (C4.4) |
+| — | `aggregateCrossplaneStatus` | — | Maps `XTenant` Ready → `CrossplaneReady` condition (C4.1) |
 
-`tenant-default` emits: Namespace, LimitRange, ResourceQuota (when set), NetworkPolicy,
-OpenBao Policy, App claims. Cluster-specific network namespaces and kube API CIDR are
-read from `gentian-cluster-config` (see `install-lib.sh`).
+`tenant-default` emits: Namespace, LimitRange, ResourceQuota, NetworkPolicy, OpenBao Policy,
+provisioning Jobs/Objects from the manifest bridge, App claims.
 
 App Compositions (`app-default`, `app-element`, `app-ox`, …) already emit: ExternalSecrets,
 Helm Releases, Keycloak Client MRs, per-app LDAP-search init Jobs.
@@ -144,8 +134,8 @@ Helm Releases, Keycloak Client MRs, per-app LDAP-search init Jobs.
 | `make e2e-p0` | `p0-crossplane-install.sh` | ✅ Implemented |
 | `make e2e-p1` | `p1-kernel-dev.sh` | ✅ Implemented (Cluster XR spot-checks) |
 | `make e2e-p2` | `p2-pattern-b.sh` | ⬜ Stub — Pattern B kernel chart verification |
-| `make e2e-p3` | `p3-tenant-shadow.sh` | ⬜ Stub — tenant shadow deployment |
-| `make e2e-p4` | `p4-tenant-cutover.sh` | ⬜ Stub — cutover existing tenant |
+| `make e2e-p3` | `p3-tenant-shadow.sh` | ✅ Implemented |
+| `make e2e-p4` | `p4-tenant-cutover.sh` | ✅ Implemented |
 
 ---
 
@@ -220,6 +210,8 @@ imperative `ensure*` for overlapping resources.
 
 **Goal:** Tenant-scoped DB, storage, cache, ingress owned by Compositions.
 
+**Status:** ✅ Complete for C3.1–C3.2 and C3.4; C3.3 (mail/office) deferred to kernel Compositions.
+
 | Task | Action |
 |------|--------|
 | C3.1 | Move `ensureDatabase`, `ensureMariaDB`, `ensureStorage`, `ensureCache` into `tenant-default` or per-app Compositions (prefer app-owned when only one app consumes the resource) |
@@ -257,13 +249,27 @@ The C2 **ConfigMap manifest bridge** is extended:
 
 **Goal:** Operator is orchestrator only; existing production tenants migrated.
 
-| Task | Action |
-|------|--------|
-| C4.1 | Operator reconcile loop: validate → seed secrets → patch `XTenant` → aggregate status → handle finalizers |
-| C4.2 | Implement `make e2e-p3` (shadow tenant — Crossplane-only on test cluster) |
-| C4.3 | Implement `make e2e-p4` (cutover — disable imperative path for one real tenant, verify end-to-end) |
-| C4.4 | Document rollback: re-enable operator ensures behind feature flag if cutover fails |
-| C4.5 | Remove dead operator code paths after all clusters pass P4 |
+| Task | Action | Status |
+|------|--------|--------|
+| C4.1 | Operator reconcile loop: validate → seed secrets → patch `XTenant` → aggregate status → handle finalizers | ✅ |
+| C4.2 | Implement `make e2e-p3` (shadow tenant — Crossplane graph on test cluster) | ✅ |
+| C4.3 | Implement `make e2e-p4` (cutover — verify existing tenant end-to-end) | ✅ |
+| C4.4 | Document rollback: `TENANT_CROSSPLANE_ONLY` feature flag | ✅ |
+| C4.5 | Remove dead operator code paths after all clusters pass P4 | ⬜ Deferred |
+
+**C4.1 implementation:**
+
+Reconcile phases are structured as: orchestration (manifest bridge + XR) → bootstrap
+side-effects (registry, staging CA) → wait-only ensures → optional kernel extensions →
+status aggregation (`CrossplaneReady` from `XTenant.status`).
+
+**C4.4 rollback flag:**
+
+Set `tenantProvisioning.crossplaneOnly: true` in the operator Helm values (env
+`TENANT_CROSSPLANE_ONLY=true`) to skip shared-kernel side effects (mail, office,
+portal/UMC, Nextcloud group, LDAP base helpers) and validate Crossplane-only
+provisioning. Leave `false` (default) for normal production behaviour. Re-enable
+imperative paths by setting the flag back to `false` and running `./update.sh`.
 
 **Exit criteria:**
 
@@ -311,7 +317,7 @@ make e2e-p1
 # Pattern B kernel charts (implement script first)
 make e2e-p2
 
-# Tenant shadow + cutover (implement scripts during C1/C4)
+# Tenant shadow + cutover (C4)
 make e2e-p3
 make e2e-p4
 ```
@@ -329,24 +335,26 @@ Suggested checks when implementing `p2-pattern-b.sh`:
 - No plaintext secrets in Release `spec.values` (only `valuesFrom` / ConfigMap refs).
 - Nubus, Postfix, Dovecot pods Running in kernel namespace.
 
-#### P3 — tenant shadow (to implement)
+#### P3 — tenant shadow (implemented)
 
-Suggested flow for `p3-tenant-shadow.sh`:
+Verifies a throwaway tenant converges via the Crossplane graph:
 
-1. Apply a `Tenant` / `XTenant` for a throwaway tenant (e.g. `shadow-test`) with one simple app.
-2. **Pause or skip** operator imperative ensures (feature flag or test-only operator build).
-3. Assert Crossplane creates: namespace, policies, App claim, Helm Release, ExternalSecret.
-4. Assert **no** operator-owned Batch Jobs for identity/LDAP (once C2 complete).
-5. Tear down: delete `Tenant` → `XTenant` cascades → namespace gone.
+```bash
+make e2e-p3
+# SHADOW_TENANT=shadow-e2e SKIP_CLEANUP=1 make e2e-p3  # leave tenant for inspection
+```
 
-#### P4 — tenant cutover (to implement)
+Checks: provisioning ConfigMap (`jobs.json` + `objects.json`), XTenant Ready,
+Crossplane Object MRs, `Tenant.status.conditions[CrossplaneReady]`.
 
-Suggested flow for `p4-tenant-cutover.sh`:
+#### P4 — tenant cutover (implemented)
 
-1. Pick an existing tenant (e.g. `demo`) already provisioned via dual path.
-2. Enable Crossplane-only mode; verify no resource recreation (generation unchanged).
-3. Run end-to-end smoke: OIDC login, app HTTP 200, IntegrationBinding contract works.
-4. Delete and recreate tenant; confirm full lifecycle via Crossplane graph alone.
+Verifies an existing tenant (default `demo`) is fully converged:
+
+```bash
+make e2e-p4
+TENANT=demo RUN_SMOKE=1 make e2e-p4  # optional HTTPS smoke
+```
 
 ### 5.3 Manual verification checklist
 
@@ -423,8 +431,8 @@ Update this table as phases complete.
 | C0 | Kernel `XCluster` structural provisioning | ✅ Done |
 | C1 | Deduplicate tenant shell (namespace, limits, policy, App claims) | ✅ Done |
 | C2 | Identity & LDAP in Compositions | ✅ Complete |
-| C3 | Data plane, edge, mail, bindings | 🟡 C3.1–C3.2, C3.4 done; C3.3 (mail/office) deferred |
-| C4 | Thin operator + P3/P4 cutover | ⬜ Not started |
+| C3 | Data plane, edge, mail, bindings | ✅ C3.1–C3.2, C3.4 done; C3.3 (mail/office) deferred |
+| C4 | Thin operator + P3/P4 cutover | 🟡 C4.1–C4.4 done; C4.5 deferred until P4 green on all clusters |
 | P2 e2e | Pattern B kernel chart verification script | ⬜ Stub |
-| P3 e2e | Tenant shadow deployment script | ⬜ Stub |
-| P4 e2e | Tenant cutover script | ⬜ Stub |
+| P3 e2e | Tenant shadow deployment script | ✅ Implemented |
+| P4 e2e | Tenant cutover script | ✅ Implemented |

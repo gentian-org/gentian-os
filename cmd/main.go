@@ -103,6 +103,7 @@ func main() {
 		LDAPBase:                 os.Getenv("LDAP_BASE"),
 		CloudflareDNS:            buildCloudflareDNSClient(),
 		RoutingMode:              routingMode,
+		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)

@@ -9,6 +9,7 @@
 #   - Removes the Nubus provider-helm Release and associated Secrets/ConfigMaps
 #   - Removes the Cluster XR (waits for Crossplane GC)
 #   - Removes Crossplane resources (XRD, Composition, providers)
+#   - Tenant undeploy removes operator manifest-bridge ConfigMaps (tenant-*-provisioning-jobs)
 #   - Uninstalls Crossplane core
 #   - Removes ArgoCD, ESO, cert-manager
 #   - Preserves PVC/PV data and namespaces that contain PVCs

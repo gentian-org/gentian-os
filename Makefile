@@ -209,10 +209,10 @@ e2e-p1:
 e2e-p2:
 	@crossplane/tests/e2e/scripts/p2-pattern-b.sh
 
-## P3 — Tenant XRD shadow deployment (dev only) — not yet implemented
+## P3 — Tenant shadow deployment (Crossplane graph verification)
 e2e-p3:
 	@crossplane/tests/e2e/scripts/p3-tenant-shadow.sh
 
-## P4 — Cutover of a real tenant (dev only) — not yet implemented
+## P4 — Cutover verification for an existing tenant
 e2e-p4:
 	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh

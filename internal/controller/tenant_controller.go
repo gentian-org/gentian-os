@@ -98,6 +98,15 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+func EnvBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // xTenantGVK is the GroupVersionKind for the XTenant composite resource managed
 // by Crossplane. The TenantReconciler creates one XTenant per Tenant so the
 // Crossplane Composition can provision namespace, networking, OpenBao policy,
@@ -165,6 +174,11 @@ type TenantReconciler struct {
 	// RoutingMode selects the edge routing stack: ingress (nginx Ingress) or
 	// gateway (Gateway API + Envoy Gateway). Sourced from ROUTING_MODE.
 	RoutingMode string
+	// CrossplaneOnly skips shared-kernel side effects (mail, office, portal/UMC
+	// convergence, Nextcloud group, LDAP base helpers) so tenant lifecycle is
+	// driven by the Crossplane graph alone. Used for P3/P4 e2e and rollback
+	// testing via TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
+	CrossplaneOnly bool
 }
 
 // SetupWithManager registers the controller with the controller-manager.
@@ -378,26 +392,23 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	nsName := tenantNamespaceName(tenant)
-	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName)
+	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName, "crossplaneOnly", r.CrossplaneOnly)
 
-	// Phase C2: operator seeds credentials and publishes Job manifests; Crossplane
-	// tenant-default applies the Jobs declaratively.
+	// ── Orchestration (Phase C4): validate → seed → patch XR → wait ──────────
 	if err := r.ensureTenantProvisioningManifests(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Crossplane tenant-default Composition owns namespace scaffolding, quotas,
-	// limits, network policy, OpenBao policy, identity Jobs, and App claims.
 	if err := r.ensureTenantXR(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 	if res, err := r.waitForTenantShell(ctx, tenant, nsName); res.RequeueAfter > 0 || err != nil {
+		_ = r.aggregateCrossplaneStatus(ctx, tenant)
 		_ = r.Status().Update(ctx, tenant)
 		return res, err
 	}
 
-	// Replicate cluster bootstrap secrets into the tenant namespace until C1.2
-	// moves these into tenant-default.
+	// Bootstrap side-effects retained until moved into tenant-default (C1.2).
 	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -405,7 +416,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 5. Identity (Keycloak realm + OIDC clients)
+	// ── Wait-only ensures: Crossplane owns resource creation via manifest bridge ─
 	identityResult, err := r.ensureIdentity(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -475,49 +486,42 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 14. Mail kernel extension (shared Postfix + Dovecot registration, or external/relay/disabled)
-	mailResult, err := r.ensureMail(ctx, tenant)
-	if err != nil {
-		_ = r.Status().Update(ctx, tenant)
+	// ── Shared-kernel extensions (skipped when TENANT_CROSSPLANE_ONLY) ─────────
+	var mailResult, officeResult ctrl.Result
+	if !r.CrossplaneOnly {
+		mailResult, err = r.ensureMail(ctx, tenant)
+		if err != nil {
+			_ = r.Status().Update(ctx, tenant)
+			return ctrl.Result{}, err
+		}
+
+		officeResult, err = r.ensureOffice(ctx, tenant)
+		if err != nil {
+			_ = r.Status().Update(ctx, tenant)
+			return ctrl.Result{}, err
+		}
+
+		if err := r.ensureNextcloudGroup(ctx, tenant); err != nil {
+			logger.Error(err, "ensure Nextcloud group (non-blocking, will retry)")
+		}
+
+		if err := r.ensureLDAPBase(ctx, tenant); err != nil {
+			logger.Error(err, "ensure LDAP base (non-blocking, will retry)")
+		}
+
+		if err := r.ensureUMC(ctx, tenant); err != nil {
+			logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
+		}
+
+		if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
+			logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
+		}
+	}
+
+	// ── Status aggregation ───────────────────────────────────────────────────
+	if err := r.aggregateCrossplaneStatus(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
-
-	// 14b. Office kernel extension (shared Collabora WOPI service).
-	officeResult, err := r.ensureOffice(ctx, tenant)
-	if err != nil {
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 14c. Nextcloud kernel file-storage service — provision a per-tenant group in
-	// the shared Nextcloud instance for every tenant regardless of installed apps.
-	// Non-blocking: errors are returned so the reconciler retries, but this step
-	// does not affect the provisioning flag or Phase=Ready (same model as mail).
-	if err := r.ensureNextcloudGroup(ctx, tenant); err != nil {
-		logger.Error(err, "ensure Nextcloud group (non-blocking, will retry)")
-	}
-
-	// 14c. LDAP base infrastructure — provision OU, delegated-admin policy, and
-	// admin user for tenants with no LDAP-requiring apps. For tenants WITH LDAP
-	// apps this is a no-op (ensureLDAP already handles all steps). Non-blocking:
-	// errors are logged and retried without blocking Phase=Ready.
-	if err := r.ensureLDAPBase(ctx, tenant); err != nil {
-		logger.Error(err, "ensure LDAP base (non-blocking, will retry)")
-	}
-
-	// 14d. Shared kernel portal — remove superseded per-tenant UMC stacks and
-	// redirect tenant domains to portal.<kernel-domain>. Non-blocking.
-	if err := r.ensureUMC(ctx, tenant); err != nil {
-		logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
-	}
-
-	// 14e. Keycloak browser security headers on kernel + tenant realms (broker /endpoint).
-	// IdP frame-ancestors for portal-embedded OIDC is owned by KeycloakPlatformReconciler.
-	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
-		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
-	}
-
-	// 15. Update status
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = nsName
 	tenant.Status.AppCount = len(tenant.Spec.Apps)
@@ -720,6 +724,10 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	}
 
 	if err := r.purgeTenantKernelResources(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.deleteTenantProvisioningConfigMap(ctx, tenant.Name); err != nil {
 		return ctrl.Result{}, err
 	}
 

@@ -98,6 +98,8 @@ spec:
               value: {{ .Values.openbaoNamespace | quote }}
             - name: MEMCACHED_IMAGE
               value: {{ .Values.memcached.image | quote }}
+            - name: TENANT_CROSSPLANE_ONLY
+              value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
           ports:
             - name: metrics
               containerPort: 8080

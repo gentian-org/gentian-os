@@ -14,6 +14,9 @@
 #       - ArgoCD AppProject (gentianos-tenants)
 #       - ESO ClusterSecretStore (openbao)
 #       - cert-manager ClusterIssuer (letsencrypt-http01)
+#   ✓ XTenant XRD + tenant-default Composition (Crossplane convergence C3/C4):
+#       - Operator seeds OpenBao credentials and writes tenant-*-provisioning-jobs
+#       - Crossplane applies identity, data-plane, and edge resources declaratively
 #   ✓ Remaining secrets seeded (registry, DNS/Cloudflare, internal)
 #
 # Usage:
@@ -245,9 +248,6 @@ install_crossplane_providers() {
     kubectl wait xrd xtenants.gentianos.io \
         --for=condition=Established --timeout=2m
 
-    info "Applying Composition (tenant-default)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
-
     success "Crossplane providers, XRDs, and Compositions are ready."
 }
 
@@ -345,6 +345,8 @@ POLICY
     bao policy write app-init - <<POLICY
 path "${_kv_mount}/data/gentian-os/kernel/master-password"           { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/kernel/identity/nubus"            { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/database/cnpg"             { capabilities = ["read"] }
+path "${_kv_mount}/metadata/gentian-os/kernel/database/cnpg"         { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/ldap"            { capabilities = ["create", "read", "update"] }
 path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/ldap"        { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/s3"              { capabilities = ["create", "read", "update"] }

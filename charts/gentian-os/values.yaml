@@ -24,6 +24,15 @@ routingMode: gateway
 # tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
 tenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare"
 
+# tenantProvisioning controls operator orchestration behaviour during Crossplane
+# convergence (Phase C4). When crossplaneOnly is true the operator skips shared-
+# kernel side effects (mail, office, portal/UMC, Nextcloud group, LDAP base) so
+# tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).
+# Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
+# if a cutover regresses; leave false for normal production behaviour.
+tenantProvisioning:
+  crossplaneOnly: false
+
 # kernelRealm is the name of the shared Keycloak realm that holds all platform
 # users (synced via Nubus LDAP). Defaults to "kernel" when empty.
 # Plumbed into the operator as the KERNEL_REALM env var.
