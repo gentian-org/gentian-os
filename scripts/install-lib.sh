@@ -3623,7 +3623,7 @@ _find_stack_data_ums_job() {
     local release_name="$1" ns="$2"
     kubectl get jobs -n "${ns}" --no-headers \
         -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-stack-data-ums-" | tail -1 || true
+        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true
 }
 
 apply_stack_data_ums_job_from_helm() {

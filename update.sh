@@ -1107,7 +1107,7 @@ op_setup_iam_recover() {
     local sdu_job=""
     sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
         -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
     if [[ -n "${sdu_job}" ]]; then
         info "Waiting for ${sdu_job} to be Complete..."
         kubectl wait "job/${sdu_job}" -n "${ns}" \
@@ -1183,7 +1183,7 @@ op_nubus_recover() {
     local sdu_job
     sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
         -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
 
     if [[ -n "$sdu_job" ]]; then
         local sdu_complete
@@ -1226,7 +1226,7 @@ op_nubus_recover() {
     until [[ -n "$new_job" ]]; do
         new_job=$(kubectl get jobs -n "${ns}" --no-headers \
             -o custom-columns=NAME:.metadata.name 2>/dev/null \
-            | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+            | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
         if (( SECONDS > deadline )); then
             warn "stack-data-ums job did not appear within 2m."
             warn "  Check: kubectl get jobs -n ${ns}"

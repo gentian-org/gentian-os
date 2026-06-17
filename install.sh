@@ -1063,7 +1063,7 @@ deploy_nubus() {
         until [[ -n "$sdu_job" ]]; do
             sdu_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
                 -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+                | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
             if (( SECONDS > sdu_deadline )); then
                 warn "  stack-data-ums job did not appear in 5m — skipping wait."
                 return 0
@@ -1119,7 +1119,7 @@ deploy_nubus() {
             until [[ -n "$new_job" ]]; do
                 new_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
                     -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                    | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+                    | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
                 if (( SECONDS > sdu_deadline )); then
                     warn "  Reapplied stack-data-ums job did not appear — check manually."
                     return 1

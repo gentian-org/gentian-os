@@ -31,7 +31,7 @@ spec:
               TTL=600
               JOB=$(kubectl get jobs -n "$NS" --no-headers \
                 -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                | grep "^${PREFIX}" | tail -1 || true)
+                | grep -E "^${PREFIX}[0-9]+" | tail -1 || true)
               if [[ -z "$JOB" ]]; then
                 echo "No stack-data-ums job found; nothing to clean up."
                 exit 0
