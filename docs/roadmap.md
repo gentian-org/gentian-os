@@ -1,37 +1,32 @@
 # Gentian OS — Roadmap
 
-Short index of **planned** work not yet fully implemented. For the current
-platform design see [architecture.md](architecture.md). For the converged
-Crossplane + operator model see [crossplane-convergence.md](crossplane-convergence.md).
+Planned work not yet fully implemented. For the current platform design see
+[architecture.md](architecture.md).
 
 ---
 
-## Crossplane & operator (convergence — complete)
+## Crossplane & operator
 
-The Crossplane convergence programme ([crossplane-convergence.md §3](crossplane-convergence.md))
-is **closed**. All provision-path resources are owned by Crossplane via the manifest bridge;
-the operator seeds secrets, writes the ConfigMap, and waits.
+Today Crossplane owns tenant infrastructure lifecycle via Compositions and the
+manifest bridge (`tenant-{name}-provisioning-jobs`: `jobs.json`, `objects.json`).
+The operator seeds OpenBao credentials, writes the ConfigMap, patches `XTenant`,
+and waits on composed resources.
 
-| Item | Status |
-|------|--------|
-| Manifest bridge (jobs + objects) | ✅ Done |
-| Broker IdP in manifest bridge | ✅ Done |
-| Gateway edge (Crossplane-owned policies) | ✅ Done |
-| `function-sequencer` (App claims after identity/LDAP Jobs) | ✅ Done |
-| `Phase=Ready` gated on `CrossplaneReady` | ✅ Done |
-| P2 e2e, render goldens, schema unit tests | ✅ Done |
-| Dead operator provision-path Creates removed | ✅ Done |
+**Still operator-owned by design:** Cloudflare DNS and stale gateway cleanup,
+tenant deletion Jobs, mail/office, portal/UMC convergence, Keycloak
+browser-security header Jobs.
 
-**Still operator-owned by design:** tenant deletion Jobs, mail/office, portal/UMC,
-Keycloak browser-security header Jobs. Not part of the convergence programme.
+Set `tenantProvisioning.crossplaneOnly: true` (`TENANT_CROSSPLANE_ONLY=true`) to
+skip shared-kernel side effects (portal/UMC, Nextcloud group, LDAP base helpers,
+browser-security Jobs).
 
 ---
 
-## Mail & office (separate track)
+## Mail & office
 
 Kernel-facing mail (Postfix/Dovecot virtual domains, tenant mail secrets) and
 Collabora/office integration remain **operator-owned** today. Moving them into
-kernel or tenant Compositions is planned as a **separate workstream**.
+kernel or tenant Compositions is a separate workstream.
 
 See [design/mail.md](design/mail.md) and operator `ensureMail` / `ensureOffice`.
 
@@ -39,45 +34,105 @@ See [design/mail.md](design/mail.md) and operator `ensureMail` / `ensureOffice`.
 
 ## Secret rotation
 
-Tenant and app credential rotation via annotations (for example
-`gentian-os.io/rotate-credentials`) is **not implemented** in the operator
-yet. Today, rotation is manual: update OpenBao paths and restart workloads, or
-reconcile provisioning Jobs where applicable. A reconciler-driven rotation flow
-is planned.
+Tenant and app credential rotation via annotations is **not implemented** in the
+operator yet. Today, rotation is manual: update OpenBao paths and restart
+workloads, or reconcile provisioning Jobs where applicable.
+
+Planned interface:
+
+```bash
+kubectl annotate tenant demo gentian-os.io/rotate-credentials=<app-name>
+kubectl annotate tenant demo gentian-os.io/rotate-credentials=all
+```
+
+When implemented, a reconciler will write new credentials to OpenBao and let ESO
++ Reloader propagate the change. See [design/security.md](design/security.md).
 
 ---
 
 ## SOC 2 hardening
 
 SOC 2–oriented controls (audit logging, access reviews, backup verification
-automation, change management evidence) are tracked here as platform hardening
-work. Operational backup targets are described in [design/operations.md](design/operations.md);
-formal control mapping and evidence collection are **planned**.
+automation, change management evidence) are platform hardening work.
+Operational backup targets are in [design/operations.md](design/operations.md);
+formal control mapping and evidence collection are not yet in place.
 
 ---
 
-## Keycloak / `provider-keycloak` consolidation (deferred)
+## Keycloak / `provider-keycloak` consolidation
 
-**Status:** Deferred — blocked on upstream `provider-keycloak` Realm support for
+**Blocked upstream** — `provider-keycloak` Realm MRs do not yet support
 browser-flow tuning, LDAP federation sync, OIDC pack role mappings, and kernel
 IdP brokering.
 
 Today **kernel** OIDC clients are Crossplane MRs (`kernel/services/keycloak-config/`);
 **per-tenant** realms and many app clients are manifest-bridge Jobs (Crossplane
 Object MRs); some app clients use Composition Client MRs when `compositionRef`
-is set. Mid-term: migrate tenant realm lifecycle to drift-safe **`provider-keycloak`
-Realm MRs** once upstream supports the required settings.
+is set. Target end state: drift-safe **`provider-keycloak` Realm MRs** for tenant
+realms once upstream supports the required settings.
 
 ---
 
-## Related planned items (elsewhere)
+## IntegrationBindings
+
+`IntegrationBinding` CRs are emitted via the manifest bridge; the operator
+reconciles contract wiring. A follow-up is full Composition-only wiring: gate on
+both provider and consumer Ready, write OpenBao paths, apply NetworkPolicy
+patches, and surface status without a separate operator loop.
+
+See [design/app-catalogue.md](design/app-catalogue.md).
+
+---
+
+## Broadcast contracts
+
+The current `IntegrationBinding` model is **point-to-point**. A possible
+addition is a **broadcast bus** (NATS with per-tenant subject namespaces and
+CloudEvents schemas) for pub/sub between apps. Most existing apps do not natively
+produce or consume broker events; the agentic AI layer may cover overlapping
+needs via MCP-driven orchestration.
+
+---
+
+## App catalogue delivery
+
+Deliver the app catalogue via an OCI artefact + `Cluster` XR instead of a
+separate ArgoCD Application (`gentian-appprofiles`).
+
+---
+
+## Per-app HTTP-01 issuers
+
+Support per-app HTTP-01 issuers on `AppProfile` ([architecture.md](architecture.md)
+§6.1). The operator uses DNS-01 wildcard certificates today.
+
+---
+
+## Gentian shell browser proxy
+
+Cross-origin API calls the Gentian shell makes on behalf of embedded apps may use
+proxy paths under `/api/apps/{name}/…` with forwarded bearer tokens. See
+[gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md).
+
+---
+
+## Agentic / MCP layer
+
+| Milestone | Capability |
+|-----------|------------|
+| **v1** | MCP registry + per-app `mcp:` block in AppProfile + 2–3 reference apps (Nextcloud, OpenProject, Element) exposing read-scope capabilities |
+| **v2** | Shell AI assistant (Portal extension) using OIDC token exchange + cross-app aggregation queries |
+| **v3** | Workflow agents (scheduled + event-driven), AppProfile generator, tenant provisioning assistant |
+
+See [design/agentic-ai.md](design/agentic-ai.md).
+
+---
+
+## Operations
 
 | Topic | Where documented |
 |-------|------------------|
-| Converged architecture & closed convergence items | [crossplane-convergence.md](crossplane-convergence.md) |
 | Tenant identity & LDAP (manifest bridge) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
-| Per-app HTTP-01 issuers on `AppProfile` | [architecture.md](architecture.md) §6.1 (future); operator uses DNS-01 wildcard today |
-| IntegrationBindings in Crossplane | [design/app-catalogue.md](design/app-catalogue.md) §8b |
-| Gentian shell `browserProxy` / `/api/apps/…` | [gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md) (north star) |
+| Gateway / ingress | [design/gateway.md](design/gateway.md) |
 | `RestoreTenant` CR | [design/operations.md](design/operations.md) §2 |
-| Agentic / MCP layer | [design/agentic-ai.md](design/agentic-ai.md) |
+| Bootstrap install | [getting-started.md](../getting-started.md) |

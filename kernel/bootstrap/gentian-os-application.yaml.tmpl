@@ -63,7 +63,7 @@ spec:
     jsonPointers:
     - /metadata/annotations
     - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
-    # Phase 1 helm bootstrap + Phase 2 Argo SSA leave kube-defaulted Deployment
+    # Direct Helm bootstrap + ArgoCD SSA leave kube-defaulted Deployment
     # fields on the live object that the Helm chart omits (same pattern as
     # gentian-portal ApplicationSet). Without these, gentian-os stays OutOfSync
     # while Healthy and install Step 16 times out every run.

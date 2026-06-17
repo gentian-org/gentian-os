@@ -147,7 +147,7 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
 	})
 
-	// Reconciler should wait on the role Job before Database CR is applied (C3).
+	// Reconciler should wait on the role Job before Database CR is applied.
 	waitForTenantConditionReason(t, "dbcreate", "DatabaseReady", "Provisioning")
 
 	// Step 2: mark role Job complete; simulator applies Database CR once all Jobs finish.

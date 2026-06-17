@@ -198,7 +198,7 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 }
 
 // collectDesiredIntegrationBindings returns IntegrationBinding CRs that should
-// exist for the tenant (C3.4).
+// exist for the tenant.
 func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]*gentianov1alpha1.IntegrationBinding, error) {
 	nsName := tenantNamespaceName(tenant)
 	presentApps := make(map[string]struct{}, len(tenant.Spec.Apps))

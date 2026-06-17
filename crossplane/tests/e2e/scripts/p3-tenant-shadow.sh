@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P3 E2E — Shadow tenant provisioned via Crossplane graph (Phase C4).
+# P3 E2E — Shadow tenant provisioned via Crossplane graph.
 #
 # Applies a throwaway Tenant CR and verifies the operator orchestrates (seed +
 # manifest bridge + XTenant patch) while Crossplane owns resource creation.
@@ -113,7 +113,7 @@ objects_key=$(kubectl get configmap "${PROV_CM}" -n "${KERNEL_NS}" -o jsonpath='
 [[ -n "${jobs_key}" && "${jobs_key}" != "[]" ]] \
   || fail "jobs.json missing or empty in ${PROV_CM}"
 [[ -n "${objects_key}" ]] \
-  || fail "objects.json missing in ${PROV_CM} (C3 manifest bridge)"
+  || fail "objects.json missing in ${PROV_CM} (manifest bridge)"
 pass "ConfigMap contains jobs.json and objects.json"
 
 # ── Wait for XTenant Ready ───────────────────────────────────────────────────
@@ -159,7 +159,7 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# Tenant.status should reflect Crossplane readiness (C4.1).
+# Tenant.status should reflect Crossplane readiness.
 cp_ready=$(kubectl get tenant "${SHADOW_TENANT}" \
     -o jsonpath='{.status.conditions[?(@.type=="CrossplaneReady")].status}' 2>/dev/null || true)
 if [[ "${cp_ready}" == "True" ]]; then
@@ -184,5 +184,5 @@ fi
 
 pass "All P3 spot-checks passed"
 echo ""
-echo "Phase 3 E2E complete. Shadow tenant ${SHADOW_TENANT} converged via Crossplane graph."
+echo "P3 E2E complete. Shadow tenant ${SHADOW_TENANT} converged via Crossplane graph."
 SKIP_CLEANUP=0

@@ -184,7 +184,7 @@ func shouldAutoCompleteDeleteCleanupJob(jobName string) bool {
 }
 
 // waitForTenantConditionReason polls until the tenant has a status condition
-// with the given type and reason (C2: reconciler gates on conditions, not Job creation order).
+// with the given type and reason (reconciler gates on conditions, not Job creation order).
 func waitForTenantConditionReason(t *testing.T, tenantName, condType, reason string) {
 	t.Helper()
 	waitFor(t, jobAppearTimeout, func() bool {

@@ -22,7 +22,7 @@ const (
 )
 
 // ensureIntegrationBindings waits for Crossplane-provisioned IntegrationBinding
-// CRs and garbage-collects stale bindings (C3.4).
+// CRs and garbage-collects stale bindings.
 func (r *TenantReconciler) ensureIntegrationBindings(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	nsName := tenantNamespaceName(tenant)
 

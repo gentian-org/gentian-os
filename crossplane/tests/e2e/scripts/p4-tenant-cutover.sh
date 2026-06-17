@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P4 E2E — Cutover verification for an existing tenant (Phase C4).
+# P4 E2E — Cutover verification for an existing tenant.
 #
 # Validates that a live tenant (default: demo) is fully converged on the
 # Crossplane graph: manifest bridge, XTenant Ready, no duplicate App claims,
@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - install.sh completed and tenant deployed (e.g. kubectl gentian tenants deploy demo)
-#   - Crossplane convergence C3 manifest bridge active on the cluster
+#   - tenant manifest bridge active on the cluster
 #
 # Optional smoke (set RUN_SMOKE=1):
 #   Requires tenant apps to expose HTTP routes; checks one app hostname returns 2xx/3xx.
@@ -67,7 +67,7 @@ pass "XTenant ${TENANT} is Ready"
 cp_ready=$(kubectl get tenant "${TENANT}" \
     -o jsonpath='{.status.conditions[?(@.type=="CrossplaneReady")].status}')
 [[ "${cp_ready}" == "True" ]] \
-  || fail "Tenant CrossplaneReady=${cp_ready:-<unset>} — status aggregation (C4.1) not converged"
+  || fail "Tenant CrossplaneReady=${cp_ready:-<unset>} — status aggregation not converged"
 pass "Tenant CrossplaneReady=True"
 
 tenant_phase=$(kubectl get tenant "${TENANT}" -o jsonpath='{.status.phase}')
@@ -140,6 +140,6 @@ fi
 
 pass "All P4 cutover checks passed"
 echo ""
-echo "Phase 4 E2E complete. Tenant ${TENANT} is converged on the Crossplane graph."
+echo "P4 E2E complete. Tenant ${TENANT} is converged on the Crossplane graph."
 echo "To validate Crossplane-only mode: set tenantProvisioning.crossplaneOnly=true"
 echo "(TENANT_CROSSPLANE_ONLY) on the operator and re-run this script."

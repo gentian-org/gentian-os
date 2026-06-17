@@ -114,7 +114,7 @@ Options:
                            as username. Idempotent (see ldap-federation-patch.yaml).
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository (tenant-default manifest bridge, app-*).
-                           Run after convergence (C3/C4) changes; included in --all.
+                           Run after Crossplane XRD/Composition changes; included in --all.
   --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.

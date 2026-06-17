@@ -2,7 +2,7 @@
 # =============================================================================
 # uninstall.sh — Gentian OS Crossplane-based uninstall
 # =============================================================================
-# Reverses install.sh (Phase 1 + Phase 2 bootstrap) in reverse order.
+# Reverses install.sh bootstrap in reverse order.
 #
 # Default (safe) mode:
 #   - Undeploys all tenants (GitOps + in-cluster) unless --keep-tenants
@@ -309,7 +309,7 @@ else
 fi
 
 # =============================================================================
-# Step 1b — Remove Phase 2 resources (provider-helm Release, nubus Secrets/CMs)
+# Step 1b — Remove Nubus provider-helm Release and associated Secrets/ConfigMaps
 # Must run before Crossplane providers are removed so the Release GC can run.
 # =============================================================================
 banner "Step 1b — Remove Nubus provider-helm Release"
@@ -406,7 +406,7 @@ kubectl delete externalsecret nextcloud-admin -n platform-kernel \
 kubectl delete secret nextcloud-admin -n platform-kernel \
     --ignore-not-found=true --timeout=30s 2>/dev/null || true
 
-success "Phase 2 nubus + Pattern B resources removed."
+success "Nubus + Pattern B resources removed."
 
 # =============================================================================
 # Step 1c — Drain all remaining Crossplane managed resources

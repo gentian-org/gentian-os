@@ -135,13 +135,10 @@ These are agents that the **platform team** runs against the
 cluster's read-scope MCP surface. They are bound by the same OIDC
 identity and RBAC model as any human operator.
 
-## 7. Implementation Roadmap
+## 7. Planned capabilities
 
-| Phase | Capability | Rationale |
-|---|---|---|
-| **v1** | MCP registry + per-app `mcp:` block in AppProfile + 2–3 reference apps (NextCloud, OpenProject, Element) exposing read-scope capabilities | Establish the contract, prove the loop end-to-end |
-| **v2** | Shell AI assistant (Portal extension) using OIDC token exchange + cross-app aggregation queries | Demonstrate user-facing value with the registry |
-| **v3** | Workflow agents (scheduled + event-driven), AppProfile generator, tenant provisioning assistant | Open the platform to external agents and AI-assisted operations |
+MCP registry, shell AI assistant, workflow agents, and AppProfile generator
+milestones are tracked in [roadmap.md](../roadmap.md).
 
 ## 8. Security Model
 

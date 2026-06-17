@@ -394,7 +394,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	nsName := tenantNamespaceName(tenant)
 	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName, "crossplaneOnly", r.CrossplaneOnly)
 
-	// ── Orchestration (Phase C4): validate → seed → patch XR → wait ──────────
+	// ── Orchestration: validate → seed → patch XR → wait ─────────────────────
 	if err := r.ensureTenantProvisioningManifests(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -408,7 +408,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return res, err
 	}
 
-	// Bootstrap side-effects retained until moved into tenant-default (C1.2).
+	// Bootstrap side-effects retained until moved into tenant-default.
 	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -682,14 +682,14 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// Phase 3: Delete the XTenant composite so Crossplane cascades deletion of
+	// Delete the XTenant composite so Crossplane cascades deletion of
 	// the Composition-managed resources (Namespace, NetworkPolicy, OpenBao policy,
 	// App claims). "Not found" is treated as already deleted.
 	if err := r.deleteXTenant(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Phase 4: Apply per-DeletionPolicy cleanup in addition to the Crossplane cascade.
+	// Apply per-DeletionPolicy cleanup in addition to the Crossplane cascade.
 	// This is necessary both as a direct/fallback mechanism (e.g. in environments
 	// without Crossplane) and to satisfy the controller's own ownership invariants.
 	nsName := tenantNamespaceName(tenant)
@@ -898,7 +898,7 @@ func tenantNamespaceName(tenant *gentianov1alpha1.Tenant) string {
 	return fmt.Sprintf("tenant-%s", tenant.Name)
 }
 
-// ── Phase 3: XTenant helpers ─────────────────────────────────────────────────
+// ── XTenant helpers ───────────────────────────────────────────────────────────
 
 // ensureTenantXR creates or updates the XTenant composite resource that drives
 // the Crossplane Composition for this tenant. The Composition provisions the

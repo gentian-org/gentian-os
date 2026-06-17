@@ -42,7 +42,7 @@ var appClaimGVK = schema.GroupVersionKind{
 }
 
 // ensureAppDeployment seeds OpenBao app secrets and watches Crossplane-owned App
-// claims for readiness. Claim creation is owned by tenant-default Composition (C1).
+// claims for readiness. Claim creation is owned by tenant-default Composition.
 func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if len(tenant.Spec.Apps) == 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "NoAppsConfigured", "No applications are configured for this tenant")

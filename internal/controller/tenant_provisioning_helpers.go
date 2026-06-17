@@ -33,7 +33,7 @@ import (
 const tenantProvisioningObjectsDataKey = "objects.json"
 
 // waitForTenantNamespaceJob waits for a Batch Job in the tenant namespace.
-// Used when an app Composition owns db-init / s3-init Jobs (C3.1).
+// Used when an app Composition owns db-init / s3-init Jobs.
 func (r *TenantReconciler) waitForTenantNamespaceJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string) (bool, error) {
 	nsName := tenantNamespaceName(tenant)
 	job := &batchv1.Job{}

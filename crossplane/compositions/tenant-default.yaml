@@ -45,7 +45,7 @@ spec:
                     type: FromCompositeFieldPath
                     valueFromFieldPath: metadata.name
 
-    # ── Step 2: Render composed resources (C1 owner for tenant shell) ─────────
+    # ── Step 2: Render composed resources (tenant shell owner) ────────────────
     - step: render-tenant-resources
       functionRef:
         name: function-go-templating

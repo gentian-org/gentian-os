@@ -3110,11 +3110,11 @@ install_appprofiles_sync() {
 #   - Deployment + ServiceAccount + ClusterRole(Binding) for the operator
 #   - ServiceMonitor + Grafana dashboard
 #
-# Two-phase install:
-#   Phase 1 — Direct Helm bootstrap (fast):
+# Two-step install:
+#   Direct Helm bootstrap (fast):
 #     CRDs and the operator Deployment are applied immediately so that
 #     subsequent install steps can use them without waiting for ArgoCD.
-#   Phase 2 — ArgoCD Application handoff:
+#   ArgoCD Application handoff:
 #     The gentian-os ArgoCD Application (rendered from
 #     kernel/bootstrap/gentian-os-application.yaml.tmpl) is applied.
 #     ArgoCD takes ownership of the resources via ServerSideApply and from
@@ -3125,7 +3125,7 @@ install_appprofiles_sync() {
 #     patches image.tag in the Application's Helm parameters and ArgoCD
 #     triggers a Helm upgrade (rolling restart) automatically.
 #
-# Without Phase 2, argocd-image-updater reports "no ImageUpdater CRs to
+# Without the ArgoCD handoff, argocd-image-updater reports "no ImageUpdater CRs to
 # process" and image updates require manual kubectl rollout restart.
 # =============================================================================
 release_gentian_os_helm_bootstrap() {
@@ -3155,7 +3155,7 @@ install_orchestrator() {
         kubectl create namespace "$ns"
     fi
 
-    # ── Phase 1: Direct Helm bootstrap ────────────────────────────────────────
+    # ── Direct Helm bootstrap ───────────────────────────────────────────────────
     info "Applying orchestrator CRDs (hard requirement for subsequent steps)..."
     if [[ ! -d "$crd_dir" ]]; then
         error "CRD directory not found: ${crd_dir}"
@@ -3205,7 +3205,7 @@ install_orchestrator() {
     fi
 
     info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
-    info "(ArgoCD will take ownership of this release in Phase 2 below.)"
+    info "(ArgoCD will take ownership of this release in the handoff step below.)"
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
         --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
@@ -3223,9 +3223,9 @@ install_orchestrator() {
             exit 1
         }
     done
-    success "Phase 1 complete: CRDs Established, operator running."
+    success "Helm bootstrap complete: CRDs Established, operator running."
 
-    # ── Phase 2: ArgoCD Application handoff ───────────────────────────────────
+    # ── ArgoCD Application handoff ────────────────────────────────────────────
     # Render the Application template and apply it.  ArgoCD adopts the
     # already-running resources via ServerSideApply, adds the ImageUpdater CR
     # (Source 4), and drives all future upgrades from git.
@@ -3255,7 +3255,7 @@ install_orchestrator() {
     kubectl annotate application gentian-os -n argocd \
         "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
-    success "Phase 2 complete: gentian-os Application and gentian-tenants ApplicationSet registered with ArgoCD."
+    success "ArgoCD handoff complete: gentian-os Application and gentian-tenants ApplicationSet registered."
     success "  Image updates are now fully automatic via argocd-image-updater."
     info "Monitor operator:  kubectl get application gentian-os -n argocd"
     info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"

@@ -41,7 +41,7 @@ func tenantProvisioningConfigMapName(tenantName string) string {
 }
 
 // ensureTenantProvisioningManifests writes Batch Job and Kubernetes object manifests
-// that Crossplane applies via tenant-default (Phases C2–C3). The operator seeds
+// that Crossplane applies via tenant-default. The operator seeds
 // credentials and updates this ConfigMap; it does not create those resources directly.
 func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	jobs, err := r.buildTenantProvisioningJobs(ctx, tenant)
@@ -351,7 +351,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 }
 
 // crossplaneOwnsOIDCClient reports whether the app Composition already emits a
-// provider-keycloak Client MR, so the operator pack/client Job can be skipped (C2d).
+// provider-keycloak Client MR, so the operator pack/client Job can be skipped.
 // Sidecar OIDC (element-jitsi) is owned by the parent profile's composition.
 func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppConfig) bool {
 	if cfg.pack != nil {

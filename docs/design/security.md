@@ -207,23 +207,12 @@ Reloader bridges the gap so rotation happens without a human running
 
 ### Rotation in `random` mode
 
-Annotation-driven rotation on the Tenant CR is **planned** (see
-[roadmap.md](../roadmap.md)); the operator does not implement
-`gentian-os.io/rotate-credentials` yet. Until then, rotate by updating
-OpenBao and rolling affected pods (Reloader where annotated).
-
-```bash
-# Planned interface (not implemented yet):
-# kubectl annotate tenant demo gentian-os.io/rotate-credentials=<app-name>
-# kubectl annotate tenant demo gentian-os.io/rotate-credentials=all
-```
-
-When implemented, a reconciler will write new random credentials to
-OpenBao and let ESO + Reloader propagate the change. OpenBao KV v2 records `updated_time` per secret version,
-giving auditors a verifiable rotation history without any extra tooling.
+Annotation-driven rotation on the Tenant CR is **not implemented** (see
+[roadmap.md](../roadmap.md)). Until then, rotate by updating OpenBao and
+rolling affected pods (Reloader where annotated).
 
 This satisfies SOC 2 Type 1. Scheduled automatic rotation (SOC 2
-Type 2) is a future phase.
+Type 2) is tracked in [roadmap.md](../roadmap.md).
 
 ### Rotation in `derived` mode
 

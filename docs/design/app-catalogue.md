@@ -235,13 +235,9 @@ tracks health through status conditions. Bindings are owned by the
 Tenant and garbage-collected on delete.
 
 **Today vs Crossplane-only:** `IntegrationBinding` CRs are created and
-reconciled only by the **gentian-os operator** when it sees matching
+reconciled by the **gentian-os operator** when it sees matching
 provider/consumer apps in `spec.apps`. Crossplane app Compositions do
-**not** emit bindings yet. A desirable mid-term shape is a composition
-pipeline step (or dedicated `IntegrationBinding` Composition) that
-runs after both `App` claims are Ready, writes contract secrets via
-`provider-vault`, and optionally configures `provider-keycloak` token
-exchange — one reconcile graph instead of a second operator loop.
+not yet emit bindings for all contract wiring. See [roadmap.md](../roadmap.md).
 
 ## 5. End-to-End Flow: Tenant CR → operator + App compositions
 
@@ -307,23 +303,4 @@ gentian-apps/
 Adding an app to the catalogue is one PR adding one YAML file. No code
 changes, no operator rebuilds.
 
-## 8b. Future Direction: Crossplane-owned bindings
-
-Move contract wiring from operator-only reconciliation into the App /
-tenant Composition pipeline: gate on both sides Ready, write OpenBao
-paths, apply NetworkPolicy patches, and surface status on
-`IntegrationBinding` without separate imperative Jobs. See
-[crossplane-convergence.md](../crossplane-convergence.md) — bindings are
-already emitted via the manifest bridge; full Composition-only wiring
-remains on the [roadmap.md](../roadmap.md).
-
-## 8. Future Direction: Broadcast Contracts
-
-The current `IntegrationBinding` model is **point-to-point**. A future
-addition is a **broadcast bus** (NATS with per-tenant subject
-namespaces and CloudEvents schemas) for pub/sub between apps. This is
-out of scope for v1 because most existing apps don't natively produce
-or consume broker events; it would require webhook adapters or
-sidecar containers per app. The agentic AI layer (see
-[agentic-ai.md](agentic-ai.md)) addresses much of the same need
-through MCP-driven orchestration without requiring upstream changes.
+For IntegrationBindings evolution and broadcast contracts see [roadmap.md](../roadmap.md).

@@ -24,9 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// buildTenantEdgeObjects returns Gateway API edge resources owned by Crossplane
-// (Phase C3.2): Certificate, Gateway, HTTPRoutes, ReferenceGrants, and
-// BackendTrafficPolicy. Cloudflare DNS and stale-resource cleanup stay in ensureGateway.
+// buildTenantEdgeObjects returns Gateway API edge resources owned by Crossplane:
+// Certificate, Gateway, HTTPRoutes, ReferenceGrants, and BackendTrafficPolicy.
+// Cloudflare DNS and stale-resource cleanup stay in ensureGateway.
 func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {
 	if !isGatewayRoutingMode(r.RoutingMode) {
 		return nil, nil

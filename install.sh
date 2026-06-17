@@ -14,7 +14,7 @@
 #       - ArgoCD AppProject (gentianos-tenants)
 #       - ESO ClusterSecretStore (openbao)
 #       - cert-manager ClusterIssuer (letsencrypt-http01)
-#   ✓ XTenant XRD + tenant-default Composition (Crossplane convergence C3/C4):
+#   ✓ XTenant XRD + tenant-default Composition:
 #       - Operator seeds OpenBao credentials and writes tenant-*-provisioning-jobs
 #       - Crossplane applies identity, data-plane, and edge resources declaratively
 #   ✓ Remaining secrets seeded (registry, DNS/Cloudflare, internal)
@@ -685,7 +685,7 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Phase 2 — Step 15c: Bootstrap the gentian-appprofiles ArgoCD Application
+# Step 15c: Bootstrap the gentian-appprofiles ArgoCD Application
 # This ArgoCD Application syncs AppProfile CRs from the gentian-apps repository
 # into the cluster. AppProfile CRs must exist before any App/XApp composite
 # can be created by tenants (the app-default composition fetches the AppProfile
@@ -711,7 +711,7 @@ bootstrap_appprofiles() {
 }
 
 # =============================================================================
-# Phase 2 — Step 13: Install provider-helm
+# Step 13: Install provider-helm
 # provider-helm deploys Helm charts into the local cluster. It replaces the
 # legacy Pattern B approach for secrets-hostile charts.
 # =============================================================================
@@ -735,7 +735,7 @@ install_provider_helm() {
 }
 
 # =============================================================================
-# Phase 2 — Step 14: Deploy Nubus via provider-helm (Pattern B migration)
+# Step 14: Deploy Nubus via provider-helm (Pattern B migration)
 #
 # Creates:
 #   - gentian-dev + gentian-infra-dev namespaces
@@ -1030,7 +1030,7 @@ deploy_nubus() {
         if (( SECONDS > deadline )); then
             warn "  register-consumers job did not appear within 5m — continuing async."
             warn "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=register-consumers"
-            success "Phase 2 — Nubus Release submitted via provider-helm."
+            success "Nubus Release submitted via provider-helm."
             return 0
         fi
         [[ -n "$job_name" ]] || sleep 5
@@ -1043,7 +1043,7 @@ deploy_nubus() {
         warn "  register-consumers job did not complete within 2m."
         warn "  Check: kubectl logs -n ${ns} -l job-name=${job_name} --tail=20"
     fi
-    success "Phase 2 — Nubus deployed via provider-helm."
+    success "Nubus deployed via provider-helm."
 
     # ── Wait for stack-data-ums job; auto-recover if it fails ────────────────
     # The stack-data-ums job:
@@ -1170,7 +1170,7 @@ print_summary_cp() {
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     Gentian OS — Phase 1 + 2 Bootstrap Complete          ║${NC}"
+    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete                       ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
@@ -1204,7 +1204,7 @@ print_summary_cp() {
 }
 
 # =============================================================================
-# main — Crossplane-based bootstrap (Phase 1)
+# main — Crossplane-based bootstrap
 # =============================================================================
 main_cp() {
     echo ""
@@ -1280,7 +1280,7 @@ main_cp() {
     install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
     bootstrap_root_appset       # Step 12d — root app-of-apps (minio, redis, mariadb, IAM…)
 
-    # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
+    # ── Pattern B chart deployments ─────────────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
     "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)

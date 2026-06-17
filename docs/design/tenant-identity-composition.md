@@ -1,6 +1,6 @@
 # Tenant Identity & LDAP — Crossplane Manifest Bridge
 
-Companion to [crossplane-convergence.md](../crossplane-convergence.md).
+Companion to [architecture.md](../architecture.md) §3.1 and [roadmap.md](../roadmap.md).
 
 ## Overview
 
@@ -51,12 +51,12 @@ Keycloak identity Jobs (`job-keycloak-.*`) and LDAP Jobs (`job-ldap-.*`) from
 the manifest bridge are Ready. The operator still waits on Job completion and
 maps status to `IdentityReady` / `LDAPReady`.
 
-## Script bundle (future)
+## Script bundle
 
 LDAP and Keycloak Jobs share large shell scripts built in Go today
-(`ldap_reconciler.go`, `identity_reconciler.go`). A future refinement extracts
-them to `crossplane/scripts/tenant-identity/` as a cluster ConfigMap mounted by
-Composition Jobs.
+(`ldap_reconciler.go`, `identity_reconciler.go`). Extracting them to
+`crossplane/scripts/tenant-identity/` as a cluster ConfigMap is tracked in
+[roadmap.md](../roadmap.md).
 
 ## Testing
 

@@ -92,7 +92,6 @@ authentication:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chat (Element / Synapse)
-# Active from Phase 4D onward.
 # ─────────────────────────────────────────────────────────────────────────────
 chat:
   matrix:
@@ -130,8 +129,6 @@ externalServices:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File Store (Nextcloud)
-# Active from Phase 4C onward.
-# Wired into: apps/nextcloud/values/_base.yaml (to be created in Phase 4C.1)
 # ─────────────────────────────────────────────────────────────────────────────
 filestore:
   naming:
@@ -177,8 +174,6 @@ filestore:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Groupware (OX App Suite)
-# Active from Phase 4D onward.
-# Wired into: apps/open-xchange/values/_base.yaml (to be created in Phase 4D)
 # ─────────────────────────────────────────────────────────────────────────────
 groupware:
   davSupport:

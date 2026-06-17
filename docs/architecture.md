@@ -87,7 +87,7 @@ graph TD
 |---|---|---|
 | **ArgoCD** | Deployment plane: pulls Git, syncs all manifests, shows drift, supports rollback. | Never provisions infrastructure. |
 | **Crossplane** | Provisioning plane: composes `XCluster`, `XTenant`, and per-tenant **`App`** claims into managed resources (namespace shell, helm `Release`, ESO, init Jobs, …). | Owns tenant infrastructure lifecycle via Compositions. |
-| **gentian-os operator** | Orchestration: reconciles `Tenant` CRs, seeds OpenBao secrets, writes the manifest bridge ConfigMap, patches `XTenant`, waits on composed resources, aggregates status. | Does not create duplicate shell resources or App claims; shared-kernel side effects (portal, DNS policies) remain operator-owned — see [crossplane-convergence.md](crossplane-convergence.md). |
+| **gentian-os operator** | Orchestration: reconciles `Tenant` CRs, seeds OpenBao secrets, writes the manifest bridge ConfigMap, patches `XTenant`, waits on composed resources, aggregates status. | Does not create duplicate shell resources or App claims; shared-kernel side effects (portal, Cloudflare DNS, stale gateway cleanup) remain operator-owned — see [roadmap.md](roadmap.md). |
 | **OpenBao + ESO** | Single secret store, synced into Kubernetes Secrets that Helm charts consume via `existingSecret` references. | Secrets never touch Git or appear in CR specs. |
 
 **Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
@@ -117,12 +117,11 @@ admin deploys a definition from `clusters/<cluster>/definitions/` into `tenants/
 
 **Tenant lifecycle**  
 Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
-`spec.apps: [element]`) triggers the operator orchestration loop described in
-[crossplane-convergence.md](crossplane-convergence.md):
+`spec.apps: [element]`) triggers the operator orchestration loop:
 
 1. **OpenBao seeding** — credentials before Compositions reconcile  
 2. **Manifest bridge** — operator writes `tenant-{name}-provisioning-jobs` (`jobs.json`, `objects.json`)  
-3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry)  
+3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity/LDAP Jobs are Ready  
 4. **Wait-only ensures** — identity/LDAP Jobs, databases, storage, cache, gateway objects, IntegrationBindings  
 5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
 6. **Shared-kernel extensions** — portal/UMC convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
@@ -151,16 +150,7 @@ App Compositions (`app-default`, `app-element`, `app-ox`) emit
 `openidclient.keycloak.crossplane.io/Client` MRs when `compositionRef` is set;
 the operator skips duplicate OIDC client Jobs for those apps.
 
-**Mid-term direction for `provider-keycloak`:** Prefer managing **all**
-Keycloak objects (kernel + tenant + app clients) as Crossplane MRs once
-realm lifecycle is declarative and drift-safe. Until then, keep the
-provider for kernel `keycloak-config`; tenant realms and clients are owned by
-Crossplane (manifest-bridge Jobs and app Composition MRs).
-
-**Future directions** (see [roadmap.md](roadmap.md))
-
-- App catalogue via OCI artefact + `Cluster` XR instead of a separate ArgoCD Application  
-- Drift-safe `provider-keycloak` Realm MRs for tenant realms
+For Keycloak consolidation and other follow-ups see [roadmap.md](roadmap.md).
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
 documented in [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §2.
@@ -331,8 +321,8 @@ Gentian OS sidesteps most browser CORS restrictions by design:
   provider directly from an app's origin — the OIDC redirect flow terminates at
   the app's server, not at a JS `fetch()`.
 - **Cross-origin API calls** that the Gentian shell will make on behalf of the
-  browser may be declared in `spec.browserProxy` (planned in
-  [gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md)):
+  browser may be declared in `spec.browserProxy` (see [roadmap.md](roadmap.md)
+  and [gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md)):
   proxy paths under `/api/apps/{name}/…` with forwarded bearer tokens. This is
   not required for apps whose UI only talks to its own origin.
 
@@ -625,21 +615,20 @@ Environment policies:
 
 ### 11.2 Install-time bootstrap
 
-`install.sh Step 15` uses a **two-phase** approach to avoid a
+`install.sh Step 15` uses a **two-step** approach to avoid a
 chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
 established yet):
 
-- **Phase 1 — direct Helm install**: CRDs are applied and the operator
-  is installed immediately via `helm upgrade --install`. Subsequent
-  install steps that depend on CRDs or the webhook proceed without
-  waiting for ArgoCD.
-- **Phase 2 — ArgoCD handoff**: The `gentian-os` Application is rendered
-  from `kernel/bootstrap/gentian-os-application.yaml.tmpl` (using the
-  active `GENTIAN_DEPLOYMENTS_REPO`/`BRANCH`/`ENV` variables) and
-  applied with `kubectl apply`. ArgoCD adopts the already-running
-  resources via `ServerSideApply` and deploys the `ImageUpdater` CR on
-  the first sync. From this point, all future upgrades — including image
-  rollouts — are git-driven and fully automatic.
+- **Direct Helm install**: CRDs are applied and the operator is installed
+  immediately via `helm upgrade --install`. Subsequent install steps that
+  depend on CRDs or the webhook proceed without waiting for ArgoCD.
+- **ArgoCD handoff**: The `gentian-os` Application is rendered from
+  `kernel/bootstrap/gentian-os-application.yaml.tmpl` (using the active
+  `GENTIAN_DEPLOYMENTS_REPO`/`BRANCH`/`ENV` variables) and applied with
+  `kubectl apply`. ArgoCD adopts the already-running resources via
+  `ServerSideApply` and deploys the `ImageUpdater` CR on the first sync. From
+  this point, all future upgrades — including image rollouts — are git-driven
+  and fully automatic.
 
 ### 11.3 App images
 
@@ -649,18 +638,13 @@ chart version on the next ArgoCD sync triggered by the ImageUpdater.
 
 ---
 
-## 12. The AI Layer (Future)
+## 12. The AI Layer
 
-The Gentian Portal hosts an AI assistant (planned) that uses three kernel
-services — identity, an MCP (Model Context Protocol) registry, and OIDC
-token exchange — to discover what apps are installed and act across
-them on behalf of the user. Apps expose capabilities by declaring an
-MCP endpoint in their AppProfile; the registry is populated
-automatically on install.
+The Gentian Portal may host an AI assistant that uses three kernel services —
+identity, an MCP (Model Context Protocol) registry, and OIDC token exchange —
+to discover what apps are installed and act across them on behalf of the user.
 
-The MCP-based capability discovery model, cross-app workflow examples,
-the AI-assisted AppProfile generator, and the implementation roadmap
-are in [design/agentic-ai.md](design/agentic-ai.md).
+See [design/agentic-ai.md](design/agentic-ai.md) and [roadmap.md](roadmap.md).
 
 ---
 
