@@ -264,14 +264,14 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 // leaving other apps' claims intact.
 func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	t.Parallel()
-	profileA := newAppProfile("keep-app", nil)
-	profileB := newAppProfile("remove-app", nil)
+	profileA := newAppProfile("rm-keep-app", nil)
+	profileB := newAppProfile("rm-remove-app", nil)
 	if err := testClient.Create(context.Background(), profileA); err != nil {
-		t.Fatalf("create AppProfile keep-app: %v", err)
+		t.Fatalf("create AppProfile rm-keep-app: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileA) })
 	if err := testClient.Create(context.Background(), profileB); err != nil {
-		t.Fatalf("create AppProfile remove-app: %v", err)
+		t.Fatalf("create AppProfile rm-remove-app: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profileB) })
 
@@ -282,8 +282,8 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 			Domain:      "rmapp.example.com",
 			AdminEmail:  "admin@rmapp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
-				{Profile: "keep-app"},
-				{Profile: "remove-app"},
+				{Profile: "rm-keep-app"},
+				{Profile: "rm-remove-app"},
 			},
 		},
 	}
@@ -293,7 +293,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
 	// Wait for both App claims to appear in the tenant namespace.
-	for _, name := range []string{"keep-app", "remove-app"} {
+	for _, name := range []string{"rm-keep-app", "rm-remove-app"} {
 		n := name
 		waitFor(t, tenantReadyTimeout, func() bool {
 			obj := &unstructured.Unstructured{}
@@ -311,7 +311,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 		if err := testClient.Get(context.Background(), types.NamespacedName{Name: "rm-app-tenant"}, updated); err != nil {
 			t.Fatalf("get tenant: %v", err)
 		}
-		updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "keep-app"}}
+		updated.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "rm-keep-app"}}
 		if err := testClient.Update(context.Background(), updated); err != nil {
 			if apierrors.IsConflict(err) {
 				continue
@@ -326,7 +326,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(appClaimTestGVK)
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "remove-app", Namespace: "tenant-rm-app-tenant"}, obj)
+			types.NamespacedName{Name: "rm-remove-app", Namespace: "tenant-rm-app-tenant"}, obj)
 		return err != nil // NotFound means it was deleted
 	})
 
@@ -334,8 +334,8 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimTestGVK)
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keep-app", Namespace: "tenant-rm-app-tenant"}, obj); err != nil {
-		t.Errorf("expected keep-app App claim to still exist, got error: %v", err)
+		types.NamespacedName{Name: "rm-keep-app", Namespace: "tenant-rm-app-tenant"}, obj); err != nil {
+		t.Errorf("expected rm-keep-app App claim to still exist, got error: %v", err)
 	}
 }
 
@@ -427,7 +427,7 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 // apps removed from spec.apps are deleted during app reconciliation.
 func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 	t.Parallel()
-	profile := newAppProfile("keep-app", nil)
+	profile := newAppProfile("orphan-wl-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 			DisplayName: "Orphan App Workload",
 			Domain:      "orphanwl.example.com",
 			AdminEmail:  "admin@orphanwl.example.com",
-			Apps:        []gentianov1alpha1.TenantApp{{Profile: "keep-app"}},
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app"}},
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
