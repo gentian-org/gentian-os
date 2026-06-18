@@ -103,6 +103,11 @@ func buildAppHTTPRoute(
 		rule.Filters = filters
 	}
 
+	rules := []gatewayv1.HTTPRouteRule{rule}
+	if rootRedirect := appRootRedirectRule(appProfile, host); rootRedirect != nil {
+		rules = append([]gatewayv1.HTTPRouteRule{*rootRedirect}, rules...)
+	}
+
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      appHTTPRouteName(tenant.Name, appProfile),
@@ -119,9 +124,48 @@ func buildAppHTTPRoute(
 				ParentRefs: tenantGatewayParentRefs(tenant.Name),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
-			Rules:     []gatewayv1.HTTPRouteRule{rule},
+			Rules:     rules,
 		},
 	}
+}
+
+func appRootRedirectRule(appProfile, host string) *gatewayv1.HTTPRouteRule {
+	target, ok := appRootRedirectTargets[appProfile]
+	if !ok {
+		return nil
+	}
+	scheme := "https"
+	status := 302
+	pathType := gatewayv1.FullPathHTTPPathModifier
+	port := gatewayv1.PortNumber(443)
+	exactPath := gatewayv1.PathMatchExact
+	rootPath := "/"
+	hostname := gatewayv1.PreciseHostname(host)
+	return &gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{{
+			Path: &gatewayv1.HTTPPathMatch{
+				Type:  &exactPath,
+				Value: &rootPath,
+			},
+		}},
+		Filters: []gatewayv1.HTTPRouteFilter{{
+			Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+			RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+				Scheme:   &scheme,
+				Hostname: &hostname,
+				Path: &gatewayv1.HTTPPathModifier{
+					Type:            pathType,
+					ReplaceFullPath: &target,
+				},
+				Port:       &port,
+				StatusCode: &status,
+			},
+		}},
+	}
+}
+
+var appRootRedirectTargets = map[string]string{
+	"ox-appsuite": "/appsuite/",
 }
 
 func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *gatewayv1.HTTPRoute {

@@ -599,6 +599,42 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
+            {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
+            {{- /* OX umbrella chart creates release-prefixed subchart services      */}}
+            {{- /* (e.g. …-core-ui-middleware) even when fullnameOverride is set.  */}}
+            {{- /* AppProfile ingress.serviceName must route to core-ui-middleware.  */}}
+            {{- $ingressSpec   := default dict $pSpec.ingress }}
+            {{- $stableSvcName := dig "serviceName" "" $ingressSpec }}
+            {{- if $stableSvcName }}
+            {{- $svcPort := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-stable-svc
+              name: {{ $xrName }}-stable-svc
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: {{ $stableSvcName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    selector:
+                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/name: core-ui-middleware
+                    ports:
+                    - name: http
+                      port: {{ $svcPort }}
+                      targetPort: http
+                      protocol: TCP
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
             {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
             {{- $identity      := default dict $kr.identity }}
             {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}

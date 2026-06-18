@@ -215,6 +215,26 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	}
 }
 
+func TestBuildAppHTTPRouteOXRootRedirect(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	ingress := &gentianov1alpha1.IngressSpec{
+		SubDomain:   "webmail",
+		ServiceName: "appsuite",
+	}
+	route := buildAppHTTPRoute(tenant, "tenant-demo", "ox-appsuite", ingress, "webmail.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	if len(route.Spec.Rules) != 2 {
+		t.Fatalf("rules = %d, want 2", len(route.Spec.Rules))
+	}
+	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
+	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/appsuite/" {
+		t.Fatalf("redirect = %+v", redirect)
+	}
+	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "appsuite" {
+		t.Fatalf("backend rule = %+v", route.Spec.Rules[1].BackendRefs)
+	}
+}
+
 func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
