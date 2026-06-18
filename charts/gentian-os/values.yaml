@@ -3,6 +3,9 @@
 
 replicaCount: 1
 
+# stage names kernel Helm releases (nubus-dev, postfix-dev, …).
+stage: dev
+
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
 # Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
 # Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
@@ -73,8 +76,10 @@ kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
-  # Empty → http://nubus-dev-keycloak.<servicesNamespace>.svc.cluster.local:8080
+  # Empty → http://nubus-{stage}-keycloak.<servicesNamespace>.svc.cluster.local:8080
   keycloakInternalURL: ""
+  # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
+  smtpHost: ""
   turnHost: ""
   turnPort: "3478"
   turnTLSHost: ""

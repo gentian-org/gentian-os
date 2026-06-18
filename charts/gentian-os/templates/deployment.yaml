@@ -94,6 +94,12 @@ spec:
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
               value: {{ .Values.servicesNamespace | quote }}
+            - name: GENTIAN_STAGE
+              value: {{ .Values.stage | default "dev" | quote }}
+            {{- with .Values.kernelServices.smtpHost }}
+            - name: MAIL_SMTP_HOST
+              value: {{ . | quote }}
+            {{- end }}
             - name: OPENBAO_NAMESPACE
               value: {{ .Values.openbaoNamespace | quote }}
             - name: MEMCACHED_IMAGE

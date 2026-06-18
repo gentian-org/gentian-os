@@ -48,15 +48,23 @@ const (
 	mailPostfixVirtualDomainsConfigMap = "mail-postfix-virtual-domains"
 	mailDovecotDomainsConfigMap        = "mail-dovecot-domains"
 
-	// mailSharedPostfixHost is the cluster-internal hostname of the shared Postfix
-	// submission endpoint. Apps in tenant namespaces use this to send outbound mail.
-	mailSharedPostfixHost = "postfix-dev.gentian-dev.svc.cluster.local"
+	// mailSharedPostfixPort is the cluster-internal submission port for shared Postfix.
 	mailSharedPostfixPort = "587"
 
 	// smtpPasswordLength is the number of random bytes used to generate per-tenant
 	// SMTP passwords, producing a 32-character base64url-encoded string.
 	smtpPasswordLength = 24
 )
+
+// mailSharedPostfixHost returns the in-cluster Postfix submission hostname.
+// Override with MAIL_SMTP_HOST; otherwise postfix-{stage}.{servicesNamespace}.
+func mailSharedPostfixHost() string {
+	if v := envOrDefault("MAIL_SMTP_HOST", ""); v != "" {
+		return v
+	}
+	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
+	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, servicesNamespace)
+}
 
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
@@ -344,7 +352,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 			},
 		},
 		StringData: map[string]string{
-			"host":     mailSharedPostfixHost,
+			"host":     mailSharedPostfixHost(),
 			"port":     mailSharedPostfixPort,
 			"username": fmt.Sprintf("smtp-%s", tenant.Name),
 			"password": password,

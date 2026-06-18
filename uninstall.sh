@@ -60,6 +60,10 @@ INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
 : "${GENTIAN_DEPLOYMENTS_CLUSTER:=default-cluster}"
 : "${GENTIAN_DEPLOYMENTS_STAGE:=${ENV}}"
 
+SERVICES_NS="${SERVICES_NAMESPACE:-gentian-${ENV}}"
+INFRA_NS="${INFRA_NAMESPACE:-gentian-infra-${ENV}}"
+export SERVICES_NS INFRA_NS
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -f)                MODE="force" ;;
@@ -339,7 +343,7 @@ fi
 # hardcoded app list. Tenant app Helm releases are removed with Tenant/App CRs.
 delete_kernel_helm_releases "${ENV}"
 
-for ns in gentian-dev gentian-infra-dev; do
+for ns in "${SERVICES_NS}" "${INFRA_NS}"; do
     info "Removing nubus ConfigMaps / Secrets from ${ns}..."
     kubectl delete configmap \
         nubus-base-values \
@@ -1115,7 +1119,7 @@ fi
 # =============================================================================
 banner "Step 11 — Remove kernel namespaces"
 
-namespaces_to_remove=(openbao gentian-dev gentian-infra-dev gentian-system platform-kernel)
+namespaces_to_remove=(openbao "${SERVICES_NS}" "${INFRA_NS}" gentian-system platform-kernel)
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
     namespaces_to_remove+=(stakater-system cnpg-system argocd-image-updater)
 fi

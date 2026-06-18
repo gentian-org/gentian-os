@@ -105,7 +105,7 @@ spec:
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
-            {{- $ldapServer  := "nubus-dev-ldap-server.gentian-dev.svc.cluster.local" }}
+            {{- $ldapServer  := dig "ldap.server" "" $ccData }}
             {{- $ldapBindDn  := "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal" }}
             {{- if gt (len $clusterCfgs) 0 }}
             {{- $cc := index $clusterCfgs 0 }}

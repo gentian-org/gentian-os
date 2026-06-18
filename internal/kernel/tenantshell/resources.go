@@ -29,16 +29,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
-	TenantLabel     = "gentianos.io/tenant"
-	ManagedByLabel  = "app.kubernetes.io/managed-by"
-	ManagedByValue  = "gentian-os"
-	KernelNamespace = "platform-kernel"
-	IngressNamespace = "ingress"
-	EnvoyGatewayInstallNamespace = "envoy-gateway-system"
-	RoutingModeGateway = "gateway"
+	TenantLabel                  = meta.TenantLabel
+	ManagedByLabel               = meta.ManagedByLabel
+	ManagedByValue               = meta.ManagedByValue
+	KernelNamespace              = meta.KernelNamespace
+	IngressNamespace             = meta.IngressNamespace
+	EnvoyGatewayInstallNamespace = meta.EnvoyGatewayInstallNamespace
+	RoutingModeGateway           = meta.RoutingModeGateway
 )
 
 // Config carries cluster-specific namespace names and routing options used when

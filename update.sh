@@ -58,7 +58,7 @@ unset GENTIAN_INSTALL_LIB_ONLY
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 CROSSPLANE_NAMESPACE=crossplane-system
-KERNEL_NAMESPACE=gentian-dev
+# KERNEL_NAMESPACE is set in _init from SERVICES_NAMESPACE / ENV after loading install.env.
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 DRY_RUN=0
@@ -184,6 +184,9 @@ _init() {
     load_env_file "$cfg"  "install.env"
     [[ -f "$sec" ]] && load_env_file "$sec" "install.secrets.env"
     load_deployments_cluster_settings
+
+    KERNEL_NAMESPACE="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    export KERNEL_NAMESPACE
 
     : "${MASTER_PASSWORD:?MASTER_PASSWORD must be set (via install.secrets.env or env var)}"
 

@@ -1227,6 +1227,7 @@ upsert_gentian_cluster_config() {
     local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
     local _services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
     local _openbao_ns="${OPENBAO_NAMESPACE:-openbao}"
+    local _smtp_host="${MAIL_SMTP_HOST:-postfix-${ENV:-dev}.${_services_ns}.svc.cluster.local}"
     local _kube_api_cidr=""
     local _kube_api_endpoint_ip=""
     local _kube_api_endpoint_port=""
@@ -1258,6 +1259,7 @@ metadata:
 data:
   ldap.server: "${_ldap_server}"
   ldap.baseDn: "${_ldap_base_dn}"
+  mail.smtpHost: "${_smtp_host}"
   udm.url: "${_udm_url}"
   minio.endpoint: "${_minio_endpoint}"
   cnpg.host: "${_cnpg_host}"
@@ -2315,7 +2317,7 @@ install_kernel_wildcard() {
     #    fallback (idempotent).
     if ! kubectl get clustersecretstore openbao &>/dev/null; then
         info "ClusterSecretStore/openbao missing — applying directly."
-        kubectl apply -f "${SCRIPT_DIR}/kernel/eso/cluster-secret-store.yaml"
+        kubectl apply -f "${SCRIPT_DIR}/kernel/services/_globals/eso-cluster-secret-store.yaml"
     fi
     kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/cert-manager/cloudflare-api-token-externalsecret.yaml"
 

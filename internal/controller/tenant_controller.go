@@ -43,24 +43,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
 	tenantFinalizer = "gentianos.io/tenant-cleanup"
-	tenantLabel     = "gentianos.io/tenant"
-	managedByLabel  = "app.kubernetes.io/managed-by"
-	managedByValue  = "gentian-os"
+	tenantLabel     = meta.TenantLabel
+	managedByLabel  = meta.ManagedByLabel
+	managedByValue  = meta.ManagedByValue
 	// umcFrontendComponentLabel marks Ingress objects owned by tenant portal redirect
 	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
-	umcFrontendComponentLabel = "gentianos.io/component"
-	umcFrontendComponentValue = "umc-frontend"
-	kernelNamespace = "platform-kernel"
+	umcFrontendComponentLabel = meta.UMCFrontendComponentLabel
+	umcFrontendComponentValue = meta.UMCFrontendComponentValue
+	kernelNamespace           = meta.KernelNamespace
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
-	// Pods in this namespace must be allowed ingress to tenant pods so that the
-	// controller can proxy external requests to services inside the tenant namespace.
-	ingressNamespace        = "ingress"
+	ingressNamespace        = meta.IngressNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 

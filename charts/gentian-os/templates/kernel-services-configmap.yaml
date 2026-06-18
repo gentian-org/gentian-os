@@ -1,7 +1,8 @@
 {{- $ks := .Values.kernelServices -}}
+{{- $stage := .Values.stage | default "dev" -}}
 {{- $keycloakInternal := $ks.keycloakInternalURL -}}
 {{- if not $keycloakInternal -}}
-{{- $keycloakInternal = printf "http://nubus-dev-keycloak.%s.svc.cluster.local:8080" (.Values.servicesNamespace | default "gentian-dev") -}}
+{{- $keycloakInternal = printf "http://nubus-%s-keycloak.%s.svc.cluster.local:8080" $stage (.Values.servicesNamespace | default "gentian-dev") -}}
 {{- end -}}
 {{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
 apiVersion: v1
