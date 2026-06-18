@@ -1,0 +1,206 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: appproducts.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: AppProduct
+    listKind: AppProductList
+    plural: appproducts
+    shortNames:
+    - appprod
+    - aprod
+    singular: appproduct
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.displayName
+      name: Display Name
+      type: string
+    - jsonPath: .spec.catalogueVersion
+      name: Cat.Version
+      type: string
+    - jsonPath: .spec.edition
+      name: Edition
+      type: string
+    - jsonPath: .spec.offeringTier
+      name: Offering
+      type: string
+    - jsonPath: .spec.trustTier
+      name: Trust
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AppProduct is the Schema for the appproducts API.
+
+          AppProduct is cluster-scoped — one per sellable SKU in the store. It references
+          one or more immutable AppProfile revisions and carries commercial metadata
+          (offering tier, trust tier, catalogue version) separate from technical deploy config.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AppProductSpec defines the desired state of AppProduct.
+            properties:
+              catalogueVersion:
+                default: 1.0.0
+                description: |-
+                  CatalogueVersion is the semver of this store SKU listing.
+                  Bump when the product bundle, pricing tier, or pinned profiles change.
+                pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
+                type: string
+              description:
+                description: Description is an optional human-readable description.
+                type: string
+              displayName:
+                description: DisplayName is the human-readable product name shown
+                  in the store.
+                maxLength: 128
+                minLength: 1
+                type: string
+              edition:
+                default: full
+                description: |-
+                  Edition is the default feature / footprint variant for this SKU.
+                  Individual profileRefs may override via identity.edition.
+                enum:
+                - minimal
+                - standard
+                - full
+                - performant
+                type: string
+              listable:
+                default: true
+                description: |-
+                  Listable controls whether the product appears in the app store catalogue.
+                  Defaults to true.
+                type: boolean
+              logo:
+                description: Logo is an optional data URI (data:image/svg+xml;base64,...)
+                  for the store tile.
+                pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                type: string
+              offeringTier:
+                default: free
+                description: OfferingTier is the commercial / support tier for this
+                  SKU (pricing axis).
+                enum:
+                - free
+                - hardened
+                - supported
+                type: string
+              profileRefs:
+                description: |-
+                  ProfileRefs lists one or more AppProfile revisions to install when this product
+                  is checked out. Each entry resolves by name or by ProfileIdentity.
+                items:
+                  description: |-
+                    ProfileReference resolves to exactly one AppProfile CR — either by metadata.name
+                    (legacy / explicit pin) or by ProfileIdentity (dimensional selector).
+                    At least one of Name or Identity must be set; Name takes precedence when both are present.
+                  properties:
+                    identity:
+                      description: Identity selects a profile by catalogue tuple when
+                        Name is empty.
+                      properties:
+                        catalogueVersion:
+                          description: |-
+                            CatalogueVersion is the semver of this catalogue entry.
+                            Immutable once published — bump to ship a new revision.
+                            Distinct from spec.chart.version (upstream Helm chart pin).
+                          pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
+                          type: string
+                        edition:
+                          default: full
+                          description: Edition selects the feature / footprint variant.
+                          enum:
+                          - minimal
+                          - standard
+                          - full
+                          - performant
+                          type: string
+                        family:
+                          description: |-
+                            Family is the stable logical application id (e.g. "openproject").
+                            All catalogue revisions of the same app share a family.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
+                          type: string
+                        offeringTier:
+                          default: free
+                          description: OfferingTier selects the commercial / support
+                            variant.
+                          enum:
+                          - free
+                          - hardened
+                          - supported
+                          type: string
+                      required:
+                      - catalogueVersion
+                      - family
+                      type: object
+                    name:
+                      description: Name is the AppProfile metadata.name. When set,
+                        this is the exact profile CR to use.
+                      type: string
+                  type: object
+                minItems: 1
+                type: array
+              publisher:
+                description: Publisher identifies who publishes this store listing.
+                properties:
+                  name:
+                    description: Name is the human-readable publisher name.
+                    minLength: 1
+                    type: string
+                  url:
+                    description: URL is an optional link to the publisher homepage
+                      or support portal.
+                    type: string
+                required:
+                - name
+                type: object
+              trustTier:
+                default: certified
+                description: |-
+                  TrustTier is the catalogue certification tier (security / trust axis).
+                  Distinct from offeringTier (commercial pricing).
+                enum:
+                - platform
+                - certified
+                - experimental
+                type: string
+            required:
+            - displayName
+            - profileRefs
+            - publisher
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

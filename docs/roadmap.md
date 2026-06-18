@@ -101,6 +101,31 @@ separate ArgoCD Application (`gentian-appprofiles`).
 
 ---
 
+## App catalogue security
+
+Implement controls in [design/app-catalogue-security.md](design/app-catalogue-security.md):
+
+- `AppProfile` validating webhook (`catalogue-tier`, registry allow-list,
+  `compositionRef` / sidecar gates)
+- CI policy in `gentian-apps` (schema, render goldens, registry/digest checks)
+- Platform **sidecar catalogue** (`sidecarRef`) before generic sidecars in
+  `app-default`
+- Kyverno tier rules on prod clusters
+
+---
+
+## AppProduct (store listing)
+
+Minimal hull implementation plan:
+[design/app-product-create.md](design/app-product-create.md) — `gentian-apps/products/`,
+`AppProduct` CRD, `AppCatalogue.status.products`, CLI and app-store UI cutover.
+
+Catalogue versioning and flavors:
+[design/app-profile-versioning.md](design/app-profile-versioning.md) —
+`catalogueVersion`, `edition`, `offeringTier`, `trustTier`.
+
+---
+
 ## Per-app HTTP-01 issuers
 
 Support per-app HTTP-01 issuers on `AppProfile` ([architecture.md](architecture.md)

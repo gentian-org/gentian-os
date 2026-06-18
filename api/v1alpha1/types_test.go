@@ -388,6 +388,8 @@ func TestSchemeRegistration(t *testing.T) {
 	types := []runtime.Object{
 		&v1alpha1.AppProfile{},
 		&v1alpha1.AppProfileList{},
+		&v1alpha1.AppProduct{},
+		&v1alpha1.AppProductList{},
 		&v1alpha1.Tenant{},
 		&v1alpha1.TenantList{},
 		&v1alpha1.IntegrationBinding{},

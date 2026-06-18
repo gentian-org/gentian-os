@@ -152,11 +152,19 @@ type TenantQuotas struct {
 }
 
 // TenantApp specifies a desired application installation for a tenant.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.profile) || has(self.profileRef)",message="either profile or profileRef is required"
 type TenantApp struct {
 	// Profile is the name of the AppProfile CR to install.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Profile string `json:"profile"`
+	// When profileRef is set, the operator resolves it to a concrete profile name
+	// and may populate this field for observability.
+	// +optional
+	Profile string `json:"profile,omitempty"`
+
+	// ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+	// offering tier). Takes precedence over profile when resolving installs.
+	// +optional
+	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
 
 	// Config provides per-tenant overrides for this app installation.
 	// Values here are merged over the AppProfile's extraValues.

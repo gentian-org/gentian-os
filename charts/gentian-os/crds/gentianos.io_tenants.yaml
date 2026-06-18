@@ -87,12 +87,67 @@ spec:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     profile:
-                      description: Profile is the name of the AppProfile CR to install.
-                      minLength: 1
+                      description: |-
+                        Profile is the name of the AppProfile CR to install.
+                        When profileRef is set, the operator resolves it to a concrete profile name
+                        and may populate this field for observability.
                       type: string
-                  required:
-                  - profile
+                    profileRef:
+                      description: |-
+                        ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+                        offering tier). Takes precedence over profile when resolving installs.
+                      properties:
+                        identity:
+                          description: Identity selects a profile by catalogue tuple
+                            when Name is empty.
+                          properties:
+                            catalogueVersion:
+                              description: |-
+                                CatalogueVersion is the semver of this catalogue entry.
+                                Immutable once published — bump to ship a new revision.
+                                Distinct from spec.chart.version (upstream Helm chart pin).
+                              pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
+                              type: string
+                            edition:
+                              default: full
+                              description: Edition selects the feature / footprint
+                                variant.
+                              enum:
+                              - minimal
+                              - standard
+                              - full
+                              - performant
+                              type: string
+                            family:
+                              description: |-
+                                Family is the stable logical application id (e.g. "openproject").
+                                All catalogue revisions of the same app share a family.
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
+                              type: string
+                            offeringTier:
+                              default: free
+                              description: OfferingTier selects the commercial / support
+                                variant.
+                              enum:
+                              - free
+                              - hardened
+                              - supported
+                              type: string
+                          required:
+                          - catalogueVersion
+                          - family
+                          type: object
+                        name:
+                          description: Name is the AppProfile metadata.name. When
+                            set, this is the exact profile CR to use.
+                          type: string
+                      type: object
                   type: object
+                  x-kubernetes-validations:
+                  - message: either profile or profileRef is required
+                    rule: has(self.profile) || has(self.profileRef)
                 type: array
               deletionPolicy:
                 default: Retain

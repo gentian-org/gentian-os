@@ -21,11 +21,20 @@ spec:
     - jsonPath: .spec.displayName
       name: Display Name
       type: string
+    - jsonPath: .spec.family
+      name: Family
+      type: string
+    - jsonPath: .spec.catalogueVersion
+      name: Cat.Version
+      type: string
+    - jsonPath: .spec.edition
+      name: Edition
+      type: string
     - jsonPath: .spec.chart.name
       name: Chart
       type: string
     - jsonPath: .spec.chart.version
-      name: Version
+      name: Chart Ver
       type: string
     - jsonPath: .spec.deploymentMethod
       name: Method
@@ -209,6 +218,13 @@ spec:
                   - target
                   type: object
                 type: array
+              catalogueVersion:
+                default: 1.0.0
+                description: |-
+                  CatalogueVersion is the semver of this catalogue entry (immutable once published).
+                  Distinct from spec.chart.version (upstream Helm chart pin).
+                pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
+                type: string
               chart:
                 description: Chart references the upstream Helm chart for this app.
                 properties:
@@ -254,6 +270,16 @@ spec:
                 maxLength: 128
                 minLength: 1
                 type: string
+              edition:
+                default: full
+                description: Edition selects the feature / footprint variant (minimal,
+                  full, performant, …).
+                enum:
+                - minimal
+                - standard
+                - full
+                - performant
+                type: string
               extraValues:
                 description: |-
                   ExtraValues provides an escape hatch for non-standard values that don't
@@ -261,6 +287,14 @@ spec:
                   Must not contain secrets — use appSecrets for secret values.
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              family:
+                description: |-
+                  Family is the stable logical application id shared across catalogue revisions
+                  (versions and flavors). When empty the App Store controller defaults it to
+                  metadata.name. Use the same family for every immutable revision of one app.
+                maxLength: 63
+                pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
+                type: string
               ingress:
                 description: |-
                   Ingress declares the HTTP routing configuration for this app.
@@ -528,6 +562,16 @@ spec:
                   The LDAP reconciler writes this value to the portal entry's pathToLogo
                   attribute so the portal frontend can render it directly as an <img src>.
                 pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                type: string
+              offeringTier:
+                default: free
+                description: |-
+                  OfferingTier selects the commercial / support variant (free, hardened, supported).
+                  Distinct from AppProduct.spec.trustTier (catalogue certification).
+                enum:
+                - free
+                - hardened
+                - supported
                 type: string
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume

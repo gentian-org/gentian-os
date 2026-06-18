@@ -13,6 +13,32 @@ type AppProfileSpec struct {
 	// +kubebuilder:validation:MaxLength=128
 	DisplayName string `json:"displayName"`
 
+	// Family is the stable logical application id shared across catalogue revisions
+	// (versions and flavors). When empty the App Store controller defaults it to
+	// metadata.name. Use the same family for every immutable revision of one app.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$`
+	Family string `json:"family,omitempty"`
+
+	// CatalogueVersion is the semver of this catalogue entry (immutable once published).
+	// Distinct from spec.chart.version (upstream Helm chart pin).
+	// +optional
+	// +kubebuilder:default="1.0.0"
+	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
+	CatalogueVersion string `json:"catalogueVersion,omitempty"`
+
+	// Edition selects the feature / footprint variant (minimal, full, performant, …).
+	// +optional
+	// +kubebuilder:default=full
+	Edition Edition `json:"edition,omitempty"`
+
+	// OfferingTier selects the commercial / support variant (free, hardened, supported).
+	// Distinct from AppProduct.spec.trustTier (catalogue certification).
+	// +optional
+	// +kubebuilder:default=free
+	OfferingTier OfferingTier `json:"offeringTier,omitempty"`
+
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
@@ -764,8 +790,11 @@ type IntegrationRef struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=ap;aps
 // +kubebuilder:printcolumn:name="Display Name",type=string,JSONPath=`.spec.displayName`
+// +kubebuilder:printcolumn:name="Family",type=string,JSONPath=`.spec.family`
+// +kubebuilder:printcolumn:name="Cat.Version",type=string,JSONPath=`.spec.catalogueVersion`
+// +kubebuilder:printcolumn:name="Edition",type=string,JSONPath=`.spec.edition`
 // +kubebuilder:printcolumn:name="Chart",type=string,JSONPath=`.spec.chart.name`
-// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.chart.version`
+// +kubebuilder:printcolumn:name="Chart Ver",type=string,JSONPath=`.spec.chart.version`
 // +kubebuilder:printcolumn:name="Method",type=string,JSONPath=`.spec.deploymentMethod`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type AppProfile struct {

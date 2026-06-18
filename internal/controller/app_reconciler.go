@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/catalogue"
 )
 
 const (
@@ -59,23 +60,27 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 	allReady := true
 
 	for _, app := range tenant.Spec.Apps {
+		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-					fmt.Sprintf("AppProfile %q not found", app.Profile))
+					fmt.Sprintf("AppProfile %q not found", profileName))
 				return ctrl.Result{}, nil
 			}
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 		}
 
-		if err := r.seedAppSecrets(ctx, tenant, app.Profile, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", app.Profile, err)
+		if err := r.seedAppSecrets(ctx, tenant, profileName, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", profileName, err)
 		}
 
-		ready, err := r.waitForAppClaimReady(ctx, tenant, app.Profile)
+		ready, err := r.waitForAppClaimReady(ctx, tenant, profileName)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("wait for App claim %s: %w", app.Profile, err)
+			return ctrl.Result{}, fmt.Errorf("wait for App claim %s: %w", profileName, err)
 		}
 		if !ready {
 			allReady = false
@@ -149,7 +154,11 @@ func (r *TenantReconciler) deleteAppDeployment(_ context.Context, _ *gentianov1a
 func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	desired := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
-		desired[app.Profile] = struct{}{}
+		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		if err != nil {
+			return err
+		}
+		desired[profileName] = struct{}{}
 	}
 
 	nsName := tenantNamespaceName(tenant)

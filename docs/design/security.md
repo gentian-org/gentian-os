@@ -4,7 +4,8 @@
 
 This document covers **secrets and credentials** (OpenBao, ESO, rotation) and
 **TLS / certificate configuration** (ACME issuers, in-cluster IdP trust, and
-production requirements).
+production requirements). For **AppProfile catalogue tiers, sidecar policy, and
+admission controls** see [app-catalogue-security.md](app-catalogue-security.md).
 
 ---
 

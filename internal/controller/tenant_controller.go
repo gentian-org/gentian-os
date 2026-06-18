@@ -43,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -591,13 +592,17 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 	missingMap := map[string]struct{}{}
 
 	for _, app := range tenant.Spec.Apps {
+		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		if err != nil {
+			return nil, err
+		}
 		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
 			if errors.IsNotFound(err) {
-				missingMap[app.Profile] = struct{}{}
+				missingMap[profileName] = struct{}{}
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 		}
 	}
 
