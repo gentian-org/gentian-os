@@ -44,18 +44,7 @@ type AppCatalogueSpec struct{}
 
 // AppCatalogueStatus holds the observed catalogue state.
 type AppCatalogueStatus struct {
-	// Products lists every available AppProduct with installation metadata.
-	// +optional
-	// +listType=map
-	// +listMapKey=name
-	Products []ProductEntry `json:"products,omitempty"`
-
-	// TotalProducts is the count of available AppProduct CRs.
-	// +optional
-	TotalProducts int `json:"totalProducts,omitempty"`
-
 	// Apps lists every available AppProfile with installation metadata.
-	// Deprecated: use Products for store discovery; retained for CLI compatibility.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -84,8 +73,12 @@ type CatalogueEntry struct {
 	// Edition is the feature / footprint variant.
 	Edition Edition `json:"edition"`
 
-	// OfferingTier is the commercial / support variant.
-	OfferingTier OfferingTier `json:"offeringTier"`
+	// TrustTier is the platform certification level.
+	TrustTier TrustTier `json:"trustTier"`
+
+	// License is the SPDX license identifier.
+	// +optional
+	License string `json:"license,omitempty"`
 
 	// DisplayName is the human-readable application name.
 	DisplayName string `json:"displayName"`
@@ -107,53 +100,6 @@ type CatalogueEntry struct {
 
 	// InstalledCount is the number of Tenant CRs that currently list this app.
 	InstalledCount int `json:"installedCount"`
-}
-
-// ProductEntry summarises one AppProduct for catalogue consumers.
-type ProductEntry struct {
-	// Name is the AppProduct CR name (store SKU).
-	Name string `json:"name"`
-
-	// DisplayName is the human-readable product name.
-	DisplayName string `json:"displayName"`
-
-	// Description is the optional human-readable description.
-	// +optional
-	Description string `json:"description,omitempty"`
-
-	// CatalogueVersion is the semver of this store SKU.
-	CatalogueVersion string `json:"catalogueVersion"`
-
-	// Edition is the default feature / footprint variant for the SKU.
-	Edition Edition `json:"edition"`
-
-	// OfferingTier is the commercial / support tier for the SKU.
-	OfferingTier OfferingTier `json:"offeringTier"`
-
-	// TrustTier is the catalogue certification tier.
-	TrustTier TrustTier `json:"trustTier"`
-
-	// ProfileRefs lists resolved AppProfile CR names in the bundle.
-	ProfileRefs []string `json:"profileRefs"`
-
-	// ProfileCount is len(ProfileRefs).
-	ProfileCount int `json:"profileCount"`
-
-	// Publisher is the human-readable publisher name.
-	Publisher string `json:"publisher"`
-
-	// KernelRequirements is the union of kernel services across referenced profiles.
-	// +optional
-	KernelRequirements []string `json:"kernelRequirements,omitempty"`
-
-	// InstalledCount is tenants with all profileRefs installed.
-	InstalledCount int `json:"installedCount"`
-
-	// PartialInstallCount is tenants with at least one but not all profileRefs.
-	PartialInstallCount int `json:"partialInstallCount"`
-
-	// Listable controls store visibility.
-	Listable bool `json:"listable"`
 }
 
 // AppCatalogueList contains a list of AppCatalogue.

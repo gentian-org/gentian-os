@@ -304,7 +304,7 @@ Adding an app to the catalogue is one PR adding one YAML file. No code
 changes, no operator rebuilds.
 
 For catalogue security (tiers, sidecars, admission policy) see
-[app-catalogue-security.md](app-catalogue-security.md). For the **AppProduct**
-store listing implementation plan see
-[app-product-create.md](app-product-create.md). For IntegrationBindings
+[app-catalogue-security.md](app-catalogue-security.md). For catalogue metadata,
+entitlements, and CRM integration see [business-logic-plan.md](business-logic-plan.md).
+For IntegrationBindings
 evolution and broadcast contracts see [roadmap.md](../roadmap.md).

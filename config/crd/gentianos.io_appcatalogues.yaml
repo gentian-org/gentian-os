@@ -58,9 +58,8 @@ spec:
             description: AppCatalogueStatus holds the observed catalogue state.
             properties:
               apps:
-                description: |-
-                  Apps lists every available AppProfile with installation metadata.
-                  Deprecated: use Products for store discovery; retained for CLI compatibility.
+                description: Apps lists every available AppProfile with installation
+                  metadata.
                 items:
                   description: CatalogueEntry summarises one AppProfile for catalogue
                     consumers.
@@ -108,15 +107,18 @@ spec:
                       items:
                         type: string
                       type: array
+                    license:
+                      description: License is the SPDX license identifier.
+                      type: string
                     name:
                       description: Name is the AppProfile CR name.
                       type: string
-                    offeringTier:
-                      description: OfferingTier is the commercial / support variant.
+                    trustTier:
+                      description: TrustTier is the platform certification level.
                       enum:
-                      - free
-                      - hardened
-                      - supported
+                      - platform
+                      - certified
+                      - experimental
                       type: string
                   required:
                   - catalogueVersion
@@ -127,7 +129,7 @@ spec:
                   - family
                   - installedCount
                   - name
-                  - offeringTier
+                  - trustTier
                   type: object
                 type: array
                 x-kubernetes-list-map-keys:
@@ -138,101 +140,8 @@ spec:
                   reconciled.
                 format: date-time
                 type: string
-              products:
-                description: Products lists every available AppProduct with installation
-                  metadata.
-                items:
-                  description: ProductEntry summarises one AppProduct for catalogue
-                    consumers.
-                  properties:
-                    catalogueVersion:
-                      description: CatalogueVersion is the semver of this store SKU.
-                      type: string
-                    description:
-                      description: Description is the optional human-readable description.
-                      type: string
-                    displayName:
-                      description: DisplayName is the human-readable product name.
-                      type: string
-                    edition:
-                      description: Edition is the default feature / footprint variant
-                        for the SKU.
-                      enum:
-                      - minimal
-                      - standard
-                      - full
-                      - performant
-                      type: string
-                    installedCount:
-                      description: InstalledCount is tenants with all profileRefs
-                        installed.
-                      type: integer
-                    kernelRequirements:
-                      description: KernelRequirements is the union of kernel services
-                        across referenced profiles.
-                      items:
-                        type: string
-                      type: array
-                    listable:
-                      description: Listable controls store visibility.
-                      type: boolean
-                    name:
-                      description: Name is the AppProduct CR name (store SKU).
-                      type: string
-                    offeringTier:
-                      description: OfferingTier is the commercial / support tier for
-                        the SKU.
-                      enum:
-                      - free
-                      - hardened
-                      - supported
-                      type: string
-                    partialInstallCount:
-                      description: PartialInstallCount is tenants with at least one
-                        but not all profileRefs.
-                      type: integer
-                    profileCount:
-                      description: ProfileCount is len(ProfileRefs).
-                      type: integer
-                    profileRefs:
-                      description: ProfileRefs lists resolved AppProfile CR names
-                        in the bundle.
-                      items:
-                        type: string
-                      type: array
-                    publisher:
-                      description: Publisher is the human-readable publisher name.
-                      type: string
-                    trustTier:
-                      description: TrustTier is the catalogue certification tier.
-                      enum:
-                      - platform
-                      - certified
-                      - experimental
-                      type: string
-                  required:
-                  - catalogueVersion
-                  - displayName
-                  - edition
-                  - installedCount
-                  - listable
-                  - name
-                  - offeringTier
-                  - partialInstallCount
-                  - profileCount
-                  - profileRefs
-                  - publisher
-                  - trustTier
-                  type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
               totalApps:
                 description: TotalApps is the count of available AppProfile CRs.
-                type: integer
-              totalProducts:
-                description: TotalProducts is the count of available AppProduct CRs.
                 type: integer
             type: object
         type: object

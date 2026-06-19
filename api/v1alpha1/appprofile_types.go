@@ -33,11 +33,15 @@ type AppProfileSpec struct {
 	// +kubebuilder:default=full
 	Edition Edition `json:"edition,omitempty"`
 
-	// OfferingTier selects the commercial / support variant (free, hardened, supported).
-	// Distinct from AppProduct.spec.trustTier (catalogue certification).
+	// TrustTier is the platform certification level for this catalogue entry.
 	// +optional
-	// +kubebuilder:default=free
-	OfferingTier OfferingTier `json:"offeringTier,omitempty"`
+	// +kubebuilder:default=certified
+	TrustTier TrustTier `json:"trustTier,omitempty"`
+
+	// License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
+	// Premium profiles in gentian-premium typically use proprietary.
+	// +optional
+	License string `json:"license,omitempty"`
 
 	// Description is an optional human-readable description.
 	// +optional
@@ -793,6 +797,8 @@ type IntegrationRef struct {
 // +kubebuilder:printcolumn:name="Family",type=string,JSONPath=`.spec.family`
 // +kubebuilder:printcolumn:name="Cat.Version",type=string,JSONPath=`.spec.catalogueVersion`
 // +kubebuilder:printcolumn:name="Edition",type=string,JSONPath=`.spec.edition`
+// +kubebuilder:printcolumn:name="Trust",type=string,JSONPath=`.spec.trustTier`
+// +kubebuilder:printcolumn:name="License",type=string,JSONPath=`.spec.license`
 // +kubebuilder:printcolumn:name="Chart",type=string,JSONPath=`.spec.chart.name`
 // +kubebuilder:printcolumn:name="Chart Ver",type=string,JSONPath=`.spec.chart.version`
 // +kubebuilder:printcolumn:name="Method",type=string,JSONPath=`.spec.deploymentMethod`

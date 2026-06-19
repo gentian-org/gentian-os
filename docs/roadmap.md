@@ -114,15 +114,14 @@ Implement controls in [design/app-catalogue-security.md](design/app-catalogue-se
 
 ---
 
-## AppProduct (store listing)
+## Commercial layer
 
-Minimal hull implementation plan:
-[design/app-product-create.md](design/app-product-create.md) — `gentian-apps/products/`,
-`AppProduct` CRD, `AppCatalogue.status.products`, CLI and app-store UI cutover.
+Implementation plan:
+[design/business-logic-plan.md](design/business-logic-plan.md) — OSS **`gentian-apps`**,
+private **`gentian-premium`** profiles, **Odoo** for customers, orders, invoices,
+and entitlements.
 
-Catalogue versioning and flavors:
-[design/app-profile-versioning.md](design/app-profile-versioning.md) —
-`catalogueVersion`, `edition`, `offeringTier`, `trustTier`.
+Catalogue metadata on **`AppProfile`**: [app-profile-versioning.md](design/app-profile-versioning.md).
 
 ---
 

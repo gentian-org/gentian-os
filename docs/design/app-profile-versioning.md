@@ -1,91 +1,50 @@
-# AppProfile Versioning and Flavors
+# AppProfile Versioning and Catalogue Metadata
 
 **Status:** Implemented (API + App Store controller)  
 **Companion to:** [app-catalogue.md](app-catalogue.md),
-[app-product-create.md](app-product-create.md),
+[business-logic-plan.md](business-logic-plan.md),
 [app-catalogue-security.md](app-catalogue-security.md)
 
 ---
 
-## 1. Problem
+## 1. Model
 
-The catalogue needs **immutable, semver-versioned** technical packages (`AppProfile`)
-and **sellable SKUs** (`AppProduct`) that can differ on:
+**`AppProfile`** is the catalogue unit.
 
-| Axis | Field | Examples | Purpose |
-|---|---|---|---|
-| **Catalogue version** | `catalogueVersion` | `1.0.0`, `2.1.0` | Immutable publish revision (OCI/Helm-style) |
-| **Edition** (feature set) | `edition` | `minimal`, `full`, `performant` | Footprint / feature variant |
-| **Offering tier** (commercial) | `offeringTier` | `free`, `hardened`, `supported` | Pricing / SLA / hardening pack |
-| **Trust tier** (certification) | `trustTier` (product only) | `platform`, `certified`, `experimental` | Security / review gate |
+| Field | Purpose |
+|---|---|
+| `family` | Logical app id shared across revisions |
+| `catalogueVersion` | Semver of this immutable catalogue entry |
+| `edition` | Feature variant (`minimal`, `standard`, `full`, `performant`) |
+| `trustTier` | Platform certification (`platform`, `certified`, `experimental`) |
+| `license` | SPDX identifier (`Apache-2.0`, `proprietary`, …) |
 
-**Do not conflate** `offeringTier` (commercial) with `trustTier` (catalogue certification).
+Public vs premium is implied by **source repo** and **license**:
 
-Upstream Helm chart version remains `spec.chart.version` — a separate pin from
-`spec.catalogueVersion`.
+| Source | Typical license |
+|---|---|
+| **`gentian-apps/profiles/`** | OSS SPDX ids (e.g. `Apache-2.0`) |
+| **`gentian-premium/profiles/`** | `proprietary` |
+
+`spec.chart.version` is the **Helm chart pin** — distinct from `catalogueVersion`.
+
+Commerce (price, customer, invoice) lives in **CRM/ERP** — see [business-logic-plan.md](business-logic-plan.md).
 
 ---
 
-## 2. Identity model (DRY)
-
-Shared types live in `api/v1alpha1/catalogue_types.go`:
+## 2. Identity tuple
 
 ```go
 type ProfileIdentity struct {
-    Family           string        // logical app id, e.g. openproject
-    CatalogueVersion string        // semver catalogue revision
-    Edition          Edition       // minimal | standard | full | performant
-    OfferingTier     OfferingTier  // free | hardened | supported
-}
-
-type ProfileReference struct {
-    Name     string           // exact AppProfile metadata.name (pin)
-    Identity *ProfileIdentity // dimensional selector when Name is empty
+    Family           string
+    CatalogueVersion string   // semver
+    Edition          Edition
 }
 ```
 
-`ProfileReference` is reused by:
+Used by `Tenant.spec.apps[].profileRef` for dimensional installs.
 
-- `AppProduct.spec.profileRefs[]`
-- `Tenant.spec.apps[].profileRef` (optional dimensional install pin)
-
-Helpers in `catalogue_helpers.go` normalize defaults and resolve references.
-
----
-
-## 3. AppProfile versioning (best practice)
-
-### 3.1 Immutable revisions
-
-Each published catalogue entry is **immutable**. To ship changes:
-
-1. Bump `spec.catalogueVersion` (semver).
-2. Create a **new** `AppProfile` CR (recommended name pattern below) or replace
-   in Git with a reviewed migration plan.
-
-Never rewrite a published `(family, catalogueVersion, edition, offeringTier)` tuple.
-
-### 3.2 Naming conventions
-
-| Field | Role |
-|---|---|
-| `metadata.name` | Unique cluster id used in `Tenant.spec.apps[].profile` and App claims |
-| `spec.family` | Groups all revisions of one logical app (defaults to `metadata.name`) |
-| `spec.catalogueVersion` | Semver of this catalogue entry (defaults to `1.0.0`) |
-
-**Recommended name** for new revisions (optional but aids GitOps clarity):
-
-```text
-{family}--{catalogueVersion}--{edition}--{offeringTier}
-# e.g. openproject--2.1.0--full--supported
-```
-
-Legacy profiles may keep short names (`openproject`) with explicit `family` +
-`catalogueVersion` fields.
-
-### 3.3 Index labels
-
-The App Store controller sets:
+**Index labels** (set by App Store controller):
 
 | Label | Value |
 |---|---|
@@ -93,76 +52,47 @@ The App Store controller sets:
 | `gentianos.io/profile-family` | `spec.family` |
 | `gentianos.io/profile-catalogue-version` | `spec.catalogueVersion` |
 | `gentianos.io/profile-edition` | `spec.edition` |
-| `gentianos.io/profile-offering-tier` | `spec.offeringTier` |
+| `gentianos.io/profile-trust-tier` | `spec.trustTier` |
 
-### 3.4 Defaults (backward compatible)
+---
+
+## 3. Defaults
 
 | Field | Default |
 |---|---|
 | `family` | `metadata.name` |
 | `catalogueVersion` | `1.0.0` |
 | `edition` | `full` |
-| `offeringTier` | `free` |
+| `trustTier` | `certified` |
 
 ---
 
-## 4. AppProduct flavors
+## 4. Repositories
 
-`AppProduct` carries store metadata and pins profile revisions:
+| Repo | Profiles |
+|---|---|
+| **`gentian-apps/profiles/`** | OSS catalogue |
+| **`gentian-premium/profiles/`** | Premium catalogue (`license: proprietary`) |
 
-```yaml
-apiVersion: gentianos.io/v1alpha1
-kind: AppProduct
-metadata:
-  name: openproject-supported
-spec:
-  displayName: "OpenProject (Supported)"
-  catalogueVersion: "1.0.0"      # SKU listing version
-  edition: full
-  offeringTier: supported        # commercial tier
-  trustTier: certified             # certification tier
-  profileRefs:
-    - identity:
-        family: openproject
-        catalogueVersion: "2.1.0"
-        edition: full
-        offeringTier: supported
-  publisher:
-    name: "Gentian Platform"
+Recommended CR name for new revisions:
+
+```text
+{family}--{catalogueVersion}--{edition}
 ```
 
-`profileRefs` may use `name:` (explicit pin) or `identity:` (dimensional pin).
-Name takes precedence when both are set.
+---
+
+## 5. AppCatalogue
+
+Singleton `AppCatalogue/default` — `status.apps[]` lists every synced `AppProfile` with
+catalogue metadata and install counts. Store UI and CLI consume this index.
 
 ---
 
-## 5. Install resolution
-
-| Source | Resolves to |
-|---|---|
-| `Tenant.spec.apps[].profile` | Exact AppProfile name (primary path today) |
-| `Tenant.spec.apps[].profileRef` | Unique match on `ProfileIdentity` |
-| `AppProduct` checkout | Each `profileRefs[]` → append resolved profile name |
-
-Operator resolution: `internal/catalogue.ResolveTenantAppProfile`.
-
----
-
-## 6. AppCatalogue status
-
-`AppCatalogue.status` exposes:
-
-- `apps[]` — every `AppProfile` with family, catalogue version, edition, offering tier
-- `products[]` — every `AppProduct` with resolved `profileRefs`, trust/offering tiers
-
-`apps[]` remains for CLI compatibility; store UIs should prefer `products[]`.
-
----
-
-## 7. Related documents
+## 6. Related documents
 
 | Topic | Document |
 |---|---|
-| AppProduct hull | [app-product-create.md](app-product-create.md) |
-| Trust / admission | [app-catalogue-security.md](app-catalogue-security.md) |
-| Profile authoring | [gentian-apps/app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) |
+| Business / Odoo | [business-logic-plan.md](business-logic-plan.md) |
+| Catalogue flow | [app-catalogue.md](app-catalogue.md) |
+| Authoring | [gentian-apps/app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) |

@@ -102,10 +102,8 @@ spec:
                             when Name is empty.
                           properties:
                             catalogueVersion:
-                              description: |-
-                                CatalogueVersion is the semver of this catalogue entry.
-                                Immutable once published — bump to ship a new revision.
-                                Distinct from spec.chart.version (upstream Helm chart pin).
+                              description: CatalogueVersion is the semver of this
+                                catalogue entry.
                               pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
                               type: string
                             edition:
@@ -119,21 +117,11 @@ spec:
                               - performant
                               type: string
                             family:
-                              description: |-
-                                Family is the stable logical application id (e.g. "openproject").
-                                All catalogue revisions of the same app share a family.
+                              description: Family is the stable logical application
+                                id (e.g. "openproject").
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
-                              type: string
-                            offeringTier:
-                              default: free
-                              description: OfferingTier selects the commercial / support
-                                variant.
-                              enum:
-                              - free
-                              - hardened
-                              - supported
                               type: string
                           required:
                           - catalogueVersion

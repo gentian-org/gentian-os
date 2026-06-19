@@ -60,8 +60,8 @@ catalogue entries **declarative**. Extend `app-default` with new profile fields
 rather than multiplying `app-<name>.yaml` compositions unless a capability is
 platform-governed and short-lived.
 
-For the **`AppProduct`** store layer (trusted listing wrapping `AppProfile`),
-see [app-product-create.md](app-product-create.md).
+For **`AppProfile`** catalogue metadata (`trustTier`, `license`, premium vs OSS)
+and CRM entitlements, see [business-logic-plan.md](business-logic-plan.md).
 
 ### 2.3 Threat scenarios
 

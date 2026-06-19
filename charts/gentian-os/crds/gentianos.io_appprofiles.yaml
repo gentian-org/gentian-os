@@ -30,6 +30,12 @@ spec:
     - jsonPath: .spec.edition
       name: Edition
       type: string
+    - jsonPath: .spec.trustTier
+      name: Trust
+      type: string
+    - jsonPath: .spec.license
+      name: License
+      type: string
     - jsonPath: .spec.chart.name
       name: Chart
       type: string
@@ -555,6 +561,11 @@ spec:
                         type: object
                     type: object
                 type: object
+              license:
+                description: |-
+                  License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
+                  Premium profiles in gentian-premium typically use proprietary.
+                type: string
               logo:
                 description: |-
                   Logo is the application icon used in the Gentian portal. It must be a
@@ -562,16 +573,6 @@ spec:
                   The LDAP reconciler writes this value to the portal entry's pathToLogo
                   attribute so the portal frontend can render it directly as an <img src>.
                 pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
-                type: string
-              offeringTier:
-                default: free
-                description: |-
-                  OfferingTier selects the commercial / support variant (free, hardened, supported).
-                  Distinct from AppProduct.spec.trustTier (catalogue certification).
-                enum:
-                - free
-                - hardened
-                - supported
                 type: string
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume
@@ -987,6 +988,15 @@ spec:
                   - name
                   type: object
                 type: array
+              trustTier:
+                default: certified
+                description: TrustTier is the platform certification level for this
+                  catalogue entry.
+                enum:
+                - platform
+                - certified
+                - experimental
+                type: string
               valueMapping:
                 description: |-
                   ValueMapping is the schema-based mapping of kernel-provided values to

@@ -1,5 +1,7 @@
 package v1alpha1
 
+import "strings"
+
 // EffectiveEdition returns the edition for a profile, defaulting to full.
 func EffectiveEdition(e Edition) Edition {
 	if e == "" {
@@ -8,10 +10,10 @@ func EffectiveEdition(e Edition) Edition {
 	return e
 }
 
-// EffectiveOfferingTier returns the offering tier for a profile, defaulting to free.
-func EffectiveOfferingTier(t OfferingTier) OfferingTier {
+// EffectiveTrustTier returns the trust tier for a profile, defaulting to certified.
+func EffectiveTrustTier(t TrustTier) TrustTier {
 	if t == "" {
-		return OfferingTierFree
+		return TrustTierCertified
 	}
 	return t
 }
@@ -38,19 +40,18 @@ func ProfileIdentityFor(p *AppProfile) ProfileIdentity {
 		Family:           ProfileFamily(p),
 		CatalogueVersion: EffectiveCatalogueVersion(p.Spec.CatalogueVersion),
 		Edition:          EffectiveEdition(p.Spec.Edition),
-		OfferingTier:     EffectiveOfferingTier(p.Spec.OfferingTier),
 	}
 }
 
-// ProfileCatalogueLabels returns index labels for an AppProfile's catalogue identity.
+// ProfileCatalogueLabels returns index labels for an AppProfile's catalogue metadata.
 func ProfileCatalogueLabels(p *AppProfile) map[string]string {
 	id := ProfileIdentityFor(p)
 	return map[string]string{
 		LabelProfileName:             p.Name,
-		LabelProfileFamily:         id.Family,
+		LabelProfileFamily:           id.Family,
 		LabelProfileCatalogueVersion: id.CatalogueVersion,
-		LabelProfileEdition:        string(id.Edition),
-		LabelProfileOfferingTier:   string(id.OfferingTier),
+		LabelProfileEdition:          string(id.Edition),
+		LabelProfileTrustTier:        string(EffectiveTrustTier(p.Spec.TrustTier)),
 	}
 }
 
@@ -64,27 +65,10 @@ func ProfileReferenceKey(ref ProfileReference) string {
 	}
 	id := *ref.Identity
 	return "id:" + id.Family + "/" + EffectiveCatalogueVersion(id.CatalogueVersion) +
-		"/" + string(EffectiveEdition(id.Edition)) + "/" + string(EffectiveOfferingTier(id.OfferingTier))
-}
-
-// EffectiveTrustTier returns the trust tier for a product, defaulting to certified.
-func EffectiveTrustTier(t TrustTier) TrustTier {
-	if t == "" {
-		return TrustTierCertified
-	}
-	return t
-}
-
-// EffectiveListable returns whether a product is listable in the store.
-func EffectiveListable(listable *bool) bool {
-	if listable == nil {
-		return true
-	}
-	return *listable
+		"/" + string(EffectiveEdition(id.Edition))
 }
 
 // ResolveProfileReference finds the AppProfile name matching ref in profiles.
-// Returns the profile name and true when exactly one match exists.
 func ResolveProfileReference(profiles []AppProfile, ref ProfileReference) (string, bool) {
 	if ref.Name != "" {
 		for i := range profiles {
@@ -103,7 +87,7 @@ func ResolveProfileReference(profiles []AppProfile, ref ProfileReference) (strin
 			continue
 		}
 		if match != "" {
-			return "", false // ambiguous
+			return "", false
 		}
 		match = profiles[i].Name
 	}
@@ -122,6 +106,11 @@ func ProfileReferenceMatches(ref ProfileReference, p *AppProfile) bool {
 	want := *ref.Identity
 	return id.Family == want.Family &&
 		id.CatalogueVersion == EffectiveCatalogueVersion(want.CatalogueVersion) &&
-		id.Edition == EffectiveEdition(want.Edition) &&
-		id.OfferingTier == EffectiveOfferingTier(want.OfferingTier)
+		id.Edition == EffectiveEdition(want.Edition)
+}
+
+// ProfileRequiresEntitlement reports whether CRM entitlement is required before install.
+// Premium profiles in gentian-premium use license: proprietary.
+func ProfileRequiresEntitlement(p *AppProfile) bool {
+	return strings.EqualFold(p.Spec.License, "proprietary")
 }
