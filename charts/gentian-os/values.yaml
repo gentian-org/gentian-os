@@ -25,7 +25,7 @@ routingMode: gateway
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
 # write records in the zone containing effectiveDomain (platform zone for default
 # tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
-tenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare"
+tenantDNS01ClusterIssuer: ""
 
 # tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, office, portal/UMC,
@@ -51,19 +51,19 @@ ldap:
   # LDAP base DN, e.g. dc=swp-ldap,dc=internal
   base: ""
 
-# infraNamespace is the namespace hosting shared infrastructure (MariaDB, Redis,
-# MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
-infraNamespace: "gentian-infra-dev"
+# infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
+# Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
+infraNamespace: ""
 
 # openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
 openbaoNamespace: "openbao"
 
-# servicesNamespace is the namespace hosting platform services consumed by
-# tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
-servicesNamespace: "gentian-dev"
+# servicesNamespace hosts platform services (Nubus, Postfix, …).
+# Set per cluster in gentian-deployments kernel values.
+servicesNamespace: ""
 
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
-# Compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
+# compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.
 # Template variables substituted in AppProfile extraValues:
 #   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL

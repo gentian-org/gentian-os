@@ -4,10 +4,11 @@
 # staging intermediate in their trust store (opendesk certificate.selfSigned parity).
 #
 # Usage: create-staging-ca-secret.sh [namespace]
-# Default namespace: gentian-dev (servicesNamespace).
+# Default namespace: ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}
 set -euo pipefail
 
-NAMESPACE="${1:-gentian-dev}"
+ENV="${ENV:-dev}"
+NAMESPACE="${1:-${SERVICES_NAMESPACE:-gentian-${ENV}}}"
 SECRET_NAME="gentian-staging-ca-tls"
 CERT_NS="${CERT_MANAGER_NS:-cert-manager}"
 LEAF_SECRET="${KERNEL_TLS_SECRET:-wildcard-kernel-tls}"

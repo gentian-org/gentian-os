@@ -73,7 +73,7 @@ spec:
             {{- $objectsJSON := dig "data" "objects.json" "[]" $provCM }}
             {{- $objects     := fromJson $objectsJSON }}
             {{- $infraNs     := default "gentian-infra-dev" (dig "network.infraNamespace" "" $ccData) }}
-            {{- $servicesNs  := default "gentian-dev" (dig "network.servicesNamespace" "" $ccData) }}
+            {{- $servicesNs  := dig "network.servicesNamespace" "" $ccData }}
             {{- $openbaoNs   := default "openbao" (dig "network.openbaoNamespace" "" $ccData) }}
             {{- $routingMode := default "gateway" (dig "network.routingMode" "" $ccData) }}
             {{- $kubeApiCIDR := dig "network.kubeApiServerCidr" "" $ccData }}
@@ -349,10 +349,8 @@ spec:
                 name: {{ $app.profile }}
               tenantNamespace: {{ $ns }}
               domain: {{ $domain }}
-              {{- if $app.variant }}
-              compositionRef:
-                name: app-{{ $app.variant }}
-              {{- end }}
+              {{- /* All apps use app-default; variant behaviour is selected via
+                   AppProfile provisioningMode / compositionRef inside the template. */}}
               {{- if $app.config }}
               config:
                 {{- if dig "replicas" nil $app.config }}

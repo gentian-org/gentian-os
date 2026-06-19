@@ -64,11 +64,18 @@ const (
 	conditionNamespaceReady = "NamespaceReady"
 )
 
-// servicesNamespace is read from an env var at process startup so that
-// staging/prod deployments can override it without rebuilding the operator.
-// Default matches the dev install layout. Inject via SERVICES_NAMESPACE in the
-// operator Deployment (see charts/gentian-os/templates/deployment.yaml).
-var servicesNamespace = envOrDefault("SERVICES_NAMESPACE", "gentian-dev")
+// servicesNamespace is read from SERVICES_NAMESPACE at process startup.
+// When unset, derives gentian-{GENTIAN_STAGE|ENV} so the operator never hardcodes
+// a cluster-specific namespace name.
+var servicesNamespace = defaultServicesNamespace()
+
+func defaultServicesNamespace() string {
+	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
+		return v
+	}
+	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
+	return "gentian-" + stage
+}
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been
 // created but has not yet completed. reconcileDelete treats this as a signal to

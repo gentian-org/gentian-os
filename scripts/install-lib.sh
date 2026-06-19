@@ -1206,7 +1206,7 @@ upsert_gentian_cluster_config() {
     fi
     export NODE_IP
 
-    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
+    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}.svc.cluster.local}"
     local _ldap_base_dn="${LDAP_BASE_DN:-}"
     if [[ -z "${_ldap_base_dn}" ]]; then
         _ldap_base_dn="$(kubectl get cluster dev-cluster -n crossplane-system \
@@ -1218,7 +1218,7 @@ upsert_gentian_cluster_config() {
     if [[ -z "${_ldap_base_dn}" ]]; then
         _ldap_base_dn="dc=swp-ldap,dc=internal"
     fi
-    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
+    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}.svc.cluster.local"
     local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
     local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
     local _storage_class="${STORAGE_CLASS:-}"
@@ -1304,10 +1304,8 @@ upsert_gentian_jitsi_oidc_overlays_configmap() {
 # =============================================================================
 # Crossplane platform compositions (not per-AppProfile)
 # =============================================================================
-# Tenant apps (jitsi, cryptpad, …) are AppProfile CRs from gentian-apps; they use
-# one of these composition *variants* via spec.compositionRef (default: app-default).
-# Adding a new AppProfile does not require editing install/update/uninstall unless
-# you introduce a new variant file matching app-<name>.yaml in crossplane/compositions/.
+# Tenant apps use the single app-default composition; mode is selected via
+# AppProfile spec.provisioningMode (element, ox) inside the template.
 
 apply_crossplane_app_compositions() {
     local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
@@ -2380,10 +2378,10 @@ spec:
   issuerRef:
     name: ${nubus_issuer}
     kind: Issuer
-  commonName: "*.${KERNEL_DOMAIN:-desk.gentian.org}"
+  commonName: "*.${KERNEL_DOMAIN}"
   dnsNames:
-    - "${KERNEL_DOMAIN:-desk.gentian.org}"
-    - "*.${KERNEL_DOMAIN:-desk.gentian.org}"
+    - "${KERNEL_DOMAIN}"
+    - "*.${KERNEL_DOMAIN}"
   duration: 8760h
   renewBefore: 720h
 EOF
@@ -3799,8 +3797,8 @@ verify_keycloak_iframe_policy() {
         return 0
     fi
 
-    local services_ns="${SERVICES_NAMESPACE:-gentian-dev}"
-    local kernel_ns="${KERNEL_NAMESPACE:-gentian-dev}"
+    local services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local kernel_ns="${KERNEL_NAMESPACE:-${services_ns}}"
     local route_name="${KEYCLOAK_IDP_HTTPROUTE_NAME:-kernel-idp}"
     local timeout="${KEYCLOAK_FRAME_VERIFY_TIMEOUT:-300}"
     local interval=10

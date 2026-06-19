@@ -953,10 +953,10 @@ op_staging_ca_secret() {
         chmod +x "$script"
     fi
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would run: $script ${SERVICES_NAMESPACE:-gentian-dev}"
+        info "[dry-run] would run: $script ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
         return 0
     fi
-    "$script" "${SERVICES_NAMESPACE:-gentian-dev}"
+    "$script" "${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
 }
 
 # =============================================================================

@@ -52,7 +52,7 @@ type Config struct {
 	KubeAPIServerCIDR string
 }
 
-// DefaultConfig returns dev-cluster defaults matching the operator env vars.
+// DefaultConfig returns test-friendly defaults; production callers should pass explicit Config.
 func DefaultConfig() Config {
 	return Config{
 		InfraNamespace:    "gentian-infra-dev",

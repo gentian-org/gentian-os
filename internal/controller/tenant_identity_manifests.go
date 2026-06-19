@@ -357,6 +357,10 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	if cfg.pack != nil {
 		return false
 	}
+	if profile.Spec.ProvisioningMode != "" {
+		return true
+	}
+	// Legacy profiles may still set compositionRef until migrated.
 	return profile.Spec.CompositionRef != ""
 }
 
