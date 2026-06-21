@@ -1078,6 +1078,49 @@ _app_failed_workload_pods() {
     | awk -v app="${app_name}" 'index($1, app) {print}')
 }
 
+# Print Crossplane composite / bootstrap hints when an App claim waits on XApp.
+_app_composite_diagnostics() {
+  local ns_name="${1}"
+  local app_name="${2}"
+
+  local xapp_name xapp_msg
+  xapp_name="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+    -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)"
+  if [[ -z "${xapp_name}" ]]; then
+    return 0
+  fi
+
+  xapp_msg="$(kubectl --request-timeout=5s get xapp "${xapp_name}" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || true)"
+  if [[ -n "${xapp_msg}" ]]; then
+    echo "  composite ${xapp_name}: ${xapp_msg}"
+  fi
+
+  local bootstrap_job bootstrap_pod
+  bootstrap_job="$(kubectl --request-timeout=5s get jobs -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+    | awk '/matrix-user-verification-service-bootstrap|synapse-create-account/ {print; exit}' || true)"
+  if [[ -n "${bootstrap_job}" ]]; then
+    local job_active
+    job_active="$(kubectl --request-timeout=5s get job "${bootstrap_job}" -n "${ns_name}" \
+      -o jsonpath='{.status.active}' 2>/dev/null || true)"
+    echo "  bootstrap job ${bootstrap_job}: active=${job_active:-0}"
+    bootstrap_pod="$(kubectl --request-timeout=5s get pods -n "${ns_name}" \
+      -l "job-name=${bootstrap_job}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    if [[ -n "${bootstrap_pod}" ]]; then
+      local tail
+      tail="$(kubectl --request-timeout=5s logs -n "${ns_name}" "pod/${bootstrap_pod}" --tail=3 2>/dev/null || true)"
+      if [[ -n "${tail}" ]]; then
+        echo "  bootstrap log (last lines):"
+        printf '%s\n' "${tail}" | sed 's/^/    /'
+      fi
+      if printf '%s\n' "${tail}" | grep -q 'Invalid username or password'; then
+        echo "  hint: stale @uvs Matrix user from a prior install — delete demo_element.users row and the bootstrap job, then retry." >&2
+      fi
+    fi
+  fi
+}
+
 wait_for_app_ready() {
   local tenant_name="${1}"
   local app_name="${2}"
@@ -1138,6 +1181,9 @@ wait_for_app_ready() {
     elapsed=$((now - start))
     if (( elapsed - last_progress_at >= 30 )); then
       echo "  app '${app_name}' not Ready yet (elapsed: ${elapsed}s) ${message:-}"
+      if [[ "${message}" == *"composite"* ]]; then
+        _app_composite_diagnostics "${ns_name}" "${app_name}" || true
+      fi
       last_progress_at="${elapsed}"
     fi
 
