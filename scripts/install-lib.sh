@@ -283,7 +283,6 @@ INPUT_HIERARCHY_VARS=(
 )
 
 # ─── Versions ────────────────────────────────────────────────────────────────
-TOFU_VERSION="1.9.0"
 BAO_VERSION="2.5.1"
 ESO_CHART_VERSION="2.4.1"
 ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-v1.2.5}"
@@ -1459,18 +1458,6 @@ install_tools() {
     fi
 
     banner "Step 1 — Installing CLI tools"
-
-    if command -v tofu &>/dev/null && tofu version 2>/dev/null | grep -q "$TOFU_VERSION"; then
-        success "tofu $TOFU_VERSION already installed."
-    else
-        info "Installing OpenTofu v${TOFU_VERSION}..."
-        local arch; arch=$(uname -m); [[ "$arch" == "x86_64" ]] && arch="amd64"
-        local pkg="tofu_${TOFU_VERSION}_linux_${arch}.deb"
-        curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${pkg}" -o "/tmp/${pkg}"
-        sudo dpkg -i "/tmp/${pkg}"
-        rm -f "/tmp/${pkg}"
-        success "tofu $TOFU_VERSION installed."
-    fi
 
     if command -v bao &>/dev/null && bao version 2>/dev/null | grep -q "$BAO_VERSION"; then
         success "bao $BAO_VERSION already installed."

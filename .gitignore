@@ -1,4 +1,4 @@
-# Terraform / OpenTofu runtime artifacts
+# IaC runtime artifacts (if present locally)
 .terraform/
 .terraform.lock.hcl
 terraform.tfstate
