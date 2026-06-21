@@ -2106,6 +2106,57 @@ cmd_list() {
       }'
 }
 
+# Element keeps its Postgres database across app uninstall (databasePerTenant +
+# deletionPolicy Retain). Stale @uvs rows and orphan profiles block UVS bootstrap
+# and OIDC login on reinstall — scrub them after uninstall.
+cleanup_element_synapse_reinstall_state() {
+  local tenant="${1}"
+  local prefix db_name pg_pod sql_out
+
+  prefix="$(kubectl --request-timeout=5s get tenant "${tenant}" \
+    -o jsonpath='{.spec.isolation.databasePrefix}' 2>/dev/null || true)"
+  if [[ -z "${prefix}" ]]; then
+    prefix="${tenant}_"
+  fi
+  # AppProfile databasePerTenant naming: <databasePrefix>element
+  db_name="${prefix}element"
+
+  pg_pod="$(kubectl --request-timeout=5s get pods -n "${KERNEL_NAMESPACE}" \
+    -l cnpg.io/cluster=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${pg_pod}" ]]; then
+    echo "WARNING: postgres pod not found; skipping Synapse DB cleanup for ${db_name}." >&2
+    return 0
+  fi
+
+  if ! kubectl --request-timeout=5s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+      psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db_name}'" 2>/dev/null \
+      | grep -q 1; then
+    echo "Synapse database ${db_name} not present; skipping Matrix user cleanup."
+    return 0
+  fi
+
+  echo "Cleaning stale Synapse Matrix state in ${db_name} (Element reinstall hygiene)..."
+  if ! sql_out="$(kubectl --request-timeout=30s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+    psql -U postgres -d "${db_name}" -v ON_ERROR_STOP=1 -c "
+BEGIN;
+DELETE FROM ${db_name}.user_external_ids WHERE user_id LIKE '@uvs:%';
+DELETE FROM ${db_name}.user_threepids WHERE user_id LIKE '@uvs:%';
+DELETE FROM ${db_name}.users WHERE name LIKE '@uvs:%';
+DELETE FROM ${db_name}.profiles p
+  WHERE p.user_id = 'uvs'
+     OR NOT EXISTS (
+       SELECT 1 FROM ${db_name}.users u
+       WHERE u.name LIKE '@' || p.user_id || ':%'
+     );
+COMMIT;
+" 2>&1)"; then
+    echo "WARNING: Synapse DB cleanup for ${db_name} failed:" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  echo "Synapse DB cleanup complete for ${db_name}."
+}
+
 # ---------------------------------------------------------------------------
 # apps install
 # ---------------------------------------------------------------------------
@@ -2223,6 +2274,10 @@ cmd_uninstall() {
     echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
     echo "  Inspect: kubectl get pods,release.helm.crossplane.io -n tenant-${tenant} | grep ${app}" >&2
     exit 1
+  fi
+
+  if [[ "${app}" == "element" ]]; then
+    cleanup_element_synapse_reinstall_state "${tenant}"
   fi
 
   echo "Done. App '${app}' is uninstalled from tenant '${tenant}'."
