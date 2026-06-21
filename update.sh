@@ -729,7 +729,12 @@ _fix_kernel_ldap_scope() {
     local release_name="nubus-dev"
     local ns="${KERNEL_NAMESPACE}"
     local kc_realm="${KERNEL_REALM:-kernel}"
-    local ldap_base="${LDAP_BASE:-dc=swp-ldap,dc=internal}"
+    local ldap_base
+    ldap_base="$(resolve_ldap_base_dn)"
+    if [[ -z "${ldap_base}" ]]; then
+        warn "LDAP base DN unset — skipping kernel LDAP scope fix (set LDAP_BASE_DN in cluster-settings.env)"
+        return 0
+    fi
     local target_users_dn="${ldap_base}"
 
     info "Patching kernel realm LDAP federation for portal login (usersDn=${target_users_dn}, SUBTREE, mailPrimaryAddress)..."

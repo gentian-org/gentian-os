@@ -108,14 +108,10 @@ type AppProfileSpec struct {
 	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
 
-	// ProvisioningMode selects extended provisioning branches in the app-default
-	// Crossplane composition (element: Matrix stack; ox: appsuite.properties).
-	// +kubebuilder:validation:Enum=element;ox
-	// +optional
-	ProvisioningMode string `json:"provisioningMode,omitempty"`
-
-	// CompositionRef is deprecated — use provisioningMode. Legacy values app-element
-	// and app-ox are mapped automatically in the composition template.
+	// CompositionRef overrides the Crossplane Composition used to deploy this
+	// app. When empty the XRD default (app-default) applies. Set to the name
+	// of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
+	// (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 

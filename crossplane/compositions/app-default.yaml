@@ -38,8 +38,7 @@ spec:
                     valueFromFieldPath: spec.profileRef.name
             # Reads the gentian-kernel-services ConfigMap from gentian-system to make
             # cluster-specific infrastructure endpoints available for extraValues
-            # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST},
-            # ${LDAP_HOST}, ${LDAP_BASE_DN}, ${SMTP_HOST}.
+            # substitution: ${S3_ENDPOINT}, ${MYSQL_HOST}, ${REDIS_HOST}.
             # The ConfigMap is published by the gentian-os Helm chart via kernelServices values.
             - kind: ConfigMap
               into: kernelServices
@@ -64,23 +63,14 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
-            # Gentian Jitsi OIDC/JWT overlays (portal iframe SSO, kernel IdP broker).
-            # Published by install-lib upsert_gentian_jitsi_oidc_overlays_configmap().
-            - kind: ConfigMap
-              into: jitsiOidcOverlays
-              apiVersion: v1
-              type: Selector
-              selector:
-                maxMatch: 1
-                minMatch: 0
-                matchLabels:
-                  - key: gentianos.io/config-type
-                    type: Value
-                    value: jitsi-oidc-overlays
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
-    # Single composition for default, element (multi-release), and ox (properties ES)
-    # modes. Mode is selected via AppProfile provisioningMode or compositionRef.
+    # Emits per-app:
+    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping an ESO ExternalSecret
+    #     (present only when the AppProfile has at least one valueMapping key or
+    #     appSecret; creates a flat Secret with one key per sensitive value)
+    #   • helm.crossplane.io/v1beta1 Release pointing at the chart from the
+    #     AppProfile, with set[] entries that pull values from the Secret above
     - step: render-app-resources
       functionRef:
         name: function-go-templating
@@ -116,45 +106,20 @@ spec:
             {{- $vm        := default dict $pSpec.valueMapping }}
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
-            {{- $provMode := default "" $pSpec.provisioningMode }}
-            {{- if and (eq $provMode "") (eq $pSpec.compositionRef "app-element") }}{{- $provMode = "element" }}{{- end }}
-            {{- if and (eq $provMode "") (eq $pSpec.compositionRef "app-ox") }}{{- $provMode = "ox" }}{{- end }}
-            {{- $kr       := default dict $pSpec.kernelRequirements }}
-            {{- $identity := default dict $kr.identity }}
-            {{- if eq $provMode "element" }}
-            {{- /* OpenDesk OIDC pack scopes: manifest-bridge Jobs create the ClientScope;
-                 ClientDefaultScopes below re-attaches them after provider-keycloak Client sync. */}}
-            {{- $oidcPackDefaultScopes := dict
-                "opendesk-synapse" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-matrix-scope")
-                "opendesk-jitsi" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-jitsi-scope")
-            }}
-            {{- $oidcPackFullScopeAllowed := dict "opendesk-synapse" false "opendesk-jitsi" true }}
-            {{- end }}
 
             {{- /* ── Load cluster-config ConfigMap for app init Jobs ────────────── */}}
-            {{- /* Provides secretMode, udm.url, cnpg.host, node.ip, minio.endpoint */}}
-            {{- /* for ldap/s3/db init Jobs. LDAP/SMTP substitution uses kernel CM. */}}
+            {{- /* Provides ldap.baseDn, udm.url, and secretMode injected as env    */}}
+            {{- /* vars into ldap-search-init Jobs (and future s3/db init Jobs).    */}}
             {{- $ccRes      := dig "clusterConfig" list $extraRes }}
             {{- $ccCM       := default dict (index $ccRes 0) }}
             {{- $ccData     := dig "data" dict $ccCM }}
+            {{- $ldapBaseDn    := dig "ldap.baseDn"    "" $ccData }}
             {{- $udmUrl        := dig "udm.url"        "" $ccData }}
             {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
-
-            {{- /* ── Load gentian-kernel-services (SoT for LDAP/SMTP substitution) ─ */}}
-            {{- $ksRes := dig "kernelServices" list $extraRes }}
-            {{- $ksCM  := default dict (index $ksRes 0) }}
-            {{- $ksCMData := dig "data" dict $ksCM }}
-            {{- $ldapBaseDn := dig "LDAP_BASE_DN" "" $ksCMData }}
-            {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-
-            {{- /* ── Load Jitsi OIDC overlay files (optional until install upserts CM) */}}
-            {{- $jitsiOverlayRes  := dig "jitsiOidcOverlays" list $extraRes }}
-            {{- $jitsiOverlayCM   := default dict (index $jitsiOverlayRes 0) }}
-            {{- $jitsiOverlayData := dig "data" dict $jitsiOverlayCM }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
@@ -231,11 +196,7 @@ spec:
             {{- $esData = append $esData (dict "secretKey" "cache-port"     "remoteRef" (dict "key" $cachePath "property" "port")) }}
             {{- end }}
             {{- if $vm.cache.passwordKey }}
-            {{- if eq $provMode "ox" }}
-            {{- $esData = append $esData (dict "secretKey" "cache-password" "remoteRef" (dict "key" "gentian-os/kernel/cache/redis" "property" "auth_password")) }}
-            {{- else }}
             {{- $esData = append $esData (dict "secretKey" "cache-password" "remoteRef" (dict "key" $cachePath "property" "password")) }}
-            {{- end }}
             {{- end }}
             {{- end }}
 
@@ -499,61 +460,32 @@ spec:
 
             {{- /* App-internal secrets */}}
             {{- range $s := $appSecrets }}
-            {{- if and $s.name $s.valuePath (or (ne $provMode "element") (ne $s.name "matrix_uvs_password")) }}
+            {{- if and $s.name $s.valuePath }}
             {{- $relSet = append $relSet (dict "name" $s.valuePath
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
-            {{- /* Jitsi Prosody hybrid_matrix_token auth needs JWT_APP_SECRET in   */}}
-            {{- /* extraEnvs (OpenDesk values-jitsi.yaml.gotmpl parity). settings.  */}}
-            {{- /* jwtAppSecret.value only feeds the keycloak-adapter sidecar.       */}}
-            {{- if and (eq $app "jitsi") (eq $s.name "jwt_app_secret") (ne $provMode "element") }}
-            {{- $relSet = append $relSet (dict "name" "jitsi.prosody.extraEnvs[2].value"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
-            {{- end }}
-            {{- end }}
-            {{- end }}
-
-            {{- /* OX: oidc.clientSecretKey and ldap.bindPasswordKey use propertiesFiles — not set[] */}}
-            {{- if eq $provMode "ox" }}
-            {{- $oxRelSet := list }}
-            {{- range $entry := $relSet }}
-            {{- $n := $entry.name | default "" }}
-            {{- if and $vm.oidc $vm.oidc.clientSecretKey (eq $n $vm.oidc.clientSecretKey) }}{{- continue }}{{- end }}
-            {{- if and $vm.ldap $vm.ldap.bindPasswordKey (eq $n $vm.ldap.bindPasswordKey) }}{{- continue }}{{- end }}
-            {{- $oxRelSet = append $oxRelSet $entry }}
-            {{- end }}
-            {{- $relSet = $oxRelSet }}
-            {{- end }}
-
-            {{- if eq $provMode "element" }}
-            {{- /* ── Synapse release set[]: exclude appServiceConfigs entries ─── */}}
-            {{- /* The appServiceConfigs[*].as_token entries are element-frontend  */}}
-            {{- /* bridge config. Passing them to synapse alongside the empty      */}}
-            {{- /* appServiceConfigs: [] in values would re-create incomplete app  */}}
-            {{- /* service objects (only as_token), causing Synapse to fail with   */}}
-            {{- /* "Required string field: 'id'". Filter them here.                */}}
-            {{- $synapseRelSet := list }}
-            {{- range $entry := $relSet }}
-            {{- if not (contains "appServiceConfigs" ($entry.name | default "")) }}
-            {{- $synapseRelSet = append $synapseRelSet $entry }}
-            {{- end }}
             {{- end }}
             {{- end }}
 
             {{- /* ── Render inline non-sensitive values ───────────────────────── */}}
             {{- /* Profile-level extraValues are merged with per-tenant config     */}}
             {{- /* overrides. Template variables are substituted before marshalling */}}
-            {{- /* Substitutions (LDAP/SMTP from gentian-kernel-services ConfigMap): */}}
+            {{- /* Substitutions:                                                   */}}
             {{- /*   ${TENANT_DOMAIN}    — effective tenant domain                 */}}
             {{- /*   ${TENANT_NAMESPACE} — tenant k8s namespace                    */}}
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
             {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
-            {{- /*   ${LDAP_HOST}        — UCS LDAP service (from kernel-services) */}}
-            {{- /*   ${LDAP_BASE_DN}     — LDAP base DN (from kernel-services)     */}}
+            {{- /*   ${LDAP_HOST}        — UCS LDAP service (from cluster-config)  */}}
+            {{- /*   ${LDAP_BASE_DN}     — LDAP base DN (from cluster-config)     */}}
             {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
+            {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
+            {{- $ksRes := dig "kernelServices" list $extraRes }}
+            {{- $ksCM  := default dict (index $ksRes 0) }}
+            {{- $ksCMData := dig "data" dict $ksCM }}
             {{- if $pSpec.extraValues }}
+            {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
             {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
             {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
             {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
@@ -563,33 +495,30 @@ spec:
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- $ldapServer  := dig "LDAP_SERVER"   "" $ksCMData }}
-            {{- $ldapBaseDnSub := dig "LDAP_BASE_DN" "" $ksCMData }}
-            {{- $smtpHost    := dig "SMTP_HOST"     "" $ksCMData }}
-            {{- $ldapBindDn  := "" }}
-            {{- $imapHost    := "" }}
-            {{- if eq $provMode "ox" }}
-            {{- $ldapBindDn = "uid=ldapsearch_ox,cn=users,dc=swp-ldap,dc=internal" }}
-            {{- $ccLdapBindDn := dig "ldap.bindDn" "" $ccData }}
-            {{- if $ccLdapBindDn }}{{- $ldapBindDn = $ccLdapBindDn }}{{- end }}
-            {{- $imapHost = printf "mail.%s" $domain }}
+            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
+            {{- $ldapServer  := "" }}
+            {{- $ldapBaseDn  := "" }}
+            {{- $smtpHost    := "" }}
+            {{- if gt (len $clusterCfgs) 0 }}
+            {{- $cc := index $clusterCfgs 0 }}
+            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
+            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
+            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
+            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
+            {{- $ccSmtpHost := dig "data" "mail.smtpHost" "" $cc }}
+            {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
             {{- end }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
             {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
-            {{- if eq $provMode "element" }}{{ $raw = $raw | replace "${TENANT_NAME}" $tenant }}{{ end }}
             {{- if $kernelDomain }}{{ $raw = $raw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
             {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
-            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDnSub }}
+            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
             {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
-            {{- if eq $provMode "ox" }}
-            {{- $raw = $raw | replace "${LDAP_BIND_DN}" $ldapBindDn }}
-            {{- $raw = $raw | replace "${IMAP_HOST}"    $imapHost }}
-            {{- end }}
             {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
             {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
             {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
@@ -604,20 +533,6 @@ spec:
             {{- end }}
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
-            {{- end }}
-
-            {{- $releaseExtraVals := $extraVals }}
-            {{- if eq $provMode "element" }}
-            {{- /* Element web-only config: merge into config.json, not homeserver.yaml */}}
-            {{- $elementExtraVals := deepCopy $extraVals }}
-            {{- $elementConf := dig "configuration" dict $elementExtraVals }}
-            {{- $elementAddConf := dig "additionalConfiguration" dict $elementConf }}
-            {{- $elementAddConf = mergeOverwrite $elementAddConf (dict
-                "sso_redirect_options" (dict "immediate" true "on_welcome_page" true)
-            ) }}
-            {{- $elementConf = mergeOverwrite $elementConf (dict "additionalConfiguration" $elementAddConf) }}
-            {{- $elementExtraVals = mergeOverwrite $elementExtraVals (dict "configuration" $elementConf) }}
-            {{- $releaseExtraVals = $elementExtraVals }}
             {{- end }}
 
             {{- /* opendesk/Bitnami charts expect imagePullSecrets as a string list. */}}
@@ -638,57 +553,6 @@ spec:
                 "imagePullSecrets" $imagePull
                 "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull))
             ) }}
-            {{- if eq $provMode "element" }}
-            {{- $releaseExtraVals = mergeOverwrite $releaseExtraVals (dict
-                "imagePullSecrets" $imagePull
-                "global" (mergeOverwrite (dig "global" dict $releaseExtraVals) (dict "imagePullSecrets" $imagePull))
-            ) }}
-            {{- end }}
-
-            {{- /* ── Jitsi: mount Gentian OIDC/JWT overlays over chart ConfigMaps ── */}}
-            {{- if and (eq $app "jitsi") (ne $provMode "element") }}
-            {{- if eq (len $jitsiOverlayData) 0 }}
-              {{- fail "gentian-jitsi-oidc-overlays ConfigMap missing — run gentian-os install/update (upsert_gentian_jitsi_oidc_overlays_configmap)" }}
-            {{- end }}
-            {{- $jitsiOidcCM := printf "%s-oidc-overlays" $xrName }}
-            {{- $jitsiWebOverlayItems := list
-                (dict "key" "body.html" "path" "body.html")
-                (dict "key" "oidc-adapter.html" "path" "oidc-adapter.html")
-                (dict "key" "oidc-redirect.html" "path" "oidc-redirect.html")
-                (dict "key" "plugin.head.html" "path" "plugin.head.html")
-            }}
-            {{- $jitsiWebOverlayMounts := list
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "body.html" "mountPath" "/usr/share/jitsi-meet/body.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "plugin.head.html" "mountPath" "/usr/share/jitsi-meet/plugin.head.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-adapter.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-adapter.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-redirect.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-redirect.html")
-            }}
-            {{- $jitsiOverlayVol := dict
-                "name" "gentian-jitsi-oidc-overlays"
-                "configMap" (dict "name" $jitsiOidcCM "items" $jitsiWebOverlayItems)
-            }}
-            {{- $jitsiAdapterOverlayVol := dict
-                "name" "gentian-jitsi-adapter-overlay"
-                "configMap" (dict "name" $jitsiOidcCM "items" (list (dict "key" "context.ts" "path" "context.ts")))
-            }}
-            {{- $jitsiAdapterOverlayMount := dict
-                "name" "gentian-jitsi-adapter-overlay"
-                "subPath" "context.ts"
-                "mountPath" "/app/context.ts"
-            }}
-            {{- $jitsiWebExtra := default dict (dig "jitsi" dict $extraVals) }}
-            {{- $jitsiWeb := default dict (dig "web" dict $jitsiWebExtra) }}
-            {{- $jitsiWeb = mergeOverwrite $jitsiWeb (dict
-                "extraVolumes" (concat (default list $jitsiWeb.extraVolumes) (list $jitsiOverlayVol))
-                "extraVolumeMounts" (concat (default list $jitsiWeb.extraVolumeMounts) $jitsiWebOverlayMounts)
-            ) }}
-            {{- $jitsiWebExtra = mergeOverwrite $jitsiWebExtra (dict "web" $jitsiWeb) }}
-            {{- $extraVals = mergeOverwrite $extraVals (dict
-                "jitsi" $jitsiWebExtra
-                "extraVolumes" (concat (default list $extraVals.extraVolumes) (list $jitsiAdapterOverlayVol))
-                "extraVolumeMounts" (concat (default list $extraVals.extraVolumeMounts) (list $jitsiAdapterOverlayMount))
-            ) }}
-            {{- end }}
 
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
             {{- if $acmeStaging }}
@@ -745,6 +609,8 @@ spec:
             {{- /* registers the app as an OIDC client in the tenant's own realm.  */}}
             {{- /* New apps only need to declare their oidc block in the AppProfile */}}
             {{- /* to get automatic per-tenant Keycloak client registration.        */}}
+            {{- $kr       := default dict $pSpec.kernelRequirements }}
+            {{- $identity := default dict $kr.identity }}
             {{- $oidcCl   := default dict $identity.oidc }}
             {{- if $oidcCl.clientId }}
             {{- $redirects  := list }}
@@ -753,9 +619,7 @@ spec:
             {{- end }}
             {{- $postLogout := list }}
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
-            {{- $postLogoutUri := $uri | replace "${TENANT_DOMAIN}" $domain | replace "${TENANT_ID}" $tenant }}
-            {{- if $kernelDomain }}{{ $postLogoutUri = $postLogoutUri | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
-            {{- $postLogout = append $postLogout $postLogoutUri }}
+            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
             {{- end }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
@@ -780,11 +644,6 @@ spec:
                 {{- end }}
                 webOrigins:
                   - "+"
-                {{- if eq $provMode "element" }}
-                {{- if hasKey $oidcPackFullScopeAllowed $oidcCl.clientId }}
-                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcCl.clientId }}
-                {{- end }}
-                {{- end }}
                 {{- if $postLogout }}
                 validPostLogoutRedirectUris:
                   {{ toYaml $postLogout | nindent 18 }}
@@ -801,84 +660,6 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
-            {{- if and (eq $provMode "element") (hasKey $oidcPackDefaultScopes $oidcCl.clientId) }}
-            ---
-            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-            kind: ClientDefaultScopes
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-default-scopes
-              name: {{ $tenant }}-{{ $app }}-keycloak-default-scopes
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $tenant }}
-                clientIdRef:
-                  name: {{ $tenant }}-{{ $app }}-keycloak-client
-                defaultScopes:
-                  {{ toYaml (index $oidcPackDefaultScopes $oidcCl.clientId) | nindent 18 }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- end }}
-
-            {{- if eq $provMode "ox" }}
-            {{- /* ── OX appsuite.properties ExternalSecret ──────────────────── */}}
-            {{- /* Fetches the same OpenBao paths as the standard ES but renders  */}}
-            {{- /* them into a Java .properties file format. The Release mounts    */}}
-            {{- /* this Secret as a valuesFrom configMapKeyRef substitute.         */}}
-            {{- $oxSecretName := printf "%s-appsuite-props" $app }}
-            {{- if gt (len $esData) 0 }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ox-props-es
-              name: {{ $xrName }}-ox-props
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: external-secrets.io/v1
-                  kind: ExternalSecret
-                  metadata:
-                    name: {{ $oxSecretName }}
-                    namespace: {{ $ns }}
-                  spec:
-                    refreshInterval: 1h
-                    secretStoreRef:
-                      kind: ClusterSecretStore
-                      name: openbao
-                    target:
-                      name: {{ $oxSecretName }}
-                      creationPolicy: Owner
-                      deletionPolicy: Retain
-                      template:
-                        engineVersion: v2
-                        data:
-                          appsuite.properties: |
-                            appsuite:
-                              core-mw:
-                                {{- if $vm.oidc.clientSecretKey }}
-                                properties:
-                                  com.openexchange.oidc.clientSecret: {{ "{{ index . \"oidc-client-secret\" }}" }}
-                                {{- end }}
-                                {{- if or $vm.ldap.bindPasswordKey $vm.s3.secretKeyKey }}
-                                propertiesFiles:
-                                  {{- if $vm.ldap.bindPasswordKey }}
-                                  /opt/open-xchange/etc/ldapauth.properties:
-                                    bindDNPassword: {{ "{{ index . \"ldap-bind-password\" }}" }}
-                                  {{- end }}
-                                  {{- if $vm.s3.secretKeyKey }}
-                                  /opt/open-xchange/etc/filestore-s3.properties:
-                                    com.openexchange.filestore.s3.ox-filestore-s3.secretKey: {{ "{{ index . \"s3-secret-key\" }}" }}
-                                  {{- end }}
-                                {{- end }}
-                    data:
-                      {{ toYaml $esData | nindent 22 }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
             {{- end }}
 
             {{- /* ── Emit ExternalSecret (only when there are secrets to sync) ── */}}
@@ -913,821 +694,12 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit Jitsi OIDC overlay ConfigMap (tenant copy of cluster overlays) */}}
-            {{- if and (eq $app "jitsi") (ne $provMode "element") (gt (len $jitsiOverlayData) 0) }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-overlays-cm
-              name: {{ $xrName }}-oidc-overlays-cm
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
-                  metadata:
-                    name: {{ printf "%s-oidc-overlays" $xrName }}
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/app: jitsi
-                      gentianos.io/tenant: {{ $tenant }}
-                  binaryData:
-                    body.html: {{ index $jitsiOverlayData "body.html" | b64enc | quote }}
-                    context.ts: {{ index $jitsiOverlayData "context.ts" | b64enc | quote }}
-                    oidc-adapter.html: {{ index $jitsiOverlayData "oidc-adapter.html" | b64enc | quote }}
-                    oidc-redirect.html: {{ index $jitsiOverlayData "oidc-redirect.html" | b64enc | quote }}
-                    plugin.head.html: {{ index $jitsiOverlayData "plugin.head.html" | b64enc | quote }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
 
-            {{- /* ── OpenProject: seed OIDC auth provider before web pods start ── */}}
-            {{- /* OpenProject 16.x registers /auth/:provider from auth_providers DB  */}}
-            {{- /* rows. The chart seeder hook only runs on post-install (revision 1); */}}
-            {{- /* repeated Crossplane upgrades skip it, leaving /auth/keycloak → 404.  */}}
-            {{- if eq $app "openproject" }}
-            {{- $opKernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-            {{- $opImg := dig "image" dict $extraVals }}
-            {{- $opImage := printf "%s/%s:%s" (dig "registry" "registry.opencode.de" $opImg) (dig "repository" "" $opImg) (dig "tag" "latest" $opImg) }}
-            {{- $opDbRole := printf "%s_%s" $tenant $app | replace "-" "_" }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-seed-job
-              name: {{ $xrName }}-oidc-seed-job
-            spec:
-              deletionPolicy: Delete
-              forProvider:
-                manifest:
-                  apiVersion: batch/v1
-                  kind: Job
-                  metadata:
-                    name: {{ $app }}-oidc-seed
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/tenant: {{ $tenant }}
-                      gentianos.io/app: {{ $app }}
-                  spec:
-                    ttlSecondsAfterFinished: 3600
-                    activeDeadlineSeconds: 1800
-                    backoffLimit: 5
-                    template:
-                      spec:
-                        restartPolicy: OnFailure
-                        initContainers:
-                          - name: wait-for-schema
-                            image: {{ $opImage | quote }}
-                            command: ["/bin/bash", "-lc"]
-                            args:
-                              - |
-                                set -euo pipefail
-                                export PGPASSWORD="${OPENPROJECT_DB_PASSWORD}"
-                                max_attempts=120
-                                attempt=0
-                                until bundle exec rails runner 'exit(ActiveRecord::Base.connection.table_exists?(:auth_providers) ? 0 : 1)' 2>/dev/null; do
-                                  attempt=$((attempt + 1))
-                                  if (( attempt >= max_attempts )); then
-                                    echo "[oidc-seed] timed out waiting for OpenProject DB migrations (auth_providers)"
-                                    exit 1
-                                  fi
-                                  echo "[oidc-seed] waiting for OpenProject DB migrations (auth_providers)..."
-                                  sleep 15
-                                done
-                            env:
-                              - name: DATABASE_HOST
-                                value: {{ $cnpgHost | quote }}
-                              - name: DATABASE_PORT
-                                value: "5432"
-                              - name: OPENPROJECT_DB_USERNAME
-                                value: {{ $opDbRole | quote }}
-                              - name: OPENPROJECT_DB_DATABASE
-                                value: {{ $opDbRole | quote }}
-                              - name: OPENPROJECT_DB_PASSWORD
-                                valueFrom:
-                                  secretKeyRef:
-                                    name: {{ $secretName }}
-                                    key: db-password
-                        containers:
-                          - name: oidc-seed
-                            image: {{ $opImage | quote }}
-                            command: ["/bin/bash", "-lc"]
-                            args:
-                              - |
-                                set -euo pipefail
-                                export PGPASSWORD="${OPENPROJECT_DB_PASSWORD}"
-                                bundle exec rails runner 'if ActiveRecord::Base.connection.select_value("SELECT COUNT(*) FROM auth_providers").to_i == 0; EnvData::OpenIDConnect::ProviderSeeder.new.seed!; puts "OIDC auth provider seeded"; else puts "auth_providers already present — skipping"; end'
-                            env:
-                              - name: DATABASE_HOST
-                                value: {{ $cnpgHost | quote }}
-                              - name: DATABASE_PORT
-                                value: "5432"
-                              - name: OPENPROJECT_DB_USERNAME
-                                value: {{ $opDbRole | quote }}
-                              - name: OPENPROJECT_DB_DATABASE
-                                value: {{ $opDbRole | quote }}
-                              - name: OPENPROJECT_DB_PASSWORD
-                                valueFrom:
-                                  secretKeyRef:
-                                    name: {{ $secretName }}
-                                    key: db-password
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ISSUER
-                                value: {{ printf "https://id.%s/realms/%s" $opKernelDomain $tenant | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_HOST
-                                value: {{ printf "id.%s" $opKernelDomain | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_IDENTIFIER
-                                value: "opendesk-openproject"
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_DISPLAY__NAME
-                                value: "Keycloak"
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_SCOPE
-                                value: "[openid,opendesk-openproject-scope]"
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_AUTHORIZATION__ENDPOINT
-                                value: {{ printf "/realms/%s/protocol/openid-connect/auth" $tenant | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_TOKEN__ENDPOINT
-                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/token" $opKernelDomain $tenant | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_USERINFO__ENDPOINT
-                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/userinfo" $opKernelDomain $tenant | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_JWKS__URI
-                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/certs" $opKernelDomain $tenant | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_END__SESSION__ENDPOINT
-                                value: {{ printf "https://id.%s/realms/%s/protocol/openid-connect/logout" $opKernelDomain $tenant | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_POST__LOGOUT__REDIRECT__URI
-                                value: {{ printf "https://projects.%s/" $domain | quote }}
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ATTRIBUTE__MAP_LOGIN
-                                value: "opendesk_username"
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_ATTRIBUTE__MAP_ADMIN
-                                value: "openproject_admin"
-                              - name: OPENPROJECT_OPENID__CONNECT_KEYCLOAK_SECRET
-                                valueFrom:
-                                  secretKeyRef:
-                                    name: {{ $secretName }}
-                                    key: oidc-client-secret
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
 
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
             {{- $extraVals = $extraVals | toJson | fromJson }}
-            {{- if eq $provMode "element" }}
-            {{- $releaseExtraVals = $releaseExtraVals | toJson | fromJson }}
-            {{- end }}
 
-            {{- if eq $provMode "element" }}
-            {{- /* ── Release 1: opendesk-element (frontend) ─────────────────── */}}
-            {{- /* Identical to app-default — extraVals contain all frontend     */}}
-            {{- /* values; the chart ignores any Synapse-specific keys.          */}}
-            ---
-            apiVersion: helm.crossplane.io/v1beta1
-            kind: Release
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
-              name: {{ $xrName }}-release
-            spec:
-              forProvider:
-                chart:
-                  repository: {{ $chart.repository }}
-                  name: {{ $chart.name }}
-                  version: {{ $chart.version | quote }}
-                namespace: {{ $ns }}
-                wait: false
-                {{- if gt (len $elementExtraVals) 0 }}
-                values:
-                  {{ toYaml $elementExtraVals | nindent 18 }}
-                {{- end }}
-                {{- if gt (len $relSet) 0 }}
-                set:
-                  {{ toYaml $relSet | nindent 18 }}
-                {{- end }}
-              providerConfigRef:
-                name: kubernetes
-            {{- /* ── Release 2: opendesk-synapse (Matrix homeserver) ─────────── */}}
-            {{- /* Uses the same secret set[] entries as the element release     */}}
-            {{- /* (value paths are identical in both charts). Non-sensitive     */}}
-            {{- /* config is taken from global.* + configuration.* in extraVals, */}}
-            {{- /* overriding fullnameOverride to "opendesk-synapse" so the       */}}
-            {{- /* headless Service matches the DNS name HAProxy in synapse-web   */}}
-            {{- /* is hardcoded to resolve: opendesk-synapse.<ns>.svc.cluster.local */}}
-            {{- $ksResStaging := dig "kernelServices" list $extraRes }}
-            {{- $ksCMStaging  := default dict (index $ksResStaging 0) }}
-            {{- $ksCMDataStaging := dig "data" dict $ksCMStaging }}
-            {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMDataStaging) "true" }}
-            {{- $globalVals  := mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull) }}
-            {{- $confVals    := dig "configuration" dict $extraVals }}
-            {{- if $acmeStaging }}
-            {{- /* opendesk-synapse does not render homeserver.oidc.skip_verification into
-                 oidc_providers. skip_verification only skips OIDC metadata checks anyway;
-                 Twisted's outbound HTTP client (OIDC discovery) uses platformTrust() and
-                 ignores REQUESTS_CA_BUNDLE — staging LE certs need the Synapse test flag. */}}
-            {{- $addConf := dig "additionalConfiguration" dict $confVals }}
-            {{- $addConf = mergeOverwrite $addConf (dict
-                "use_insecure_ssl_client_just_for_testing_do_not_use" true
-            ) }}
-            {{- $confVals = mergeOverwrite $confVals (dict "additionalConfiguration" $addConf) }}
-            {{- end }}
-            {{- /* opendesk-synapse renders oidc_providers from configuration.homeserver.oidc
-                 only; discover/endpoint fields in that block are ignored. With discover
-                 enabled, startup loads JWKS over Twisted HTTPS to id.<kernel> which fails
-                 on ACME staging hairpin (curl -k works; Twisted load_jwks times out).
-                 Emit a single additionalConfiguration oidc_providers entry with
-                 discover:false, public https authorization_endpoint (browser), in-cluster
-                 http token/userinfo/jwks when KEYCLOAK_INTERNAL_URL is set, use_insecure_ssl
-                 (staging fallback), user_profile_method:userinfo_endpoint, and strip
-                 homeserver.oidc so the chart does not emit a duplicate block. */}}
-            {{- $publicIdBase := printf "https://id.%s/realms/%s" $kernelDomain $tenant }}
-            {{- $keycloakInternal := dig "KEYCLOAK_INTERNAL_URL" "" $ksCMDataStaging }}
-            {{- $serverIdBase := $publicIdBase }}
-            {{- if $keycloakInternal }}
-            {{- $serverIdBase = printf "%s/realms/%s" $keycloakInternal $tenant }}
-            {{- end }}
-            {{- $profileOidc := dig "oidc" dict (dig "homeserver" dict $confVals) }}
-            {{- $matrixLocalpart := default "opendesk_username" (dig "matrixIdLocalpart" "opendesk_username" $profileOidc) }}
-            {{- $oidcScopes := default (list "openid" "opendesk-matrix-scope") (dig "scopes" list $profileOidc) }}
-            {{- $addConf := dig "additionalConfiguration" dict $confVals }}
-            {{- $oidcProvider := dict
-                "idp_id" "oidc"
-                "idp_name" "OIDC"
-                "discover" false
-                "scopes" $oidcScopes
-                "authorization_endpoint" (printf "%s/protocol/openid-connect/auth" $publicIdBase)
-                "token_endpoint" (printf "%s/protocol/openid-connect/token" $serverIdBase)
-                "userinfo_endpoint" (printf "%s/protocol/openid-connect/userinfo" $serverIdBase)
-                "jwks_uri" (printf "%s/protocol/openid-connect/certs" $serverIdBase)
-                "user_profile_method" "userinfo_endpoint"
-                "skip_verification" true
-                "allow_existing_users" true
-                "user_mapping_provider" (dict "config" (dict
-                    "subject_template" `{{ user.opendesk_useruuid }}`
-                    "display_name_template" `{{ user.name }}`
-                    "localpart_template" (printf `{{ user.%s }}` $matrixLocalpart)
-                    "email_template" `{{ user.email }}`
-                ))
-                "backchannel_logout_enabled" true
-                "backchannel_logout_ignore_sub" true
-            }}
-            {{- $addConf = mergeOverwrite $addConf (dict "oidc_providers" (list $oidcProvider)) }}
-            {{- $confVals = mergeOverwrite $confVals (dict "additionalConfiguration" $addConf) }}
-            {{- $hsSyn := omit (dig "homeserver" dict $confVals) "oidc" }}
-            {{- $confVals = mergeOverwrite $confVals (dict "homeserver" $hsSyn) }}
-            {{- $synOidcRelSet := list }}
-            {{- range $entry := $synapseRelSet }}
-            {{- if not (contains "configuration.homeserver.oidc" ($entry.name | default "")) }}
-            {{- $synOidcRelSet = append $synOidcRelSet $entry }}
-            {{- end }}
-            {{- end }}
-            {{- if $vm.oidc }}
-            {{- if $vm.oidc.issuerKey }}
-            {{- $synOidcRelSet = append $synOidcRelSet (dict "name" "configuration.additionalConfiguration.oidc_providers[0].issuer"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
-            {{- end }}
-            {{- if $vm.oidc.clientIdKey }}
-            {{- $synOidcRelSet = append $synOidcRelSet (dict "name" "configuration.additionalConfiguration.oidc_providers[0].client_id"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
-            {{- end }}
-            {{- if $vm.oidc.clientSecretKey }}
-            {{- $synOidcRelSet = append $synOidcRelSet (dict "name" "configuration.additionalConfiguration.oidc_providers[0].client_secret"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
-            {{- end }}
-            {{- end }}
-            {{- $synapseRelSet = $synOidcRelSet }}
-            {{- $synapseVals := dict
-                "global"           $globalVals
-                "configuration"    $confVals
-                "fullnameOverride" "opendesk-synapse"
-                "imagePullSecrets" $imagePull
-                "replicaCount"     1
-                "federation" (dict "ingress" (dict "enabled" false))
-            }}
-            {{- /* Staging CA env/volume mounts omitted for Synapse: the chart already
-                 sets SSL_CERT_DIR and duplicate extraEnvVars break StatefulSet patches.
-                 OIDC token exchange uses KEYCLOAK_INTERNAL_URL (plain HTTP). */}}
-            ---
-            apiVersion: helm.crossplane.io/v1beta1
-            kind: Release
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-synapse-release
-              name: {{ $xrName }}-synapse-release
-            spec:
-              forProvider:
-                chart:
-                  repository: {{ $chart.repository }}
-                  name: opendesk-synapse
-                  version: {{ $chart.version | quote }}
-                namespace: {{ $ns }}
-                wait: false
-                values:
-                  {{ toYaml $synapseVals | nindent 18 }}
-                {{- if gt (len $synapseRelSet) 0 }}
-                set:
-                  {{ toYaml $synapseRelSet | nindent 18 }}
-                {{- end }}
-              providerConfigRef:
-                name: kubernetes
-
-            {{- /* ── Release 3: UVS bootstrap (creates @uvs Matrix account) ─── */}}
-            {{- $uvsBootstrapSet := list (dict "name" "configuration.password"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "internal-matrix_uvs_password"))) }}
-            {{- $uvsBootstrapVals := dict
-                "configuration" (dict
-                  "username" "uvs"
-                  "pod" "opendesk-synapse-0"
-                  "secretName" "opendesk-matrix-user-verification-service-account"
-                )
-                "fullnameOverride" "opendesk-matrix-user-verification-service-bootstrap"
-                "global" (dict "imagePullSecrets" $imagePull)
-                "image" (dict
-                  "registry" "registry-1.docker.io"
-                  "url" "alpine/k8s"
-                  "tag" "1.34.0@sha256:b5f6edfeac5279f3e182d938d1ffecb62f7c980756ac4b6b66d7f0d566782f77"
-                  "imagePullPolicy" "IfNotPresent"
-                )
-                "cleanup" (dict "deletePodsOnSuccess" true "deletePodsOnSuccessTimeout" 60)
-                "securityContext" (dict
-                  "allowPrivilegeEscalation" false
-                  "capabilities" (dict "drop" (list "ALL"))
-                  "privileged" false
-                  "readOnlyRootFilesystem" true
-                  "runAsGroup" 101
-                  "runAsNonRoot" true
-                  "runAsUser" 101
-                  "seccompProfile" (dict "type" "RuntimeDefault")
-                )
-            }}
-            ---
-            apiVersion: helm.crossplane.io/v1beta1
-            kind: Release
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-uvs-bootstrap-release
-              name: {{ $xrName }}-uvs-bootstrap-release
-            spec:
-              forProvider:
-                chart:
-                  repository: {{ $chart.repository }}
-                  name: opendesk-synapse-create-account
-                  version: {{ $chart.version | quote }}
-                namespace: {{ $ns }}
-                wait: false
-                values:
-                  {{ toYaml $uvsBootstrapVals | nindent 18 }}
-                set:
-                  {{ toYaml $uvsBootstrapSet | nindent 18 }}
-              providerConfigRef:
-                name: kubernetes
-
-            {{- /* ── Release 4: Matrix User Verification Service (Jitsi auth) ── */}}
-            {{- $uvsVals := dict
-                "global" $globalVals
-                "imagePullSecrets" $imagePull
-                "fullnameOverride" "opendesk-matrix-user-verification-service"
-                "replicaCount" 1
-                "extraEnvVars" (list
-                  (dict "name" "UVS_ACCESS_TOKEN" "valueFrom" (dict "secretKeyRef" (dict "name" "opendesk-matrix-user-verification-service-account" "key" "access_token")))
-                  (dict "name" "UVS_DISABLE_IP_BLACKLIST" "value" "true")
-                )
-                "image" (dict
-                  "registry" "registry.opencode.de"
-                  "repository" "bmi/opendesk/components/supplier/element/images-mirror/matrix-user-verification-service"
-                  "tag" "v3.0.0@sha256:25e685d595785e2a72e75a525dac78cf8c782445454f8ac090d3702431c38008"
-                  "imagePullPolicy" "IfNotPresent"
-                )
-                "containerSecurityContext" (dict
-                  "allowPrivilegeEscalation" false
-                  "capabilities" (dict "drop" (list "ALL"))
-                  "enabled" true
-                  "privileged" false
-                  "readOnlyRootFilesystem" false
-                  "runAsGroup" 1000
-                  "runAsNonRoot" true
-                  "runAsUser" 1000
-                  "seccompProfile" (dict "type" "RuntimeDefault")
-                )
-                "podSecurityContext" (dict "enabled" true "fsGroup" 101)
-                "resources" (dict
-                  "limits" (dict "cpu" "3" "memory" "256Mi")
-                  "requests" (dict "cpu" "100m" "memory" "128Mi")
-                )
-            }}
-            ---
-            apiVersion: helm.crossplane.io/v1beta1
-            kind: Release
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-uvs-release
-              name: {{ $xrName }}-uvs-release
-            spec:
-              forProvider:
-                chart:
-                  repository: {{ $chart.repository }}
-                  name: opendesk-matrix-user-verification-service
-                  version: {{ $chart.version | quote }}
-                namespace: {{ $ns }}
-                wait: false
-                values:
-                  {{ toYaml $uvsVals | nindent 18 }}
-              providerConfigRef:
-                name: kubernetes
-
-            {{- /* ── Release 5: opendesk-synapse-web (nginx proxy, no chart ingress) */}}
-            {{- /* matrix.{domain} edge routing is AppProfile additionalIngresses   */}}
-            {{- /* Edge route owned by gentian-os operator (HTTPRoute). */}}
-            {{- /* No secrets needed — it only proxies to the synapse service.   */}}
-            {{- $synapseWebIngress := dict "enabled" false }}
-            {{- $synapseWebVals := dict
-                "global"           $globalVals
-                "fullnameOverride" "synapse-web"
-                "imagePullSecrets" $imagePull
-                "replicaCount"     1
-                "ingress"          $synapseWebIngress
-            }}
-            ---
-            apiVersion: helm.crossplane.io/v1beta1
-            kind: Release
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-synapse-web-release
-              name: {{ $xrName }}-synapse-web-release
-            spec:
-              forProvider:
-                chart:
-                  repository: {{ $chart.repository }}
-                  name: opendesk-synapse-web
-                  version: {{ $chart.version | quote }}
-                namespace: {{ $ns }}
-                wait: false
-                values:
-                  {{ toYaml $synapseWebVals | nindent 18 }}
-              providerConfigRef:
-                name: kubernetes
-
-            {{- /* ── Sidecars (e.g. Jitsi for Element video conferencing) ─────── */}}
-            {{- $sidecars := default list $pSpec.sidecars }}
-            {{- $jitsiOverlayRes  := dig "jitsiOidcOverlays" list $extraRes }}
-            {{- $jitsiOverlayCM   := default dict (index $jitsiOverlayRes 0) }}
-            {{- $jitsiOverlayData := dig "data" dict $jitsiOverlayCM }}
-            {{- range $sidecar := $sidecars }}
-            {{- $scName := $sidecar.name }}
-            {{- $scAppKey := printf "%s-%s" $app $scName }}
-            {{- $scXrName := printf "%s-sidecar-%s" $xrName $scName }}
-            {{- $scChart := $sidecar.chart }}
-            {{- $scSecrets := default list $sidecar.appSecrets }}
-            {{- $scSecretName := printf "%s-sensitive-values" $scAppKey }}
-
-            {{- /* Sidecar ExternalSecret data[] */}}
-            {{- $scEsData := list }}
-            {{- range $s := $scSecrets }}
-            {{- if and $s.name $s.valuePath }}
-            {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $scAppKey $s.name }}
-            {{- $scEsData = append $scEsData (dict "secretKey" (printf "internal-%s" $s.name)
-                "remoteRef" (dict "key" $internalPath "property" "value")) }}
-            {{- end }}
-            {{- end }}
-
-            {{- /* Seed sidecar app-internal secrets into OpenBao */}}
-            {{- range $s := $scSecrets }}
-            {{- if and $s.name $s.valuePath }}
-            {{- $safeName := $s.name | replace "_" "-" }}
-            {{- $seedName := printf "%s-%s-seed" $scXrName $safeName }}
-            {{- $kvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $scAppKey $s.name }}
-            {{- $seedVal  := sha256sum (printf "%s:%s:%s" $scXrName $scAppKey $s.name) }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-{{ $safeName }}-seed-secret
-              name: {{ $seedName }}
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: Secret
-                  metadata:
-                    name: {{ $seedName }}
-                    namespace: crossplane-system
-                  type: Opaque
-                  stringData:
-                    data.json: '{"value":"{{ $seedVal }}"}'
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kv.vault.upbound.io/v1alpha1
-            kind: SecretV2
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-{{ $safeName }}-kv
-              name: {{ $seedName }}-kv
-            spec:
-              deletionPolicy: Orphan
-              managementPolicies:
-                - Observe
-                - Create
-              forProvider:
-                mount: secret
-                name: {{ $kvPath }}
-                dataJsonSecretRef:
-                  name: {{ $seedName }}
-                  namespace: crossplane-system
-                  key: data.json
-              providerConfigRef:
-                name: openbao
-            {{- end }}
-            {{- end }}
-
-            {{- if gt (len $scEsData) 0 }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-external-secret
-              name: {{ $scXrName }}-external-secret
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: external-secrets.io/v1
-                  kind: ExternalSecret
-                  metadata:
-                    name: {{ $scSecretName }}
-                    namespace: {{ $ns }}
-                  spec:
-                    refreshInterval: 1h
-                    secretStoreRef:
-                      kind: ClusterSecretStore
-                      name: openbao
-                    target:
-                      name: {{ $scSecretName }}
-                      creationPolicy: Owner
-                      deletionPolicy: Retain
-                    data:
-                      {{ toYaml $scEsData | nindent 22 }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
-
-            {{- /* Sidecar Helm set[] */}}
-            {{- $scRelSet := list }}
-            {{- range $s := $scSecrets }}
-            {{- if and $s.name $s.valuePath }}
-            {{- $scRelSet = append $scRelSet (dict "name" $s.valuePath
-                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
-            {{- if and (eq $scName "jitsi") (eq $s.name "jwt_app_secret") }}
-            {{- $scRelSet = append $scRelSet (dict "name" "jitsi.prosody.extraEnvs[2].value"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
-            {{- end }}
-            {{- end }}
-            {{- end }}
-
-            {{- /* Sidecar extraValues with kernel substitution */}}
-            {{- $scExtraVals := dict }}
-            {{- if $sidecar.extraValues }}
-            {{- $ksRes := dig "kernelServices" list $extraRes }}
-            {{- $ksCM  := default dict (index $ksRes 0) }}
-            {{- $ksCMData := dig "data" dict $ksCM }}
-            {{- $scKernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-            {{- $scTurnHost     := dig "TURN_HOST"        "" $ksCMData }}
-            {{- $scTurnPort     := dig "TURN_PORT"        "3478" $ksCMData }}
-            {{- $scTurnTLSHost  := dig "TURN_TLS_HOST"    "" $ksCMData }}
-            {{- $scTurnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
-            {{- $scTurnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
-            {{- $scTurnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- $scRaw := $sidecar.extraValues | toJson }}
-            {{- $scRaw = $scRaw | replace "${TENANT_DOMAIN}"    $domain }}
-            {{- $scRaw = $scRaw | replace "${TENANT_NAMESPACE}" $ns }}
-            {{- $scRaw = $scRaw | replace "${TENANT_NAME}"     $tenant }}
-            {{- $scRaw = $scRaw | replace "${TENANT_ID}"       $tenant }}
-            {{- if $scKernelDomain }}{{ $scRaw = $scRaw | replace "${KERNEL_DOMAIN}" $scKernelDomain }}{{ end }}
-            {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $scTurnHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $scTurnPort }}
-            {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $scTurnTLSHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_TLS_PORT}"   $scTurnTLSPort }}
-            {{- $scRaw = $scRaw | replace "${TURN_TRANSPORT}" $scTurnTransport }}
-            {{- $scRaw = $scRaw | replace "${TURN_CREDENTIALS}" $scTurnCreds }}
-            {{- if $nodeIP }}{{ $scRaw = $scRaw | replace "${NODE_IP}" $nodeIP }}{{ end }}
-            {{- $scExtraVals = $scRaw | fromJson }}
-            {{- $scExtraVals = mergeOverwrite $scExtraVals (dict
-                "imagePullSecrets" $imagePull
-                "global" (mergeOverwrite (dig "global" dict $scExtraVals) (dict "imagePullSecrets" $imagePull))
-            ) }}
-            {{- end }}
-
-            {{- /* Jitsi: mount Gentian OIDC/JWT overlays over chart ConfigMaps */}}
-            {{- if eq $scName "jitsi" }}
-            {{- if eq (len $jitsiOverlayData) 0 }}
-              {{- fail "gentian-jitsi-oidc-overlays ConfigMap missing — run gentian-os install/update (upsert_gentian_jitsi_oidc_overlays_configmap)" }}
-            {{- end }}
-            {{- $jitsiOidcCM := printf "%s-oidc-overlays" $scXrName }}
-            {{- $jitsiWebOverlayItems := list
-                (dict "key" "body.html" "path" "body.html")
-                (dict "key" "oidc-adapter.html" "path" "oidc-adapter.html")
-                (dict "key" "oidc-redirect.html" "path" "oidc-redirect.html")
-                (dict "key" "plugin.head.html" "path" "plugin.head.html")
-            }}
-            {{- $jitsiWebOverlayMounts := list
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "body.html" "mountPath" "/usr/share/jitsi-meet/body.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "plugin.head.html" "mountPath" "/usr/share/jitsi-meet/plugin.head.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-adapter.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-adapter.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-redirect.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-redirect.html")
-            }}
-            {{- $jitsiOverlayVol := dict
-                "name" "gentian-jitsi-oidc-overlays"
-                "configMap" (dict "name" $jitsiOidcCM "items" $jitsiWebOverlayItems)
-            }}
-            {{- $jitsiAdapterOverlayVol := dict
-                "name" "gentian-jitsi-adapter-overlay"
-                "configMap" (dict "name" $jitsiOidcCM "items" (list (dict "key" "context.ts" "path" "context.ts")))
-            }}
-            {{- $jitsiAdapterOverlayMount := dict
-                "name" "gentian-jitsi-adapter-overlay"
-                "subPath" "context.ts"
-                "mountPath" "/usr/src/app/dist/context.ts"
-            }}
-            {{- $jitsiWebExtra := default dict (dig "jitsi" dict $scExtraVals) }}
-            {{- $jitsiWeb := default dict (dig "web" dict $jitsiWebExtra) }}
-            {{- $jitsiWeb = mergeOverwrite $jitsiWeb (dict
-                "extraVolumes" (concat (default list $jitsiWeb.extraVolumes) (list $jitsiOverlayVol))
-                "extraVolumeMounts" (concat (default list $jitsiWeb.extraVolumeMounts) $jitsiWebOverlayMounts)
-            ) }}
-            {{- $jitsiWebExtra = mergeOverwrite $jitsiWebExtra (dict "web" $jitsiWeb) }}
-            {{- $scExtraVals = mergeOverwrite $scExtraVals (dict
-                "jitsi" $jitsiWebExtra
-                "extraVolumes" (concat (default list $scExtraVals.extraVolumes) (list $jitsiAdapterOverlayVol))
-                "extraVolumeMounts" (concat (default list $scExtraVals.extraVolumeMounts) (list $jitsiAdapterOverlayMount))
-            ) }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-oidc-overlays-cm
-              name: {{ $scXrName }}-oidc-overlays-cm
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
-                  metadata:
-                    name: {{ $jitsiOidcCM }}
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/app: {{ $scAppKey }}
-                      gentianos.io/tenant: {{ $tenant }}
-                  binaryData:
-                    body.html: {{ index $jitsiOverlayData "body.html" | b64enc | quote }}
-                    context.ts: {{ index $jitsiOverlayData "context.ts" | b64enc | quote }}
-                    oidc-adapter.html: {{ index $jitsiOverlayData "oidc-adapter.html" | b64enc | quote }}
-                    oidc-redirect.html: {{ index $jitsiOverlayData "oidc-redirect.html" | b64enc | quote }}
-                    plugin.head.html: {{ index $jitsiOverlayData "plugin.head.html" | b64enc | quote }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
-
-            {{- /* Sidecar Keycloak Client (e.g. opendesk-jitsi) — no standalone AppProfile */}}
-            {{- $scKr := default dict $sidecar.kernelRequirements }}
-            {{- $scIdentity := default dict $scKr.identity }}
-            {{- $scOidcCl := default dict $scIdentity.oidc }}
-            {{- if $scOidcCl.clientId }}
-            {{- $scRedirects := list }}
-            {{- range $uri := (default list $scOidcCl.redirectUris) }}
-            {{- $scRedirects = append $scRedirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
-            {{- end }}
-            {{- $scPostLogout := list }}
-            {{- range $uri := (default list $scOidcCl.postLogoutRedirectUris) }}
-            {{- $scPostLogoutUri := $uri | replace "${TENANT_DOMAIN}" $domain | replace "${TENANT_ID}" $tenant }}
-            {{- if $kernelDomain }}{{ $scPostLogoutUri = $scPostLogoutUri | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
-            {{- $scPostLogout = append $scPostLogout $scPostLogoutUri }}
-            {{- end }}
-            ---
-            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-            kind: Client
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-keycloak-client
-              name: {{ $tenant }}-{{ $scAppKey }}-keycloak-client
-            spec:
-              deletionPolicy: Delete
-              forProvider:
-                clientId: {{ $scOidcCl.clientId | quote }}
-                name: {{ default $scOidcCl.clientId $scOidcCl.name | quote }}
-                realmId: {{ $tenant }}
-                accessType: {{ default "PUBLIC" $scOidcCl.accessType | quote }}
-                standardFlowEnabled: true
-                directAccessGrantsEnabled: {{ default false $scOidcCl.directAccessGrantsEnabled }}
-                serviceAccountsEnabled: false
-                {{- if hasKey $oidcPackFullScopeAllowed $scOidcCl.clientId }}
-                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $scOidcCl.clientId }}
-                {{- end }}
-                {{- if $scRedirects }}
-                validRedirectUris:
-                  {{ toYaml $scRedirects | nindent 18 }}
-                {{- end }}
-                webOrigins:
-                  - "+"
-                {{- if $scPostLogout }}
-                validPostLogoutRedirectUris:
-                  {{ toYaml $scPostLogout | nindent 18 }}
-                {{- end }}
-                {{- if and $scOidcCl.backchannelLogoutUrl (ne $scOidcCl.backchannelLogoutUrl "") }}
-                backchannelLogoutUrl: {{ $scOidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
-                backchannelLogoutSessionRequired: true
-                {{- end }}
-                {{- if eq (default "PUBLIC" $scOidcCl.accessType) "CONFIDENTIAL" }}
-                clientSecretSecretRef:
-                  name: {{ $scXrName }}-oidc-client-creds
-                  namespace: crossplane-system
-                  key: client-secret
-                {{- end }}
-              providerConfigRef:
-                name: keycloak
-            {{- if hasKey $oidcPackDefaultScopes $scOidcCl.clientId }}
-            ---
-            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-            kind: ClientDefaultScopes
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-keycloak-default-scopes
-              name: {{ $tenant }}-{{ $scAppKey }}-keycloak-default-scopes
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $tenant }}
-                clientIdRef:
-                  name: {{ $tenant }}-{{ $scAppKey }}-keycloak-client
-                defaultScopes:
-                  {{ toYaml (index $oidcPackDefaultScopes $scOidcCl.clientId) | nindent 18 }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- end }}
-
-            ---
-            apiVersion: helm.crossplane.io/v1beta1
-            kind: Release
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-release
-              name: {{ $scXrName }}-release
-            spec:
-              forProvider:
-                chart:
-                  repository: {{ $scChart.repository }}
-                  name: {{ $scChart.name }}
-                  version: {{ $scChart.version | quote }}
-                namespace: {{ $ns }}
-                wait: false
-                {{- if gt (len $scExtraVals) 0 }}
-                values:
-                  {{ toYaml $scExtraVals | nindent 18 }}
-                {{- end }}
-                {{- if gt (len $scRelSet) 0 }}
-                set:
-                  {{ toYaml $scRelSet | nindent 18 }}
-                {{- end }}
-              providerConfigRef:
-                name: kubernetes
-
-            {{- $stableSvcName := default "" $sidecar.stableServiceName }}
-            {{- if $stableSvcName }}
-            {{- $stableSvcPort := default 80 ($sidecar.stableServicePort | int) }}
-            {{- $scComponent := "web" }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $scAppKey }}-stable-svc
-              name: {{ $scXrName }}-stable-svc
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: Service
-                  metadata:
-                    name: {{ $stableSvcName }}
-                    namespace: {{ $ns }}
-                  spec:
-                    selector:
-                      app.kubernetes.io/instance: {{ $scXrName }}-release
-                      app.kubernetes.io/component: {{ $scComponent }}
-                    ports:
-                    - name: http
-                      port: {{ $stableSvcPort }}
-                      targetPort: {{ $stableSvcPort }}
-                      protocol: TCP
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
-            {{- end }}
-            {{- else }}
-
-            {{- /* ── Emit Helm Release (default / ox) ─────────────────────────── */}}
+            {{- /* ── Emit Helm Release ────────────────────────────────────────── */}}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release
@@ -1745,16 +717,6 @@ spec:
                 namespace: {{ $ns }}
                 wait: false
                 skipCRDs: true
-                {{- if eq $provMode "ox" }}
-                {{- if gt (len $esData) 0 }}
-                valuesFrom:
-                  - secretKeyRef:
-                      name: {{ printf "%s-appsuite-props" $app }}
-                      namespace: {{ $ns }}
-                      key: appsuite.properties
-                      optional: false
-                {{- end }}
-                {{- end }}
                 {{- if gt (len $extraVals) 0 }}
                 values:
                   {{ toYaml $extraVals | nindent 18 }}
@@ -1767,41 +729,17 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
+            {{- /* When AppProfile sets spec.ingress.serviceName (e.g. "jitsi-web") */}}
+            {{- /* the chart creates services named <xrName>-release-<component>.   */}}
+            {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
+            {{- /* tenant operator ingress backend always resolves correctly.        */}}
+            {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
+            {{- /* creates a Service with the correct name, so emitting our own      */}}
+            {{- /* Object with the same name would conflict with Helm ownership.     */}}
             {{- $ingressSpec    := default dict $pSpec.ingress }}
             {{- $stableSvcName  := dig "serviceName" "" $ingressSpec }}
-            {{- if $stableSvcName }}
-            {{- if eq $provMode "ox" }}
-            {{- $svcPort := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-stable-svc
-              name: {{ $xrName }}-stable-svc
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: Service
-                  metadata:
-                    name: {{ $stableSvcName }}
-                    namespace: {{ $ns }}
-                  spec:
-                    selector:
-                      app.kubernetes.io/instance: {{ $xrName }}-release
-                      app.kubernetes.io/name: core-ui-middleware
-                    ports:
-                    - name: http
-                      port: {{ $svcPort }}
-                      targetPort: http
-                      protocol: TCP
-              providerConfigRef:
-                name: kubernetes
-            {{- else }}
-            {{- /* Skip when fullnameOverride == serviceName: chart already owns the name */}}
             {{- $fullnameOverride := dig "fullnameOverride" "" $extraVals }}
-            {{- if ne $stableSvcName $fullnameOverride }}
+            {{- if and $stableSvcName (ne $stableSvcName $fullnameOverride) }}
             {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
             {{- $svcPort   := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
             ---
@@ -1830,10 +768,6 @@ spec:
                       protocol: TCP
               providerConfigRef:
                 name: kubernetes
-            {{- end }}
-            {{- end }}
-            {{- end }}
-
             {{- end }}
 
             {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
@@ -2314,23 +1248,3 @@ spec:
     - step: automatically-detect-ready-composed-resources
       functionRef:
         name: function-auto-ready
-
-    # ── Step 4: Gate Element Helm releases until OIDC pack scopes are attached ─
-    # Rules only match element resource names (keycloak-default-scopes, synapse).
-    - step: sequence-element-oidc-scopes
-      functionRef:
-        name: function-sequencer
-      input:
-        apiVersion: sequencer.fn.crossplane.io/v1beta1
-        kind: Input
-        resetCompositeReadiness: true
-        rules:
-          - sequence:
-            - .*-keycloak-client
-            - .*-keycloak-default-scopes
-          - sequence:
-            - .*-keycloak-default-scopes
-            - .*-synapse-release
-          - sequence:
-            - .*-keycloak-default-scopes
-            - .*-release

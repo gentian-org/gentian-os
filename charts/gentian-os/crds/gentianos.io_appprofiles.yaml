@@ -251,19 +251,12 @@ spec:
                 - repository
                 - version
                 type: object
-              provisioningMode:
-                description: |-
-                  ProvisioningMode selects extended branches in the app-default composition
-                  (element: Matrix stack; ox: appsuite.properties). Legacy compositionRef
-                  values app-element and app-ox are still honoured by the composition template.
-                enum:
-                - element
-                - ox
-                type: string
               compositionRef:
                 description: |-
-                  Deprecated — use provisioningMode. Legacy app-element / app-ox values are
-                  mapped automatically in the app-default composition template.
+                  CompositionRef overrides the Crossplane Composition used to deploy this
+                  app. When empty the XRD default (app-default) applies. Set to the name
+                  of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
+                  (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
                 type: string
               deploymentMethod:
                 default: crossplane

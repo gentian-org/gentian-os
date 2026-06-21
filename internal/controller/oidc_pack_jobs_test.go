@@ -20,7 +20,7 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	element := &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "element"},
 		Spec: gentianov1alpha1.AppProfileSpec{
-			ProvisioningMode: "element",
+			CompositionRef: "app-element",
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{

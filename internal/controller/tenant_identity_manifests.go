@@ -357,11 +357,17 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	if cfg.pack != nil {
 		return false
 	}
-	if profile.Spec.ProvisioningMode != "" {
-		return true
+	if profile.Spec.DeploymentMethod != "" && profile.Spec.DeploymentMethod != gentianov1alpha1.DeploymentMethodCrossplane {
+		return false
 	}
-	// Legacy profiles may still set compositionRef until migrated.
-	return profile.Spec.CompositionRef != ""
+	if cfg.parentProfile != "" {
+		return profile.Spec.CompositionRef != ""
+	}
+	kr := profile.Spec.KernelRequirements
+	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {
+		return false
+	}
+	return true
 }
 
 func dedupeStrings(in []string) []string {

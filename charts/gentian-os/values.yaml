@@ -50,6 +50,8 @@ ldap:
   server: ""
   # LDAP base DN, e.g. dc=swp-ldap,dc=internal
   base: ""
+  # Optional LDAP bind DN for apps that read a shared search account (OX).
+  bindSearchDn: ""
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
 # Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).

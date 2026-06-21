@@ -4,7 +4,7 @@
 {{- if not $keycloakInternal -}}
 {{- $keycloakInternal = printf "http://nubus-%s-keycloak.%s.svc.cluster.local:8080" $stage .Values.servicesNamespace -}}
 {{- end -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode .Values.ldap.server .Values.ldap.base $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- if or .Values.kernelDomain .Values.tenancyMode .Values.ldap.server .Values.ldap.base .Values.ldap.bindSearchDn $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,6 +26,9 @@ data:
   {{- end }}
   {{- with .Values.ldap.base }}
   LDAP_BASE_DN: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ldap.bindSearchDn }}
+  LDAP_BIND_DN: {{ . | quote }}
   {{- end }}
   {{- with $ks.smtpHost }}
   SMTP_HOST: {{ . | quote }}

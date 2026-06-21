@@ -1193,6 +1193,26 @@ check_prereqs() {
 }
 
 # =============================================================================
+# resolve_ldap_base_dn — cluster LDAP base DN (SoT: LDAP_BASE_DN / LDAP_BASE env,
+# then Cluster XR spec.ldapBaseDn, then dc=* derivation from KERNEL_DOMAIN).
+# =============================================================================
+resolve_ldap_base_dn() {
+    local dn="${LDAP_BASE_DN:-${LDAP_BASE:-}}"
+    if [[ -z "${dn}" ]]; then
+        dn="$(kubectl get cluster dev-cluster -n crossplane-system \
+            -o jsonpath='{.spec.ldapBaseDn}' 2>/dev/null || true)"
+    fi
+    if [[ -z "${dn}" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        dn="$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')"
+    fi
+    if [[ -z "${dn}" && "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        error "LDAP base DN is required (LDAP_BASE_DN in cluster-settings.env or KERNEL_DOMAIN for derivation)."
+        exit 1
+    fi
+    printf '%s' "${dn}"
+}
+
+# =============================================================================
 # upsert_gentian_cluster_config — cluster-wide ConfigMap for Crossplane / apps
 # =============================================================================
 # Idempotent. Used by install.sh (after Cluster XR Ready) and update.sh
@@ -1207,17 +1227,9 @@ upsert_gentian_cluster_config() {
     export NODE_IP
 
     local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}.svc.cluster.local}"
-    local _ldap_base_dn="${LDAP_BASE_DN:-}"
-    if [[ -z "${_ldap_base_dn}" ]]; then
-        _ldap_base_dn="$(kubectl get cluster dev-cluster -n crossplane-system \
-            -o jsonpath='{.spec.ldapBaseDn}' 2>/dev/null || true)"
-    fi
-    if [[ -z "${_ldap_base_dn}" && -n "${KERNEL_DOMAIN:-}" ]]; then
-        _ldap_base_dn="$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')"
-    fi
-    if [[ -z "${_ldap_base_dn}" ]]; then
-        _ldap_base_dn="dc=swp-ldap,dc=internal"
-    fi
+    local _ldap_base_dn
+    _ldap_base_dn="$(resolve_ldap_base_dn)"
+    local _ldap_bind_dn="${LDAP_BIND_DN:-${LDAP_BIND_SEARCH_DN:-}}"
     local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}.svc.cluster.local"
     local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
     local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
@@ -1259,6 +1271,7 @@ metadata:
 data:
   ldap.server: "${_ldap_server}"
   ldap.baseDn: "${_ldap_base_dn}"
+  ldap.bindDn: "${_ldap_bind_dn}"
   mail.smtpHost: "${_smtp_host}"
   udm.url: "${_udm_url}"
   minio.endpoint: "${_minio_endpoint}"
@@ -1280,9 +1293,10 @@ EOF
 }
 
 # upsert_gentian_jitsi_oidc_overlays_configmap — cluster-wide Jitsi OIDC/JWT file
-# overlays consumed by app-default composition (portal iframe SSO, kernel IdP broker).
+# overlays consumed by the element profile composition (portal iframe SSO, kernel IdP broker).
 upsert_gentian_jitsi_oidc_overlays_configmap() {
-    local overlay_dir="${SCRIPT_DIR}/overlays/jitsi"
+    resolve_gentian_apps_path
+    local overlay_dir="${GENTIAN_APPS_PATH}/profiles/element/jitsi-overlay"
     if [[ ! -d "${overlay_dir}" ]]; then
         warn "Jitsi OIDC overlay directory missing (${overlay_dir}); skipping"
         return
@@ -1301,21 +1315,47 @@ upsert_gentian_jitsi_oidc_overlays_configmap() {
     success "gentian-jitsi-oidc-overlays ConfigMap upserted."
 }
 
+resolve_gentian_apps_path() {
+    : "${GENTIAN_APPS_PATH:=${HOME}/.gentian/gentian-apps}"
+    if [[ ! -d "${GENTIAN_APPS_PATH}" ]]; then
+        local sibling_repo
+        sibling_repo="$(cd "${SCRIPT_DIR}/.." && pwd)/gentian-apps"
+        if [[ -d "${sibling_repo}" ]]; then
+            GENTIAN_APPS_PATH="${sibling_repo}"
+            export GENTIAN_APPS_PATH
+            info "Using sibling gentian-apps repo at ${GENTIAN_APPS_PATH}."
+        fi
+    fi
+}
+
+apply_gentian_apps_profile_compositions() {
+    resolve_gentian_apps_path
+    local profiles_dir="${GENTIAN_APPS_PATH}/profiles"
+    if [[ ! -d "${profiles_dir}" ]]; then
+        warn "gentian-apps profiles directory missing (${profiles_dir}); skipping profile compositions"
+        return
+    fi
+
+    local comp
+    shopt -s nullglob
+    for comp in "${profiles_dir}"/*/composition.yaml; do
+        info "Applying profile Composition $(basename "$(dirname "${comp}")")..."
+        kubectl apply -f "${comp}"
+    done
+    shopt -u nullglob
+}
+
 # =============================================================================
 # Crossplane platform compositions (not per-AppProfile)
 # =============================================================================
-# Tenant apps use the single app-default composition; mode is selected via
-# AppProfile spec.provisioningMode (element, ox) inside the template.
+# Generic app-default lives in gentian-os; profile-specific compositions live in
+# gentian-apps/profiles/<profile>/composition.yaml and are applied at install/update.
 
 apply_crossplane_app_compositions() {
     local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
-    local f
-    shopt -s nullglob
-    for f in "${comp_dir}"/app-*.yaml; do
-        info "Applying Composition $(basename "${f}")..."
-        kubectl apply -f "${f}"
-    done
-    shopt -u nullglob
+    info "Applying Composition app-default..."
+    kubectl apply -f "${comp_dir}/app-default.yaml"
+    apply_gentian_apps_profile_compositions
 }
 
 apply_crossplane_platform_compositions() {
@@ -1327,7 +1367,7 @@ apply_crossplane_platform_compositions() {
 }
 
 apply_crossplane_platform_compositions_update() {
-    # Day-2: apply every composition YAML in the directory (including any new app-* variant).
+    # Day-2: apply platform compositions from gentian-os, then profile compositions from gentian-apps.
     local f
     shopt -s nullglob
     for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
@@ -1335,6 +1375,7 @@ apply_crossplane_platform_compositions_update() {
         kubectl apply -f "${f}"
     done
     shopt -u nullglob
+    apply_gentian_apps_profile_compositions
 }
 
 delete_crossplane_compositions() {

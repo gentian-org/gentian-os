@@ -349,8 +349,10 @@ spec:
                 name: {{ $app.profile }}
               tenantNamespace: {{ $ns }}
               domain: {{ $domain }}
-              {{- /* All apps use app-default; variant behaviour is selected via
-                   AppProfile provisioningMode / compositionRef inside the template. */}}
+              {{- if $app.variant }}
+              compositionRef:
+                name: app-{{ $app.variant }}
+              {{- end }}
               {{- if $app.config }}
               config:
                 {{- if dig "replicas" nil $app.config }}
