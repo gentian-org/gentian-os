@@ -187,7 +187,8 @@ git_commit_push() {
       exit 0
     fi
     git commit -m "${message}"
-    git pull --rebase
+    # Match ensure_repo: autostash so unrelated local edits do not block push.
+    git pull --rebase --autostash
     git push
   )
 }
