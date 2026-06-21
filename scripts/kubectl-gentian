@@ -1214,57 +1214,6 @@ wait_for_app_uninstalled() {
   done
 }
 
-# verify_element_keycloak_scopes checks ClientDefaultScopes for Element apps.
-# Missing opendesk-matrix-scope on opendesk-synapse causes invalid_scope SSO loops.
-verify_element_keycloak_scopes() {
-  local tenant_name="${1:-}"
-  if [[ -z "${tenant_name}" ]]; then
-    return 0
-  fi
-
-  local profiles
-  profiles="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.apps[*].profile}' 2>/dev/null || true)"
-  if [[ "${profiles}" != *element* ]]; then
-    return 0
-  fi
-
-  echo "Verifying Element Keycloak OIDC scopes for tenant '${tenant_name}'..."
-
-  local scope_resources=(
-    "${tenant_name}-element-keycloak-default-scopes"
-    "${tenant_name}-element-jitsi-keycloak-default-scopes"
-  )
-  local failed=0
-  for name in "${scope_resources[@]}"; do
-    if ! kubectl --request-timeout=5s get clientdefaultscopes.openidclient.keycloak.crossplane.io "${name}" >/dev/null 2>&1; then
-      if [[ "${name}" == *"-jitsi-"* ]]; then
-        continue
-      fi
-      echo "WARNING: Missing ClientDefaultScopes ${name} — Synapse may reject opendesk-matrix-scope." >&2
-      failed=1
-      continue
-    fi
-    local ready synced
-    ready="$(kubectl --request-timeout=5s get clientdefaultscopes.openidclient.keycloak.crossplane.io "${name}" \
-      -o jsonpath='{.status.conditions[?(@.type==Ready)].status}' 2>/dev/null || true)"
-    synced="$(kubectl --request-timeout=5s get clientdefaultscopes.openidclient.keycloak.crossplane.io "${name}" \
-      -o jsonpath='{.status.conditions[?(@.type==Synced)].status}' 2>/dev/null || true)"
-    if [[ "${ready}" != "True" || "${synced}" != "True" ]]; then
-      echo "WARNING: ClientDefaultScopes ${name} not converged (Ready=${ready:-?}, Synced=${synced:-?})." >&2
-      failed=1
-      continue
-    fi
-    echo "  ClientDefaultScopes ${name}: Ready."
-  done
-
-  if [[ "${failed}" -ne 0 ]]; then
-    echo "WARNING: Element OIDC scope drift causes invalid_scope SSO loops (loading flicker)." >&2
-    echo "  Reconcile the element XApp or redeploy the tenant." >&2
-    return 1
-  fi
-  return 0
-}
-
 wait_for_tenant_ready() {
   local tenant_name="${1}"
   local timeout_secs="${2:-600}"
@@ -1834,8 +1783,6 @@ cmd_tenant_deploy() {
   if ! wait_for_tenant_ready "${tenant_name}" 600; then
     rollback_deploy "${instance}" "${tenant_name}" "${env_name}"
   fi
-
-  verify_element_keycloak_scopes "${tenant_name}" || true
 
   echo "Waiting for tenant-admin credentials to become available..."
   if ! fetch_tenant_admin_credentials "${tenant_name}" 300; then

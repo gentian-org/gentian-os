@@ -988,7 +988,6 @@ op_crossplane_update() {
     apply_crossplane_platform_compositions_update
 
     upsert_gentian_cluster_config
-    upsert_gentian_jitsi_oidc_overlays_configmap
 
     success "Crossplane XRDs and Compositions updated."
 }

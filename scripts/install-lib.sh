@@ -1291,29 +1291,6 @@ EOF
     success "gentian-cluster-config ConfigMap upserted."
 }
 
-# upsert_gentian_jitsi_oidc_overlays_configmap — cluster-wide Jitsi OIDC/JWT file
-# overlays consumed by the element profile composition (portal iframe SSO, kernel IdP broker).
-upsert_gentian_jitsi_oidc_overlays_configmap() {
-    resolve_gentian_apps_path
-    local overlay_dir="${GENTIAN_APPS_PATH}/profiles/element/jitsi-overlay"
-    if [[ ! -d "${overlay_dir}" ]]; then
-        warn "Jitsi OIDC overlay directory missing (${overlay_dir}); skipping"
-        return
-    fi
-
-    info "Upserting gentian-jitsi-oidc-overlays ConfigMap..."
-    kubectl create configmap gentian-jitsi-oidc-overlays \
-        -n crossplane-system \
-        --from-file="${overlay_dir}" \
-        --dry-run=client -o yaml \
-        | kubectl label --local -f - \
-            gentianos.io/config-type=jitsi-oidc-overlays \
-            app.kubernetes.io/managed-by=gentian-os-install \
-            --dry-run=client -o yaml \
-        | kubectl apply -f - >/dev/null
-    success "gentian-jitsi-oidc-overlays ConfigMap upserted."
-}
-
 resolve_gentian_apps_path() {
     : "${GENTIAN_APPS_PATH:=${HOME}/.gentian/gentian-apps}"
     if [[ ! -d "${GENTIAN_APPS_PATH}" ]]; then
@@ -1333,6 +1310,21 @@ apply_gentian_apps_profile_compositions() {
     if [[ ! -d "${profiles_dir}" ]]; then
         warn "gentian-apps profiles directory missing (${profiles_dir}); skipping profile compositions"
         return
+    fi
+
+    # Cluster-wide assets consumed by profile compositions (e.g. element Jitsi OIDC overlays).
+    local overlay_dir="${profiles_dir}/element/jitsi-overlay"
+    if [[ -d "${overlay_dir}" ]]; then
+        info "Applying element Jitsi OIDC overlay ConfigMap..."
+        kubectl create configmap gentian-jitsi-oidc-overlays \
+            -n crossplane-system \
+            --from-file="${overlay_dir}" \
+            --dry-run=client -o yaml \
+            | kubectl label --local -f - \
+                gentianos.io/config-type=jitsi-oidc-overlays \
+                app.kubernetes.io/managed-by=gentian-os-install \
+                --dry-run=client -o yaml \
+            | kubectl apply -f - >/dev/null
     fi
 
     local comp
@@ -2107,59 +2099,6 @@ verify_intercom_ics() {
     warn "intercom did not log 'Redis connected' within ${timeout}s."
     warn "  Try: kubectl rollout restart deployment/${deploy} -n ${services_ns}"
     return 1
-}
-
-# verify_element_keycloak_scopes ensures OpenDesk OIDC pack scopes survived
-# provider-keycloak Client reconciliation. Without ClientDefaultScopes Ready,
-# Synapse SSO returns invalid_scope and Element flickers on the loading screen.
-verify_element_keycloak_scopes() {
-    local tenant_name="${1:-}"
-    if [[ -z "$tenant_name" ]]; then
-        return 0
-    fi
-
-    local profiles
-    profiles="$(kubectl get tenant "$tenant_name" -o jsonpath='{.spec.apps[*].profile}' 2>/dev/null || true)"
-    if [[ "$profiles" != *element* ]]; then
-        return 0
-    fi
-
-    banner "Verifying Element Keycloak OIDC scopes (tenant ${tenant_name})"
-
-    local scope_resources=(
-        "${tenant_name}-element-keycloak-default-scopes"
-        "${tenant_name}-element-jitsi-keycloak-default-scopes"
-    )
-    local failed=0
-    for name in "${scope_resources[@]}"; do
-        if ! kubectl get clientdefaultscopes.openidclient.keycloak.crossplane.io "$name" >/dev/null 2>&1; then
-            if [[ "$name" == *"-jitsi-"* ]]; then
-                continue
-            fi
-            warn "Missing ClientDefaultScopes ${name} — Synapse may reject opendesk-matrix-scope."
-            failed=1
-            continue
-        fi
-        local ready synced
-        ready="$(kubectl get clientdefaultscopes.openidclient.keycloak.crossplane.io "$name" \
-            -o jsonpath='{.status.conditions[?(@.type==Ready)].status}' 2>/dev/null || true)"
-        synced="$(kubectl get clientdefaultscopes.openidclient.keycloak.crossplane.io "$name" \
-            -o jsonpath='{.status.conditions[?(@.type==Synced)].status}' 2>/dev/null || true)"
-        if [[ "$ready" != "True" || "$synced" != "True" ]]; then
-            warn "ClientDefaultScopes ${name} not converged (Ready=${ready:-?}, Synced=${synced:-?})."
-            failed=1
-            continue
-        fi
-        success "ClientDefaultScopes ${name} Ready."
-    done
-
-    if [[ "$failed" -ne 0 ]]; then
-        warn "Element OIDC scope drift causes invalid_scope SSO loops (loading flicker)."
-        warn "  Reconcile: kubectl annotate xapp ${tenant_name}-element crossplane.io/paused=false --overwrite"
-        warn "  Or redeploy: kubectl gentian tenants deploy ${tenant_name}"
-        return 1
-    fi
-    return 0
 }
 
 wait_for_gateway_platform() {

@@ -114,9 +114,6 @@ provisioning:
     - name: notes
       versioning: Versioned
       withLock: false
-    - name: openproject
-      versioning: Suspended
-      withLock: false
     - name: ums
       versioning: Suspended
       withLock: false
@@ -144,14 +141,6 @@ provisioning:
           effect: Allow
           actions: [s3:*]
         - resources: [arn:aws:s3:::notes/*]
-          effect: Allow
-          actions: [s3:*]
-    - name: openproject-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::openproject]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::openproject/*]
           effect: Allow
           actions: [s3:*]
     - name: ums-bucket-policy
