@@ -27,6 +27,9 @@ _gentian_err_trap() {
   local exit_code=$?
   local line=$1
   echo "error: kubectl gentian failed (line ${line}, exit code ${exit_code})" >&2
+  if [[ "${exit_code}" -eq 141 ]]; then
+    echo "  Hint: a kubectl pipeline exited early (SIGPIPE). Update kubectl-gentian/gtnctl." >&2
+  fi
   echo "  Run with 'bash -x kubectl gentian ...' for full trace." >&2
   exit "${exit_code}"
 }
@@ -180,17 +183,37 @@ apply_tenant_manifest_from_git() {
 git_commit_push() {
   local message="${1}"
 
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    if git diff --cached --quiet; then
-      echo "No Git changes detected."
-      exit 0
-    fi
-    git commit -m "${message}"
-    # Match ensure_repo: autostash so unrelated local edits do not block push.
-    git pull --rebase --autostash
-    git push
-  )
+  if ! pushd "${DEPLOYMENTS_PATH}" >/dev/null; then
+    echo "ERROR: deployments path '${DEPLOYMENTS_PATH}' is not accessible." >&2
+    return 1
+  fi
+
+  if git diff --cached --quiet; then
+    echo "No Git changes detected."
+    popd >/dev/null
+    return 0
+  fi
+
+  if ! git commit -m "${message}"; then
+    echo "ERROR: git commit failed in ${DEPLOYMENTS_PATH}." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  # Match ensure_repo: autostash so unrelated local edits do not block push.
+  if ! git pull --rebase --autostash; then
+    echo "ERROR: git pull --rebase failed in ${DEPLOYMENTS_PATH}." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  if ! git push; then
+    echo "ERROR: git push failed in ${DEPLOYMENTS_PATH}." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  popd >/dev/null
 }
 
 set_tenant_deletion_policy() {
@@ -643,7 +666,7 @@ argocd_tenants_app_for_instance() {
   kubectl get application.argoproj.io -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.source.path}{"\n"}{end}' \
     2>/dev/null \
-    | awk -F'\t' -v p="${want_path}" '$2 == p {print $1; exit}'
+    | awk -F'\t' -v p="${want_path}" '$2 == p && !seen { print $1; seen = 1 }'
 }
 
 # Hard-refresh and sync-with-prune the tenant Application so Git revisions apply
@@ -2060,32 +2083,45 @@ cmd_install() {
     exit 1
   fi
 
-  # Guard: check not already installed.
+  # Guard: check not already installed (unless still reconciling).
+  local skip_git=false
   if grep -q "profile: ${app}" "${file}"; then
-    echo "App '${app}' is already listed in tenant '${tenant}'. Nothing to do."
-    exit 0
-  fi
-
-  # Inject the entry under spec.apps.
-  # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
-  # Insert immediately after the "  apps:" line (order within the list is irrelevant).
-  if grep -q '^  apps:' "${file}"; then
-    sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+    local ready_status=""
+    ready_status="$(kubectl --request-timeout=5s get app "${app}" -n "tenant-${tenant}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
+    if [[ "${ready_status}" == "True" ]]; then
+      echo "App '${app}' is already installed and Ready on tenant '${tenant}'. Nothing to do."
+      exit 0
+    fi
+    echo "App '${app}' is already listed for tenant '${tenant}' but not Ready; continuing reconciliation..."
+    skip_git=true
   else
-    # No apps key yet — append the block at the end of the file.
-    printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
+    # Inject the entry under spec.apps.
+    # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
+    # Insert immediately after the "  apps:" line (order within the list is irrelevant).
+    if grep -q '^  apps:' "${file}"; then
+      sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+    else
+      # No apps key yet — append the block at the end of the file.
+      printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
+    fi
+    echo "Added '${app}' to spec.apps."
   fi
-  echo "Added '${app}' to spec.apps."
 
-  # Commit and push.
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    git add "${file}"
-  )
-  git_commit_push "feat(${tenant}): install ${app}"
+  if [[ "${skip_git}" != "true" ]]; then
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${file}"
+    )
+    git_commit_push "feat(${tenant}): install ${app}"
+  fi
 
+  echo ""
+  echo "==> Reconciling tenant manifest (Argo CD sync or kubectl apply)..."
   apply_tenant_manifest_from_git "${file}"
 
+  echo ""
+  echo "==> Waiting for app '${app}' to become Ready..."
   if ! wait_for_app_ready "${tenant}" "${app}" 900; then
     echo "ERROR: app '${app}' did not become Ready on tenant '${tenant}'." >&2
     echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
@@ -2130,8 +2166,12 @@ cmd_uninstall() {
   )
   git_commit_push "feat(${tenant}): uninstall ${app}"
 
+  echo ""
+  echo "==> Reconciling tenant manifest (Argo CD sync or kubectl apply)..."
   apply_tenant_manifest_from_git "${file}"
 
+  echo ""
+  echo "==> Waiting for app '${app}' to be removed..."
   if ! wait_for_app_uninstalled "${tenant}" "${app}" 900; then
     echo "ERROR: app '${app}' was not fully removed from tenant '${tenant}'." >&2
     echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
