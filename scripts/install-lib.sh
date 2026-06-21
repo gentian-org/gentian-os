@@ -1291,87 +1291,17 @@ EOF
     success "gentian-cluster-config ConfigMap upserted."
 }
 
-resolve_gentian_apps_path() {
-    : "${GENTIAN_APPS_PATH:=${HOME}/.gentian/gentian-apps}"
-    if [[ ! -d "${GENTIAN_APPS_PATH}" ]]; then
-        local sibling_repo
-        sibling_repo="$(cd "${SCRIPT_DIR}/.." && pwd)/gentian-apps"
-        if [[ -d "${sibling_repo}" ]]; then
-            GENTIAN_APPS_PATH="${sibling_repo}"
-            export GENTIAN_APPS_PATH
-            info "Using sibling gentian-apps repo at ${GENTIAN_APPS_PATH}."
-        fi
-    fi
-}
-
-apply_gentian_apps_profile_compositions() {
-    resolve_gentian_apps_path
-    local profiles_dir="${GENTIAN_APPS_PATH}/profiles"
-    if [[ ! -d "${profiles_dir}" ]]; then
-        warn "gentian-apps profiles directory missing (${profiles_dir}); skipping profile compositions"
-        return
-    fi
-
-    local comp profile_name script_name script_path
-    shopt -s nullglob
-    for comp in "${profiles_dir}"/*/composition.yaml; do
-        profile_name="$(basename "$(dirname "${comp}")")"
-        script_name="$(_profile_assets_script_name "${profile_name}" "${profiles_dir}")"
-        if [[ -n "${script_name}" ]]; then
-            script_path="${profiles_dir}/${profile_name}/${script_name}"
-            if [[ ! -f "${script_path}" ]]; then
-                warn "Profile ${profile_name} assetsScript=${script_name} not found at ${script_path}"
-                return 1
-            fi
-            if [[ ! -x "${script_path}" ]]; then
-                warn "Profile ${profile_name} assetsScript is not executable: ${script_path}"
-                return 1
-            fi
-            info "Running profile assets script for ${profile_name} (${script_name})..."
-            PROFILE_NAME="${profile_name}" \
-                PROFILE_DIR="${profiles_dir}/${profile_name}" \
-                GENTIAN_APPS_PATH="${GENTIAN_APPS_PATH}" \
-                bash "${script_path}" || return 1
-        fi
-        info "Applying profile Composition ${profile_name}..."
-        kubectl apply -f "${comp}"
-    done
-    shopt -u nullglob
-}
-
-# _profile_assets_script_name reads spec.assetsScript from profiles/<name>.yaml.
-_profile_assets_script_name() {
-    local profile_name="$1"
-    local profiles_dir="$2"
-    local profile_yaml="${profiles_dir}/${profile_name}.yaml"
-    if [[ ! -f "${profile_yaml}" ]]; then
-        return 0
-    fi
-    python3 - "${profile_yaml}" <<'PY' 2>/dev/null || true
-import sys
-try:
-    import yaml
-except ImportError:
-    sys.exit(0)
-with open(sys.argv[1], encoding="utf-8") as fh:
-    doc = yaml.safe_load(fh) or {}
-script = (doc.get("spec") or {}).get("assetsScript") or ""
-if script:
-    print(script.strip())
-PY
-}
-
 # =============================================================================
-# Crossplane platform compositions (not per-AppProfile)
+# Crossplane platform compositions (gentian-os only)
 # =============================================================================
-# Generic app-default lives in gentian-os; profile-specific compositions live in
-# gentian-apps/profiles/<profile>/composition.yaml and are applied at install/update.
+# Generic app-default and tenant/cluster compositions live in gentian-os.
+# Profile-specific compositions are synced from gentian-apps via Argo CD
+# ApplicationSet gentian-catalogue (see install_catalogue_sync).
 
 apply_crossplane_app_compositions() {
     local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
     info "Applying Composition app-default..."
     kubectl apply -f "${comp_dir}/app-default.yaml"
-    apply_gentian_apps_profile_compositions
 }
 
 apply_crossplane_platform_compositions() {
@@ -1383,7 +1313,6 @@ apply_crossplane_platform_compositions() {
 }
 
 apply_crossplane_platform_compositions_update() {
-    # Day-2: apply platform compositions from gentian-os, then profile compositions from gentian-apps.
     local f
     shopt -s nullglob
     for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
@@ -1391,7 +1320,6 @@ apply_crossplane_platform_compositions_update() {
         kubectl apply -f "${f}"
     done
     shopt -u nullglob
-    apply_gentian_apps_profile_compositions
 }
 
 delete_crossplane_compositions() {
@@ -3145,31 +3073,36 @@ install_app_catalogue() {
 }
 
 # =============================================================================
-# 14b. Install ArgoCD Application that syncs AppProfiles from gentian-apps
+# 14b. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
 # =============================================================================
-# Renders kernel/bootstrap/appprofiles-application.yaml.tmpl with the user's
-# chosen repo URL and branch, and applies it. Once Synced, every YAML in
-# <gentian-apps>/profiles/ becomes a cluster-scoped AppProfile CR, which the
-# AppStore controller projects into the AppCatalogue singleton (kubectl gentian
-# apps list reads from there).
-install_appprofiles_sync() {
-    banner "Step 14b — ArgoCD Application syncing AppProfiles from gentian-apps"
+# Renders kernel/bootstrap/catalogue-applicationset.yaml.tmpl. Once synced, each
+# profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
+# applies AppProfile, optional composition.yaml, and optional cluster assets.
+install_catalogue_sync() {
+    banner "Step 14b — Argo CD catalogue sync (gentian-apps profile bundles)"
 
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-applicationset.yaml.tmpl"
     local rendered
     rendered="$(mktemp)"
     sed -e "s|%REPO_URL%|${GENTIAN_APPS_REPO}|g" \
         -e "s|%BRANCH%|${GENTIAN_APPS_BRANCH}|g" \
         "$tmpl" >"$rendered"
 
-    info "Applying gentian-appprofiles Application:"
+    info "Applying gentian-catalogue ApplicationSet:"
     info "  repo:   ${GENTIAN_APPS_REPO}"
     info "  branch: ${GENTIAN_APPS_BRANCH}"
+    # Legacy flat Application (profiles/*.yaml only) — remove on upgrade.
+    kubectl delete application gentian-appprofiles -n argocd --ignore-not-found=true >/dev/null 2>&1 || true
     kubectl apply -f "$rendered"
     rm -f "$rendered"
-    success "AppProfiles sync configured. ArgoCD will populate AppProfile CRs."
+    success "Catalogue sync configured. Argo CD will sync profiles/<name>/ bundles."
     info "After sync, list available app profiles with:"
     info "  kubectl gentian apps list"
+}
+
+# Back-compat alias for install.sh / update.sh call sites.
+install_appprofiles_sync() {
+    install_catalogue_sync
 }
 
 # =============================================================================

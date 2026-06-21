@@ -173,14 +173,6 @@ spec:
                   - valuePath
                   type: object
                 type: array
-              assetsScript:
-                description: |-
-                  AssetsScript names an executable bash script in gentian-apps/profiles/<name>/
-                  run before the profile composition is applied during cluster install/update.
-                  Use for cluster-scoped prerequisites (ConfigMaps, etc.) that the composition
-                  fetches via function-extra-resources. Must be a single filename (no paths).
-                pattern: ^[a-zA-Z0-9._-]+$
-                type: string
               browserProxy:
                 description: |-
                   BrowserProxy declares HTTP routes the shell backend should transparently

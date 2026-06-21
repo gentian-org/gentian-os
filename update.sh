@@ -115,7 +115,7 @@ Options:
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository (tenant-default manifest bridge, app-*).
                            Run after Crossplane XRD/Composition changes; included in --all.
-  --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
+  --appprofiles            Ensure the gentian-catalogue ApplicationSet
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.
   --argocd                 Re-apply gentian-os / appprofiles ArgoCD Application
@@ -993,48 +993,22 @@ op_crossplane_update() {
 }
 
 # =============================================================================
-# op_appprofiles_bootstrap — ensure the gentian-appprofiles ArgoCD Application
-#                            exists so AppProfile CRs are kept in sync from the
-#                            gentian-apps repository.
-#
-# AppProfile CRs carry a gentianos.io/profile-name label that the app-default
-# composition uses to look up profiles via function-extra-resources Selector.
-# Without this ArgoCD Application the profiles are not deployed (or are missing
-# the label) and all App/XApp composites fail with "AppProfile not found".
-#
-# This is idempotent: kubectl apply is a no-op if the Application already
-# exists with identical spec.
+# op_appprofiles_bootstrap — ensure the gentian-catalogue ApplicationSet exists so
+# profile bundles (AppProfile + compositions + assets) sync from gentian-apps.
 # =============================================================================
 op_appprofiles_bootstrap() {
-    banner "gentian-appprofiles ArgoCD Application bootstrap"
-
-    local repo="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
-    local branch="${GENTIAN_APPS_BRANCH:-main}"
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
-
-    if [[ ! -f "${tmpl}" ]]; then
-        warn "Template not found: ${tmpl} — skipping appprofiles bootstrap."
-        return 0
-    fi
-
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would apply gentian-appprofiles Application (repo=${repo}, branch=${branch})"
+        info "[dry-run] would apply gentian-catalogue ApplicationSet"
         return 0
     fi
 
-    info "Applying gentian-appprofiles Application (repo=${repo}, branch=${branch})..."
-    sed -e "s|%REPO_URL%|${repo}|g" \
-        -e "s|%BRANCH%|${branch}|g" \
-        "${tmpl}" | kubectl apply -f -
+    install_catalogue_sync
 
-    success "gentian-appprofiles Application applied."
-
-    # Trigger an immediate ArgoCD refresh so AppProfile CRs with the updated
-    # labels are synced without waiting for the automated poll interval (~3 min).
-    kubectl annotate application gentian-appprofiles -n argocd \
+    kubectl annotate applicationset gentian-catalogue -n argocd \
         "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
-    info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
+    info "  Monitor: kubectl get applicationset gentian-catalogue -n argocd"
+    info "  Bundles: kubectl get applications -n argocd | grep '^catalogue-'"
 }
 
 # =============================================================================

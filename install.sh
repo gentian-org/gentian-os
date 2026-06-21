@@ -685,29 +685,10 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Step 15c: Bootstrap the gentian-appprofiles ArgoCD Application
-# This ArgoCD Application syncs AppProfile CRs from the gentian-apps repository
-# into the cluster. AppProfile CRs must exist before any App/XApp composite
-# can be created by tenants (the app-default composition fetches the AppProfile
-# via function-extra-resources).
-#
-# GENTIAN_APPS_REPO and GENTIAN_APPS_BRANCH are set by install-lib.sh
-# (defaulting to https://github.com/gentian-org/gentian-apps @ main).
+# Step 15c: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
 # =============================================================================
 bootstrap_appprofiles() {
-    banner "Step 15c — Bootstrap gentian-appprofiles ArgoCD Application"
-
-    local repo="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
-    local branch="${GENTIAN_APPS_BRANCH:-main}"
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
-
-    info "Rendering appprofiles-application.yaml (repo=${repo}, branch=${branch})..."
-    sed -e "s|%REPO_URL%|${repo}|g" \
-        -e "s|%BRANCH%|${branch}|g" \
-        "${tmpl}" | kubectl apply -f -
-
-    success "gentian-appprofiles Application applied."
-    info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
+    install_catalogue_sync
 }
 
 # =============================================================================
