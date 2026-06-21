@@ -1312,28 +1312,53 @@ apply_gentian_apps_profile_compositions() {
         return
     fi
 
-    # Cluster-wide assets consumed by profile compositions (e.g. element Jitsi OIDC overlays).
-    local overlay_dir="${profiles_dir}/element/jitsi-overlay"
-    if [[ -d "${overlay_dir}" ]]; then
-        info "Applying element Jitsi OIDC overlay ConfigMap..."
-        kubectl create configmap gentian-jitsi-oidc-overlays \
-            -n crossplane-system \
-            --from-file="${overlay_dir}" \
-            --dry-run=client -o yaml \
-            | kubectl label --local -f - \
-                gentianos.io/config-type=jitsi-oidc-overlays \
-                app.kubernetes.io/managed-by=gentian-os-install \
-                --dry-run=client -o yaml \
-            | kubectl apply -f - >/dev/null
-    fi
-
-    local comp
+    local comp profile_name script_name script_path
     shopt -s nullglob
     for comp in "${profiles_dir}"/*/composition.yaml; do
-        info "Applying profile Composition $(basename "$(dirname "${comp}")")..."
+        profile_name="$(basename "$(dirname "${comp}")")"
+        script_name="$(_profile_assets_script_name "${profile_name}" "${profiles_dir}")"
+        if [[ -n "${script_name}" ]]; then
+            script_path="${profiles_dir}/${profile_name}/${script_name}"
+            if [[ ! -f "${script_path}" ]]; then
+                warn "Profile ${profile_name} assetsScript=${script_name} not found at ${script_path}"
+                return 1
+            fi
+            if [[ ! -x "${script_path}" ]]; then
+                warn "Profile ${profile_name} assetsScript is not executable: ${script_path}"
+                return 1
+            fi
+            info "Running profile assets script for ${profile_name} (${script_name})..."
+            PROFILE_NAME="${profile_name}" \
+                PROFILE_DIR="${profiles_dir}/${profile_name}" \
+                GENTIAN_APPS_PATH="${GENTIAN_APPS_PATH}" \
+                bash "${script_path}" || return 1
+        fi
+        info "Applying profile Composition ${profile_name}..."
         kubectl apply -f "${comp}"
     done
     shopt -u nullglob
+}
+
+# _profile_assets_script_name reads spec.assetsScript from profiles/<name>.yaml.
+_profile_assets_script_name() {
+    local profile_name="$1"
+    local profiles_dir="$2"
+    local profile_yaml="${profiles_dir}/${profile_name}.yaml"
+    if [[ ! -f "${profile_yaml}" ]]; then
+        return 0
+    fi
+    python3 - "${profile_yaml}" <<'PY' 2>/dev/null || true
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+with open(sys.argv[1], encoding="utf-8") as fh:
+    doc = yaml.safe_load(fh) or {}
+script = (doc.get("spec") or {}).get("assetsScript") or ""
+if script:
+    print(script.strip())
+PY
 }
 
 # =============================================================================

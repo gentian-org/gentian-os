@@ -115,6 +115,14 @@ type AppProfileSpec struct {
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 
+	// AssetsScript names an executable bash script in gentian-apps/profiles/<name>/
+	// run before the profile composition is applied during cluster install/update.
+	// Use for cluster-scoped prerequisites (ConfigMaps, etc.) that the composition
+	// fetches via function-extra-resources. Must be a single filename (no paths).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9._-]+$`
+	AssetsScript string `json:"assetsScript,omitempty"`
+
 	// Ingress declares the HTTP routing configuration for this app.
 	// When set, the orchestrator creates a Kubernetes Ingress resource and a
 	// cert-manager Certificate CR for TLS.
