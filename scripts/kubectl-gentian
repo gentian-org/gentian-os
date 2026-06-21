@@ -61,9 +61,12 @@ Usage:
       Install an app for a tenant by committing to gentian-deployments.
       Blocks until the Crossplane App claim is Ready (or reports failed Jobs).
 
-  kubectl gentian apps uninstall <app> --tenant <tenant>
+  kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]
       Uninstall an app from a tenant by committing to gentian-deployments.
       Blocks until the Crossplane App claim and workload pods are gone.
+      Element: default cleanup removes Matrix user identities (fixes OIDC
+      "Account already exists" on reinstall). With --purge / -f, drops the
+      Synapse Postgres schema (full chat history wipe).
 
     kubectl gentian tenants list [--env <stage>]
       List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
@@ -95,6 +98,7 @@ Examples:
   kubectl gentian apps list
   kubectl gentian apps install openproject --tenant gtn-demo
   kubectl gentian apps uninstall openproject --tenant gtn-demo
+  kubectl gentian apps uninstall element --tenant demo --purge   # or -f: wipe Synapse DB schema
   kubectl gentian tenants list
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
@@ -2107,22 +2111,25 @@ cmd_list() {
 }
 
 # Element keeps its Postgres database across app uninstall (databasePerTenant +
-# deletionPolicy Retain). Stale @uvs rows and orphan profiles block UVS bootstrap
-# and OIDC login on reinstall — scrub them after uninstall.
-cleanup_element_synapse_reinstall_state() {
+# deletionPolicy Retain). Stale Matrix users block UVS bootstrap and OIDC login.
+_element_synapse_db_name() {
   local tenant="${1}"
-  local prefix db_name pg_pod sql_out
+  # Matches app-element db-init: ROLE=<tenant>_element (hyphens → underscores).
+  printf '%s_element' "${tenant}" | tr '-' '_'
+}
 
-  prefix="$(kubectl --request-timeout=5s get tenant "${tenant}" \
-    -o jsonpath='{.spec.isolation.databasePrefix}' 2>/dev/null || true)"
-  if [[ -z "${prefix}" ]]; then
-    prefix="${tenant}_"
-  fi
-  # AppProfile databasePerTenant naming: <databasePrefix>element
-  db_name="${prefix}element"
+_element_synapse_postgres_pod() {
+  kubectl --request-timeout=5s get pods -n "${KERNEL_NAMESPACE}" \
+    -l cnpg.io/cluster=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+}
 
-  pg_pod="$(kubectl --request-timeout=5s get pods -n "${KERNEL_NAMESPACE}" \
-    -l cnpg.io/cluster=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+cleanup_element_synapse_post_uninstall() {
+  local tenant="${1}"
+  local force="${2:-false}"
+  local db_name pg_pod sql_out
+
+  db_name="$(_element_synapse_db_name "${tenant}")"
+  pg_pod="$(_element_synapse_postgres_pod)"
   if [[ -z "${pg_pod}" ]]; then
     echo "WARNING: postgres pod not found; skipping Synapse DB cleanup for ${db_name}." >&2
     return 0
@@ -2131,30 +2138,48 @@ cleanup_element_synapse_reinstall_state() {
   if ! kubectl --request-timeout=5s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
       psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db_name}'" 2>/dev/null \
       | grep -q 1; then
-    echo "Synapse database ${db_name} not present; skipping Matrix user cleanup."
+    echo "Synapse database ${db_name} not present; skipping Matrix cleanup."
     return 0
   fi
 
-  echo "Cleaning stale Synapse Matrix state in ${db_name} (Element reinstall hygiene)..."
+  if [[ "${force}" == "true" ]]; then
+    echo "Purging Synapse schema ${db_name} (Element --purge: full Matrix data wipe)..."
+    if ! sql_out="$(kubectl --request-timeout=60s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+      psql -U postgres -d "${db_name}" -v ON_ERROR_STOP=1 -c "
+DROP SCHEMA IF EXISTS \"${db_name}\" CASCADE;
+CREATE SCHEMA \"${db_name}\" AUTHORIZATION \"${db_name}\";
+GRANT ALL ON SCHEMA \"${db_name}\" TO \"${db_name}\";
+" 2>&1)"; then
+      echo "WARNING: Synapse schema purge for ${db_name} failed:" >&2
+      printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+      return 0
+    fi
+    kubectl --request-timeout=10s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+      psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+      -c "ALTER ROLE \"${db_name}\" SET search_path TO \"${db_name}\", public;" \
+      >/dev/null 2>&1 || true
+    echo "Synapse schema ${db_name} purged. Synapse will re-migrate on next Element install."
+    return 0
+  fi
+
+  echo "Cleaning Matrix user identities in ${db_name} (Element reinstall hygiene)..."
   if ! sql_out="$(kubectl --request-timeout=30s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
     psql -U postgres -d "${db_name}" -v ON_ERROR_STOP=1 -c "
 BEGIN;
-DELETE FROM ${db_name}.user_external_ids WHERE user_id LIKE '@uvs:%';
-DELETE FROM ${db_name}.user_threepids WHERE user_id LIKE '@uvs:%';
-DELETE FROM ${db_name}.users WHERE name LIKE '@uvs:%';
-DELETE FROM ${db_name}.profiles p
-  WHERE p.user_id = 'uvs'
-     OR NOT EXISTS (
-       SELECT 1 FROM ${db_name}.users u
-       WHERE u.name LIKE '@' || p.user_id || ':%'
-     );
+DELETE FROM \"${db_name}\".access_tokens;
+DELETE FROM \"${db_name}\".devices;
+DELETE FROM \"${db_name}\".user_external_ids;
+DELETE FROM \"${db_name}\".user_threepids;
+DELETE FROM \"${db_name}\".profiles;
+DELETE FROM \"${db_name}\".users;
 COMMIT;
 " 2>&1)"; then
-    echo "WARNING: Synapse DB cleanup for ${db_name} failed:" >&2
+    echo "WARNING: Synapse identity cleanup for ${db_name} failed:" >&2
     printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    echo "  Retry with: gtnctl apps uninstall element --tenant ${tenant} --purge" >&2
     return 0
   fi
-  echo "Synapse DB cleanup complete for ${db_name}."
+  echo "Synapse identity cleanup complete for ${db_name}."
 }
 
 # ---------------------------------------------------------------------------
@@ -2235,9 +2260,10 @@ cmd_install() {
 cmd_uninstall() {
   local app="${1:-}"
   local tenant="${2:-}"
+  local force="${3:-false}"
 
   if [[ -z "${app}" || -z "${tenant}" ]]; then
-    echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant>" >&2
+    echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]" >&2
     exit 1
   fi
 
@@ -2277,7 +2303,7 @@ cmd_uninstall() {
   fi
 
   if [[ "${app}" == "element" ]]; then
-    cleanup_element_synapse_reinstall_state "${tenant}"
+    cleanup_element_synapse_post_uninstall "${tenant}" "${force}"
   fi
 
   echo "Done. App '${app}' is uninstalled from tenant '${tenant}'."
@@ -2306,11 +2332,16 @@ case "${SUBCOMMAND}" in
         APP_NAME="${1:-}"
         shift || true
         TENANT_NAME=""
+        APP_PURGE=false
         while [[ $# -gt 0 ]]; do
           case "${1}" in
             --tenant|-t)
               TENANT_NAME="${2:-}"
               shift 2
+              ;;
+            --purge|-f)
+              APP_PURGE=true
+              shift
               ;;
             *)
               echo "ERROR: unknown flag: ${1}" >&2
@@ -2319,9 +2350,13 @@ case "${SUBCOMMAND}" in
           esac
         done
         if [[ "${APPS_CMD}" == "install" ]]; then
+          if [[ "${APP_PURGE}" == "true" ]]; then
+            echo "ERROR: --purge / -f is only supported for apps uninstall (not install)." >&2
+            exit 1
+          fi
           cmd_install "${APP_NAME}" "${TENANT_NAME}"
         else
-          cmd_uninstall "${APP_NAME}" "${TENANT_NAME}"
+          cmd_uninstall "${APP_NAME}" "${TENANT_NAME}" "${APP_PURGE}"
         fi
         ;;
       *)
