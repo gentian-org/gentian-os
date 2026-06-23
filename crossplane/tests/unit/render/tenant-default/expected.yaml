@@ -6,7 +6,7 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-default'
+    message: 'Unready resources: app-element'
     reason: Creating
     status: "False"
     type: Ready
@@ -15,7 +15,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: App
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: app-default
+    crossplane.io/composition-resource-name: app-element
   labels:
     app.kubernetes.io/managed-by: gentian-os
     crossplane.io/composite: render-fixture
