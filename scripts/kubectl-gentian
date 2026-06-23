@@ -64,9 +64,10 @@ Usage:
   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]
       Uninstall an app from a tenant by committing to gentian-deployments.
       Blocks until the Crossplane App claim and workload pods are gone.
-      Element: default cleanup removes Matrix user identities (fixes OIDC
-      "Account already exists" on reinstall). With --purge / -f, drops the
-      Synapse Postgres schema (full chat history wipe).
+      Default cleanup (Element only): removes Matrix user identities so OIDC
+      reinstall works. With --purge / -f, permanently deletes all app-owned
+      persistent state (Postgres/MariaDB, S3, Redis ACL, OpenBao secrets,
+      kernel provisioning Jobs) so reinstall starts from a clean slate.
 
     kubectl gentian tenants list [--env <stage>]
       List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
@@ -98,7 +99,8 @@ Examples:
   kubectl gentian apps list
   kubectl gentian apps install openproject --tenant gtn-demo
   kubectl gentian apps uninstall openproject --tenant gtn-demo
-  kubectl gentian apps uninstall element --tenant demo --purge   # or -f: wipe Synapse DB schema
+  kubectl gentian apps uninstall openproject --tenant gtn-demo --purge   # wipe DB, S3, secrets
+  kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
@@ -2110,55 +2112,226 @@ cmd_list() {
       }'
 }
 
-# Element keeps its Postgres database across app uninstall (databasePerTenant +
-# deletionPolicy Retain). Stale Matrix users block UVS bootstrap and OIDC login.
-_element_synapse_db_name() {
-  local tenant="${1}"
-  # Matches app-element db-init: ROLE=<tenant>_element (hyphens → underscores).
-  printf '%s_element' "${tenant}" | tr '-' '_'
+# App uninstall cleanup — persistent state survives Crossplane teardown because
+# databasePerTenant + deletionPolicy Retain keep kernel resources until purge.
+# Naming mirrors internal/controller/*_reconciler.go and app-default db-init.
+
+_app_db_role_name() {
+  local tenant="${1}" app="${2}"
+  printf '%s_%s' "${tenant}" "${app}" | tr '-' '_'
 }
 
-_element_synapse_postgres_pod() {
+_app_database_name() {
+  local tenant="${1}" app="${2}"
+  local prefix
+  prefix="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.databasePrefix}' 2>/dev/null || true)"
+  if [[ -z "${prefix}" ]]; then
+    prefix="${tenant}_"
+  fi
+  printf '%s%s' "$(printf '%s' "${prefix}" | tr '-' '_')" "$(printf '%s' "${app}" | tr '-' '_')"
+}
+
+_app_mariadb_user_name() {
+  local tenant="${1}" app="${2}"
+  printf '%s_%s' "$(printf '%s' "${tenant}" | tr '-' '_')" "$(printf '%s' "${app}" | tr '-' '_')"
+}
+
+_s3_safe_component() {
+  local s="${1}" out="" i ch lower
+  for ((i = 0; i < ${#s}; i++)); do
+    ch="${s:i:1}"
+    case "${ch}" in
+      [a-z0-9-]) out+="${ch}" ;;
+      [A-Z])
+        lower="$(printf '%s' "${ch}" | tr '[:upper:]' '[:lower:]')"
+        out+="${lower}"
+        ;;
+      *) out+="-" ;;
+    esac
+  done
+  printf '%s' "${out}"
+}
+
+_app_s3_bucket_name() {
+  local tenant="${1}" app="${2}"
+  local prefix
+  prefix="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.s3Prefix}' 2>/dev/null || true)"
+  if [[ -z "${prefix}" ]]; then
+    prefix="${tenant}-"
+  fi
+  printf '%s%s' "$(_s3_safe_component "${prefix}")" "$(_s3_safe_component "${app}")"
+}
+
+_app_redis_acl_username() {
+  local tenant="${1}" app="${2}"
+  printf '%s-%s' "${tenant}" "${app}"
+}
+
+_postgres_pod() {
   kubectl --request-timeout=5s get pods -n "${KERNEL_NAMESPACE}" \
     -l cnpg.io/cluster=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
 }
 
-cleanup_element_synapse_post_uninstall() {
-  local tenant="${1}"
-  local force="${2:-false}"
-  local db_name pg_pod sql_out
+_openbao_pod() {
+  kubectl --request-timeout=5s get pods -n openbao \
+    -l 'app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao' \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || kubectl --request-timeout=5s get pods -n openbao -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || true
+}
 
-  db_name="$(_element_synapse_db_name "${tenant}")"
-  pg_pod="$(_element_synapse_postgres_pod)"
+_openbao_operator_token() {
+  local jwt bao_pod login_token
+  jwt="$(kubectl --request-timeout=5s create token -n gentian-system gentian-os --duration=10m 2>/dev/null || true)"
+  if [[ -z "${jwt}" ]]; then
+    return 1
+  fi
+  bao_pod="$(_openbao_pod)"
+  if [[ -z "${bao_pod}" ]]; then
+    return 1
+  fi
+  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc \
+    "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" \
+    2>/dev/null || true)"
+  if [[ -z "${login_token}" ]]; then
+    return 1
+  fi
+  printf '%s' "${login_token}"
+}
+
+_app_profile_requirement() {
+  local app="${1}" jsonpath="${2}"
+  kubectl get appprofile "${app}" -o "jsonpath=${jsonpath}" 2>/dev/null || true
+}
+
+_run_kernel_provisioning_job() {
+  local job_name="${1}"
+  local force="${2:-false}"
+  shift 2
+
+  if [[ "${force}" == "true" ]]; then
+    kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
+  elif kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    local complete_status=""
+    complete_status="$(kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+      -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)"
+    if [[ "${complete_status}" == "True" ]]; then
+      echo "Provisioning job '${job_name}' already completed."
+      return 0
+    fi
+  fi
+
+  kubectl apply -f -
+  wait_with_message \
+    "Waiting for provisioning job '${job_name}' to complete (timeout: 300s)..." \
+    job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+    --for=condition=complete --timeout=300s
+}
+
+purge_app_cluster_artifacts() {
+  local tenant="${1}" app="${2}"
+  local label_selector="gentianos.io/tenant=${tenant},gentianos.io/app=${app},app.kubernetes.io/managed-by=gentian-os"
+
+  echo "Removing kernel provisioning artifacts for '${app}'..."
+  delete_labeled_resources "jobs" "${KERNEL_NAMESPACE}" "${label_selector}"
+  kubectl delete secrets -n "${KERNEL_NAMESPACE}" \
+    -l "${label_selector}" --ignore-not-found=true
+  kubectl delete database.postgresql.cnpg.io "db-${tenant}-${app}" \
+    -n "${KERNEL_NAMESPACE}" --ignore-not-found=true
+}
+
+purge_app_openbao_path() {
+  local tenant="${1}" app_key="${2}"
+  local token bao_pod base_path
+  token="$(_openbao_operator_token)" || {
+    echo "WARNING: OpenBao login failed; skipping secret purge for '${app_key}'." >&2
+    return 0
+  }
+  bao_pod="$(_openbao_pod)"
+  if [[ -z "${bao_pod}" ]]; then
+    echo "WARNING: OpenBao pod not found; skipping secret purge for '${app_key}'." >&2
+    return 0
+  fi
+
+  base_path="gentian-os/tenants/${tenant}/apps/${app_key}"
+  echo "Purging OpenBao secrets at ${base_path}..."
+  kubectl --request-timeout=60s exec -n openbao "${bao_pod}" -- sh -lc "
+    set -eu
+    BAO_ADDR=http://127.0.0.1:8200
+    BAO_TOKEN='${token}'
+    BASE='${base_path}'
+    purge_kv_tree() {
+      path=\"\$1\"
+      listed=\$(bao kv list -mount=secret \"\${path}\" 2>/dev/null || true)
+      if [ -z \"\${listed}\" ]; then
+        bao kv metadata delete -mount=secret \"\${path}\" 2>/dev/null || true
+        return 0
+      fi
+      printf '%s\n' \"\${listed}\" | while IFS= read -r entry; do
+        [ -z \"\${entry}\" ] && continue
+        case \"\${entry}\" in
+          */) purge_kv_tree \"\${path}/\${entry%/}\"
+               ;;
+          *) bao kv metadata delete -mount=secret \"\${path}/\${entry}\" 2>/dev/null || true
+             ;;
+        esac
+      done
+      bao kv metadata delete -mount=secret \"\${path}\" 2>/dev/null || true
+    }
+    purge_kv_tree \"\${BASE}\"
+    echo \"OpenBao path \${BASE} purged\"
+  " || echo "WARNING: OpenBao purge for '${app_key}' failed." >&2
+}
+
+purge_app_openbao_secrets() {
+  local tenant="${1}" app="${2}"
+  purge_app_openbao_path "${tenant}" "${app}"
+
+  local sidecar
+  while IFS= read -r sidecar; do
+    [[ -z "${sidecar}" ]] && continue
+    purge_app_openbao_path "${tenant}" "${app}-${sidecar}"
+  done < <(_app_profile_requirement "${app}" '{range .spec.sidecars[*]}{.name}{"\n"}{end}')
+}
+
+purge_app_postgresql() {
+  local tenant="${1}" app="${2}"
+  local db_name pg_pod sql_out
+  db_name="$(_app_db_role_name "${tenant}" "${app}")"
+  pg_pod="$(_postgres_pod)"
   if [[ -z "${pg_pod}" ]]; then
-    echo "WARNING: postgres pod not found; skipping Synapse DB cleanup for ${db_name}." >&2
+    echo "WARNING: postgres pod not found; skipping Postgres purge for ${db_name}." >&2
+    return 0
+  fi
+
+  echo "Purging Postgres database ${db_name}..."
+  if ! sql_out="$(kubectl --request-timeout=60s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}';
+DROP DATABASE IF EXISTS \"${db_name}\";
+DROP ROLE IF EXISTS \"${db_name}\";
+" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed:" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  echo "Postgres database ${db_name} removed."
+}
+
+cleanup_element_synapse_identities() {
+  local tenant="${1}"
+  local db_name pg_pod sql_out
+  db_name="$(_app_db_role_name "${tenant}" "element")"
+  pg_pod="$(_postgres_pod)"
+  if [[ -z "${pg_pod}" ]]; then
+    echo "WARNING: postgres pod not found; skipping Synapse identity cleanup for ${db_name}." >&2
     return 0
   fi
 
   if ! kubectl --request-timeout=5s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
       psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db_name}'" 2>/dev/null \
       | grep -q 1; then
-    echo "Synapse database ${db_name} not present; skipping Matrix cleanup."
-    return 0
-  fi
-
-  if [[ "${force}" == "true" ]]; then
-    echo "Purging Synapse schema ${db_name} (Element --purge: full Matrix data wipe)..."
-    if ! sql_out="$(kubectl --request-timeout=60s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
-      psql -U postgres -d "${db_name}" -v ON_ERROR_STOP=1 -c "
-DROP SCHEMA IF EXISTS \"${db_name}\" CASCADE;
-CREATE SCHEMA \"${db_name}\" AUTHORIZATION \"${db_name}\";
-GRANT ALL ON SCHEMA \"${db_name}\" TO \"${db_name}\";
-" 2>&1)"; then
-      echo "WARNING: Synapse schema purge for ${db_name} failed:" >&2
-      printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
-      return 0
-    fi
-    kubectl --request-timeout=10s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
-      psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-      -c "ALTER ROLE \"${db_name}\" SET search_path TO \"${db_name}\", public;" \
-      >/dev/null 2>&1 || true
-    echo "Synapse schema ${db_name} purged. Synapse will re-migrate on next Element install."
+    echo "Synapse database ${db_name} not present; skipping Matrix identity cleanup."
     return 0
   fi
 
@@ -2180,6 +2353,240 @@ COMMIT;
     return 0
   fi
   echo "Synapse identity cleanup complete for ${db_name}."
+}
+
+purge_app_mariadb() {
+  local tenant="${1}" app="${2}"
+  local db_name db_user job_name
+  db_name="$(_app_database_name "${tenant}" "${app}")"
+  db_user="$(_app_mariadb_user_name "${tenant}" "${app}")"
+  job_name="mariadb-delete-${tenant}-${app}"
+
+  echo "Purging MariaDB database ${db_name} (user ${db_user})..."
+  _run_kernel_provisioning_job "${job_name}" true <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant}
+    gentianos.io/app: ${app}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: delete-db
+        image: mariadb:11
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          if ! echo "\${DB_NAME}" | grep -qE '^[a-zA-Z0-9_]+$'; then
+            echo "ERROR: invalid DB_NAME '\${DB_NAME}'" >&2; exit 1
+          fi
+          if ! echo "\${DB_USER}" | grep -qE '^[a-zA-Z0-9_]+$'; then
+            echo "ERROR: invalid DB_USER '\${DB_USER}'" >&2; exit 1
+          fi
+          MARIADB="mariadb -h\${MYSQL_HOST} -P\${MYSQL_TCP_PORT} -u\${MYSQL_ADMIN_USER}"
+          \$MARIADB -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM '\${DB_USER}'@'%';" 2>/dev/null || true
+          \$MARIADB -e "DROP USER IF EXISTS '\${DB_USER}'@'%';"
+          \$MARIADB -e "DROP DATABASE IF EXISTS \${DB_NAME};"
+          echo "deleted database \${DB_NAME} and user \${DB_USER}"
+        env:
+        - name: MYSQL_HOST
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: host
+        - name: MYSQL_TCP_PORT
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: port
+        - name: MYSQL_PWD
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: password
+        - name: MYSQL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: username
+        - name: DB_NAME
+          value: ${db_name}
+        - name: DB_USER
+          value: ${db_user}
+EOF
+}
+
+purge_app_s3() {
+  local tenant="${1}" app="${2}"
+  local bucket job_name
+  bucket="$(_app_s3_bucket_name "${tenant}" "${app}")"
+  job_name="s3-delete-${tenant}-${app}"
+
+  echo "Purging S3 bucket ${bucket}..."
+  _run_kernel_provisioning_job "${job_name}" true <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant}
+    gentianos.io/app: ${app}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: delete-bucket
+        image: minio/mc:RELEASE.2025-04-03T17-07-56Z
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eu
+          mc alias set gentian "\${MINIO_ENDPOINT}" "\${MINIO_ACCESS_KEY}" "\${MINIO_SECRET_KEY}"
+          mc rb --force "gentian/${bucket}" 2>/dev/null || echo "bucket ${bucket} already gone"
+          echo "bucket ${bucket} removed"
+        env:
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin
+              key: endpoint
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin
+              key: accessKey
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin
+              key: secretKey
+EOF
+}
+
+purge_app_redis() {
+  local tenant="${1}" app="${2}"
+  local username job_name
+  username="$(_app_redis_acl_username "${tenant}" "${app}")"
+  job_name="redis-acl-delete-${tenant}-${app}"
+
+  echo "Purging Redis ACL user ${username}..."
+  _run_kernel_provisioning_job "${job_name}" true <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant}
+    gentianos.io/app: ${app}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: del-acl-user
+        image: redis:7-alpine
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          redis-cli -h "\$REDIS_HOST" -p "\${REDIS_PORT:-6379}" -a "\$REDIS_PASSWORD" --no-auth-warning \\
+            ACL DELUSER ${username} 2>/dev/null || echo "user ${username} already absent"
+          echo "done"
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin
+              key: host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin
+              key: port
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin
+              key: password
+EOF
+}
+
+cleanup_app_post_uninstall() {
+  local tenant="${1}" app="${2}" force="${3:-false}"
+  local db_engine s3_req redis_engine profile_found=false
+
+  if kubectl get appprofile "${app}" &>/dev/null; then
+    profile_found=true
+    db_engine="$(_app_profile_requirement "${app}" '{.spec.kernelRequirements.database.engine}')"
+    s3_req="$(_app_profile_requirement "${app}" '{.spec.kernelRequirements.storage.s3}')"
+    redis_engine="$(_app_profile_requirement "${app}" '{.spec.kernelRequirements.cache.engine}')"
+  fi
+
+  if [[ "${force}" != "true" ]]; then
+    if [[ "${app}" == "element" ]] && { [[ "${db_engine}" == "postgresql" ]] || [[ "${profile_found}" != "true" ]]; }; then
+      cleanup_element_synapse_identities "${tenant}"
+    fi
+    return 0
+  fi
+
+  echo ""
+  echo "==> Purging persistent state for app '${app}' on tenant '${tenant}'..."
+
+  if [[ "${profile_found}" != "true" ]]; then
+    echo "WARNING: AppProfile '${app}' not found; running best-effort purge from naming conventions." >&2
+    if kubectl get job "mariadb-setup-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      db_engine="mariadb"
+    elif kubectl get job "pg-role-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null \
+      || kubectl get database.postgresql.cnpg.io "db-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      db_engine="postgresql"
+    else
+      db_engine="postgresql"
+    fi
+    if kubectl get job "redis-acl-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      redis_engine="redis"
+    fi
+    if kubectl get job "s3-bucket-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      s3_req="1"
+    fi
+  fi
+
+  case "${db_engine}" in
+    postgresql) purge_app_postgresql "${tenant}" "${app}" ;;
+    mariadb) purge_app_mariadb "${tenant}" "${app}" ;;
+    "") ;;
+    *)
+      echo "WARNING: unsupported database engine '${db_engine}' for '${app}'; skipping DB purge." >&2
+      ;;
+  esac
+
+  if [[ -n "${s3_req}" ]]; then
+    purge_app_s3 "${tenant}" "${app}"
+  elif [[ "${profile_found}" != "true" && -n "${s3_req}" ]]; then
+    purge_app_s3 "${tenant}" "${app}" || true
+  fi
+
+  if [[ "${redis_engine}" == "redis" ]]; then
+    purge_app_redis "${tenant}" "${app}"
+  fi
+
+  purge_app_openbao_secrets "${tenant}" "${app}"
+  purge_app_cluster_artifacts "${tenant}" "${app}"
+  echo "Persistent state purge complete for '${app}'."
 }
 
 # ---------------------------------------------------------------------------
@@ -2302,9 +2709,7 @@ cmd_uninstall() {
     exit 1
   fi
 
-  if [[ "${app}" == "element" ]]; then
-    cleanup_element_synapse_post_uninstall "${tenant}" "${force}"
-  fi
+  cleanup_app_post_uninstall "${tenant}" "${app}" "${force}"
 
   echo "Done. App '${app}' is uninstalled from tenant '${tenant}'."
 }
