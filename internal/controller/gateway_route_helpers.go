@@ -104,6 +104,9 @@ func buildAppHTTPRoute(
 	}
 
 	rules := []gatewayv1.HTTPRouteRule{rule}
+	if apiRules := appAPIBackendRules(appProfile, svcPort); len(apiRules) > 0 {
+		rules = append(apiRules, rules...)
+	}
 	if rootRedirect := appRootRedirectRule(appProfile, host); rootRedirect != nil {
 		rules = append([]gatewayv1.HTTPRouteRule{*rootRedirect}, rules...)
 	}
@@ -166,6 +169,41 @@ func appRootRedirectRule(appProfile, host string) *gatewayv1.HTTPRouteRule {
 
 var appRootRedirectTargets = map[string]string{
 	"ox-appsuite": "/appsuite/",
+}
+
+type appAPIBackend struct {
+	pathPrefix  string
+	serviceName string
+}
+
+var appAPIBackends = map[string][]appAPIBackend{
+	"ox-appsuite": {
+		{pathPrefix: "/appsuite/api", serviceName: "appsuite-api"},
+	},
+}
+
+func appAPIBackendRules(appProfile string, svcPort int32) []gatewayv1.HTTPRouteRule {
+	backends, ok := appAPIBackends[appProfile]
+	if !ok {
+		return nil
+	}
+	port := gatewayv1.PortNumber(svcPort)
+	var rules []gatewayv1.HTTPRouteRule
+	for _, backend := range backends {
+		prefix := backend.pathPrefix
+		rules = append(rules, gatewayv1.HTTPRouteRule{
+			Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
+			BackendRefs: []gatewayv1.HTTPBackendRef{{
+				BackendRef: gatewayv1.BackendRef{
+					BackendObjectReference: gatewayv1.BackendObjectReference{
+						Name: gatewayv1.ObjectName(backend.serviceName),
+						Port: &port,
+					},
+				},
+			}},
+		})
+	}
+	return rules
 }
 
 func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *gatewayv1.HTTPRoute {

@@ -223,15 +223,18 @@ func TestBuildAppHTTPRouteOXRootRedirect(t *testing.T) {
 		ServiceName: "appsuite",
 	}
 	route := buildAppHTTPRoute(tenant, "tenant-demo", "ox-appsuite", ingress, "webmail.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
-	if len(route.Spec.Rules) != 2 {
-		t.Fatalf("rules = %d, want 2", len(route.Spec.Rules))
+	if len(route.Spec.Rules) != 3 {
+		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
 	}
 	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
 	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/appsuite/" {
 		t.Fatalf("redirect = %+v", redirect)
 	}
-	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "appsuite" {
-		t.Fatalf("backend rule = %+v", route.Spec.Rules[1].BackendRefs)
+	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "appsuite-api" {
+		t.Fatalf("api backend rule = %+v", route.Spec.Rules[1].BackendRefs)
+	}
+	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "appsuite" {
+		t.Fatalf("ui backend rule = %+v", route.Spec.Rules[2].BackendRefs)
 	}
 }
 
