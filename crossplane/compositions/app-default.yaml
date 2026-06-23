@@ -121,6 +121,25 @@ spec:
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
 
+            {{- /* OpenDesk OIDC pack scopes: operator Jobs create ClientScope + mappers;
+                 ClientDefaultScopes re-attaches them after provider-keycloak Client sync. */}}
+            {{- $oidcPackDefaultScopes := dict
+                "opendesk-jitsi" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-jitsi-scope")
+                "opendesk-synapse" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-matrix-scope")
+                "opendesk-nextcloud" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-nextcloud-scope")
+                "opendesk-openproject" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-openproject-scope")
+                "opendesk-xwiki" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-xwiki-scope")
+                "opendesk-oxappsuite" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-oxappsuite-scope")
+            }}
+            {{- $oidcPackFullScopeAllowed := dict
+                "opendesk-jitsi" true
+                "opendesk-synapse" false
+                "opendesk-nextcloud" false
+                "opendesk-openproject" false
+                "opendesk-xwiki" false
+                "opendesk-oxappsuite" false
+            }}
+
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
             {{- /* it under a flat secretKey in the managed Secret. Non-empty keys  */}}
@@ -641,6 +660,9 @@ spec:
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
+                {{- if hasKey $oidcPackFullScopeAllowed $oidcCl.clientId }}
+                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcCl.clientId }}
+                {{- end }}
                 {{- if $redirects }}
                 validRedirectUris:
                   {{ toYaml $redirects | nindent 18 }}
@@ -663,6 +685,25 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+            {{- if hasKey $oidcPackDefaultScopes $oidcCl.clientId }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-default-scopes
+              name: {{ $tenant }}-{{ $app }}-keycloak-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                defaultScopes:
+                  {{ toYaml (index $oidcPackDefaultScopes $oidcCl.clientId) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
 
             {{- /* ── Emit ExternalSecret (only when there are secrets to sync) ── */}}
