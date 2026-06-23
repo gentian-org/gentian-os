@@ -643,6 +643,41 @@ spec:
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
             {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
             {{- end }}
+            {{- /* provider-keycloak Client reads clientSecretSecretRef from this Secret;
+                 it must match the OpenBao path XWiki consumes via ExternalSecret. */}}
+            {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
+            {{- $oidcCredsPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $app }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-client-creds-es
+              name: {{ $xrName }}-oidc-client-creds-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $xrName }}-oidc-client-creds
+                    namespace: crossplane-system
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $xrName }}-oidc-client-creds
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: {{ $oidcCredsPath }}
+                          property: client-secret
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client
