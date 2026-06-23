@@ -1216,16 +1216,25 @@ spec:
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database" \
                         2>/dev/null || echo '{}')
-                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
-                        echo "[db-init] credential already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
+                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
+                      DBNAME="${ROLE}"
                       CNPG=$(curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/database/cnpg")
                       SU_USER=$(echo "${CNPG}" | jq -r '.data.data.superuser_username')
                       SU_PASS=$(echo "${CNPG}" | jq -r '.data.data.superuser_password')
-                      if [ "${SECRET_MODE}" = "random" ]; then
+                      export PGPASSWORD="${SU_PASS}"
+                      ROLE_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE}'" 2>/dev/null || echo "")
+                      DB_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DBNAME}'" 2>/dev/null || echo "")
+                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1 \
+                        && [ "${ROLE_EXISTS}" = "1" ] && [ "${DB_EXISTS}" = "1" ]; then
+                        echo "[db-init] credential and database already present for ${TENANT}/${APP} — skipping"
+                        exit 0
+                      fi
+                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
+                        echo "[db-init] OpenBao credential present but Postgres role/db missing for ${TENANT}/${APP} — reprovisioning"
+                        PASSWORD=$(echo "${EXISTING}" | jq -r '.data.data.password')
+                      elif [ "${SECRET_MODE}" = "random" ]; then
                         PASSWORD=$(openssl rand -hex 32)
                       else
                         MASTER=$(curl -sf \
@@ -1235,9 +1244,6 @@ spec:
                         PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
                       fi
-                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
-                      DBNAME="${ROLE}"
-                      export PGPASSWORD="${SU_PASS}"
                       psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 <<SQL
                       DO \$\$
                       BEGIN

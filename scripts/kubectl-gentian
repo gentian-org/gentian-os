@@ -2305,13 +2305,23 @@ purge_app_postgresql() {
   fi
 
   echo "Purging Postgres database ${db_name}..."
-  if ! sql_out="$(kubectl --request-timeout=60s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
-    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}';
-DROP DATABASE IF EXISTS \"${db_name}\";
-DROP ROLE IF EXISTS \"${db_name}\";
-" 2>&1)"; then
-    echo "WARNING: Postgres purge for ${db_name} failed:" >&2
+  # DROP DATABASE cannot run inside a transaction; psql -c with multiple statements
+  # executes them in one transaction, so each step must be a separate invocation.
+  local pg_exec=(kubectl --request-timeout=60s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres --
+    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c)
+  if ! sql_out="$("${pg_exec[@]}" \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}';" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed (terminate backends):" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  if ! sql_out="$("${pg_exec[@]}" "DROP DATABASE IF EXISTS \"${db_name}\";" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed (drop database):" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  if ! sql_out="$("${pg_exec[@]}" "DROP ROLE IF EXISTS \"${db_name}\";" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed (drop role):" >&2
     printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
     return 0
   fi
