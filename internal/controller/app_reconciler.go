@@ -194,22 +194,40 @@ func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenan
 		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
-		for _, ref := range pod.OwnerReferences {
-			if ref.Kind != "Job" {
+		if appName := pod.Labels[appLabel]; appName != "" {
+			if _, wanted := desired[appName]; !wanted {
+				if err := r.Delete(ctx, pod, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+					return fmt.Errorf("delete pod for removed app %s: %w", pod.Name, err)
+				}
 				continue
 			}
-			job := &batchv1.Job{}
-			err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: nsName}, job)
-			if !errors.IsNotFound(err) {
-				continue
-			}
-			if err := r.Delete(ctx, pod, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
-				return fmt.Errorf("delete orphaned Job pod %s: %w", pod.Name, err)
-			}
-			break
+		}
+		jobName := orphanJobNameForPod(pod)
+		if jobName == "" {
+			continue
+		}
+		job := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: nsName}, job)
+		if !errors.IsNotFound(err) {
+			continue
+		}
+		if err := r.Delete(ctx, pod, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete orphaned Job pod %s: %w", pod.Name, err)
 		}
 	}
 	return nil
+}
+
+func orphanJobNameForPod(pod *corev1.Pod) string {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind == "Job" {
+			return ref.Name
+		}
+	}
+	if name := pod.Labels["batch.kubernetes.io/job-name"]; name != "" {
+		return name
+	}
+	return pod.Labels["job-name"]
 }
 
 // appClaimIsReady returns true when the App claim's Ready condition is True,

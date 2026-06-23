@@ -529,3 +529,75 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 		return apierrors.IsNotFound(err)
 	})
 }
+
+// TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod verifies that Job pods
+// without ownerReferences are removed when the owning Job is already gone.
+func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
+	t.Parallel()
+	profile := newAppProfile("orphan-wl-app2", nil)
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl2"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Orphan App Workload 2",
+			Domain:      "orphanwl2.example.com",
+			AdminEmail:  "admin@orphanwl2.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app2"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	nsName := "tenant-orphan-app-wl2"
+	waitFor(t, tenantReadyTimeout, func() bool {
+		return testClient.Get(context.Background(), types.NamespacedName{Name: nsName}, &corev1.Namespace{}) == nil
+	})
+
+	ownerlessPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ox-appsuite-connector-register-orphan",
+			Namespace: nsName,
+			Labels: map[string]string{
+				"batch.kubernetes.io/job-name": "ox-appsuite-connector-register",
+				"job-name":                     "ox-appsuite-connector-register",
+				"gentianos.io/app":             "ox-appsuite",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "register",
+				Image: "pause:3.9",
+			}},
+		},
+	}
+	if err := testClient.Create(context.Background(), ownerlessPod); err != nil {
+		t.Fatalf("create ownerless Job pod: %v", err)
+	}
+
+	for {
+		updated := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenant.Name}, updated); err != nil {
+			t.Fatalf("get tenant: %v", err)
+		}
+		updated.Spec.DisplayName = "Orphan App Workload 2 Updated"
+		if err := testClient.Update(context.Background(), updated); err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			t.Fatalf("update tenant: %v", err)
+		}
+		break
+	}
+
+	waitFor(t, tenantReadyTimeout, func() bool {
+		err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "ox-appsuite-connector-register-orphan", Namespace: nsName}, &corev1.Pod{})
+		return apierrors.IsNotFound(err)
+	})
+}

@@ -1221,6 +1221,14 @@ _app_lingering_pods() {
 
     job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
       -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
+    if [[ -z "${job_name}" ]]; then
+      job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+        -o jsonpath='{.metadata.labels.batch\.kubernetes\.io/job-name}' 2>/dev/null || true)"
+    fi
+    if [[ -z "${job_name}" ]]; then
+      job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+        -o jsonpath='{.metadata.labels.job-name}' 2>/dev/null || true)"
+    fi
     if [[ -n "${job_name}" ]] \
         && ! kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" &>/dev/null; then
       continue
