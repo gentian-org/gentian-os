@@ -185,7 +185,55 @@ Show all available `kubectl gentian` subcommands:
 kubectl gentian --help
 ```
 
-## 6. Retrieve Admin Credentials
+## 6. Install and Uninstall Apps
+
+Apps are installed by adding an entry to the tenant manifest in
+`gentian-deployments` and waiting for Crossplane + the operator to reconcile.
+
+List catalogue profiles (cluster-scoped `AppProfile` CRs):
+
+```bash
+kubectl gentian apps list
+# shorthand:
+gtnctl apps list
+```
+
+Install an app on a tenant (commits/pushes GitOps, syncs Argo CD, waits for Ready):
+
+```bash
+kubectl gentian apps install openproject --tenant demo
+# shorthand:
+gtnctl apps install xwiki --tenant demo
+```
+
+Uninstall (removes the app from Git; retains databases and OpenBao secrets by default):
+
+```bash
+kubectl gentian apps uninstall openproject --tenant demo
+```
+
+Purge persistent state (Postgres/MariaDB, S3 bucket, Redis keys, OpenBao paths):
+
+```bash
+kubectl gentian apps uninstall element --tenant demo --purge
+# or
+gtnctl apps uninstall xwiki --tenant demo -f
+```
+
+Inspect app reconciliation:
+
+```bash
+kubectl get app xwiki -n tenant-demo
+kubectl get xapp -A | grep xwiki
+kubectl get pods -n tenant-demo | grep xwiki
+kubectl logs -n tenant-demo -l app.kubernetes.io/instance=xwiki --tail=50
+```
+
+Tenant stage (`dev`, `staging`, `prod`) is selected via `install.env` /
+`GENTIAN_DEPLOYMENTS_ENV` — app commands do not take `--env`; they target the
+active tenant file for that stage.
+
+## 7. Retrieve Admin Credentials
 
 Portal and identity credentials can be read from Kubernetes Secrets.
 
@@ -207,7 +255,7 @@ ArgoCD admin:
 kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
-## 7. Key URLs
+## 8. Key URLs
 
 Given KERNEL_DOMAIN, the main URLs are:
 
@@ -216,7 +264,7 @@ Given KERNEL_DOMAIN, the main URLs are:
 
 ArgoCD URL depends on service exposure (NodePort/LoadBalancer/Ingress) in your cluster.
 
-## 8. Useful Troubleshooting Commands
+## 9. Useful Troubleshooting Commands
 
 ```bash
 kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
@@ -251,7 +299,27 @@ On `NETWORK_MODE=tunnel`, `Gateway.status.conditions[Programmed]` may be
 and traffic reaches Envoy via Cloudflare tunnel. Check `TunnelIngressReady` on
 the Tenant and external curl to the public hostname.
 
-## 9. Kernel Mail Stack (Dovecot + Postfix)
+### OIDC pack catalogue
+
+OpenDesk-style apps depend on the cluster-scoped `OIDCPackCatalog` CR shipped
+from `gentian-apps` (`profiles/opendesk-oidc-catalog/`). Verify it is synced
+before debugging pack Jobs or missing client scopes:
+
+```bash
+kubectl get oidcpackcatalog opendesk -o yaml
+# expect: metadata.labels.gentianos.io/oidc-catalog: opendesk
+```
+
+List pack keys and confirm a profile's `clientId` is present:
+
+```bash
+kubectl get oidcpackcatalog opendesk -o jsonpath='{.spec.packs}' | jq 'keys'
+```
+
+Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
+**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §8.
+
+## 10. Kernel Mail Stack (Dovecot + Postfix)
 
 **Two knobs:** `MAIL_SERVICE_MODE` in
 `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` controls whether the
