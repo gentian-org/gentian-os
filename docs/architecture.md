@@ -737,6 +737,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Commercial model & Odoo integration | [design/business-logic-plan.md](design/business-logic-plan.md) |
 | OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
+| OIDC catalogue decoupling (pre-Odoo) | [design/oidc-cleanup.md](design/oidc-cleanup.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
