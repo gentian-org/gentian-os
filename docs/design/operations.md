@@ -1,6 +1,7 @@
 # Operations: Backup, DR, Observability, Image Updates
 
-**Companion to:** [architecture.md](../architecture.md)
+**Companion to:** [architecture.md](../architecture.md),
+[deployment.md](../deployment.md)
 
 ---
 
@@ -124,6 +125,10 @@ Crossplane helm `Release` reconciliation (and operator-driven
 `App` claim updates when `spec.apps` changes).
 
 ### 7.2 Per-Environment Update Policies
+
+Cluster-to-stage mapping and promotion workflows (simplified dev→prod and
+fortified dev→staging→prod) are documented in
+[deployment.md](../deployment.md).
 
 A per-environment `ImageUpdater` CR watches the registry and updates
 the kernel `Application` whenever a new image is published:

@@ -2,6 +2,9 @@
 
 This document lists key cluster-admin commands for Gentian OS operations.
 
+For environment mapping, promotion flows, and GitOps layout, see
+[deployment.md](deployment.md).
+
 For tenant-admin app lifecycle commands, see:
 
 - ../../gentian-deployments/README.md

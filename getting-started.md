@@ -528,6 +528,7 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 
 ## Further reading
 
+- [Deployment environments](docs/deployment.md) — dev / staging / prod mapping, promotion flows, GitOps layout
 - [Architecture](docs/architecture.md) — full system design
 - [FAQ](docs/FAQ.md) — quick operational answers (edge routing, storage class)
 - [Design docs](docs/design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI

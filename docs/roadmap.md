@@ -160,3 +160,4 @@ See [design/agentic-ai.md](design/agentic-ai.md).
 | Gateway / ingress | [design/gateway.md](design/gateway.md) |
 | `RestoreTenant` CR | [design/operations.md](design/operations.md) §2 |
 | Bootstrap install | [getting-started.md](../getting-started.md) |
+| Deployment environments | [deployment.md](deployment.md) |

@@ -649,6 +649,10 @@ Environment policies:
 | staging | `newest-build` | Latest push to `staging` |
 | prod | `semver` | Semver tags `v*` only |
 
+For cluster-to-environment mapping, promotion workflows (with and without a
+staging tier), and `gentian-deployments` layout, see
+[deployment.md](deployment.md).
+
 ### 11.2 Install-time bootstrap
 
 `install.sh Step 15` uses a **two-step** approach to avoid a
@@ -729,6 +733,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 
 | Topic | Document |
 |---|---|
+| Deployment environments and promotion | [deployment.md](deployment.md) |
 | Why a cloud OS at all | [design/cloud-os-rationale.md](design/cloud-os-rationale.md) |
 | Kernel functions, default install, OS analogy details | [design/kernel.md](design/kernel.md) |
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
