@@ -10,6 +10,22 @@ const (
 	LabelProfileTrustTier        = "gentianos.io/profile-trust-tier"
 )
 
+// Profile bundle annotations — generic catalogue semantics without CRD fields per app.
+// App-specific install parameters belong in extraValues or profile-scoped compositions.
+const (
+	AnnotationProfileDeploymentRole  = "gentianos.io/deployment-role"
+	AnnotationProfileRequiresProfile = "gentianos.io/requires-profile"
+)
+
+// ProfileDeploymentRole describes how a catalogue entry is deployed relative to siblings.
+type ProfileDeploymentRole string
+
+const (
+	ProfileDeploymentRoleStandalone ProfileDeploymentRole = "standalone"
+	ProfileDeploymentRoleBase       ProfileDeploymentRole = "base"
+	ProfileDeploymentRoleModule     ProfileDeploymentRole = "module"
+)
+
 // Default catalogue values applied when fields are omitted on legacy profiles.
 const (
 	DefaultCatalogueVersion = "1.0.0"

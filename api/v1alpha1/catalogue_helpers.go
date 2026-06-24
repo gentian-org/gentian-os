@@ -114,3 +114,27 @@ func ProfileReferenceMatches(ref ProfileReference, p *AppProfile) bool {
 func ProfileRequiresEntitlement(p *AppProfile) bool {
 	return strings.EqualFold(p.Spec.License, "proprietary")
 }
+
+// EffectiveDeploymentRole reads gentianos.io/deployment-role (default: standalone).
+func EffectiveDeploymentRole(p *AppProfile) ProfileDeploymentRole {
+	if p == nil {
+		return ProfileDeploymentRoleStandalone
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Annotations[AnnotationProfileDeploymentRole])) {
+	case string(ProfileDeploymentRoleBase):
+		return ProfileDeploymentRoleBase
+	case string(ProfileDeploymentRoleModule):
+		return ProfileDeploymentRoleModule
+	default:
+		return ProfileDeploymentRoleStandalone
+	}
+}
+
+// ProfileRequiresProfile returns the base profile name from gentianos.io/requires-profile.
+// Used with deployment-role=module so the operator can auto-install shared runtimes.
+func ProfileRequiresProfile(p *AppProfile) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.Annotations[AnnotationProfileRequiresProfile])
+}

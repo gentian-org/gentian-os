@@ -115,22 +115,6 @@ type AppProfileSpec struct {
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 
-	// DeploymentRole controls how the orchestrator deploys this profile.
-	// standalone (default): full Helm release. base: shared runtime (e.g. odoo-free-base).
-	// module: no chart — module install Job only (requires base profile).
-	// +optional
-	// +kubebuilder:validation:Enum=standalone;base;module
-	DeploymentRole DeploymentRole `json:"deploymentRole,omitempty"`
-
-	// RequiresBaseProfile names the base AppProfile auto-installed with this
-	// module profile (e.g. odoo-free-base for odoo-crm).
-	// +optional
-	RequiresBaseProfile string `json:"requiresBaseProfile,omitempty"`
-
-	// OdooModule holds Odoo CE module install metadata when deploymentRole=module.
-	// +optional
-	OdooModule *OdooModuleSpec `json:"odooModule,omitempty"`
-
 	// Ingress declares the HTTP routing configuration for this app.
 	// When set, the orchestrator creates a Kubernetes Ingress resource and a
 	// cert-manager Certificate CR for TLS.
@@ -391,27 +375,6 @@ type OIDCClientSpec struct {
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
-}
-
-// DeploymentRole controls catalogue deploy semantics.
-// +kubebuilder:validation:Enum=standalone;base;module
-type DeploymentRole string
-
-const (
-	DeploymentRoleStandalone DeploymentRole = "standalone"
-	DeploymentRoleBase       DeploymentRole = "base"
-	DeploymentRoleModule     DeploymentRole = "module"
-)
-
-// OdooModuleSpec declares one Odoo CE module installed by a module profile.
-type OdooModuleSpec struct {
-	// TechnicalName is the Odoo module technical name (e.g. crm, account).
-	// +kubebuilder:validation:Required
-	TechnicalName string `json:"technicalName"`
-
-	// DependsOn lists other Odoo module technical names that must be installed first.
-	// +optional
-	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // LDAPRequirement describes per-tenant LDAP needs.

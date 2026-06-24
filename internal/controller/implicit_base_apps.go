@@ -13,10 +13,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 )
 
-const odooFreeBaseProfile = "odoo-free-base"
-
-// ensureImplicitBaseApps injects required base profiles (e.g. odoo-free-base when
-// an odoo module profile is installed) into tenant.Spec.Apps before provisioning.
+// ensureImplicitBaseApps injects profiles listed in gentianos.io/requires-profile when
+// a module profile (gentianos.io/deployment-role=module) is installed. Generic
+// catalogue semantics — app-specific install Jobs read extraValues in compositions.
 func (r *TenantReconciler) ensureImplicitBaseApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if len(tenant.Spec.Apps) == 0 {
 		return ctrl.Result{}, nil
@@ -41,13 +40,10 @@ func (r *TenantReconciler) ensureImplicitBaseApps(ctx context.Context, tenant *g
 		if err := r.Get(ctx, client.ObjectKey{Name: profileName}, profile); err != nil {
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 		}
-		if profile.Spec.DeploymentRole != gentianov1alpha1.DeploymentRoleModule {
+		if gentianov1alpha1.EffectiveDeploymentRole(profile) != gentianov1alpha1.ProfileDeploymentRoleModule {
 			continue
 		}
-		base := profile.Spec.RequiresBaseProfile
-		if base == "" && profile.Spec.Family == "odoo" {
-			base = odooFreeBaseProfile
-		}
+		base := gentianov1alpha1.ProfileRequiresProfile(profile)
 		if base == "" {
 			continue
 		}

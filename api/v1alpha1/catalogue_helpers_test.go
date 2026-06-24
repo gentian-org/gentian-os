@@ -25,6 +25,31 @@ func TestProfileIdentityFor_Defaults(t *testing.T) {
 	}
 }
 
+func TestEffectiveDeploymentRole(t *testing.T) {
+	base := &v1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{v1alpha1.AnnotationProfileDeploymentRole: "base"},
+		},
+	}
+	if v1alpha1.EffectiveDeploymentRole(base) != v1alpha1.ProfileDeploymentRoleBase {
+		t.Fatalf("role: got %q", v1alpha1.EffectiveDeploymentRole(base))
+	}
+	if v1alpha1.EffectiveDeploymentRole(&v1alpha1.AppProfile{}) != v1alpha1.ProfileDeploymentRoleStandalone {
+		t.Fatal("expected standalone default")
+	}
+}
+
+func TestProfileRequiresProfile(t *testing.T) {
+	mod := &v1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{v1alpha1.AnnotationProfileRequiresProfile: "odoo-free-base"},
+		},
+	}
+	if v1alpha1.ProfileRequiresProfile(mod) != "odoo-free-base" {
+		t.Fatalf("requires: got %q", v1alpha1.ProfileRequiresProfile(mod))
+	}
+}
+
 func TestProfileRequiresEntitlement(t *testing.T) {
 	oss := &v1alpha1.AppProfile{
 		Spec: v1alpha1.AppProfileSpec{License: "Apache-2.0"},
