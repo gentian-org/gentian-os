@@ -11,20 +11,15 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ResolvePack returns the OIDC pack for clientID from cluster OIDCPackCatalog CRs,
-// falling back to the embedded openDesk catalog when no cluster entry exists.
+// ResolvePack returns the OIDC pack for clientID from cluster OIDCPackCatalog CRs.
 func ResolvePack(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
 	if clientID == "" {
 		return Pack{}, nil, false, nil
 	}
-	if c != nil {
-		if pack, templates, ok, err := packFromCluster(ctx, c, clientID); err != nil {
-			return Pack{}, nil, false, err
-		} else if ok {
-			return pack, templates, true, nil
-		}
+	if c == nil {
+		return Pack{}, nil, false, fmt.Errorf("kubernetes client is required")
 	}
-	return PackForClient(clientID)
+	return packFromCluster(ctx, c, clientID)
 }
 
 func packFromCluster(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {

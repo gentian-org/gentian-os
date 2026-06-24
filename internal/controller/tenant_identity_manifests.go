@@ -29,6 +29,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
 const (
@@ -160,10 +161,18 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 
 func (r *TenantReconciler) buildLDAPProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, error) {
 	ouDN := tenantOUDN(tenant)
+	mbaGroups, err := oidc.ManagedByAttributeGroupNames(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("resolve managed-by-attribute groups: %w", err)
+	}
+	if len(mbaGroups) == 0 {
+		return nil, fmt.Errorf("no managed-by-attribute groups found in OIDCPackCatalog")
+	}
+
 	var jobs []batchv1.Job
 
-	jobs = append(jobs, *makeOUJob(tenant, ouDN))
-	jobs = append(jobs, *makeMBAGroupsJob(tenant, ouDN))
+	jobs = append(jobs, *makeOUJob(tenant, ouDN, mbaGroups))
+	jobs = append(jobs, *makeMBAGroupsJob(tenant, ouDN, mbaGroups))
 
 	mailDomain := tenantUserMailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	if mailDomain != "" {

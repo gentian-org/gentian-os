@@ -100,7 +100,7 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 
 func TestBuildOUScript_PreservesCurlHTTPCodeFormat(t *testing.T) {
 	t.Parallel()
-	script := buildOUScript("ou=demo,${UDM_LDAP_BASE}", "demo")
+	script := buildOUScript("ou=demo,${UDM_LDAP_BASE}", "demo", []string{"Fileshare"})
 	if strings.Contains(script, "%!(MISSING)") {
 		t.Fatal("OU script contains corrupted fmt.Sprintf verbs")
 	}
@@ -111,7 +111,17 @@ func TestBuildOUScript_PreservesCurlHTTPCodeFormat(t *testing.T) {
 
 func TestBuildMBAGroupsScript_IncludesOpenDeskOIDCGroups(t *testing.T) {
 	t.Parallel()
-	script := buildMBAGroupsScript("ou=demo,${UDM_LDAP_BASE}")
+	groups := []string{
+		"Groupware",
+		"Fileshare",
+		"FileshareAdmin",
+		"Videoconference",
+		"Livecollaboration",
+		"LivecollaborationAdmin",
+		"Projectmanagement",
+		"Knowledgemanagement",
+	}
+	script := buildMBAGroupsScript("ou=demo,${UDM_LDAP_BASE}", groups)
 	for _, want := range []string{
 		"for MBA_GROUP in",
 		"Projectmanagement",

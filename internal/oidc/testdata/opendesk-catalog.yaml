@@ -1,18 +1,14 @@
-# OpenDesk OIDC pack catalog for Gentian OS tenant Keycloak realms.
-#
-# Each pack mirrors one entry in opendesk/helmfile/apps/nubus/
-# values-opendesk-keycloak-bootstrap.yaml.gotmpl (clientAccessRestrictions +
-# opendesk.clientScopes). Packs are keyed by OIDC clientId; the identity
-# reconciler applies them per tenant realm when an AppProfile declares a
-# matching kernelRequirements.identity.oidc.clientId.
-#
-# LDAP groups are tenant-scoped: cn=managed-by-attribute-<App>,ou=<tenant>,...
-
+# Test fixture mirroring gentian-apps/profiles/opendesk-oidc-catalog/catalog.yaml
 apiVersion: gentianos.io/v1alpha1
 kind: OIDCPackCatalog
 metadata:
   name: opendesk
+  labels:
+    gentianos.io/oidc-catalog: opendesk
 spec:
+  extraManagedByAttributeGroups:
+    - FileshareAdmin
+    - LivecollaborationAdmin
   mapperTemplates:
     opendesk_useruuid:
       protocolMapper: oidc-usermodel-attribute-mapper

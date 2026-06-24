@@ -43,6 +43,12 @@ type OIDCPackCatalogSpec struct {
 	// Packs maps OIDC clientId to pack configuration.
 	// +optional
 	Packs map[string]OIDCPackSpec `json:"packs,omitempty"`
+
+	// ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
+	// provisioned per tenant OU that are not tied to an OIDC pack ldapGroup (e.g.
+	// openDesk portal admin groups).
+	// +optional
+	ExtraManagedByAttributeGroups []string `json:"extraManagedByAttributeGroups,omitempty"`
 }
 
 // OIDCMapperTemplate describes one Keycloak protocol mapper on a client scope.
@@ -75,7 +81,8 @@ type OIDCPackSpec struct {
 	// +kubebuilder:validation:Required
 	ClientRole string `json:"clientRole"`
 
-	// LDAPGroup is the managed-by-attribute-* group name (without OU prefix).
+	// LDAPGroup is the managed-by-attribute-* LDAP group (full cn suffix or short
+	// name — the operator normalizes to the short suffix for OU provisioning).
 	// +kubebuilder:validation:Required
 	LDAPGroup string `json:"ldapGroup"`
 

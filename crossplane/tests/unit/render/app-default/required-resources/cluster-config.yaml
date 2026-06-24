@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: crossplane-system
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  ldap.baseDn: dc=example,dc=org
+  udm.url: http://udm.example.invalid
+  secretMode: derived

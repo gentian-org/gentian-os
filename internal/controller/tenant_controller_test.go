@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -328,6 +329,18 @@ func TestMain(m *testing.M) {
 			"password": []byte("test-kc-password"),
 		},
 	}); err != nil {
+		panic(err)
+	}
+
+	catalogRaw, err := os.ReadFile(filepath.Join("..", "oidc", "testdata", "opendesk-catalog.yaml"))
+	if err != nil {
+		panic(err)
+	}
+	var oidcCatalog gentianov1alpha1.OIDCPackCatalog
+	if err := yaml.Unmarshal(catalogRaw, &oidcCatalog); err != nil {
+		panic(err)
+	}
+	if err := testClient.Create(context.Background(), &oidcCatalog); err != nil {
 		panic(err)
 	}
 

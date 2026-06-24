@@ -1,0 +1,21 @@
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: opendesk
+  labels:
+    gentianos.io/oidc-catalog: opendesk
+spec:
+  packs:
+    opendesk-openproject:
+      scopeName: opendesk-openproject-scope
+      clientRole: opendesk-openproject-access-control
+      ldapGroup: managed-by-attribute-Projectmanagement
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - opendesk_useruuid

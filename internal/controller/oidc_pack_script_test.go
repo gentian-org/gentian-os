@@ -3,6 +3,7 @@
 package controller
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,11 +14,11 @@ import (
 )
 
 func TestOIDCPacksNeedLDAPGroups(t *testing.T) {
-	packs, templates, err := oidc.LoadCatalog()
-	if err != nil {
-		t.Fatal(err)
+	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+	if err != nil || !ok {
+		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	pack := packs["opendesk-jitsi"]
 	if !oidcPacksNeedLDAPGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
 		t.Fatal("expected opendesk-jitsi pack to require LDAP groups")
 	}
@@ -40,11 +41,11 @@ func TestBuildKCLDAPGroupSyncScript(t *testing.T) {
 }
 
 func TestBuildOIDCPackScriptJitsi(t *testing.T) {
-	packs, templates, err := oidc.LoadCatalog()
-	if err != nil {
-		t.Fatal(err)
+	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+	if err != nil || !ok {
+		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	pack := packs["opendesk-jitsi"]
 	script := buildOIDCPackScript("demo", "opendesk-jitsi", pack, templates,
 		[]string{"https://meet.demo.desk.gentian.org/*"}, "")
 	for _, want := range []string{

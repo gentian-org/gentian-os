@@ -132,7 +132,7 @@ spec:
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
 
-            {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog (fallback: embed dict). */}}
+            {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog. */}}
             {{- $oidcPackDefaultScopes := dict }}
             {{- $oidcPackFullScopeAllowed := dict }}
             {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
@@ -147,23 +147,6 @@ spec:
             {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
             {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
             {{- end }}
-            {{- else }}
-            {{- $oidcPackDefaultScopes = dict
-                "opendesk-jitsi" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-jitsi-scope")
-                "opendesk-synapse" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-matrix-scope")
-                "opendesk-nextcloud" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-nextcloud-scope")
-                "opendesk-openproject" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-openproject-scope")
-                "opendesk-xwiki" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-xwiki-scope")
-                "opendesk-oxappsuite" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-oxappsuite-scope")
-            }}
-            {{- $oidcPackFullScopeAllowed = dict
-                "opendesk-jitsi" true
-                "opendesk-synapse" false
-                "opendesk-nextcloud" false
-                "opendesk-openproject" false
-                "opendesk-xwiki" false
-                "opendesk-oxappsuite" false
-            }}
             {{- end }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}

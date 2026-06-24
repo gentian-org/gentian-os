@@ -650,7 +650,7 @@ func makeLockOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 	}
 }
 
-func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string, mbaGroups []string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -667,7 +667,7 @@ func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						udmContainer("provision-mba-groups", buildMBAGroupsScript(ouDN)),
+						udmContainer("provision-mba-groups", buildMBAGroupsScript(ouDN, mbaGroups)),
 					},
 				},
 			},
@@ -675,7 +675,7 @@ func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job
 	}
 }
 
-func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
+func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string, mbaGroups []string) *batchv1.Job {
 	ttl := int32(3600)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -692,7 +692,7 @@ func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers: []corev1.Container{
-						udmContainer("provision-ou", buildOUScript(ouDN, tenant.Name)),
+						udmContainer("provision-ou", buildOUScript(ouDN, tenant.Name, mbaGroups)),
 					},
 				},
 			},
@@ -953,37 +953,19 @@ func udmContainer(name, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
-// tenantManagedByAttributeGroupNames lists per-tenant cn=managed-by-attribute-* groups
-// created inside each tenant OU. Must stay aligned with internal/oidc/packs/opendesk.yaml
-// ldapGroup entries and openDesk Nubus portaltileGroup* references.
-var tenantManagedByAttributeGroupNames = []string{
-	"Groupware",
-	"Fileshare",
-	"FileshareAdmin",
-	"Videoconference",
-	"Livecollaboration",
-	"LivecollaborationAdmin",
-	"Projectmanagement",
-	"Knowledgemanagement",
-}
-
-func tenantManagedByAttributeGroupsShellList() string {
-	return strings.Join(tenantManagedByAttributeGroupNames, " ")
-}
-
 // buildMBAGroupsScript creates managed-by-attribute-* groups inside the tenant OU.
 // All UDM calls are idempotent (GET before POST).
-func buildMBAGroupsScript(ouDN string) string {
+func buildMBAGroupsScript(ouDN string, mbaGroups []string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
 BASE_URL="${UDM_URL}/udm"
 OU_POS="%s"
 %s`,
-		ouDN, buildMBAGroupsScriptBody())
+		ouDN, buildMBAGroupsScriptBody(mbaGroups))
 }
 
-func buildMBAGroupsScriptBody() string {
+func buildMBAGroupsScriptBody(mbaGroups []string) string {
 	return fmt.Sprintf(`for MBA_GROUP in %s; do
   MBA_GRP_ENC=$(urlencode "cn=managed-by-attribute-${MBA_GROUP},${OU_POS}")
   STATUS=$(curl -s -o /dev/null -w "%%{http_code}" ${CREDS} \
@@ -1009,12 +991,12 @@ func buildMBAGroupsScriptBody() string {
     echo "UDM not ready (HTTP ${STATUS}); will retry" >&2
     exit 1
   fi
-done`, tenantManagedByAttributeGroupsShellList())
+done`, strings.Join(mbaGroups, " "))
 }
 
 // buildOUScript creates the tenant OU, users group, and admins group.
 // All UDM calls are idempotent (GET before POST).
-func buildOUScript(ouDN, tenantName string) string {
+func buildOUScript(ouDN, tenantName string, mbaGroups []string) string {
 	return fmt.Sprintf(`set -eu
 urlencode() { printf '%%s' "$1" | sed 's/%%/%%25/g; s/ /%%20/g; s/,/%%2C/g; s/=/%%3D/g'; }
 CREDS="-u Administrator:${UDM_ADMIN_PASSWORD}"
@@ -1126,7 +1108,7 @@ fi
 `,
 		ouDN, tenantName, tenantName, tenantName, tenantName,
 		tenantName, tenantName, tenantName, tenantName,
-		tenantName, tenantName, tenantName, tenantName) + buildMBAGroupsScriptBody()
+		tenantName, tenantName, tenantName, tenantName) + buildMBAGroupsScriptBody(mbaGroups)
 }
 
 // buildBindAccountScript creates a service-account user that apps use as the LDAP bind DN.
