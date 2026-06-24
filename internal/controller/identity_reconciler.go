@@ -241,6 +241,16 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
 
+		kcMappersDone, err := r.ensureKCLDAPOpenDeskMappersJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OpenDesk LDAP mapper Job: %w", err)
+		}
+		if !kcMappersDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"SyncingKCLDAPOpenDeskMappers", "Waiting for OpenDesk LDAP mapper sync Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+
 		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure broker IdP Job: %w", err)
@@ -714,6 +724,8 @@ if [ -n "${LDAP_SERVER:-}" ]; then
 
   ensure_ldap_uid_attribute_mapper "%s" "ldap"
   ensure_ldap_email_attribute_mapper "%s" "ldap"
+  ensure_ldap_oxcontext_attribute_mapper "%s" "ldap"
+  ensure_ldap_entryuuid_attribute_mapper "%s" "ldap"
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -787,13 +799,14 @@ ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
   #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName, realmName, realmName,
+		realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
 	// Realm Job registers the kernel IdP with the built-in "first broker login" flow.
 	// The custom first-broker-login-gentian flow is created later (dedicated Job or
 	// broker-idp Job) before the IdP alias is switched — see docs/design/iam.md.
-	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + ensureLDAPEmailAttributeMapperShell + script
+	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + ensureLDAPEmailAttributeMapperShell + ensureLDAPOpenDeskAttributeMappersShell + script
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
@@ -856,12 +869,14 @@ echo "Keycloak LDAP group sync complete for realm ${REALM}: ${RESULT}"
 	if syncUsers {
 		steps += `
 ensure_ldap_email_attribute_mapper "${REALM}" "ldap"
+ensure_ldap_oxcontext_attribute_mapper "${REALM}" "ldap"
+ensure_ldap_entryuuid_attribute_mapper "${REALM}" "ldap"
 RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
 echo "Keycloak LDAP user sync complete for realm ${REALM}: ${RESULT}"
 `
 	}
-	return keycloakShellJSONIDExtractor() + ensureLDAPEmailAttributeMapperShell + fmt.Sprintf(`set -eu
+	return keycloakShellJSONIDExtractor() + ensureLDAPEmailAttributeMapperShell + ensureLDAPOpenDeskAttributeMappersShell + fmt.Sprintf(`set -eu
 REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -895,6 +910,19 @@ func makeKCLDAPGroupSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *
 func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	return makeKCLDAPFederationSyncJob(tenant, kcLDAPSyncJobName(tenant.Name), "kc-ldap-sync",
 		buildKCLDAPSyncScript(realmName))
+}
+
+// makeKCLDAPOpenDeskMappersJob re-imports LDAP users after ensuring oxContextIDNum and
+// entryUUID attribute mappers exist. Separate from kc-ldap-sync so existing tenants
+// pick up mapper fixes without recreating the realm Job.
+func makeKCLDAPOpenDeskMappersJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	return makeKCLDAPFederationSyncJob(tenant, kcLDAPOpenDeskMappersJobName(tenant.Name), "kc-ldap-opendesk-mappers",
+		buildKCLDAPSyncScript(realmName))
+}
+
+func (r *TenantReconciler) ensureKCLDAPOpenDeskMappersJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPOpenDeskMappersJobName(tenant.Name),
+		func() *batchv1.Job { return makeKCLDAPOpenDeskMappersJob(tenant, keycloakRealmName(tenant)) })
 }
 
 // makeKernelLDAPSyncJob returns the Job that re-imports LDAP users into the
@@ -1269,6 +1297,10 @@ func kcLDAPGroupSyncJobName(tenantName string) string {
 // disabled entries caused by the brief UDM shadowExpire race during provisioning.
 func kcLDAPSyncJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-ldap-sync-%s", tenantName)
+}
+
+func kcLDAPOpenDeskMappersJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-ldap-opendesk-mappers-%s", tenantName)
 }
 
 func oidcClientID(tenantName, appName string) string {

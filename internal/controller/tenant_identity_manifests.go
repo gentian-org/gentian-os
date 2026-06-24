@@ -277,6 +277,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
 		jobs = append(jobs, *makeKernelLDAPSyncJob(tenant, r.KernelRealm))
 		jobs = append(jobs, *makeKCLDAPSyncJob(tenant, realmName))
+		jobs = append(jobs, *makeKCLDAPOpenDeskMappersJob(tenant, realmName))
 	}
 
 	if r.KernelRealm != "" && r.KernelDomain != "" {
