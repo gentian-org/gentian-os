@@ -373,6 +373,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	if res, err := r.ensureImplicitBaseApps(ctx, tenant); res.Requeue || err != nil {
+		return res, err
+	}
+
 	// Preflight gate: a tenant may only proceed when all requested AppProfiles
 	// exist.
 	missingProfiles, err := r.validateTenantPrerequisites(ctx, tenant)

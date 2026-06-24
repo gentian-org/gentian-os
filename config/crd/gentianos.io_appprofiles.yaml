@@ -268,6 +268,21 @@ spec:
                 - argocd
                 - crossplane
                 type: string
+              deploymentRole:
+                allOf:
+                - enum:
+                  - standalone
+                  - base
+                  - module
+                - enum:
+                  - standalone
+                  - base
+                  - module
+                description: |-
+                  DeploymentRole controls how the orchestrator deploys this profile.
+                  standalone (default): full Helm release. base: shared runtime (e.g. odoo-free-base).
+                  module: no chart — module install Job only (requires base profile).
+                type: string
               description:
                 description: Description is an optional human-readable description.
                 type: string
@@ -454,6 +469,11 @@ spec:
                               Name is the human-readable display name shown in the Keycloak admin UI.
                               Defaults to ClientID when empty.
                             type: string
+                          oidcPackRef:
+                            description: |-
+                              OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
+                              pack key differs from clientId. When empty, clientId is used as the pack key.
+                            type: string
                           postLogoutRedirectUris:
                             description: |-
                               PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
@@ -574,6 +594,23 @@ spec:
                   attribute so the portal frontend can render it directly as an <img src>.
                 pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
                 type: string
+              odooModule:
+                description: OdooModule holds Odoo CE module install metadata when
+                  deploymentRole=module.
+                properties:
+                  dependsOn:
+                    description: DependsOn lists other Odoo module technical names
+                      that must be installed first.
+                    items:
+                      type: string
+                    type: array
+                  technicalName:
+                    description: TechnicalName is the Odoo module technical name (e.g.
+                      crm, account).
+                    type: string
+                required:
+                - technicalName
+                type: object
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume
                   when available.
@@ -688,6 +725,11 @@ spec:
                   - name
                   type: object
                 type: array
+              requiresBaseProfile:
+                description: |-
+                  RequiresBaseProfile names the base AppProfile auto-installed with this
+                  module profile (e.g. odoo-free-base for odoo-crm).
+                type: string
               sidecars:
                 description: |-
                   Sidecars declares companion services deployed by purpose-built compositions
@@ -854,6 +896,11 @@ spec:
                                   description: |-
                                     Name is the human-readable display name shown in the Keycloak admin UI.
                                     Defaults to ClientID when empty.
+                                  type: string
+                                oidcPackRef:
+                                  description: |-
+                                    OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
+                                    pack key differs from clientId. When empty, clientId is used as the pack key.
                                   type: string
                                 postLogoutRedirectUris:
                                   description: |-

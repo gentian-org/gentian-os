@@ -127,12 +127,17 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	}
 	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
 
+	packKey := clientID
+	if oidcSpec.OIDCPackRef != "" {
+		packKey = oidcSpec.OIDCPackRef
+	}
+
 	cfg := oidcAppConfig{
 		profileName:  profileName,
 		clientID:     clientID,
 		redirectURIs: redirects,
 	}
-	if pack, templates, ok, err := oidc.PackForClient(clientID); err != nil {
+	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
 		return oidcAppConfig{}, err
 	} else if ok {
 		cfg.pack = &pack
@@ -141,7 +146,7 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	return cfg, nil
 }
 
-func (r *TenantReconciler) resolveSidecarOIDCAppConfig(_ context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
+func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
 	profileName := gentianov1alpha1.SidecarAppName(parentProfile, sidecar.Name)
 	oidcSpec := sidecar.KernelRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
@@ -150,13 +155,18 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(_ context.Context, tenant
 	}
 	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
 
+	packKey := clientID
+	if oidcSpec.OIDCPackRef != "" {
+		packKey = oidcSpec.OIDCPackRef
+	}
+
 	cfg := oidcAppConfig{
 		profileName:   profileName,
 		parentProfile: parentProfile,
 		clientID:      clientID,
 		redirectURIs:  redirects,
 	}
-	if pack, templates, ok, err := oidc.PackForClient(clientID); err != nil {
+	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
 		return oidcAppConfig{}, err
 	} else if ok {
 		cfg.pack = &pack

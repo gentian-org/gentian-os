@@ -1,6 +1,6 @@
 # OIDC catalogue decoupling
 
-**Status:** Pre-work before Odoo and other non-openDesk catalogue apps  
+**Status:** Phase 0 partially implemented (CRD + cluster catalog + app-default lookup)  
 **Companion to:** [iam.md](iam.md), [tenant-identity-composition.md](tenant-identity-composition.md),
 [app-catalogue-security.md](app-catalogue-security.md)
 

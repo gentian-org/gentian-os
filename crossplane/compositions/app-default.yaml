@@ -63,6 +63,17 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
+            # OpenDesk OIDC pack catalogue — replaces hardcoded clientId dicts when synced.
+            - kind: OIDCPackCatalog
+              into: oidcPackCatalog
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/oidc-catalog
+                    type: Value
+                    value: opendesk
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -121,9 +132,23 @@ spec:
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
 
-            {{- /* OpenDesk OIDC pack scopes: operator Jobs create ClientScope + mappers;
-                 ClientDefaultScopes re-attaches them after provider-keycloak Client sync. */}}
-            {{- $oidcPackDefaultScopes := dict
+            {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog (fallback: embed dict). */}}
+            {{- $oidcPackDefaultScopes := dict }}
+            {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
+            {{- if gt (len $catalogRes) 0 }}
+            {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
+            {{- $catPacks := default dict $catSpec.packs }}
+            {{- range $clientId, $pack := $catPacks }}
+            {{- $scopes := default list $pack.defaultScopes }}
+            {{- if $pack.scopeName }}
+            {{- $scopes = append $scopes $pack.scopeName }}
+            {{- end }}
+            {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
+            {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- end }}
+            {{- else }}
+            {{- $oidcPackDefaultScopes = dict
                 "opendesk-jitsi" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-jitsi-scope")
                 "opendesk-synapse" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-matrix-scope")
                 "opendesk-nextcloud" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-nextcloud-scope")
@@ -131,7 +156,7 @@ spec:
                 "opendesk-xwiki" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-xwiki-scope")
                 "opendesk-oxappsuite" (list "profile" "email" "roles" "web-origins" "acr" "opendesk-oxappsuite-scope")
             }}
-            {{- $oidcPackFullScopeAllowed := dict
+            {{- $oidcPackFullScopeAllowed = dict
                 "opendesk-jitsi" true
                 "opendesk-synapse" false
                 "opendesk-nextcloud" false
@@ -139,6 +164,7 @@ spec:
                 "opendesk-xwiki" false
                 "opendesk-oxappsuite" false
             }}
+            {{- end }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
@@ -635,6 +661,7 @@ spec:
             {{- $identity := default dict $kr.identity }}
             {{- $oidcCl   := default dict $identity.oidc }}
             {{- if $oidcCl.clientId }}
+            {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
             {{- $redirects  := list }}
             {{- range $uri := (default list $oidcCl.redirectUris) }}
             {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
@@ -695,8 +722,8 @@ spec:
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
-                {{- if hasKey $oidcPackFullScopeAllowed $oidcCl.clientId }}
-                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcCl.clientId }}
+                {{- if hasKey $oidcPackFullScopeAllowed $oidcPackKey }}
+                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcPackKey }}
                 {{- end }}
                 {{- if $redirects }}
                 validRedirectUris:
@@ -720,7 +747,7 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
-            {{- if hasKey $oidcPackDefaultScopes $oidcCl.clientId }}
+            {{- if hasKey $oidcPackDefaultScopes $oidcPackKey }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientDefaultScopes
@@ -735,7 +762,7 @@ spec:
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
                 defaultScopes:
-                  {{ toYaml (index $oidcPackDefaultScopes $oidcCl.clientId) | nindent 18 }}
+                  {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
               providerConfigRef:
                 name: keycloak
             {{- end }}
