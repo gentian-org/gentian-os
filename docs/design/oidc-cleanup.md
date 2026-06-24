@@ -23,7 +23,7 @@ edits.
 
 | Path | Use when | gentian-apps | gentian-os |
 |---|---|---|---|
-| **A. Composition Client MR** | Standard SSO — client id, redirects, confidential secret | `AppProfile.kernelRequirements.identity.oidc` | `app-default` / `app-odoo` emits `openidclient.keycloak.crossplane.io/Client`; operator skips duplicate Jobs (`crossplaneOwnsOIDCClient`) |
+| **A. Composition Client MR** | Standard SSO — client id, redirects, confidential secret | `AppProfile.kernelRequirements.identity.oidc` | **`app-default`** emits `openidclient.keycloak.crossplane.io/Client`; operator skips duplicate Jobs (`crossplaneOwnsOIDCClient`) |
 | **B. OIDC pack** | Custom client scope, protocol mappers, LDAP group → Keycloak client role | Pack data (target: cluster CR) | Pack provisioning Job |
 
 **Most new apps (including Odoo) use path A only.** Path B remains for openDesk
@@ -69,7 +69,7 @@ flowchart LR
 
 - Adding a **standard OIDC app** = `AppProfile` YAML in gentian-apps only (no gentian-os PR).
 - Adding an **openDesk-style app** with custom mappers = AppProfile + `OIDCPackCatalog` in gentian-apps (no operator rebuild).
-- Odoo (`clientId: odoo`) uses path A via `app-odoo`; **no** entry in pack catalog.
+- Odoo (`clientId: odoo`) uses path A via **`app-default`** (no `compositionRef`); **no** entry in pack catalog.
 - CI: `crossplane render` proves Client MR + scopes for a sample profile with `oidcPackRef`.
 
 ## Out of scope (follow-ups)
