@@ -1,6 +1,9 @@
 package v1alpha1
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // EffectiveEdition returns the edition for a profile, defaulting to full.
 func EffectiveEdition(e Edition) Edition {
@@ -137,4 +140,51 @@ func ProfileRequiresProfile(p *AppProfile) string {
 		return ""
 	}
 	return strings.TrimSpace(p.Annotations[AnnotationProfileRequiresProfile])
+}
+
+// GatewayAPIBackend is one extra HTTPRoute rule: path prefix → Kubernetes Service.
+type GatewayAPIBackend struct {
+	PathPrefix  string `json:"pathPrefix"`
+	ServiceName string `json:"serviceName"`
+	Port        int32  `json:"port,omitempty"`
+}
+
+// ProfileGatewayRootRedirect returns gentianos.io/gateway-root-redirect when set.
+func ProfileGatewayRootRedirect(p *AppProfile) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.Annotations[AnnotationProfileGatewayRootRedirect])
+}
+
+// ProfileGatewayAPIBackends parses gentianos.io/gateway-api-backends JSON.
+func ProfileGatewayAPIBackends(p *AppProfile) ([]GatewayAPIBackend, error) {
+	if p == nil {
+		return nil, nil
+	}
+	raw := strings.TrimSpace(p.Annotations[AnnotationProfileGatewayAPIBackends])
+	if raw == "" {
+		return nil, nil
+	}
+	var backends []GatewayAPIBackend
+	if err := json.Unmarshal([]byte(raw), &backends); err != nil {
+		return nil, err
+	}
+	return backends, nil
+}
+
+// ProfileOIDCDefaultRedirectURIs parses gentianos.io/oidc-default-redirect-uris JSON.
+func ProfileOIDCDefaultRedirectURIs(p *AppProfile) ([]string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	raw := strings.TrimSpace(p.Annotations[AnnotationProfileOIDCDefaultRedirectURIs])
+	if raw == "" {
+		return nil, nil
+	}
+	var uris []string
+	if err := json.Unmarshal([]byte(raw), &uris); err != nil {
+		return nil, err
+	}
+	return uris, nil
 }

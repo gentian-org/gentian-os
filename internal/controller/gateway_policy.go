@@ -44,11 +44,12 @@ func (r *TenantReconciler) collectTenantIngressIntents(ctx context.Context, tena
 			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
 		if profile.Spec.Ingress != nil {
-			intents = append(intents, ingressIntent{appProfile: app.Profile, ingress: profile.Spec.Ingress})
+			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})
 		}
 		for i := range profile.Spec.AdditionalIngresses {
 			intents = append(intents, ingressIntent{
 				appProfile: additionalIngressProfile(app.Profile, i),
+				profile:    profile,
 				ingress:    &profile.Spec.AdditionalIngresses[i],
 			})
 		}

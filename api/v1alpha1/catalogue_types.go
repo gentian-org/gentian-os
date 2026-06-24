@@ -15,6 +15,14 @@ const (
 const (
 	AnnotationProfileDeploymentRole  = "gentianos.io/deployment-role"
 	AnnotationProfileRequiresProfile = "gentianos.io/requires-profile"
+	// GatewayRootRedirect is an HTTPRoute redirect target for GET / on the app host.
+	AnnotationProfileGatewayRootRedirect = "gentianos.io/gateway-root-redirect"
+	// GatewayAPIBackends is a JSON array of extra path→Service routes on the app host.
+	// Shape: [{"pathPrefix":"/api","serviceName":"my-api","port":8080}]
+	AnnotationProfileGatewayAPIBackends = "gentianos.io/gateway-api-backends"
+	// OIDCDefaultRedirectURIs is a JSON array used when spec.kernelRequirements.identity.oidc.redirectUris is empty.
+	// Supports ${TENANT_DOMAIN} substitution (legacy pack Jobs and operator fallbacks).
+	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
 )
 
 // ProfileDeploymentRole describes how a catalogue entry is deployed relative to siblings.

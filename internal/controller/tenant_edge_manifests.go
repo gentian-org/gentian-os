@@ -60,7 +60,7 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 
 	for _, intent := range intents {
 		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress, host, effectiveDomain, r.KernelDomain)
+		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress, host, effectiveDomain, r.KernelDomain)
 		route.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("HTTPRoute"))
 		objects = append(objects, route)
 		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
@@ -100,7 +100,7 @@ func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenan
 
 	for _, intent := range intents {
 		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress, host, effectiveDomain, r.KernelDomain)
+		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress, host, effectiveDomain, r.KernelDomain)
 		if ok, reason := httpRouteProgrammed(ctx, r.Client, route); !ok {
 			return false, reason, nil
 		}

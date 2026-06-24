@@ -50,6 +50,38 @@ func TestProfileRequiresProfile(t *testing.T) {
 	}
 }
 
+func TestProfileGatewayAnnotations(t *testing.T) {
+	p := &v1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				v1alpha1.AnnotationProfileGatewayRootRedirect: "/appsuite/",
+				v1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/appsuite/api","serviceName":"appsuite-api"}]`,
+			},
+		},
+	}
+	if v1alpha1.ProfileGatewayRootRedirect(p) != "/appsuite/" {
+		t.Fatalf("root redirect: %q", v1alpha1.ProfileGatewayRootRedirect(p))
+	}
+	backends, err := v1alpha1.ProfileGatewayAPIBackends(p)
+	if err != nil || len(backends) != 1 || backends[0].ServiceName != "appsuite-api" {
+		t.Fatalf("api backends: %v, %v", backends, err)
+	}
+}
+
+func TestProfileOIDCDefaultRedirectURIs(t *testing.T) {
+	p := &v1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				v1alpha1.AnnotationProfileOIDCDefaultRedirectURIs: `["https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback"]`,
+			},
+		},
+	}
+	uris, err := v1alpha1.ProfileOIDCDefaultRedirectURIs(p)
+	if err != nil || len(uris) != 1 || uris[0] != "https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback" {
+		t.Fatalf("oidc defaults: %v, %v", uris, err)
+	}
+}
+
 func TestProfileRequiresEntitlement(t *testing.T) {
 	oss := &v1alpha1.AppProfile{
 		Spec: v1alpha1.AppProfileSpec{License: "Apache-2.0"},

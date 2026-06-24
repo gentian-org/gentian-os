@@ -62,7 +62,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	expectedRoutes := make(map[string]struct{}, len(intents))
 	expectedPolicies := make(map[string]struct{})
 	for _, intent := range intents {
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.ingress,
+		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress,
 			ingressHost(intent.appProfile, intent.ingress, effectiveDomain), effectiveDomain, r.KernelDomain)
 		expectedRoutes[route.Name] = struct{}{}
 		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {

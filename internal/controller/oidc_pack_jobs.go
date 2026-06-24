@@ -125,17 +125,19 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
-
-	packKey := clientID
-	if oidcSpec.OIDCPackRef != "" {
-		packKey = oidcSpec.OIDCPackRef
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs)
+	if err != nil {
+		return oidcAppConfig{}, err
 	}
 
 	cfg := oidcAppConfig{
 		profileName:  profileName,
 		clientID:     clientID,
 		redirectURIs: redirects,
+	}
+	packKey := clientID
+	if oidcSpec.OIDCPackRef != "" {
+		packKey = oidcSpec.OIDCPackRef
 	}
 	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
 		return oidcAppConfig{}, err
@@ -147,13 +149,20 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 }
 
 func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
+	owner := &gentianov1alpha1.AppProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: parentProfile}, owner); err != nil {
+		return oidcAppConfig{}, fmt.Errorf("get parent AppProfile %s: %w", parentProfile, err)
+	}
 	profileName := gentianov1alpha1.SidecarAppName(parentProfile, sidecar.Name)
 	oidcSpec := sidecar.KernelRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects := resolveOIDCRedirectURIs(tenant, profileName, oidcSpec.RedirectURIs, r.KernelDomain, r.TenancyMode)
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs)
+	if err != nil {
+		return oidcAppConfig{}, err
+	}
 
 	packKey := clientID
 	if oidcSpec.OIDCPackRef != "" {
@@ -190,25 +199,52 @@ func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppC
 	return profile, nil
 }
 
-func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain, tenancyMode string) []string {
+func (r *TenantReconciler) resolveOIDCRedirectURIs(
+	_ context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	profile *gentianov1alpha1.AppProfile,
+	profileName string,
+	uris []string,
+) ([]string, error) {
 	if len(uris) > 0 {
-		host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if host == "" {
-			host = tenant.Spec.Domain
-		}
-		out := make([]string, 0, len(uris))
-		for _, u := range uris {
-			out = append(out, strings.ReplaceAll(u, "${TENANT_DOMAIN}", host))
-		}
-		return out
+		return substituteTenantDomainInURIs(tenant, uris, r.KernelDomain, r.TenancyMode), nil
 	}
-	// Legacy fallback when AppProfile omits redirectUris.
+	if profile != nil {
+		defaults, err := gentianov1alpha1.ProfileOIDCDefaultRedirectURIs(profile)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s on AppProfile %s: %w", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
+		}
+		if len(defaults) > 0 {
+			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
+		}
+	}
+	host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
+	if host == "" {
+		host = tenant.Spec.Domain
+	}
+	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}, nil
+}
+
+func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string, kernelDomain, tenancyMode string) []string {
 	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
 	if host == "" {
 		host = tenant.Spec.Domain
 	}
-	if profileName == "element" {
-		return []string{fmt.Sprintf("https://matrix.%s/_synapse/client/oidc/callback", host)}
+	out := make([]string, 0, len(uris))
+	for _, u := range uris {
+		out = append(out, strings.ReplaceAll(u, "${TENANT_DOMAIN}", host))
+	}
+	return out
+}
+
+// resolveOIDCRedirectURIsLegacy is a package-level helper for tests that do not have an AppProfile.
+func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain, tenancyMode string) []string {
+	if len(uris) > 0 {
+		return substituteTenantDomainInURIs(tenant, uris, kernelDomain, tenancyMode)
+	}
+	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
+	if host == "" {
+		host = tenant.Spec.Domain
 	}
 	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}
 }

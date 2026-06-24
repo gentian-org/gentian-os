@@ -191,7 +191,7 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	ingress := &gentianov1alpha1.IngressSpec{
 		SubDomain: "chat",
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "element", ingress, "chat.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	route := buildAppHTTPRoute(tenant, "tenant-demo", "element", nil, ingress, "chat.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
 	if route.Name != "httproute-demo-element" {
 		t.Fatalf("name = %q", route.Name)
 	}
@@ -222,7 +222,16 @@ func TestBuildAppHTTPRouteOXRootRedirect(t *testing.T) {
 		SubDomain:   "webmail",
 		ServiceName: "appsuite",
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "ox-appsuite", ingress, "webmail.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	oxProfile := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ox-appsuite",
+			Annotations: map[string]string{
+				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/appsuite/",
+				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/appsuite/api","serviceName":"appsuite-api"}]`,
+			},
+		},
+	}
+	route := buildAppHTTPRoute(tenant, "tenant-demo", "ox-appsuite", oxProfile, ingress, "webmail.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
 	if len(route.Spec.Rules) != 3 {
 		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
 	}

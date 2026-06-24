@@ -21,6 +21,7 @@ const (
 
 type ingressIntent struct {
 	appProfile string
+	profile    *gentianov1alpha1.AppProfile
 	ingress    *gentianov1alpha1.IngressSpec
 }
 
@@ -73,6 +74,7 @@ func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 func buildAppHTTPRoute(
 	tenant *gentianov1alpha1.Tenant,
 	nsName, appProfile string,
+	profile *gentianov1alpha1.AppProfile,
 	ingress *gentianov1alpha1.IngressSpec,
 	host, effectiveDomain, kernelDomain string,
 ) *gatewayv1.HTTPRoute {
@@ -104,10 +106,10 @@ func buildAppHTTPRoute(
 	}
 
 	rules := []gatewayv1.HTTPRouteRule{rule}
-	if apiRules := appAPIBackendRules(appProfile, svcPort); len(apiRules) > 0 {
+	if apiRules := appAPIBackendRules(profile, svcPort); len(apiRules) > 0 {
 		rules = append(apiRules, rules...)
 	}
-	if rootRedirect := appRootRedirectRule(appProfile, host); rootRedirect != nil {
+	if rootRedirect := appRootRedirectRule(profile, host); rootRedirect != nil {
 		rules = append([]gatewayv1.HTTPRouteRule{*rootRedirect}, rules...)
 	}
 
@@ -132,9 +134,9 @@ func buildAppHTTPRoute(
 	}
 }
 
-func appRootRedirectRule(appProfile, host string) *gatewayv1.HTTPRouteRule {
-	target, ok := appRootRedirectTargets[appProfile]
-	if !ok {
+func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gatewayv1.HTTPRouteRule {
+	target := gentianov1alpha1.ProfileGatewayRootRedirect(profile)
+	if target == "" {
 		return nil
 	}
 	scheme := "https"
@@ -167,37 +169,29 @@ func appRootRedirectRule(appProfile, host string) *gatewayv1.HTTPRouteRule {
 	}
 }
 
-var appRootRedirectTargets = map[string]string{
-	"ox-appsuite": "/appsuite/",
-}
-
-type appAPIBackend struct {
-	pathPrefix  string
-	serviceName string
-}
-
-var appAPIBackends = map[string][]appAPIBackend{
-	"ox-appsuite": {
-		{pathPrefix: "/appsuite/api", serviceName: "appsuite-api"},
-	},
-}
-
-func appAPIBackendRules(appProfile string, svcPort int32) []gatewayv1.HTTPRouteRule {
-	backends, ok := appAPIBackends[appProfile]
-	if !ok {
+func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32) []gatewayv1.HTTPRouteRule {
+	backends, err := gentianov1alpha1.ProfileGatewayAPIBackends(profile)
+	if err != nil || len(backends) == 0 {
 		return nil
 	}
-	port := gatewayv1.PortNumber(svcPort)
 	var rules []gatewayv1.HTTPRouteRule
 	for _, backend := range backends {
-		prefix := backend.pathPrefix
+		if backend.PathPrefix == "" || backend.ServiceName == "" {
+			continue
+		}
+		port := defaultPort
+		if backend.Port > 0 {
+			port = backend.Port
+		}
+		p := gatewayv1.PortNumber(port)
+		prefix := backend.PathPrefix
 		rules = append(rules, gatewayv1.HTTPRouteRule{
 			Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
 			BackendRefs: []gatewayv1.HTTPBackendRef{{
 				BackendRef: gatewayv1.BackendRef{
 					BackendObjectReference: gatewayv1.BackendObjectReference{
-						Name: gatewayv1.ObjectName(backend.serviceName),
-						Port: &port,
+						Name: gatewayv1.ObjectName(backend.ServiceName),
+						Port: &p,
 					},
 				},
 			}},

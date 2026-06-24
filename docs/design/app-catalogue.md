@@ -33,6 +33,14 @@ to other apps, optional peer integrations, the upstream Helm chart,
 and a typed `valueMapping` describing how to feed kernel-provided
 values into the chart.
 
+**Operator vs composition:** The `AppProfile` CRD stays generic — no per-app
+fields. Shared operator behaviour (gateway extra routes, OIDC redirect fallbacks,
+base/module auto-install) uses **`metadata.annotations`** with the `gentianos.io/`
+prefix. Deploy sequencing, bootstrap Jobs, and chart-specific MR graphs belong in
+**`gentian-apps/profiles/<name>/composition.yaml`**. See
+[app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) §1 (annotations
+vs composition).
+
 ```yaml
 apiVersion: gentianos.io/v1alpha1
 kind: AppProfile
