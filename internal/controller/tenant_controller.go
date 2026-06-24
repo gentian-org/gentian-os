@@ -370,15 +370,12 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if err := r.Update(ctx, tenant); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
-	}
-
-	if res, err := r.ensureImplicitBaseApps(ctx, tenant); res.Requeue || err != nil {
-		return res, err
+		return ctrl.Result{}, nil
 	}
 
 	// Preflight gate: a tenant may only proceed when all requested AppProfiles
-	// exist.
+	// exist. Run before implicit base injection so missing profiles surface as
+	// Degraded without hitting ensureImplicitBaseApps Get errors.
 	missingProfiles, err := r.validateTenantPrerequisites(ctx, tenant)
 	if err != nil {
 		reconcileErrors.WithLabelValues("tenant").Inc()
@@ -392,6 +389,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, nil
+	}
+
+	if res, err := r.ensureImplicitBaseApps(ctx, tenant); res.RequeueAfter > 0 || err != nil {
+		return res, err
 	}
 
 	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {
