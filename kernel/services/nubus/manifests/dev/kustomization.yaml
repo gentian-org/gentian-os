@@ -34,6 +34,10 @@ configMapGenerator:
     namespace: gentian-dev
     files:
       - 95-gentian-umc-gateway-upstream.sh=patches/95-gentian-umc-gateway-upstream.sh
+  - name: nubus-dev-umc-gateway-upstream-patcher
+    namespace: gentian-dev
+    files:
+      - patch-umc-gateway-upstream.sh=patches/patch-umc-gateway-upstream.sh
 
 generatorOptions:
   disableNameSuffixHash: true
