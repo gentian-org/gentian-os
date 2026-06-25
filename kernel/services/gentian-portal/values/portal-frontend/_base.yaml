@@ -27,6 +27,8 @@ fullnameOverride: "nubus-dev-portal-frontend"
 portalFrontend:
   environment: "production"
   logLevel: "WARNING"
+  # Gentian theme + favicons ship in the portal-frontend image (public/css/gentian-theme.css).
+  # Use portalFrontend.branding.* only for tenant-specific overrides (see gentian-ui/docs/ui-cleanup.md).
   objectStorage:
     iconsProxyUrl: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000/ums/portal-assets/icons/"
 
@@ -128,4 +130,4 @@ podAnnotations:
 image:
   registry: "ghcr.io"
   repository: "gentian-org/portal-frontend"
-  tag: "d62fbb89"
+  tag: "2f8f7e31"

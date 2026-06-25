@@ -87,6 +87,9 @@ global:
               disabled: "No"
     ucs:
       web:
+        # Gentian portal ships gentian-theme.css with the frontend static build.
+        # Legacy UMC pages may still reference theme: light; portal SPA uses
+        # ./css/gentian-theme.css (see gentian-ui/docs/ui-cleanup.md).
         theme: light
     umc:
       web:
