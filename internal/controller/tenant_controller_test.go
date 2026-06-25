@@ -295,6 +295,16 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
+	// gentian-infra-dev and ingress are referenced by gateway/isolation tests.
+	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "ingress"} {
+		if err := testClient.Create(context.Background(), &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: ns},
+		}); err != nil {
+			panic(err)
+		}
+	}
+
 	// udm-admin Secret is required by the mail reconciler for Dovecot LDAP config.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
