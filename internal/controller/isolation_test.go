@@ -494,20 +494,20 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		t.Errorf("namespace should be retained, but got error: %v", err)
 	}
 
-	// Owned resources in namespace should be cleaned up.
+	// Owned resources in namespace should be cleaned up (poll: envtest shell simulator
+	// may lag one tick behind the controller finalizer).
+	waitForRetainShellTeardown(t, ctx, "tenant-ret-full")
+
 	rq := &corev1.ResourceQuota{}
-	err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-ret-full"}, rq)
-	if err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-ret-full"}, rq); err == nil {
 		t.Error("ResourceQuota should be deleted in Retain mode")
 	}
 	lr := &corev1.LimitRange{}
-	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-ret-full"}, lr)
-	if err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-ret-full"}, lr); err == nil {
 		t.Error("LimitRange should be deleted in Retain mode")
 	}
 	npCheck := &networkingv1.NetworkPolicy{}
-	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-ret-full"}, npCheck)
-	if err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-ret-full"}, npCheck); err == nil {
 		t.Error("NetworkPolicy should be deleted in Retain mode")
 	}
 
@@ -532,6 +532,26 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	}, ldapDeleteJob); err == nil {
 		t.Error("LDAP OU deletion Job should NOT be created for Retain policy")
 	}
+}
+
+// waitForRetainShellTeardown polls until orchestrator-owned namespace scaffolding
+// is gone after a Retain tenant delete.
+func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string) {
+	t.Helper()
+	waitFor(t, jobAppearTimeout, func() bool {
+		objs := []client.Object{
+			&corev1.ResourceQuota{},
+			&corev1.LimitRange{},
+			&networkingv1.NetworkPolicy{},
+		}
+		names := []string{"tenant-quota", "tenant-limits", "tenant-isolation"}
+		for i, name := range names {
+			if err := testClient.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, objs[i]); err == nil {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 // ---------------------------------------------------------------------------

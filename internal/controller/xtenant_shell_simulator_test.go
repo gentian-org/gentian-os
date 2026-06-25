@@ -87,6 +87,9 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 		if xr.GetDeletionTimestamp() != nil {
 			continue
 		}
+		if !xTenantShellActive(ctx, c, xr) {
+			continue
+		}
 		tenantName := xr.GetName()
 		spec, _, _ := unstructured.NestedMap(xr.Object, "spec")
 		if spec == nil {
@@ -144,7 +147,7 @@ func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, active
 	active := make(map[string]struct{}, len(activeXTenants))
 	for i := range activeXTenants {
 		xr := &activeXTenants[i]
-		if xr.GetDeletionTimestamp() != nil {
+		if !xTenantShellActive(ctx, c, xr) {
 			continue
 		}
 		active[xr.GetName()] = struct{}{}
@@ -188,13 +191,33 @@ func simulateXTenantShellTeardown(ctx context.Context, c client.Client, activeTe
 			continue
 		}
 		nsName := ns.GetName()
-		for _, obj := range []client.Object{
-			&corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: "tenant-limits", Namespace: nsName}},
-			&corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: "tenant-quota", Namespace: nsName}},
-			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "tenant-isolation", Namespace: nsName}},
-		} {
-			_ = client.IgnoreNotFound(c.Delete(ctx, obj))
-		}
+		deleteSimulatedShellResources(ctx, c, nsName)
+	}
+}
+
+// xTenantShellActive reports whether the envtest simulator should provision or
+// retain tenant shell resources for an XTenant. While the Tenant CR is deleting
+// (or gone) the operator owns teardown — recreating LimitRange/NetworkPolicy
+// here races deleteOwnedResourcesInNamespace and flakes Retain deletion tests.
+func xTenantShellActive(ctx context.Context, c client.Client, xr *unstructured.Unstructured) bool {
+	if xr.GetDeletionTimestamp() != nil {
+		return false
+	}
+	tenantCR := &gentianov1alpha1.Tenant{}
+	err := c.Get(ctx, types.NamespacedName{Name: xr.GetName()}, tenantCR)
+	if err != nil {
+		return false
+	}
+	return tenantCR.GetDeletionTimestamp() == nil
+}
+
+func deleteSimulatedShellResources(ctx context.Context, c client.Client, nsName string) {
+	for _, obj := range []client.Object{
+		&corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: "tenant-limits", Namespace: nsName}},
+		&corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: "tenant-quota", Namespace: nsName}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "tenant-isolation", Namespace: nsName}},
+	} {
+		_ = client.IgnoreNotFound(c.Delete(ctx, obj))
 	}
 }
 
