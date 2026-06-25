@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: 2025 Gentian
 #
 # Pins portal-frontend / gentian-login image tags after gentian-ui builds.
-# Called from gentian-ui via workflow_call (no PAT; requires org setting
-# "Allow gentian-org actions and reusable workflows").
+# Called from gentian-ui via workflow_call. Cross-repo workflow_call uses the
+# caller's GITHUB_TOKEN for git operations, so git push needs CI_BOT_PAT on
+# gentian-os (not on gentian-ui). See gentian-ui/docs/ci-setup.md §3.
 
 name: Pin portal-frontend image
 
@@ -18,9 +19,12 @@ on:
         description: Full git SHA of the gentian-ui build (audit only)
         required: false
         type: string
-  repository_dispatch:
-    types:
-      - portal-frontend-image-pin
+  workflow_dispatch:
+    inputs:
+      sha_tag:
+        description: 8-char image tag to pin
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -31,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      SHA_TAG: ${{ inputs.sha_tag || github.event.client_payload.sha_tag }}
+      SHA_TAG: ${{ inputs.sha_tag }}
 
     steps:
       - name: Checkout gentian-os
@@ -39,10 +43,7 @@ jobs:
         with:
           repository: gentian-org/gentian-os
           ref: develop
-          # Cross-repo workflow_call: default credentials target the caller repo.
-          # CI_BOT_PAT (gentian-os secret, contents:write on this repo) is the
-          # reliable option; fall back to github.token for repository_dispatch.
-          token: ${{ secrets.CI_BOT_PAT || github.token }}
+          token: ${{ secrets.CI_BOT_PAT }}
 
       - name: Validate payload
         run: |
@@ -63,7 +64,7 @@ jobs:
 
       - name: Commit and push
         env:
-          PUSH_TOKEN: ${{ secrets.CI_BOT_PAT || github.token }}
+          PUSH_TOKEN: ${{ secrets.CI_BOT_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -76,7 +77,7 @@ jobs:
           git commit -m "ci(portal-frontend): update image to ${SHA_TAG}"
           if ! git push "https://x-access-token:${PUSH_TOKEN}@github.com/gentian-org/gentian-os.git" HEAD:develop; then
             echo "::error::git push failed."
-            echo "::error::For cross-repo workflow_call, add CI_BOT_PAT on gentian-os (Contents read/write)."
+            echo "::error::Add CI_BOT_PAT on gentian-os (fine-grained PAT, Contents read/write)."
             exit 1
           fi
 

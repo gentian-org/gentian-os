@@ -2,8 +2,7 @@
 # SPDX-FileCopyrightText: 2025 Gentian
 #
 # Pins base-router image tag after gentian-ui builds.
-# Called from gentian-ui via workflow_call (no PAT; requires org setting
-# "Allow gentian-org actions and reusable workflows").
+# See portal-frontend-image-pin.yaml for the CI_BOT_PAT requirement.
 
 name: Pin base-router image
 
@@ -12,6 +11,12 @@ on:
     inputs:
       sha_tag:
         description: 8-char image tag built by gentian-ui CI
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      sha_tag:
+        description: 8-char image tag to pin
         required: true
         type: string
 
@@ -32,7 +37,7 @@ jobs:
         with:
           repository: gentian-org/gentian-os
           ref: develop
-          token: ${{ secrets.CI_BOT_PAT || github.token }}
+          token: ${{ secrets.CI_BOT_PAT }}
 
       - name: Validate payload
         run: |
@@ -51,7 +56,7 @@ jobs:
 
       - name: Commit and push
         env:
-          PUSH_TOKEN: ${{ secrets.CI_BOT_PAT || github.token }}
+          PUSH_TOKEN: ${{ secrets.CI_BOT_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -62,7 +67,7 @@ jobs:
           fi
           git commit -m "ci(base-router): update image to ${SHA_TAG}"
           if ! git push "https://x-access-token:${PUSH_TOKEN}@github.com/gentian-org/gentian-os.git" HEAD:develop; then
-            echo "::error::git push failed. Add secret CI_BOT_PAT on gentian-os (Contents read/write on gentian-org/gentian-os)."
+            echo "::error::git push failed. Add CI_BOT_PAT on gentian-os (Contents read/write)."
             exit 1
           fi
 
