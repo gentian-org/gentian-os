@@ -200,6 +200,8 @@ appLifecycle:
     repo: https://github.com/gentian-org/gentian-deployments
     cluster: default-cluster
     stage: dev
+    # Secret with key .git-credentials (https://user:token@host) for git push.
+    gitCredentialsSecret: ""
 
 # Admission webhook for Tenant create/update validation.
 webhook:
