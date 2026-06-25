@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2025 Gentian
+#
+# Pins portal-frontend / gentian-login image tags after gentian-ui builds.
+# Triggered by repository_dispatch from gentian-ui/.github/workflows/portal-frontend.yaml
+
+name: Pin portal-frontend image
+
+on:
+  repository_dispatch:
+    types:
+      - portal-frontend-image-pin
+
+permissions:
+  contents: write
+
+jobs:
+  pin:
+    name: Update image tag in values
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout gentian-os
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Validate payload
+        env:
+          SHA_TAG: ${{ github.event.client_payload.sha_tag }}
+        run: |
+          if [ -z "$SHA_TAG" ]; then
+            echo "::error::client_payload.sha_tag is required"
+            exit 1
+          fi
+          echo "Pinning portal-frontend image to ${SHA_TAG}"
+
+      - name: Update image tags
+        env:
+          SHA_TAG: ${{ github.event.client_payload.sha_tag }}
+        run: |
+          for VALUES in \
+            kernel/services/gentian-portal/values/portal-frontend/_base.yaml \
+            kernel/services/gentian-portal/values/gentian-login/_base.yaml
+          do
+            sed -i "s|^  tag: \".*\"|  tag: \"${SHA_TAG}\"|" "$VALUES"
+          done
+
+      - name: Commit and push
+        env:
+          SHA_TAG: ${{ github.event.client_payload.sha_tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add kernel/services/gentian-portal/values/portal-frontend/_base.yaml
+          git add kernel/services/gentian-portal/values/gentian-login/_base.yaml
+          if git diff --staged --quiet; then
+            echo "Image tag already pinned to ${SHA_TAG}"
+            exit 0
+          fi
+          git commit -m "ci(portal-frontend): update image to ${SHA_TAG}"
+          git push
+
+      - name: Trigger ArgoCD sync
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+          APP_NAME: gentian-portal-portal-frontend-dev
+        run: |
+          if [ -z "$ARGOCD_SERVER" ] || [ -z "$ARGOCD_TOKEN" ]; then
+            echo "ArgoCD secrets not configured — skipping sync"
+            exit 0
+          fi
+          curl -sf -X POST \
+            "${ARGOCD_SERVER}/api/v1/applications/${APP_NAME}/sync" \
+            -H "Authorization: Bearer ${ARGOCD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"revision":"HEAD","prune":true}' \
+          && echo "ArgoCD sync triggered for ${APP_NAME}" \
+          || echo "ArgoCD sync trigger failed (non-fatal)"
