@@ -47,4 +47,4 @@ branding:
 image:
   registry: "ghcr.io"
   repository: "gentian-org/portal-frontend"
-  tag: "7a882f76"
+  tag: "db3cdd16"
