@@ -221,7 +221,7 @@ keycloak:
       primary15: "#ECECF7"
     texts:
       productName: "Gentian"
-    univentionCustomTheme: "https://portal.desk.gentian.org/css/keycloak-theme.css"
+    univentionCustomTheme: "https://portal.desk.gentian.org/css/keycloak-theme.css?v=3"
   keycloak:
     features:
       enabled:
