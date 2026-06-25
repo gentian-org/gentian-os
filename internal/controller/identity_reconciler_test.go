@@ -373,16 +373,11 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-ldap-sync-allready", "platform-kernel")
 
-	// Wait for IdentityReady=True and Phase=Ready.
+	// Wait for Phase=Ready (identity and remaining tenant paths must converge first).
 	updated := &gentianov1alpha1.Tenant{}
 	waitFor(t, tenantReadyTimeout, func() bool {
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "allready"}, updated)
-		for _, c := range updated.Status.Conditions {
-			if c.Type == "IdentityReady" && c.Status == metav1.ConditionTrue {
-				return true
-			}
-		}
-		return false
+		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
 
 	if updated.Status.Phase != gentianov1alpha1.TenantPhaseReady {
