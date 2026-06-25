@@ -130,5 +130,5 @@ func (s *Service) applyTenantFile(ctx context.Context, file string) error {
 	if err := yaml.Unmarshal(b, &obj.Object); err != nil {
 		return fmt.Errorf("decode tenant manifest: %w", err)
 	}
-	return s.client.Patch(ctx, obj, client.Apply, client.FieldOwner("gentian-applifecycle"), client.ForceOwnership)
+	return s.client.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), client.FieldOwner("gentian-applifecycle"), client.ForceOwnership)
 }

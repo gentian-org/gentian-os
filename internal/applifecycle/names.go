@@ -16,13 +16,10 @@ See the License for the specific language governing limitations under the Licens
 package applifecycle
 
 import (
-	"regexp"
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
-
-var safeSQLIdent = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 func tenantNamespace(tenant string) string {
 	return "tenant-" + tenant
