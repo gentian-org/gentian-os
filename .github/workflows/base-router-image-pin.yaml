@@ -32,6 +32,7 @@ jobs:
         with:
           repository: gentian-org/gentian-os
           ref: develop
+          token: ${{ secrets.CI_BOT_PAT || github.token }}
 
       - name: Validate payload
         run: |
@@ -49,6 +50,8 @@ jobs:
           sed -i "s|tag: .*|tag: \"${SHA_TAG}\"|" "$VALUES"
 
       - name: Commit and push
+        env:
+          PUSH_TOKEN: ${{ secrets.CI_BOT_PAT || github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -58,7 +61,10 @@ jobs:
             exit 0
           fi
           git commit -m "ci(base-router): update image to ${SHA_TAG}"
-          git push
+          if ! git push "https://x-access-token:${PUSH_TOKEN}@github.com/gentian-org/gentian-os.git" HEAD:develop; then
+            echo "::error::git push failed. Add secret CI_BOT_PAT on gentian-os (Contents read/write on gentian-org/gentian-os)."
+            exit 1
+          fi
 
       - name: Trigger ArgoCD sync
         env:
