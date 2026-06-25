@@ -106,12 +106,27 @@ spec:
               value: {{ .Values.memcached.image | quote }}
             - name: TENANT_CROSSPLANE_ONLY
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
+            - name: APP_LIFECYCLE_BIND_ADDRESS
+              value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
+            - name: APP_LIFECYCLE_DEFAULT_BACKEND
+              value: {{ .Values.appLifecycle.defaultBackend | quote }}
+            - name: KERNEL_NAMESPACE
+              value: {{ .Values.infraNamespace | default "platform-kernel" | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OPERATOR_SA
+              value: {{ include "gentian-os.serviceAccountName" . | quote }}
           ports:
             - name: metrics
               containerPort: 8080
               protocol: TCP
             - name: health
               containerPort: 8081
+              protocol: TCP
+            - name: lifecycle
+              containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
             {{- if $webhookEnabled }}
             - name: webhook

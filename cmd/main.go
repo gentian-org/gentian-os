@@ -35,6 +35,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/applifecycle"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/webhook"
@@ -145,6 +146,19 @@ func main() {
 			TenancyMode:  os.Getenv("TENANCY_MODE"),
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		}).SetupWithManager(mgr)
+	}
+
+	if os.Getenv("APP_LIFECYCLE_ENABLED") != "false" {
+		lifecycle, err := applifecycle.NewRunnableFromEnv(mgr)
+		if err != nil {
+			setupLog.Error(err, "unable to create app lifecycle server")
+			os.Exit(1)
+		}
+		if err := mgr.Add(lifecycle); err != nil {
+			setupLog.Error(err, "unable to add app lifecycle server")
+			os.Exit(1)
+		}
+		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -2608,6 +2608,34 @@ cleanup_app_post_uninstall() {
 }
 
 # ---------------------------------------------------------------------------
+# gtnctl delegation (shared Go implementation in gentian-os/internal/applifecycle)
+# ---------------------------------------------------------------------------
+_gtnctl_bin() {
+  if command -v gtnctl >/dev/null 2>&1; then
+    command -v gtnctl
+    return 0
+  fi
+  local plugin_dir
+  plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "${plugin_dir}/gtnctl" ]]; then
+    echo "${plugin_dir}/gtnctl"
+    return 0
+  fi
+  if [[ -x "${plugin_dir}/../bin/gtnctl" ]]; then
+    echo "${plugin_dir}/../bin/gtnctl"
+    return 0
+  fi
+  return 1
+}
+
+_run_gtnctl_apps() {
+  local gtnctl_bin
+  gtnctl_bin="$(_gtnctl_bin)" || return 127
+  local backend="${GENTIAN_APP_LIFECYCLE_BACKEND:-gitops}"
+  "${gtnctl_bin}" apps "$@" --backend "${backend}"
+}
+
+# ---------------------------------------------------------------------------
 # apps install
 # ---------------------------------------------------------------------------
 cmd_install() {
@@ -2618,6 +2646,15 @@ cmd_install() {
     echo "ERROR: usage: kubectl gentian apps install <app> --tenant <tenant>" >&2
     exit 1
   fi
+
+  if _run_gtnctl_apps install "${app}" --tenant "${tenant}"; then
+    return 0
+  fi
+  local gtnctl_status=$?
+  if [[ "${gtnctl_status}" -ne 127 ]]; then
+    exit "${gtnctl_status}"
+  fi
+  echo "NOTE: gtnctl not found; using legacy bash installer. Build it with: make -C gentian-os install-plugin" >&2
 
   ensure_repo
 
@@ -2691,6 +2728,19 @@ cmd_uninstall() {
     echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]" >&2
     exit 1
   fi
+
+  local purge_args=()
+  if [[ "${force}" == "true" ]]; then
+    purge_args=(--purge)
+  fi
+  if _run_gtnctl_apps uninstall "${app}" --tenant "${tenant}" "${purge_args[@]}"; then
+    return 0
+  fi
+  local gtnctl_status=$?
+  if [[ "${gtnctl_status}" -ne 127 ]]; then
+    exit "${gtnctl_status}"
+  fi
+  echo "NOTE: gtnctl not found; using legacy bash uninstaller. Build it with: make -C gentian-os install-plugin" >&2
 
   ensure_repo
 

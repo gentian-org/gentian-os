@@ -191,6 +191,11 @@ metrics:
     # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
     additionalLabels: {}
 
+# App lifecycle HTTP API (install/uninstall/purge — shared by App Store and gtnctl).
+appLifecycle:
+  port: 8082
+  defaultBackend: kubernetes
+
 # Admission webhook for Tenant create/update validation.
 webhook:
   enabled: true

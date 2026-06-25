@@ -24,16 +24,17 @@ export KUBEBUILDER_ASSETS
 
 all: generate build test
 
-## Build the module (no binary yet — orchestrator binary added in Increment 2)
+## Build the module (manager + gtnctl CLI)
 build:
-	go build ./...
+	go build -o bin/manager ./cmd/main.go
+	go build -o bin/gtnctl ./cmd/gtnctl
 
-## Install the kubectl-gentian plugin to ~/.local/bin (gtnctl symlink)
+## Install the kubectl-gentian plugin and gtnctl to ~/.local/bin
 install-plugin:
 	install -d $(HOME)/.local/bin
+	go build -o $(HOME)/.local/bin/gtnctl ./cmd/gtnctl
 	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
-	ln -sf $(HOME)/.local/bin/kubectl-gentian $(HOME)/.local/bin/gtnctl
-	@echo "Installed kubectl-gentian and gtnctl to $(HOME)/.local/bin"
+	@echo "Installed gtnctl and kubectl-gentian to $(HOME)/.local/bin"
 
 ## Run unit tests
 # internal/controller uses envtest whose watch goroutines conflict with -race;

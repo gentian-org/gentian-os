@@ -3018,8 +3018,16 @@ install_app_catalogue() {
     success "AppCatalogue CRD applied."
 
     local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
+    local gtnctl_src="${SCRIPT_DIR}/bin/gtnctl"
     local plugin_dst="/usr/local/bin/kubectl-gentian"
-    local alias_dst="/usr/local/bin/gtnctl"
+    local gtnctl_dst="/usr/local/bin/gtnctl"
+
+    if [[ ! -x "${gtnctl_src}" ]]; then
+        info "Building gtnctl..."
+        if ! (cd "${SCRIPT_DIR}" && go build -o bin/gtnctl ./cmd/gtnctl); then
+            warn "Failed to build gtnctl — run: make -C ${SCRIPT_DIR} build"
+        fi
+    fi
 
     # Idempotency: skip if destination is identical to source (no sudo needed).
     if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
@@ -3038,36 +3046,31 @@ install_app_catalogue() {
     fi
 
     if [[ ! -x "${plugin_dst}" ]]; then
-        warn "Skipping gtnctl symlink — kubectl-gentian is not installed."
+        warn "Skipping gtnctl install — kubectl-gentian is not installed."
         return 0
+    fi
+
+    if [[ -x "${gtnctl_src}" ]]; then
+        if [[ -w /usr/local/bin ]]; then
+            install -m 755 "${gtnctl_src}" "${gtnctl_dst}"
+        else
+            sudo install -m 755 "${gtnctl_src}" "${gtnctl_dst}" || warn "Failed to install gtnctl to ${gtnctl_dst}"
+        fi
     fi
 
     # Mirror to ~/.local/bin when present — it often precedes /usr/local/bin in PATH.
     local user_bin="${HOME}/.local/bin"
     local user_plugin_dst="${user_bin}/kubectl-gentian"
-    local user_alias_dst="${user_bin}/gtnctl"
+    local user_gtnctl_dst="${user_bin}/gtnctl"
     if [[ -d "${user_bin}" ]]; then
         if [[ -w "${user_bin}" ]]; then
             install -m 755 "$plugin_src" "$user_plugin_dst"
-            ln -sf "${user_plugin_dst}" "${user_alias_dst}"
-            success "kubectl-gentian also installed to ${user_plugin_dst} (gtnctl)."
+            if [[ -x "${gtnctl_src}" ]]; then
+                install -m 755 "${gtnctl_src}" "${user_gtnctl_dst}"
+            fi
+            success "kubectl-gentian and gtnctl installed to ${user_bin}."
         else
             warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
-        fi
-    fi
-
-    if [[ -L "${alias_dst}" ]] && [[ "$(readlink -f "${alias_dst}")" == "$(readlink -f "${plugin_dst}")" ]]; then
-        success "gtnctl symlink already up-to-date at ${alias_dst}."
-    elif [[ -w /usr/local/bin ]]; then
-        ln -sf "${plugin_dst}" "${alias_dst}"
-        success "gtnctl symlink installed at ${alias_dst}."
-    else
-        info "Installing gtnctl symlink at ${alias_dst} (sudo required)..."
-        if sudo ln -sf "${plugin_dst}" "${alias_dst}"; then
-            success "gtnctl symlink installed at ${alias_dst}."
-        else
-            warn "Failed to install gtnctl symlink — install manually:"
-            warn "  sudo ln -sf ${plugin_dst} ${alias_dst}"
         fi
     fi
 }
