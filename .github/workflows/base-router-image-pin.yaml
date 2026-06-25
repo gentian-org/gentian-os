@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # SPDX-FileCopyrightText: 2025 Gentian
 #
-# Pins portal-frontend / gentian-login image tags after gentian-ui builds.
+# Pins base-router image tag after gentian-ui builds.
 # Called from gentian-ui via workflow_call (no PAT; requires org setting
 # "Allow gentian-org actions and reusable workflows").
 
-name: Pin portal-frontend image
+name: Pin base-router image
 
 on:
   workflow_call:
@@ -14,13 +14,6 @@ on:
         description: 8-char image tag built by gentian-ui CI
         required: true
         type: string
-      source_sha:
-        description: Full git SHA of the gentian-ui build (audit only)
-        required: false
-        type: string
-  repository_dispatch:
-    types:
-      - portal-frontend-image-pin
 
 permissions:
   contents: write
@@ -31,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      SHA_TAG: ${{ inputs.sha_tag || github.event.client_payload.sha_tag }}
+      SHA_TAG: ${{ inputs.sha_tag }}
 
     steps:
       - name: Checkout gentian-os
@@ -45,35 +38,32 @@ jobs:
             echo "::error::sha_tag is required"
             exit 1
           fi
-          echo "Pinning portal-frontend image to ${SHA_TAG}"
+          echo "Pinning base-router image to ${SHA_TAG}"
 
-      - name: Update image tags
+      - name: Update image tag
         run: |
-          for VALUES in \
-            kernel/services/gentian-portal/values/portal-frontend/_base.yaml \
-            kernel/services/gentian-portal/values/gentian-login/_base.yaml
-          do
-            sed -i "s|^  tag: \".*\"|  tag: \"${SHA_TAG}\"|" "$VALUES"
-          done
+          VALUES=kernel/services/gentian-portal/values/base-router/_base.yaml
+          sed -i "s|registry: .*|registry: \"ghcr.io\"|" "$VALUES"
+          sed -i "s|repository: .*|repository: \"gentian-org/base-router\"|" "$VALUES"
+          sed -i "s|tag: .*|tag: \"${SHA_TAG}\"|" "$VALUES"
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add kernel/services/gentian-portal/values/portal-frontend/_base.yaml
-          git add kernel/services/gentian-portal/values/gentian-login/_base.yaml
+          git add kernel/services/gentian-portal/values/base-router/_base.yaml
           if git diff --staged --quiet; then
             echo "Image tag already pinned to ${SHA_TAG}"
             exit 0
           fi
-          git commit -m "ci(portal-frontend): update image to ${SHA_TAG}"
+          git commit -m "ci(base-router): update image to ${SHA_TAG}"
           git push
 
       - name: Trigger ArgoCD sync
         env:
           ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
           ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
-          APP_NAME: gentian-portal-portal-frontend-dev
+          APP_NAME: gentian-portal-base-router-dev
         run: |
           if [ -z "$ARGOCD_SERVER" ] || [ -z "$ARGOCD_TOKEN" ]; then
             echo "ArgoCD secrets not configured — skipping sync"
