@@ -1278,6 +1278,8 @@ main_cp() {
     verify_intercom_ics || true
     reconcile_nextcloud_office || true  # Step 16c — richdocuments doc_format + WOPI (Collabora is wave 12)
 
+    configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
+
     # Clear the persisted run-start epoch so the next install (after a future
     # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.
     unset INSTALL_START_EPOCH

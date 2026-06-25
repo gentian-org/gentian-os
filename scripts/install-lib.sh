@@ -273,6 +273,10 @@ INPUT_HIERARCHY_VARS=(
     GENTIAN_DEPLOYMENTS_STAGE
     GENTIAN_DEPLOYMENTS_GIT_TOKEN
     GENTIAN_DEPLOYMENTS_GIT_USERNAME
+    GITHUB_ACTIONS_OS_REPO
+    CI_BOT_PAT
+    ARGOCD_SERVER
+    ARGOCD_TOKEN
     GENTIAN_NONINTERACTIVE
     INSTALL_CLUSTER_INFRA
     GENTIAN_MANAGED_CERT_MANAGER
@@ -514,6 +518,10 @@ validate_config() {
     _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push (install.secrets.env)" "${INSTALL_SECRETS_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "${INSTALL_SECRETS_FILE}"
+    _opt_from CI_BOT_PAT "GitHub PAT for gentian-os image-pin workflows (install.secrets.env)" "${INSTALL_SECRETS_FILE}"
+    _opt_from ARGOCD_SERVER "ArgoCD URL for pin-workflow sync (optional; derived from KERNEL_DOMAIN)" "${INSTALL_SECRETS_FILE}"
+    _opt_from ARGOCD_TOKEN "ArgoCD API token for pin-workflow sync (optional)" "${INSTALL_SECRETS_FILE}"
+    _opt_from GITHUB_ACTIONS_OS_REPO "GitHub repo for Actions secrets upload (install.env)" "${INSTALL_CONFIG_FILE}"
 
     echo ""
     if (( errors > 0 )); then
@@ -627,7 +635,7 @@ save_creds_cache() {
         echo "# Delete to be re-prompted on next run."
         for var in MASTER_PASSWORD OD_PRIVATE_REGISTRY_USERNAME OD_PRIVATE_REGISTRY_PASSWORD \
                    OD_SMTP_RELAY_USERNAME OD_SMTP_RELAY_PASSWORD CF_API_TOKEN \
-                   GENTIAN_DEPLOYMENTS_GIT_TOKEN; do
+                   GENTIAN_DEPLOYMENTS_GIT_TOKEN CI_BOT_PAT ARGOCD_TOKEN; do
             local val="${!var:-}"
             [[ -n "$val" ]] || continue
             # printf %q escapes safely for re-sourcing.
@@ -818,6 +826,21 @@ EOF
     fi
     : "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:=x-access-token}"
     export GENTIAN_DEPLOYMENTS_GIT_USERNAME
+
+    if [[ -z "${CI_BOT_PAT:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            warn "CI_BOT_PAT not set — gentian-ui image builds cannot auto-pin tags in gentian-os."
+        else
+            read -rsp "  CI_BOT_PAT (fine-grained PAT, Contents write on gentian-os; optional): " CI_BOT_PAT
+            echo ""
+            if [[ -n "${CI_BOT_PAT}" ]]; then
+                export CI_BOT_PAT
+                save_creds_cache
+            fi
+        fi
+    fi
+    : "${GITHUB_ACTIONS_OS_REPO:=gentian-org/gentian-os}"
+    export GITHUB_ACTIONS_OS_REPO
 }
 
 # =============================================================================
@@ -3194,6 +3217,21 @@ create_deployments_git_credentials() {
         "${username}" \
         "${host}"
     success "Deployments git credentials Secret ready in ${ns}."
+}
+
+# =============================================================================
+# Upload CI_BOT_PAT (and optional ArgoCD sync secrets) to gentian-os GitHub repo
+# =============================================================================
+configure_github_actions_secrets() {
+    if [[ -z "${CI_BOT_PAT:-}" ]]; then
+        warn "CI_BOT_PAT not set — skipping GitHub Actions secret upload for image-pin workflows."
+        warn "  Portal/base-router CI can build images but cannot commit pins to gentian-os."
+        warn "  See getting-started.md § GitHub Actions CI and gentian-ui/docs/ci-setup.md."
+        return 0
+    fi
+
+    banner "GitHub Actions secrets (gentian-os image pin)"
+    bash "${SCRIPT_DIR}/scripts/configure-github-actions-secrets.sh"
 }
 
 install_orchestrator() {
