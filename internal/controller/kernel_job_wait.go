@@ -90,3 +90,19 @@ func (r *TenantReconciler) waitForProvisioningJob(ctx context.Context, tenantNam
 	}
 	return crossplaneObjectReady(obj), nil
 }
+
+// deleteProvisioningJobObject removes the Crossplane Object MR for a provisioning
+// Job so the composite can recreate it after spec changes (e.g. portal tile icon).
+func (r *TenantReconciler) deleteProvisioningJobObject(ctx context.Context, tenantName, jobName string) {
+	if tenantName == "" {
+		return
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(crossplaneObjectGVK)
+	objName := provisioningJobObjectName(tenantName, jobName)
+	if err := r.Get(ctx, types.NamespacedName{Name: objName}, obj); err != nil {
+		return
+	}
+	prop := metav1.DeletePropagationBackground
+	_ = r.Delete(ctx, obj, &client.DeleteOptions{PropagationPolicy: &prop})
+}

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -38,12 +39,13 @@ import (
 const (
 	conditionLDAPReady  = "LDAPReady"
 	udmProvisionerImage = "curlimages/curl:8.7.1"
-	udmAdminSecret      = "udm-admin"
+	udmAdminSecret = "udm-admin"
 
 	// annotationProvisionedPortalTiles tracks which portal tile names have been
 	// provisioned in LDAP for a tenant. Used to detect and clean up stale entries
 	// when apps are removed from a tenant's profile.
 	annotationProvisionedPortalTiles = "gentian.org/provisioned-portal-tiles"
+	annotationPortalTileIconPrefix   = "gentian.org/portal-tile-icon-"
 	ldapRequeueAfter                 = 2 * time.Second
 )
 
@@ -332,6 +334,11 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 // ensurePortalEntryJob creates the per-tenant portal entry UDM Job for one tile.
 // Returns true when the Job has completed successfully.
 func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicatedPortalApp) (bool, error) {
+	jobName := portalEntryJobName(tenant.Name, pa.AppName)
+	if err := r.refreshPortalEntryJobIfIconChanged(ctx, tenant, pa, jobName); err != nil {
+		return false, err
+	}
+
 	// First, clean up any stale delete job for this tile.
 	deleteJobName := portalEntryDeleteJobName(tenant.Name, pa.AppName)
 	deleteJob := &batchv1.Job{}
@@ -349,7 +356,75 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 	}
 
 	jobName := portalEntryJobName(tenant.Name, pa.AppName)
-	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
+	done, err := r.waitForProvisioningJob(ctx, tenant.Name, jobName)
+	if err != nil {
+		return false, err
+	}
+	if done {
+		if trackErr := r.patchPortalTileIconHash(ctx, tenant, pa.AppName, pa.Logo); trackErr != nil {
+			return false, trackErr
+		}
+	}
+	return done, nil
+}
+
+func portalTileIconAnnotationKey(tileName string) string {
+	return annotationPortalTileIconPrefix + tileName
+}
+
+func hashPortalTileIcon(logo string) string {
+	if logo == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(logo))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func (r *TenantReconciler) storedPortalTileIconHash(tenant *gentianov1alpha1.Tenant, tileName string) string {
+	if tenant.Annotations == nil {
+		return ""
+	}
+	return tenant.Annotations[portalTileIconAnnotationKey(tileName)]
+}
+
+func (r *TenantReconciler) patchPortalTileIconHash(ctx context.Context, tenant *gentianov1alpha1.Tenant, tileName, logo string) error {
+	patch := client.MergeFrom(tenant.DeepCopy())
+	if tenant.Annotations == nil {
+		tenant.Annotations = make(map[string]string)
+	}
+	tenant.Annotations[portalTileIconAnnotationKey(tileName)] = hashPortalTileIcon(logo)
+	return client.IgnoreNotFound(r.Patch(ctx, tenant, patch))
+}
+
+func (r *TenantReconciler) removeProvisionedPortalTile(ctx context.Context, tenant *gentianov1alpha1.Tenant, tileName string) error {
+	tiles := getProvisionedPortalTiles(tenant)
+	if _, exists := tiles[tileName]; !exists {
+		return nil
+	}
+	delete(tiles, tileName)
+	return r.patchProvisionedPortalTiles(ctx, tenant, tiles)
+}
+
+// refreshPortalEntryJobIfIconChanged deletes a completed portal-entry Job when
+// the AppProfile tile logo changes so Crossplane can recreate it with the new icon.
+func (r *TenantReconciler) refreshPortalEntryJobIfIconChanged(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	pa dedicatedPortalApp,
+	jobName string,
+) error {
+	want := hashPortalTileIcon(pa.Logo)
+	if want == "" {
+		return nil
+	}
+	got := r.storedPortalTileIconHash(tenant, pa.AppName)
+	if got == want {
+		return nil
+	}
+
+	r.deleteProvisioningJobs(ctx, jobName)
+	r.deleteProvisioningJobObject(ctx, tenant.Name, jobName)
+	return r.removeProvisionedPortalTile(ctx, tenant, pa.AppName)
 }
 
 // ensureOUJob waits for the Crossplane-owned UDM OU + groups Job.
