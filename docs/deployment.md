@@ -244,7 +244,7 @@ candidates (see the template in `gentian-deployments`).
 | `gentian-deployments/clusters/<cluster>/definitions/` | Yes | Tenant definitions (inactive) |
 | `gentian-deployments/clusters/<cluster>/tenants/` | Yes | Activated tenant manifests |
 | `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `ACME_ENV`, repo URLs |
-| `install.secrets.env` | **Never** | Master password, registry, SMTP, Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN`, optional `CI_BOT_PAT` (GitHub Actions image pin) |
+| `install.secrets.env` | **Never** | Master password, registry, SMTP, Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN`, optional `CI_BOT_PAT` (uploaded to gentian-os + gentian-ui for image pin) |
 
 All deployment configuration for every cluster and stage can live on the
 `main` branch of `gentian-deployments`. Access control and review policy

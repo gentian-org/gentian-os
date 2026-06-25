@@ -63,7 +63,7 @@ them or store them in the config files below.
 | `CF_ZONE_NAME` | Override zone name for CF token verification (optional) |
 | `GENTIAN_DEPLOYMENTS_GIT_TOKEN` | GitHub PAT with `contents:write` on `gentian-deployments` — required for **in-cluster** App Store install/uninstall (operator git push) |
 | `GENTIAN_DEPLOYMENTS_GIT_USERNAME` | Git credential username (default: `x-access-token` for GitHub PATs) |
-| `CI_BOT_PAT` | Fine-grained GitHub PAT with **Contents read/write** on `gentian-org/gentian-os` — enables gentian-ui CI to auto-pin portal/base-router image tags (uploaded to GitHub Actions by `install.sh`; not stored on gentian-ui) |
+| `CI_BOT_PAT` | Fine-grained GitHub PAT with **Contents read/write** on `gentian-org/gentian-os` — uploaded to **both** `gentian-os` and `gentian-ui` Actions secrets by `install.sh` (gentian-ui pass-through for `workflow_call` only) |
 | `ARGOCD_SERVER` | ArgoCD URL for pin-workflow immediate sync (optional; defaults to `https://argocd.<KERNEL_DOMAIN>`) |
 | `ARGOCD_TOKEN` | ArgoCD API token for pin-workflow sync (optional; webhook/polling still work without it) |
 
@@ -149,7 +149,8 @@ or override per cluster/stage:
 | `GENTIAN_DEPLOYMENTS_CLUSTER` | `default-cluster` | Selects `clusters/<cluster>/...` in deployments repo |
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev` | Selects tenant directories under `clusters/<cluster>/tenants/*/<stage>` |
 | `GENTIAN_DEPLOYMENTS_GIT_TOKEN` | unset | GitHub PAT for operator in-cluster git push (see `install.secrets.env`) |
-| `GITHUB_ACTIONS_OS_REPO` | `gentian-org/gentian-os` | Target repo for `CI_BOT_PAT` / ArgoCD pin secrets (`install.env`) |
+| `GITHUB_ACTIONS_OS_REPO` | `gentian-org/gentian-os` | Target repo for ArgoCD pin secrets (`install.env`) |
+| `GITHUB_ACTIONS_UI_REPO` | `gentian-org/gentian-ui` | Receives `CI_BOT_PAT` pass-through for `workflow_call` (`install.env`) |
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
 
 The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
@@ -194,7 +195,7 @@ resolved values. The checked-in `dev-cluster.yaml` example uses
 | 15 | Operator | Install gentian-os controller (CRDs + reconcilers in `gentian-system`); optional deployments git credentials Secret for in-cluster app lifecycle |
 | 15b | Mail | Postfix + Dovecot when `MAIL_SERVICE_MODE=kernel` |
 | 15c | App catalogue | ArgoCD Application `gentian-appprofiles` syncs `gentian-apps/profiles/` |
-| 16d | GitHub Actions | Upload `CI_BOT_PAT` (+ optional ArgoCD pin secrets) to `gentian-org/gentian-os` via `gh` when configured |
+| 16d | GitHub Actions | Upload `CI_BOT_PAT` to `gentian-os` + `gentian-ui`, optional ArgoCD pin secrets on `gentian-os` |
 
 ---
 
@@ -262,14 +263,15 @@ kubectl get pods -A
 `gentian-ui` builds container images on push; reusable workflows in `gentian-os`
 commit the new image tag to `develop` so ArgoCD rolls out the portal.
 
-**Credentials:** `gentian-ui` does not need a PAT. Cross-repo git push requires
-`CI_BOT_PAT` on **gentian-org/gentian-os** only (fine-grained PAT: Contents
-read/write on that repository).
+**Credentials:** one fine-grained `CI_BOT_PAT` (Contents write on
+`gentian-org/gentian-os`). Cross-repo `workflow_call` requires the same secret
+on **gentian-ui** so the caller can pass it through; gentian-ui does not use it
+for its own git operations.
 
 **During install:** add `CI_BOT_PAT` to `install.secrets.env`. When `install.sh`
 finishes and `gh` is logged in, it runs `scripts/configure-github-actions-secrets.sh`
-to upload `CI_BOT_PAT` (and optional `ARGOCD_SERVER` / `ARGOCD_TOKEN`) to the
-GitHub repository configured in `GITHUB_ACTIONS_OS_REPO` (`install.env`).
+to upload `CI_BOT_PAT` to `GITHUB_ACTIONS_OS_REPO` and `GITHUB_ACTIONS_UI_REPO`
+(`install.env`), plus optional `ARGOCD_SERVER` / `ARGOCD_TOKEN` on `gentian-os`.
 
 **After install (manual):**
 
