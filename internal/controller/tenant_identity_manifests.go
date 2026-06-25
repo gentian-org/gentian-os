@@ -269,6 +269,9 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 			return nil, err
 		}
 		if crossplaneOwnsOIDCClient(profile, cfg) {
+			if err := r.seedOIDCSecrets(ctx, tenant, realmName, cfg); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		job, err := r.buildOIDCClientProvisioningJob(ctx, tenant, realmName, cfg)
@@ -324,6 +327,23 @@ func (r *TenantReconciler) seedTenantAdminCreds(ctx context.Context, tenant *gen
 		return r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
 	}
 	return secrets.TenantAdminCreds{Username: "admin-" + tenant.Name, Password: "placeholder"}, nil
+}
+
+// seedOIDCSecrets writes issuer/client-id/client-secret to OpenBao for apps whose
+// Keycloak Client MR is owned by Crossplane (operator OIDC Jobs are skipped).
+func (r *TenantReconciler) seedOIDCSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) error {
+	if r.Seeder == nil || cfg.clientID == "" {
+		return nil
+	}
+	issuerHost := tenant.Spec.Domain
+	if r.KernelDomain != "" {
+		issuerHost = r.KernelDomain
+	}
+	issuer := fmt.Sprintf("https://id.%s/realms/%s", issuerHost, realmName)
+	if _, err := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID); err != nil {
+		return fmt.Errorf("seed oidc for %s: %w", cfg.profileName, err)
+	}
+	return nil
 }
 
 func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (*batchv1.Job, error) {

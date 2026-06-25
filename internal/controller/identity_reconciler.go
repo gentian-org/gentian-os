@@ -152,6 +152,9 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			return ctrl.Result{}, err
 		}
 		if crossplaneOwnsOIDCClient(profile, cfg) {
+			if err := r.seedOIDCSecrets(ctx, tenant, realmName, cfg); err != nil {
+				return ctrl.Result{}, err
+			}
 			continue
 		}
 		done, err := r.ensureOIDCClientJob(ctx, tenant, realmName, cfg)
