@@ -75,7 +75,8 @@ jobs:
           fi
           git commit -m "ci(portal-frontend): update image to ${SHA_TAG}"
           if ! git push "https://x-access-token:${PUSH_TOKEN}@github.com/gentian-org/gentian-os.git" HEAD:develop; then
-            echo "::error::git push failed. For cross-repo workflow_call, add secret CI_BOT_PAT on gentian-os (fine-grained PAT with Contents read/write on gentian-org/gentian-os)."
+            echo "::error::git push failed."
+            echo "::error::For cross-repo workflow_call, add CI_BOT_PAT on gentian-os (Contents read/write)."
             exit 1
           fi
 
