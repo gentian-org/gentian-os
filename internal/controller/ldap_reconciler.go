@@ -355,7 +355,6 @@ func (r *TenantReconciler) ensurePortalEntryJob(ctx context.Context, tenant *gen
 		return false, nil
 	}
 
-	jobName := portalEntryJobName(tenant.Name, pa.AppName)
 	done, err := r.waitForProvisioningJob(ctx, tenant.Name, jobName)
 	if err != nil {
 		return false, err
