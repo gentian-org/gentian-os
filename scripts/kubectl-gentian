@@ -2631,8 +2631,7 @@ _gtnctl_bin() {
 _run_gtnctl_apps() {
   local gtnctl_bin
   gtnctl_bin="$(_gtnctl_bin)" || return 127
-  local backend="${GENTIAN_APP_LIFECYCLE_BACKEND:-gitops}"
-  "${gtnctl_bin}" apps "$@" --backend "${backend}"
+  "${gtnctl_bin}" apps "$@"
 }
 
 # ---------------------------------------------------------------------------

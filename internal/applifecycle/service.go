@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations under the License.
+See the License for the specific language governing limitations and the License.
 */
 
 package applifecycle
@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gentian-org/gentian-os/internal/meta"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -39,7 +38,7 @@ var appClaimGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
-// Service implements tenant app install/uninstall/purge.
+// Service implements tenant app install/uninstall/purge via GitOps.
 type Service struct {
 	client    client.Client
 	clientset kubernetes.Interface
@@ -50,7 +49,7 @@ type Service struct {
 // NewService constructs a lifecycle service.
 func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, error) {
 	if opts.KernelNamespace == "" {
-		opts.KernelNamespace = meta.KernelNamespace
+		opts.KernelNamespace = "platform-kernel"
 	}
 	if opts.OpenBaoNamespace == "" {
 		opts.OpenBaoNamespace = "openbao"
@@ -60,9 +59,6 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	}
 	if opts.OperatorSA == "" {
 		opts.OperatorSA = "gentian-os"
-	}
-	if opts.DefaultBackend == "" {
-		opts.DefaultBackend = BackendKubernetes
 	}
 	if opts.WaitTimeout == 0 {
 		opts.WaitTimeout = 15 * time.Minute
@@ -79,20 +75,13 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	}, nil
 }
 
-func (s *Service) backend(reqBackend Backend) Backend {
-	if reqBackend != "" {
-		return reqBackend
-	}
-	return s.opts.DefaultBackend
-}
-
-// Install adds a profile to the tenant and waits until the App claim is Ready.
+// Install commits the profile to gentian-deployments, reconciles, and waits until Ready.
 func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, error) {
 	if err := s.validateProfile(ctx, req.Profile); err != nil {
 		return nil, err
 	}
-	backend := s.backend(req.Backend)
-	status, err := s.addProfile(ctx, backend, req.Tenant, req.Profile, req.Actor)
+
+	status, file, _, err := s.git.Install(req.Tenant, req.Profile, req.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -101,31 +90,39 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		if err != nil {
 			return nil, err
 		}
-		return &Result{
-			Status:  status,
-			Tenant:  req.Tenant,
-			Profile: req.Profile,
-			Backend: backend,
-			Ready:   ready,
-			Message: msg,
-		}, nil
+		if ready {
+			return &Result{
+				Status:  status,
+				Tenant:  req.Tenant,
+				Profile: req.Profile,
+				Ready:   true,
+				Message: msg,
+			}, nil
+		}
 	}
+	if file != "" {
+		if err := s.reconcileTenantFile(ctx, file); err != nil {
+			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
+		}
+	}
+
 	if err := s.waitForAppReady(ctx, req.Tenant, req.Profile, s.opts.WaitTimeout); err != nil {
 		return nil, err
+	}
+	if status == "" {
+		status = "installed"
 	}
 	return &Result{
 		Status:  status,
 		Tenant:  req.Tenant,
 		Profile: req.Profile,
-		Backend: backend,
 		Ready:   true,
 		Message: "Installed and ready",
 	}, nil
 }
 
-// Uninstall removes a profile from the tenant and optionally purges persistent state.
+// Uninstall removes the profile from git, reconciles, waits for removal, and optionally purges.
 func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
-	backend := s.backend(req.Backend)
 	tenant := &gentianov1alpha1.Tenant{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Tenant}, tenant); err != nil {
 		return nil, fmt.Errorf("get tenant %q: %w", req.Tenant, err)
@@ -140,17 +137,19 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		}
 	}
 
-	status, err := s.removeProfile(ctx, backend, req.Tenant, req.Profile, req.Actor)
+	status, file, changed, err := s.git.Uninstall(req.Tenant, req.Profile, req.Actor)
 	if err != nil {
 		return nil, err
 	}
 	if status == "not_installed" && !s.appClaimExists(ctx, req.Tenant, req.Profile) {
-		return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile, Backend: backend}, nil
+		return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile}, nil
+	}
+	if changed && file != "" {
+		if err := s.reconcileTenantFile(ctx, file); err != nil {
+			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
+		}
 	}
 
-	if err := s.deleteAppClaim(ctx, req.Tenant, req.Profile); err != nil {
-		return nil, err
-	}
 	if err := s.waitForAppUninstalled(ctx, req.Tenant, req.Profile, s.opts.WaitTimeout); err != nil {
 		return nil, err
 	}
@@ -166,7 +165,6 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		Status:   status,
 		Tenant:   req.Tenant,
 		Profile:  req.Profile,
-		Backend:  backend,
 		Purged:   req.Purge,
 		Warnings: warnings,
 	}, nil
@@ -193,85 +191,11 @@ func profileUsesPostgres(ap *gentianov1alpha1.AppProfile) bool {
 	return ap.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL
 }
 
-func (s *Service) addProfile(ctx context.Context, backend Backend, tenant, profile, actor string) (string, error) {
-	switch backend {
-	case BackendGitOps:
-		return s.git.Install(tenant, profile, actor)
-	default:
-		return s.patchTenantAddApp(ctx, tenant, profile)
-	}
-}
-
-func (s *Service) removeProfile(ctx context.Context, backend Backend, tenant, profile, actor string) (string, error) {
-	switch backend {
-	case BackendGitOps:
-		return s.git.Uninstall(tenant, profile, actor)
-	default:
-		return s.patchTenantRemoveApp(ctx, tenant, profile)
-	}
-}
-
-func (s *Service) patchTenantAddApp(ctx context.Context, tenantName, profile string) (string, error) {
-	tenant := &gentianov1alpha1.Tenant{}
-	if err := s.client.Get(ctx, client.ObjectKey{Name: tenantName}, tenant); err != nil {
-		return "", err
-	}
-	for _, app := range tenant.Spec.Apps {
-		if app.Profile == profile {
-			return "already_installed", nil
-		}
-	}
-	patch := client.MergeFrom(tenant.DeepCopy())
-	tenant.Spec.Apps = append(tenant.Spec.Apps, gentianov1alpha1.TenantApp{Profile: profile})
-	if err := s.client.Patch(ctx, tenant, patch); err != nil {
-		return "", err
-	}
-	return "installed", nil
-}
-
-func (s *Service) patchTenantRemoveApp(ctx context.Context, tenantName, profile string) (string, error) {
-	tenant := &gentianov1alpha1.Tenant{}
-	if err := s.client.Get(ctx, client.ObjectKey{Name: tenantName}, tenant); err != nil {
-		return "", err
-	}
-	next := make([]gentianov1alpha1.TenantApp, 0, len(tenant.Spec.Apps))
-	found := false
-	for _, app := range tenant.Spec.Apps {
-		if app.Profile == profile {
-			found = true
-			continue
-		}
-		next = append(next, app)
-	}
-	if !found {
-		return "not_installed", nil
-	}
-	patch := client.MergeFrom(tenant.DeepCopy())
-	tenant.Spec.Apps = next
-	if err := s.client.Patch(ctx, tenant, patch); err != nil {
-		return "", err
-	}
-	return "uninstalled", nil
-}
-
 func (s *Service) appClaimExists(ctx context.Context, tenant, profile string) bool {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimGVK)
 	err := s.client.Get(ctx, client.ObjectKey{Name: profile, Namespace: tenantNamespace(tenant)}, obj)
 	return err == nil
-}
-
-func (s *Service) deleteAppClaim(ctx context.Context, tenant, profile string) error {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(appClaimGVK)
-	key := client.ObjectKey{Name: profile, Namespace: tenantNamespace(tenant)}
-	if err := s.client.Get(ctx, key, obj); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	return client.IgnoreNotFound(s.client.Delete(ctx, obj))
 }
 
 func (s *Service) appReadyState(ctx context.Context, tenant, profile string) (bool, string, error) {

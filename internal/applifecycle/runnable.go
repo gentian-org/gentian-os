@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations under the License.
+See the License for the specific language governing limitations and the License.
 */
 
 package applifecycle
@@ -35,13 +35,14 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		addr = ":8082"
 	}
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
-		KernelNamespace:   envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
-		OpenBaoNamespace:  envOrDefault("OPENBAO_NAMESPACE", "openbao"),
-		OperatorNamespace: envOrDefault("POD_NAMESPACE", "gentian-system"),
-		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
-		DefaultBackend:    Backend(envOrDefault("APP_LIFECYCLE_DEFAULT_BACKEND", string(BackendKubernetes))),
-		DeploymentsPath:   os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
-		DeploymentsRepo:   os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
+		KernelNamespace:    envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
+		OpenBaoNamespace:   envOrDefault("OPENBAO_NAMESPACE", "openbao"),
+		OperatorNamespace:  envOrDefault("POD_NAMESPACE", "gentian-system"),
+		OperatorSA:         envOrDefault("OPERATOR_SA", "gentian-os"),
+		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
+		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
+		DeploymentsCluster: envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER", "default-cluster"),
+		DeploymentsStage:   envOrDefault("GENTIAN_DEPLOYMENTS_STAGE", envOrDefault("GENTIAN_STAGE", "dev")),
 	})
 	if err != nil {
 		return nil, err

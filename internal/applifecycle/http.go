@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations under the License.
+See the License for the specific language governing limitations and the License.
 */
 
 package applifecycle
@@ -76,10 +76,6 @@ func (h *HTTPServer) handleList(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
 	profile := r.PathValue("profile")
-	backend := Backend(r.URL.Query().Get("backend"))
-	if backend == "" {
-		backend = h.Service.opts.DefaultBackend
-	}
 	actor := r.Header.Get("X-Gentian-Actor")
 	if actor == "" {
 		actor = "app-lifecycle-api"
@@ -87,7 +83,6 @@ func (h *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 	result, err := h.Service.Install(r.Context(), InstallRequest{
 		Tenant:  tenant,
 		Profile: profile,
-		Backend: backend,
 		Actor:   actor,
 	})
 	if err != nil {
@@ -101,10 +96,6 @@ func (h *HTTPServer) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
 	profile := r.PathValue("profile")
 	purge := r.URL.Query().Get("purge") == "true" || r.URL.Query().Get("purge") == "1"
-	backend := Backend(r.URL.Query().Get("backend"))
-	if backend == "" {
-		backend = h.Service.opts.DefaultBackend
-	}
 	actor := r.Header.Get("X-Gentian-Actor")
 	if actor == "" {
 		actor = "app-lifecycle-api"
@@ -112,7 +103,6 @@ func (h *HTTPServer) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	result, err := h.Service.Uninstall(r.Context(), UninstallRequest{
 		Tenant:  tenant,
 		Profile: profile,
-		Backend: backend,
 		Purge:   purge,
 		Actor:   actor,
 	})

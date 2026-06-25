@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations under the License.
+See the License for the specific language governing limitations and the License.
 */
 
 package applifecycle
@@ -35,13 +35,16 @@ func NewGitOps(path, repo string) *GitOps {
 	return &GitOps{path: path, repo: repo}
 }
 
-func (g *GitOps) enabled() bool {
-	return g.path != ""
+func (g *GitOps) requirePath() error {
+	if g.path == "" {
+		return fmt.Errorf("GENTIAN_DEPLOYMENTS_PATH is not configured")
+	}
+	return nil
 }
 
 func (g *GitOps) ensureRepo() error {
-	if g.path == "" {
-		return fmt.Errorf("GENTIAN_DEPLOYMENTS_PATH is not configured")
+	if err := g.requirePath(); err != nil {
+		return err
 	}
 	if _, err := os.Stat(filepath.Join(g.path, ".git")); err == nil {
 		return nil
@@ -63,6 +66,7 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 	for _, p := range matches {
 		return p, nil
 	}
+	var found []string
 	err := filepath.WalkDir(g.path, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -76,76 +80,83 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 		}
 		text := string(b)
 		if strings.Contains(text, "kind: Tenant") && strings.Contains(text, "name: "+tenant) {
-			matches = append(matches, path)
+			found = append(found, path)
 		}
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	if len(matches) == 0 {
+	if len(found) == 0 {
 		return "", fmt.Errorf("tenant file for %q not found in deployments repo", tenant)
 	}
-	return matches[0], nil
+	return found[0], nil
 }
 
-func (g *GitOps) Install(tenant, profile, actor string) (string, error) {
-	if !g.enabled() {
-		return "", fmt.Errorf("gitops backend requires deployments path")
-	}
-	file, err := g.tenantFile(tenant)
+// Install adds profile to tenant YAML in git. Returns status, tenant file path, and whether git changed.
+func (g *GitOps) Install(tenant, profile, actor string) (status, file string, changed bool, err error) {
+	file, err = g.tenantFile(tenant)
 	if err != nil {
-		return "", err
+		return "", "", false, err
 	}
 	content, err := os.ReadFile(file)
 	if err != nil {
-		return "", err
+		return "", file, false, err
 	}
 	text := string(content)
 	profileLine := regexp.MustCompile(`(?m)^\s+profile:\s+` + regexp.QuoteMeta(profile) + `\s*$`)
 	if profileLine.MatchString(text) {
-		return "already_installed", nil
+		return "already_installed", file, false, nil
 	}
-	appsHeader := regexp.MustCompile(`(?m)^  apps:\s*$`)
-	if appsHeader.MatchString(text) {
-		text = appsHeader.ReplaceAllString(text, "  apps:\n  - profile: "+profile)
-	} else {
-		text = strings.TrimRight(text, "\n") + "\n  apps:\n  - profile: " + profile + "\n"
+	text, ok := insertAppProfile(text, profile)
+	if !ok {
+		return "", file, false, fmt.Errorf("failed to update apps list in %s", file)
 	}
 	if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
-		return "", err
+		return "", file, false, err
 	}
-	if err := g.commit(file, fmt.Sprintf("feat(%s): install %s (via gtnctl by %s)", tenant, profile, actor)); err != nil {
-		return "", err
+	if err := g.commit(file, fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, actor)); err != nil {
+		return "", file, false, err
 	}
-	return "installed", nil
+	return "installed", file, true, nil
 }
 
-func (g *GitOps) Uninstall(tenant, profile, actor string) (string, error) {
-	if !g.enabled() {
-		return "", fmt.Errorf("gitops backend requires deployments path")
-	}
-	file, err := g.tenantFile(tenant)
+// Uninstall removes profile from tenant YAML in git.
+func (g *GitOps) Uninstall(tenant, profile, actor string) (status, file string, changed bool, err error) {
+	file, err = g.tenantFile(tenant)
 	if err != nil {
-		return "", err
+		return "", "", false, err
 	}
 	content, err := os.ReadFile(file)
 	if err != nil {
-		return "", err
+		return "", file, false, err
 	}
 	re := regexp.MustCompile(`(?m)^  - profile: ` + regexp.QuoteMeta(profile) + `\s*\n`)
 	text := string(content)
 	newText := re.ReplaceAllString(text, "")
 	if newText == text {
-		return "not_installed", nil
+		return "not_installed", file, false, nil
 	}
 	if err := os.WriteFile(file, []byte(newText), 0o644); err != nil {
-		return "", err
+		return "", file, false, err
 	}
-	if err := g.commit(file, fmt.Sprintf("feat(%s): uninstall %s (via gtnctl by %s)", tenant, profile, actor)); err != nil {
-		return "", err
+	if err := g.commit(file, fmt.Sprintf("feat(%s): uninstall %s (via %s)", tenant, profile, actor)); err != nil {
+		return "", file, false, err
 	}
-	return "uninstalled", nil
+	return "uninstalled", file, true, nil
+}
+
+func insertAppProfile(text, profile string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if line == "  apps:" {
+			out := append([]string{}, lines[:i+1]...)
+			out = append(out, "  - profile: "+profile)
+			out = append(out, lines[i+1:]...)
+			return strings.Join(out, "\n"), true
+		}
+	}
+	return strings.TrimRight(text, "\n") + "\n  apps:\n  - profile: " + profile + "\n", true
 }
 
 func (g *GitOps) commit(file, message string) error {
@@ -157,12 +168,20 @@ func (g *GitOps) commit(file, message string) error {
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}
+	diff := exec.Command("git", "-C", g.path, "diff", "--cached", "--quiet")
+	if err := diff.Run(); err == nil {
+		return nil
+	}
 	commit := exec.Command("git", "-C", g.path, "commit", "-m", message)
 	if out, err := commit.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "nothing to commit") {
 			return nil
 		}
 		return fmt.Errorf("git commit: %w: %s", err, out)
+	}
+	pull := exec.Command("git", "-C", g.path, "pull", "--rebase", "--autostash")
+	if out, err := pull.CombinedOutput(); err != nil {
+		return fmt.Errorf("git pull --rebase: %w: %s", err, out)
 	}
 	push := exec.Command("git", "-C", g.path, "push")
 	if out, err := push.CombinedOutput(); err != nil {

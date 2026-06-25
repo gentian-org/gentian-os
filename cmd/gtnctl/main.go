@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations under the License.
+See the License for the specific language governing limitations and the License.
 */
 
 // gtnctl is the Gentian OS CLI for tenant app lifecycle (install/uninstall/purge).
@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -71,13 +70,15 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `gtnctl — Gentian OS app lifecycle CLI
 
 Usage:
-  gtnctl apps install <profile> --tenant <tenant> [--backend kubernetes|gitops]
-  gtnctl apps uninstall <profile> --tenant <tenant> [--purge|-f] [--backend kubernetes|gitops]
+  gtnctl apps install <profile> --tenant <tenant>
+  gtnctl apps uninstall <profile> --tenant <tenant> [--purge|-f]
 
 Environment:
-  GENTIAN_DEPLOYMENTS_PATH   required for --backend gitops
-  GENTIAN_DEPLOYMENTS_REPO   used when deployments path needs cloning
-  KERNEL_NAMESPACE           default platform-kernel
+  GENTIAN_DEPLOYMENTS_PATH     local checkout of gentian-deployments (required)
+  GENTIAN_DEPLOYMENTS_REPO     used when deployments path needs cloning
+  GENTIAN_DEPLOYMENTS_CLUSTER  cluster selector (default: default-cluster)
+  GENTIAN_DEPLOYMENTS_STAGE    stage selector (default: dev)
+  KERNEL_NAMESPACE             default platform-kernel
 `)
 }
 
@@ -98,7 +99,6 @@ func runApps(args []string) error {
 func runAppMutation(action string, args []string) error {
 	fs := flag.NewFlagSet("apps "+action, flag.ExitOnError)
 	tenant := fs.String("tenant", "", "tenant name")
-	backend := fs.String("backend", string(envBackend()), "kubernetes or gitops")
 	purge := fs.Bool("purge", false, "purge persistent state (uninstall only)")
 	force := fs.Bool("f", false, "alias for --purge")
 	if err := fs.Parse(args); err != nil {
@@ -111,6 +111,9 @@ func runAppMutation(action string, args []string) error {
 	doPurge := *purge || *force
 	if action == "install" && doPurge {
 		return fmt.Errorf("--purge is only supported for uninstall")
+	}
+	if os.Getenv("GENTIAN_DEPLOYMENTS_PATH") == "" {
+		return fmt.Errorf("GENTIAN_DEPLOYMENTS_PATH is not set")
 	}
 
 	cfg, err := rest.InClusterConfig()
@@ -135,14 +138,12 @@ func runAppMutation(action string, args []string) error {
 	if actor == "" {
 		actor = "gtnctl"
 	}
-	be := applifecycle.Backend(strings.ToLower(*backend))
 
 	switch action {
 	case "install":
 		res, err := svc.Install(ctx, applifecycle.InstallRequest{
 			Tenant:  *tenant,
 			Profile: profile,
-			Backend: be,
 			Actor:   actor,
 		})
 		if err != nil {
@@ -153,7 +154,6 @@ func runAppMutation(action string, args []string) error {
 		res, err := svc.Uninstall(ctx, applifecycle.UninstallRequest{
 			Tenant:  *tenant,
 			Profile: profile,
-			Backend: be,
 			Purge:   doPurge,
 			Actor:   actor,
 		})
@@ -172,26 +172,17 @@ func runAppMutation(action string, args []string) error {
 	return nil
 }
 
-func envBackend() applifecycle.Backend {
-	if v := os.Getenv("GENTIAN_APP_LIFECYCLE_BACKEND"); v != "" {
-		return applifecycle.Backend(v)
-	}
-	if os.Getenv("GENTIAN_DEPLOYMENTS_PATH") != "" {
-		return applifecycle.BackendGitOps
-	}
-	return applifecycle.BackendKubernetes
-}
-
 func serviceOpts() applifecycle.Options {
 	return applifecycle.Options{
-		KernelNamespace:   envOr("KERNEL_NAMESPACE", "platform-kernel"),
-		OpenBaoNamespace:  envOr("OPENBAO_NAMESPACE", "openbao"),
-		OperatorNamespace: envOr("OPERATOR_NAMESPACE", "gentian-system"),
-		OperatorSA:        envOr("OPERATOR_SA", "gentian-os"),
-		DefaultBackend:    envBackend(),
-		DeploymentsPath:   os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
-		DeploymentsRepo:   os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
-		WaitTimeout:       15 * time.Minute,
+		KernelNamespace:    envOr("KERNEL_NAMESPACE", "platform-kernel"),
+		OpenBaoNamespace:   envOr("OPENBAO_NAMESPACE", "openbao"),
+		OperatorNamespace:  envOr("OPERATOR_NAMESPACE", "gentian-system"),
+		OperatorSA:         envOr("OPERATOR_SA", "gentian-os"),
+		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
+		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
+		DeploymentsCluster: envOr("GENTIAN_DEPLOYMENTS_CLUSTER", "default-cluster"),
+		DeploymentsStage:   envOr("GENTIAN_DEPLOYMENTS_STAGE", "dev"),
+		WaitTimeout:        15 * time.Minute,
 	}
 }
 

@@ -5,6 +5,8 @@ kind: Deployment
 {{- $webhookPort := $webhook.port | default 9443 }}
 {{- $imageDigest := .Values.image.digest | default "" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
+{{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
+{{- $lifecycleDeploymentsEnabled := $lifecycleDeployments.enabled | default false }}
 metadata:
   name: {{ include "gentian-os.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -108,8 +110,14 @@ spec:
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS
               value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
-            - name: APP_LIFECYCLE_DEFAULT_BACKEND
-              value: {{ .Values.appLifecycle.defaultBackend | quote }}
+            - name: GENTIAN_DEPLOYMENTS_PATH
+              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER
+              value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
+            - name: GENTIAN_DEPLOYMENTS_STAGE
+              value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}
             - name: KERNEL_NAMESPACE
               value: {{ .Values.infraNamespace | default "platform-kernel" | quote }}
             - name: POD_NAMESPACE
@@ -156,11 +164,17 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if $webhookEnabled }}
+          {{- if or $webhookEnabled $lifecycleDeploymentsEnabled }}
           volumeMounts:
+            {{- if $webhookEnabled }}
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
+            {{- end }}
+            {{- if $lifecycleDeploymentsEnabled }}
+            - name: deployments-checkout
+              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
+            {{- end }}
           {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -174,10 +188,43 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if $webhookEnabled }}
+      {{- if or $webhookEnabled $lifecycleDeploymentsEnabled }}
       volumes:
+        {{- if $webhookEnabled }}
         - name: webhook-certs
           secret:
             secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
+        {{- end }}
+        {{- if $lifecycleDeploymentsEnabled }}
+        - name: deployments-checkout
+          emptyDir: {}
+        {{- end }}
+      {{- end }}
+      {{- if $lifecycleDeploymentsEnabled }}
+      initContainers:
+        - name: git-clone-deployments
+          image: alpine/git:2.45.2
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              for attempt in 1 2 3 4 5; do
+                if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
+                  exit 0
+                fi
+                if git clone "${GENTIAN_DEPLOYMENTS_REPO}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
+                  exit 0
+                fi
+                echo "git clone attempt ${attempt} failed; retrying..."
+                sleep 15
+              done
+              exit 1
+          env:
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+          volumeMounts:
+            - name: deployments-checkout
+              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
       {{- end }}
       terminationGracePeriodSeconds: 10
