@@ -19,6 +19,10 @@ on:
         description: Full git SHA of the gentian-ui build (audit only)
         required: false
         type: string
+    secrets:
+      CI_BOT_PAT:
+        description: Fine-grained PAT with Contents write on gentian-org/gentian-os
+        required: true
   workflow_dispatch:
     inputs:
       sha_tag:

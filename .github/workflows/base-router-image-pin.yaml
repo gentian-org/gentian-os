@@ -13,6 +13,10 @@ on:
         description: 8-char image tag built by gentian-ui CI
         required: true
         type: string
+    secrets:
+      CI_BOT_PAT:
+        description: Fine-grained PAT with Contents write on gentian-org/gentian-os
+        required: true
   workflow_dispatch:
     inputs:
       sha_tag:
