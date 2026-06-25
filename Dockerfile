@@ -13,7 +13,7 @@ COPY internal/ internal/
 COPY cmd/ cmd/
 
 # Build the manager binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager ./cmd/...
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager ./cmd
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
