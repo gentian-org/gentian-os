@@ -37,6 +37,7 @@ jobs:
       - name: Checkout gentian-os
         uses: actions/checkout@v4
         with:
+          repository: gentian-org/gentian-os
           ref: develop
 
       - name: Validate payload
