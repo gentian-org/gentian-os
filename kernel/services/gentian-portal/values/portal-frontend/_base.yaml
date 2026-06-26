@@ -130,4 +130,4 @@ podAnnotations:
 image:
   registry: "ghcr.io"
   repository: "gentian-org/portal-frontend"
-  tag: "05b1f9fc"
+  tag: "5a485e07"
