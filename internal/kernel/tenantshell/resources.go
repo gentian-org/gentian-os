@@ -37,6 +37,7 @@ const (
 	ManagedByLabel               = meta.ManagedByLabel
 	ManagedByValue               = meta.ManagedByValue
 	KernelNamespace              = meta.KernelNamespace
+	OperatorNamespace            = meta.OperatorNamespace
 	IngressNamespace             = meta.IngressNamespace
 	EnvoyGatewayInstallNamespace = meta.EnvoyGatewayInstallNamespace
 	RoutingModeGateway           = meta.RoutingModeGateway
@@ -159,6 +160,7 @@ func NetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discove
 		namespaceEgress(KernelNamespace),
 		namespaceEgress(cfg.ServicesNamespace),
 		namespaceEgress(cfg.OpenbaoNamespace),
+		namespaceEgress(OperatorNamespace),
 		{
 			To: []networkingv1.NetworkPolicyPeer{
 				{NamespaceSelector: &metav1.LabelSelector{

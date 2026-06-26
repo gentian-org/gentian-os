@@ -248,6 +248,10 @@ spec:
                       - to:
                           - namespaceSelector:
                               matchLabels:
+                                kubernetes.io/metadata.name: gentian-system
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
                                 gentianos.io/tenant: {{ $tenant }}
                       - to:
                           - namespaceSelector:
