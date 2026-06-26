@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -1063,6 +1064,12 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 			cfg := map[string]interface{}{}
 			if app.Config.Replicas != nil {
 				cfg["replicas"] = int64(*app.Config.Replicas)
+			}
+			if app.Config.ExtraValues != nil && len(app.Config.ExtraValues.Raw) > 0 {
+				var extra map[string]interface{}
+				if err := json.Unmarshal(app.Config.ExtraValues.Raw, &extra); err == nil && len(extra) > 0 {
+					cfg["extraValues"] = extra
+				}
 			}
 			if len(cfg) > 0 {
 				entry["config"] = cfg

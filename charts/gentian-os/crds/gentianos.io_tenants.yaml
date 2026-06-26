@@ -79,6 +79,12 @@ spec:
                         Config provides per-tenant overrides for this app installation.
                         Values here are merged over the AppProfile's extraValues.
                       properties:
+                        extraValues:
+                          description: |-
+                            ExtraValues deep-merges Helm values over the AppProfile defaults.
+                            Must not contain secrets — use valueMapping for credentials.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
                         replicas:
                           description: Replicas overrides the default replica count.
                           format: int32

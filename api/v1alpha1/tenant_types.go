@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // TenantSpec defines the desired state of a Tenant.
@@ -184,6 +185,12 @@ type TenantAppConfig struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// ExtraValues deep-merges Helm values over the AppProfile defaults.
+	// Must not contain secrets — use valueMapping for credentials.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 }
 
 // TenantStatus holds the observed state of a Tenant.
