@@ -84,6 +84,9 @@ spec:
           kind: Deployment
           name: nubus-{{.env}}-portal-frontend
           namespace: gentian-{{.env}}
+          jsonPointers:
+            - /metadata/annotations
+            - /spec/template/metadata/annotations
           jqPathExpressions:
             - .spec.progressDeadlineSeconds
             - .spec.revisionHistoryLimit
@@ -95,14 +98,21 @@ spec:
             - .spec.template.spec.terminationGracePeriodSeconds
             - .spec.template.spec.serviceAccount
             - .spec.template.spec.serviceAccountName
+            - .spec.template.spec.securityContext
             - .spec.template.spec.containers[].imagePullPolicy
             - .spec.template.spec.containers[].resources
+            - .spec.template.spec.containers[].securityContext
             - .spec.template.spec.containers[].terminationMessagePath
             - .spec.template.spec.containers[].terminationMessagePolicy
             - .spec.template.spec.containers[].livenessProbe.failureThreshold
             - .spec.template.spec.containers[].livenessProbe.successThreshold
             - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+            - .spec.template.spec.containers[].livenessProbe.initialDelaySeconds
+            - .spec.template.spec.containers[].livenessProbe.periodSeconds
             - .spec.template.spec.containers[].readinessProbe.failureThreshold
             - .spec.template.spec.containers[].readinessProbe.successThreshold
             - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+            - .spec.template.spec.containers[].readinessProbe.initialDelaySeconds
+            - .spec.template.spec.containers[].readinessProbe.periodSeconds
+            - .spec.template.spec.containers[].startupProbe
             - .spec.template.spec.volumes[].configMap.defaultMode
