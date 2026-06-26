@@ -18,4 +18,5 @@ install.secrets.env.backup
 
 # Go test binaries (produced by go test -c or go test -o)
 *.test
+bin/
 __pycache__/
