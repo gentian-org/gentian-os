@@ -51,10 +51,11 @@ DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
 usage() {
   cat <<EOF
-kubectl-gentian — Gentian OS management plugin
+kubectl-gentian — Gentian OS management plugin (also available as gtnctl)
 
 Usage:
   kubectl gentian apps list
+  gtnctl apps list
       List all available apps from the AppCatalogue.
 
   kubectl gentian apps install <app> --tenant <tenant>
@@ -137,24 +138,26 @@ ensure_repo() {
 # ---------------------------------------------------------------------------
 tenant_file() {
   local tenant="${1}"
-  # First try matching by filename: tenants/gtn-demo.yaml or dev/tenants/gtn-demo.yaml
-  local candidates
-  candidates=$(find "${DEPLOYMENTS_PATH}/clusters" -name "${tenant}.yaml" -path "*/tenants/*/*" 2>/dev/null || true)
+  local preferred="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants/${tenant}/${DEPLOYMENTS_STAGE}/tenant.yaml"
+  if [[ -f "${preferred}" ]]; then
+    echo "${preferred}"
+    return 0
+  fi
 
-  # Fall back to searching by metadata.name inside all tenant YAML files
-  if [[ -z "${candidates}" ]]; then
-    candidates=$(grep -rl "name: ${tenant}" "${DEPLOYMENTS_PATH}" --include="*.yaml" 2>/dev/null \
+  local tenants_root="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
+  local candidates=""
+  if [[ -d "${tenants_root}" ]]; then
+    candidates=$(grep -rl "name: ${tenant}" "${tenants_root}" --include="tenant.yaml" 2>/dev/null \
       | while read -r f; do
-          [[ "${f}" == */tenants/* ]] && grep -q "kind: Tenant" "${f}" && echo "${f}"
+          grep -q "kind: Tenant" "${f}" && echo "${f}"
         done || true)
   fi
 
   if [[ -z "${candidates}" ]]; then
-    echo "ERROR: Tenant file for '${tenant}' not found under ${DEPLOYMENTS_PATH}." >&2
-    echo "Searched by filename (*/tenants/${tenant}.yaml) and by metadata.name." >&2
+    echo "ERROR: Tenant file for '${tenant}' not found under clusters/${DEPLOYMENTS_CLUSTER}/tenants (stage ${DEPLOYMENTS_STAGE})." >&2
+    echo "Expected: ${preferred}" >&2
     exit 1
   fi
-  # If multiple candidates exist (e.g. dev/ and staging/), take the first one.
   echo "${candidates}" | head -n1
 }
 
@@ -2608,33 +2611,6 @@ cleanup_app_post_uninstall() {
 }
 
 # ---------------------------------------------------------------------------
-# gtnctl delegation (shared Go implementation in gentian-os/internal/applifecycle)
-# ---------------------------------------------------------------------------
-_gtnctl_bin() {
-  if command -v gtnctl >/dev/null 2>&1; then
-    command -v gtnctl
-    return 0
-  fi
-  local plugin_dir
-  plugin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -x "${plugin_dir}/gtnctl" ]]; then
-    echo "${plugin_dir}/gtnctl"
-    return 0
-  fi
-  if [[ -x "${plugin_dir}/../bin/gtnctl" ]]; then
-    echo "${plugin_dir}/../bin/gtnctl"
-    return 0
-  fi
-  return 1
-}
-
-_run_gtnctl_apps() {
-  local gtnctl_bin
-  gtnctl_bin="$(_gtnctl_bin)" || return 127
-  "${gtnctl_bin}" apps "$@"
-}
-
-# ---------------------------------------------------------------------------
 # apps install
 # ---------------------------------------------------------------------------
 cmd_install() {
@@ -2645,15 +2621,6 @@ cmd_install() {
     echo "ERROR: usage: kubectl gentian apps install <app> --tenant <tenant>" >&2
     exit 1
   fi
-
-  if _run_gtnctl_apps install "${app}" --tenant "${tenant}"; then
-    return 0
-  fi
-  local gtnctl_status=$?
-  if [[ "${gtnctl_status}" -ne 127 ]]; then
-    exit "${gtnctl_status}"
-  fi
-  echo "NOTE: gtnctl not found; using legacy bash installer. Build it with: make -C gentian-os install-plugin" >&2
 
   ensure_repo
 
@@ -2727,19 +2694,6 @@ cmd_uninstall() {
     echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]" >&2
     exit 1
   fi
-
-  local purge_args=()
-  if [[ "${force}" == "true" ]]; then
-    purge_args=(--purge)
-  fi
-  if _run_gtnctl_apps uninstall "${app}" --tenant "${tenant}" "${purge_args[@]}"; then
-    return 0
-  fi
-  local gtnctl_status=$?
-  if [[ "${gtnctl_status}" -ne 127 ]]; then
-    exit "${gtnctl_status}"
-  fi
-  echo "NOTE: gtnctl not found; using legacy bash uninstaller. Build it with: make -C gentian-os install-plugin" >&2
 
   ensure_repo
 

@@ -191,7 +191,7 @@ metrics:
     # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
     additionalLabels: {}
 
-# App lifecycle HTTP API (install/uninstall/purge — shared by App Store and gtnctl).
+# App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
 appLifecycle:
   port: 8082
   deployments:
