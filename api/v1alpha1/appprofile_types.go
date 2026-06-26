@@ -47,10 +47,15 @@ type AppProfileSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// Logo is the application icon used in the Gentian portal. It must be a
-	// data URI (data:image/svg+xml;base64,...) containing a base64-encoded SVG.
-	// The LDAP reconciler writes this value to the portal entry's pathToLogo
-	// attribute so the portal frontend can render it directly as an <img src>.
+	// Tile declares the Gentian portal app-menu icon for this profile.
+	// Path 1 (custom): set tile.logo to a data URI or tile.image in git (inlined before publish).
+	// Path 2 (catalogue): set tile.icon to a Gentian catalogue id (e.g. "mail", "chat").
+	// Legacy spec.logo is still honoured when tile is unset.
+	// +optional
+	Tile *TileSpec `json:"tile,omitempty"`
+
+	// Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
+	// The LDAP reconciler writes the resolved value to pathToLogo on portal entries.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
@@ -147,6 +152,26 @@ type AppProfileSpec struct {
 	PortalTiles []PortalTileSpec `json:"portalTiles,omitempty"`
 }
 
+// TileSpec configures a Gentian portal tile icon (52×52 SVG).
+// Set icon (catalogue path) or logo (custom data URI). image is source-repo only
+// and must be inlined to logo before the AppProfile is applied to a cluster.
+type TileSpec struct {
+	// Icon selects a pre-made tile from the Gentian catalogue (path 2).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
+	Icon string `json:"icon,omitempty"`
+
+	// Logo is a custom tile as a data URI (path 1). Mutually exclusive with icon.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	Logo string `json:"logo,omitempty"`
+
+	// Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
+	// Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+	// +optional
+	Image string `json:"image,omitempty"`
+}
+
 // PortalLinkTarget controls how the portal opens a tile link.
 // +kubebuilder:validation:Enum=newwindow;samewindow;embedded
 type PortalLinkTarget string
@@ -198,8 +223,11 @@ type PortalTileSpec struct {
 	// +kubebuilder:default="Domain Users"
 	AllowedGroup string `json:"allowedGroup,omitempty"`
 
-	// Logo is an optional per-tile icon override. Must be a data URI
-	// (data:image/svg+xml;base64,...). Falls back to the AppProfile logo.
+	// Tile overrides the app-level tile for this portal entry.
+	// +optional
+	Tile *TileSpec `json:"tile,omitempty"`
+
+	// Logo is deprecated; prefer tile. Optional per-tile data URI override.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`

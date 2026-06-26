@@ -35,6 +35,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/tiles"
 )
 
 const (
@@ -312,9 +313,14 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 			if deDE == "" {
 				deDE = enUS
 			}
-			tileLogo := tile.Logo
-			if tileLogo == "" {
-				tileLogo = profile.Spec.Logo
+			resolvedLogo, err := tiles.ResolveLogo(
+				profile.Spec.Tile,
+				profile.Spec.Logo,
+				tile.Tile,
+				tile.Logo,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("resolve portal tile logo for %s/%s: %w", app.Profile, tile.Name, err)
 			}
 			result = append(result, dedicatedPortalApp{
 				AppName:        tile.Name,
@@ -325,7 +331,7 @@ func (r *TenantReconciler) collectDedicatedPortalApps(ctx context.Context, tenan
 				DisplayNameEN:  enUS,
 				LinkTarget:     linkTarget,
 				AllowedGroupCN: allowedGroupCN,
-				Logo:           strings.TrimPrefix(tileLogo, "data:image/svg+xml;base64,"),
+				Logo:           tiles.LogoBase64(resolvedLogo),
 			})
 		}
 	}
