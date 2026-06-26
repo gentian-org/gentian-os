@@ -99,6 +99,7 @@ spec:
             - .spec.template.spec.serviceAccount
             - .spec.template.spec.serviceAccountName
             - .spec.template.spec.securityContext
+            - .spec.template.spec.containers[].env
             - .spec.template.spec.containers[].imagePullPolicy
             - .spec.template.spec.containers[].resources
             - .spec.template.spec.containers[].securityContext
