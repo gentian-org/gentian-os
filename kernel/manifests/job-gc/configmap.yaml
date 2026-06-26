@@ -66,7 +66,10 @@ data:
         append_log "$(now_iso) gc namespace=${ns} job=${name} succeeded=${succeeded:-0} failed=${failed:-0}"
         kubectl delete job "${name}" -n "${ns}" --ignore-not-found --wait=false
         kubectl delete pods -n "${ns}" -l "job-name=${name}" --ignore-not-found --wait=false
-      done < <(kubectl get jobs -n "${ns}" -l 'app.kubernetes.io/managed-by=gentian-os' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+      done < <(kubectl get jobs -n "${ns}" \
+        -l 'app.kubernetes.io/managed-by=gentian-os' \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+        2>/dev/null || true)
     done
 ---
 apiVersion: v1
