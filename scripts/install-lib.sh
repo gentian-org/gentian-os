@@ -1981,9 +1981,8 @@ apply_intercom_gateway_values() {
 }
 
 # sync_intercom_argocd_app refreshes the intercom Helm release after gateway overlay
-# changes. Argo CD ApplicationSet valuesFrom is not always propagated to existing
-# Applications; gateway.yaml carries BASE_URL in git, but a hard refresh ensures
-# the Deployment picks up extraEnvVars after install/update.
+# changes. BASE_URL lives in kernel/services/intercom-service/values/gateway.yaml
+# (must match KERNEL_DOMAIN); a hard refresh ensures the Deployment picks up changes.
 sync_intercom_argocd_app() {
     local app="intercom-service-${ENV:-dev}"
     if ! kubectl get application "$app" -n argocd >/dev/null 2>&1; then
@@ -3953,13 +3952,13 @@ verify_argocd_apps() {
         synced=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.sync.status=="Synced")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
-        # Bootstrap operator: kube-defaulted Deployment fields (Application
-        # ignoreDifferences) can leave gentian-os OutOfSync while Healthy.
-        if kubectl get application gentian-os -n argocd \
-                -o jsonpath='{.status.sync.status}{" "}{.status.health.status}' 2>/dev/null \
-                | grep -qx 'OutOfSync Healthy'; then
-            synced=$((synced + 1))
-        fi
+        # Bootstrap operator / ApplicationSet parent: kube-defaulted fields or
+        # Argo tracking annotations can leave apps OutOfSync while Healthy.
+        while IFS= read -r _app; do
+            [[ -n "$_app" ]] && synced=$((synced + 1))
+        done < <(kubectl get applications -n argocd \
+            -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null | grep -E '^(gentian-os|gentian-appsets|gentian-portal-portal-frontend-)' || true)
         healthy=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)

@@ -90,6 +90,11 @@ spec:
     - .spec.template.spec.containers[].readinessProbe.successThreshold
     - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
     - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
+    - .spec.template.spec.initContainers[].imagePullPolicy
+    - .spec.template.spec.initContainers[].resources
+    - .spec.template.spec.initContainers[].terminationMessagePath
+    - .spec.template.spec.initContainers[].terminationMessagePolicy
     - .spec.template.spec.volumes[].secret.defaultMode
   # Crossplane enriches gentianos.io XRD-owned CRDs with additional printer
   # columns and its own spec properties (compositionRef, resourceRefs, etc.)

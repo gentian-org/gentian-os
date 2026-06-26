@@ -99,4 +99,10 @@ spec:
             - .spec.template.spec.containers[].resources
             - .spec.template.spec.containers[].terminationMessagePath
             - .spec.template.spec.containers[].terminationMessagePolicy
+            - .spec.template.spec.containers[].livenessProbe.failureThreshold
+            - .spec.template.spec.containers[].livenessProbe.successThreshold
+            - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+            - .spec.template.spec.containers[].readinessProbe.failureThreshold
+            - .spec.template.spec.containers[].readinessProbe.successThreshold
+            - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
             - .spec.template.spec.volumes[].configMap.defaultMode

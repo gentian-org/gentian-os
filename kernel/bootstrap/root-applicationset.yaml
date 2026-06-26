@@ -11,6 +11,11 @@ metadata:
   - resources-finalizer.argocd.argoproj.io
 spec:
   project: gentian
+  ignoreDifferences:
+  - group: argoproj.io
+    kind: ApplicationSet
+    jsonPointers:
+    - /metadata/annotations/argocd.argoproj.io~1tracking-id
   source:
     repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop
@@ -22,3 +27,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+    - ServerSideApply=true
