@@ -364,12 +364,13 @@ spec:
               compositionRef:
                 name: app-{{ $app.variant }}
               {{- end }}
-              {{- if or (dig "replicas" nil $app.config) (dig "extraValues" nil $app.config) }}
+              {{- $appConfig := default dict $app.config }}
+              {{- if or (dig "replicas" nil $appConfig) (dig "extraValues" nil $appConfig) }}
               config:
-                {{- if dig "replicas" nil $app.config }}
-                replicas: {{ dig "replicas" 1 $app.config }}
+                {{- if dig "replicas" nil $appConfig }}
+                replicas: {{ dig "replicas" 1 $appConfig }}
                 {{- end }}
-                {{- with dig "extraValues" nil $app.config }}
+                {{- with dig "extraValues" nil $appConfig }}
                 extraValues:
                   {{- . | toYaml | nindent 18 }}
                 {{- end }}
