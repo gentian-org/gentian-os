@@ -359,8 +359,8 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 17 {
-		t.Fatalf("spec count = %d, want 17", len(specs))
+	if len(specs) != 18 {
+		t.Fatalf("spec count = %d, want 18", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -373,11 +373,13 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		t.Fatalf("id backend port = %d, want %d", got, keycloakProxyServicePort)
 	}
 
-	var baseRouter, udm *gatewayv1.HTTPRoute
+	var baseRouter, shellPrefs, udm *gatewayv1.HTTPRoute
 	for i := range specs {
 		switch specs[i].name {
 		case kernelRoutePortalBaseRouter:
 			baseRouter = buildKernelHTTPRoute(specs[i])
+		case kernelRoutePortalShellPrefs:
+			shellPrefs = buildKernelHTTPRoute(specs[i])
 		case kernelRoutePortalUDM:
 			udm = buildKernelHTTPRoute(specs[i])
 		}
@@ -387,6 +389,15 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 	if got := *baseRouter.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(baseRouterServicePort) {
 		t.Fatalf("base-router port = %d, want %d", got, baseRouterServicePort)
+	}
+	if shellPrefs == nil {
+		t.Fatal("missing shell-prefs spec")
+	}
+	if got := *shellPrefs.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(shellPrefsServicePort) {
+		t.Fatalf("shell-prefs port = %d, want %d", got, shellPrefsServicePort)
+	}
+	if len(shellPrefs.Spec.Rules[0].Filters) != 1 || shellPrefs.Spec.Rules[0].Filters[0].URLRewrite == nil {
+		t.Fatal("shell-prefs route missing URL rewrite filter")
 	}
 	if udm == nil {
 		t.Fatal("missing udm spec")

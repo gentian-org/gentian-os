@@ -28,7 +28,7 @@ portalFrontend:
   environment: "production"
   logLevel: "WARNING"
   # Gentian theme + favicons ship in the portal-frontend image (public/css/gentian-theme.css).
-  # Use portalFrontend.branding.* only for tenant-specific overrides (see gentian-ui/docs/ui-cleanup.md).
+  # Use portalFrontend.branding.* only for tenant-specific overrides (see gentian-ui/gentian-ui-architecture.md).
   objectStorage:
     iconsProxyUrl: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000/ums/portal-assets/icons/"
 

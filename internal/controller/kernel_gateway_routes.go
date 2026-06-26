@@ -24,6 +24,7 @@ const (
 	kernelRoutePortalRewritesApp = "kernel-portal-rewrite-app"
 	kernelRoutePortalLogin       = "kernel-portal-login"
 	kernelRoutePortalBaseRouter  = "kernel-portal-base-router"
+	kernelRoutePortalShellPrefs  = "kernel-portal-shell-prefs"
 	kernelRoutePortalServer      = "kernel-portal-server"
 	kernelRoutePortalUMC         = "kernel-portal-umc"
 	kernelRoutePortalUMCShell    = "kernel-portal-umc-shell"
@@ -40,6 +41,7 @@ const (
 
 	keycloakProxyServicePort = int32(8181)
 	baseRouterServicePort    = int32(8080)
+	shellPrefsServicePort    = int32(8081)
 	udmRestAPIServicePort    = int32(9979)
 )
 
@@ -79,6 +81,10 @@ func gentianLoginServiceName() string {
 
 func baseRouterServiceName() string {
 	return fmt.Sprintf("gentian-portal-base-router-%s-base-router", kernelStage())
+}
+
+func shellPrefsServiceName() string {
+	return fmt.Sprintf("gentian-portal-shell-prefs-%s-shell-prefs", kernelStage())
 }
 
 func portalServerServiceName() string {
@@ -183,6 +189,13 @@ func kernelHTTPRouteSpecs(
 			host: portalHost,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefix(baseRouterServiceName(), baseRouterServicePort, "/u/base-router"),
+			},
+		},
+		{
+			name: kernelRoutePortalShellPrefs,
+			host: portalHost,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelURLRewriteBackendRule(shellPrefsServiceName(), shellPrefsServicePort, "/shell-prefs", "/"),
 			},
 		},
 		{

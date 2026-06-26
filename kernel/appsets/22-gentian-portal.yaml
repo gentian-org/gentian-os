@@ -37,6 +37,7 @@ spec:
               elements:
                 - chart: portal-frontend
                 - chart: base-router
+                - chart: shell-prefs
                 - chart: gentian-login
   template:
     metadata:
