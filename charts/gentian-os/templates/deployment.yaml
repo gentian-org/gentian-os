@@ -232,6 +232,7 @@ spec:
         - name: git-credentials
           secret:
             secretName: {{ $lifecycleGitCredsSecret | quote }}
+            optional: true
         {{- end }}
       {{- end }}
       {{- if $lifecycleDeploymentsEnabled }}

@@ -80,6 +80,10 @@ spec:
             {{- $kubeApiEndpointIP := dig "network.kubeApiServerEndpointIp" "" $ccData }}
             {{- $kubeApiEndpointPort := dig "network.kubeApiServerEndpointPort" "" $ccData }}
             {{- $quotas      := default dict (dig "quotas" dict $spec) }}
+            {{- $lrDefaultCPU := dig "tenant.limitRange.default.cpu" "500m" $ccData }}
+            {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
+            {{- $lrRequestCPU := dig "tenant.limitRange.defaultRequest.cpu" "100m" $ccData }}
+            {{- $lrRequestMem := dig "tenant.limitRange.defaultRequest.memory" "128Mi" $ccData }}
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -126,11 +130,11 @@ spec:
                     limits:
                       - type: Container
                         default:
-                          cpu: 250m
-                          memory: 256Mi
+                          cpu: {{ $lrDefaultCPU | quote }}
+                          memory: {{ $lrDefaultMem | quote }}
                         defaultRequest:
-                          cpu: 50m
-                          memory: 128Mi
+                          cpu: {{ $lrRequestCPU | quote }}
+                          memory: {{ $lrRequestMem | quote }}
                         max:
                           cpu: "4"
                           memory: 8Gi

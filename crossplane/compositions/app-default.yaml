@@ -131,6 +131,10 @@ spec:
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
             {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
+            {{- $initJobLimitCPU := dig "tenant.initJob.limits.cpu" "500m" $ccData }}
+            {{- $initJobLimitMem := dig "tenant.initJob.limits.memory" "512Mi" $ccData }}
+            {{- $initJobRequestCPU := dig "tenant.initJob.requests.cpu" "100m" $ccData }}
+            {{- $initJobRequestMem := dig "tenant.initJob.requests.memory" "128Mi" $ccData }}
 
             {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog. */}}
             {{- $oidcPackDefaultScopes := dict }}
@@ -1040,11 +1044,11 @@ spec:
                                 value: {{ $secretMode | quote }}
                             resources:
                               limits:
-                                cpu: 200m
-                                memory: 256Mi
+                                cpu: {{ $initJobLimitCPU | quote }}
+                                memory: {{ $initJobLimitMem | quote }}
                               requests:
-                                cpu: 50m
-                                memory: 128Mi
+                                cpu: {{ $initJobRequestCPU | quote }}
+                                memory: {{ $initJobRequestMem | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
@@ -1210,11 +1214,11 @@ spec:
                                 value: {{ $secretMode | quote }}
                             resources:
                               limits:
-                                cpu: 200m
-                                memory: 256Mi
+                                cpu: {{ $initJobLimitCPU | quote }}
+                                memory: {{ $initJobLimitMem | quote }}
                               requests:
-                                cpu: 50m
-                                memory: 128Mi
+                                cpu: {{ $initJobRequestCPU | quote }}
+                                memory: {{ $initJobRequestMem | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
@@ -1380,11 +1384,11 @@ spec:
                                 value: {{ $secretMode | quote }}
                             resources:
                               limits:
-                                cpu: 200m
-                                memory: 256Mi
+                                cpu: {{ $initJobLimitCPU | quote }}
+                                memory: {{ $initJobLimitMem | quote }}
                               requests:
-                                cpu: 50m
-                                memory: 128Mi
+                                cpu: {{ $initJobRequestCPU | quote }}
+                                memory: {{ $initJobRequestMem | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}

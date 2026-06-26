@@ -1330,6 +1330,14 @@ data:
   network.kubeApiServerCidr: "${_kube_api_cidr}"
   network.kubeApiServerEndpointIp: "${_kube_api_endpoint_ip}"
   network.kubeApiServerEndpointPort: "${_kube_api_endpoint_port}"
+  tenant.limitRange.default.cpu: "${TENANT_LIMITRANGE_DEFAULT_CPU:-500m}"
+  tenant.limitRange.default.memory: "${TENANT_LIMITRANGE_DEFAULT_MEMORY:-512Mi}"
+  tenant.limitRange.defaultRequest.cpu: "${TENANT_LIMITRANGE_DEFAULT_REQUEST_CPU:-100m}"
+  tenant.limitRange.defaultRequest.memory: "${TENANT_LIMITRANGE_DEFAULT_REQUEST_MEMORY:-128Mi}"
+  tenant.initJob.limits.cpu: "${TENANT_INITJOB_LIMIT_CPU:-500m}"
+  tenant.initJob.limits.memory: "${TENANT_INITJOB_LIMIT_MEMORY:-512Mi}"
+  tenant.initJob.requests.cpu: "${TENANT_INITJOB_REQUEST_CPU:-100m}"
+  tenant.initJob.requests.memory: "${TENANT_INITJOB_REQUEST_MEMORY:-128Mi}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
 }
@@ -3270,6 +3278,14 @@ install_orchestrator() {
             --set "appLifecycle.deployments.stage=${stage}"
             --set appLifecycle.deployments.gitCredentialsSecret=gentian-deployments-git-credentials
         )
+    elif [[ "${GENTIAN_DEPLOYMENTS_LIFECYCLE_ENABLED:-0}" == "1" ]]; then
+        helm_sets+=(
+            --set appLifecycle.deployments.enabled=true
+            --set "appLifecycle.deployments.repo=${GENTIAN_DEPLOYMENTS_REPO}"
+            --set "appLifecycle.deployments.cluster=${cluster}"
+            --set "appLifecycle.deployments.stage=${stage}"
+        )
+        warn "App lifecycle enabled without GENTIAN_DEPLOYMENTS_GIT_TOKEN — git push from App Store will fail until configured."
     fi
 
     # ── Direct Helm bootstrap ───────────────────────────────────────────────────

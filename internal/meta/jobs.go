@@ -25,8 +25,9 @@ import (
 // TTL controller deletes them. Keep short so tenant CPU quotas free quickly.
 const ProvisioningJobTTLSeconds int32 = 600
 
-// InitJobResources caps CPU/memory for short-lived provisioning Jobs (Keycloak,
-// LDAP, db-init, etc.) so many init Jobs do not exhaust tenant quotas.
+// InitJobResources caps CPU/memory for operator-owned provisioning Jobs in
+// platform-kernel. Tenant-scoped init Jobs read tenant.initJob.* from
+// gentian-cluster-config via app-default composition instead.
 func InitJobResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
