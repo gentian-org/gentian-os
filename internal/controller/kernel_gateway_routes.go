@@ -195,7 +195,7 @@ func kernelHTTPRouteSpecs(
 			name: kernelRoutePortalShellPrefs,
 			host: portalHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelURLRewriteBackendRule(shellPrefsServiceName(), shellPrefsServicePort, "/shell-prefs", "/"),
+				kernelURLRewriteBackendRule(shellPrefsServiceName(), shellPrefsServicePort, "/univention/shell-prefs", "/"),
 			},
 		},
 		{

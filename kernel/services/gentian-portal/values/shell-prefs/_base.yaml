@@ -14,7 +14,7 @@ ingress:
   enabled: true
   host: "portal.desk.gentian.org"
   ingressClassName: "nginx"
-  path: "/shell-prefs"
+  path: "/univention/shell-prefs"
   pathType: "Prefix"
   tls:
     enabled: true
