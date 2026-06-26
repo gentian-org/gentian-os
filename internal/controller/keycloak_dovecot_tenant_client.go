@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -81,7 +82,7 @@ echo "client opendesk-dovecot configured in realm ${REALM_NAME}"
 }
 
 func makeDovecotTenantOIDCClientJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("dovecot-oidc-client", buildDovecotTenantOIDCClientScript())
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
@@ -100,8 +101,8 @@ func makeDovecotTenantOIDCClientJob(tenant *gentianov1alpha1.Tenant, realmName s
 			Name:      tenantDovecotOIDCClientJobName(tenant.Name),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				tenantLabel:                                 tenant.Name,
-				managedByLabel:                              managedByValue,
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
 				"gentianos.io/keycloak-dovecot-oidc-client": dovecotTenantOIDCClientVersion,
 			},
 		},

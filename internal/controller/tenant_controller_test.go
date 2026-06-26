@@ -35,10 +35,10 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -309,10 +309,10 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"url":       []byte("http://nubus-dev-ldap-server.gentian-dev.svc.cluster.local/univention/"),
-			"password":  []byte("test-ldap-password"),
-			"ldapBase":  []byte("dc=swp-ldap,dc=internal"),
-			"ldapHost":  []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
+			"url":               []byte("http://nubus-dev-ldap-server.gentian-dev.svc.cluster.local/univention/"),
+			"password":          []byte("test-ldap-password"),
+			"ldapBase":          []byte("dc=swp-ldap,dc=internal"),
+			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
 			"ldapsearchDovecot": []byte("test-ldap-password"),
 		},
 	}); err != nil {

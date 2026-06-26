@@ -1006,7 +1006,7 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 3600
+                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       spec:
@@ -1038,6 +1038,13 @@ spec:
                                 value: {{ $ldapBaseDn | quote }}
                               - name: SECRET_MODE
                                 value: {{ $secretMode | quote }}
+                            resources:
+                              limits:
+                                cpu: 200m
+                                memory: 256Mi
+                              requests:
+                                cpu: 50m
+                                memory: 128Mi
               providerConfigRef:
                 name: kubernetes
             {{- end }}
@@ -1171,7 +1178,7 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 3600
+                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       spec:
@@ -1201,6 +1208,13 @@ spec:
                                 value: {{ $minioEndpoint | quote }}
                               - name: SECRET_MODE
                                 value: {{ $secretMode | quote }}
+                            resources:
+                              limits:
+                                cpu: 200m
+                                memory: 256Mi
+                              requests:
+                                cpu: 50m
+                                memory: 128Mi
               providerConfigRef:
                 name: kubernetes
             {{- end }}
@@ -1334,7 +1348,7 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 3600
+                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       spec:
@@ -1364,6 +1378,13 @@ spec:
                                 value: {{ $cnpgHost | quote }}
                               - name: SECRET_MODE
                                 value: {{ $secretMode | quote }}
+                            resources:
+                              limits:
+                                cpu: 200m
+                                memory: 256Mi
+                              requests:
+                                cpu: 50m
+                                memory: 128Mi
               providerConfigRef:
                 name: kubernetes
             {{- end }}

@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -287,7 +287,7 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 	t.Parallel()
 	spec := backendTrafficPolicySpecFromIngressAnnotations(map[string]string{
 		"nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
-		"nginx.ingress.kubernetes.io/proxy-body-size":      "128m",
+		"nginx.ingress.kubernetes.io/proxy-body-size":    "128m",
 	})
 	if spec == nil {
 		t.Fatal("expected spec")

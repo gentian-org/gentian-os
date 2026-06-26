@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -200,7 +201,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
 // generates a random password locally (legacy behaviour).
 func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	roleName := roleUserName(tenant.Name, appName)
 	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName), nsName)
 	if rolePassword != "" {

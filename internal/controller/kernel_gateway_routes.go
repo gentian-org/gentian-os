@@ -6,35 +6,35 @@ import (
 	"context"
 	"fmt"
 
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 const (
-	kernelRouteKeycloakIDP         = "kernel-idp"
-	kernelRoutePortal              = "kernel-portal"
-	kernelRoutePortalRewrites      = "kernel-portal-rewrite-assets"
-	kernelRoutePortalRewritesApp   = "kernel-portal-rewrite-app"
-	kernelRoutePortalLogin         = "kernel-portal-login"
-	kernelRoutePortalBaseRouter    = "kernel-portal-base-router"
-	kernelRoutePortalServer        = "kernel-portal-server"
-	kernelRoutePortalUMC           = "kernel-portal-umc"
-	kernelRoutePortalUMCShell      = "kernel-portal-umc-shell"
-	kernelRoutePortalUDM           = "kernel-portal-udm"
-	kernelRouteKernelApex          = "kernel-apex-redirect"
-	kernelRouteCryptpad            = "kernel-cryptpad"
-	kernelRouteCryptpadSandbox     = "kernel-cryptpad-sandbox"
-	kernelRouteNextcloud           = "kernel-nextcloud"
-	kernelRouteCollabora           = "kernel-collabora"
-	kernelRouteIntercom            = "kernel-intercom"
-	kernelRouteArgoCD              = "kernel-argocd"
+	kernelRouteKeycloakIDP       = "kernel-idp"
+	kernelRoutePortal            = "kernel-portal"
+	kernelRoutePortalRewrites    = "kernel-portal-rewrite-assets"
+	kernelRoutePortalRewritesApp = "kernel-portal-rewrite-app"
+	kernelRoutePortalLogin       = "kernel-portal-login"
+	kernelRoutePortalBaseRouter  = "kernel-portal-base-router"
+	kernelRoutePortalServer      = "kernel-portal-server"
+	kernelRoutePortalUMC         = "kernel-portal-umc"
+	kernelRoutePortalUMCShell    = "kernel-portal-umc-shell"
+	kernelRoutePortalUDM         = "kernel-portal-udm"
+	kernelRouteKernelApex        = "kernel-apex-redirect"
+	kernelRouteCryptpad          = "kernel-cryptpad"
+	kernelRouteCryptpadSandbox   = "kernel-cryptpad-sandbox"
+	kernelRouteNextcloud         = "kernel-nextcloud"
+	kernelRouteCollabora         = "kernel-collabora"
+	kernelRouteIntercom          = "kernel-intercom"
+	kernelRouteArgoCD            = "kernel-argocd"
 
 	argocdServerServiceName = "argocd-server"
 
@@ -186,18 +186,18 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 		{
-			name: kernelRoutePortalServer,
-			host: portalHost,
+			name:  kernelRoutePortalServer,
+			host:  portalHost,
 			rules: kernelPortalServerDataRules(portalServerServiceName(), 80),
 		},
 		{
-			name: kernelRoutePortalUMC,
-			host: portalHost,
+			name:  kernelRoutePortalUMC,
+			host:  portalHost,
 			rules: kernelUMCGatewayRules(umcGatewayServiceName(), 80),
 		},
 		{
-			name: kernelRoutePortalUMCShell,
-			host: portalHost,
+			name:  kernelRoutePortalUMCShell,
+			host:  portalHost,
 			rules: kernelUMCGatewayShellRules(umcGatewayServiceName(), 80),
 		},
 		{
@@ -208,18 +208,18 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 		{
-			name: kernelRoutePortalRewrites,
-			host: portalHost,
+			name:  kernelRoutePortalRewrites,
+			host:  portalHost,
 			rules: kernelPortalFrontendAssetRewriteRules(portalFrontendServiceName(), 80),
 		},
 		{
-			name: kernelRoutePortalRewritesApp,
-			host: portalHost,
+			name:  kernelRoutePortalRewritesApp,
+			host:  portalHost,
 			rules: kernelPortalFrontendAppRewriteRules(portalFrontendServiceName(), 80),
 		},
 		{
-			name: kernelRoutePortal,
-			host: portalHost,
+			name:  kernelRoutePortal,
+			host:  portalHost,
 			rules: kernelPortalFrontendRules(portalFrontendServiceName(), 80),
 		},
 		{

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -174,7 +175,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 
 // makeS3BucketJob creates a MinIO mc Job that provisions a per-app S3 bucket.
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	bucket := s3BucketName(tenant, appName)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -202,7 +203,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.J
 
 // makeS3BucketDeleteJob creates a MinIO mc Job that removes the per-app S3 bucket.
 func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	bucket := s3BucketName(tenant, appName)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -231,7 +232,7 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 // makeNextcloudGroupJob creates a curl Job that provisions a Nextcloud group via
 // the OCS API for all WebDAV-requiring apps in the tenant.
 func makeNextcloudGroupJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	group := nextcloudGroupName(tenant.Name)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -265,7 +266,7 @@ func makeNextcloudGroupJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
 // is not used for user assignment (users are auto-assigned to the cross-tenant
 // managed-by-attribute-Fileshare group via LDAP attributes instead).
 func makeNextcloudGroupDeleteJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	group := nextcloudGroupName(tenant.Name)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

@@ -19,8 +19,8 @@ const (
 	coreDNSNamespace     = "kube-system"
 	coreDNSConfigMapName = "coredns"
 	coreDNSDeployment    = "coredns"
-	hairpinBeginMarker    = "# BEGIN gentian-hairpin"
-	hairpinEndMarker      = "# END gentian-hairpin"
+	hairpinBeginMarker   = "# BEGIN gentian-hairpin"
+	hairpinEndMarker     = "# END gentian-hairpin"
 )
 
 // kernelHTTPSHairpinHosts returns kernel hostnames that tenant and kernel pods

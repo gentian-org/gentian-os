@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
 
@@ -358,7 +359,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 // --- Job constructors --------------------------------------------------------
 
 func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, ldap *realmLDAPParams, broker *realmBrokerParams) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
@@ -400,7 +401,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 }
 
 func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	redirectURI := redirectURIs[0]
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if clientSecret != "" {
@@ -432,7 +433,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 }
 
 func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secrets.TenantAdminCreds) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
 	adminEmail := tenant.Spec.AdminEmail
 	if adminEmail == "" {
@@ -466,7 +467,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 }
 
 func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDisableJobName(tenant.Name),
@@ -491,7 +492,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 }
 
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDeleteJobName(tenant.Name),
@@ -516,7 +517,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 }
 
 func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, kernelRealm string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kernelAdminEnableJobName(tenant.Name),
@@ -586,6 +587,7 @@ func keycloakContainer(name, script string) corev1.Container {
 				},
 			},
 		},
+		Resources: meta.InitJobResources(),
 	}
 }
 
@@ -795,7 +797,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
 ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
-` + brokerKernelClientUsernameMapperShell + brokerIdPUsernameImporterShell + `
+`+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
   # (No defaultProvider is set on the identity-provider-redirector execution.
   #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
   #  on mailPrimaryAddress). The kernel IdP registered above remains available
@@ -936,7 +938,7 @@ func makeKernelLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *b
 }
 
 func makeKCLDAPFederationSyncJob(tenant *gentianov1alpha1.Tenant, jobName, containerName, script string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,

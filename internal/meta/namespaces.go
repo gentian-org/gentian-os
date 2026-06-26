@@ -17,6 +17,6 @@ limitations under the License.
 package meta
 
 const (
-	KernelNamespace = "platform-kernel"
+	KernelNamespace    = "platform-kernel"
 	RoutingModeGateway = "gateway"
 )

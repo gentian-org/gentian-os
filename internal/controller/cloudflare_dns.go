@@ -100,8 +100,8 @@ type cfTunnelOriginRequest struct {
 }
 
 type cfTunnelIngressRule struct {
-	Hostname      string                `json:"hostname,omitempty"`
-	Service       string                `json:"service"`
+	Hostname      string                 `json:"hostname,omitempty"`
+	Service       string                 `json:"service"`
 	OriginRequest *cfTunnelOriginRequest `json:"originRequest,omitempty"`
 }
 

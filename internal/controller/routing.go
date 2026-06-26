@@ -12,17 +12,17 @@ const (
 	// RoutingModeGateway is the only supported edge routing stack.
 	RoutingModeGateway = "gateway"
 
-	GentianGatewayClassName        = "gentian-envoy"
-	GentianGatewayControllerName   = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
-	KernelPublicGatewayName        = "kernel-public-gateway"
-	kernelCollaboraListenerName    = "https-office"
-	kernelWildcardTLSSecretName    = "wildcard-tls"
-	envoyGatewayInstallNamespace     = "envoy-gateway-system"
-	gatewayPlatformReconcileKey      = "gateway-platform"
-	conditionGatewayReady            = "GatewayReady"
-	conditionTunnelIngressReady      = "TunnelIngressReady"
-	operatorNamespace                = "gentian-system"
-	operatorConfigMapName            = "gentian-os-config"
+	GentianGatewayClassName      = "gentian-envoy"
+	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
+	KernelPublicGatewayName      = "kernel-public-gateway"
+	kernelCollaboraListenerName  = "https-office"
+	kernelWildcardTLSSecretName  = "wildcard-tls"
+	envoyGatewayInstallNamespace = "envoy-gateway-system"
+	gatewayPlatformReconcileKey  = "gateway-platform"
+	conditionGatewayReady        = "GatewayReady"
+	conditionTunnelIngressReady  = "TunnelIngressReady"
+	operatorNamespace            = "gentian-system"
+	operatorConfigMapName        = "gentian-os-config"
 )
 
 func normalizeRoutingMode(mode string) string {

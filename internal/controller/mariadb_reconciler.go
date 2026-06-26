@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
 
@@ -143,7 +144,7 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // The database name and username are passed as explicit env vars to avoid shell
 // quoting issues.
 func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string, allowDynamic bool) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	c := mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser)
@@ -177,7 +178,7 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword st
 
 // makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job.
 func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	return &batchv1.Job{

@@ -103,10 +103,10 @@ func legacyUMCResourceNames(tenantName string) []string {
 
 func umcPortalRedirectLabels(tenantName, instance string) map[string]string {
 	return map[string]string{
-		tenantLabel:               tenantName,
-		managedByLabel:            managedByValue,
-		umcFrontendComponentLabel: umcFrontendComponentValue,
-		"app.kubernetes.io/name":  "portal-redirect",
+		tenantLabel:                  tenantName,
+		managedByLabel:               managedByValue,
+		umcFrontendComponentLabel:    umcFrontendComponentValue,
+		"app.kubernetes.io/name":     "portal-redirect",
 		"app.kubernetes.io/instance": instance,
 	}
 }

@@ -280,10 +280,10 @@ func simulateAppClaims(ctx context.Context, c client.Client, tenantName, nsName 
 		claim.SetName(profile)
 		claim.SetNamespace(nsName)
 		claim.SetLabels(map[string]string{
-			tenantshell.TenantLabel:   tenantName,
-			"gentianos.io/app":          profile,
-			tenantshell.ManagedByLabel:  tenantshell.ManagedByValue,
-			"gentianos.io/managed-by":   "crossplane",
+			tenantshell.TenantLabel:    tenantName,
+			"gentianos.io/app":         profile,
+			tenantshell.ManagedByLabel: tenantshell.ManagedByValue,
+			"gentianos.io/managed-by":  "crossplane",
 		})
 		_ = unstructured.SetNestedField(claim.Object, profile, "spec", "profileRef", "name")
 		_ = unstructured.SetNestedField(claim.Object, nsName, "spec", "tenantNamespace")

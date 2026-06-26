@@ -149,6 +149,11 @@ type TenantQuotas struct {
 	// Memory is the total memory request limit across all tenant pods.
 	// +optional
 	Memory *resource.Quantity `json:"memory,omitempty"`
+
+	// MaxPods caps the number of pods in the tenant namespace (init Jobs + app workloads).
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxPods int32 `json:"maxPods,omitempty"`
 }
 
 // TenantApp specifies a desired application installation for a tenant.

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,17 +39,17 @@ import (
 )
 
 const (
-	conditionCacheReady      = "CacheReady"
-	redisProvisionerImage    = "redis:7-alpine"
-	redisAdminSecret         = "redis-admin"
-	cacheRequeueAfter        = 2 * time.Second
-	argocdGroup              = "argoproj.io"
-	argocdVersion            = "v1alpha1"
-	argocdApplicationKind    = "Application"
-	argocdNamespace          = "argocd"
-	memcachedServiceName     = "memcached"
-	memcachedDeploymentName  = "memcached"
-	memcachedPort            = int32(11211)
+	conditionCacheReady     = "CacheReady"
+	redisProvisionerImage   = "redis:7-alpine"
+	redisAdminSecret        = "redis-admin"
+	cacheRequeueAfter       = 2 * time.Second
+	argocdGroup             = "argoproj.io"
+	argocdVersion           = "v1alpha1"
+	argocdApplicationKind   = "Application"
+	argocdNamespace         = "argocd"
+	memcachedServiceName    = "memcached"
+	memcachedDeploymentName = "memcached"
+	memcachedPort           = int32(11211)
 )
 
 // Memcached image — configurable via Helm values / env vars so upgrades don't
@@ -240,7 +241,7 @@ func (r *TenantReconciler) deleteLegacyMemcachedApplication(ctx context.Context,
 // makeRedisACLJob creates a redis-cli Job that provisions a per-app Redis ACL user.
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
 func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
 	c := redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix))
@@ -271,7 +272,7 @@ func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword stri
 
 // makeRedisACLDeleteJob creates a redis-cli Job that removes the per-app Redis ACL user.
 func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
 	return &batchv1.Job{

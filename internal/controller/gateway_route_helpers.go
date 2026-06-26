@@ -5,18 +5,18 @@ package controller
 import (
 	"fmt"
 
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 const (
-	gatewayComponentLabel     = "gentianos.io/gateway-component"
-	gatewayComponentApp       = "app-route"
-	gatewayComponentApex      = "apex-redirect"
-	gatewayComponentKernel    = "kernel-route"
-	umcPortalRedirectGateway  = "umc-frontend"
+	gatewayComponentLabel    = "gentianos.io/gateway-component"
+	gatewayComponentApp      = "app-route"
+	gatewayComponentApex     = "apex-redirect"
+	gatewayComponentKernel   = "kernel-route"
+	umcPortalRedirectGateway = "umc-frontend"
 )
 
 type ingressIntent struct {
@@ -41,9 +41,9 @@ func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
 	g := gatewayv1.Group("gateway.networking.k8s.io")
 	k := gatewayv1.Kind("Gateway")
 	return gatewayv1.ParentReference{
-		Group:     &g,
-		Kind:      &k,
-		Name:      gatewayv1.ObjectName(gatewayName),
+		Group: &g,
+		Kind:  &k,
+		Name:  gatewayv1.ObjectName(gatewayName),
 	}
 }
 
@@ -225,8 +225,8 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 						{
 							Type: gatewayv1.HTTPRouteFilterRequestRedirect,
 							RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-								Scheme:     &scheme,
-								Hostname:   &portalHost,
+								Scheme:   &scheme,
+								Hostname: &portalHost,
 								Path: &gatewayv1.HTTPPathModifier{
 									Type:            pathType,
 									ReplaceFullPath: &loginPath,

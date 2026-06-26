@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"sort"
 	"strings"
 	"time"
@@ -39,7 +40,7 @@ import (
 const (
 	conditionLDAPReady  = "LDAPReady"
 	udmProvisionerImage = "curlimages/curl:8.7.1"
-	udmAdminSecret = "udm-admin"
+	udmAdminSecret      = "udm-admin"
 
 	// annotationProvisionedPortalTiles tracks which portal tile names have been
 	// provisioned in LDAP for a tenant. Used to detect and clean up stale entries
@@ -700,7 +701,7 @@ func (r *TenantReconciler) deleteStalePortalEntriesForTenant(
 // --- Job constructors --------------------------------------------------------
 
 func makeLockOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ldapLockJobName(tenant.Name),
@@ -725,7 +726,7 @@ func makeLockOUJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
 }
 
 func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string, mbaGroups []string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mbaGroupsJobName(tenant.Name),
@@ -750,7 +751,7 @@ func makeMBAGroupsJob(tenant *gentianov1alpha1.Tenant, ouDN string, mbaGroups []
 }
 
 func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string, mbaGroups []string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ouJobName(tenant.Name),
@@ -775,7 +776,7 @@ func makeOUJob(tenant *gentianov1alpha1.Tenant, ouDN string, mbaGroups []string)
 }
 
 func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPassword string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := udmContainer("provision-bind-account", buildBindAccountScript(ouDN, appName, tenant.Name))
 	if bindPassword != "" {
 		c.Env = append(c.Env, corev1.EnvVar{Name: "BIND_PW", Value: bindPassword})
@@ -803,7 +804,7 @@ func makeBindAccountJob(tenant *gentianov1alpha1.Tenant, ouDN, appName, bindPass
 }
 
 func makeAppUserCapabilitiesJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      appUserCapabilitiesJobName(tenant.Name),
@@ -828,7 +829,7 @@ func makeAppUserCapabilitiesJob(tenant *gentianov1alpha1.Tenant, ouDN string) *b
 }
 
 func makeAppUserTemplateJob(tenant *gentianov1alpha1.Tenant, ouDN, mailDomain string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      appUserTemplateJobName(tenant.Name),
@@ -853,7 +854,7 @@ func makeAppUserTemplateJob(tenant *gentianov1alpha1.Tenant, ouDN, mailDomain st
 }
 
 func makeAdminUserJob(tenant *gentianov1alpha1.Tenant, ouDN string, creds secrets.TenantAdminCreds) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := udmContainer("provision-admin-user", buildAdminUserScript(ouDN, tenant.Name, tenant.Spec.AdminEmail))
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "ADMIN_USERNAME", Value: creds.Username},
@@ -881,7 +882,7 @@ func makeAdminUserJob(tenant *gentianov1alpha1.Tenant, ouDN string, creds secret
 }
 
 func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := udmContainer("provision-admin-policy", buildAdminPolicyScript(ouDN, tenant.Name))
 	c.Env = append(c.Env, corev1.EnvVar{Name: "ADMIN_USERNAME", Value: "admin-" + tenant.Name})
 	return &batchv1.Job{
@@ -906,7 +907,7 @@ func makeAdminPolicyJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.J
 }
 
 func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicatedPortalApp, tenantDomain string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      portalEntryJobName(tenant.Name, pa.AppName),
@@ -936,7 +937,7 @@ func makePortalEntryJob(tenant *gentianov1alpha1.Tenant, ouDN string, pa dedicat
 }
 
 func makePortalEntryDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      portalEntryDeleteJobName(tenant.Name, appName),
@@ -962,7 +963,7 @@ func makePortalEntryDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *
 }
 
 func makeOUDeleteJob(tenant *gentianov1alpha1.Tenant, ouDN string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ouDeleteJobName(tenant.Name),
@@ -1022,6 +1023,7 @@ func udmContainer(name, script string) corev1.Container {
 				},
 			},
 		},
+		Resources: meta.InitJobResources(),
 	}
 }
 
@@ -2085,7 +2087,7 @@ func (r *TenantReconciler) ensurePortalRealtimeLinksJob(
 }
 
 func makePortalRealtimeLinksJob(tenant *gentianov1alpha1.Tenant, ouDN, meetURL, chatURL string, includeLegacy bool) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      portalRealtimeLinksJobName(tenant.Name),

@@ -44,9 +44,9 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/meta"
-	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
@@ -1038,6 +1038,9 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 		if tenant.Spec.Quotas.MaxApps > 0 {
 			quotas["maxApps"] = int64(tenant.Spec.Quotas.MaxApps)
+		}
+		if tenant.Spec.Quotas.MaxPods > 0 {
+			quotas["maxPods"] = int64(tenant.Spec.Quotas.MaxPods)
 		}
 		if len(quotas) > 0 {
 			spec["quotas"] = quotas

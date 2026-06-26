@@ -93,11 +93,11 @@ func LimitRange(tenantName, nsName string) *corev1.LimitRange {
 				{
 					Type: corev1.LimitTypeContainer,
 					Default: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("500m"),
-						corev1.ResourceMemory: resource.MustParse("512Mi"),
+						corev1.ResourceCPU:    resource.MustParse("250m"),
+						corev1.ResourceMemory: resource.MustParse("256Mi"),
 					},
 					DefaultRequest: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceCPU:    resource.MustParse("50m"),
 						corev1.ResourceMemory: resource.MustParse("128Mi"),
 					},
 					Max: corev1.ResourceList{
@@ -139,6 +139,9 @@ func resourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceLis
 	}
 	if q.Memory != nil {
 		rl[corev1.ResourceLimitsMemory] = *q.Memory
+	}
+	if q.MaxPods > 0 {
+		rl[corev1.ResourcePods] = resource.MustParse(fmt.Sprintf("%d", q.MaxPods))
 	}
 	return rl
 }

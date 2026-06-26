@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -20,12 +21,12 @@ import (
 
 // oidcAppConfig holds resolved OIDC settings for one tenant app profile.
 type oidcAppConfig struct {
-	profileName  string
+	profileName   string
 	parentProfile string // set for sidecars (e.g. element-jitsi → parent element)
-	clientID     string
-	redirectURIs []string
-	pack         *oidc.Pack
-	templates    map[string]oidc.MapperTemplate
+	clientID      string
+	redirectURIs  []string
+	pack          *oidc.Pack
+	templates     map[string]oidc.MapperTemplate
 }
 
 // oidcPacksNeedLDAPGroups reports whether any resolved OIDC config uses an
@@ -267,14 +268,14 @@ func brokerFirstLoginFlowJobCurrent(job *batchv1.Job) bool {
 }
 
 func makeBrokerFirstLoginFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      brokerFirstLoginFlowJobName(tenant.Name),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				tenantLabel:                              tenant.Name,
-				managedByLabel:                           managedByValue,
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
 				"gentianos.io/keycloak-broker-first-login": brokerFirstLoginFlowJobVersion,
 			},
 		},
@@ -312,7 +313,7 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 }
 
 func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	container := keycloakContainer("provision-oidc-pack",
 		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret))
 	if clientSecret != "" {
@@ -344,7 +345,7 @@ func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidc
 }
 
 func makeOIDCBrowserFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      oidcBrowserFlowJobName(tenant.Name),

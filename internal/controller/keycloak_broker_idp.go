@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -125,7 +126,7 @@ fi
 `
 
 func makeBrokerIdentityProviderJob(tenantName, realmName, kernelRealm, kernelExternalURL string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("broker-idp", buildBrokerIdentityProviderScript())
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
@@ -137,9 +138,9 @@ func makeBrokerIdentityProviderJob(tenantName, realmName, kernelRealm, kernelExt
 			Name:      tenantBrokerIdPJobName(tenantName),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				tenantLabel:                          tenantName,
-				managedByLabel:                       managedByValue,
-				"gentianos.io/keycloak-broker-idp":   brokerIdentityProviderVersion,
+				tenantLabel:                        tenantName,
+				managedByLabel:                     managedByValue,
+				"gentianos.io/keycloak-broker-idp": brokerIdentityProviderVersion,
 			},
 		},
 		Spec: batchv1.JobSpec{

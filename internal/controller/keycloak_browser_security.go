@@ -64,7 +64,7 @@ func makeBrowserSecurityHeadersJob(name, realmName string) *batchv1.Job {
 			Name:      name,
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				managedByLabel:                         managedByValue,
+				managedByLabel:                           managedByValue,
 				"gentianos.io/keycloak-browser-security": browserSecurityHeadersVersion,
 			},
 		},
