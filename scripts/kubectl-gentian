@@ -27,6 +27,9 @@ _gentian_err_trap() {
   local exit_code=$?
   local line=$1
   echo "error: kubectl gentian failed (line ${line}, exit code ${exit_code})" >&2
+  if [[ "${exit_code}" -eq 141 ]]; then
+    echo "  Hint: a kubectl pipeline exited early (SIGPIPE). Update kubectl-gentian/gtnctl." >&2
+  fi
   echo "  Run with 'bash -x kubectl gentian ...' for full trace." >&2
   exit "${exit_code}"
 }
@@ -43,47 +46,67 @@ fi
 
 DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH:-}"
 DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
+DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
 usage() {
   cat <<EOF
-kubectl-gentian — Gentian OS management plugin
+kubectl-gentian — Gentian OS management plugin (also available as gtnctl)
 
 Usage:
   kubectl gentian apps list
+  gtnctl apps list
       List all available apps from the AppCatalogue.
 
   kubectl gentian apps install <app> --tenant <tenant>
       Install an app for a tenant by committing to gentian-deployments.
+      Blocks until the Crossplane App claim is Ready (or reports failed Jobs).
 
-  kubectl gentian apps uninstall <app> --tenant <tenant>
+  kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]
       Uninstall an app from a tenant by committing to gentian-deployments.
+      Blocks until the Crossplane App claim and workload pods are gone.
+      Default cleanup (Element only): removes Matrix user identities so OIDC
+      reinstall works. With --purge / -f, permanently deletes all app-owned
+      persistent state (Postgres/MariaDB, S3, Redis ACL, OpenBao secrets,
+      kernel provisioning Jobs) so reinstall starts from a clean slate.
 
-    kubectl gentian tenants list [--env <env>]
-      List tenant instances available in git. Shows ACTIVE (instance is listed
-      in the env kustomization.yaml) and LIVE (Tenant CR exists in the cluster).
-      Environment defaults to dev.
+    kubectl gentian tenants list [--env <stage>]
+      List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
+      ACTIVE=yes when deployed under tenants/<name>/<stage>/ (GitOps sync path).
+      ACTIVE=no when defined only under definitions/<name>/<stage>/.
+      LIVE=yes when the Tenant CR exists on the cluster.
 
-    kubectl gentian tenants deploy <instance> [--env <env>]
-      Deploy a tenant instance by adding it to <env>/tenants/kustomization.yaml.
+    kubectl gentian tenants deploy <instance> [--env <stage>]
+      Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/<stage>/.
+      If not yet deployed, copies the definition from definitions/<instance>/<stage>/.
 
-    kubectl gentian tenants undeploy <instance> [--env <env>] [--purge|-f]
+    kubectl gentian tenants undeploy <instance> [--env <stage>] [--purge|-f]
       Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
       With --purge / -f, set deletionPolicy=Delete before undeploying, which
       permanently deletes all tenant data including LDAP users, databases,
       mail secrets, UMC releases, and other orchestrator-owned artifacts.
 
+    kubectl gentian tenants cleanup-ldap <instance> [--env <stage>]
+      Delete the tenant LDAP OU (recursive). Use after a failed purge left users
+      in UMC, or to repair LDAP without a live Tenant CR.
+
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
+  GENTIAN_DEPLOYMENTS_CLUSTER  cluster selector (default: default-cluster)
+  GENTIAN_DEPLOYMENTS_STAGE    stage selector (default: dev)
 
 Examples:
   kubectl gentian apps list
   kubectl gentian apps install openproject --tenant gtn-demo
   kubectl gentian apps uninstall openproject --tenant gtn-demo
+  kubectl gentian apps uninstall openproject --tenant gtn-demo --purge   # wipe DB, S3, secrets
+  kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
-  kubectl gentian tenants deploy gtn-demo
-  kubectl gentian tenants undeploy gtn-demo
-  kubectl gentian tenants undeploy gtn-demo --purge   # or -f
+  kubectl gentian tenants deploy demo
+  kubectl gentian tenants undeploy demo
+  kubectl gentian tenants undeploy demo --purge   # or -f
+  kubectl gentian tenants cleanup-ldap demo
 EOF
 }
 
@@ -115,40 +138,91 @@ ensure_repo() {
 # ---------------------------------------------------------------------------
 tenant_file() {
   local tenant="${1}"
-  # First try matching by filename: tenants/gtn-demo.yaml or dev/tenants/gtn-demo.yaml
-  local candidates
-  candidates=$(find "${DEPLOYMENTS_PATH}" -name "${tenant}.yaml" -path "*/tenants/*" 2>/dev/null || true)
+  local preferred="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants/${tenant}/${DEPLOYMENTS_STAGE}/tenant.yaml"
+  if [[ -f "${preferred}" ]]; then
+    echo "${preferred}"
+    return 0
+  fi
 
-  # Fall back to searching by metadata.name inside all tenant YAML files
-  if [[ -z "${candidates}" ]]; then
-    candidates=$(grep -rl "name: ${tenant}" "${DEPLOYMENTS_PATH}" --include="*.yaml" 2>/dev/null \
+  local tenants_root="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
+  local candidates=""
+  if [[ -d "${tenants_root}" ]]; then
+    candidates=$(grep -rl "name: ${tenant}" "${tenants_root}" --include="tenant.yaml" 2>/dev/null \
       | while read -r f; do
-          [[ "${f}" == */tenants/* ]] && grep -q "kind: Tenant" "${f}" && echo "${f}"
+          grep -q "kind: Tenant" "${f}" && echo "${f}"
         done || true)
   fi
 
   if [[ -z "${candidates}" ]]; then
-    echo "ERROR: Tenant file for '${tenant}' not found under ${DEPLOYMENTS_PATH}." >&2
-    echo "Searched by filename (*/tenants/${tenant}.yaml) and by metadata.name." >&2
+    echo "ERROR: Tenant file for '${tenant}' not found under clusters/${DEPLOYMENTS_CLUSTER}/tenants (stage ${DEPLOYMENTS_STAGE})." >&2
+    echo "Expected: ${preferred}" >&2
     exit 1
   fi
-  # If multiple candidates exist (e.g. dev/ and staging/), take the first one.
   echo "${candidates}" | head -n1
+}
+
+# Parse .../tenants/<instance>/<stage>/... from a tenant YAML path.
+tenant_instance_stage_from_file() {
+  local file="${1}"
+  if [[ "${file}" =~ /tenants/([^/]+)/([^/]+)/ ]]; then
+    echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+  fi
+}
+
+# Apply a tenant manifest change committed to git. Prefer ArgoCD sync so
+# selfHeal does not revert a premature kubectl apply from a stale revision.
+apply_tenant_manifest_from_git() {
+  local file="${1}"
+  local parsed instance env_name
+
+  parsed="$(tenant_instance_stage_from_file "${file}")"
+  instance="${parsed%% *}"
+  env_name="${parsed#* }"
+
+  if [[ -n "${instance}" && -n "${env_name}" ]] \
+      && [[ -n "$(argocd_tenants_app_for_instance "${instance}" "${env_name}")" ]]; then
+    argocd_trigger_sync_prune "${instance}" "${env_name}"
+    return 0
+  fi
+
+  echo "Applying tenant manifest directly (no ArgoCD app for Git sync)..."
+  kubectl apply -f "${file}"
 }
 
 git_commit_push() {
   local message="${1}"
 
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    if git diff --cached --quiet; then
-      echo "No Git changes detected."
-      exit 0
-    fi
-    git commit -m "${message}"
-    git pull --rebase
-    git push
-  )
+  if ! pushd "${DEPLOYMENTS_PATH}" >/dev/null; then
+    echo "ERROR: deployments path '${DEPLOYMENTS_PATH}' is not accessible." >&2
+    return 1
+  fi
+
+  if git diff --cached --quiet; then
+    echo "No Git changes detected."
+    popd >/dev/null
+    return 0
+  fi
+
+  if ! git commit -m "${message}"; then
+    echo "ERROR: git commit failed in ${DEPLOYMENTS_PATH}." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  # Match ensure_repo: autostash so unrelated local edits do not block push.
+  if ! git pull --rebase --autostash; then
+    echo "ERROR: git pull --rebase failed in ${DEPLOYMENTS_PATH}." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  if ! git push; then
+    echo "ERROR: git push failed in ${DEPLOYMENTS_PATH}." >&2
+    popd >/dev/null
+    return 1
+  fi
+
+  popd >/dev/null
 }
 
 set_tenant_deletion_policy() {
@@ -255,6 +329,45 @@ assert_live_tenant_deletion_policy() {
   return 1
 }
 
+# After pushing deletionPolicy=Delete to Git, wait for ArgoCD to apply it before
+# kubectl delete. Otherwise selfHeal can revert the live CR to Retain while the
+# operator runs Retain cleanup (LDAP lock) instead of destructive delete.
+assert_argocd_tenant_delete_synced() {
+  local instance="${1}"
+  local env_name="${2}"
+  local tenant_name="${3}"
+  local timeout="${4:-120}"
+  local elapsed=0
+  local app_ns_name
+
+  app_ns_name="$(argocd_tenants_app_for_instance "${instance}" "${env_name}")"
+  if [[ -z "${app_ns_name}" ]]; then
+    return 0
+  fi
+
+  echo "Waiting for ArgoCD to sync deletionPolicy=Delete for '${tenant_name}'..."
+  argocd_trigger_sync_prune "${instance}" "${env_name}" || true
+
+  while (( elapsed < timeout )); do
+    if ! kubectl get tenant "${tenant_name}" &>/dev/null; then
+      return 0
+    fi
+    local live_policy
+    live_policy="$(kubectl get tenant "${tenant_name}" \
+      -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
+    if [[ "${live_policy}" == "Delete" ]]; then
+      return 0
+    fi
+    ensure_tenant_deletion_policy_live "${tenant_name}" "Delete" || true
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  echo "WARNING: ArgoCD did not stabilize deletionPolicy=Delete within ${timeout}s; continuing with live patch." >&2
+  ensure_tenant_deletion_policy_live "${tenant_name}" "Delete" || return 1
+  return 0
+}
+
 # Print a status line before kubectl wait (which is silent until it finishes).
 wait_with_message() {
   local message="${1}"
@@ -266,11 +379,20 @@ wait_with_message() {
 tenant_ldap_ou_from_resource() {
   local resource_file="${1}"
   local tenant_name="${2}"
+  local instance="${3:-${tenant_name}}"
   local ou=""
 
   if [[ -f "${resource_file}" ]]; then
     ou="$(grep -E '^[[:space:]]*ldapOU:' "${resource_file}" 2>/dev/null \
       | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
+  fi
+  if [[ -z "${ou}" ]]; then
+    local definition_file
+    definition_file="$(tenant_definition_stage_dir "${instance}" "${DEPLOYMENTS_STAGE}")/tenant.yaml"
+    if [[ -f "${definition_file}" ]]; then
+      ou="$(grep -E '^[[:space:]]*ldapOU:' "${definition_file}" 2>/dev/null \
+        | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
+    fi
   fi
   if [[ -z "${ou}" ]]; then
     ou="ou=${tenant_name}"
@@ -282,10 +404,11 @@ run_ldap_ou_delete_fallback() {
   local tenant_name="${1}"
   local resource_file="${2}"
   local force="${3:-false}"
+  local instance="${4:-${tenant_name}}"
   local ou_spec
   local job_name="ldap-ou-delete-${tenant_name}"
 
-  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
+  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}" "${instance}")"
   ou_spec="${ou_spec//\"/\\\"}"
   echo "Running LDAP OU delete for tenant '${tenant_name}' (${ou_spec})..."
 
@@ -329,6 +452,24 @@ spec:
             *) OU_POS="\${OU_SPEC},\${UDM_LDAP_BASE}" ;;
           esac
           OU_ENC=\$(urlencode "\${OU_POS}")
+          echo "deleting users under \${OU_POS} (subtree search)"
+          USERS_JSON=\$(curl -s --max-time 30 \${CREDS} \\
+            -H "Accept: application/json" \\
+            "\${BASE_URL}/users/user/?position=\${OU_ENC}&scope=sub")
+          printf '%s' "\${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
+            if [ -n "\${USER_DN}" ]; then
+              USER_ENC=\$(urlencode "\${USER_DN}")
+              HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
+                -H "Accept: application/json" \\
+                "\${BASE_URL}/users/user/\${USER_ENC}")
+              echo "deleted user \${USER_DN} (HTTP \${HTTP})"
+              case "\${HTTP}" in
+                200|204|404) ;;
+                *) echo "ERROR: user delete failed for \${USER_DN} (HTTP \${HTTP})" >&2; exit 1 ;;
+              esac
+            fi
+          done
+          echo "user subtree sweep complete for \${OU_POS}"
           HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
             -H "Accept: application/json" \\
             "\${BASE_URL}/container/ou/\${OU_ENC}?cleanup=1&recursive=1")
@@ -364,10 +505,11 @@ EOF
 verify_ldap_ou_absent() {
   local tenant_name="${1}"
   local resource_file="${2}"
+  local instance="${3:-${tenant_name}}"
   local ou_spec
   local job_name="ldap-ou-verify-gone-${tenant_name}"
 
-  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}")"
+  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}" "${instance}")"
   ou_spec="${ou_spec//\"/\\\"}"
 
   kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
@@ -410,6 +552,15 @@ spec:
             404) echo "OU absent (HTTP 404)" ;;
             *) echo "ERROR: tenant LDAP OU still present (HTTP \${HTTP})" >&2; exit 1 ;;
           esac
+          USERS_JSON=\$(curl -s --max-time 30 \${CREDS} \\
+            -H "Accept: application/json" \\
+            "\${BASE_URL}/users/user/?position=\${OU_ENC}&scope=sub")
+          if printf '%s' "\${USERS_JSON}" | grep -q '"dn"'; then
+            echo "ERROR: tenant users still present under \${OU_POS}" >&2
+            printf '%s' "\${USERS_JSON}" | grep -o '"dn": *"[^"]*"' >&2 || true
+            exit 1
+          fi
+          echo "No tenant users remain under \${OU_POS}"
         env:
         - name: UDM_URL
           valueFrom:
@@ -437,6 +588,7 @@ EOF
 wait_for_purge_controller_cleanup() {
   local tenant_name="${1}"
   local resource_file="${2}"
+  local instance="${3:-${tenant_name}}"
   local ou_job="ldap-ou-delete-${tenant_name}"
   local lock_job="ldap-lock-${tenant_name}"
 
@@ -453,12 +605,12 @@ wait_for_purge_controller_cleanup() {
 
   # Always re-run OU delete on purge: idempotent (404 = already gone) and covers
   # cases where GitOps overwrote deletionPolicy=Delete before the controller ran.
-  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true; then
+  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true "${instance}"; then
     return 1
   fi
 
   echo "Verifying tenant LDAP OU is gone..."
-  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}"; then
+  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}" "${instance}"; then
     return 1
   fi
 
@@ -513,33 +665,36 @@ purge_tenant_cluster_artifacts() {
   delete_labeled_resources "jobs" "${KERNEL_NAMESPACE}" "${label_selector}"
 }
 
-# Resolve the ArgoCD Application that syncs ENV_NAME/tenants. Prints "namespace/name".
-argocd_tenants_app_for_env() {
-  local env_name="${1}"
-  local want_path="${env_name}/tenants"
+# Resolve the ArgoCD Application for clusters/<cluster>/tenants/<instance>/<stage>.
+# Prints "namespace/name".
+argocd_tenants_app_for_instance() {
+  local instance="${1}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
+  local want_path="clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name}"
 
   kubectl get application.argoproj.io -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.source.path}{"\n"}{end}' \
     2>/dev/null \
-    | awk -F'\t' -v p="${want_path}" '$2 == p {print $1; exit}'
+    | awk -F'\t' -v p="${want_path}" '$2 == p && !seen { print $1; seen = 1 }'
 }
 
-# Hard-refresh and sync-with-prune the tenants Application so Git revisions apply
+# Hard-refresh and sync-with-prune the tenant Application so Git revisions apply
 # before selfHeal can recreate a manually deleted Tenant CR.
 argocd_trigger_sync_prune() {
-  local env_name="${1}"
+  local instance="${1}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local app_ns_name
-  app_ns_name="$(argocd_tenants_app_for_env "${env_name}")"
+  app_ns_name="$(argocd_tenants_app_for_instance "${instance}" "${env_name}")"
 
   if [[ -z "${app_ns_name}" ]]; then
-    echo "No ArgoCD app found for '${env_name}/tenants'; skipping ArgoCD sync." >&2
+    echo "No ArgoCD app found for 'clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name}'; skipping ArgoCD sync." >&2
     return 0
   fi
 
   local argocd_ns="${app_ns_name%%/*}"
   local argocd_app="${app_ns_name##*/}"
 
-  echo "Refreshing ArgoCD app '${argocd_app}' (${env_name}/tenants)..."
+  echo "Refreshing ArgoCD app '${argocd_app}' (clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name})..."
   kubectl annotate "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
     "argocd.argoproj.io/refresh=hard" --overwrite &>/dev/null || true
 
@@ -575,7 +730,8 @@ wait_for_tenant_delete() {
   local ns_name="${2}"
   local purge="${3:-false}"
   local resource_file="${4:-}"
-  local env_name="${5:-}"
+  local instance="${5:-${tenant_name}}"
+  local env_name="${6:-${DEPLOYMENTS_STAGE}}"
   local timeout=300
   local elapsed=0
   local last_argocd_sync=-1000
@@ -595,7 +751,7 @@ wait_for_tenant_delete() {
     if [[ -z "${deletion_ts}" ]]; then
       echo "WARNING: tenant '${tenant_name}' exists without deletionTimestamp (likely ArgoCD selfHeal); recovering..." >&2
       if [[ -n "${env_name}" ]] && (( elapsed - last_argocd_sync >= 10 )); then
-        argocd_trigger_sync_prune "${env_name}" || true
+        argocd_trigger_sync_prune "${instance:-${tenant_name}}" "${env_name}" || true
         last_argocd_sync=$elapsed
       fi
       if [[ "${purge}" == "true" ]]; then
@@ -625,7 +781,7 @@ wait_for_tenant_delete() {
   fi
 
   if [[ "${purge}" == "true" ]]; then
-    if ! wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}"; then
+    if ! wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}" "${instance}"; then
       echo "ERROR: purge LDAP cleanup did not complete for tenant '${tenant_name}'." >&2
       return 1
     fi
@@ -647,49 +803,134 @@ wait_for_tenant_delete() {
 tenant_undeploy_remove_from_git() {
   local instance="${1}"
   local env_name="${2}"
-  local kustom_file="${3}"
+  local _kustom_file="${3:-}"
   local await_prune="${4:-true}"
   local tenant_name="${5:-}"
 
-  remove_instance_resource "${kustom_file}" "${instance}"
+  local stage_dir
+  stage_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+
+  rm -rf "${stage_dir}"
   (
     cd "${DEPLOYMENTS_PATH}"
-    git add "${kustom_file}"
+    git add -A "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
   )
   git_commit_push "feat(${instance}): undeploy tenant instance from ${env_name}"
-  if ! apply_env_kustomization "${env_name}"; then
-    echo "WARNING: failed to apply kustomization for '${env_name}' after undeploy." >&2
-  fi
+  # Git path removed; ArgoCD prune (or the caller's delete/wait) drops the live CR.
   if [[ "${await_prune}" == "true" && -n "${tenant_name}" ]]; then
-    argocd_refresh_await_prune "${env_name}" "${tenant_name}"
+    argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"
   fi
 }
 
-tenant_env_root() {
-  local env_name="${1:-dev}"
-  echo "${DEPLOYMENTS_PATH}/${env_name}/tenants"
+tenant_stage_name() {
+  local env_name="${1:-}"
+  if [[ -n "${env_name}" ]]; then
+    echo "${env_name}"
+  else
+    echo "${DEPLOYMENTS_STAGE}"
+  fi
 }
 
-tenant_instances_root() {
-  local env_name="${1:-dev}"
-  echo "$(tenant_env_root "${env_name}")/instances"
+tenant_tenants_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
 }
 
-tenant_env_kustomization() {
-  local env_name="${1:-dev}"
-  echo "$(tenant_env_root "${env_name}")/kustomization.yaml"
+tenant_definitions_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions"
+}
+
+tenant_definition_stage_dir() {
+  local instance="${1}"
+  local env_name="${2:-}"
+  local stage
+  stage="$(tenant_stage_name "${env_name}")"
+  echo "$(tenant_definitions_root)/${instance}/${stage}"
+}
+
+write_tenant_stage_kustomization() {
+  local stage_dir="${1}"
+  cat > "${stage_dir}/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+components:
+- ../../components/tenant-defaults
+EOF
+}
+
+scaffold_tenant_from_definition() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local stage
+  local definition_dir
+  local target_dir
+
+  stage="$(tenant_stage_name "${env_name}")"
+  definition_dir="$(tenant_definition_stage_dir "${instance}" "${env_name}")"
+  target_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+
+  if [[ ! -d "${definition_dir}" ]]; then
+    echo "ERROR: tenant '${instance}' is not defined at ${definition_dir}." >&2
+    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/${instance}/${stage}/tenant.yaml" >&2
+    echo "Or an active deploy path: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${stage}/" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${definition_dir}/tenant.yaml" ]]; then
+    echo "ERROR: tenant definition at ${definition_dir} is missing tenant.yaml." >&2
+    exit 1
+  fi
+
+  mkdir -p "${target_dir}"
+  cp "${definition_dir}/tenant.yaml" "${target_dir}/tenant.yaml"
+  write_tenant_stage_kustomization "${target_dir}"
+
+  (
+    cd "${DEPLOYMENTS_PATH}"
+    git add "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
+  )
+  git_commit_push "feat(${instance}): deploy tenant definition for ${env_name}"
+  echo "Activated tenant '${instance}' from definitions/${instance}/${stage}/."
+}
+
+ensure_tenant_instance_dir() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local dir
+
+  dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+  if [[ ! -d "${dir}" ]]; then
+    scaffold_tenant_from_definition "${instance}" "${env_name}"
+  fi
+  tenant_instance_dir "${instance}" "${env_name}"
+}
+
+tenant_stage_dir() {
+  local instance="${1}"
+  local env_name="${2:-}"
+  local stage
+  stage="$(tenant_stage_name "${env_name}")"
+  echo "$(tenant_tenants_root)/${instance}/${stage}"
 }
 
 tenant_instance_dir() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-}"
   local dir
-  dir="$(tenant_instances_root "${env_name}")/${instance}"
+  dir="$(tenant_stage_dir "${instance}" "${env_name}")"
   if [[ ! -d "${dir}" ]]; then
     echo "ERROR: tenant instance '${instance}' not found at ${dir}." >&2
+    echo "Expected layout: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/$(tenant_stage_name "${env_name}")/" >&2
     exit 1
   fi
   echo "${dir}"
+}
+
+tenant_instance_kustomization() {
+  local instance="${1}"
+  local env_name="${2:-}"
+  echo "$(tenant_stage_dir "${instance}" "${env_name}")/kustomization.yaml"
 }
 
 tenant_instance_patch_file() {
@@ -807,6 +1048,259 @@ print_tenant_admin_login_instructions() {
   echo "─────────────────────────────────────────────────────────────────────────────"
 }
 
+# _app_failed_workload_pods prints pod names that are genuinely failed — not init
+# Job pods still within backoff retries.
+_app_failed_workload_pods() {
+  local ns_name="${1}"
+  local app_name="${2}"
+  local line pod reason job_name failed backoff job_failed
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] && continue
+    pod="${line%% *}"
+    reason="${line#* }"
+    [[ "${reason}" != @(CrashLoopBackOff|Error|ImagePullBackOff|CreateContainerConfigError) ]] && continue
+    job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+      -o jsonpath='{.metadata.labels.job-name}' 2>/dev/null || true)"
+    if [[ -n "${job_name}" ]]; then
+      if ! kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" &>/dev/null; then
+        printf '%s\n' "${pod}"
+        continue
+      fi
+      job_failed="$(kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)"
+      if [[ "${job_failed}" == "True" ]]; then
+        printf '%s\n' "${pod}"
+        continue
+      fi
+      failed="$(kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" \
+        -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)"
+      backoff="$(kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" \
+        -o jsonpath='{.spec.backoffLimit}' 2>/dev/null || echo 6)"
+      if [[ "${failed:-0}" -ge "${backoff:-6}" ]]; then
+        printf '%s\n' "${pod}"
+      fi
+      continue
+    fi
+    printf '%s\n' "${pod}"
+  done < <(kubectl --request-timeout=5s get pods -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null \
+    | awk -v app="${app_name}" 'index($1, app) {print}')
+}
+
+# Print Crossplane composite / bootstrap hints when an App claim waits on XApp.
+_app_composite_diagnostics() {
+  local ns_name="${1}"
+  local app_name="${2}"
+
+  local xapp_name xapp_msg
+  xapp_name="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+    -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)"
+  if [[ -z "${xapp_name}" ]]; then
+    return 0
+  fi
+
+  xapp_msg="$(kubectl --request-timeout=5s get xapp "${xapp_name}" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || true)"
+  if [[ -n "${xapp_msg}" ]]; then
+    echo "  composite ${xapp_name}: ${xapp_msg}"
+  fi
+
+  local bootstrap_job bootstrap_pod
+  bootstrap_job="$(kubectl --request-timeout=5s get jobs -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+    | awk '/matrix-user-verification-service-bootstrap|synapse-create-account/ {print; exit}' || true)"
+  if [[ -n "${bootstrap_job}" ]]; then
+    local job_active
+    job_active="$(kubectl --request-timeout=5s get job "${bootstrap_job}" -n "${ns_name}" \
+      -o jsonpath='{.status.active}' 2>/dev/null || true)"
+    echo "  bootstrap job ${bootstrap_job}: active=${job_active:-0}"
+    bootstrap_pod="$(kubectl --request-timeout=5s get pods -n "${ns_name}" \
+      -l "job-name=${bootstrap_job}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    if [[ -n "${bootstrap_pod}" ]]; then
+      local tail
+      tail="$(kubectl --request-timeout=5s logs -n "${ns_name}" "pod/${bootstrap_pod}" --tail=3 2>/dev/null || true)"
+      if [[ -n "${tail}" ]]; then
+        echo "  bootstrap log (last lines):"
+        printf '%s\n' "${tail}" | sed 's/^/    /'
+      fi
+      if printf '%s\n' "${tail}" | grep -q 'Invalid username or password'; then
+        echo "  hint: stale @uvs Matrix user from a prior install — delete demo_element.users row and the bootstrap job, then retry." >&2
+      fi
+    fi
+  fi
+}
+
+wait_for_app_ready() {
+  local tenant_name="${1}"
+  local app_name="${2}"
+  local timeout_secs="${3:-900}"
+  local ns_name="tenant-${tenant_name}"
+  local start last_progress_at=0
+  start="$(date +%s)"
+
+  echo "Waiting for app '${app_name}' on tenant '${tenant_name}' to become Ready (timeout: ${timeout_secs}s)..."
+
+  while true; do
+    local crash_pods=""
+    crash_pods="$(_app_failed_workload_pods "${ns_name}" "${app_name}")"
+    if [[ -n "${crash_pods}" ]]; then
+      echo "App '${app_name}' has unhealthy pod(s) in ${ns_name}:" >&2
+      printf '%s\n' "${crash_pods}" | sed 's/^/  - /' >&2
+      local first_crash
+      first_crash="$(printf '%s\n' "${crash_pods}" | sed -n '1p')"
+      if [[ -n "${first_crash}" ]]; then
+        echo "Recent logs from pod '${first_crash}':" >&2
+        kubectl --request-timeout=5s logs -n "${ns_name}" "pod/${first_crash}" --tail=20 2>/dev/null | sed 's/^/    /' >&2 || true
+        kubectl --request-timeout=5s logs -n "${ns_name}" "pod/${first_crash}" --previous --tail=20 2>/dev/null | sed 's/^/    (previous) /' >&2 || true
+      fi
+      return 1
+    fi
+
+    local failed_jobs=""
+    failed_jobs="$(kubectl --request-timeout=5s get jobs -n "${ns_name}" \
+      -o jsonpath="{range .items[?(@.status.failed>0)]}{.metadata.name}{\"\\n\"}{end}" 2>/dev/null \
+      | awk -v app="${app_name}" '$0 ~ "^" app "-" || index($0, app) {print}' || true)"
+    if [[ -n "${failed_jobs}" ]]; then
+      echo "App '${app_name}' has failed Job(s) in ${ns_name}:" >&2
+      printf '%s\n' "${failed_jobs}" | sed 's/^/  - /' >&2
+      local first_failed
+      first_failed="$(printf '%s\n' "${failed_jobs}" | sed -n '1p')"
+      if [[ -n "${first_failed}" ]]; then
+        echo "Recent logs from failed Job '${first_failed}':" >&2
+        kubectl --request-timeout=5s logs -n "${ns_name}" "job/${first_failed}" --tail=20 2>/dev/null | sed 's/^/    /' >&2 || true
+      fi
+      return 1
+    fi
+
+    local ready_status message
+    ready_status="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
+    message="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.message}{end}' 2>/dev/null || true)"
+
+    if [[ "${ready_status}" == "True" ]]; then
+      local now_ready
+      now_ready="$(date +%s)"
+      echo "App '${app_name}' is Ready after $((now_ready - start))s."
+      return 0
+    fi
+
+    local now elapsed
+    now="$(date +%s)"
+    elapsed=$((now - start))
+    if (( elapsed - last_progress_at >= 30 )); then
+      echo "  app '${app_name}' not Ready yet (elapsed: ${elapsed}s) ${message:-}"
+      if [[ "${message}" == *"composite"* ]]; then
+        _app_composite_diagnostics "${ns_name}" "${app_name}" || true
+      fi
+      last_progress_at="${elapsed}"
+    fi
+
+    if (( elapsed >= timeout_secs )); then
+      echo "Timed out waiting for app '${app_name}' to become Ready." >&2
+      if [[ -n "${message}" ]]; then
+        echo "  Last App claim message: ${message}" >&2
+      fi
+      kubectl --request-timeout=5s get pods -n "${ns_name}" 2>/dev/null | grep -E "${app_name}|NAME" >&2 || true
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
+# _app_lingering_pods returns app pods still running or terminating — not Completed
+# Job pods left in Succeeded phase (e.g. db-init, s3-init). Job pods whose owning
+# Job was already removed (orphans after Crossplane teardown) are ignored.
+_app_lingering_pods() {
+  local ns_name="${1}"
+  local app_name="${2}"
+  local pod phase job_name
+
+  while read -r pod phase; do
+    [[ -z "${pod}" ]] && continue
+    [[ "${phase}" == "Succeeded" || "${phase}" == "Completed" ]] && continue
+    [[ "${pod}" != *"${app_name}"* ]] && continue
+
+    job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+      -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
+    if [[ -z "${job_name}" ]]; then
+      job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+        -o jsonpath='{.metadata.labels.batch\.kubernetes\.io/job-name}' 2>/dev/null || true)"
+    fi
+    if [[ -z "${job_name}" ]]; then
+      job_name="$(kubectl --request-timeout=5s get pod "${pod}" -n "${ns_name}" \
+        -o jsonpath='{.metadata.labels.job-name}' 2>/dev/null || true)"
+    fi
+    if [[ -n "${job_name}" ]] \
+        && ! kubectl --request-timeout=5s get job "${job_name}" -n "${ns_name}" &>/dev/null; then
+      continue
+    fi
+
+    echo "${pod}"
+  done < <(kubectl --request-timeout=5s get pods -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null || true)
+}
+
+wait_for_app_uninstalled() {
+  local tenant_name="${1}"
+  local app_name="${2}"
+  local timeout_secs="${3:-900}"
+  local ns_name="tenant-${tenant_name}"
+  local start last_progress_at=0
+  start="$(date +%s)"
+
+  echo "Waiting for app '${app_name}' to be removed from tenant '${tenant_name}' (timeout: ${timeout_secs}s)..."
+
+  while true; do
+    if kubectl get app "${app_name}" -n "${ns_name}" &>/dev/null; then
+      local message
+      message="$(kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" \
+        -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.message}{end}' 2>/dev/null || true)"
+      local now elapsed
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      if (( elapsed - last_progress_at >= 30 )); then
+        echo "  app '${app_name}' claim still present (elapsed: ${elapsed}s) ${message:-}"
+        last_progress_at="${elapsed}"
+      fi
+    else
+      local lingering_pods lingering_releases
+      lingering_pods="$(_app_lingering_pods "${ns_name}" "${app_name}")"
+      lingering_releases="$(kubectl --request-timeout=5s get release.helm.crossplane.io -n "${ns_name}" -o name 2>/dev/null \
+        | sed 's|.*/||' | awk -v app="${app_name}" 'index($0, app) {print}' || true)"
+      if [[ -z "${lingering_pods}" && -z "${lingering_releases}" ]]; then
+        local now_done
+        now_done="$(date +%s)"
+        echo "App '${app_name}' removed from tenant '${tenant_name}' after $((now_done - start))s."
+        return 0
+      fi
+      local now elapsed
+      now="$(date +%s)"
+      elapsed=$((now - start))
+      if (( elapsed - last_progress_at >= 30 )); then
+        echo "  app claim gone; waiting for workloads to finish terminating (elapsed: ${elapsed}s)"
+        [[ -n "${lingering_pods}" ]] && echo "    pods: $(printf '%s' "${lingering_pods}" | tr '\n' ' ')"
+        [[ -n "${lingering_releases}" ]] && echo "    releases: $(printf '%s' "${lingering_releases}" | tr '\n' ' ')"
+        last_progress_at="${elapsed}"
+      fi
+    fi
+
+    local now elapsed
+    now="$(date +%s)"
+    elapsed=$((now - start))
+    if (( elapsed >= timeout_secs )); then
+      echo "Timed out waiting for app '${app_name}' to be removed from tenant '${tenant_name}'." >&2
+      kubectl --request-timeout=5s get app "${app_name}" -n "${ns_name}" 2>/dev/null >&2 || true
+      kubectl --request-timeout=5s get pods,release.helm.crossplane.io -n "${ns_name}" 2>/dev/null \
+        | grep -E "${app_name}|NAME" >&2 || true
+      return 1
+    fi
+
+    sleep 5
+  done
+}
+
 wait_for_tenant_ready() {
   local tenant_name="${1}"
   local timeout_secs="${2:-600}"
@@ -890,6 +1384,11 @@ wait_for_tenant_ready() {
   done
 }
 
+platform_kernel_job_logs() {
+  local job_name="${1}"
+  kubectl --request-timeout=5s logs -n platform-kernel "job/${job_name}" 2>/dev/null
+}
+
 ldap_admin_password_synced() {
   local tenant_name="${1}"
   local ldap_job="ldap-admin-user-${tenant_name}"
@@ -898,7 +1397,7 @@ ldap_admin_password_synced() {
   if [[ -z "${succeeded}" || "${succeeded}" == "0" ]]; then
     return 1
   fi
-  kubectl --request-timeout=5s logs -n platform-kernel "${ldap_job}" 2>/dev/null \
+  platform_kernel_job_logs "${ldap_job}" \
     | grep -qE 'TENANT_ADMIN_LDAP_PASSWORD_SYNCED|password synced via interim rotation|user admin-'"${tenant_name}"' password synced \(HTTP'
 }
 
@@ -1030,35 +1529,17 @@ rollback_deploy() {
   local instance="${1}"
   local tenant_name="${2}"
   local env_name="${3}"
-  local kustom_file="${4}"
+  local _kustom_file="${4:-}"
   local ns_name="tenant-${tenant_name}"
 
   echo "failed to provision tenant, rolling back" >&2
 
+  # Match `tenants undeploy`: deactivate in Git first so ArgoCD stops reconciling
+  # the Tenant CR, then delete the CR and let the operator run cleanup finalizers.
   if is_instance_deployed "${instance}" "${env_name}"; then
-    remove_instance_resource "${kustom_file}" "${instance}"
-    (
-      cd "${DEPLOYMENTS_PATH}"
-      git add "${kustom_file}"
-    )
-
-    if ! git_commit_push "revert(${instance}): rollback failed tenant deploy in ${env_name}"; then
-      echo "rollback failed: could not commit/push rollback change" >&2
-      return 1
-    fi
-  else
-    echo "Tenant instance '${instance}' is already removed from '${env_name}' GitOps; cleaning up cluster..." >&2
+    echo "Removing activated tenant manifest from GitOps path..."
+    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" false "${tenant_name}"
   fi
-
-  if ! apply_env_kustomization "${env_name}"; then
-    echo "rollback failed: could not apply rollback state to cluster" >&2
-    return 1
-  fi
-
-  # Mirror cmd_tenant_undeploy: let ArgoCD prune, delete the CR, then wait for
-  # finalizers/selfHeal recovery. A fire-and-forget delete races ArgoCD and
-  # reports failure while the Tenant CR is still terminating.
-  argocd_refresh_await_prune "${env_name}" "${tenant_name}" || true
 
   if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
     ns_name="$(kubectl get tenant "${tenant_name}" \
@@ -1066,56 +1547,37 @@ rollback_deploy() {
     if [[ -z "${ns_name}" ]]; then
       ns_name="tenant-${tenant_name}"
     fi
+    echo "Deleting Tenant CR '${tenant_name}' and waiting for operator cleanup..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
-  fi
-
-  if kubectl get tenant "${tenant_name}" &>/dev/null 2>&1; then
-    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${env_name}"; then
+    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${instance}" "${env_name}"; then
       echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
       return 1
     fi
   fi
 
-  kubectl delete jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" --ignore-not-found=true >/dev/null 2>&1 || true
-  argocd_refresh_await_prune "${env_name}" "${tenant_name}" || true
-
-  if is_instance_deployed "${instance}" "${env_name}"; then
-    echo "rollback failed: tenant instance '${instance}' is still marked deployed in '${env_name}'" >&2
+  if ! argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"; then
+    echo "rollback failed: tenant '${tenant_name}' was not fully removed" >&2
     return 1
   fi
 
-  if kubectl get tenant "${tenant_name}" >/dev/null 2>&1; then
-    echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
-    return 1
-  fi
-
-  echo "Rollback completed: tenant instance '${instance}' undeployed in '${env_name}'." >&2
+  echo "Rollback completed: tenant '${tenant_name}' removed from cluster and deactivated in Git (definition preserved under definitions/)." >&2
   return 1
 }
 
 is_instance_deployed() {
   local instance="${1}"
   local env_name="${2:-dev}"
-  local kustom_file
-  kustom_file="$(tenant_env_kustomization "${env_name}")"
-
-  [[ -f "${kustom_file}" ]] || return 1
-
-  grep -Eq "^[[:space:]]*-[[:space:]]*instances/${instance}[[:space:]]*$" "${kustom_file}"
+  [[ -f "$(tenant_stage_dir "${instance}" "${env_name}")/tenant.yaml" ]]
 }
 
 ensure_env_layout() {
-  local env_name="${1:-dev}"
+  local _env_name="${1:-dev}"
   local root
-  root="$(tenant_env_root "${env_name}")"
+  root="$(tenant_tenants_root)"
 
   if [[ ! -d "${root}" ]]; then
-    echo "ERROR: tenant environment path not found: ${root}" >&2
-    exit 1
-  fi
-
-  if [[ ! -f "$(tenant_env_kustomization "${env_name}")" ]]; then
-    echo "ERROR: missing environment kustomization: $(tenant_env_kustomization "${env_name}")" >&2
+    echo "ERROR: tenant path not found: ${root}" >&2
+    echo "Set GENTIAN_DEPLOYMENTS_CLUSTER (currently '${DEPLOYMENTS_CLUSTER}') in ${CONFIG_FILE}." >&2
     exit 1
   fi
 }
@@ -1214,23 +1676,18 @@ EOF
   fi
 }
 
-# argocd_refresh_await_prune ENV_NAME TENANT_NAME
-#
-# Finds the ArgoCD Application managing ENV_NAME's tenants (by matching
-# spec.source.path == "ENV_NAME/tenants"), triggers an immediate git refresh
-# and sync-with-prune, and waits up to 120 s for the Tenant CR to disappear.
-# Falls back to a direct kubectl delete when ArgoCD cannot prune in time.
-# Returns 0 when the tenant CR is gone, 1 on timeout.
+# argocd_refresh_await_prune INSTANCE STAGE TENANT_NAME
 argocd_refresh_await_prune() {
-  local env_name="${1}"
-  local tenant_name="${2}"
+  local instance="${1}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
+  local tenant_name="${3}"
 
   if ! kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
     return 0
   fi
 
-  if [[ -z "$(argocd_tenants_app_for_env "${env_name}")" ]]; then
-    echo "No ArgoCD app found for '${env_name}/tenants'; deleting tenant CR directly..."
+  if [[ -z "$(argocd_tenants_app_for_instance "${instance}" "${env_name}")" ]]; then
+    echo "No ArgoCD app found for 'clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name}'; deleting tenant CR directly..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
     wait_with_message \
       "Waiting for tenant '${tenant_name}' to be removed after direct delete (timeout: 120s)..." \
@@ -1242,7 +1699,7 @@ argocd_refresh_await_prune() {
     return 0
   fi
 
-  argocd_trigger_sync_prune "${env_name}"
+  argocd_trigger_sync_prune "${instance}" "${env_name}"
 
   echo "Waiting for ArgoCD to prune tenant '${tenant_name}' from the cluster (timeout: 120s)..."
   local i=0
@@ -1271,11 +1728,19 @@ argocd_refresh_await_prune() {
   return 0
 }
 
-apply_env_kustomization() {
-  local env_name="${1}"
+apply_tenant_instance() {
+  local instance="${1}"
+  local env_name="${2:-dev}"
+  local stage_dir
   local output
 
-  output="$(kubectl apply -k "$(tenant_env_root "${env_name}")" 2>&1)"
+  stage_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
+  if [[ ! -d "${stage_dir}" ]]; then
+    echo "ERROR: tenant stage directory not found: ${stage_dir}" >&2
+    return 1
+  fi
+
+  output="$(kubectl apply -k "${stage_dir}" 2>&1)"
   local rc=$?
 
   if [[ ${rc} -eq 0 ]]; then
@@ -1283,57 +1748,69 @@ apply_env_kustomization() {
     return 0
   fi
 
-  if echo "${output}" | grep -q "no objects passed to apply"; then
-    echo "No tenant instances selected in '${env_name}' (nothing to apply)."
-    return 0
-  fi
-
   echo "${output}" >&2
   return ${rc}
 }
 
+tenant_collect_instance_names() {
+  local env_name="${1:-dev}"
+  local tenants_root definitions_root stage
+  local tenant_dir instance
+
+  tenants_root="$(tenant_tenants_root)"
+  definitions_root="$(tenant_definitions_root)"
+  stage="$(tenant_stage_name "${env_name}")"
+
+  declare -A instances=()
+
+  for tenant_dir in "${tenants_root}"/* "${definitions_root}"/*; do
+    [[ -d "${tenant_dir}" ]] || continue
+    instance="$(basename "${tenant_dir}")"
+    [[ "${instance}" == "components" ]] && continue
+    [[ -f "${tenant_dir}/${stage}/tenant.yaml" ]] || continue
+    instances["${instance}"]=1
+  done
+
+  if [[ ${#instances[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  printf '%s\n' "${!instances[@]}" | sort
+}
+
 cmd_tenant_list() {
   local env_name="${1:-dev}"
-  local instances_dir
-  local kustom_file
+  local tenants_root definitions_root stage
 
   ensure_repo
   ensure_env_layout "${env_name}"
 
-  instances_dir="$(tenant_instances_root "${env_name}")"
-  kustom_file="$(tenant_env_kustomization "${env_name}")"
-
-  if [[ ! -d "${instances_dir}" ]]; then
-    echo "No instances directory found: ${instances_dir}"
-    return 0
-  fi
+  tenants_root="$(tenant_tenants_root)"
+  definitions_root="$(tenant_definitions_root)"
+  stage="$(tenant_stage_name "${env_name}")"
 
   local found=0
   printf "%-24s %-10s %-8s %-18s\n" "INSTANCE" "ACTIVE" "LIVE" "TENANT_NAME"
   printf "%-24s %-10s %-8s %-18s\n" "--------" "------" "----" "-----------"
 
-  local instance
-  for instance in "${instances_dir}"/*; do
-    [[ -d "${instance}" ]] || continue
+  local instance_name
+  while IFS= read -r instance_name; do
+    [[ -n "${instance_name}" ]] || continue
     found=1
 
-    local instance_name
-    local active
-    local live
-    local patch
-    local tenant_name
+    local active live tenant_file tenant_name
 
-    instance_name="$(basename "${instance}")"
-    if grep -Eq "^[[:space:]]*-[[:space:]]*instances/${instance_name}[[:space:]]*$" "${kustom_file}"; then
+    tenant_file="${tenants_root}/${instance_name}/${stage}/tenant.yaml"
+    if [[ -f "${tenant_file}" ]]; then
       active="yes"
     else
       active="no"
+      tenant_file="${definitions_root}/${instance_name}/${stage}/tenant.yaml"
     fi
 
-    patch="$(tenant_instance_patch_file "${instance_name}" "${env_name}")"
-    tenant_name="$(tenant_instance_name_from_patch "${patch}")"
+    tenant_name="$(tenant_instance_name_from_patch "${tenant_file}")"
     if [[ -z "${tenant_name}" ]]; then
-      tenant_name="-"
+      tenant_name="${instance_name}"
     fi
 
     if kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
@@ -1343,10 +1820,10 @@ cmd_tenant_list() {
     fi
 
     printf "%-24s %-10s %-8s %-18s\n" "${instance_name}" "${active}" "${live}" "${tenant_name}"
-  done
+  done < <(tenant_collect_instance_names "${env_name}")
 
   if [[ "${found}" -eq 0 ]]; then
-    echo "No tenant instances found under ${instances_dir}."
+    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/*/${stage} or tenants/*/${stage}."
   fi
 }
 
@@ -1361,15 +1838,12 @@ cmd_tenant_deploy() {
 
   ensure_repo
   ensure_env_layout "${env_name}"
-  tenant_instance_dir "${instance}" "${env_name}" >/dev/null
+  ensure_tenant_instance_dir "${instance}" "${env_name}" >/dev/null
 
-  local kustom_file
   local patch
   local tenant_name
   local realm
 
-  kustom_file="$(tenant_env_kustomization "${env_name}")"
-  ensure_kustomization_seed "${kustom_file}"
   patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
   tenant_name="$(tenant_instance_name_from_patch "${patch}")"
   realm="$(tenant_realm_from_patch "${patch}")"
@@ -1381,39 +1855,25 @@ cmd_tenant_deploy() {
     realm="${tenant_name}"
   fi
 
-  local already_in_kustomization=false
-  local already_live=false
-  is_instance_deployed "${instance}" "${env_name}" && already_in_kustomization=true
-  kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1 && already_live=true
-
-  if [[ "${already_live}" == "true" ]]; then
+  if kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
     echo "Tenant instance '${instance}' is already live in '${env_name}' — applying spec changes..."
-  fi
-
-  if [[ "${already_in_kustomization}" == "false" ]]; then
-    append_instance_resource "${kustom_file}" "${instance}"
-    (
-      cd "${DEPLOYMENTS_PATH}"
-      git add "${kustom_file}"
-    )
-    git_commit_push "feat(${instance}): deploy tenant instance in ${env_name}"
   else
-    echo "Tenant instance '${instance}' is already in kustomization but not yet live — applying now..."
+    echo "Tenant instance '${instance}' manifest found — applying to cluster..."
   fi
 
   echo "Applying tenant desired state for '${env_name}'..."
-  if ! apply_env_kustomization "${env_name}"; then
-    rollback_deploy "${instance}" "${tenant_name}" "${env_name}" "${kustom_file}"
+  if ! apply_tenant_instance "${instance}" "${env_name}"; then
+    rollback_deploy "${instance}" "${tenant_name}" "${env_name}"
   fi
 
   echo "Waiting for tenant reconciliation to complete..."
   if ! wait_for_tenant_ready "${tenant_name}" 600; then
-    rollback_deploy "${instance}" "${tenant_name}" "${env_name}" "${kustom_file}"
+    rollback_deploy "${instance}" "${tenant_name}" "${env_name}"
   fi
 
   echo "Waiting for tenant-admin credentials to become available..."
   if ! fetch_tenant_admin_credentials "${tenant_name}" 300; then
-    rollback_deploy "${instance}" "${tenant_name}" "${env_name}" "${kustom_file}"
+    rollback_deploy "${instance}" "${tenant_name}" "${env_name}"
   fi
 
   echo "Done. Tenant instance '${instance}' deployed in '${env_name}'."
@@ -1434,14 +1894,11 @@ cmd_tenant_undeploy() {
   ensure_env_layout "${env_name}"
   tenant_instance_dir "${instance}" "${env_name}" >/dev/null
 
-  local kustom_file
   local patch
   local resource_file
   local tenant_name
   local ns_name
 
-  kustom_file="$(tenant_env_kustomization "${env_name}")"
-  ensure_kustomization_seed "${kustom_file}"
   patch="$(tenant_instance_patch_file "${instance}" "${env_name}")"
   resource_file="$(tenant_instance_resource_file "${instance}" "${env_name}")"
   tenant_name="$(tenant_instance_name_from_patch "${patch}")"
@@ -1452,7 +1909,7 @@ cmd_tenant_undeploy() {
 
   if [[ "${purge}" == "true" ]]; then
     cmd_tenant_undeploy_purge "${instance}" "${env_name}" "${tenant_name}" \
-      "${kustom_file}" "${resource_file}"
+      "${resource_file}"
     return $?
   fi
 
@@ -1469,7 +1926,7 @@ cmd_tenant_undeploy() {
       -o jsonpath='{.spec.deletionPolicy}' 2>/dev/null || echo "Retain")"
     if [[ "${live_policy}" == "Delete" ]] && is_instance_deployed "${instance}" "${env_name}"; then
       git_commit_push "chore(${instance}): reset deletionPolicy to Retain before undeploy in ${env_name}"
-      kubectl apply -k "$(tenant_env_root "${env_name}")" 2>/dev/null || true
+      apply_tenant_instance "${instance}" "${env_name}" 2>/dev/null || true
     fi
   fi
 
@@ -1477,7 +1934,7 @@ cmd_tenant_undeploy() {
     echo "Tenant instance '${instance}' is not deployed in '${env_name}'."
     git_commit_push "chore(${instance}): finalize tenant undeploy in ${env_name}"
   else
-    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "${kustom_file}" true "${tenant_name}"
+    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" true "${tenant_name}"
   fi
 
   ns_name="$(kubectl get tenant "${tenant_name}" \
@@ -1488,7 +1945,7 @@ cmd_tenant_undeploy() {
 
   kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
-  if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false; then
+  if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${instance}" "${env_name}"; then
     exit 1
   fi
 
@@ -1501,7 +1958,7 @@ cmd_tenant_undeploy() {
     git_commit_push "chore(${instance}): reset deletionPolicy to Retain after undeploy in ${env_name}"
   fi
 
-  if ! argocd_refresh_await_prune "${env_name}" "${tenant_name}"; then
+  if ! argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"; then
     exit 1
   fi
 
@@ -1512,8 +1969,7 @@ cmd_tenant_undeploy_purge() {
   local instance="${1}"
   local env_name="${2}"
   local tenant_name="${3}"
-  local kustom_file="${4}"
-  local resource_file="${5}"
+  local resource_file="${4}"
   local ns_name="tenant-${tenant_name}"
   local tenant_exists=false
 
@@ -1539,16 +1995,13 @@ cmd_tenant_undeploy_purge() {
     # selfHeal after a prior undeploy). Sync/prune before destructive cleanup.
     if ! is_instance_deployed "${instance}" "${env_name}"; then
       echo "Tenant '${tenant_name}' is live but not active in GitOps; pruning via ArgoCD..."
-      if argocd_refresh_await_prune "${env_name}" "${tenant_name}"; then
+      if argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"; then
         tenant_exists=false
       fi
     fi
   fi
 
   if [[ "${tenant_exists}" == "true" ]]; then
-    # Commit deletionPolicy=Delete while the instance is still in GitOps desired state.
-    # Deleting the Tenant CR must happen before removing it from kustomization; otherwise
-    # ArgoCD prune races and can delete the CR with deletionPolicy=Retain still set.
     if is_instance_deployed "${instance}" "${env_name}"; then
       (
         cd "${DEPLOYMENTS_PATH}"
@@ -1558,8 +2011,11 @@ cmd_tenant_undeploy_purge() {
         fi
       )
       echo "Applying deletionPolicy=Delete for '${tenant_name}'..."
-      if ! apply_env_kustomization "${env_name}"; then
-        echo "WARNING: failed to apply kustomization for '${env_name}' before purge." >&2
+      if ! apply_tenant_instance "${instance}" "${env_name}"; then
+        echo "WARNING: failed to apply tenant manifest for '${instance}' before purge." >&2
+      fi
+      if ! assert_argocd_tenant_delete_synced "${instance}" "${env_name}" "${tenant_name}" 120; then
+        exit 1
       fi
       if ! assert_live_tenant_deletion_policy "${tenant_name}" "Delete" 180; then
         exit 1
@@ -1573,19 +2029,16 @@ cmd_tenant_undeploy_purge() {
     echo "Deleting tenant '${tenant_name}' with deletionPolicy=Delete..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
 
-    # Remove from GitOps immediately so ArgoCD selfHeal cannot recreate the CR
-    # while controller cleanup runs (previously we waited first, leaving git stale).
-    if is_instance_deployed "${instance}" "${env_name}"; then
-      tenant_undeploy_remove_from_git "${instance}" "${env_name}" "${kustom_file}" false "${tenant_name}"
-      # Push Git removal before selfHeal can recreate the Tenant CR from stale desired state.
-      argocd_trigger_sync_prune "${env_name}"
-    fi
-
-    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" true "${resource_file}" "${env_name}"; then
+    if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" true "${resource_file}" "${instance}" "${env_name}"; then
       exit 1
     fi
 
     purge_tenant_cluster_artifacts "${tenant_name}" "${ns_name}"
+
+    if is_instance_deployed "${instance}" "${env_name}"; then
+      tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" false "${tenant_name}"
+      argocd_trigger_sync_prune "${instance}" "${env_name}" || true
+    fi
   else
     echo "Tenant CR '${tenant_name}' is not present; purging orphaned cluster artifacts..."
     purge_tenant_cluster_artifacts "${tenant_name}" "${ns_name}"
@@ -1597,10 +2050,8 @@ cmd_tenant_undeploy_purge() {
     )
   fi
 
-  # Update GitOps after cluster cleanup when the instance was not removed above
-  # (e.g. tenant CR was already absent at the start of purge).
   if is_instance_deployed "${instance}" "${env_name}"; then
-    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "${kustom_file}" false "${tenant_name}"
+    tenant_undeploy_remove_from_git "${instance}" "${env_name}" "" false "${tenant_name}"
   fi
 
   if [[ -f "${resource_file}" ]] && grep -q '^  deletionPolicy: Delete$' "${resource_file}" 2>/dev/null; then
@@ -1612,11 +2063,44 @@ cmd_tenant_undeploy_purge() {
     git_commit_push "chore(${instance}): reset deletionPolicy to Retain after purge in ${env_name}"
   fi
 
-  if ! argocd_refresh_await_prune "${env_name}" "${tenant_name}"; then
+  if ! argocd_refresh_await_prune "${instance}" "${env_name}" "${tenant_name}"; then
     exit 1
   fi
 
   echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
+}
+
+cmd_tenant_cleanup_ldap() {
+  local instance="${1:-}"
+  local env_name="${2:-dev}"
+
+  if [[ -z "${instance}" ]]; then
+    echo "ERROR: usage: kubectl gentian tenants cleanup-ldap <instance> [--env <env>]" >&2
+    exit 1
+  fi
+
+  ensure_repo
+  tenant_definition_stage_dir "${instance}" "${env_name}" >/dev/null
+
+  local resource_file tenant_name
+  resource_file="$(tenant_definition_stage_dir "${instance}" "${env_name}")/tenant.yaml"
+  if [[ ! -f "${resource_file}" ]]; then
+    resource_file="$(tenant_instance_resource_file "${instance}" "${env_name}")"
+  fi
+  tenant_name="${instance}"
+  if [[ -f "${resource_file}" ]]; then
+    tenant_name="$(tenant_instance_name_from_patch "${resource_file}")"
+    [[ -z "${tenant_name}" ]] && tenant_name="${instance}"
+  fi
+
+  echo "Deleting LDAP OU for tenant '${tenant_name}' (instance '${instance}')..."
+  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true "${instance}"; then
+    exit 1
+  fi
+  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}" "${instance}"; then
+    exit 1
+  fi
+  echo "Done. LDAP OU for tenant '${tenant_name}' is removed."
 }
 
 # ---------------------------------------------------------------------------
@@ -1637,6 +2121,493 @@ cmd_list() {
         if ($4 == "") $4 = "-"
         printf fmt, $1, $2, $3 " tenants", $4
       }'
+}
+
+# App uninstall cleanup — persistent state survives Crossplane teardown because
+# databasePerTenant + deletionPolicy Retain keep kernel resources until purge.
+# Naming mirrors internal/controller/*_reconciler.go and app-default db-init.
+
+_app_db_role_name() {
+  local tenant="${1}" app="${2}"
+  printf '%s_%s' "${tenant}" "${app}" | tr '-' '_'
+}
+
+_app_database_name() {
+  local tenant="${1}" app="${2}"
+  local prefix
+  prefix="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.databasePrefix}' 2>/dev/null || true)"
+  if [[ -z "${prefix}" ]]; then
+    prefix="${tenant}_"
+  fi
+  printf '%s%s' "$(printf '%s' "${prefix}" | tr '-' '_')" "$(printf '%s' "${app}" | tr '-' '_')"
+}
+
+_app_mariadb_user_name() {
+  local tenant="${1}" app="${2}"
+  printf '%s_%s' "$(printf '%s' "${tenant}" | tr '-' '_')" "$(printf '%s' "${app}" | tr '-' '_')"
+}
+
+_s3_safe_component() {
+  local s="${1}" out="" i ch lower
+  for ((i = 0; i < ${#s}; i++)); do
+    ch="${s:i:1}"
+    case "${ch}" in
+      [a-z0-9-]) out+="${ch}" ;;
+      [A-Z])
+        lower="$(printf '%s' "${ch}" | tr '[:upper:]' '[:lower:]')"
+        out+="${lower}"
+        ;;
+      *) out+="-" ;;
+    esac
+  done
+  printf '%s' "${out}"
+}
+
+_app_s3_bucket_name() {
+  local tenant="${1}" app="${2}"
+  local prefix
+  prefix="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.s3Prefix}' 2>/dev/null || true)"
+  if [[ -z "${prefix}" ]]; then
+    prefix="${tenant}-"
+  fi
+  printf '%s%s' "$(_s3_safe_component "${prefix}")" "$(_s3_safe_component "${app}")"
+}
+
+_app_redis_acl_username() {
+  local tenant="${1}" app="${2}"
+  printf '%s-%s' "${tenant}" "${app}"
+}
+
+_postgres_pod() {
+  kubectl --request-timeout=5s get pods -n "${KERNEL_NAMESPACE}" \
+    -l cnpg.io/cluster=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+}
+
+_openbao_pod() {
+  kubectl --request-timeout=5s get pods -n openbao \
+    -l 'app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao' \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || kubectl --request-timeout=5s get pods -n openbao -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || true
+}
+
+_openbao_operator_token() {
+  local jwt bao_pod login_token
+  jwt="$(kubectl --request-timeout=5s create token -n gentian-system gentian-os --duration=10m 2>/dev/null || true)"
+  if [[ -z "${jwt}" ]]; then
+    return 1
+  fi
+  bao_pod="$(_openbao_pod)"
+  if [[ -z "${bao_pod}" ]]; then
+    return 1
+  fi
+  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc \
+    "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" \
+    2>/dev/null || true)"
+  if [[ -z "${login_token}" ]]; then
+    return 1
+  fi
+  printf '%s' "${login_token}"
+}
+
+_app_profile_requirement() {
+  local app="${1}" jsonpath="${2}"
+  kubectl get appprofile "${app}" -o "jsonpath=${jsonpath}" 2>/dev/null || true
+}
+
+_run_kernel_provisioning_job() {
+  local job_name="${1}"
+  local force="${2:-false}"
+  shift 2
+
+  if [[ "${force}" == "true" ]]; then
+    kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
+  elif kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    local complete_status=""
+    complete_status="$(kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+      -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)"
+    if [[ "${complete_status}" == "True" ]]; then
+      echo "Provisioning job '${job_name}' already completed."
+      return 0
+    fi
+  fi
+
+  kubectl apply -f -
+  wait_with_message \
+    "Waiting for provisioning job '${job_name}' to complete (timeout: 300s)..." \
+    job "${job_name}" -n "${KERNEL_NAMESPACE}" \
+    --for=condition=complete --timeout=300s
+}
+
+purge_app_cluster_artifacts() {
+  local tenant="${1}" app="${2}"
+  local label_selector="gentianos.io/tenant=${tenant},gentianos.io/app=${app},app.kubernetes.io/managed-by=gentian-os"
+
+  echo "Removing kernel provisioning artifacts for '${app}'..."
+  delete_labeled_resources "jobs" "${KERNEL_NAMESPACE}" "${label_selector}"
+  kubectl delete secrets -n "${KERNEL_NAMESPACE}" \
+    -l "${label_selector}" --ignore-not-found=true
+  kubectl delete database.postgresql.cnpg.io "db-${tenant}-${app}" \
+    -n "${KERNEL_NAMESPACE}" --ignore-not-found=true
+}
+
+purge_app_openbao_path() {
+  local tenant="${1}" app_key="${2}"
+  local token bao_pod base_path
+  token="$(_openbao_operator_token)" || {
+    echo "WARNING: OpenBao login failed; skipping secret purge for '${app_key}'." >&2
+    return 0
+  }
+  bao_pod="$(_openbao_pod)"
+  if [[ -z "${bao_pod}" ]]; then
+    echo "WARNING: OpenBao pod not found; skipping secret purge for '${app_key}'." >&2
+    return 0
+  fi
+
+  base_path="gentian-os/tenants/${tenant}/apps/${app_key}"
+  echo "Purging OpenBao secrets at ${base_path}..."
+  kubectl --request-timeout=60s exec -n openbao "${bao_pod}" -- sh -lc "
+    set -eu
+    BAO_ADDR=http://127.0.0.1:8200
+    BAO_TOKEN='${token}'
+    BASE='${base_path}'
+    purge_kv_tree() {
+      path=\"\$1\"
+      listed=\$(bao kv list -mount=secret \"\${path}\" 2>/dev/null || true)
+      if [ -z \"\${listed}\" ]; then
+        bao kv metadata delete -mount=secret \"\${path}\" 2>/dev/null || true
+        return 0
+      fi
+      printf '%s\n' \"\${listed}\" | while IFS= read -r entry; do
+        [ -z \"\${entry}\" ] && continue
+        case \"\${entry}\" in
+          */) purge_kv_tree \"\${path}/\${entry%/}\"
+               ;;
+          *) bao kv metadata delete -mount=secret \"\${path}/\${entry}\" 2>/dev/null || true
+             ;;
+        esac
+      done
+      bao kv metadata delete -mount=secret \"\${path}\" 2>/dev/null || true
+    }
+    purge_kv_tree \"\${BASE}\"
+    echo \"OpenBao path \${BASE} purged\"
+  " || echo "WARNING: OpenBao purge for '${app_key}' failed." >&2
+}
+
+purge_app_openbao_secrets() {
+  local tenant="${1}" app="${2}"
+  purge_app_openbao_path "${tenant}" "${app}"
+
+  local sidecar
+  while IFS= read -r sidecar; do
+    [[ -z "${sidecar}" ]] && continue
+    purge_app_openbao_path "${tenant}" "${app}-${sidecar}"
+  done < <(_app_profile_requirement "${app}" '{range .spec.sidecars[*]}{.name}{"\n"}{end}')
+}
+
+purge_app_postgresql() {
+  local tenant="${1}" app="${2}"
+  local db_name pg_pod sql_out
+  db_name="$(_app_db_role_name "${tenant}" "${app}")"
+  pg_pod="$(_postgres_pod)"
+  if [[ -z "${pg_pod}" ]]; then
+    echo "WARNING: postgres pod not found; skipping Postgres purge for ${db_name}." >&2
+    return 0
+  fi
+
+  echo "Purging Postgres database ${db_name}..."
+  # DROP DATABASE cannot run inside a transaction; psql -c with multiple statements
+  # executes them in one transaction, so each step must be a separate invocation.
+  local pg_exec=(kubectl --request-timeout=60s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres --
+    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c)
+  if ! sql_out="$("${pg_exec[@]}" \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}';" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed (terminate backends):" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  if ! sql_out="$("${pg_exec[@]}" "DROP DATABASE IF EXISTS \"${db_name}\";" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed (drop database):" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  if ! sql_out="$("${pg_exec[@]}" "DROP ROLE IF EXISTS \"${db_name}\";" 2>&1)"; then
+    echo "WARNING: Postgres purge for ${db_name} failed (drop role):" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    return 0
+  fi
+  echo "Postgres database ${db_name} removed."
+}
+
+cleanup_element_synapse_identities() {
+  local tenant="${1}"
+  local db_name pg_pod sql_out
+  db_name="$(_app_db_role_name "${tenant}" "element")"
+  pg_pod="$(_postgres_pod)"
+  if [[ -z "${pg_pod}" ]]; then
+    echo "WARNING: postgres pod not found; skipping Synapse identity cleanup for ${db_name}." >&2
+    return 0
+  fi
+
+  if ! kubectl --request-timeout=5s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+      psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db_name}'" 2>/dev/null \
+      | grep -q 1; then
+    echo "Synapse database ${db_name} not present; skipping Matrix identity cleanup."
+    return 0
+  fi
+
+  echo "Cleaning Matrix user identities in ${db_name} (Element reinstall hygiene)..."
+  if ! sql_out="$(kubectl --request-timeout=30s exec -n "${KERNEL_NAMESPACE}" "${pg_pod}" -c postgres -- \
+    psql -U postgres -d "${db_name}" -v ON_ERROR_STOP=1 -c "
+BEGIN;
+DELETE FROM \"${db_name}\".access_tokens;
+DELETE FROM \"${db_name}\".devices;
+DELETE FROM \"${db_name}\".user_external_ids;
+DELETE FROM \"${db_name}\".user_threepids;
+DELETE FROM \"${db_name}\".profiles;
+DELETE FROM \"${db_name}\".users;
+COMMIT;
+" 2>&1)"; then
+    echo "WARNING: Synapse identity cleanup for ${db_name} failed:" >&2
+    printf '%s\n' "${sql_out}" | sed 's/^/  /' >&2
+    echo "  Retry with: gtnctl apps uninstall element --tenant ${tenant} --purge" >&2
+    return 0
+  fi
+  echo "Synapse identity cleanup complete for ${db_name}."
+}
+
+purge_app_mariadb() {
+  local tenant="${1}" app="${2}"
+  local db_name db_user job_name
+  db_name="$(_app_database_name "${tenant}" "${app}")"
+  db_user="$(_app_mariadb_user_name "${tenant}" "${app}")"
+  job_name="mariadb-delete-${tenant}-${app}"
+
+  echo "Purging MariaDB database ${db_name} (user ${db_user})..."
+  _run_kernel_provisioning_job "${job_name}" true <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant}
+    gentianos.io/app: ${app}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: delete-db
+        image: mariadb:11
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          if ! echo "\${DB_NAME}" | grep -qE '^[a-zA-Z0-9_]+$'; then
+            echo "ERROR: invalid DB_NAME '\${DB_NAME}'" >&2; exit 1
+          fi
+          if ! echo "\${DB_USER}" | grep -qE '^[a-zA-Z0-9_]+$'; then
+            echo "ERROR: invalid DB_USER '\${DB_USER}'" >&2; exit 1
+          fi
+          MARIADB="mariadb -h\${MYSQL_HOST} -P\${MYSQL_TCP_PORT} -u\${MYSQL_ADMIN_USER}"
+          \$MARIADB -e "REVOKE ALL PRIVILEGES, GRANT OPTION FROM '\${DB_USER}'@'%';" 2>/dev/null || true
+          \$MARIADB -e "DROP USER IF EXISTS '\${DB_USER}'@'%';"
+          \$MARIADB -e "DROP DATABASE IF EXISTS \${DB_NAME};"
+          echo "deleted database \${DB_NAME} and user \${DB_USER}"
+        env:
+        - name: MYSQL_HOST
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: host
+        - name: MYSQL_TCP_PORT
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: port
+        - name: MYSQL_PWD
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: password
+        - name: MYSQL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-admin
+              key: username
+        - name: DB_NAME
+          value: ${db_name}
+        - name: DB_USER
+          value: ${db_user}
+EOF
+}
+
+purge_app_s3() {
+  local tenant="${1}" app="${2}"
+  local bucket job_name
+  bucket="$(_app_s3_bucket_name "${tenant}" "${app}")"
+  job_name="s3-delete-${tenant}-${app}"
+
+  echo "Purging S3 bucket ${bucket}..."
+  _run_kernel_provisioning_job "${job_name}" true <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant}
+    gentianos.io/app: ${app}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: delete-bucket
+        image: minio/mc:RELEASE.2025-04-03T17-07-56Z
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eu
+          mc alias set gentian "\${MINIO_ENDPOINT}" "\${MINIO_ACCESS_KEY}" "\${MINIO_SECRET_KEY}"
+          mc rb --force "gentian/${bucket}" 2>/dev/null || echo "bucket ${bucket} already gone"
+          echo "bucket ${bucket} removed"
+        env:
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin
+              key: endpoint
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin
+              key: accessKey
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin
+              key: secretKey
+EOF
+}
+
+purge_app_redis() {
+  local tenant="${1}" app="${2}"
+  local username job_name
+  username="$(_app_redis_acl_username "${tenant}" "${app}")"
+  job_name="redis-acl-delete-${tenant}-${app}"
+
+  echo "Purging Redis ACL user ${username}..."
+  _run_kernel_provisioning_job "${job_name}" true <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${KERNEL_NAMESPACE}
+  labels:
+    gentianos.io/tenant: ${tenant}
+    gentianos.io/app: ${app}
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: del-acl-user
+        image: redis:7-alpine
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          redis-cli -h "\$REDIS_HOST" -p "\${REDIS_PORT:-6379}" -a "\$REDIS_PASSWORD" --no-auth-warning \\
+            ACL DELUSER ${username} 2>/dev/null || echo "user ${username} already absent"
+          echo "done"
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin
+              key: host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin
+              key: port
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin
+              key: password
+EOF
+}
+
+cleanup_app_post_uninstall() {
+  local tenant="${1}" app="${2}" force="${3:-false}"
+  local db_engine s3_req redis_engine profile_found=false
+
+  if kubectl get appprofile "${app}" &>/dev/null; then
+    profile_found=true
+    db_engine="$(_app_profile_requirement "${app}" '{.spec.kernelRequirements.database.engine}')"
+    s3_req="$(_app_profile_requirement "${app}" '{.spec.kernelRequirements.storage.s3}')"
+    redis_engine="$(_app_profile_requirement "${app}" '{.spec.kernelRequirements.cache.engine}')"
+  fi
+
+  if [[ "${force}" != "true" ]]; then
+    if [[ "${app}" == "element" ]] && { [[ "${db_engine}" == "postgresql" ]] || [[ "${profile_found}" != "true" ]]; }; then
+      cleanup_element_synapse_identities "${tenant}"
+    fi
+    return 0
+  fi
+
+  echo ""
+  echo "==> Purging persistent state for app '${app}' on tenant '${tenant}'..."
+
+  if [[ "${profile_found}" != "true" ]]; then
+    echo "WARNING: AppProfile '${app}' not found; running best-effort purge from naming conventions." >&2
+    if kubectl get job "mariadb-setup-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      db_engine="mariadb"
+    elif kubectl get job "pg-role-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null \
+      || kubectl get database.postgresql.cnpg.io "db-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      db_engine="postgresql"
+    else
+      db_engine="postgresql"
+    fi
+    if kubectl get job "redis-acl-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      redis_engine="redis"
+    fi
+    if kubectl get job "s3-bucket-${tenant}-${app}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+      s3_req="1"
+    fi
+  fi
+
+  case "${db_engine}" in
+    postgresql) purge_app_postgresql "${tenant}" "${app}" ;;
+    mariadb) purge_app_mariadb "${tenant}" "${app}" ;;
+    "") ;;
+    *)
+      echo "WARNING: unsupported database engine '${db_engine}' for '${app}'; skipping DB purge." >&2
+      ;;
+  esac
+
+  if [[ -n "${s3_req}" ]]; then
+    purge_app_s3 "${tenant}" "${app}"
+  elif [[ "${profile_found}" != "true" && -n "${s3_req}" ]]; then
+    purge_app_s3 "${tenant}" "${app}" || true
+  fi
+
+  if [[ "${redis_engine}" == "redis" ]]; then
+    purge_app_redis "${tenant}" "${app}"
+  fi
+
+  purge_app_openbao_secrets "${tenant}" "${app}"
+  purge_app_cluster_artifacts "${tenant}" "${app}"
+  echo "Persistent state purge complete for '${app}'."
 }
 
 # ---------------------------------------------------------------------------
@@ -1662,34 +2633,53 @@ cmd_install() {
     exit 1
   fi
 
-  # Guard: check not already installed.
+  # Guard: check not already installed (unless still reconciling).
+  local skip_git=false
   if grep -q "profile: ${app}" "${file}"; then
-    echo "App '${app}' is already listed in tenant '${tenant}'. Nothing to do."
-    exit 0
-  fi
-
-  # Inject the entry under spec.apps.
-  # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
-  # Insert immediately after the "  apps:" line (order within the list is irrelevant).
-  if grep -q '^  apps:' "${file}"; then
-    sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+    local ready_status=""
+    ready_status="$(kubectl --request-timeout=5s get app "${app}" -n "tenant-${tenant}" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
+    if [[ "${ready_status}" == "True" ]]; then
+      echo "App '${app}' is already installed and Ready on tenant '${tenant}'. Nothing to do."
+      exit 0
+    fi
+    echo "App '${app}' is already listed for tenant '${tenant}' but not Ready; continuing reconciliation..."
+    skip_git=true
   else
-    # No apps key yet — append the block at the end of the file.
-    printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
+    # Inject the entry under spec.apps.
+    # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
+    # Insert immediately after the "  apps:" line (order within the list is irrelevant).
+    if grep -q '^  apps:' "${file}"; then
+      sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+    else
+      # No apps key yet — append the block at the end of the file.
+      printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
+    fi
+    echo "Added '${app}' to spec.apps."
   fi
-  echo "Added '${app}' to spec.apps."
 
-  # Commit and push.
-  (
-    cd "${DEPLOYMENTS_PATH}"
-    git add "${file}"
-  )
-  git_commit_push "feat(${tenant}): install ${app}"
+  if [[ "${skip_git}" != "true" ]]; then
+    (
+      cd "${DEPLOYMENTS_PATH}"
+      git add "${file}"
+    )
+    git_commit_push "feat(${tenant}): install ${app}"
+  fi
 
-  # Apply the updated Tenant CR so the operator reconciles immediately.
-  kubectl apply -f "${file}"
+  echo ""
+  echo "==> Reconciling tenant manifest (Argo CD sync or kubectl apply)..."
+  apply_tenant_manifest_from_git "${file}"
 
-  echo "Done. Tenant '${tenant}' updated — operator will provision '${app}'."
+  echo ""
+  echo "==> Waiting for app '${app}' to become Ready..."
+  if ! wait_for_app_ready "${tenant}" "${app}" 900; then
+    echo "ERROR: app '${app}' did not become Ready on tenant '${tenant}'." >&2
+    echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
+    echo "  Inspect: kubectl get pods -n tenant-${tenant} | grep ${app}" >&2
+    exit 1
+  fi
+
+  echo "Done. App '${app}' is installed and Ready on tenant '${tenant}'."
 }
 
 # ---------------------------------------------------------------------------
@@ -1698,9 +2688,10 @@ cmd_install() {
 cmd_uninstall() {
   local app="${1:-}"
   local tenant="${2:-}"
+  local force="${3:-false}"
 
   if [[ -z "${app}" || -z "${tenant}" ]]; then
-    echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant>" >&2
+    echo "ERROR: usage: kubectl gentian apps uninstall <app> --tenant <tenant> [--purge|-f]" >&2
     exit 1
   fi
 
@@ -1726,10 +2717,22 @@ cmd_uninstall() {
   )
   git_commit_push "feat(${tenant}): uninstall ${app}"
 
-  # Apply the updated Tenant CR so the operator reconciles immediately.
-  kubectl apply -f "${file}"
+  echo ""
+  echo "==> Reconciling tenant manifest (Argo CD sync or kubectl apply)..."
+  apply_tenant_manifest_from_git "${file}"
 
-  echo "Done. Tenant '${tenant}' updated — operator will deprovision '${app}'."
+  echo ""
+  echo "==> Waiting for app '${app}' to be removed..."
+  if ! wait_for_app_uninstalled "${tenant}" "${app}" 900; then
+    echo "ERROR: app '${app}' was not fully removed from tenant '${tenant}'." >&2
+    echo "  Inspect: kubectl get app ${app} -n tenant-${tenant}" >&2
+    echo "  Inspect: kubectl get pods,release.helm.crossplane.io -n tenant-${tenant} | grep ${app}" >&2
+    exit 1
+  fi
+
+  cleanup_app_post_uninstall "${tenant}" "${app}" "${force}"
+
+  echo "Done. App '${app}' is uninstalled from tenant '${tenant}'."
 }
 
 # ---------------------------------------------------------------------------
@@ -1755,11 +2758,16 @@ case "${SUBCOMMAND}" in
         APP_NAME="${1:-}"
         shift || true
         TENANT_NAME=""
+        APP_PURGE=false
         while [[ $# -gt 0 ]]; do
           case "${1}" in
             --tenant|-t)
               TENANT_NAME="${2:-}"
               shift 2
+              ;;
+            --purge|-f)
+              APP_PURGE=true
+              shift
               ;;
             *)
               echo "ERROR: unknown flag: ${1}" >&2
@@ -1768,9 +2776,13 @@ case "${SUBCOMMAND}" in
           esac
         done
         if [[ "${APPS_CMD}" == "install" ]]; then
+          if [[ "${APP_PURGE}" == "true" ]]; then
+            echo "ERROR: --purge / -f is only supported for apps uninstall (not install)." >&2
+            exit 1
+          fi
           cmd_install "${APP_NAME}" "${TENANT_NAME}"
         else
-          cmd_uninstall "${APP_NAME}" "${TENANT_NAME}"
+          cmd_uninstall "${APP_NAME}" "${TENANT_NAME}" "${APP_PURGE}"
         fi
         ;;
       *)
@@ -1838,6 +2850,23 @@ case "${SUBCOMMAND}" in
           esac
         done
         cmd_tenant_undeploy "${TENANT_INSTANCE}" "${TENANT_ENV}" "${PURGE}"
+        ;;
+      cleanup-ldap)
+        TENANT_INSTANCE="${1:-}"
+        shift || true
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --env|-e)
+              TENANT_ENV="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_tenant_cleanup_ldap "${TENANT_INSTANCE}" "${TENANT_ENV}"
         ;;
       *)
         echo "ERROR: unknown tenants subcommand: ${TENANT_CMD}" >&2

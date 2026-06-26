@@ -4,10 +4,11 @@
 # staging intermediate in their trust store (opendesk certificate.selfSigned parity).
 #
 # Usage: create-staging-ca-secret.sh [namespace]
-# Default namespace: gentian-dev (servicesNamespace).
+# Default namespace: ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}
 set -euo pipefail
 
-NAMESPACE="${1:-gentian-dev}"
+ENV="${ENV:-dev}"
+NAMESPACE="${1:-${SERVICES_NAMESPACE:-gentian-${ENV}}}"
 SECRET_NAME="gentian-staging-ca-tls"
 CERT_NS="${CERT_MANAGER_NS:-cert-manager}"
 LEAF_SECRET="${KERNEL_TLS_SECRET:-wildcard-kernel-tls}"
@@ -27,22 +28,55 @@ kubectl get secret "$LEAF_SECRET" -n "$CERT_NS" -o jsonpath='{.data.tls\.crt}' \
 docker run --rm alpine:3.20 cat /etc/ssl/certs/ca-certificates.crt >"$TMPDIR/bundle.crt" 2>/dev/null \
   || cp /etc/ssl/certs/ca-certificates.crt "$TMPDIR/bundle.crt"
 
-# Append the issuing intermediate via AIA when present (LE staging chain).
+# Walk the LE staging issuer chain via AIA (intermediate → root → …).
+# Node.js NODE_EXTRA_CA_CERTS needs the full chain, not just the first intermediate.
 AIA="$(openssl x509 -in "$TMPDIR/leaf.pem" -noout -text 2>/dev/null \
   | awk -F'URI:' '/CA Issuers - URI:/{print $2; exit}' | tr -d '[:space:]')" || true
-if [[ -n "$AIA" ]]; then
-  curl -fsSL "$AIA" -o "$TMPDIR/intermediate.pem"
-  cat "$TMPDIR/intermediate.pem" >>"$TMPDIR/bundle.crt"
-  echo "appended intermediate from $AIA"
-else
-  echo "warning: no AIA on $LEAF_SECRET leaf; bundle is system CAs only" >&2
+: >"$TMPDIR/node-extra-ca.crt"
+step=0
+while [[ -n "$AIA" && "$step" -lt 8 ]]; do
+  curl -fsSL "$AIA" -o "$TMPDIR/chain.der"
+  openssl x509 -inform DER -in "$TMPDIR/chain.der" -out "$TMPDIR/chain.pem"
+  printf '\n' >>"$TMPDIR/bundle.crt"
+  cat "$TMPDIR/chain.pem" >>"$TMPDIR/bundle.crt"
+  printf '\n' >>"$TMPDIR/node-extra-ca.crt"
+  cat "$TMPDIR/chain.pem" >>"$TMPDIR/node-extra-ca.crt"
+  echo "appended issuer from $AIA"
+  subj="$(openssl x509 -in "$TMPDIR/chain.pem" -noout -subject 2>/dev/null || true)"
+  issuer="$(openssl x509 -in "$TMPDIR/chain.pem" -noout -issuer 2>/dev/null || true)"
+  if [[ "$subj" == "$issuer" ]]; then
+    break
+  fi
+  AIA="$(openssl x509 -in "$TMPDIR/chain.pem" -noout -text 2>/dev/null \
+    | awk -F'URI:' '/CA Issuers - URI:/{print $2; exit}' | tr -d '[:space:]')" || true
+  step=$((step + 1))
+done
+if [[ ! -s "$TMPDIR/node-extra-ca.crt" ]]; then
+  echo "warning: no AIA chain on $LEAF_SECRET leaf; bundle is system CAs only" >&2
 fi
+
+# Java OIDC clients (XWiki, etc.) need a JKS truststore; curl/python use ca.crt.
+# keytool -importcert on a multi-cert PEM only imports the first certificate.
+awk '/BEGIN CERT/{n++}{print > "'"$TMPDIR"'/cert-" n ".pem"}' "$TMPDIR/bundle.crt"
+docker run --rm -v "$TMPDIR:/work" eclipse-temurin:17-jdk bash -ec '
+  rm -f /work/truststore.jks
+  n=0
+  for cert in /work/cert-*.pem; do
+    [[ -s "$cert" ]] || continue
+    keytool -importcert -noprompt -alias "staging-ca-${n}" \
+      -file "$cert" -keystore /work/truststore.jks -storetype JKS -storepass changeit
+    n=$((n + 1))
+  done
+  test -f /work/truststore.jks
+'
 
 if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
   kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE"
 fi
 kubectl create secret generic "$SECRET_NAME" \
   --namespace="$NAMESPACE" \
-  --from-file=ca.crt="$TMPDIR/bundle.crt"
+  --from-file=ca.crt="$TMPDIR/bundle.crt" \
+  --from-file=node-extra-ca.crt="$TMPDIR/node-extra-ca.crt" \
+  --from-file=truststore.jks="$TMPDIR/truststore.jks"
 
-echo "secret/$SECRET_NAME updated in namespace $NAMESPACE"
+echo "secret/$SECRET_NAME updated in namespace $NAMESPACE (ca.crt + node-extra-ca.crt + truststore.jks)"

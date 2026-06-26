@@ -47,16 +47,25 @@ const (
 	// provisioned or deleted.
 	mailPostfixVirtualDomainsConfigMap = "mail-postfix-virtual-domains"
 	mailDovecotDomainsConfigMap        = "mail-dovecot-domains"
+	mailDovecotOIDCValuesConfigMap     = "dovecot-tenant-oidc-values"
 
-	// mailSharedPostfixHost is the cluster-internal hostname of the shared Postfix
-	// submission endpoint. Apps in tenant namespaces use this to send outbound mail.
-	mailSharedPostfixHost = "postfix-dev.gentian-dev.svc.cluster.local"
+	// mailSharedPostfixPort is the cluster-internal submission port for shared Postfix.
 	mailSharedPostfixPort = "587"
 
 	// smtpPasswordLength is the number of random bytes used to generate per-tenant
 	// SMTP passwords, producing a 32-character base64url-encoded string.
 	smtpPasswordLength = 24
 )
+
+// mailSharedPostfixHost returns the in-cluster Postfix submission hostname.
+// Override with MAIL_SMTP_HOST; otherwise postfix-{stage}.{servicesNamespace}.
+func mailSharedPostfixHost() string {
+	if v := envOrDefault("MAIL_SMTP_HOST", ""); v != "" {
+		return v
+	}
+	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
+	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, servicesNamespace)
+}
 
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
@@ -68,10 +77,15 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 
 	switch mode {
 	case gentianov1alpha1.MailModeSelfhosted:
-		err := r.ensureMailSelfhosted(ctx, tenant)
+		done, err := r.ensureMailSelfhosted(ctx, tenant)
 		if err != nil {
 			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 			return ctrl.Result{}, err
+		}
+		if !done {
+			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse,
+				"Provisioning", "Waiting for Dovecot tenant OIDC client in Keycloak")
+			return ctrl.Result{RequeueAfter: mailRequeueAfter}, nil
 		}
 		if err := r.seedPerAppMailSecrets(ctx, tenant); err != nil {
 			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
@@ -141,11 +155,11 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 //     tenant's apps to authenticate to the shared Postfix submission endpoint.
 //  4. An entry in the shared Dovecot domains ConfigMap (kernel namespace), enabling
 //     IMAP storage at the tenant-scoped path /var/mail/{domain}/{user}.
-func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	// 1. DKIM key Secret in kernel namespace (idempotent — generate once, never rotate automatically).
 	pubKey, err := r.ensureDKIMSecret(ctx, tenant)
 	if err != nil {
-		return fmt.Errorf("ensure DKIM key Secret: %w", err)
+		return false, fmt.Errorf("ensure DKIM key Secret: %w", err)
 	}
 	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	if tenant.Status.Mail == nil {
@@ -159,20 +173,32 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 
 	// 2. Register the tenant domain in the shared Postfix virtual-domains ConfigMap.
 	if err := r.ensurePostfixVirtualDomain(ctx, tenant); err != nil {
-		return fmt.Errorf("register Postfix virtual domain: %w", err)
+		return false, fmt.Errorf("register Postfix virtual domain: %w", err)
 	}
 
 	// 3. Provision per-tenant SMTP credentials in the tenant namespace.
 	if err := r.ensureSmtpCredentialsSecret(ctx, tenant); err != nil {
-		return fmt.Errorf("ensure SMTP credentials Secret: %w", err)
+		return false, fmt.Errorf("ensure SMTP credentials Secret: %w", err)
 	}
 
 	// 4. Register the tenant domain in the shared Dovecot domains ConfigMap.
 	if err := r.ensureDovecotDomainConfig(ctx, tenant); err != nil {
-		return fmt.Errorf("register Dovecot domain config: %w", err)
+		return false, fmt.Errorf("register Dovecot domain config: %w", err)
 	}
 
-	return nil
+	// 5. Ensure opendesk-dovecot exists in the tenant realm for IMAP XOAUTH2 introspection.
+	if ready, err := r.ensureDovecotTenantOIDCClientJob(ctx, tenant); err != nil {
+		return false, fmt.Errorf("ensure Dovecot tenant OIDC client: %w", err)
+	} else if !ready {
+		return false, nil
+	}
+
+	// 6. Point shared Dovecot token introspection at the tenant realm that issues OX tokens.
+	if err := r.ensureDovecotTenantOIDCIntrospection(ctx, tenant); err != nil {
+		return false, fmt.Errorf("configure Dovecot tenant OIDC introspection: %w", err)
+	}
+
+	return true, nil
 }
 
 // ensureMailExternal propagates SMTP relay credentials from the kernel namespace into
@@ -310,6 +336,45 @@ func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant
 	return r.Update(ctx, cm)
 }
 
+// ensureDovecotTenantOIDCIntrospection patches the shared Dovecot Helm values
+// ConfigMap so IMAP XOAUTH2 introspection targets the tenant Keycloak realm.
+// OX App Suite issues access tokens in the tenant realm; kernel-realm introspection
+// rejects them and the App Suite UI fails to load its configuration namespace.
+func (r *TenantReconciler) ensureDovecotTenantOIDCIntrospection(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	realmName := keycloakRealmName(tenant)
+	ns := servicesNamespace
+	path := fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", realmName)
+	values := fmt.Sprintf(`dovecot:
+  oidc:
+    introspectionPath: %q
+`, path)
+
+	cm := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: mailDovecotOIDCValuesConfigMap, Namespace: ns}, cm)
+	if errors.IsNotFound(err) {
+		cm = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      mailDovecotOIDCValuesConfigMap,
+				Namespace: ns,
+				Labels:    map[string]string{managedByLabel: managedByValue},
+			},
+			Data: map[string]string{"values.yaml": values},
+		}
+		return r.Create(ctx, cm)
+	}
+	if err != nil {
+		return err
+	}
+	if cm.Data["values.yaml"] == values {
+		return nil
+	}
+	if cm.Data == nil {
+		cm.Data = make(map[string]string)
+	}
+	cm.Data["values.yaml"] = values
+	return r.Update(ctx, cm)
+}
+
 // ensureSmtpCredentialsSecret creates a per-tenant SMTP credentials Secret in the
 // tenant namespace. Apps use these to authenticate to the shared Postfix submission
 // endpoint (mailSharedPostfixHost:587). The password is generated on first creation and
@@ -344,7 +409,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 			},
 		},
 		StringData: map[string]string{
-			"host":     mailSharedPostfixHost,
+			"host":     mailSharedPostfixHost(),
 			"port":     mailSharedPostfixPort,
 			"username": fmt.Sprintf("smtp-%s", tenant.Name),
 			"password": password,

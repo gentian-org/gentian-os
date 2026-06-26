@@ -1,0 +1,60 @@
+---
+# Syncs app catalogue profile bundles from gentian-apps into the cluster.
+#
+# One Argo CD Application per profiles/<name>/ directory (kustomization.yaml required).
+# Each bundle may contain:
+#   profile.yaml       — AppProfile CR
+#   composition.yaml   — optional Crossplane Composition (spec.compositionRef)
+#   assets/            — optional cluster-scoped prerequisites (ConfigMaps, …)
+#
+# Replaces the legacy gentian-appprofiles Application (flat profiles/*.yaml only).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-catalogue
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: %REPO_URL%
+      revision: %BRANCH%
+      directories:
+      - path: profiles/*
+  template:
+    metadata:
+      name: 'catalogue-{{ .path.basename }}'
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: gentian
+      source:
+        repoURL: %REPO_URL%
+        targetRevision: %BRANCH%
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gentian-system
+      ignoreDifferences:
+      - group: gentianos.io
+        kind: AppProfile
+        jsonPointers:
+        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+      - group: gentianos.io
+        kind: AppProfile
+        jqPathExpressions:
+        - .spec.ingress.clusterIssuer
+        - .spec.kernelRequirements.database.allowDynamicDatabaseCreation
+        - .spec.additionalIngresses[]?.clusterIssuer
+        - .spec.browserProxy[]?.authMode
+        - .spec.browserProxy[]?.stripPrefix
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true

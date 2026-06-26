@@ -3,6 +3,9 @@
 
 replicaCount: 1
 
+# stage names kernel Helm releases (nubus-dev, postfix-dev, …).
+stage: dev
+
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
 # Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
 # Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
@@ -14,11 +17,24 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE.
 tenancyMode: multi
 
+# routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
+# Plumbed as ROUTING_MODE.
+routingMode: gateway
+
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
 # write records in the zone containing effectiveDomain (platform zone for default
 # tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
-tenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare"
+tenantDNS01ClusterIssuer: ""
+
+# tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
+# is true the operator skips shared-kernel side effects (mail, office, portal/UMC,
+# Nextcloud group, LDAP base) so tenant lifecycle is validated via the Crossplane
+# graph alone (P3/P4 e2e).
+# Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
+# if a cutover regresses; leave false for normal production behaviour.
+tenantProvisioning:
+  crossplaneOnly: false
 
 # kernelRealm is the name of the shared Keycloak realm that holds all platform
 # users (synced via Nubus LDAP). Defaults to "kernel" when empty.
@@ -34,27 +50,38 @@ ldap:
   server: ""
   # LDAP base DN, e.g. dc=swp-ldap,dc=internal
   base: ""
+  # Optional LDAP bind DN for apps that read a shared search account (OX).
+  bindSearchDn: ""
 
-# infraNamespace is the namespace hosting shared infrastructure (MariaDB, Redis,
-# MinIO). Tenant NetworkPolicy rules allow egress here. Overridden per env.
-infraNamespace: "gentian-infra-dev"
+# infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
+# Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
+infraNamespace: ""
 
-# servicesNamespace is the namespace hosting platform services consumed by
-# tenants (e.g. Nubus UDM API for ox-connector). Overridden per env.
-servicesNamespace: "gentian-dev"
+# openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
+openbaoNamespace: "openbao"
+
+# servicesNamespace hosts platform services (Nubus, Postfix, …).
+# Set per cluster in gentian-deployments kernel values.
+servicesNamespace: ""
 
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
-# Compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
+# compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.
 # Template variables substituted in AppProfile extraValues:
 #   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
 #   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
 #   ${REDIS_HOST}   — Redis primary hostname (no port)
 #   ${TURN_*}       — Shared TURN server settings for Element + Jitsi
+#   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path); Synapse uses this
+#                           for token/userinfo/JWKS while the browser keeps https://id.*
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
+  # Empty → http://nubus-{stage}-keycloak.<servicesNamespace>.svc.cluster.local:8080
+  keycloakInternalURL: ""
+  # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
+  smtpHost: ""
   turnHost: ""
   turnPort: "3478"
   turnTLSHost: ""
@@ -120,6 +147,12 @@ cloudflare:
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
   tunnelCNAME: ""
+  # Optional separate API token with Account → Cloudflare Tunnel → Edit for
+  # automated tenant public hostname routing in tunnel mode. When unset, the
+  # DNS token above is used (and must also hold tunnel permissions).
+  tunnelAPITokenSecretRef:
+    name: ""
+    key: "api-token"
 
 # OpenBao / Vault integration
 openbao:
@@ -137,12 +170,10 @@ argocd:
   namespace: "argocd"
   project: "default"
 
-# Memcached chart coordinates for tenant cache provisioning.
-# Changing these takes effect on the next operator redeploy without rebuilding.
+# Memcached image for tenant cache provisioning (operator-managed Deployment).
+# Changing this takes effect on the next operator redeploy without rebuilding.
 memcached:
-  chartRepo: "https://charts.bitnami.com/bitnami"
-  chartName: "memcached"
-  chartVersion: "7.4.1"
+  image: "memcached:1.6.38-alpine"
 
 # Operator defaults
 defaults:
@@ -159,6 +190,18 @@ metrics:
     scrapeTimeout: "10s"
     # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
     additionalLabels: {}
+
+# App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
+appLifecycle:
+  port: 8082
+  deployments:
+    enabled: false
+    path: /data/gentian-deployments
+    repo: https://github.com/gentian-org/gentian-deployments
+    cluster: default-cluster
+    stage: dev
+    # Secret with key .git-credentials (https://user:token@host) for git push.
+    gitCredentialsSecret: ""
 
 # Admission webhook for Tenant create/update validation.
 webhook:

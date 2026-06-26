@@ -27,6 +27,8 @@ fullnameOverride: "nubus-dev-portal-frontend"
 portalFrontend:
   environment: "production"
   logLevel: "WARNING"
+  # Gentian theme + favicons ship in the portal-frontend image (public/css/gentian-theme.css).
+  # Use portalFrontend.branding.* only for tenant-specific overrides (see gentian-ui/gentian-ui-architecture.md).
   objectStorage:
     iconsProxyUrl: "http://minio-dev.gentian-infra-dev.svc.cluster.local:9000/ums/portal-assets/icons/"
 
@@ -124,8 +126,8 @@ podAnnotations:
 #            and auto-patches this file with the new SHA tag.
 # Update:    docker build -f frontend/Dockerfile.cluster -t ghcr.io/gentian-org/portal-frontend:<sha> ./frontend
 #            docker push ghcr.io/gentian-org/portal-frontend:<sha>
-#            then update tag: "e56485dc"
+#            then update tag: "3fd3370a"
 image:
   registry: "ghcr.io"
   repository: "gentian-org/portal-frontend"
-  tag: "e56485dc"
+  tag: "94fd556e"

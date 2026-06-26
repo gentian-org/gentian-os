@@ -25,6 +25,7 @@ func TestBuildPortalRealtimeLinksScript(t *testing.T) {
 		"swp.realtime_collaboration_demo",
 		"https://chat.demo.desk.gentian.org",
 		"cn=users_demo,${OU_POS}",
+		`-w "%{http_code}"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
@@ -32,6 +33,9 @@ func TestBuildPortalRealtimeLinksScript(t *testing.T) {
 	}
 	if strings.Contains(script, `ensure_realtime_entry "swp.realtime_videoconference"`) {
 		t.Fatal("multi mode must not create legacy swp.realtime_videoconference entry")
+	}
+	if strings.Contains(script, `%%{http_code}`) {
+		t.Fatal("curl -w must use %{http_code}, not %%{http_code} (WriteString does not fmt-escape %)")
 	}
 	if strings.Contains(script, `s/=/=%3D/g`) {
 		t.Fatal("urlencode must not encode = in LDAP DNs; UDM REST paths require literal cn=/ou=")
@@ -69,7 +73,6 @@ func TestPortalRealtimeLinkTargetsMulti(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "demo"
 	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{
-		{Profile: "jitsi"},
 		{Profile: "element"},
 	}
 	meet, chat := r.portalRealtimeLinkTargets(tenant)
@@ -85,9 +88,12 @@ func TestPortalRealtimeLinkTargetsSingle(t *testing.T) {
 	r := &TenantReconciler{KernelDomain: "desk.gentian.org", TenancyMode: gentianov1alpha1.TenancyModeSingle}
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "default"
-	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "jitsi"}}
-	meet, _ := r.portalRealtimeLinkTargets(tenant)
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "element"}}
+	meet, chat := r.portalRealtimeLinkTargets(tenant)
 	if meet != "https://meet.desk.gentian.org" {
 		t.Fatalf("meet URL: %q", meet)
+	}
+	if chat != "https://chat.desk.gentian.org" {
+		t.Fatalf("chat URL: %q", chat)
 	}
 }

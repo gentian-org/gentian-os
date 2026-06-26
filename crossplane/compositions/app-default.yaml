@@ -63,19 +63,17 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
-            # Gentian Jitsi OIDC/JWT overlays (portal iframe SSO, kernel IdP broker).
-            # Published by install-lib upsert_gentian_jitsi_oidc_overlays_configmap().
-            - kind: ConfigMap
-              into: jitsiOidcOverlays
-              apiVersion: v1
+            # OpenDesk OIDC pack catalogue — replaces hardcoded clientId dicts when synced.
+            - kind: OIDCPackCatalog
+              into: oidcPackCatalog
+              apiVersion: gentianos.io/v1alpha1
               type: Selector
               selector:
                 maxMatch: 1
-                minMatch: 0
                 matchLabels:
-                  - key: gentianos.io/config-type
+                  - key: gentianos.io/oidc-catalog
                     type: Value
-                    value: jitsi-oidc-overlays
+                    value: opendesk
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -132,11 +130,28 @@ spec:
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
+            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
+            {{- $initJobLimitCPU := dig "tenant.initJob.limits.cpu" "500m" $ccData }}
+            {{- $initJobLimitMem := dig "tenant.initJob.limits.memory" "512Mi" $ccData }}
+            {{- $initJobRequestCPU := dig "tenant.initJob.requests.cpu" "100m" $ccData }}
+            {{- $initJobRequestMem := dig "tenant.initJob.requests.memory" "128Mi" $ccData }}
 
-            {{- /* ── Load Jitsi OIDC overlay files (optional until install upserts CM) */}}
-            {{- $jitsiOverlayRes  := dig "jitsiOidcOverlays" list $extraRes }}
-            {{- $jitsiOverlayCM   := default dict (index $jitsiOverlayRes 0) }}
-            {{- $jitsiOverlayData := dig "data" dict $jitsiOverlayCM }}
+            {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog. */}}
+            {{- $oidcPackDefaultScopes := dict }}
+            {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
+            {{- if gt (len $catalogRes) 0 }}
+            {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
+            {{- $catPacks := default dict $catSpec.packs }}
+            {{- range $clientId, $pack := $catPacks }}
+            {{- $scopes := default list $pack.defaultScopes }}
+            {{- if $pack.scopeName }}
+            {{- $scopes = append $scopes $pack.scopeName }}
+            {{- end }}
+            {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
+            {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- end }}
+            {{- end }}
 
             {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
             {{- /* Each entry pulls one scalar from an OpenBao KV path and stores  */}}
@@ -480,13 +495,6 @@ spec:
             {{- if and $s.name $s.valuePath }}
             {{- $relSet = append $relSet (dict "name" $s.valuePath
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
-            {{- /* Jitsi Prosody hybrid_matrix_token auth needs JWT_APP_SECRET in   */}}
-            {{- /* extraEnvs (OpenDesk values-jitsi.yaml.gotmpl parity). settings.  */}}
-            {{- /* jwtAppSecret.value only feeds the keycloak-adapter sidecar.       */}}
-            {{- if and (eq $app "jitsi") (eq $s.name "jwt_app_secret") }}
-            {{- $relSet = append $relSet (dict "name" "jitsi.prosody.extraEnvs[2].value"
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
-            {{- end }}
             {{- end }}
             {{- end }}
 
@@ -499,6 +507,9 @@ spec:
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
             {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
+            {{- /*   ${LDAP_HOST}        — UCS LDAP service (from cluster-config)  */}}
+            {{- /*   ${LDAP_BASE_DN}     — LDAP base DN (from cluster-config)     */}}
+            {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
@@ -516,6 +527,22 @@ spec:
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
+            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
+            {{- $ldapServer  := "" }}
+            {{- $ldapBaseDn  := "" }}
+            {{- $smtpHost    := "" }}
+            {{- if gt (len $clusterCfgs) 0 }}
+            {{- $cc := index $clusterCfgs 0 }}
+            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
+            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
+            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
+            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
+            {{- $ccSmtpHost := dig "data" "mail.smtpHost" "" $cc }}
+            {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
+            {{- end }}
+            {{- if not $smtpHost }}
+            {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
+            {{- end }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
@@ -524,6 +551,9 @@ spec:
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
+            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
+            {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
             {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
             {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
             {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
@@ -540,69 +570,73 @@ spec:
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
 
-            {{- /* ── Jitsi: mount Gentian OIDC/JWT overlays over chart ConfigMaps ── */}}
-            {{- if eq $app "jitsi" }}
-            {{- if eq (len $jitsiOverlayData) 0 }}
-              {{- fail "gentian-jitsi-oidc-overlays ConfigMap missing — run gentian-os install/update (upsert_gentian_jitsi_oidc_overlays_configmap)" }}
+            {{- /* opendesk/Bitnami charts expect imagePullSecrets as a string list. */}}
+            {{- $rawImagePull := dig "imagePullSecrets" list $extraVals }}
+            {{- $imagePull := list }}
+            {{- range $entry := $rawImagePull }}
+            {{- if kindIs "string" $entry }}
+            {{- $imagePull = append $imagePull $entry }}
+            {{- else if kindIs "map" $entry }}
+            {{- $pullName := dig "name" "" $entry }}
+            {{- if $pullName }}{{- $imagePull = append $imagePull $pullName }}{{- end }}
             {{- end }}
-            {{- $jitsiOidcCM := printf "%s-oidc-overlays" $xrName }}
-            {{- $jitsiWebOverlayItems := list
-                (dict "key" "body.html" "path" "body.html")
-                (dict "key" "oidc-adapter.html" "path" "oidc-adapter.html")
-                (dict "key" "oidc-redirect.html" "path" "oidc-redirect.html")
-                (dict "key" "plugin.head.html" "path" "plugin.head.html")
-            }}
-            {{- $jitsiWebOverlayMounts := list
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "body.html" "mountPath" "/usr/share/jitsi-meet/body.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "plugin.head.html" "mountPath" "/usr/share/jitsi-meet/plugin.head.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-adapter.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-adapter.html")
-                (dict "name" "gentian-jitsi-oidc-overlays" "subPath" "oidc-redirect.html" "mountPath" "/usr/share/jitsi-meet/static/oidc-redirect.html")
-            }}
-            {{- $jitsiOverlayVol := dict
-                "name" "gentian-jitsi-oidc-overlays"
-                "configMap" (dict "name" $jitsiOidcCM "items" $jitsiWebOverlayItems)
-            }}
-            {{- $jitsiAdapterOverlayVol := dict
-                "name" "gentian-jitsi-adapter-overlay"
-                "configMap" (dict "name" $jitsiOidcCM "items" (list (dict "key" "context.ts" "path" "context.ts")))
-            }}
-            {{- $jitsiAdapterOverlayMount := dict
-                "name" "gentian-jitsi-adapter-overlay"
-                "subPath" "context.ts"
-                "mountPath" "/app/context.ts"
-            }}
-            {{- $jitsiWebExtra := default dict (dig "jitsi" dict $extraVals) }}
-            {{- $jitsiWeb := default dict (dig "web" dict $jitsiWebExtra) }}
-            {{- $jitsiWeb = mergeOverwrite $jitsiWeb (dict
-                "extraVolumes" (concat (default list $jitsiWeb.extraVolumes) (list $jitsiOverlayVol))
-                "extraVolumeMounts" (concat (default list $jitsiWeb.extraVolumeMounts) $jitsiWebOverlayMounts)
-            ) }}
-            {{- $jitsiWebExtra = mergeOverwrite $jitsiWebExtra (dict "web" $jitsiWeb) }}
+            {{- end }}
+            {{- if eq (len $imagePull) 0 }}
+            {{- $imagePull = list "registry-credentials" }}
+            {{- end }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
-                "jitsi" $jitsiWebExtra
-                "extraVolumes" (concat (default list $extraVals.extraVolumes) (list $jitsiAdapterOverlayVol))
-                "extraVolumeMounts" (concat (default list $extraVals.extraVolumeMounts) (list $jitsiAdapterOverlayMount))
+                "imagePullSecrets" $imagePull
+                "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull))
             ) }}
-            {{- end }}
 
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
             {{- if $acmeStaging }}
+            {{- $krStaging := default dict $pSpec.kernelRequirements }}
+            {{- $identityStaging := default dict $krStaging.identity }}
+            {{- $oidcStaging := default dict $identityStaging.oidc }}
+            {{- $stagingVol := dict
+                "name" "gentian-staging-ca"
+                "secret" (dict "secretName" "gentian-staging-ca-tls")
+            }}
+            {{- $stagingMounts := list
+                (dict "name" "gentian-staging-ca" "mountPath" "/opt/gentian-staging-ca" "readOnly" true)
+            }}
+            {{- $stagingEnv := list
+                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
+            }}
+            {{- /* Charts that render env from values.environment (e.g. OpenProject)   */}}
+            {{- /* ignore top-level extraEnvVars — merge staging CA paths there too. */}}
+            {{- $stagingEnvironment := dict
+                "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
+                "SSL_CERT_FILE" "/opt/gentian-staging-ca/ca.crt"
+                "DENO_CERT" "/opt/gentian-staging-ca/ca.crt"
+            }}
+            {{- $existingEnvironment := default dict (dig "environment" dict $extraVals) }}
+            {{- $stagingJavaOpts := list
+                "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
+                "-Djavax.net.ssl.trustStoreType=JKS"
+                "-Djavax.net.ssl.trustStorePassword=changeit"
+            }}
+            {{- $existingJavaOpts := default list (dig "javaOpts" list $extraVals) }}
+            {{- $needsJavaTrust := or (gt (len $existingJavaOpts) 0) $oidcStaging.clientId }}
+            {{- if $needsJavaTrust }}
+            {{- range $opt := $stagingJavaOpts }}
+            {{- if not (has $opt $existingJavaOpts) }}
+            {{- $existingJavaOpts = append $existingJavaOpts $opt }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
-                "extraEnvVars" (list
-                  (dict "name" "REQUESTS_CA_BUNDLE" "value" "/etc/ssl/certs/ca-certificates.crt")
-                  (dict "name" "SSL_CERT_FILE" "value" "/etc/ssl/certs/ca-certificates.crt")
-                  (dict "name" "DENO_CERT" "value" "/etc/ssl/certs/ca-certificates.crt")
-                )
-                "extraVolumes" (list
-                  (dict "name" "trusted-cert-secret-volume" "secret" (dict
-                    "secretName" "gentian-staging-ca-tls"
-                    "items" (list (dict "key" "ca.crt" "path" "ca-certificates.crt"))
-                  ))
-                )
-                "extraVolumeMounts" (list
-                  (dict "name" "trusted-cert-secret-volume" "mountPath" "/etc/ssl/certs/ca-certificates.crt" "subPath" "ca-certificates.crt")
-                )
+                "extraEnvVars" (concat (default list (dig "extraEnvVars" list $extraVals)) $stagingEnv)
+                "environment" (mergeOverwrite $existingEnvironment $stagingEnvironment)
+                "extraVolumes" (concat (default list (dig "extraVolumes" list $extraVals)) (list $stagingVol))
+                "extraVolumeMounts" (concat (default list (dig "extraVolumeMounts" list $extraVals)) $stagingMounts)
             ) }}
+            {{- if $needsJavaTrust }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "javaOpts" $existingJavaOpts) }}
+            {{- end }}
             {{- end }}
 
             {{- /* ── Emit Keycloak Client CR ──────────────────────────────────── */}}
@@ -614,6 +648,7 @@ spec:
             {{- $identity := default dict $kr.identity }}
             {{- $oidcCl   := default dict $identity.oidc }}
             {{- if $oidcCl.clientId }}
+            {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
             {{- $redirects  := list }}
             {{- range $uri := (default list $oidcCl.redirectUris) }}
             {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
@@ -621,6 +656,41 @@ spec:
             {{- $postLogout := list }}
             {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
             {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- /* provider-keycloak Client reads clientSecretSecretRef from this Secret;
+                 it must match the OpenBao path XWiki consumes via ExternalSecret. */}}
+            {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
+            {{- $oidcCredsPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $app }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-client-creds-es
+              name: {{ $xrName }}-oidc-client-creds-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $xrName }}-oidc-client-creds
+                    namespace: crossplane-system
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $xrName }}-oidc-client-creds
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: {{ $oidcCredsPath }}
+                          property: client-secret
+              providerConfigRef:
+                name: kubernetes
             {{- end }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
@@ -639,6 +709,9 @@ spec:
                 standardFlowEnabled: true
                 directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
                 serviceAccountsEnabled: false
+                {{- if hasKey $oidcPackFullScopeAllowed $oidcPackKey }}
+                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcPackKey }}
+                {{- end }}
                 {{- if $redirects }}
                 validRedirectUris:
                   {{ toYaml $redirects | nindent 18 }}
@@ -661,6 +734,25 @@ spec:
                 {{- end }}
               providerConfigRef:
                 name: keycloak
+            {{- if hasKey $oidcPackDefaultScopes $oidcPackKey }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-default-scopes
+              name: {{ $tenant }}-{{ $app }}-keycloak-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                defaultScopes:
+                  {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
 
             {{- /* ── Emit ExternalSecret (only when there are secrets to sync) ── */}}
@@ -695,36 +787,10 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit Jitsi OIDC overlay ConfigMap (tenant copy of cluster overlays) */}}
-            {{- if and (eq $app "jitsi") (gt (len $jitsiOverlayData) 0) }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-overlays-cm
-              name: {{ $xrName }}-oidc-overlays-cm
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
-                  metadata:
-                    name: {{ printf "%s-oidc-overlays" $xrName }}
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/app: jitsi
-                      gentianos.io/tenant: {{ $tenant }}
-                  binaryData:
-                    body.html: {{ index $jitsiOverlayData "body.html" | b64enc | quote }}
-                    context.ts: {{ index $jitsiOverlayData "context.ts" | b64enc | quote }}
-                    oidc-adapter.html: {{ index $jitsiOverlayData "oidc-adapter.html" | b64enc | quote }}
-                    oidc-redirect.html: {{ index $jitsiOverlayData "oidc-redirect.html" | b64enc | quote }}
-                    plugin.head.html: {{ index $jitsiOverlayData "plugin.head.html" | b64enc | quote }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
+
+
+            {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
+            {{- $extraVals = $extraVals | toJson | fromJson }}
 
             {{- /* ── Emit Helm Release ────────────────────────────────────────── */}}
             ---
@@ -735,6 +801,7 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
               name: {{ $xrName }}-release
             spec:
+              rollbackLimit: 3
               forProvider:
                 chart:
                   repository: {{ $chart.repository }}
@@ -742,6 +809,7 @@ spec:
                   version: {{ $chart.version | quote }}
                 namespace: {{ $ns }}
                 wait: false
+                skipCRDs: true
                 {{- if gt (len $extraVals) 0 }}
                 values:
                   {{ toYaml $extraVals | nindent 18 }}
@@ -793,6 +861,35 @@ spec:
                       protocol: TCP
               providerConfigRef:
                 name: kubernetes
+            {{- /* Stable alias for companion API service (e.g. app-store-api). */}}
+            {{- $apiSvcName := printf "%s-api" $app }}
+            {{- $apiSvcPort := 8000 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-api-stable-svc
+              name: {{ $xrName }}-api-stable-svc
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: {{ $apiSvcName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    selector:
+                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/component: api
+                    ports:
+                    - name: http
+                      port: {{ $apiSvcPort }}
+                      targetPort: {{ $apiSvcPort }}
+                      protocol: TCP
+              providerConfigRef:
+                name: kubernetes
             {{- end }}
 
             {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
@@ -836,7 +933,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -855,7 +951,7 @@ spec:
                       else
                         MASTER=$(curl -sf \
                           -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                           | jq -r '.data.data.value')
                         PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
@@ -914,7 +1010,7 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 3600
+                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       spec:
@@ -926,11 +1022,10 @@ spec:
                               name: {{ $app }}-ldap-init
                         containers:
                           - name: ldap-search-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -947,6 +1042,13 @@ spec:
                                 value: {{ $ldapBaseDn | quote }}
                               - name: SECRET_MODE
                                 value: {{ $secretMode | quote }}
+                            resources:
+                              limits:
+                                cpu: {{ $initJobLimitCPU | quote }}
+                                memory: {{ $initJobLimitMem | quote }}
+                              requests:
+                                cpu: {{ $initJobRequestCPU | quote }}
+                                memory: {{ $initJobRequestMem | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
@@ -993,46 +1095,63 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null
+                      MC=mc
+                      command -v "${MC}" >/dev/null 2>&1 || MC=mcli
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
                         -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
                         | jq -r '.auth.client_token')
-                      EXISTING=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
-                        2>/dev/null || echo '{}')
-                      if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
-                        echo "[s3-init] credential already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
+                      ACCESS_KEY="${TENANT}-${APP}"
+                      BUCKET="${TENANT}-${APP}"
                       MINIO=$(curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/storage/minio")
                       ROOT_USER=$(echo "${MINIO}" | jq -r '.data.data.root_user')
                       ROOT_PASS=$(echo "${MINIO}" | jq -r '.data.data.root_password')
-                      if [ "${SECRET_MODE}" = "random" ]; then
-                        SECRET_KEY=$(openssl rand -hex 32)
-                      else
-                        MASTER=$(curl -sf \
-                          -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
-                          | jq -r '.data.data.value')
-                        SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
-                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                      ${MC} alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
+                      EXISTING=$(curl -sf \
+                        -H "X-Vault-Token: ${BAO_TOKEN}" \
+                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
+                        2>/dev/null || echo '{}')
+                      # Verify MinIO user and access-key match — OpenBao may retain stale credentials.
+                      if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
+                        EXISTING_ACCESS=$(echo "${EXISTING}" | jq -r '.data.data."access-key" // empty')
+                        SECRET_KEY=$(echo "${EXISTING}" | jq -r '.data.data."secret-key"')
+                        if [ "${EXISTING_ACCESS}" = "${ACCESS_KEY}" ] && ${MC} admin user info minio "${ACCESS_KEY}" >/dev/null 2>&1; then
+                          ${MC} mb --ignore-existing "minio/${BUCKET}"
+                          echo "[s3-init] credential and MinIO user already present for ${TENANT}/${APP} — skipping"
+                          exit 0
+                        fi
+                        if [ "${EXISTING_ACCESS}" != "${ACCESS_KEY}" ]; then
+                          echo "[s3-init] OpenBao access-key mismatch (got ${EXISTING_ACCESS}, want ${ACCESS_KEY}) — re-provisioning"
+                          SECRET_KEY=""
+                        else
+                          echo "[s3-init] OpenBao credential present but MinIO user ${ACCESS_KEY} missing — re-provisioning"
+                        fi
                       fi
-                      ACCESS_KEY="${TENANT}-${APP}"
-                      BUCKET="${TENANT}-${APP}"
-                      mc alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
-                      mc mb --ignore-existing "minio/${BUCKET}"
+                      if [ -z "${SECRET_KEY:-}" ]; then
+                        if [ "${SECRET_MODE}" = "random" ]; then
+                          SECRET_KEY=$(openssl rand -hex 32)
+                        else
+                          MASTER=$(curl -sf \
+                            -H "X-Vault-Token: ${BAO_TOKEN}" \
+                            "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
+                            | jq -r '.data.data.value')
+                          SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
+                            | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
+                        fi
+                      fi
+                      ${MC} mb --ignore-existing "minio/${BUCKET}"
                       echo "[s3-init] bucket ${BUCKET} ensured"
-                      mc admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"
+                      ${MC} admin user remove minio "${ACCESS_KEY}" >/dev/null 2>&1 || true
+                      ${MC} admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"
                       echo "[s3-init] MinIO user ${ACCESS_KEY} created"
                       printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/%s"]},"Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' \
                         "${ACCESS_KEY}" "${BUCKET}" "${BUCKET}" > /tmp/policy.json
-                      mc admin policy create minio "${ACCESS_KEY}-policy" /tmp/policy.json
-                      mc admin policy attach minio "${ACCESS_KEY}-policy" --user "${ACCESS_KEY}"
+                      ${MC} admin policy rm minio "${ACCESS_KEY}-policy" >/dev/null 2>&1 || true
+                      ${MC} admin policy create minio "${ACCESS_KEY}-policy" /tmp/policy.json
+                      ${MC} admin policy attach minio "${ACCESS_KEY}-policy" --user "${ACCESS_KEY}"
                       echo "[s3-init] bucket policy attached"
                       curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
@@ -1063,7 +1182,7 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 3600
+                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       spec:
@@ -1075,11 +1194,10 @@ spec:
                               name: {{ $app }}-s3-init
                         containers:
                           - name: s3-init
-                            image: minio/mc:latest
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -1094,6 +1212,13 @@ spec:
                                 value: {{ $minioEndpoint | quote }}
                               - name: SECRET_MODE
                                 value: {{ $secretMode | quote }}
+                            resources:
+                              limits:
+                                cpu: {{ $initJobLimitCPU | quote }}
+                                memory: {{ $initJobLimitMem | quote }}
+                              requests:
+                                cpu: {{ $initJobRequestCPU | quote }}
+                                memory: {{ $initJobRequestMem | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
@@ -1139,7 +1264,6 @@ spec:
                     init.sh: |
                       #!/bin/sh
                       set -eu
-                      apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null
                       JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
                       BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
                         -H 'Content-Type: application/json' \
@@ -1149,28 +1273,34 @@ spec:
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database" \
                         2>/dev/null || echo '{}')
-                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
-                        echo "[db-init] credential already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
+                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
+                      DBNAME="${ROLE}"
                       CNPG=$(curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/database/cnpg")
                       SU_USER=$(echo "${CNPG}" | jq -r '.data.data.superuser_username')
                       SU_PASS=$(echo "${CNPG}" | jq -r '.data.data.superuser_password')
-                      if [ "${SECRET_MODE}" = "random" ]; then
+                      export PGPASSWORD="${SU_PASS}"
+                      ROLE_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE}'" 2>/dev/null || echo "")
+                      DB_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DBNAME}'" 2>/dev/null || echo "")
+                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1 \
+                        && [ "${ROLE_EXISTS}" = "1" ] && [ "${DB_EXISTS}" = "1" ]; then
+                        echo "[db-init] credential and database already present for ${TENANT}/${APP} — skipping"
+                        exit 0
+                      fi
+                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
+                        echo "[db-init] OpenBao credential present but Postgres role/db missing for ${TENANT}/${APP} — reprovisioning"
+                        PASSWORD=$(echo "${EXISTING}" | jq -r '.data.data.password')
+                      elif [ "${SECRET_MODE}" = "random" ]; then
                         PASSWORD=$(openssl rand -hex 32)
                       else
                         MASTER=$(curl -sf \
                           -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/master-password" \
+                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
                           | jq -r '.data.data.value')
                         PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
                           | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
                       fi
-                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
-                      DBNAME="${ROLE}"
-                      export PGPASSWORD="${SU_PASS}"
                       psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 <<SQL
                       DO \$\$
                       BEGIN
@@ -1186,7 +1316,13 @@ spec:
                         | grep -q 'CREATE DATABASE' \
                         && psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres \
                              -c "CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"" || true
-                      echo "[db-init] role ${ROLE} and database ${DBNAME} ensured"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
+                        -c "CREATE SCHEMA IF NOT EXISTS \"${DBNAME}\" AUTHORIZATION \"${ROLE}\";"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
+                        -c "GRANT ALL ON SCHEMA \"${DBNAME}\" TO \"${ROLE}\";"
+                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
+                        -c "ALTER ROLE \"${ROLE}\" SET search_path TO \"${DBNAME}\", public;"
+                      echo "[db-init] role ${ROLE}, database ${DBNAME}, and schema ${DBNAME} ensured"
                       curl -sf \
                         -H "X-Vault-Token: ${BAO_TOKEN}" \
                         -H 'Content-Type: application/json' \
@@ -1216,7 +1352,7 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 3600
+                    ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
                       spec:
@@ -1228,11 +1364,10 @@ spec:
                               name: {{ $app }}-db-init
                         containers:
                           - name: database-init
-                            image: alpine:3.20
+                            image: {{ $appInitImage | quote }}
                             command:
                               - /bin/sh
-                              - -c
-                              - apk add -q --no-progress --no-cache curl jq openssl postgresql-client 2>/dev/null && exec /bin/sh /scripts/init.sh
+                              - /scripts/init.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
@@ -1247,6 +1382,13 @@ spec:
                                 value: {{ $cnpgHost | quote }}
                               - name: SECRET_MODE
                                 value: {{ $secretMode | quote }}
+                            resources:
+                              limits:
+                                cpu: {{ $initJobLimitCPU | quote }}
+                                memory: {{ $initJobLimitMem | quote }}
+                              requests:
+                                cpu: {{ $initJobRequestCPU | quote }}
+                                memory: {{ $initJobRequestMem | quote }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}

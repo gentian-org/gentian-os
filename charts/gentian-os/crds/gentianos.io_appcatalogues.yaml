@@ -64,6 +64,9 @@ spec:
                   description: CatalogueEntry summarises one AppProfile for catalogue
                     consumers.
                   properties:
+                    catalogueVersion:
+                      description: CatalogueVersion is the semver catalogue revision.
+                      type: string
                     chartVersion:
                       description: ChartVersion is the chart version declared in the
                         AppProfile.
@@ -81,6 +84,18 @@ spec:
                     displayName:
                       description: DisplayName is the human-readable application name.
                       type: string
+                    edition:
+                      description: Edition is the feature / footprint variant.
+                      enum:
+                      - minimal
+                      - standard
+                      - full
+                      - performant
+                      type: string
+                    family:
+                      description: Family is the logical application id (shared across
+                        versions/flavors).
+                      type: string
                     installedCount:
                       description: InstalledCount is the number of Tenant CRs that
                         currently list this app.
@@ -92,18 +107,29 @@ spec:
                       items:
                         type: string
                       type: array
-                    logo:
-                      description: Logo is the AppProfile logo data URI (image/svg+xml;base64,...).
+                    license:
+                      description: License is the SPDX license identifier.
                       type: string
                     name:
                       description: Name is the AppProfile CR name.
                       type: string
+                    trustTier:
+                      description: TrustTier is the platform certification level.
+                      enum:
+                      - platform
+                      - certified
+                      - experimental
+                      type: string
                   required:
+                  - catalogueVersion
                   - chartVersion
                   - deploymentMethod
                   - displayName
+                  - edition
+                  - family
                   - installedCount
                   - name
+                  - trustTier
                   type: object
                 type: array
                 x-kubernetes-list-map-keys:

@@ -4,7 +4,7 @@
 #
 # Patch FirstPageWizard.js for tenant user creation:
 # - Hide legacy kernel App User template (cn=App User under cn=univention), if any
-# - Sort templates by label (use "1 App User", "2 Admin User" prefixes)
+# - Sort templates by label (App User before Admin User alphabetically)
 # - Show "None" last (append to dynamic list, clear staticValues)
 set -euo pipefail
 

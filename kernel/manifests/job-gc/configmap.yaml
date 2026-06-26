@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-job-gc-script
+  namespace: platform-kernel
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/component: job-gc
+data:
+  gc.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LOG_CM=gentian-job-completion-log
+    LOG_NS=platform-kernel
+    MAX_LOG_BYTES=102400
+    now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+    append_log() {
+      local line="$1"
+      local tmp
+      tmp=$(mktemp)
+      if kubectl get configmap "${LOG_CM}" -n "${LOG_NS}" >/dev/null 2>&1; then
+        kubectl get configmap "${LOG_CM}" -n "${LOG_NS}" -o jsonpath='{.data.log\.txt}' >"${tmp}" 2>/dev/null || true
+      fi
+      printf '%s\n' "${line}" >>"${tmp}"
+      if [ "$(wc -c <"${tmp}")" -gt "${MAX_LOG_BYTES}" ]; then
+        tail -c "${MAX_LOG_BYTES}" "${tmp}" >"${tmp}.trim"
+        mv "${tmp}.trim" "${tmp}"
+      fi
+      kubectl create configmap "${LOG_CM}" -n "${LOG_NS}" \
+        --from-file=log.txt="${tmp}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+      kubectl label configmap "${LOG_CM}" -n "${LOG_NS}" \
+        app.kubernetes.io/managed-by=gentian-os gentianos.io/component=job-gc --overwrite >/dev/null
+      rm -f "${tmp}"
+    }
+
+    should_gc_job() {
+      local ns="$1" name="$2"
+      local succeeded failed active start
+      succeeded=$(kubectl get job "${name}" -n "${ns}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)
+      failed=$(kubectl get job "${name}" -n "${ns}" -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)
+      active=$(kubectl get job "${name}" -n "${ns}" -o jsonpath='{.status.active}' 2>/dev/null || echo 0)
+      start=$(kubectl get job "${name}" -n "${ns}" -o jsonpath='{.status.startTime}' 2>/dev/null || true)
+      if [ "${succeeded:-0}" != "0" ] || [ "${failed:-0}" != "0" ]; then
+        return 0
+      fi
+      if [ "${active:-0}" = "0" ] && [ -n "${start}" ]; then
+        start_epoch=$(date -d "${start}" +%s)
+        now_epoch=$(date +%s)
+        if [ $((now_epoch - start_epoch)) -gt 1800 ]; then
+          return 0
+        fi
+      fi
+      return 1
+    }
+
+    for ns in $(kubectl get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -E '^(tenant-|platform-kernel$)' || true); do
+      while IFS= read -r name; do
+        [ -z "${name}" ] && continue
+        if ! should_gc_job "${ns}" "${name}"; then
+          continue
+        fi
+        succeeded=$(kubectl get job "${name}" -n "${ns}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)
+        failed=$(kubectl get job "${name}" -n "${ns}" -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)
+        append_log "$(now_iso) gc namespace=${ns} job=${name} succeeded=${succeeded:-0} failed=${failed:-0}"
+        kubectl delete job "${name}" -n "${ns}" --ignore-not-found --wait=false
+        kubectl delete pods -n "${ns}" -l "job-name=${name}" --ignore-not-found --wait=false
+      done < <(kubectl get jobs -n "${ns}" \
+        -l 'app.kubernetes.io/managed-by=gentian-os' \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+        2>/dev/null || true)
+    done
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-job-completion-log
+  namespace: platform-kernel
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/component: job-gc
+data:
+  log.txt: ""

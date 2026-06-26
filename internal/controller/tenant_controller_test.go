@@ -38,6 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -49,7 +51,7 @@ var testClient client.Client
 // envtestWaitTimeout is the default poll deadline for controller envtest waits.
 // Tests share one manager; under t.Parallel() load on CI runners, shorter
 // deadlines flake when many tenants reconcile and extra Keycloak/LDAP Jobs run.
-const envtestWaitTimeout = 30 * time.Second
+const envtestWaitTimeout = 45 * time.Second
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
 const tenantReadyTimeout = envtestWaitTimeout
@@ -64,9 +66,29 @@ var ldapManualTestTenants = map[string]struct{}{
 	"bindtest":    {},
 }
 
+// dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
+// manually in reconciler tests (redis/pg/mariadb/s3/nc-group assertions).
+var dataPlaneManualTestTenants = map[string]struct{}{
+	"cacheready":   {},
+	"storageready": {},
+	"mariaready":   {},
+	"dbcreate":     {},
+	"rolejob":      {},
+	"dbready":      {},
+	"dbdelete":     {},
+	"nc-always":    {},
+	"nccreate":     {},
+}
+
+// deleteRetainManualTestTenants lists tenants that assert Retain cleanup Job creation.
+var deleteRetainManualTestTenants = map[string]struct{}{
+	"identretain": {},
+}
+
 func ldapBaseJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
 		"ldap-ou-",
+		"ldap-mba-groups-",
 		"ldap-app-user-template-",
 		"ldap-app-user-capabilities-",
 		"ldap-admin-user-",
@@ -86,6 +108,98 @@ func shouldAutoCompleteLDAPJob(jobName string) bool {
 	}
 	_, manual := ldapManualTestTenants[tenant]
 	return !manual
+}
+
+func provisioningJobTenant(jobName string) (tenant string, ok bool) {
+	for _, prefix := range []string{
+		"ldap-bind-",
+		"redis-acl-",
+		"pg-role-",
+		"mariadb-setup-",
+		"s3-bucket-",
+		"nc-group-",
+	} {
+		if strings.HasPrefix(jobName, prefix) {
+			rest := strings.TrimPrefix(jobName, prefix)
+			if idx := strings.Index(rest, "-"); idx > 0 {
+				return rest[:idx], true
+			}
+			return rest, true
+		}
+	}
+	return "", false
+}
+
+func shouldAutoCompleteProvisioningJob(jobName string) bool {
+	tenant, ok := provisioningJobTenant(jobName)
+	if !ok {
+		return false
+	}
+	if _, manual := ldapManualTestTenants[tenant]; manual {
+		return false
+	}
+	if _, manual := dataPlaneManualTestTenants[tenant]; manual {
+		switch {
+		case strings.HasPrefix(jobName, "redis-acl-"):
+			return false
+		case strings.HasPrefix(jobName, "pg-role-"):
+			return false
+		case strings.HasPrefix(jobName, "mariadb-setup-"):
+			return false
+		case strings.HasPrefix(jobName, "s3-bucket-"):
+			return false
+		}
+	}
+	return true
+}
+
+func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
+	for _, prefix := range []string{
+		"keycloak-realm-delete-",
+		"keycloak-realm-disable-",
+		"ldap-ou-delete-",
+		"ldap-lock-",
+		"mariadb-delete-",
+		"s3-delete-",
+		"nc-group-delete-",
+		"redis-acl-delete-",
+	} {
+		if strings.HasPrefix(jobName, prefix) {
+			rest := strings.TrimPrefix(jobName, prefix)
+			if idx := strings.Index(rest, "-"); idx > 0 {
+				return rest[:idx], true
+			}
+			return rest, true
+		}
+	}
+	return "", false
+}
+
+func shouldAutoCompleteDeleteCleanupJob(jobName string) bool {
+	tenant, ok := deleteCleanupJobTenant(jobName)
+	if !ok {
+		return false
+	}
+	_, manual := deleteRetainManualTestTenants[tenant]
+	return !manual
+}
+
+// waitForTenantConditionReason polls until the tenant has a status condition
+// with the given type and reason (reconciler gates on conditions, not Job creation order).
+func waitForTenantConditionReason(t *testing.T, tenantName, condType, reason string) {
+	t.Helper()
+	waitFor(t, jobAppearTimeout, func() bool {
+		tenant := &gentianov1alpha1.Tenant{}
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, tenant); err != nil {
+			return false
+		}
+		for _, c := range tenant.Status.Conditions {
+			if c.Type == condType && c.Reason == reason {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func markJobSucceeded(job *batchv1.Job) {
@@ -113,6 +227,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	if err := networkingv1.AddToScheme(scheme.Scheme); err != nil {
+		panic(err)
+	}
+	if err := gatewayv1.Install(scheme.Scheme); err != nil {
 		panic(err)
 	}
 
@@ -143,6 +260,9 @@ func TestMain(m *testing.M) {
 		KernelDomain:             "desk.gentian.org",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
+		RoutingMode:              controller.RoutingModeGateway,
+		LDAPBase:                 "dc=swp-ldap,dc=internal",
+		LDAPServer:               "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -157,6 +277,8 @@ func TestMain(m *testing.M) {
 	testClient = mgr.GetClient()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	startXTenantShellSimulator(ctx, testClient)
+	startTenantProvisioningJobSimulator(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
 
 	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
@@ -173,12 +295,24 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
+	// gentian-infra-dev and ingress are referenced by gateway/isolation tests.
+	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "ingress"} {
+		if err := testClient.Create(context.Background(), &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: ns},
+		}); err != nil {
+			panic(err)
+		}
+	}
+
 	// udm-admin Secret is required by the mail reconciler for Dovecot LDAP config.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
+			"url":               []byte("http://nubus-dev-ldap-server.gentian-dev.svc.cluster.local/univention/"),
+			"password":          []byte("test-ldap-password"),
 			"ldapBase":          []byte("dc=swp-ldap,dc=internal"),
+			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
 			"ldapsearchDovecot": []byte("test-ldap-password"),
 		},
 	}); err != nil {
@@ -208,6 +342,18 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	catalogRaw, err := os.ReadFile(filepath.Join("..", "oidc", "testdata", "opendesk-catalog.yaml"))
+	if err != nil {
+		panic(err)
+	}
+	var oidcCatalog gentianov1alpha1.OIDCPackCatalog
+	if err := yaml.Unmarshal(catalogRaw, &oidcCatalog); err != nil {
+		panic(err)
+	}
+	if err := testClient.Create(context.Background(), &oidcCatalog); err != nil {
+		panic(err)
+	}
+
 	// Auto-complete Keycloak Jobs and LDAP base provisioning Jobs for tests that
 	// do not assert job ordering manually. ensureIdentity blocks on the LDAP
 	// admin-user Job when ensureLDAPBase has created it; without auto-completion
@@ -225,8 +371,16 @@ func TestMain(m *testing.M) {
 					name := j.Name
 					autoKeycloak := strings.HasPrefix(name, "keycloak-")
 					autoLDAP := shouldAutoCompleteLDAPJob(name)
-					if !autoKeycloak && !autoLDAP {
+					autoProv := shouldAutoCompleteProvisioningJob(name)
+					autoDeleteCleanup := shouldAutoCompleteDeleteCleanupJob(name)
+					if !autoKeycloak && !autoLDAP && !autoProv && !autoDeleteCleanup {
 						continue
+					}
+					if autoDeleteCleanup && strings.Contains(name, "realm-disable") {
+						// identretain asserts disable Job creation before completion.
+						if strings.Contains(name, "identretain") {
+							continue
+						}
 					}
 					if autoKeycloak && (strings.Contains(name, "clienttest") || strings.Contains(name, "admintest") || strings.Contains(name, "identretain") || strings.Contains(name, "del-tenant")) {
 						// These tests control Keycloak job timing or test deletion flows.

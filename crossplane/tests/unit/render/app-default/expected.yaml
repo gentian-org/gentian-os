@@ -1,0 +1,203 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-openproject-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: openproject-externalsecret, openproject-keycloak-client,
+      openproject-keycloak-default-scopes, and 2 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: openproject-externalsecret
+  labels:
+    crossplane.io/composite: render-openproject-fixture
+  name: render-openproject-fixture-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-openproject-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: openproject-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/openproject/oidc
+            property: client-secret
+          secretKey: oidc-client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: openproject-sensitive-values
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: openproject-keycloak-client
+  labels:
+    crossplane.io/composite: render-openproject-fixture
+  name: demo-openproject-keycloak-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-openproject-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: opendesk-openproject
+    clientSecretSecretRef:
+      key: client-secret
+      name: render-openproject-fixture-oidc-client-creds
+      namespace: crossplane-system
+    directAccessGrantsEnabled: false
+    fullScopeAllowed: false
+    name: OpenProject
+    realmId: demo
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validPostLogoutRedirectUris:
+    - https://projects.demo.desk.gentian.org/
+    validRedirectUris:
+    - https://projects.demo.desk.gentian.org/auth/keycloak/callback
+    webOrigins:
+    - +
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: openproject-keycloak-default-scopes
+  labels:
+    crossplane.io/composite: render-openproject-fixture
+  name: demo-openproject-keycloak-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-openproject-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: demo-openproject-keycloak-client
+    defaultScopes:
+    - profile
+    - email
+    - roles
+    - web-origins
+    - acr
+    - opendesk-openproject-scope
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: openproject-oidc-client-creds-es
+  labels:
+    crossplane.io/composite: render-openproject-fixture
+  name: render-openproject-fixture-oidc-client-creds-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-openproject-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: render-openproject-fixture-oidc-client-creds
+        namespace: crossplane-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/openproject/oidc
+            property: client-secret
+          secretKey: client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          name: render-openproject-fixture-oidc-client-creds
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: openproject-release
+  labels:
+    crossplane.io/composite: render-openproject-fixture
+  name: render-openproject-fixture-release
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-openproject-fixture
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: openproject
+      repository: oci://example.invalid/openproject
+      version: 10.1.0
+    namespace: tenant-demo
+    set:
+    - name: openproject.oidc.secret
+      valueFrom:
+        secretKeyRef:
+          key: oidc-client-secret
+          name: openproject-sensitive-values
+          namespace: tenant-demo
+    skipCRDs: true
+    values:
+      global:
+        imagePullSecrets:
+        - registry-credentials
+      imagePullSecrets:
+      - registry-credentials
+    wait: false
+  providerConfigRef:
+    name: kubernetes
+  rollbackLimit: 3

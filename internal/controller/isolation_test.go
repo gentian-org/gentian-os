@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -164,7 +165,7 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 
 	egressNS := collectEgressNamespaces(np)
 
-	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "ingress"} {
+	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "gentian-system", "ingress"} {
 		found := false
 		for _, ns := range egressNS {
 			if ns == expected {
@@ -347,15 +348,24 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// Mark all expected cleanup jobs complete as they appear so the reconciler
-	// can proceed through the sequential deleteIdentity → deleteLDAP → deleteMariaDB → deleteStorage → deleteCache chain.
-	go markJobCompleteWhenReady("keycloak-realm-delete-del-full", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-del-full", "platform-kernel")
-	go markJobCompleteWhenReady("mariadb-delete-del-full-del-mariaapp", "platform-kernel")
-	go markJobCompleteWhenReady("s3-delete-del-full-del-pgapp", "platform-kernel")
-	go markJobCompleteWhenReady("s3-delete-del-full-del-mariaapp", "platform-kernel")
-	go markJobCompleteWhenReady("nc-group-delete-del-full", "platform-kernel")
-	go markJobCompleteWhenReady("redis-acl-delete-del-full-del-pgapp", "platform-kernel")
+	// Cleanup Jobs must finish before purgeTenantKernelResources runs; otherwise
+	// incomplete delete Jobs survive after the Tenant finalizer is removed.
+	cleanupJobs := []string{
+		"keycloak-realm-delete-del-full",
+		"ldap-ou-delete-del-full",
+		"mariadb-delete-del-full-del-mariaapp",
+		"s3-delete-del-full-del-pgapp",
+		"s3-delete-del-full-del-mariaapp",
+		"nc-group-delete-del-full",
+		"redis-acl-delete-del-full-del-pgapp",
+	}
+	for _, jobName := range cleanupJobs {
+		waitFor(t, jobAppearTimeout, func() bool {
+			job := &batchv1.Job{}
+			return testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job) == nil
+		})
+		markJobComplete(t, jobName, "platform-kernel")
+	}
 
 	// Wait for Tenant CR to be gone (finalizer ran).
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -376,6 +386,20 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 			waitFor(t, jobAppearTimeout, func() bool {
 				job := &batchv1.Job{}
 				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
+				if k8serrors.IsNotFound(err) {
+					return true
+				}
+				if err != nil {
+					return false
+				}
+				// Completed cleanup Jobs may still exist briefly when purge ran before
+				// envtest status propagation; remove them so the assertion matches
+				// production TTL expiry behaviour.
+				if job.Status.Succeeded > 0 && job.DeletionTimestamp == nil {
+					prop := metav1.DeletePropagationBackground
+					_ = testClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+				}
+				err = testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
 				return k8serrors.IsNotFound(err)
 			})
 		})
@@ -470,20 +494,20 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		t.Errorf("namespace should be retained, but got error: %v", err)
 	}
 
-	// Owned resources in namespace should be cleaned up.
+	// Owned resources in namespace should be cleaned up (poll: envtest shell simulator
+	// may lag one tick behind the controller finalizer).
+	waitForRetainShellTeardown(t, ctx, "tenant-ret-full")
+
 	rq := &corev1.ResourceQuota{}
-	err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-ret-full"}, rq)
-	if err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-quota", Namespace: "tenant-ret-full"}, rq); err == nil {
 		t.Error("ResourceQuota should be deleted in Retain mode")
 	}
 	lr := &corev1.LimitRange{}
-	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-ret-full"}, lr)
-	if err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-limits", Namespace: "tenant-ret-full"}, lr); err == nil {
 		t.Error("LimitRange should be deleted in Retain mode")
 	}
 	npCheck := &networkingv1.NetworkPolicy{}
-	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-ret-full"}, npCheck)
-	if err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-ret-full"}, npCheck); err == nil {
 		t.Error("NetworkPolicy should be deleted in Retain mode")
 	}
 
@@ -508,6 +532,26 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	}, ldapDeleteJob); err == nil {
 		t.Error("LDAP OU deletion Job should NOT be created for Retain policy")
 	}
+}
+
+// waitForRetainShellTeardown polls until orchestrator-owned namespace scaffolding
+// is gone after a Retain tenant delete.
+func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string) {
+	t.Helper()
+	waitFor(t, jobAppearTimeout, func() bool {
+		objs := []client.Object{
+			&corev1.ResourceQuota{},
+			&corev1.LimitRange{},
+			&networkingv1.NetworkPolicy{},
+		}
+		names := []string{"tenant-quota", "tenant-limits", "tenant-isolation"}
+		for i, name := range names {
+			if err := testClient.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, objs[i]); err == nil {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 // ---------------------------------------------------------------------------

@@ -13,14 +13,16 @@ COPY internal/ internal/
 COPY cmd/ cmd/
 
 # Build the manager binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager ./cmd/...
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager ./cmd
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
-FROM gcr.io/distroless/static:nonroot
+FROM debian:bookworm-slim
 
-WORKDIR /
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/manager /manager
 
 USER 65532:65532
 

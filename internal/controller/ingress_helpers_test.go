@@ -22,8 +22,6 @@ import (
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func TestIsUMCFrontendIngress(t *testing.T) {
@@ -83,6 +81,20 @@ more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal
 	}
 }
 
+func TestCryptpadSandboxFrameAncestorOrigins(t *testing.T) {
+	t.Parallel()
+	origins := cryptpadSandboxFrameAncestorOrigins("desk.gentian.org", "demo.desk.gentian.org")
+	for _, want := range []string{
+		"https://pad.demo.desk.gentian.org",
+		"https://portal.desk.gentian.org",
+		"https://files.desk.gentian.org",
+	} {
+		if !strings.Contains(origins, want) {
+			t.Fatalf("origins = %q, missing %q", origins, want)
+		}
+	}
+}
+
 func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
 	annotations := map[string]string{}
 	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
@@ -92,6 +104,9 @@ func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
 	}
 	if !strings.Contains(got, "https://portal.desk.gentian.org") {
 		t.Fatal("sandbox ingress must allow kernel portal in frame-ancestors for nested portal→pad→sandbox")
+	}
+	if !strings.Contains(got, "https://files.desk.gentian.org") {
+		t.Fatal("sandbox ingress must allow kernel Nextcloud Files (openincryptpad direct embed)")
 	}
 }
 
@@ -131,9 +146,26 @@ func TestEnsurePortalEmbeddingAnnotationsReplacesUpstreamCSPForElement(t *testin
 }
 
 func TestKeycloakOIDCEmbeddingIngressSnippet(t *testing.T) {
-	snippet := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"})
+	oidcSubs := map[string][]string{
+		"demo": {"chat", "matrix", "meet", "wiki"},
+	}
+	snippet := keycloakOIDCEmbeddingIngressSnippet(
+		"desk.gentian.org",
+		[]string{"demo.desk.gentian.org"},
+		oidcSubs,
+		[]string{"demo"},
+	)
 	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
 		t.Fatalf("expected kernel portal origin, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, "https://id.desk.gentian.org") {
+		t.Fatalf("expected explicit id origin for nested IdP iframes, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, "https://ics.desk.gentian.org") {
+		t.Fatalf("expected explicit ics origin for Nordeck silent login, got:\n%s", snippet)
+	}
+	if !strings.Contains(snippet, "https://*.desk.gentian.org") {
+		t.Fatalf("expected kernel-zone wildcard for files/ics SSO, got:\n%s", snippet)
 	}
 	if !strings.Contains(snippet, "https://*.demo.desk.gentian.org") {
 		t.Fatalf("expected tenant wildcard origin, got:\n%s", snippet)
@@ -144,26 +176,10 @@ func TestKeycloakOIDCEmbeddingIngressSnippet(t *testing.T) {
 	if !strings.Contains(snippet, "https://matrix.demo.desk.gentian.org") {
 		t.Fatalf("expected explicit matrix origin for Synapse OIDC, got:\n%s", snippet)
 	}
+	if !strings.Contains(snippet, "https://wiki.demo.desk.gentian.org") {
+		t.Fatalf("expected explicit wiki origin for XWiki OIDC, got:\n%s", snippet)
+	}
 	if !strings.Contains(snippet, `proxy_hide_header Content-Security-Policy`) {
 		t.Fatal("Keycloak IdP ingress must replace upstream CSP (not append)")
-	}
-}
-
-func TestBuildAppIngressInjectsKernelPortalCSP(t *testing.T) {
-	tenant := &gentianov1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
-	}
-	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain:   "meet",
-		ServiceName: "jitsi-web",
-		ServicePort: 80,
-		Annotations: map[string]string{
-			nginxConfigurationSnippetAnnotation: `more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal.${TENANT_DOMAIN}";`,
-		},
-	}
-	ing := buildAppIngress(tenant, "tenant-demo", "jitsi", ingress, "meet.demo.desk.gentian.org", "tenant-demo-wildcard-tls", "demo.desk.gentian.org", "desk.gentian.org")
-	snippet := ing.Annotations[nginxConfigurationSnippetAnnotation]
-	if !strings.Contains(snippet, "https://portal.desk.gentian.org") {
-		t.Fatalf("expected kernel portal CSP, got:\n%s", snippet)
 	}
 }

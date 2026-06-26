@@ -24,14 +24,16 @@ export KUBEBUILDER_ASSETS
 
 all: generate build test
 
-## Build the module (no binary yet — orchestrator binary added in Increment 2)
+## Build the module (operator manager)
 build:
-	go build ./...
+	go build -o bin/manager ./cmd/main.go
 
-## Install the kubectl-gentian plugin to ~/.local/bin
+## Install the kubectl-gentian plugin and gtnctl symlink to ~/.local/bin
 install-plugin:
+	install -d $(HOME)/.local/bin
 	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
-	@echo "Installed kubectl-gentian to $(HOME)/.local/bin/kubectl-gentian"
+	ln -sf kubectl-gentian $(HOME)/.local/bin/gtnctl
+	@echo "Installed kubectl-gentian and gtnctl (-> kubectl-gentian) to $(HOME)/.local/bin"
 
 ## Run unit tests
 # internal/controller uses envtest whose watch goroutines conflict with -race;
@@ -90,7 +92,17 @@ test-unit-render:
 			echo "SKIP: $$name (no expected.yaml — run 'make test-unit-render-update' to generate)"; \
 			continue; \
 		fi; \
-		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" 2>&1); \
+		req_args=""; \
+		if [ -d "$$dir/required-resources" ]; then \
+			req_args="-e $$dir/required-resources"; \
+		fi; \
+		obs_args=""; \
+		if [ -d "$$dir/observed-resources" ]; then \
+			obs_args="-o $$dir/observed-resources"; \
+		elif [ -f "$$dir/observed-resources.yaml" ]; then \
+			obs_args="-o $$dir/observed-resources.yaml"; \
+		fi; \
+		actual=$$(crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args $$obs_args 2>&1); \
 		rc=$$?; \
 		if [ $$rc -ne 0 ]; then \
 			echo "FAIL: $$name (crossplane render exited $$rc)"; \
@@ -118,7 +130,17 @@ test-unit-render-update:
 			echo "SKIP: $$name (missing xr/composition/functions.yaml)"; \
 			continue; \
 		fi; \
-		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" \
+		req_args=""; \
+		if [ -d "$$dir/required-resources" ]; then \
+			req_args="-e $$dir/required-resources"; \
+		fi; \
+		obs_args=""; \
+		if [ -d "$$dir/observed-resources" ]; then \
+			obs_args="-o $$dir/observed-resources"; \
+		elif [ -f "$$dir/observed-resources.yaml" ]; then \
+			obs_args="-o $$dir/observed-resources.yaml"; \
+		fi; \
+		crossplane render "$$dir/xr.yaml" "$$dir/composition.yaml" "$$dir/functions.yaml" $$req_args $$obs_args \
 			> "$$dir/expected.yaml" && echo "UPDATED: $$name" || echo "FAIL: $$name"; \
 	done
 
@@ -201,18 +223,18 @@ e2e-p0-clean:
 	kubectl delete clusterrolebinding crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse --ignore-not-found=true
 	@echo "Done."
 
-## P1 — Kernel provisioning via Cluster XR (dev only) — not yet implemented
+## P1 — Kernel provisioning via Cluster XR (dev cluster)
 e2e-p1:
 	@crossplane/tests/e2e/scripts/p1-kernel-dev.sh
 
-## P2 — Migrate Pattern B charts to provider-helm (dev only) — not yet implemented
+## P2 — Pattern B kernel Helm Releases (dev cluster)
 e2e-p2:
 	@crossplane/tests/e2e/scripts/p2-pattern-b.sh
 
-## P3 — Tenant XRD shadow deployment (dev only) — not yet implemented
+## P3 — Tenant shadow deployment (Crossplane graph verification)
 e2e-p3:
 	@crossplane/tests/e2e/scripts/p3-tenant-shadow.sh
 
-## P4 — Cutover of a real tenant (dev only) — not yet implemented
+## P4 — Cutover verification for an existing tenant
 e2e-p4:
 	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh

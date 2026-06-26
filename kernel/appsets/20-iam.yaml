@@ -47,6 +47,7 @@ spec:
           - $values/kernel/values/env/{{.env}}.yaml
           - $values/kernel/services/{{.app}}/values/_base.yaml
           - $values/kernel/services/{{.app}}/values/{{.env}}/values.yaml
+          - $values/kernel/services/{{.app}}/values/gateway.yaml
       destination:
         server: https://kubernetes.default.svc
         namespace: 'gentian-{{.env}}'

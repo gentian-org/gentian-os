@@ -1,0 +1,14 @@
+# Gateway API foundation manifests (gentian-envoy GatewayClass).
+#
+# GatewayClass is reconciled by the gentian-os operator when ROUTING_MODE=gateway.
+# Envoy Gateway must be installed first (install.sh Step 3c).
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: gentian-envoy
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  controllerName: gateway.envoyproxy.io/gentian-gatewayclass-controller
+  description: Gentian OS edge routing via Envoy Gateway

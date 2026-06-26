@@ -1,0 +1,105 @@
+# Prerequisites marked Ready so function-sequencer emits the full tenant graph.
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-namespace
+  annotations:
+    crossplane.io/composition-resource-name: namespace
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-limitrange
+  annotations:
+    crossplane.io/composition-resource-name: limitrange
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-networkpolicy
+  annotations:
+    crossplane.io/composition-resource-name: networkpolicy
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  name: render-fixture-tenant-policy
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-job-keycloak-realm-render-fixture
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-realm-render-fixture
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-job-ldap-ou-render-fixture
+  annotations:
+    crossplane.io/composition-resource-name: job-ldap-ou-render-fixture
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-job-keycloak-admin-render-fixture
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-admin-render-fixture
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-job-ldap-bind-render-fixture-keycloak
+  annotations:
+    crossplane.io/composition-resource-name: job-ldap-bind-render-fixture-keycloak
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

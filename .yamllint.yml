@@ -11,6 +11,7 @@ ignore: |
   export/gentian-apps/profiles/
   kernel/manifests/flux-crds/
   crossplane/compositions/
+  crossplane/tests/unit/render/**/composition.yaml
   kernel/services/nextcloud-management/manifests/
 
 rules:

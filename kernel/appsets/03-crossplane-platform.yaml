@@ -54,3 +54,26 @@ spec:
     automated:
       prune: true
       selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-job-gc
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: kernel/manifests/job-gc
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-kernel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

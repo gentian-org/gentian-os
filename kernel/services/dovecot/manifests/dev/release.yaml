@@ -54,5 +54,10 @@ spec:
           namespace: gentian-dev
           key: sensitive-values.yaml
           optional: false
+      - configMapKeyRef:
+          name: dovecot-tenant-oidc-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: true
   providerConfigRef:
     name: kubernetes

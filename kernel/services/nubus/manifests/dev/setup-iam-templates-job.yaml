@@ -105,15 +105,23 @@ spec:
                   fi
               done
 
-              # 3. Create '2 Admin User' template (kernel admins; tenant admins see it second in UMC)
+              # 3. Create kernel Admin User template (tenant admins may pick it for tenant IT accounts).
               # Do not set opendesk* properties here — they require stack-data-ums extended
               # attributes and cause 422 if the UDM module cache is not ready yet.
-              # RDN must match properties.name ("2 Admin User"); a mismatched cn breaks idempotent PATCH.
-              ADMIN_TEMPLATE_DN="cn=2 Admin User,cn=templates,cn=univention,${LDAP_BASE}"
+              # RDN must match properties.name ("Admin User"); a mismatched cn breaks idempotent PATCH.
+              ADMIN_TEMPLATE_DN="cn=Admin User,cn=templates,cn=univention,${LDAP_BASE}"
               ADMIN_TEMPLATE_ENC=$(urlencode "${ADMIN_TEMPLATE_DN}")
+              LEGACY_NUMBERED_ADMIN_DN="cn=2 Admin User,cn=templates,cn=univention,${LDAP_BASE}"
+              LEGACY_NUMBERED_ADMIN_ENC=$(urlencode "${LEGACY_NUMBERED_ADMIN_DN}")
+              LEGACY_NUMBERED_ADMIN_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${CREDS} -H "Accept: application/json" \
+                  "${BASE_URL}/settings/usertemplate/${LEGACY_NUMBERED_ADMIN_ENC}")
+              if [ "${LEGACY_NUMBERED_ADMIN_STATUS}" = "200" ]; then
+                  udm_http DELETE "${BASE_URL}/settings/usertemplate/${LEGACY_NUMBERED_ADMIN_ENC}" \
+                      && echo "Removed legacy numbered Admin User template."
+              fi
               ADMIN_TEMPLATE_BODY='{
                         "properties": {
-                          "name": "2 Admin User",
+                          "name": "Admin User",
                           "description": "Administrative user without app access"
                         },
                         "position": "cn=templates,cn=univention,'"${LDAP_BASE}"'"

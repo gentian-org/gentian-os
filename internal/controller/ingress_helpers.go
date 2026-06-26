@@ -9,15 +9,6 @@ import (
 
 const nginxConfigurationSnippetAnnotation = "nginx.ingress.kubernetes.io/configuration-snippet"
 
-// substituteIngressAnnotationPlaceholders expands AppProfile ingress annotation
-// templates. ${TENANT_DOMAIN} is the tenant effective domain; ${KERNEL_DOMAIN} is
-// the cluster platform domain (portal, Keycloak, …).
-func substituteIngressAnnotationPlaceholders(s, effectiveDomain, kernelDomain string) string {
-	s = strings.ReplaceAll(s, "${TENANT_DOMAIN}", effectiveDomain)
-	s = strings.ReplaceAll(s, "${KERNEL_DOMAIN}", kernelDomain)
-	return s
-}
-
 // cryptpadSandboxSubDomain is the additional CryptPad ingress hostname prefix for
 // httpSafeOrigin (client-side crypto isolation). That origin is framed by the
 // main CryptPad host (pad.<tenant>), not by the kernel portal.
@@ -28,19 +19,20 @@ const cryptpadSandboxSubDomain = "pad-sandbox"
 // operator must append frame-ancestors, not replace the upstream header.
 const cryptpadMainSubDomain = "pad"
 
-// keycloakSSOAppSubdomains are tenant app ingress prefixes that commonly embed
-// the shared IdP (id.<kernel>) during OIDC — e.g. Element chat framing Keycloak,
-// Synapse matrix handling the OIDC callback.
-var keycloakSSOAppSubdomains = []string{"chat", "matrix", "meet", "projects", "webmail", "pad"}
-
 // keycloakOIDCAncestorOrigins builds space-separated https origins for the
 // Keycloak proxy ingress frame-ancestors policy: kernel portal plus, per tenant
-// effective domain, a wildcard and explicit SSO app hosts.
-func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []string) string {
+// effective domain, a tenant wildcard and explicit OIDC app ingress hosts
+// discovered from installed AppProfiles (see collectOIDCIngressSubdomainsByTenant).
+func keycloakOIDCAncestorOrigins(
+	kernelDomain string,
+	tenantEffectiveDomains []string,
+	tenantOIDCSubdomains map[string][]string,
+	tenantNames []string,
+) string {
 	if kernelDomain == "" {
 		return ""
 	}
-	seen := make(map[string]struct{}, len(tenantEffectiveDomains)*(len(keycloakSSOAppSubdomains)+1)+1)
+	seen := make(map[string]struct{})
 	var origins []string
 	add := func(origin string) {
 		if origin == "" {
@@ -53,12 +45,23 @@ func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []s
 		origins = append(origins, origin)
 	}
 	add(fmt.Sprintf("https://portal.%s", kernelDomain))
-	for _, effective := range tenantEffectiveDomains {
+	// Explicit kernel IdP + ICS origins (visible in curl checks; also covers browsers
+	// that treat 'self' / *.kernel wildcards differently in nested iframe chains).
+	add(fmt.Sprintf("https://id.%s", kernelDomain))
+	add(fmt.Sprintf("https://ics.%s", kernelDomain))
+	// Kernel-zone apps (Nextcloud Files, …) run on *.<kernelDomain> and may embed
+	// id.<kernel> in a nested iframe during OIDC — not under tenant zones.
+	add(fmt.Sprintf("https://*.%s", kernelDomain))
+	for i, effective := range tenantEffectiveDomains {
 		if effective == "" {
 			continue
 		}
 		add(fmt.Sprintf("https://*.%s", effective))
-		for _, sub := range keycloakSSOAppSubdomains {
+		var tenantName string
+		if i < len(tenantNames) {
+			tenantName = tenantNames[i]
+		}
+		for _, sub := range tenantOIDCSubdomains[tenantName] {
 			add(fmt.Sprintf("https://%s.%s", sub, effective))
 		}
 	}
@@ -66,22 +69,61 @@ func keycloakOIDCAncestorOrigins(kernelDomain string, tenantEffectiveDomains []s
 }
 
 // keycloakOIDCIngressServerSnippet strips upstream framing headers at the server
-// block (microk8s ingress sometimes misses proxy_hide_header in location only).
-const nginxServerSnippetAnnotation = "nginx.ingress.kubernetes.io/server-snippet"
+// block (legacy nginx ingress sometimes missed proxy_hide_header in location only).
+const (
+	nginxProxyBodySizeAnnotation        = "nginx.ingress.kubernetes.io/proxy-body-size"
+	nginxProxyBufferSizeAnnotation      = "nginx.ingress.kubernetes.io/proxy-buffer-size"
+	nginxProxyBuffersNumberAnnotation   = "nginx.ingress.kubernetes.io/proxy-buffers-number"
+	nginxProxyBusyBuffersSizeAnnotation = "nginx.ingress.kubernetes.io/proxy-busy-buffers-size"
+)
+
+// keycloakProxyIngressBufferAnnotations prevents nginx 502 "upstream sent too big
+// header" on broker /endpoint redirects (Keycloak sets large session cookies).
+var keycloakProxyIngressBufferAnnotations = map[string]string{
+	nginxProxyBodySizeAnnotation:        "128k",
+	nginxProxyBufferSizeAnnotation:      "64k",
+	nginxProxyBuffersNumberAnnotation:   "4",
+	nginxProxyBusyBuffersSizeAnnotation: "128k",
+}
+
+func ensureKeycloakProxyIngressBuffers(annotations map[string]string) {
+	for k, v := range keycloakProxyIngressBufferAnnotations {
+		annotations[k] = v
+	}
+}
+
+func keycloakProxyIngressBuffersApplied(annotations map[string]string) bool {
+	for k, v := range keycloakProxyIngressBufferAnnotations {
+		if annotations[k] != v {
+			return false
+		}
+	}
+	return true
+}
 
 func keycloakOIDCIngressServerSnippet() string {
+	// proxy_hide_header alone is not always enough on microk8s ingress-nginx; an
+	// empty X-Frame-Options override prevents Keycloak SAMEORIGIN from blocking
+	// broker /endpoint callbacks in portal iframes (see keycloak_browser_security.go).
 	return `proxy_hide_header X-Frame-Options;
+add_header X-Frame-Options "" always;
 proxy_hide_header Content-Security-Policy;`
 }
 
 // keycloakOIDCEmbeddingIngressSnippet returns NGINX directives for the shared
 // Keycloak ingress so portal-embedded apps can frame OIDC login pages.
-func keycloakOIDCEmbeddingIngressSnippet(kernelDomain string, tenantEffectiveDomains []string) string {
+func keycloakOIDCEmbeddingIngressSnippet(
+	kernelDomain string,
+	tenantEffectiveDomains []string,
+	tenantOIDCSubdomains map[string][]string,
+	tenantNames []string,
+) string {
 	// Repeat hide directives in the location block; browsers enforce X-Frame-Options
 	// before CSP frame-ancestors, so SAMEORIGIN from Keycloak blocks broker endpoints
 	// even when frame-ancestors lists chat.<tenant>.
 	return keycloakOIDCIngressServerSnippet() + "\n" +
-		frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(kernelDomain, tenantEffectiveDomains))
+		frameAncestorsIngressSnippetReplace(keycloakOIDCAncestorOrigins(
+			kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames))
 }
 
 // portalEmbeddingIngressSnippet returns NGINX directives that allow the shared
@@ -96,16 +138,61 @@ func portalEmbeddingIngressSnippetAppend(kernelDomain string) string {
 	return frameAncestorsIngressSnippetAppend(portalOrigin)
 }
 
-// cryptpadSandboxIngressSnippet allows the main CryptPad origin and the shared
-// kernel portal to embed the sandbox iframe. CSP frame-ancestors checks the full
-// ancestor chain: portal → pad.<tenant> → pad-sandbox.<tenant> when the portal
-// opens CryptPad in an embedded window; pad alone is sufficient in a top-level tab.
-func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string {
-	origins := fmt.Sprintf("https://pad.%s", effectiveDomain)
-	if kernelDomain != "" {
-		origins += fmt.Sprintf(" https://portal.%s", kernelDomain)
+// cryptpadSandboxFrameAncestorOrigins lists https origins allowed to embed
+// pad-sandbox.<padDomain>. Shared by kernel HTTPRoutes, tenant AppProfile
+// ingress snippets, and Gateway API response filters (DRY embedding policy).
+//
+// Nextcloud Files (files.<kernelDomain>) may iframe the sandbox directly via
+// openincryptpad, not only via pad.<padDomain>. With CryptPad's upstream CSP
+// still present, the appended frame-ancestors policy must allow every direct
+// parent — browsers enforce all CSP headers.
+func cryptpadSandboxFrameAncestorOrigins(kernelDomain, padDomain string) string {
+	var origins []string
+	add := func(origin string) {
+		if origin != "" {
+			origins = append(origins, origin)
+		}
 	}
-	return frameAncestorsIngressSnippetAppend(origins)
+	add(padOrigin(padDomain))
+	add(kernelPortalOrigin(kernelDomain))
+	add(kernelFilesOrigin(kernelDomain))
+	return strings.Join(origins, " ")
+}
+
+// cryptpadKernelMainFrameAncestorOrigins lists embedders for the shared kernel
+// CryptPad service at pad.<kernelDomain> (diagrams.net from Nextcloud Files).
+func cryptpadKernelMainFrameAncestorOrigins(kernelDomain string) string {
+	return strings.Join([]string{
+		kernelFilesOrigin(kernelDomain),
+		kernelPortalOrigin(kernelDomain),
+	}, " ")
+}
+
+func kernelPortalOrigin(kernelDomain string) string {
+	if kernelDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://portal.%s", kernelDomain)
+}
+
+func kernelFilesOrigin(kernelDomain string) string {
+	if kernelDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://files.%s", kernelDomain)
+}
+
+func padOrigin(padDomain string) string {
+	if padDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://pad.%s", padDomain)
+}
+
+// cryptpadSandboxIngressSnippet allows pad, portal, and kernel Nextcloud Files
+// to embed the CryptPad sandbox iframe (append mode — preserve upstream script-src).
+func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string {
+	return frameAncestorsIngressSnippetAppend(cryptpadSandboxFrameAncestorOrigins(kernelDomain, effectiveDomain))
 }
 
 // frameAncestorsIngressSnippetReplace clears upstream X-Frame-Options and
@@ -117,6 +204,7 @@ func frameAncestorsIngressSnippetReplace(ancestorOrigins string) string {
 	// proxy_hide_header works on stock ingress-nginx (including microk8s builds
 	// that lack the headers-more module). more_clear_headers is not available there.
 	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
+add_header X-Frame-Options "" always;
 proxy_hide_header Content-Security-Policy;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
@@ -126,6 +214,7 @@ add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancesto
 // script-src/connect-src (sandbox must not gain 'unsafe-eval').
 func frameAncestorsIngressSnippetAppend(ancestorOrigins string) string {
 	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
+add_header X-Frame-Options "" always;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
 

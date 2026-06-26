@@ -108,6 +108,9 @@ spec:
                     memory:
                       type: string
                       description: Total memory request limit (e.g. "16Gi").
+                    maxPods:
+                      type: integer
+                      description: Maximum number of pods in the tenant namespace.
                 deletionPolicy:
                   type: string
                   description: >

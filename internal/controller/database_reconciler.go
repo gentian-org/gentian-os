@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -29,10 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -65,10 +64,22 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", appName, err)
+		}
 
-		// Step 1 — psql role Job: create the PostgreSQL role first.
-		// The CNPG Database CR references this role as spec.owner, so the role
-		// must exist before CNPG attempts to create the database.
+		if appUsesCrossplaneDBInit(profile) {
+			done, err := r.waitForTenantNamespaceJob(ctx, tenant, appCompositionInitJobName(appName, "db-init"))
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("wait for db-init Job for app %s: %w", appName, err)
+			}
+			if !done {
+				allDone = false
+			}
+			continue
+		}
+
 		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure role Job for app %s: %w", appName, err)
@@ -120,18 +131,18 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 	return pgApps, nil
 }
 
-// ensureDatabaseCR creates (or confirms the existence of) a CloudNativePG Database CR
-// in the kernel namespace (same namespace as the shared CNPG Cluster). Returns true once
-// the Database CR reports Ready=True.
+// ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.
 func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
-	desired := buildDatabaseCR(tenant, nsName, dbName, appName)
 	crName := databaseCRName(tenant.Name, appName)
-
 	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(desired.GroupVersionKind())
+	existing.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   cnpgGroup,
+		Version: cnpgVersion,
+		Kind:    cnpgDatabaseKind,
+	})
 	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: kernelNamespace}, existing)
 	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, desired)
+		return false, nil
 	}
 	if err != nil {
 		return false, err
@@ -139,43 +150,9 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 	return cnpgDatabaseIsReady(existing), nil
 }
 
-// ensureRoleJob creates the psql role/user Job for the app if absent.
-// Returns true when the Job has completed successfully.
+// ensureRoleJob waits for the Crossplane-owned psql role Job.
 func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
-	jobName := roleJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: seed the per-app database credentials into OpenBao *before*
-		// creating the role Job so the Job can apply the derived password to
-		// PostgreSQL (CREATE ROLE + ALTER ROLE … PASSWORD). When the Seeder is
-		// nil (envtest / staged rollout) the Job falls back to generating a
-		// random password locally (legacy behaviour).
-		rolePassword := ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-				Host:     fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
-				Port:     "5432",
-				Name:     dbName,
-				User:     roleUserName(tenant.Name, appName),
-				Password: "", // derived inside Seeder
-			})
-			if seedErr != nil {
-				return false, fmt.Errorf("seed database: %w", seedErr)
-			}
-			rolePassword = creds.Password
-		}
-		return false, r.Create(ctx, makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, roleJobName(tenant.Name, appName))
 }
 
 // deleteDatabase handles database cleanup on tenant deletion.
@@ -224,7 +201,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
 // generates a random password locally (legacy behaviour).
 func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	roleName := roleUserName(tenant.Name, appName)
 	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName), nsName)
 	if rolePassword != "" {
@@ -330,7 +307,13 @@ if [ "${DB_EXISTS}" != "1" ]; then
   echo "database %s created"
 fi
 psql -c "GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";" postgres
-echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName)
+# openDesk XWiki uses PostgreSQL schema virtual_mode: tables live in a schema
+# matching the database name (e.g. demo_xwiki), not public.
+psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZATION \"%s\";"
+psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
+psql -c "ALTER ROLE \"%s\" SET search_path TO \"%s\", public;" postgres
+echo "schema %s ensured"
+echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, dbName, dbName)
 }
 
 // --- Status helpers ----------------------------------------------------------

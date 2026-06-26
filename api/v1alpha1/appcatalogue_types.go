@@ -64,6 +64,22 @@ type CatalogueEntry struct {
 	// Name is the AppProfile CR name.
 	Name string `json:"name"`
 
+	// Family is the logical application id (shared across versions/flavors).
+	Family string `json:"family"`
+
+	// CatalogueVersion is the semver catalogue revision.
+	CatalogueVersion string `json:"catalogueVersion"`
+
+	// Edition is the feature / footprint variant.
+	Edition Edition `json:"edition"`
+
+	// TrustTier is the platform certification level.
+	TrustTier TrustTier `json:"trustTier"`
+
+	// License is the SPDX license identifier.
+	// +optional
+	License string `json:"license,omitempty"`
+
 	// DisplayName is the human-readable application name.
 	DisplayName string `json:"displayName"`
 

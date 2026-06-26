@@ -34,7 +34,8 @@ func newPostgresProfile(name string) *gentianov1alpha1.AppProfile {
 	return &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName: name,
+			DisplayName:      name,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
@@ -146,17 +147,14 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
 	})
 
-	// DB CR must NOT exist before role Job completes.
-	db := &unstructured.Unstructured{}
-	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "platform-kernel"}, db); err == nil {
-		t.Error("Database CR must not exist before role Job completes")
-	}
+	// Reconciler should wait on the role Job before Database CR is applied.
+	waitForTenantConditionReason(t, "dbcreate", "DatabaseReady", "Provisioning")
 
-	// Step 2: mark role Job complete; DB CR should then be created in platform-kernel.
+	// Step 2: mark role Job complete; simulator applies Database CR once all Jobs finish.
 	markJobComplete(t, "pg-role-dbcreate-pg-app1", "platform-kernel")
 
+	db := &unstructured.Unstructured{}
+	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "platform-kernel"}, db) == nil
@@ -200,23 +198,20 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	// Step 1: role Job must be created immediately (before Database CR).
+	// Step 1: role Job must be created immediately.
 	roleJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
 	})
 
-	// Database CR must NOT exist before role Job completes.
+	waitForTenantConditionReason(t, "rolejob", "DatabaseReady", "Provisioning")
+
+	// Mark role Job as complete; Database CR is applied once all Jobs finish.
+	markJobComplete(t, "pg-role-rolejob-pg-app2", "platform-kernel")
+
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
-	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "platform-kernel"}, db); err == nil {
-		t.Error("Database CR must not exist before role Job completes")
-	}
-
-	// Mark role Job as complete; Database CR should now be created in platform-kernel.
-	markJobComplete(t, "pg-role-rolejob-pg-app2", "platform-kernel")
 
 	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(),

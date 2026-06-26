@@ -33,6 +33,14 @@ to other apps, optional peer integrations, the upstream Helm chart,
 and a typed `valueMapping` describing how to feed kernel-provided
 values into the chart.
 
+**Operator vs composition:** The `AppProfile` CRD stays generic — no per-app
+fields. Shared operator behaviour (gateway extra routes, OIDC redirect fallbacks,
+base/module auto-install) uses **`metadata.annotations`** with the `gentianos.io/`
+prefix. Deploy sequencing, bootstrap Jobs, and chart-specific MR graphs belong in
+**`gentian-apps/profiles/<name>/composition.yaml`**. See
+[app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) §1 (annotations
+vs composition).
+
 ```yaml
 apiVersion: gentianos.io/v1alpha1
 kind: AppProfile
@@ -235,13 +243,9 @@ tracks health through status conditions. Bindings are owned by the
 Tenant and garbage-collected on delete.
 
 **Today vs Crossplane-only:** `IntegrationBinding` CRs are created and
-reconciled only by the **gentian-os operator** when it sees matching
+reconciled by the **gentian-os operator** when it sees matching
 provider/consumer apps in `spec.apps`. Crossplane app Compositions do
-**not** emit bindings yet. A desirable mid-term shape is a composition
-pipeline step (or dedicated `IntegrationBinding` Composition) that
-runs after both `App` claims are Ready, writes contract secrets via
-`provider-vault`, and optionally configures `provider-keycloak` token
-exchange — one reconcile graph instead of a second operator loop.
+not yet emit bindings for all contract wiring. See [roadmap.md](../roadmap.md).
 
 ## 5. End-to-End Flow: Tenant CR → operator + App compositions
 
@@ -288,43 +292,27 @@ mailboxes) is preserved or dropped.
 
 ```
 gentian-apps/
-├── profiles/              # AppProfile YAML — synced by ArgoCD gentian-appprofiles
-│   ├── openproject.yaml   # upstream chart (profile only)
-│   ├── element.yaml
-│   └── app-store.yaml     # first-party (source in apps/app-store/)
-├── apps/                  # First-party implementations
-│   ├── _template/         # gentian-app-template scaffold
-│   └── app-store/         # FastAPI + React + Helm
+├── profiles/
+│   ├── openproject.yaml
+│   ├── nextcloud.yaml
+│   ├── ox-appsuite.yaml
+│   ├── element.yaml          # includes Jitsi sidecar (spec.sidecars)
+│   ├── xwiki.yaml
+│   # Jitsi is bundled with Element, not a standalone AppProfile
+│   # CryptPad is a kernel service (gentian-os/kernel/services/cryptpad), not a catalogue app
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml
 │   └── central-navigation.yaml
-├── app-profile-guide.md   # Wrap existing upstream charts
-├── custom-app-guide.md    # Build new Gentian-native apps
-└── .github/workflows/apps-ci.yaml
+└── tests/
+    └── validate-profiles.sh   # schema validation in CI
 ```
 
-**Third-party apps:** one PR adding `profiles/<app>.yaml` only — no operator rebuild.
+Adding an app to the catalogue is one PR adding one YAML file. No code
+changes, no operator rebuilds.
 
-**First-party apps:** implement under `apps/<app>/`, publish pinned images + OCI
-chart via CI, then add or bump `profiles/<app>.yaml` `spec.chart.version`.
-ArgoCD syncs `profiles/` only; app source is not mounted into the cluster.
-
-## 8b. Future Direction: Crossplane-owned bindings
-
-Move contract wiring from operator-only reconciliation into the App /
-tenant Composition pipeline: gate on both sides Ready, write OpenBao
-paths, apply NetworkPolicy patches, and surface status on
-`IntegrationBinding` without separate imperative Jobs. This aligns with
-the Phase 3b goal in [architecture.md](../architecture.md) §3.1.
-
-## 8. Future Direction: Broadcast Contracts
-
-The current `IntegrationBinding` model is **point-to-point**. A future
-addition is a **broadcast bus** (NATS with per-tenant subject
-namespaces and CloudEvents schemas) for pub/sub between apps. This is
-out of scope for v1 because most existing apps don't natively produce
-or consume broker events; it would require webhook adapters or
-sidecar containers per app. The agentic AI layer (see
-[agentic-ai.md](agentic-ai.md)) addresses much of the same need
-through MCP-driven orchestration without requiring upstream changes.
+For catalogue security (tiers, sidecars, admission policy) see
+[app-catalogue-security.md](app-catalogue-security.md). For catalogue metadata,
+entitlements, and CRM integration see [business-logic-plan.md](business-logic-plan.md).
+For IntegrationBindings
+evolution and broadcast contracts see [roadmap.md](../roadmap.md).

@@ -10,8 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+See the License for the permissions and limitations under the License.
 */
 
 package controller
@@ -35,16 +34,11 @@ import (
 )
 
 const (
-	// appCatalogueName is the fixed name of the singleton AppCatalogue CR.
 	appCatalogueName = "default"
 )
 
-// AppStoreReconciler watches AppProfile CRs and maintains the singleton
-// AppCatalogue CR so that CLIs and UIs can discover available apps without
-// listing raw AppProfile objects.
-//
-// It also watches Tenant CRs to keep the InstalledCount cross-reference
-// up to date whenever tenants add or remove apps.
+// AppStoreReconciler watches AppProfile and Tenant CRs and maintains the singleton
+// AppCatalogue CR so that CLIs and UIs can discover available apps.
 //
 // +kubebuilder:rbac:groups=gentianos.io,resources=appcatalogues,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appcatalogues/status,verbs=get;update;patch
@@ -55,11 +49,8 @@ type AppStoreReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// SetupWithManager registers the AppStore controller. It reconciles whenever
-// an AppProfile or Tenant changes, because both events affect the catalogue status.
+// SetupWithManager registers the AppStore controller.
 func (r *AppStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Any AppProfile or Tenant change should trigger a full catalogue rebuild.
-	// We map these events to a fixed reconcile request for the singleton AppCatalogue.
 	mapToSingleton := func(_ context.Context, _ client.Object) []reconcile.Request {
 		return []reconcile.Request{
 			{NamespacedName: types.NamespacedName{Name: appCatalogueName}},
@@ -79,82 +70,42 @@ func (r *AppStoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// Reconcile rebuilds the AppCatalogue status from all AppProfile CRs in the cluster.
+// Reconcile rebuilds the AppCatalogue status from AppProfile CRs in the cluster.
 func (r *AppStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Only process the singleton.
 	if req.Name != appCatalogueName {
 		return ctrl.Result{}, nil
 	}
 
-	// List all AppProfiles.
 	profileList := &gentianov1alpha1.AppProfileList{}
 	if err := r.List(ctx, profileList); err != nil {
 		reconcileErrors.WithLabelValues("appstore").Inc()
 		return ctrl.Result{}, err
 	}
 
-	// Ensure every AppProfile carries the gentianos.io/profile-name label.
-	// The Crossplane app Compositions select AppProfiles by this label; without
-	// it the minMatch:1 selector silently fails. We auto-apply it here so
-	// profiles created without the label (e.g. by new contributors) still work.
-	const profileNameLabel = "gentianos.io/profile-name"
 	for i := range profileList.Items {
 		p := &profileList.Items[i]
-		if p.Labels[profileNameLabel] == p.Name {
-			continue
-		}
-		patched := p.DeepCopy()
-		if patched.Labels == nil {
-			patched.Labels = make(map[string]string)
-		}
-		patched.Labels[profileNameLabel] = p.Name
-		if err := r.Patch(ctx, patched, client.MergeFrom(p)); err != nil {
-			logger.Error(err, "failed to set profile-name label", "profile", p.Name)
-		} else {
-			logger.Info("auto-set profile-name label", "profile", p.Name)
+		if err := r.ensureProfileCatalogueLabels(ctx, p); err != nil {
+			logger.Error(err, "failed to set profile catalogue labels", "profile", p.Name)
 		}
 	}
 
-	// Count how many tenants reference each AppProfile.
 	tenantList := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, tenantList); err != nil {
 		reconcileErrors.WithLabelValues("appstore").Inc()
 		return ctrl.Result{}, err
 	}
-	installedCounts := buildInstalledCounts(tenantList.Items)
-
-	// Build catalogue entries.
-	entries := make([]gentianov1alpha1.CatalogueEntry, 0, len(profileList.Items))
-	for i := range profileList.Items {
-		p := &profileList.Items[i]
-		entries = append(entries, gentianov1alpha1.CatalogueEntry{
-			Name:               p.Name,
-			DisplayName:        p.Spec.DisplayName,
-			Description:        p.Spec.Description,
-			Logo:               p.Spec.Logo,
-			ChartVersion:       p.Spec.Chart.Version,
-			DeploymentMethod:   p.Spec.DeploymentMethod,
-			KernelRequirements: kernelRequirementLabels(p.Spec.KernelRequirements),
-			InstalledCount:     installedCounts[p.Name],
-		})
-	}
-	// Stable ordering so the status diff is deterministic.
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name < entries[j].Name
-	})
+	installedCounts := buildInstalledCounts(tenantList.Items, profileList.Items)
+	entries := buildProfileEntries(profileList.Items, installedCounts)
 
 	now := metav1.NewTime(time.Now())
 
-	// Fetch or create the singleton AppCatalogue CR.
 	catalogue := &gentianov1alpha1.AppCatalogue{}
 	err := r.Get(ctx, types.NamespacedName{Name: appCatalogueName}, catalogue)
 	if errors.IsNotFound(err) {
 		catalogue = &gentianov1alpha1.AppCatalogue{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: appCatalogueName,
-			},
+			ObjectMeta: metav1.ObjectMeta{Name: appCatalogueName},
 		}
 		if createErr := r.Create(ctx, catalogue); createErr != nil {
 			reconcileErrors.WithLabelValues("appstore").Inc()
@@ -166,7 +117,6 @@ func (r *AppStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// Patch status.
 	patch := client.MergeFrom(catalogue.DeepCopy())
 	catalogue.Status.Apps = entries
 	catalogue.Status.TotalApps = len(entries)
@@ -181,20 +131,80 @@ func (r *AppStoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-// buildInstalledCounts returns a map from AppProfile name → number of Tenants
-// that currently list it in their spec.apps.
-func buildInstalledCounts(tenants []gentianov1alpha1.Tenant) map[string]int {
+func (r *AppStoreReconciler) ensureProfileCatalogueLabels(ctx context.Context, p *gentianov1alpha1.AppProfile) error {
+	want := gentianov1alpha1.ProfileCatalogueLabels(p)
+	if labelsMatch(p.Labels, want) {
+		return nil
+	}
+	patched := p.DeepCopy()
+	if patched.Labels == nil {
+		patched.Labels = make(map[string]string)
+	}
+	for k, v := range want {
+		patched.Labels[k] = v
+	}
+	return r.Patch(ctx, patched, client.MergeFrom(p))
+}
+
+func labelsMatch(have, want map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func buildProfileEntries(profiles []gentianov1alpha1.AppProfile, installedCounts map[string]int) []gentianov1alpha1.CatalogueEntry {
+	entries := make([]gentianov1alpha1.CatalogueEntry, 0, len(profiles))
+	for i := range profiles {
+		p := &profiles[i]
+		id := gentianov1alpha1.ProfileIdentityFor(p)
+		entries = append(entries, gentianov1alpha1.CatalogueEntry{
+			Name:               p.Name,
+			Family:             id.Family,
+			CatalogueVersion:   id.CatalogueVersion,
+			Edition:            id.Edition,
+			TrustTier:          gentianov1alpha1.EffectiveTrustTier(p.Spec.TrustTier),
+			License:            p.Spec.License,
+			DisplayName:        p.Spec.DisplayName,
+			Description:        p.Spec.Description,
+			ChartVersion:       p.Spec.Chart.Version,
+			DeploymentMethod:   p.Spec.DeploymentMethod,
+			KernelRequirements: kernelRequirementLabels(p.Spec.KernelRequirements),
+			InstalledCount:     installedCounts[p.Name],
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Family != entries[j].Family {
+			return entries[i].Family < entries[j].Family
+		}
+		if entries[i].CatalogueVersion != entries[j].CatalogueVersion {
+			return entries[i].CatalogueVersion < entries[j].CatalogueVersion
+		}
+		return entries[i].Name < entries[j].Name
+	})
+	return entries
+}
+
+func buildInstalledCounts(tenants []gentianov1alpha1.Tenant, profiles []gentianov1alpha1.AppProfile) map[string]int {
 	counts := make(map[string]int)
 	for i := range tenants {
 		for _, app := range tenants[i].Spec.Apps {
-			counts[app.Profile]++
+			name := app.Profile
+			if name == "" && app.ProfileRef != nil {
+				if resolved, ok := gentianov1alpha1.ResolveProfileReference(profiles, *app.ProfileRef); ok {
+					name = resolved
+				}
+			}
+			if name != "" {
+				counts[name]++
+			}
 		}
 	}
 	return counts
 }
 
-// kernelRequirementLabels converts the structured KernelRequirements into a
-// compact sorted list of human-readable labels (e.g. ["ldap", "oidc", "postgresql", "s3"]).
 func kernelRequirementLabels(kr *gentianov1alpha1.KernelRequirements) []string {
 	if kr == nil {
 		return nil

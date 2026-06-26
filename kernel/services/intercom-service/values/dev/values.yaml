@@ -14,7 +14,20 @@ provisioning:
           keyMapping:
             password: adminPassword
 
+# ACME staging: id.<kernel> uses LE staging certs; Node OIDC discovery needs the
+# gentian-staging-ca-tls bundle (see docs/design/security.md §9.1).
+extraVolumes:
+  - name: gentian-staging-ca
+    secret:
+      secretName: gentian-staging-ca-tls
+      defaultMode: 0444
+extraVolumeMounts:
+  - name: gentian-staging-ca
+    mountPath: /opt/staging-ca
+    readOnly: true
+
 ics:
+  logLevel: DEBUG
   session:
     existingSecret:
       name: intercom-credentials
@@ -38,7 +51,9 @@ ics:
         keyMapping:
           sharedSecret: portal-shared-secret
   redis:
-    host: redis-dev-headless.gentian-infra-dev.svc.cluster.local
+    # Use the master Service (stable ClusterIP DNS), not headless — intercom fails
+    # silently when Redis DNS is not yet resolvable at pod start (Element Nordeck loop).
+    host: redis-dev-master.gentian-infra-dev.svc.cluster.local
     auth:
       existingSecret:
         name: intercom-credentials

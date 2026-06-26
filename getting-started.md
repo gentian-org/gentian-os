@@ -1,7 +1,7 @@
 # Getting Started — Gentian OS
 
 This guide covers the prerequisites and steps to bootstrap a Gentian OS kernel
-cluster using **`install.sh`** (Phase 1 + Phase 2). After completing this guide
+cluster using **`install.sh`**. After completing this guide
 you will have Crossplane, cert-manager, External Secrets Operator, ArgoCD, and
 OpenBao running, with all kernel structural resources provisioned by the Cluster XR,
 and Nubus deployed via the `provider-helm` Release CR.
@@ -19,6 +19,7 @@ and Nubus deployed via the `provider-helm` Release CR.
 | `jq`         | 1.6+            | `sudo apt install jq` / `brew install jq` |
 | `openssl`    | 1.1+            | usually pre-installed |
 | `curl`       | any             | usually pre-installed |
+| `gh`         | 2.0+ (optional) | <https://cli.github.com/> — uploads `CI_BOT_PAT` to GitHub Actions during install |
 | `bao`        | 2.0+            | <https://github.com/openbao/openbao/releases> |
 | `crossplane` | 2.0+            | `make install-tools` (in this repo) |
 | `kubeconform` | 0.6+           | `make install-tools` (in this repo) |
@@ -31,14 +32,9 @@ You need a running, reachable cluster. Both `install.sh` and
 
 **Requirements:**
 - Kubernetes 1.26+
-- Default StorageClass available (tested with `nfs-csi` and `microk8s-hostpath`)
-- Ingress controller installed (tested with `ingress-nginx`)
+- Default StorageClass available (configure per cluster in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`)
+- Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 3c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/FAQ.md](docs/FAQ.md))
 - DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
-
-Tested cluster distributions:
-- **microk8s** (local dev, with `dns`, `hostpath-storage`, `ingress`, and
-  optionally `crossplane` addon)
-- Any standard kubeconfig-accessible cluster (k3s, RKE2, EKS, GKE, AKS)
 
 > `install.sh` provisions cert-manager, CloudNativePG, and Stakater Reloader
 > automatically. Pass `--no-cluster-infra` (or `INSTALL_CLUSTER_INFRA=0`) to
@@ -49,7 +45,7 @@ Tested cluster distributions:
 `install.sh` will **prompt** for any missing value. You can also pre-export
 them or store them in the config files below.
 
-**Required:**
+**Required in `install.secrets.env`:**
 
 | Variable | Description |
 |---|---|
@@ -58,18 +54,36 @@ them or store them in the config files below.
 | `OD_PRIVATE_REGISTRY_PASSWORD` | `registry.opencode.de` token/password |
 | `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
 | `OD_SMTP_RELAY_PASSWORD` | SMTP relay password (e.g. Gmail App Password) |
-| `KERNEL_DOMAIN` | Platform-wide DNS suffix (e.g. `platform.example.com`) |
-| `TENANCY_MODE` | `multi` (default) or `single` — see [multi-tenancy.md](docs/design/multi-tenancy.md) §3 |
-| `EXTERNAL_SMTP_HOST` | Required when `MAIL_SERVICE_MODE=external` (default) |
+
+**Optional in `install.secrets.env`:**
+
+| Variable | Description |
+|---|---|
+| `CF_API_TOKEN` | Cloudflare API token for kernel wildcard DNS-01 (optional) |
+| `CF_ZONE_NAME` | Override zone name for CF token verification (optional) |
+| `GENTIAN_DEPLOYMENTS_GIT_TOKEN` | GitHub PAT with `contents:write` on `gentian-deployments` — required for **in-cluster** App Store install/uninstall (operator git push) |
+| `GENTIAN_DEPLOYMENTS_GIT_USERNAME` | Git credential username (default: `x-access-token` for GitHub PATs) |
+| `CI_BOT_PAT` | Fine-grained GitHub PAT with **Contents read/write** on `gentian-org/gentian-os` — uploaded to **both** `gentian-os` and `gentian-ui` Actions secrets by `install.sh` (gentian-ui pass-through for `workflow_call` only) |
+| `ARGOCD_SERVER` | ArgoCD URL for pin-workflow immediate sync (optional; defaults to `https://argocd.<KERNEL_DOMAIN>`) |
+| `ARGOCD_TOKEN` | ArgoCD API token for pin-workflow sync (optional; webhook/polling still work without it) |
+
+**Required in `install.env`:**
+
+| Variable | Description |
+|---|---|
+| `GENTIAN_DEPLOYMENTS_CLUSTER` | Cluster selector in `gentian-deployments` (`clusters/<cluster>/...`) |
+| `GENTIAN_DEPLOYMENTS_STAGE` | Stage selector (`dev`, `staging`, `prod`) |
 
 **Optional:**
 
 | Variable | Default | Description |
 |---|---|---|
 | `LETSENCRYPT_EMAIL` | `admin@KERNEL_DOMAIN` | Let's Encrypt ACME contact |
-| `CF_API_TOKEN` | — | Cloudflare token for DNS-01 wildcard certificates |
-| `NETWORK_MODE` | `tunnel` | `tunnel` or `static-ip` |
-| `MAIL_SERVICE_MODE` | `external` | `external` or `internal` |
+| `INSTALL_CLUSTER_INFRA` | `1` | Set `0` only when cert-manager/CNPG/Reloader are already managed |
+| `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
+| `ROUTING_MODE` | `gateway` | Gateway API + Envoy Gateway edge routing (required) |
+
+Configure `routingMode` in `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml` for the operator (preferred for cluster behavior).
 
 ### Config files
 
@@ -92,18 +106,51 @@ Or disable file loading entirely:
 ./install.sh --no-config-files
 ```
 
+### Files to configure before install.sh
+
+Configure these files in order before the first install run:
+
+1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`: cluster runtime behavior and endpoints (`KERNEL_DOMAIN`, `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`, `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`: `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`, `EXTERNAL_SMTP_STARTTLS`). **This overrides `.install-state.env`** when both are present.
+
+1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `routingMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, `appLifecycle.deployments`, namespace defaults and policy defaults).
+
+  App lifecycle (GitOps install/uninstall from App Store or operator HTTP API):
+  - `appLifecycle.deployments.enabled: true`
+  - `appLifecycle.deployments.cluster` / `stage` — must match this cluster's deployments layout
+  - `appLifecycle.deployments.gitCredentialsSecret: gentian-deployments-git-credentials` — created by `install.sh` when `GENTIAN_DEPLOYMENTS_GIT_TOKEN` is set
+
+1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you deploy a definition).
+
+1. `install.secrets.env`: secrets only (master password, registry creds, SMTP creds, optional Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN` for in-cluster app installs, optional `CI_BOT_PAT` for GitHub Actions image pin on `gentian-os`).
+
+  Cloudflare secrets (installer):
+  - `CF_API_TOKEN`: optional secret for kernel wildcard DNS-01 issuance
+  - `CF_ZONE_NAME`: optional override for installer token verification (compound public suffixes)
+
+  Cloudflare specifics in `values-<stage>.yaml`:
+  - `cloudflare.zoneID`: required for operator DNS mutations when Cloudflare adapter is enabled.
+  - `cloudflare.tunnelCNAME`: required for proxied wildcard CNAME behavior.
+  - `cloudflare.apiTokenSecretRef.*`: secret reference metadata only (safe for Git).
+
+1. `install.env`: installer-local behavior and repo selection (`GENTIAN_DEPLOYMENTS_CLUSTER`, `GENTIAN_DEPLOYMENTS_STAGE`, repo URLs/branches).
+
 ### Repository variables
 
 `install.sh` prompts for the source repositories the cluster pulls from.
 Defaults point at the upstream `gentian-org` org; press `<Enter>` to accept
-or override per environment:
+or override per cluster/stage:
 
 | Variable | Default | Used by |
 |---|---|---|
 | `GENTIAN_APPS_REPO` | `https://github.com/gentian-org/gentian-apps` | ArgoCD `gentian-appprofiles` Application |
 | `GENTIAN_APPS_BRANCH` | `main` | same |
-| `GENTIAN_DEPLOYMENTS_REPO` | `https://github.com/gentian-org/gentian-deployments` | `kubectl gentian apps install/uninstall` |
+| `GENTIAN_DEPLOYMENTS_REPO` | `https://github.com/gentian-org/gentian-deployments` | GitOps source for tenants and app installs |
 | `GENTIAN_DEPLOYMENTS_BRANCH` | `main` | same |
+| `GENTIAN_DEPLOYMENTS_CLUSTER` | `default-cluster` | Selects `clusters/<cluster>/...` in deployments repo |
+| `GENTIAN_DEPLOYMENTS_STAGE` | `dev` | Selects tenant directories under `clusters/<cluster>/tenants/*/<stage>` |
+| `GENTIAN_DEPLOYMENTS_GIT_TOKEN` | unset | GitHub PAT for operator in-cluster git push (see `install.secrets.env`) |
+| `GITHUB_ACTIONS_OS_REPO` | `gentian-org/gentian-os` | Target repo for ArgoCD pin secrets (`install.env`) |
+| `GITHUB_ACTIONS_UI_REPO` | `gentian-org/gentian-ui` | Receives `CI_BOT_PAT` pass-through for `workflow_call` (`install.env`) |
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
 
 The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
@@ -111,10 +158,12 @@ The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
 
 ### Cluster claim
 
-For templated installs, set `KERNEL_DOMAIN` (and optional `LDAP_BASE_DN`)
-before `install.sh` runs — it renders `crossplane/claims/dev-cluster.yaml`
-from `dev-cluster.yaml.tmpl`. The checked-in `dev-cluster.yaml` example
-uses `ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
+For templated installs, define `KERNEL_DOMAIN` in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
+(and optionally `LDAP_BASE_DN`) before `install.sh` runs. The installer renders
+`crossplane/claims/dev-cluster.yaml` from `dev-cluster.yaml.tmpl` using those
+resolved values. The checked-in `dev-cluster.yaml` example uses
+`ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
 
 ---
 
@@ -140,12 +189,13 @@ uses `ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
 | 12 | Cluster XR | Apply Cluster claim → kernel structural resources reconciled by `provider-vault` and `provider-kubernetes`: KV mount + policies + K8s auth backend/roles, KV seed paths (database, cache, storage, identity, mail), ArgoCD AppProject, ESO ClusterSecretStore, cert-manager ClusterIssuer |
 | 12b | Secrets | Seed remaining secrets: registry, DNS/Cloudflare, internal |
 | 12c _(optional)_ | TLS | Install kernel wildcard Certificate for platform UIs (requires `CF_API_TOKEN`); tenant apps use per-tenant DNS-01 wildcards via the operator |
-| **13** | **Crossplane** | **Wait for `provider-helm` Healthy** |
-| **14** | **Nubus** | **Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR** |
-| **14b** | **LDAP scope** | **`update.sh --fix-kernel-ldap-scope`** (kernel realm SUBTREE + mailPrimaryAddress for portal login) |
-| **15** | **Operator** | **Install gentian-os controller** (CRDs + reconcilers in `gentian-system`) |
-| **15b** | **Mail** | **Postfix + Dovecot** when `MAIL_SERVICE_MODE=kernel` |
-| **15c** | **App catalogue** | **ArgoCD Application `gentian-appprofiles`** syncs `gentian-apps/profiles/` |
+| 13 | Crossplane | Wait for `provider-helm` Healthy |
+| 14 | Nubus | Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR |
+| 14b | LDAP scope | `update.sh --fix-kernel-ldap-scope` (kernel realm SUBTREE + mailPrimaryAddress for portal login) |
+| 15 | Operator | Install gentian-os controller (CRDs + reconcilers in `gentian-system`); optional deployments git credentials Secret for in-cluster app lifecycle |
+| 15b | Mail | Postfix + Dovecot when `MAIL_SERVICE_MODE=kernel` |
+| 15c | App catalogue | ArgoCD Application `gentian-appprofiles` syncs `gentian-apps/profiles/` |
+| 16d | GitHub Actions | Upload `CI_BOT_PAT` to `gentian-os` + `gentian-ui`, optional ArgoCD pin secrets on `gentian-os` |
 
 ---
 
@@ -155,7 +205,7 @@ uses `ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
 # Verify your environment first (runs check_prereqs, exits with list of issues)
 ./install.sh --validate
 
-# Full bootstrap (Phase 1 + Phase 2)
+# Full bootstrap
 ./install.sh
 ```
 
@@ -208,6 +258,36 @@ kubectl get applications -n argocd
 kubectl get pods -A
 ```
 
+### GitHub Actions CI (portal / base-router image pin)
+
+`gentian-ui` builds container images on push; reusable workflows in `gentian-os`
+commit the new image tag to `develop` so ArgoCD rolls out the portal.
+
+**Credentials:** one fine-grained `CI_BOT_PAT` (Contents write on
+`gentian-org/gentian-os`). Cross-repo `workflow_call` requires the same secret
+on **gentian-ui** so the caller can pass it through; gentian-ui does not use it
+for its own git operations.
+
+**During install:** add `CI_BOT_PAT` to `install.secrets.env`. When `install.sh`
+finishes and `gh` is logged in, it runs `scripts/configure-github-actions-secrets.sh`
+to upload `CI_BOT_PAT` to `GITHUB_ACTIONS_OS_REPO` and `GITHUB_ACTIONS_UI_REPO`
+(`install.env`), plus optional `ARGOCD_SERVER` / `ARGOCD_TOKEN` on `gentian-os`.
+
+**After install (manual):**
+
+```bash
+# From gentian-os checkout with install.secrets.env sourced:
+set -a && source install.secrets.env && set +a
+export KERNEL_DOMAIN=your.kernel.domain   # if ARGOCD_SERVER should be derived
+./scripts/configure-github-actions-secrets.sh
+```
+
+**Org policy:** enable *Allow gentian-org actions and reusable workflows* under
+organisation Actions settings so `gentian-ui` can call pin workflows in
+`gentian-os`.
+
+Full pipeline details: [gentian-ui/docs/ci-setup.md](../gentian-ui/docs/ci-setup.md).
+
 ### Verify the App Store
 
 ```bash
@@ -225,18 +305,42 @@ kubectl gentian apps list
 
 ## Provision your first tenant
 
+Install completes with **no tenants** deployed. Tenant definitions (such as
+`demo`) live under
+[`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
+at `clusters/<cluster>/definitions/<tenant>/<stage>/`.
+
 **Catalogue** (cluster-wide): `gentian-apps/profiles/` → ArgoCD app
 **`gentian-appprofiles`** (install step 15c). **Tenant apps** (per org):
-edit `spec.apps` in
-[`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
-(e.g. `dev/tenants/instances/demo/tenant.yaml`), commit, and apply — the
-operator creates `App` claims; Crossplane installs helm Releases. There is
-no ArgoCD Application per tenant app.
+add profiles to `spec.apps` in `gentian-deployments` (GitOps). The operator
+creates `App` claims after Argo CD syncs the tenant manifest; Crossplane
+installs helm Releases.
+
+Install and uninstall always go through **GitOps** — edit
+`gentian-deployments`, commit, push, Argo CD sync, wait. The App Store Install
+button and `kubectl gentian apps install` run the same flow via
+`internal/applifecycle` (CLI uses your local git checkout;
+in-cluster uses the operator HTTP API on `:8082`).
 
 ```bash
-# Example: demo tenant with Element + Jitsi
-kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/dev/tenants/instances/demo/tenant.yaml"
-# Or: kubectl gentian apps install element --tenant demo  (updates Git + applies)
+# From your workstation (requires GENTIAN_DEPLOYMENTS_PATH checkout):
+kubectl gentian apps install element --tenant demo
+
+# Or gtnctl directly:
+gtnctl apps install element --tenant demo
+```
+
+For **in-cluster** App Store installs, set `GENTIAN_DEPLOYMENTS_GIT_TOKEN` in
+`install.secrets.env` before bootstrap (or run
+`scripts/create-deployments-git-credentials.sh` on an existing cluster) and
+ensure `appLifecycle.deployments` is enabled in cluster operator values.
+
+```bash
+# Deploy the demo tenant definition (Element; Jitsi is an Element sidecar)
+kubectl gentian tenants deploy demo
+
+# List definitions and whether each is deployed/live
+kubectl gentian tenants list
 ```
 
 Watch provisioning progress:
@@ -262,12 +366,6 @@ Provisioning is complete when:
 ```bash
 kubectl get tenant demo -o jsonpath='{.status.phase}'
 # → Ready
-```
-
-List all tenants:
-
-```bash
-kubectl get tenants
 ```
 
 Decommission a single tenant:
@@ -302,12 +400,19 @@ The transit key is stored in your password manager (`gentian/openbao-transit`).
 
 ## Uninstalling
 
+By default, `./uninstall.sh` **undeploys all tenants first** (GitOps manifests
+removed from `gentian-deployments` and live `Tenant` CRs deleted from the
+cluster) so ArgoCD does not recreate them on the next install.
+
 ```bash
-# Safe mode — preserves PVC/PV data and OpenBao KV paths.
+# Safe mode — undeploy tenants, preserve PVC/PV data and OpenBao KV paths.
 ./uninstall.sh
 
-# Force mode — also deletes data namespaces and bound PVs (dev/test only).
+# Force mode — tenant undeploy uses --purge, then deletes data namespaces and bound PVs.
 ./uninstall.sh -f
+
+# Keep tenant workloads and Git manifests; only tear down Gentian OS kernel/infra.
+./uninstall.sh --keep-tenants
 
 # Also remove cert-manager, Reloader, CNPG (only if Gentian-managed).
 ./uninstall.sh -f --cluster-infra
@@ -337,7 +442,7 @@ make test-unit
 # Install Crossplane core and verify CRDs
 make e2e-p0
 
-# Full Phase 1 kernel provisioning E2E
+# Full kernel provisioning E2E
 make e2e-p1
 
 # Tear down
@@ -491,7 +596,9 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 
 ## Further reading
 
+- [Deployment environments](docs/deployment.md) — dev / staging / prod mapping, promotion flows, GitOps layout
 - [Architecture](docs/architecture.md) — full system design
+- [FAQ](docs/FAQ.md) — quick operational answers (edge routing, storage class)
 - [Design docs](docs/design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
 - [docs/commands.md](docs/commands.md) — reference for day-2 kubectl commands
 - [Roadmap](docs/roadmap.md) — planned features (rotation, SOC 2 hardening)

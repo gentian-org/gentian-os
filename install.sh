@@ -14,6 +14,9 @@
 #       - ArgoCD AppProject (gentianos-tenants)
 #       - ESO ClusterSecretStore (openbao)
 #       - cert-manager ClusterIssuer (letsencrypt-http01)
+#   ✓ XTenant XRD + tenant-default Composition:
+#       - Operator seeds OpenBao credentials and writes tenant-*-provisioning-jobs
+#       - Crossplane applies identity, data-plane, and edge resources declaratively
 #   ✓ Remaining secrets seeded (registry, DNS/Cloudflare, internal)
 #
 # Usage:
@@ -245,9 +248,6 @@ install_crossplane_providers() {
     kubectl wait xrd xtenants.gentianos.io \
         --for=condition=Established --timeout=2m
 
-    info "Applying Composition (tenant-default)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
-
     success "Crossplane providers, XRDs, and Compositions are ready."
 }
 
@@ -343,8 +343,11 @@ POLICY
     # use this policy to provision per-tenant/app credentials in OpenBao on
     # first app install (ldap, s3, database).
     bao policy write app-init - <<POLICY
-path "${_kv_mount}/data/gentian-os/kernel/master-password"           { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/internal/master-password"   { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/kernel/identity/nubus"            { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/database/cnpg"             { capabilities = ["read"] }
+path "${_kv_mount}/data/gentian-os/kernel/storage/minio"             { capabilities = ["read"] }
+path "${_kv_mount}/metadata/gentian-os/kernel/database/cnpg"         { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/ldap"            { capabilities = ["create", "read", "update"] }
 path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/ldap"        { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/s3"              { capabilities = ["create", "read", "update"] }
@@ -622,7 +625,6 @@ apply_cluster_xr() {
     info "  ${mr_count} managed resource(s) reconciled."
 
     upsert_gentian_cluster_config
-    upsert_gentian_jitsi_oidc_overlays_configmap
 }
 
 # =============================================================================
@@ -683,33 +685,14 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Phase 2 — Step 15c: Bootstrap the gentian-appprofiles ArgoCD Application
-# This ArgoCD Application syncs AppProfile CRs from the gentian-apps repository
-# into the cluster. AppProfile CRs must exist before any App/XApp composite
-# can be created by tenants (the app-default composition fetches the AppProfile
-# via function-extra-resources).
-#
-# GENTIAN_APPS_REPO and GENTIAN_APPS_BRANCH are set by install-lib.sh
-# (defaulting to https://github.com/gentian-org/gentian-apps @ main).
+# Step 15c: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
 # =============================================================================
 bootstrap_appprofiles() {
-    banner "Step 15c — Bootstrap gentian-appprofiles ArgoCD Application"
-
-    local repo="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
-    local branch="${GENTIAN_APPS_BRANCH:-main}"
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
-
-    info "Rendering appprofiles-application.yaml (repo=${repo}, branch=${branch})..."
-    sed -e "s|%REPO_URL%|${repo}|g" \
-        -e "s|%BRANCH%|${branch}|g" \
-        "${tmpl}" | kubectl apply -f -
-
-    success "gentian-appprofiles Application applied."
-    info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
+    install_catalogue_sync
 }
 
 # =============================================================================
-# Phase 2 — Step 13: Install provider-helm
+# Step 13: Install provider-helm
 # provider-helm deploys Helm charts into the local cluster. It replaces the
 # legacy Pattern B approach for secrets-hostile charts.
 # =============================================================================
@@ -733,7 +716,7 @@ install_provider_helm() {
 }
 
 # =============================================================================
-# Phase 2 — Step 14: Deploy Nubus via provider-helm (Pattern B migration)
+# Step 14: Deploy Nubus via provider-helm (Pattern B migration)
 #
 # Creates:
 #   - gentian-dev + gentian-infra-dev namespaces
@@ -850,6 +833,13 @@ deploy_nubus() {
         -n "${ns}" \
         --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/dev.yaml" \
         --dry-run=client -o yaml | kubectl apply -f -
+    if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
+        info "Creating nubus gateway values ConfigMap (ROUTING_MODE=gateway)..."
+        kubectl create configmap nubus-gateway-values \
+            -n "${ns}" \
+            --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/gateway.yaml" \
+            --dry-run=client -o yaml | kubectl apply -f -
+    fi
 
     # ── NATS subject patch ConfigMap ──────────────────────────────────────────
     # Fixes LDAP_SUBJECT mismatch between udm-listener and udm-transformer
@@ -1021,7 +1011,7 @@ deploy_nubus() {
         if (( SECONDS > deadline )); then
             warn "  register-consumers job did not appear within 5m — continuing async."
             warn "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=register-consumers"
-            success "Phase 2 — Nubus Release submitted via provider-helm."
+            success "Nubus Release submitted via provider-helm."
             return 0
         fi
         [[ -n "$job_name" ]] || sleep 5
@@ -1034,7 +1024,7 @@ deploy_nubus() {
         warn "  register-consumers job did not complete within 2m."
         warn "  Check: kubectl logs -n ${ns} -l job-name=${job_name} --tail=20"
     fi
-    success "Phase 2 — Nubus deployed via provider-helm."
+    success "Nubus deployed via provider-helm."
 
     # ── Wait for stack-data-ums job; auto-recover if it fails ────────────────
     # The stack-data-ums job:
@@ -1054,7 +1044,7 @@ deploy_nubus() {
         until [[ -n "$sdu_job" ]]; do
             sdu_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
                 -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+                | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
             if (( SECONDS > sdu_deadline )); then
                 warn "  stack-data-ums job did not appear in 5m — skipping wait."
                 return 0
@@ -1062,10 +1052,15 @@ deploy_nubus() {
             [[ -n "$sdu_job" ]] || sleep 5
         done
 
+        # Patch TTL early so failed retry pods are garbage-collected even if
+        # install is interrupted before finalize_stack_data_ums_job runs.
+        finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
+
         info "Waiting for stack-data-ums job '${sdu_job}' to complete (up to 10m)..."
         if kubectl wait "job/${sdu_job}" -n "${sdu_ns}" \
                 --for=condition=Complete --timeout=600s 2>/dev/null; then
             success "  stack-data-ums job completed successfully."
+            finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
             return 0
         fi
 
@@ -1097,9 +1092,7 @@ deploy_nubus() {
             info "  Reapplying stack-data-ums job..."
             kubectl delete job "${sdu_job}" -n "${sdu_ns}" \
                 --ignore-not-found=true 2>/dev/null || true
-            helm get manifest "${release_name}" -n "${sdu_ns}" 2>/dev/null \
-                | awk "/# Source:.*nubusStackDataUms.*job-load-data-ums/{found=1} found{print} found && /^---/{found=0; exit}" \
-                | kubectl apply -n "${sdu_ns}" -f - 2>/dev/null || true
+            apply_stack_data_ums_job_from_helm "${release_name}" "${sdu_ns}" || true
 
             info "  Waiting for reapplied stack-data-ums job to complete (up to 10m)..."
             sdu_deadline=$((SECONDS + 600))
@@ -1107,7 +1100,7 @@ deploy_nubus() {
             until [[ -n "$new_job" ]]; do
                 new_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
                     -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                    | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+                    | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
                 if (( SECONDS > sdu_deadline )); then
                     warn "  Reapplied stack-data-ums job did not appear — check manually."
                     return 1
@@ -1117,6 +1110,7 @@ deploy_nubus() {
             if kubectl wait "job/${new_job}" -n "${sdu_ns}" \
                     --for=condition=Complete --timeout=600s 2>/dev/null; then
                 success "  stack-data-ums job succeeded after UDM restart."
+                finalize_stack_data_ums_job "${sdu_ns}" "${new_job}"
             else
                 warn "  stack-data-ums still failing after UDM restart."
                 warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${new_job} --tail=40"
@@ -1135,7 +1129,7 @@ deploy_nubus() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_pw
+    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_user portal_pw
 
     xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
@@ -1152,13 +1146,12 @@ print_summary_cp() {
     argocd_url=$(resolve_argocd_url 2>/dev/null)
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    portal_pw=$(kubectl get secret "nubus-${ENV:-dev}-stack-data-ums-administrator" \
-        -n "gentian-${ENV:-dev}" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    portal_user=$(resolve_portal_admin_email)
+    portal_pw=$(resolve_portal_admin_password)
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     Gentian OS — Phase 1 + 2 Bootstrap Complete          ║${NC}"
+    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete                       ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
@@ -1177,18 +1170,22 @@ print_summary_cp() {
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
     echo ""
     echo -e "${GREEN}  Portal / UMC admin:${NC}"
-    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}${NC}"
-    echo -e "${GREEN}    User : Administrator${NC}"
+    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}/login/${NC}"
+    echo -e "${GREEN}    User : ${portal_user:-administrator@${KERNEL_DOMAIN}}${NC}"
     echo -e "${GREEN}    Pass : ${portal_pw:-not available}${NC}"
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
+    echo ""
+    echo -e "${GREEN}  Tenants: none — provision when ready:${NC}"
+    echo -e "${GREEN}    kubectl gentian tenants list${NC}"
+    echo -e "${GREEN}    kubectl gentian tenants deploy demo${NC}"
     echo ""
     echo -e "${GREEN}  Gentian OS installation complete.${NC}"
     echo ""
 }
 
 # =============================================================================
-# main — Crossplane-based bootstrap (Phase 1)
+# main — Crossplane-based bootstrap
 # =============================================================================
 main_cp() {
     echo ""
@@ -1221,8 +1218,11 @@ main_cp() {
     export INSTALL_START_EPOCH
     save_install_state
 
+    load_deployments_cluster_settings
+
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
+    prompt_app_repos
     prompt_credentials
     prompt_kernel_domain
     prompt_network_mode
@@ -1239,6 +1239,7 @@ main_cp() {
     prewarm_cluster             # Step 2
     install_cert_manager        # Step 3
     install_kernel_cert_resources  # Step 3b — ClusterIssuers
+    install_envoy_gateway       # Step 3c — Envoy Gateway (ROUTING_MODE=gateway)
     install_eso                 # Step 4
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────
@@ -1260,18 +1261,24 @@ main_cp() {
     install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
     bootstrap_root_appset       # Step 12d — root app-of-apps (minio, redis, mariadb, IAM…)
 
-    # ── Phase 2: Pattern B chart deployments ─────────────────────────────────
+    # ── Pattern B chart deployments ─────────────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
     "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)
     deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
+    apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays
+    wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
     bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
 
     # Step 16 — wait for async ArgoCD hooks / apps, then verify cluster health.
     wait_for_setup_iam_job || true
     verify_argocd_apps || true
-    reconcile_nextcloud_office || true  # Step 16b — richdocuments doc_format + WOPI (Collabora is wave 12)
+    verify_keycloak_iframe_policy || true
+    verify_intercom_ics || true
+    reconcile_nextcloud_office || true  # Step 16c — richdocuments doc_format + WOPI (Collabora is wave 12)
+
+    configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
 
     # Clear the persisted run-start epoch so the next install (after a future
     # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.

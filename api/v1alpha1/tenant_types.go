@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // TenantSpec defines the desired state of a Tenant.
@@ -149,14 +150,27 @@ type TenantQuotas struct {
 	// Memory is the total memory request limit across all tenant pods.
 	// +optional
 	Memory *resource.Quantity `json:"memory,omitempty"`
+
+	// MaxPods caps the number of pods in the tenant namespace (init Jobs + app workloads).
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxPods int32 `json:"maxPods,omitempty"`
 }
 
 // TenantApp specifies a desired application installation for a tenant.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.profile) || has(self.profileRef)",message="either profile or profileRef is required"
 type TenantApp struct {
 	// Profile is the name of the AppProfile CR to install.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Profile string `json:"profile"`
+	// When profileRef is set, the operator resolves it to a concrete profile name
+	// and may populate this field for observability.
+	// +optional
+	Profile string `json:"profile,omitempty"`
+
+	// ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+	// offering tier). Takes precedence over profile when resolving installs.
+	// +optional
+	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
 
 	// Config provides per-tenant overrides for this app installation.
 	// Values here are merged over the AppProfile's extraValues.
@@ -171,6 +185,12 @@ type TenantAppConfig struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// ExtraValues deep-merges Helm values over the AppProfile defaults.
+	// Must not contain secrets — use valueMapping for credentials.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 }
 
 // TenantStatus holds the observed state of a Tenant.

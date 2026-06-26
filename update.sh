@@ -58,7 +58,7 @@ unset GENTIAN_INSTALL_LIB_ONLY
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 CROSSPLANE_NAMESPACE=crossplane-system
-KERNEL_NAMESPACE=gentian-dev
+# KERNEL_NAMESPACE is set in _init from SERVICES_NAMESPACE / ENV after loading install.env.
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 DRY_RUN=0
@@ -113,9 +113,9 @@ Options:
                            login: SUBTREE on the LDAP base, mailPrimaryAddress
                            as username. Idempotent (see ldap-federation-patch.yaml).
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
-                           repository. Run after committing composition changes
-                           so the cluster picks them up without a full reinstall.
-  --appprofiles            Ensure the gentian-appprofiles ArgoCD Application
+                           repository (tenant-default manifest bridge, app-*).
+                           Run after Crossplane XRD/Composition changes; included in --all.
+  --appprofiles            Ensure the gentian-catalogue ApplicationSet
                            exists so AppProfile CRs are kept in sync from the
                            gentian-apps repository.
   --argocd                 Re-apply gentian-os / appprofiles ArgoCD Application
@@ -183,6 +183,10 @@ _init() {
     [[ -f "$cfg" ]] || { echo "ERROR: $cfg not found." >&2; exit 1; }
     load_env_file "$cfg"  "install.env"
     [[ -f "$sec" ]] && load_env_file "$sec" "install.secrets.env"
+    load_deployments_cluster_settings
+
+    KERNEL_NAMESPACE="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    export KERNEL_NAMESPACE
 
     : "${MASTER_PASSWORD:?MASTER_PASSWORD must be set (via install.secrets.env or env var)}"
 
@@ -725,7 +729,12 @@ _fix_kernel_ldap_scope() {
     local release_name="nubus-dev"
     local ns="${KERNEL_NAMESPACE}"
     local kc_realm="${KERNEL_REALM:-kernel}"
-    local ldap_base="${LDAP_BASE:-dc=swp-ldap,dc=internal}"
+    local ldap_base
+    ldap_base="$(resolve_ldap_base_dn)"
+    if [[ -z "${ldap_base}" ]]; then
+        warn "LDAP base DN unset — skipping kernel LDAP scope fix (set LDAP_BASE_DN in cluster-settings.env)"
+        return 0
+    fi
     local target_users_dn="${ldap_base}"
 
     info "Patching kernel realm LDAP federation for portal login (usersDn=${target_users_dn}, SUBTREE, mailPrimaryAddress)..."
@@ -949,10 +958,10 @@ op_staging_ca_secret() {
         chmod +x "$script"
     fi
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would run: $script ${SERVICES_NAMESPACE:-gentian-dev}"
+        info "[dry-run] would run: $script ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
         return 0
     fi
-    "$script" "${SERVICES_NAMESPACE:-gentian-dev}"
+    "$script" "${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
 }
 
 # =============================================================================
@@ -979,54 +988,27 @@ op_crossplane_update() {
     apply_crossplane_platform_compositions_update
 
     upsert_gentian_cluster_config
-    upsert_gentian_jitsi_oidc_overlays_configmap
 
     success "Crossplane XRDs and Compositions updated."
 }
 
 # =============================================================================
-# op_appprofiles_bootstrap — ensure the gentian-appprofiles ArgoCD Application
-#                            exists so AppProfile CRs are kept in sync from the
-#                            gentian-apps repository.
-#
-# AppProfile CRs carry a gentianos.io/profile-name label that the app-default
-# composition uses to look up profiles via function-extra-resources Selector.
-# Without this ArgoCD Application the profiles are not deployed (or are missing
-# the label) and all App/XApp composites fail with "AppProfile not found".
-#
-# This is idempotent: kubectl apply is a no-op if the Application already
-# exists with identical spec.
+# op_appprofiles_bootstrap — ensure the gentian-catalogue ApplicationSet exists so
+# profile bundles (AppProfile + compositions + assets) sync from gentian-apps.
 # =============================================================================
 op_appprofiles_bootstrap() {
-    banner "gentian-appprofiles ArgoCD Application bootstrap"
-
-    local repo="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
-    local branch="${GENTIAN_APPS_BRANCH:-main}"
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
-
-    if [[ ! -f "${tmpl}" ]]; then
-        warn "Template not found: ${tmpl} — skipping appprofiles bootstrap."
-        return 0
-    fi
-
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would apply gentian-appprofiles Application (repo=${repo}, branch=${branch})"
+        info "[dry-run] would apply gentian-catalogue ApplicationSet"
         return 0
     fi
 
-    info "Applying gentian-appprofiles Application (repo=${repo}, branch=${branch})..."
-    sed -e "s|%REPO_URL%|${repo}|g" \
-        -e "s|%BRANCH%|${branch}|g" \
-        "${tmpl}" | kubectl apply -f -
+    install_catalogue_sync
 
-    success "gentian-appprofiles Application applied."
-
-    # Trigger an immediate ArgoCD refresh so AppProfile CRs with the updated
-    # labels are synced without waiting for the automated poll interval (~3 min).
-    kubectl annotate application gentian-appprofiles -n argocd \
+    kubectl annotate applicationset gentian-catalogue -n argocd \
         "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
-    info "  Monitor: kubectl get application gentian-appprofiles -n argocd"
+    info "  Monitor: kubectl get applicationset gentian-catalogue -n argocd"
+    info "  Bundles: kubectl get applications -n argocd | grep '^catalogue-'"
 }
 
 # =============================================================================
@@ -1036,25 +1018,28 @@ op_appprofiles_bootstrap() {
 op_argocd_bootstrap() {
     banner "ArgoCD Application manifest reconciliation"
 
-    local env="${ENV:-dev}"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local gentian_os_branch
     gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
 
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would apply gentian-os + gentian-tenants Applications"
+        info "[dry-run] would apply gentian-os Application + gentian-tenants ApplicationSet"
         info "[dry-run] would hard-refresh all ArgoCD Applications"
         return 0
     fi
 
     if [[ -f "${tmpl}" ]]; then
-        info "Re-applying gentian-os + gentian-tenants Applications (branch=${gentian_os_branch})..."
+        info "Re-applying gentian-os Application + gentian-tenants ApplicationSet (branch=${gentian_os_branch})..."
         sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
             -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}|g" \
             -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH:-main}|g" \
-            -e "s|%ENV%|${env}|g" \
+            -e "s|%CLUSTER%|${cluster}|g" \
+            -e "s|%STAGE%|${stage}|g" \
             "${tmpl}" | kubectl apply -f -
         success "gentian-os Application manifest updated."
+        release_gentian_os_helm_bootstrap "gentian-system"
     else
         warn "Template not found: ${tmpl}"
     fi
@@ -1075,6 +1060,8 @@ op_argocd_bootstrap() {
             "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
     verify_argocd_apps || true
+    apply_intercom_gateway_values || true
+    verify_intercom_ics || true
 }
 
 # =============================================================================
@@ -1101,7 +1088,7 @@ op_setup_iam_recover() {
     local sdu_job=""
     sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
         -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
     if [[ -n "${sdu_job}" ]]; then
         info "Waiting for ${sdu_job} to be Complete..."
         kubectl wait "job/${sdu_job}" -n "${ns}" \
@@ -1177,7 +1164,7 @@ op_nubus_recover() {
     local sdu_job
     sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
         -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
 
     if [[ -n "$sdu_job" ]]; then
         local sdu_complete
@@ -1207,16 +1194,7 @@ op_nubus_recover() {
         return 0
     fi
 
-    helm get all "${release_name}" -n "${ns}" 2>/dev/null \
-        | python3 -c "
-import sys
-for section in sys.stdin.read().split('---'):
-    if 'stack-data-ums' in section and 'kind: \"Job\"' in section:
-        print('---')
-        print(section.strip())
-        break
-" \
-        | kubectl apply -n "${ns}" -f - >/dev/null || {
+    apply_stack_data_ums_job_from_helm "${release_name}" "${ns}" >/dev/null || {
         warn "Failed to apply stack-data-ums job — is the nubus Helm release deployed?"
         warn "  helm list -n ${ns}"
         return 1
@@ -1229,7 +1207,7 @@ for section in sys.stdin.read().split('---'):
     until [[ -n "$new_job" ]]; do
         new_job=$(kubectl get jobs -n "${ns}" --no-headers \
             -o custom-columns=NAME:.metadata.name 2>/dev/null \
-            | grep "^${release_name}-stack-data-ums-" | tail -1 || true)
+            | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
         if (( SECONDS > deadline )); then
             warn "stack-data-ums job did not appear within 2m."
             warn "  Check: kubectl get jobs -n ${ns}"
@@ -1242,6 +1220,7 @@ for section in sys.stdin.read().split('---'):
     if kubectl wait "job/${new_job}" -n "${ns}" \
             --for=condition=Complete --timeout=600s 2>/dev/null; then
         success "stack-data-ums job completed — portal stack should recover within a few minutes."
+        finalize_stack_data_ums_job "${ns}" "${new_job}"
         info "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=portal-consumer"
     else
         warn "stack-data-ums job did not complete within 10m."

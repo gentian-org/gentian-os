@@ -5,6 +5,9 @@ kind: Deployment
 {{- $webhookPort := $webhook.port | default 9443 }}
 {{- $imageDigest := .Values.image.digest | default "" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
+{{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
+{{- $lifecycleDeploymentsEnabled := $lifecycleDeployments.enabled | default false }}
+{{- $lifecycleGitCredsSecret := $lifecycleDeployments.gitCredentialsSecret | default "" }}
 metadata:
   name: {{ include "gentian-os.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -31,6 +34,7 @@ spec:
       serviceAccountName: {{ include "gentian-os.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -62,6 +66,8 @@ spec:
               value: {{ .Values.kernelDomain | quote }}
             - name: TENANCY_MODE
               value: {{ .Values.tenancyMode | default "multi" | quote }}
+            - name: ROUTING_MODE
+              value: {{ .Values.routingMode | default "gateway" | quote }}
             - name: TENANT_DNS01_CLUSTER_ISSUER
               value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM
@@ -81,22 +87,78 @@ spec:
                   name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
                   key: {{ .Values.cloudflare.apiTokenSecretRef.key | default "api-token" | quote }}
             {{- end }}
+            {{- if .Values.cloudflare.tunnelAPITokenSecretRef.name }}
+            - name: CLOUDFLARE_TUNNEL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.tunnelAPITokenSecretRef.name | quote }}
+                  key: {{ .Values.cloudflare.tunnelAPITokenSecretRef.key | default "api-token" | quote }}
+            {{- end }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
               value: {{ .Values.servicesNamespace | quote }}
-            - name: MEMCACHED_CHART_REPO
-              value: {{ .Values.memcached.chartRepo | quote }}
-            - name: MEMCACHED_CHART_NAME
-              value: {{ .Values.memcached.chartName | quote }}
-            - name: MEMCACHED_CHART_VERSION
-              value: {{ .Values.memcached.chartVersion | quote }}
+            - name: GENTIAN_STAGE
+              value: {{ .Values.stage | default "dev" | quote }}
+            {{- with .Values.kernelServices.smtpHost }}
+            - name: MAIL_SMTP_HOST
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OPENBAO_NAMESPACE
+              value: {{ .Values.openbaoNamespace | quote }}
+            - name: MEMCACHED_IMAGE
+              value: {{ .Values.memcached.image | quote }}
+            - name: TENANT_CROSSPLANE_ONLY
+              value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
+            - name: APP_LIFECYCLE_BIND_ADDRESS
+              value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
+            - name: GENTIAN_DEPLOYMENTS_PATH
+              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER
+              value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
+            - name: GENTIAN_DEPLOYMENTS_STAGE
+              value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}
+            {{- if $lifecycleGitCredsSecret }}
+            - name: HOME
+              value: /tmp
+            - name: GIT_CONFIG_COUNT
+              value: "2"
+            - name: GIT_CONFIG_KEY_0
+              value: credential.helper
+            - name: GIT_CONFIG_VALUE_0
+              value: store --file=/etc/git/credentials
+            - name: GIT_CONFIG_KEY_1
+              value: safe.directory
+            - name: GIT_CONFIG_VALUE_1
+              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            - name: GIT_AUTHOR_NAME
+              value: gentian-os
+            - name: GIT_AUTHOR_EMAIL
+              value: gentian-os@gentian.org
+            - name: GIT_COMMITTER_NAME
+              value: gentian-os
+            - name: GIT_COMMITTER_EMAIL
+              value: gentian-os@gentian.org
+            {{- end }}
+            - name: KERNEL_NAMESPACE
+              value: {{ .Values.infraNamespace | default "platform-kernel" | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OPERATOR_SA
+              value: {{ include "gentian-os.serviceAccountName" . | quote }}
           ports:
             - name: metrics
               containerPort: 8080
               protocol: TCP
             - name: health
               containerPort: 8081
+              protocol: TCP
+            - name: lifecycle
+              containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
             {{- if $webhookEnabled }}
             - name: webhook
@@ -126,11 +188,23 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if $webhookEnabled }}
+          {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
           volumeMounts:
+            {{- if $webhookEnabled }}
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
+            {{- end }}
+            {{- if $lifecycleDeploymentsEnabled }}
+            - name: deployments-checkout
+              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
+            {{- end }}
+            {{- if $lifecycleGitCredsSecret }}
+            - name: git-credentials
+              mountPath: /etc/git/credentials
+              subPath: .git-credentials
+              readOnly: true
+            {{- end }}
           {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -144,10 +218,56 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if $webhookEnabled }}
+      {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
       volumes:
+        {{- if $webhookEnabled }}
         - name: webhook-certs
           secret:
             secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
+        {{- end }}
+        {{- if $lifecycleDeploymentsEnabled }}
+        - name: deployments-checkout
+          emptyDir: {}
+        {{- end }}
+        {{- if $lifecycleGitCredsSecret }}
+        - name: git-credentials
+          secret:
+            secretName: {{ $lifecycleGitCredsSecret | quote }}
+            optional: true
+        {{- end }}
+      {{- end }}
+      {{- if $lifecycleDeploymentsEnabled }}
+      initContainers:
+        - name: git-clone-deployments
+          image: alpine/git:2.45.2
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              for attempt in 1 2 3 4 5; do
+                if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
+                  exit 0
+                fi
+                if git clone "${GENTIAN_DEPLOYMENTS_REPO}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
+                  exit 0
+                fi
+                echo "git clone attempt ${attempt} failed; retrying..."
+                sleep 15
+              done
+              exit 1
+          env:
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+          securityContext:
+            runAsUser: 65532
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: deployments-checkout
+              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
       {{- end }}
       terminationGracePeriodSeconds: 10

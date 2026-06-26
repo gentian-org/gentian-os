@@ -1,0 +1,11 @@
+# Valid minimal App claim — one profile in a tenant namespace.
+apiVersion: gentianos.io/v1alpha1
+kind: App
+metadata:
+  name: schema-fixture-element
+  namespace: tenant-schema-fixture
+spec:
+  profileRef:
+    name: element
+  tenantNamespace: tenant-schema-fixture
+  domain: schema-fixture.desk.gentian.org

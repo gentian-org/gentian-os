@@ -2,7 +2,7 @@
 # Bootstrap Application: manages the gentian-os operator via ArgoCD.
 #
 # Intentionally contains ONLY the operator (Helm chart + ImageUpdater CR).
-# Tenant CRs live in the separate `gentian-tenants` Application so that
+# Tenant CRs live in the separate `gentian-tenants` ApplicationSet so that
 # long-running tenant provisioning never stalls operator image rollouts:
 # argocd-image-updater targets only `gentian-os`, which is a clean Helm
 # deployment.  When a new image lands in GHCR, ArgoCD syncs it in seconds
@@ -11,14 +11,15 @@
 # Sources:
 #   Source 1: gentian-os Helm chart — operator Deployment, CRDs, RBAC, etc.
 #   Source 2: gentian-deployments ref only — provides the $deploy variable
-#             for Source 1's valueFiles; renders no manifests.
-#   Source 3: gentian-deployments %ENV%/kernel — ImageUpdater CR.
+#             for Source 1's layered valueFiles; renders no manifests.
+#   Source 3: gentian-deployments clusters/%CLUSTER%/kernel — stage-specific ImageUpdater CR.
 #
 # Placeholders filled in by install_orchestrator() in scripts/install-lib.sh:
 #   %GENTIAN_OS_BRANCH%   — branch/tag of this repo (e.g. develop, main, v1.2.3)
 #   %DEPLOYMENTS_REPO%    — gentian-deployments repo URL
 #   %DEPLOYMENTS_BRANCH%  — gentian-deployments branch
-#   %ENV%                 — environment name (dev / staging / prod)
+#   %CLUSTER%             — cluster identifier in deployments repo (e.g. pck-kulxwmm)
+#   %STAGE%               — stage name (dev / staging / prod)
 #
 # Apply:
 #   Rendered and applied automatically by install.sh Step 15.
@@ -27,7 +28,8 @@
 #     sed -e "s|%GENTIAN_OS_BRANCH%|develop|g" \
 #         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
 #         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-#         -e "s|%ENV%|dev|g" \
+#         -e "s|%CLUSTER%|pck-kulxwmm|g" \
+#         -e "s|%STAGE%|dev|g" \
 #         kernel/bootstrap/gentian-os-application.yaml.tmpl | kubectl apply -f -
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -61,6 +63,39 @@ spec:
     jsonPointers:
     - /metadata/annotations
     - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+    # Direct Helm bootstrap + ArgoCD SSA leave kube-defaulted Deployment
+    # fields on the live object that the Helm chart omits (same pattern as
+    # gentian-portal ApplicationSet). Without these, gentian-os stays OutOfSync
+    # while Healthy and install Step 16 times out every run.
+    jqPathExpressions:
+    - .spec.progressDeadlineSeconds
+    - .spec.revisionHistoryLimit
+    - .spec.strategy
+    - .spec.template.metadata.creationTimestamp
+    - .spec.template.spec.dnsPolicy
+    - .spec.template.spec.restartPolicy
+    - .spec.template.spec.schedulerName
+    - .spec.template.spec.terminationGracePeriodSeconds
+    - .spec.template.spec.serviceAccount
+    - .spec.template.spec.serviceAccountName
+    - .spec.template.spec.containers[].imagePullPolicy
+    - .spec.template.spec.containers[].resources
+    - .spec.template.spec.containers[].terminationMessagePath
+    - .spec.template.spec.containers[].terminationMessagePolicy
+    - .spec.template.spec.containers[].livenessProbe.failureThreshold
+    - .spec.template.spec.containers[].livenessProbe.successThreshold
+    - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].readinessProbe.failureThreshold
+    - .spec.template.spec.containers[].readinessProbe.successThreshold
+    - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
+    - .spec.template.spec.initContainers[].imagePullPolicy
+    - .spec.template.spec.initContainers[].resources
+    - .spec.template.spec.initContainers[].terminationMessagePath
+    - .spec.template.spec.initContainers[].terminationMessagePolicy
+    - .spec.template.spec.volumes[].secret.defaultMode
   # Crossplane enriches gentianos.io XRD-owned CRDs with additional printer
   # columns and its own spec properties (compositionRef, resourceRefs, etc.)
   # after the initial install. Ignore spec.versions drift so ArgoCD does not
@@ -89,26 +124,29 @@ spec:
     - .metadata.finalizers
   sources:
   # Source 1: gentian-os Helm chart (operator)
-  # Values come from $deploy (%ENV%/kernel/values-%ENV%.yaml in the
-  # deployments repo).  image.tag is further overridden in-cluster by
+  # Values are layered from the deployments repo:
+  #   - $deploy/clusters/%CLUSTER%/kernel/values-base.yaml
+  #   - $deploy/clusters/%CLUSTER%/kernel/values-%STAGE%.yaml
+  # image.tag is further overridden in-cluster by
   # argocd-image-updater via the Application's Helm parameters.
   - repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: %GENTIAN_OS_BRANCH%
     path: charts/gentian-os
     helm:
       valueFiles:
-      - $deploy/%ENV%/kernel/values-%ENV%.yaml
+      - $deploy/clusters/%CLUSTER%/kernel/values-base.yaml
+      - $deploy/clusters/%CLUSTER%/kernel/values-%STAGE%.yaml
   # Source 2: deployments ref only (provides $deploy variable, no manifests)
   - repoURL: %DEPLOYMENTS_REPO%
     targetRevision: %DEPLOYMENTS_BRANCH%
     ref: deploy
-  # Source 3: Environment kernel config (ImageUpdater CR)
+  # Source 3: Cluster kernel config (stage-specific ImageUpdater CR)
   # Deploying this CR activates automatic image updates.
   - repoURL: %DEPLOYMENTS_REPO%
     targetRevision: %DEPLOYMENTS_BRANCH%
-    path: %ENV%/kernel
+    path: clusters/%CLUSTER%/kernel
     directory:
-      include: "image-updater.yaml"
+      include: "image-updater-%STAGE%.yaml"
   destination:
     server: https://kubernetes.default.svc
     namespace: gentian-system
@@ -120,36 +158,49 @@ spec:
     - CreateNamespace=true
     - ServerSideApply=true
 ---
-# Bootstrap Application: manages Tenant CRs via ArgoCD.
+# Bootstrap ApplicationSet: manages Tenant CRs via ArgoCD.
 #
 # Kept separate from `gentian-os` so that long-running tenant provisioning
-# never blocks operator image rollouts. argocd-image-updater targets only
-# `gentian-os`, so a new operator build deploys in seconds regardless of
-# tenant health.
+# never blocks operator image rollouts. This generator scans all tenant
+# definitions for the selected stage:
 #
-# Same placeholders as the gentian-os Application above.
+#   clusters/%CLUSTER%/tenants/<tenant>/%STAGE%
+#
+# Each tenant directory must contain a kustomization.yaml and tenant.yaml.
 apiVersion: argoproj.io/v1alpha1
-kind: Application
+kind: ApplicationSet
 metadata:
   name: gentian-tenants
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "2"
-  finalizers:
-  - resources-finalizer.argocd.argoproj.io
 spec:
-  project: gentian
-  source:
-    repoURL: %DEPLOYMENTS_REPO%
-    targetRevision: %DEPLOYMENTS_BRANCH%
-    path: %ENV%/tenants
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: gentian-system
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
-    - ServerSideApply=true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: %DEPLOYMENTS_REPO%
+      revision: %DEPLOYMENTS_BRANCH%
+      directories:
+      - path: clusters/%CLUSTER%/tenants/*/%STAGE%
+  template:
+    metadata:
+      name: '{{ .path.path | replace "/" "-" }}'
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: gentian
+      source:
+        repoURL: %DEPLOYMENTS_REPO%
+        targetRevision: %DEPLOYMENTS_BRANCH%
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gentian-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true

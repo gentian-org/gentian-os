@@ -11,17 +11,41 @@ spec:
   mode: Pipeline
   pipeline:
 
-    # ── Step 1: Render composed resources ─────────────────────────────────────
-    # Emits per-tenant:
-    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping the tenant Namespace
-    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping a LimitRange with
-    #     sensible container defaults
-    #   • kubernetes.crossplane.io/v1alpha2 Object wrapping a NetworkPolicy
-    #     (deny cross-tenant ingress; allow same-ns and platform-kernel ingress)
-    #   • vault.vault.upbound.io/v1alpha1 Policy granting the tenant's ESO
-    #     ServiceAccount read/write to its own secret paths
-    #   • One gentianos.io/v1alpha1 App claim per entry in spec.apps, placed
-    #     in the tenant namespace so the App Composition can reconcile it
+    - step: fetch-cluster-config
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ConfigMap
+              into: clusterConfig
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: cluster-config
+            - kind: ConfigMap
+              into: provisioningJobs
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: tenant-provisioning-jobs
+                  - key: gentianos.io/tenant
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: metadata.name
+
+    # ── Step 2: Render composed resources (tenant shell owner) ────────────────
     - step: render-tenant-resources
       functionRef:
         name: function-go-templating
@@ -34,15 +58,34 @@ spec:
             {{- $xr     := .observed.composite.resource }}
             {{- $spec   := $xr.spec }}
             {{- $tenant := $xr.metadata.name }}
-            {{- /* Resolve namespace: use isolation.namespace override or convention. */}}
             {{- $ns     := default (printf "tenant-%s" $tenant) (dig "isolation" "namespace" "" $spec) }}
-            {{- /* Resolve effective domain for app claims. */}}
             {{- $kd     := default "" $spec.kernelDomain }}
             {{- $domain := default (printf "%s.%s" $tenant $kd) (default "" $spec.domain) }}
             {{- $kvMount := "secret" }}
+            {{- $extraRes := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $ccList   := dig "clusterConfig" list $extraRes }}
+            {{- $cc       := ternary (index $ccList 0) dict (gt (len $ccList) 0) }}
+            {{- $ccData   := dig "data" dict $cc }}
+            {{- $provList  := dig "provisioningJobs" list $extraRes }}
+            {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
+            {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
+            {{- $jobs      := fromJson $jobsJSON }}
+            {{- $objectsJSON := dig "data" "objects.json" "[]" $provCM }}
+            {{- $objects     := fromJson $objectsJSON }}
+            {{- $infraNs     := default "gentian-infra-dev" (dig "network.infraNamespace" "" $ccData) }}
+            {{- $servicesNs  := dig "network.servicesNamespace" "" $ccData }}
+            {{- $openbaoNs   := default "openbao" (dig "network.openbaoNamespace" "" $ccData) }}
+            {{- $routingMode := default "gateway" (dig "network.routingMode" "" $ccData) }}
+            {{- $kubeApiCIDR := dig "network.kubeApiServerCidr" "" $ccData }}
+            {{- $kubeApiEndpointIP := dig "network.kubeApiServerEndpointIp" "" $ccData }}
+            {{- $kubeApiEndpointPort := dig "network.kubeApiServerEndpointPort" "" $ccData }}
+            {{- $quotas      := default dict (dig "quotas" dict $spec) }}
+            {{- $lrDefaultCPU := dig "tenant.limitRange.default.cpu" "500m" $ccData }}
+            {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
+            {{- $lrRequestCPU := dig "tenant.limitRange.defaultRequest.cpu" "100m" $ccData }}
+            {{- $lrRequestMem := dig "tenant.limitRange.defaultRequest.memory" "128Mi" $ccData }}
 
             ---
-            # ── Tenant Namespace ─────────────────────────────────────────────────
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
@@ -61,9 +104,9 @@ spec:
                     labels:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/managed-by: crossplane
+                      app.kubernetes.io/managed-by: gentian-os
 
             ---
-            # ── LimitRange — sensible per-container defaults ──────────────────────
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
@@ -78,26 +121,62 @@ spec:
                   apiVersion: v1
                   kind: LimitRange
                   metadata:
-                    name: default-limits
+                    name: tenant-limits
                     namespace: {{ $ns }}
                     labels:
                       gentianos.io/tenant: {{ $tenant }}
-                      gentianos.io/managed-by: crossplane
+                      app.kubernetes.io/managed-by: gentian-os
                   spec:
                     limits:
                       - type: Container
                         default:
-                          cpu: "1"
-                          memory: 512Mi
+                          cpu: {{ $lrDefaultCPU | quote }}
+                          memory: {{ $lrDefaultMem | quote }}
                         defaultRequest:
-                          cpu: 100m
-                          memory: 128Mi
+                          cpu: {{ $lrRequestCPU | quote }}
+                          memory: {{ $lrRequestMem | quote }}
+                        max:
+                          cpu: "4"
+                          memory: 8Gi
+
+            {{- if or $quotas.storage $quotas.cpu $quotas.memory }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-resourcequota
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: resourcequota
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ResourceQuota
+                  metadata:
+                    name: tenant-quota
+                    namespace: {{ $ns }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant }}
+                      app.kubernetes.io/managed-by: gentian-os
+                  spec:
+                    hard:
+                      {{- if $quotas.storage }}
+                      requests.storage: {{ $quotas.storage | quote }}
+                      {{- end }}
+                      {{- if $quotas.cpu }}
+                      limits.cpu: {{ $quotas.cpu | quote }}
+                      {{- end }}
+                      {{- if $quotas.memory }}
+                      limits.memory: {{ $quotas.memory | quote }}
+                      {{- end }}
+                      {{- if $quotas.maxPods }}
+                      pods: {{ $quotas.maxPods | quote }}
+                      {{- end }}
+            {{- end }}
 
             ---
-            # ── NetworkPolicy — tenant isolation ─────────────────────────────────
-            # Deny ingress from other tenant namespaces; allow intra-tenant,
-            # platform-kernel (Jobs, ESO), and ingress-controller traffic.
-            # All egress is unrestricted so tenant pods can reach shared services.
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
@@ -116,7 +195,7 @@ spec:
                     namespace: {{ $ns }}
                     labels:
                       gentianos.io/tenant: {{ $tenant }}
-                      gentianos.io/managed-by: crossplane
+                      app.kubernetes.io/managed-by: gentian-os
                   spec:
                     podSelector: {}
                     policyTypes:
@@ -126,7 +205,7 @@ spec:
                       - from:
                           - namespaceSelector:
                               matchLabels:
-                                kubernetes.io/metadata.name: {{ $ns }}
+                                gentianos.io/tenant: {{ $tenant }}
                       - from:
                           - namespaceSelector:
                               matchLabels:
@@ -134,12 +213,80 @@ spec:
                       - from:
                           - namespaceSelector:
                               matchLabels:
+                                kubernetes.io/metadata.name: {{ $infraNs }}
+                      - from:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $servicesNs }}
+                      - from:
+                          - namespaceSelector:
+                              matchLabels:
                                 kubernetes.io/metadata.name: ingress
+                      {{- if eq $routingMode "gateway" }}
+                      - from:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: envoy-gateway-system
+                      {{- end }}
                     egress:
-                      - {}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: platform-kernel
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $infraNs }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $servicesNs }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $openbaoNs }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: gentian-system
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                gentianos.io/tenant: {{ $tenant }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: ingress
+                      {{- if eq $routingMode "gateway" }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: envoy-gateway-system
+                      {{- end }}
+                      - ports:
+                          - protocol: UDP
+                            port: 53
+                          - protocol: TCP
+                            port: 53
+                      {{- if $kubeApiCIDR }}
+                      - to:
+                          - ipBlock:
+                              cidr: {{ $kubeApiCIDR | quote }}
+                        ports:
+                          - protocol: TCP
+                            port: 443
+                      {{- end }}
+                      {{- /* Post-DNAT apiserver endpoint (MicroK8s/k3s often :16443). */}}
+                      {{- if and $kubeApiEndpointIP $kubeApiEndpointPort }}
+                      - to:
+                          - ipBlock:
+                              cidr: {{ printf "%s/32" $kubeApiEndpointIP | quote }}
+                        ports:
+                          - protocol: TCP
+                            port: {{ $kubeApiEndpointPort }}
+                      {{- end }}
 
             ---
-            # ── OpenBao policy — tenant read/write on its own secret paths ────────
             apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
             metadata:
@@ -159,10 +306,42 @@ spec:
                     capabilities = ["list", "delete"]
                   }
 
-            {{- /* ── App claims ─────────────────────────────────────────────────── */}}
+            {{- range $job := $jobs }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-job-{{ $job.metadata.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: job-{{ $job.metadata.name }}
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  {{- $job | toYaml | nindent 18 }}
+            {{- end }}
+
+            {{- range $obj := $objects }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              # Include kind in the Object name — multiple resources can share
+              # metadata.name (e.g. memcached Deployment + Service).
+              name: {{ $tenant }}-obj-{{ lower $obj.kind }}-{{ $obj.metadata.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: obj-{{ lower $obj.kind }}-{{ $obj.metadata.name }}
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  {{- $obj | toYaml | nindent 18 }}
+            {{- end }}
+
             {{- range $app := dig "apps" list $spec }}
             ---
-            # App claim for {{ $app.profile }}
             apiVersion: gentianos.io/v1alpha1
             kind: App
             metadata:
@@ -172,8 +351,11 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: app-{{ $app.profile }}
               labels:
                 gentianos.io/tenant: {{ $tenant }}
+                gentianos.io/app: {{ $app.profile }}
                 gentianos.io/managed-by: crossplane
+                app.kubernetes.io/managed-by: gentian-os
             spec:
+              compositionUpdatePolicy: Automatic
               profileRef:
                 name: {{ $app.profile }}
               tenantNamespace: {{ $ns }}
@@ -182,15 +364,51 @@ spec:
               compositionRef:
                 name: app-{{ $app.variant }}
               {{- end }}
-              {{- if $app.config }}
+              {{- $appConfig := default dict $app.config }}
+              {{- if or (dig "replicas" nil $appConfig) (dig "extraValues" nil $appConfig) }}
               config:
-                {{- if dig "replicas" nil $app.config }}
-                replicas: {{ dig "replicas" 1 $app.config }}
+                {{- if dig "replicas" nil $appConfig }}
+                replicas: {{ dig "replicas" 1 $appConfig }}
+                {{- end }}
+                {{- with dig "extraValues" nil $appConfig }}
+                extraValues:
+                  {{- . | toYaml | nindent 18 }}
                 {{- end }}
               {{- end }}
             {{- end }}
 
-    # ── Step 2: Mark XTenant Ready when all composed resources are Ready ───────
     - step: automatically-detect-ready-composed-resources
       functionRef:
         name: function-auto-ready
+
+    - step: sequence-tenant-provisioning
+      functionRef:
+        name: function-sequencer
+      input:
+        apiVersion: sequencer.fn.crossplane.io/v1beta1
+        kind: Input
+        resetCompositeReadiness: true
+        rules:
+          # Tenant shell before kernel Jobs or app claims.
+          - sequence:
+            - namespace
+            - limitrange
+            - networkpolicy
+            - vault-policy
+          # Keycloak realm before other identity Jobs; identity before App Compositions.
+          # job-keycloak-(admin|…)-.* deliberately excludes job-keycloak-realm-* —
+          # realm matches both patterns if the broad job-keycloak-.* form is used.
+          - sequence:
+            - job-keycloak-realm-.*
+            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
+          - sequence:
+            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
+            - app-.*
+          # LDAP OU before remaining LDAP Jobs; LDAP before App Compositions.
+          # job-ldap-(admin|…)-.* excludes job-ldap-ou-* for the same reason.
+          - sequence:
+            - job-ldap-ou-.*
+            - job-ldap-(admin|app|bind|mba|portal)-.*
+          - sequence:
+            - job-ldap-(admin|app|bind|mba|portal)-.*
+            - app-.*

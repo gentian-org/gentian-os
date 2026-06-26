@@ -5,6 +5,8 @@ resources:
   - service-aliases.yaml
   - release.yaml
   - setup-iam-templates-job.yaml
+  - stack-data-ums-cleanup-postsync-job.yaml
+  - umc-gateway-upstream-postsync-job.yaml
 
 configMapGenerator:
   - name: nubus-base-values
@@ -15,6 +17,10 @@ configMapGenerator:
     namespace: gentian-dev
     files:
       - values.yaml=values/dev.yaml
+  - name: nubus-portal-tiles-values
+    namespace: gentian-dev
+    files:
+      - values.yaml=values/portal-tiles-gentian.yaml
   - name: nubus-dev-udm-listener-nats-patch
     namespace: gentian-dev
     files:
@@ -28,6 +34,14 @@ configMapGenerator:
     files:
       - 93-gentian-umc-template-default.sh=patches/93-gentian-umc-template-default.sh
       - 94-gentian-umc-template-picker.sh=patches/94-gentian-umc-template-picker.sh
+  - name: nubus-dev-umc-gateway-upstream
+    namespace: gentian-dev
+    files:
+      - 95-gentian-umc-gateway-upstream.sh=patches/95-gentian-umc-gateway-upstream.sh
+  - name: nubus-dev-umc-gateway-upstream-patcher
+    namespace: gentian-dev
+    files:
+      - patch-umc-gateway-upstream.sh=patches/patch-umc-gateway-upstream.sh
 
 generatorOptions:
   disableNameSuffixHash: true

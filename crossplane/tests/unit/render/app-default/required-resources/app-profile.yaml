@@ -1,0 +1,26 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: openproject
+  labels:
+    gentianos.io/profile-name: openproject
+spec:
+  displayName: OpenProject
+  compositionRef: app-openproject
+  chart:
+    repository: oci://example.invalid/openproject
+    name: openproject
+    version: "10.1.0"
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: opendesk-openproject
+        name: OpenProject
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://projects.${TENANT_DOMAIN}/auth/keycloak/callback"
+        postLogoutRedirectUris:
+          - "https://projects.${TENANT_DOMAIN}/"
+  valueMapping:
+    oidc:
+      clientSecretKey: openproject.oidc.secret

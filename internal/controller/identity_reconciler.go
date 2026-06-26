@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
 
@@ -29,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -63,7 +63,7 @@ type realmBrokerParams struct {
 }
 
 // ensureIdentity provisions a Keycloak realm and OIDC clients for the tenant.
-// It creates idempotent Kubernetes Jobs in the kernel namespace that call the
+// It waits for Crossplane-owned Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	realmName := keycloakRealmName(tenant)
@@ -71,6 +71,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if err := r.cleanupOrphanedOIDCClientJobs(ctx, tenant, oidcConfigs); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned OIDC client Jobs: %w", err)
 	}
 
 	// We must always provision the tenant Keycloak realm for app OIDC and the
@@ -107,13 +111,22 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningBrowserFlow", "Waiting for OIDC browser flow Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+		firstLoginDone, err := r.ensureBrokerFirstLoginFlowJob(ctx, tenant, realmName)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure broker first-login flow Job: %w", err)
+		}
+		if !firstLoginDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningBrokerFirstLogin", "Waiting for broker first-login flow Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	// OpenDesk OIDC packs map managed-by-attribute-* LDAP groups to client roles.
 	// Those groups must exist in LDAP (OU Job) and be imported into Keycloak
 	// (group-ldap-mapper sync) before client Jobs run — see docs/design/iam.md §1.3.
 	if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
-		ouDone, err := r.ldapOUJobComplete(ctx, tenant.Name)
+		ouDone, err := r.ldapManagedGroupsReady(ctx, tenant.Name)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -135,6 +148,16 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 
 	allDone := true
 	for _, cfg := range oidcConfigs {
+		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if crossplaneOwnsOIDCClient(profile, cfg) {
+			if err := r.seedOIDCSecrets(ctx, tenant, realmName, cfg); err != nil {
+				return ctrl.Result{}, err
+			}
+			continue
+		}
 		done, err := r.ensureOIDCClientJob(ctx, tenant, realmName, cfg)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OIDC Job for app %s: %w", cfg.profileName, err)
@@ -221,6 +244,26 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"SyncingKCLDAP", "Waiting for Keycloak LDAP sync Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+
+		kcMappersDone, err := r.ensureKCLDAPOpenDeskMappersJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OpenDesk LDAP mapper Job: %w", err)
+		}
+		if !kcMappersDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"SyncingKCLDAPOpenDeskMappers", "Waiting for OpenDesk LDAP mapper sync Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
+
+		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure broker IdP Job: %w", err)
+		}
+		if !brokerIdPDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningBrokerIdP", "Waiting for broker IdP Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
@@ -228,168 +271,19 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	return ctrl.Result{}, nil
 }
 
-// collectOIDCApps returns the profile names of apps in tenant.spec.apps that
-// have kernelRequirements.identity.oidc enabled.
-func (r *TenantReconciler) collectOIDCApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	var oidcApps []string
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue // profile not yet installed; will retry on next reconcile
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.OIDC != nil {
-			oidcApps = append(oidcApps, app.Profile)
-		}
-	}
-	return oidcApps, nil
-}
-
-// ensureRealmJob creates the Keycloak realm Job if absent.
-// Returns true when the Job has completed successfully.
+// ensureRealmJob waits for the Crossplane-owned Keycloak realm Job.
 func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	jobName := realmJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Delete any stale cleanup jobs so the next undeploy creates a fresh one.
-		r.deleteProvisioningJobs(ctx, realmDeleteJobName(tenant.Name), realmDisableJobName(tenant.Name))
-
-		// B.3: Seed the keycloak LDAP bind password and pass it to the realm job
-		// so the realm script can register the LDAP User Storage Provider.
-		// Seeder is deterministic — calling SeedLDAP here and in ensureLDAP yields
-		// the same password, keeping LDAP and Keycloak in sync.
-		var ldap *realmLDAPParams
-		if r.LDAPBase != "" && r.LDAPServer != "" && r.Seeder != nil {
-			ouDN := tenantConcreteOUDN(tenant, r.LDAPBase)
-			bindDN := fmt.Sprintf("uid=app-keycloak-%s,%s", tenant.Name, ouDN)
-			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, "keycloak", secrets.LDAPCreds{
-				BindDN: bindDN,
-				BaseDN: ouDN,
-			})
-			if seedErr != nil {
-				return false, fmt.Errorf("seed keycloak ldap: %w", seedErr)
-			}
-			ldap = &realmLDAPParams{
-				server:   r.LDAPServer,
-				bindDN:   bindDN,
-				bindPW:   creds.BindPassword,
-				usersDN:  "ou=users," + ouDN,
-				groupsDN: ouDN,
-			}
-		}
-		var broker *realmBrokerParams
-		if r.KernelRealm != "" && r.KernelDomain != "" {
-			broker = &realmBrokerParams{
-				kernelRealm:       r.KernelRealm,
-				kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
-			}
-		}
-		return false, r.Create(ctx, makeRealmJob(tenant, realmName, r.KernelDomain, ldap, broker))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil // recreated on next reconcile
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 }
 
-// ensureAdminJob creates (or re-creates on failure) the Job that provisions a
-// tenant-scoped realm-admin user in the tenant's Keycloak realm. The user is
-// assigned the built-in realm-management/realm-admin composite role so they
-// can manage users, groups, clients, and sessions within their realm only —
-// zero visibility into other realms.
-//
-// The admin password is derived from the master via Seeder.SeedTenantAdmin and
-// stored write-once at gentian-os/tenants/<tenant>/admin in OpenBao. The
-// provision Job always syncs that canonical password into Keycloak (including
-// redeploys after deletionPolicy=Retain) and emits INITIAL_TENANT_ADMIN once.
-//
-// When Seeder is nil (envtest / staged rollout) a placeholder password is
-// used so the Job is still created and the test flow can proceed.
+// ensureAdminJob waits for the Crossplane-owned tenant realm-admin Job.
 func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	jobName := adminJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		var creds secrets.TenantAdminCreds
-		if r.Seeder != nil {
-			creds, err = r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
-			if err != nil {
-				return false, fmt.Errorf("seed tenant admin: %w", err)
-			}
-			log.FromContext(ctx).Info(
-				"Initial tenant admin credentials (printed once)",
-				"tenant", tenant.Name,
-				"realm", realmName,
-				"username", creds.Username,
-				"password", creds.Password,
-				"retrieveCommand", fmt.Sprintf("bao kv get -mount=secret -field=password gentian-os/tenants/%s/admin", tenant.Name),
-			)
-		} else {
-			creds = secrets.TenantAdminCreds{Username: "admin", Password: "placeholder"}
-		}
-		return false, r.Create(ctx, makeAdminJob(tenant, realmName, creds))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, adminJobName(tenant.Name))
 }
 
-// ensureClientJob creates the OIDC client Job for one app if absent.
-// Returns true when the Job has completed successfully.
+// ensureClientJob waits for the Crossplane-owned OIDC client Job for one app.
 func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string) (bool, error) {
-	jobName := clientJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: seed the per-app OIDC secret into OpenBao *before* creating
-		// the provisioning Job so the Job can apply the derived client secret
-		// to Keycloak (POST on create, PUT on update). When the Seeder is nil
-		// (envtest / staged rollout) we fall back to the legacy behaviour of
-		// letting Keycloak auto-generate the secret.
-		clientSecret := ""
-		if r.Seeder != nil {
-			// OIDC issuer URL stays on the kernel domain so it is stable
-			// across vanity-domain changes (see docs/architecture.md §2.5).
-			// Falls back to tenant.Spec.Domain when KERNEL_DOMAIN is unset
-			// (envtest / staged rollout).
-			issuerHost := tenant.Spec.Domain
-			if r.KernelDomain != "" {
-				issuerHost = r.KernelDomain
-			}
-			issuer := fmt.Sprintf("https://id.%s/realms/%s", issuerHost, realmName)
-			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, appName, issuer, clientID)
-			if seedErr != nil {
-				return false, fmt.Errorf("seed oidc: %w", seedErr)
-			}
-			clientSecret = creds.ClientSecret
-		}
-		return false, r.Create(ctx, makeClientJob(tenant, realmName, appName, clientID, redirectURIs, clientSecret))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, appName))
 }
 
 // deleteIdentity handles identity cleanup on tenant deletion.
@@ -412,6 +306,10 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 		rj := &batchv1.Job{}
 		switch err := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: kernelNamespace}, rj); {
 		case err == nil:
+			if !jobIsComplete(rj) {
+				// Manifest exists but Crossplane never finished provisioning the realm.
+				return nil
+			}
 			// Realm was provisioned; proceed to create the disable job.
 		case errors.IsNotFound(err):
 			return nil
@@ -432,6 +330,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 				oidcBrowserFlowJobName(tenant.Name),
 				kernelAdminEnableJobName(tenant.Name), kernelLDAPSyncJobName(tenant.Name),
 				kcLDAPGroupSyncJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
+				mbaGroupsJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -460,7 +359,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 // --- Job constructors --------------------------------------------------------
 
 func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, ldap *realmLDAPParams, broker *realmBrokerParams) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
@@ -502,7 +401,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 }
 
 func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	redirectURI := redirectURIs[0]
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if clientSecret != "" {
@@ -534,7 +433,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 }
 
 func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secrets.TenantAdminCreds) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
 	adminEmail := tenant.Spec.AdminEmail
 	if adminEmail == "" {
@@ -568,7 +467,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 }
 
 func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDisableJobName(tenant.Name),
@@ -593,7 +492,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 }
 
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDeleteJobName(tenant.Name),
@@ -618,7 +517,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 }
 
 func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, kernelRealm string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kernelAdminEnableJobName(tenant.Name),
@@ -648,21 +547,7 @@ func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, ker
 // making the Keycloak re-enable durable against subsequent LDAP federation
 // imports.
 func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminEmail string) (bool, error) {
-	jobName := kernelAdminEnableJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, kernelAdminEnableJobName(tenant.Name))
 }
 
 // keycloakContainer returns a Container spec that runs a shell script via the
@@ -702,6 +587,7 @@ func keycloakContainer(name, script string) corev1.Container {
 				},
 			},
 		},
+		Resources: meta.InitJobResources(),
 	}
 }
 
@@ -840,6 +726,11 @@ if [ -n "${LDAP_SERVER:-}" ]; then
         "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${LDAP_ID}/sync?action=triggerFullSync" >/dev/null 2>&1 || true
     fi
   fi
+
+  ensure_ldap_uid_attribute_mapper "%s" "ldap"
+  ensure_ldap_email_attribute_mapper "%s" "ldap"
+  ensure_ldap_oxcontext_attribute_mapper "%s" "ldap"
+  ensure_ldap_entryuuid_attribute_mapper "%s" "ldap"
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -891,7 +782,9 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   #    redundantly; the defaultProvider setting (step 3) handles the auto-redirect.
   IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
-  IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
+  # Server-side OIDC endpoints use KEYCLOAK_URL (cluster-internal) so broker code
+  # exchange does not hairpin through the public id.<kernel> URL.
+  IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
   if [ "${IDP_HTTP}" = "200" ]; then
     curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
       -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
@@ -903,17 +796,22 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
       -d "${IDP_BODY}"
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
-
+ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
+`+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
   # (No defaultProvider is set on the identity-provider-redirector execution.
   #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
   #  on mailPrimaryAddress). The kernel IdP registered above remains available
   #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName, realmName, realmName,
+		realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	return keycloakShellJSONIDExtractor() + script
+	// Realm Job registers the kernel IdP with the built-in "first broker login" flow.
+	// The custom first-broker-login-gentian flow is created later (dedicated Job or
+	// broker-idp Job) before the IdP alias is switched — see docs/design/iam.md.
+	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + ensureLDAPEmailAttributeMapperShell + ensureLDAPOpenDeskAttributeMappersShell + script
 }
 
 // buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
@@ -975,12 +873,15 @@ echo "Keycloak LDAP group sync complete for realm ${REALM}: ${RESULT}"
 	}
 	if syncUsers {
 		steps += `
+ensure_ldap_email_attribute_mapper "${REALM}" "ldap"
+ensure_ldap_oxcontext_attribute_mapper "${REALM}" "ldap"
+ensure_ldap_entryuuid_attribute_mapper "${REALM}" "ldap"
 RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
 echo "Keycloak LDAP user sync complete for realm ${REALM}: ${RESULT}"
 `
 	}
-	return fmt.Sprintf(`set -eu
+	return keycloakShellJSONIDExtractor() + ensureLDAPEmailAttributeMapperShell + ensureLDAPOpenDeskAttributeMappersShell + fmt.Sprintf(`set -eu
 REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -1016,6 +917,19 @@ func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batch
 		buildKCLDAPSyncScript(realmName))
 }
 
+// makeKCLDAPOpenDeskMappersJob re-imports LDAP users after ensuring oxContextIDNum and
+// entryUUID attribute mappers exist. Separate from kc-ldap-sync so existing tenants
+// pick up mapper fixes without recreating the realm Job.
+func makeKCLDAPOpenDeskMappersJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+	return makeKCLDAPFederationSyncJob(tenant, kcLDAPOpenDeskMappersJobName(tenant.Name), "kc-ldap-opendesk-mappers",
+		buildKCLDAPSyncScript(realmName))
+}
+
+func (r *TenantReconciler) ensureKCLDAPOpenDeskMappersJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPOpenDeskMappersJobName(tenant.Name),
+		func() *batchv1.Job { return makeKCLDAPOpenDeskMappersJob(tenant, keycloakRealmName(tenant)) })
+}
+
 // makeKernelLDAPSyncJob returns the Job that re-imports LDAP users into the
 // shared kernel realm for portal login (iam.md §1.2).
 func makeKernelLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
@@ -1024,7 +938,7 @@ func makeKernelLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *b
 }
 
 func makeKCLDAPFederationSyncJob(tenant *gentianov1alpha1.Tenant, jobName, containerName, script string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -1049,15 +963,67 @@ func makeKCLDAPFederationSyncJob(tenant *gentianov1alpha1.Tenant, jobName, conta
 }
 
 // ensureKCLDAPGroupSyncJob creates the pre-OIDC LDAP group import job.
+// If managed-by-attribute groups were backfilled after the last sync (e.g. tenant
+// upgrade or new OpenDesk OIDC packs), the completed sync Job is deleted so LDAP
+// groups are re-imported before OIDC client Jobs run.
 func (r *TenantReconciler) ensureKCLDAPGroupSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPGroupSyncJobName(tenant.Name),
+	jobName := kcLDAPGroupSyncJobName(tenant.Name)
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	if err == nil && jobIsComplete(job) {
+		stale, staleErr := r.kcLDAPGroupSyncStaleAfterManagedGroups(ctx, tenant.Name, job)
+		if staleErr != nil {
+			return false, staleErr
+		}
+		if stale {
+			prop := metav1.DeletePropagationBackground
+			if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil {
+				return false, delErr
+			}
+			return false, nil
+		}
+	}
+	if err != nil && !errors.IsNotFound(err) {
+		return false, err
+	}
+	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, jobName,
 		func() *batchv1.Job { return makeKCLDAPGroupSyncJob(tenant, keycloakRealmName(tenant)) })
 }
 
-// ldapOUJobComplete reports whether the UDM OU Job (managed-by-attribute groups) finished.
-func (r *TenantReconciler) ldapOUJobComplete(ctx context.Context, tenantName string) (bool, error) {
+// kcLDAPGroupSyncStaleAfterManagedGroups reports whether LDAP OU or managed-by-attribute
+// group Jobs finished after the last Keycloak LDAP group sync.
+func (r *TenantReconciler) kcLDAPGroupSyncStaleAfterManagedGroups(ctx context.Context, tenantName string, groupSync *batchv1.Job) (bool, error) {
+	for _, sourceName := range []string{ouJobName(tenantName), mbaGroupsJobName(tenantName)} {
+		source := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: kernelNamespace}, source)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if jobIsComplete(source) && jobCompletedAfter(groupSync, source) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ldapManagedGroupsReady reports whether the UDM OU Job and the managed-by-attribute
+// group backfill Job have both completed successfully.
+func (r *TenantReconciler) ldapManagedGroupsReady(ctx context.Context, tenantName string) (bool, error) {
+	for _, jobName := range []string{ouJobName(tenantName), mbaGroupsJobName(tenantName)} {
+		done, err := r.kernelJobSucceeded(ctx, jobName)
+		if err != nil || !done {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (r *TenantReconciler) kernelJobSucceeded(ctx context.Context, jobName string) (bool, error) {
 	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: ouJobName(tenantName), Namespace: kernelNamespace}, job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if errors.IsNotFound(err) {
 		return false, nil
 	}
@@ -1070,21 +1036,8 @@ func (r *TenantReconciler) ldapOUJobComplete(ctx context.Context, tenantName str
 	return jobIsComplete(job), nil
 }
 
-func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, makeJob func() *batchv1.Job) (bool, error) {
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeJob())
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, _ func() *batchv1.Job) (bool, error) {
+	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
 }
 
 // ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and
@@ -1351,6 +1304,10 @@ func kcLDAPSyncJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-ldap-sync-%s", tenantName)
 }
 
+func kcLDAPOpenDeskMappersJobName(tenantName string) string {
+	return fmt.Sprintf("keycloak-ldap-opendesk-mappers-%s", tenantName)
+}
+
 func oidcClientID(tenantName, appName string) string {
 	return fmt.Sprintf("%s-%s", tenantName, appName)
 }
@@ -1364,6 +1321,27 @@ func jobIsComplete(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+func jobCompletionTime(job *batchv1.Job) *metav1.Time {
+	if job.Status.CompletionTime != nil {
+		return job.Status.CompletionTime
+	}
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
+			return &c.LastTransitionTime
+		}
+	}
+	return nil
+}
+
+func jobCompletedAfter(sync, source *batchv1.Job) bool {
+	syncTime := jobCompletionTime(sync)
+	sourceTime := jobCompletionTime(source)
+	if syncTime == nil || sourceTime == nil {
+		return false
+	}
+	return sourceTime.After(syncTime.Time)
 }
 
 func jobIsFailed(job *batchv1.Job) bool {

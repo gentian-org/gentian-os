@@ -1,0 +1,9 @@
+# Valid minimal XTenant composite — matches operator buildXTenant required fields.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: schema-fixture
+spec:
+  displayName: Schema Fixture
+  adminEmail: admin@schema-fixture.example.com
+  kernelDomain: desk.gentian.org

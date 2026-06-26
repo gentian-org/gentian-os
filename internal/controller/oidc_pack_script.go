@@ -250,3 +250,81 @@ curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "{\"browserFlow\":\"${FLOW_ALIAS}\"}" >/dev/null
 echo "realm ${REALM} browser flow set to ${FLOW_ALIAS}"`, realmName)
 }
+
+// buildEnsureFirstBrokerLoginFlowShell creates the custom first-broker-login flow
+// when missing. Requires TOKEN and sets REALM from realmExpr (e.g. "demo" or "${REALM_NAME}").
+func buildEnsureFirstBrokerLoginFlowShell(realmExpr string) string {
+	return fmt.Sprintf(`
+REALM=%s
+FLOW_ALIAS=%q
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+
+FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
+if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
+  echo "first broker login flow ${FLOW_ALIAS} already exists"
+else
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-link kernel IdP to LDAP users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+  echo "first broker login flow ${FLOW_ALIAS} created"
+fi
+
+for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
+  EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
+    | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
+  if [ -z "${EXEC_ID}" ]; then
+    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
+      -d "{\"provider\":\"${PROVIDER}\",\"requirement\":\"REQUIRED\"}"
+    EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
+      | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
+    echo "added ${PROVIDER} to ${FLOW_ALIAS}"
+  fi
+  if [ -n "${EXEC_ID}" ]; then
+    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
+      -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
+  fi
+done
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmExpr, firstBrokerLoginFlowAlias)
+}
+
+// buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
+// that links kernel IdP identities to existing LDAP users by email without prompting.
+// See Keycloak docs: "Detect existing user first login flow".
+func buildFirstBrokerLoginFlowScript(realmName string) string {
+	return fmt.Sprintf(`set -eu
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+%s
+
+# Drop stale kernel IdP links left from the old confirm/re-auth flow or partial
+# links. Users re-link silently on the next broker login via auto-link.
+PAGE=0
+while true; do
+  USERS=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/users?first=${PAGE}&max=100" || echo "[]")
+  COUNT=$(printf '%%s' "${USERS}" | jq 'length')
+  if [ "${COUNT}" -eq 0 ]; then
+    break
+  fi
+  printf '%%s' "${USERS}" | jq -r '.[].id' | while read -r UID; do
+    [ -z "${UID}" ] && continue
+    HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/users/${UID}/federated-identity/kernel")
+    if [ "${HTTP}" = "204" ]; then
+      echo "removed stale kernel broker link for user ${UID}"
+    fi
+  done
+  PAGE=$((PAGE + 100))
+  if [ "${COUNT}" -lt 100 ]; then
+    break
+  fi
+done
+echo "kernel broker link purge finished for realm ${REALM}"`, buildEnsureFirstBrokerLoginFlowShell(fmt.Sprintf("%q", realmName)))
+}

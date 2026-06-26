@@ -1,0 +1,8 @@
+# Invalid XTenant — adminEmail is required by the XRD.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: schema-invalid
+spec:
+  displayName: Invalid
+  kernelDomain: desk.gentian.org

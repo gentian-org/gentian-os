@@ -38,5 +38,10 @@ spec:
           namespace: gentian-dev
           key: sensitive-values.yaml
           optional: false
+      - configMapKeyRef:
+          name: nextcloud-notifypush-gateway-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: true
   providerConfigRef:
     name: kubernetes

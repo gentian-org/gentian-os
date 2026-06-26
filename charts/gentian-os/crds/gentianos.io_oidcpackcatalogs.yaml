@@ -1,0 +1,149 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: oidcpackcatalogs.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: OIDCPackCatalog
+    listKind: OIDCPackCatalogList
+    plural: oidcpackcatalogs
+    shortNames:
+    - oidcpack
+    - oidcpacks
+    singular: oidcpackcatalog
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.packCount
+      name: Packs
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          OIDCPackCatalog is a cluster-scoped catalogue of OpenDesk-style OIDC packs.
+          Shipped from gentian-apps (e.g. profiles/opendesk-oidc-catalog/) and consumed
+          by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: OIDCPackCatalogSpec holds mapper templates and per-clientId
+              pack definitions.
+            properties:
+              extraManagedByAttributeGroups:
+                description: |-
+                  ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
+                  provisioned per tenant OU that are not tied to an OIDC pack ldapGroup (e.g.
+                  openDesk portal admin groups).
+                items:
+                  type: string
+                type: array
+              mapperTemplates:
+                additionalProperties:
+                  description: OIDCMapperTemplate describes one Keycloak protocol
+                    mapper on a client scope.
+                  properties:
+                    config:
+                      additionalProperties:
+                        type: string
+                      description: Config holds Keycloak mapper configuration key/value
+                        pairs.
+                      type: object
+                    keycloakName:
+                      description: |-
+                        KeycloakName overrides the mapper name in Keycloak when it differs from
+                        the catalog template key.
+                      type: string
+                    protocolMapper:
+                      description: ProtocolMapper is the Keycloak protocol mapper
+                        type.
+                      type: string
+                  required:
+                  - protocolMapper
+                  type: object
+                description: MapperTemplates are reusable Keycloak protocol mapper
+                  definitions.
+                type: object
+              packs:
+                additionalProperties:
+                  description: OIDCPackSpec is the OpenDesk-style OIDC configuration
+                    for one clientId.
+                  properties:
+                    clientRole:
+                      description: ClientRole is the Keycloak client role mapped from
+                        the LDAP group.
+                      type: string
+                    defaultScopes:
+                      description: DefaultScopes are realm default scopes attached
+                        before the pack scope.
+                      items:
+                        type: string
+                      type: array
+                    fullScopeAllowed:
+                      description: FullScopeAllowed controls Keycloak fullScopeAllowed
+                        on the client.
+                      type: boolean
+                    ldapGroup:
+                      description: |-
+                        LDAPGroup is the managed-by-attribute-* LDAP group (full cn suffix or short
+                        name — the operator normalizes to the short suffix for OU provisioning).
+                      type: string
+                    mappers:
+                      description: Mappers lists mapper template keys from spec.mapperTemplates.
+                      items:
+                        type: string
+                      type: array
+                    publicClient:
+                      description: PublicClient marks the OIDC client as PUBLIC (PKCE,
+                        no secret).
+                      type: boolean
+                    scopeDescription:
+                      description: ScopeDescription is shown in the Keycloak admin
+                        UI.
+                      type: string
+                    scopeName:
+                      description: ScopeName is the Keycloak client scope created
+                        for this pack.
+                      type: string
+                  required:
+                  - clientRole
+                  - ldapGroup
+                  - scopeName
+                  type: object
+                description: Packs maps OIDC clientId to pack configuration.
+                type: object
+            type: object
+          status:
+            description: OIDCPackCatalogStatus is optional observed state.
+            properties:
+              packCount:
+                description: PackCount is the number of entries in spec.packs.
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

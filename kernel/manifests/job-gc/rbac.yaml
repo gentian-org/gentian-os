@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gentian-job-gc
+  namespace: platform-kernel
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/component: job-gc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gentian-job-gc
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gentian-job-gc
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gentian-job-gc
+subjects:
+  - kind: ServiceAccount
+    name: gentian-job-gc
+    namespace: platform-kernel

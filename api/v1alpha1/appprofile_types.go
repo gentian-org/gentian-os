@@ -13,14 +13,49 @@ type AppProfileSpec struct {
 	// +kubebuilder:validation:MaxLength=128
 	DisplayName string `json:"displayName"`
 
+	// Family is the stable logical application id shared across catalogue revisions
+	// (versions and flavors). When empty the App Store controller defaults it to
+	// metadata.name. Use the same family for every immutable revision of one app.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$`
+	Family string `json:"family,omitempty"`
+
+	// CatalogueVersion is the semver of this catalogue entry (immutable once published).
+	// Distinct from spec.chart.version (upstream Helm chart pin).
+	// +optional
+	// +kubebuilder:default="1.0.0"
+	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
+	CatalogueVersion string `json:"catalogueVersion,omitempty"`
+
+	// Edition selects the feature / footprint variant (minimal, full, performant, …).
+	// +optional
+	// +kubebuilder:default=full
+	Edition Edition `json:"edition,omitempty"`
+
+	// TrustTier is the platform certification level for this catalogue entry.
+	// +optional
+	// +kubebuilder:default=certified
+	TrustTier TrustTier `json:"trustTier,omitempty"`
+
+	// License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
+	// Premium profiles in gentian-premium typically use proprietary.
+	// +optional
+	License string `json:"license,omitempty"`
+
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// Logo is the application icon used in the Gentian portal. It must be a
-	// data URI (data:image/svg+xml;base64,...) containing a base64-encoded SVG.
-	// The LDAP reconciler writes this value to the portal entry's pathToLogo
-	// attribute so the portal frontend can render it directly as an <img src>.
+	// Tile declares the Gentian portal app-menu icon for this profile.
+	// Path 1 (custom): set tile.logo to a data URI or tile.image in git (inlined before publish).
+	// Path 2 (catalogue): set tile.icon to a Gentian catalogue id (e.g. "mail", "chat").
+	// Legacy spec.logo is still honoured when tile is unset.
+	// +optional
+	Tile *TileSpec `json:"tile,omitempty"`
+
+	// Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
+	// The LDAP reconciler writes the resolved value to pathToLogo on portal entries.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
@@ -80,8 +115,8 @@ type AppProfileSpec struct {
 
 	// CompositionRef overrides the Crossplane Composition used to deploy this
 	// app. When empty the XRD default (app-default) applies. Set to the name
-	// of a purpose-built composition (e.g. "app-element", "app-ox") for
-	// profiles that require deploying multiple Helm Releases.
+	// of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
+	// (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 
@@ -102,6 +137,12 @@ type AppProfileSpec struct {
 	// +optional
 	AdditionalIngresses []IngressSpec `json:"additionalIngresses,omitempty"`
 
+	// Sidecars declares companion services deployed by purpose-built compositions
+	// alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+	// clients and internal secrets use the synthetic app key {profile}-{sidecar}.
+	// +optional
+	Sidecars []AppSidecarSpec `json:"sidecars,omitempty"`
+
 	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
 	// UDM portal entry under swp.{tile.name}_{tenantName}.
@@ -109,6 +150,26 @@ type AppProfileSpec struct {
 	// When empty no per-tenant portal entries are created.
 	// +optional
 	PortalTiles []PortalTileSpec `json:"portalTiles,omitempty"`
+}
+
+// TileSpec configures a Gentian portal tile icon (52×52 SVG).
+// Set icon (catalogue path) or logo (custom data URI). image is source-repo only
+// and must be inlined to logo before the AppProfile is applied to a cluster.
+type TileSpec struct {
+	// Icon selects a pre-made tile from the Gentian catalogue (path 2).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
+	Icon string `json:"icon,omitempty"`
+
+	// Logo is a custom tile as a data URI (path 1). Mutually exclusive with icon.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	Logo string `json:"logo,omitempty"`
+
+	// Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
+	// Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+	// +optional
+	Image string `json:"image,omitempty"`
 }
 
 // PortalLinkTarget controls how the portal opens a tile link.
@@ -162,8 +223,11 @@ type PortalTileSpec struct {
 	// +kubebuilder:default="Domain Users"
 	AllowedGroup string `json:"allowedGroup,omitempty"`
 
-	// Logo is an optional per-tile icon override. Must be a data URI
-	// (data:image/svg+xml;base64,...). Falls back to the AppProfile logo.
+	// Tile overrides the app-level tile for this portal entry.
+	// +optional
+	Tile *TileSpec `json:"tile,omitempty"`
+
+	// Logo is deprecated; prefer tile. Optional per-tile data URI override.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
@@ -334,6 +398,11 @@ type OIDCClientSpec struct {
 	// grant (legacy / CLI apps). Defaults to false.
 	// +optional
 	DirectAccessGrantsEnabled bool `json:"directAccessGrantsEnabled,omitempty"`
+
+	// OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
+	// pack key differs from clientId. When empty, clientId is used as the pack key.
+	// +optional
+	OIDCPackRef string `json:"oidcPackRef,omitempty"`
 }
 
 // LDAPRequirement describes per-tenant LDAP needs.
@@ -654,6 +723,51 @@ type LDAPValueMapping struct {
 	BindPasswordKey string `json:"bindPasswordKey,omitempty"`
 }
 
+// AppSidecarSpec declares a companion service deployed alongside the primary
+// app by a purpose-built composition (for example Jitsi with Element).
+type AppSidecarSpec struct {
+	// Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
+	// use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
+	Name string `json:"name"`
+
+	// Chart references the sidecar Helm chart.
+	Chart ChartRef `json:"chart"`
+
+	// KernelRequirements declares kernel services the sidecar needs.
+	// +optional
+	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
+
+	// AppSecrets are sidecar-internal secrets stored at
+	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.
+	// +optional
+	AppSecrets []AppSecret `json:"appSecrets,omitempty"`
+
+	// ExtraValues are merged into the sidecar Helm release values.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
+
+	// StableServiceName is the Kubernetes Service name the tenant ingress
+	// reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+	// a stable ClusterIP alias pointing at the sidecar release.
+	// +optional
+	StableServiceName string `json:"stableServiceName,omitempty"`
+
+	// StableServicePort is the port on StableServiceName. Defaults to 80.
+	// +optional
+	// +kubebuilder:default=80
+	StableServicePort int32 `json:"stableServicePort,omitempty"`
+}
+
+// SidecarAppName returns the synthetic app key used for sidecar OpenBao paths
+// and OIDC client jobs ({parent}-{sidecar}).
+func SidecarAppName(parentProfile, sidecarName string) string {
+	return parentProfile + "-" + sidecarName
+}
+
 // AppSecret declares an app-internal secret the orchestrator must generate
 // and inject. These are credentials the app needs (admin passwords, session
 // signing keys, cluster tokens) that are not provided by any kernel service.
@@ -713,8 +827,13 @@ type IntegrationRef struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=ap;aps
 // +kubebuilder:printcolumn:name="Display Name",type=string,JSONPath=`.spec.displayName`
+// +kubebuilder:printcolumn:name="Family",type=string,JSONPath=`.spec.family`
+// +kubebuilder:printcolumn:name="Cat.Version",type=string,JSONPath=`.spec.catalogueVersion`
+// +kubebuilder:printcolumn:name="Edition",type=string,JSONPath=`.spec.edition`
+// +kubebuilder:printcolumn:name="Trust",type=string,JSONPath=`.spec.trustTier`
+// +kubebuilder:printcolumn:name="License",type=string,JSONPath=`.spec.license`
 // +kubebuilder:printcolumn:name="Chart",type=string,JSONPath=`.spec.chart.name`
-// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.chart.version`
+// +kubebuilder:printcolumn:name="Chart Ver",type=string,JSONPath=`.spec.chart.version`
 // +kubebuilder:printcolumn:name="Method",type=string,JSONPath=`.spec.deploymentMethod`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type AppProfile struct {

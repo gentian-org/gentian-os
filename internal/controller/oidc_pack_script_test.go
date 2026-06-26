@@ -3,6 +3,7 @@
 package controller
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,11 +14,11 @@ import (
 )
 
 func TestOIDCPacksNeedLDAPGroups(t *testing.T) {
-	packs, templates, err := oidc.LoadCatalog()
-	if err != nil {
-		t.Fatal(err)
+	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+	if err != nil || !ok {
+		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	pack := packs["opendesk-jitsi"]
 	if !oidcPacksNeedLDAPGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
 		t.Fatal("expected opendesk-jitsi pack to require LDAP groups")
 	}
@@ -40,11 +41,11 @@ func TestBuildKCLDAPGroupSyncScript(t *testing.T) {
 }
 
 func TestBuildOIDCPackScriptJitsi(t *testing.T) {
-	packs, templates, err := oidc.LoadCatalog()
-	if err != nil {
-		t.Fatal(err)
+	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+	if err != nil || !ok {
+		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	pack := packs["opendesk-jitsi"]
 	script := buildOIDCPackScript("demo", "opendesk-jitsi", pack, templates,
 		[]string{"https://meet.demo.desk.gentian.org/*"}, "")
 	for _, want := range []string{
@@ -91,6 +92,28 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	}
 	if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
 		t.Fatalf("oidc pack script must be valid POSIX sh: %v\n%s", err, out)
+	}
+}
+
+func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
+	script := buildFirstBrokerLoginFlowScript("demo")
+	if path := os.Getenv("DUMP_FIRST_BROKER_LOGIN_SCRIPT"); path != "" {
+		if err := os.WriteFile(path, []byte(keycloakProvisionerBootstrap+script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, want := range []string{
+		firstBrokerLoginFlowAlias,
+		`idp-detect-existing-broker-user`,
+		`first broker login flow ${FLOW_ALIAS} ready`,
+		`idp-auto-link`,
+		`requirement\":\"REQUIRED`,
+		`federated-identity/kernel`,
+		`kernel broker link purge finished`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("first broker login script missing %q", want)
+		}
 	}
 }
 

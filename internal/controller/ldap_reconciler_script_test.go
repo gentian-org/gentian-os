@@ -29,7 +29,7 @@ func TestBuildAdminPolicyScript_IdempotentRedeploy(t *testing.T) {
 		"uid=${ADMIN_USERNAME},${USERS_OU_POS}",
 		"grep -qF \"${ADMINS_GRP_DN}\"",
 		"grep -qF \"${ADMIN_DN}\"",
-		"TENANT_TEMPLATE_DN=\"cn=1 App User,cn=templates,${OU_POS}\"",
+		"TENANT_TEMPLATE_DN=\"cn=App User,cn=templates,${OU_POS}\"",
 		"tenant App User template ${TENANT_TEMPLATE_DN} is the UMC default",
 		"admin policy provisioning complete for ${ADMIN_USERNAME}",
 	} {
@@ -89,10 +89,49 @@ func TestBuildAppUserTemplateScript_PrefillsTenantMailDomain(t *testing.T) {
 		`"mailPrimaryAddress": "<username>@${MAIL_DOMAIN}"`,
 		"MAIL_DOMAIN=\"demo.desk.gentian.org\"",
 		"cn=templates,${OU_POS}",
-		`"name": "1 App User"`,
+		`"name": "App User"`,
+		"LEGACY_NUMBERED_TEMPLATE_DN=\"cn=1 App User",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected App User template script to contain %q", want)
+		}
+	}
+}
+
+func TestBuildOUScript_PreservesCurlHTTPCodeFormat(t *testing.T) {
+	t.Parallel()
+	script := buildOUScript("ou=demo,${UDM_LDAP_BASE}", "demo", []string{"Fileshare"})
+	if strings.Contains(script, "%!(MISSING)") {
+		t.Fatal("OU script contains corrupted fmt.Sprintf verbs")
+	}
+	if !strings.Contains(script, `%{http_code}`) {
+		t.Fatal("expected shell curl -w %{http_code} in OU script")
+	}
+}
+
+func TestBuildMBAGroupsScript_IncludesOpenDeskOIDCGroups(t *testing.T) {
+	t.Parallel()
+	groups := []string{
+		"Groupware",
+		"Fileshare",
+		"FileshareAdmin",
+		"Videoconference",
+		"Livecollaboration",
+		"LivecollaborationAdmin",
+		"Projectmanagement",
+		"Knowledgemanagement",
+	}
+	script := buildMBAGroupsScript("ou=demo,${UDM_LDAP_BASE}", groups)
+	for _, want := range []string{
+		"for MBA_GROUP in",
+		"Projectmanagement",
+		"Knowledgemanagement",
+		"Livecollaboration",
+		"Groupware",
+		"managed-by-attribute-${MBA_GROUP}",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected MBA groups script to contain %q", want)
 		}
 	}
 }
@@ -103,6 +142,8 @@ func TestBuildOUDeleteScript_FailsOnNonSuccessHTTP(t *testing.T) {
 	for _, want := range []string{
 		`case "${HTTP}" in`,
 		`200|204|404) ;;`,
+		`scope=sub`,
+		`user subtree sweep complete`,
 		`exit 1`,
 	} {
 		if !strings.Contains(script, want) {

@@ -2,9 +2,24 @@
 
 This document lists key cluster-admin commands for Gentian OS operations.
 
+For environment mapping, promotion flows, and GitOps layout, see
+[deployment.md](deployment.md).
+
 For tenant-admin app lifecycle commands, see:
 
 - ../../gentian-deployments/README.md
+
+## CLI entry points
+
+`install.sh` installs the Gentian CLI as a kubectl plugin (`kubectl-gentian` in
+`/usr/local/bin`). A shorthand symlink `gtnctl` points at the same binary:
+
+```bash
+gtnctl tenants list    # same as kubectl gentian tenants list
+```
+
+Use `gtnctl` at the terminal if you prefer a shorter command. All examples below
+use the canonical `kubectl gentian` form for consistency in docs and scripts.
 
 ## 1. Install the OS (Cluster Admin)
 
@@ -26,23 +41,32 @@ kubectl get tenants
 
 ## 3. Provision a Tenant
 
-Tenants are modeled in the deployments repository as:
+Each cluster maintains tenant **definitions** under
+`clusters/<cluster>/definitions/<tenant>/<stage>/`. Fresh installs leave
+`clusters/<cluster>/tenants/` empty until a definition is deployed.
 
-- `dev/tenants/instances/<tenant>/tenant.yaml` (tenant instance)
-- `dev/tenants/instances/<instance>/...` (how that definition is instantiated)
-- `dev/tenants/kustomization.yaml` (which instances are deployed in dev)
+| Path | State |
+|------|--------|
+| `definitions/<tenant>/<stage>/` | Defined only (`ACTIVE=no` in list) |
+| `tenants/<tenant>/<stage>/` | Deployed to GitOps (`ACTIVE=yes`) |
 
-List available tenant instances and whether they are currently deployed:
+List all tenant definitions and deployment status:
 
 ```bash
 kubectl gentian tenants list
 ```
 
-Deploy a specific tenant instance:
+`ACTIVE=yes` when the definition is activated under `tenants/` (Argo sync path).
+`ACTIVE=no` when defined only under `definitions/`. `LIVE=yes` when the Tenant CR
+exists on the cluster.
+
+Deploy a tenant definition:
 
 ```bash
 kubectl gentian tenants deploy demo
 ```
+
+If not yet under `tenants/`, deploy copies the definition from `definitions/` first.
 
 Deploy is transactional:
 
@@ -62,7 +86,7 @@ After successful deploy, the CLI prints tenant-admin login guidance, including:
 Render and apply the active tenant set for dev manually (optional):
 
 ```bash
-kubectl apply -k gentian-deployments/dev/tenants
+kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
 ```
 
 To target another environment, use `--env`:
@@ -72,16 +96,11 @@ kubectl gentian tenants list --env staging
 kubectl gentian tenants deploy demo --env staging
 ```
 
-The deploy command updates `resources:` in
-`gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, then
-applies that Kustomization.
+The deploy command writes/updates tenant manifests under
+`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
+and ArgoCD ApplicationSet discovers the directory automatically.
 
-Equivalent Git edit:
-
-```yaml
-resources:
-- instances/demo
-```
+Equivalent Git change: add/remove tenant directories for the selected stage.
 
 Check tenant reconciliation:
 
@@ -120,8 +139,8 @@ If a prior undeploy ran Retain cleanup only, purge falls back to an LDAP OU
 delete Job when it detects `ldap-lock-<tenant>` without `ldap-ou-delete-<tenant>`.
 
 The undeploy command removes the instance from
-`gentian-deployments/<env>/tenants/kustomization.yaml`, commits/pushes, applies
-the Kustomization, and deletes the live Tenant CR.
+`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
+and deletes the live Tenant CR.
 
 Equivalent Git edit:
 
@@ -132,7 +151,7 @@ resources: []
 Apply the desired state manually (optional):
 
 ```bash
-kubectl apply -k gentian-deployments/dev/tenants
+kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
 ```
 
 If you want immediate local convergence before ArgoCD sync, delete the live
@@ -189,7 +208,55 @@ Show all available `kubectl gentian` subcommands:
 kubectl gentian --help
 ```
 
-## 6. Retrieve Admin Credentials
+## 6. Install and Uninstall Apps
+
+Apps are installed by adding an entry to the tenant manifest in
+`gentian-deployments` and waiting for Crossplane + the operator to reconcile.
+
+List catalogue profiles (cluster-scoped `AppProfile` CRs):
+
+```bash
+kubectl gentian apps list
+# shorthand:
+gtnctl apps list
+```
+
+Install an app on a tenant (commits/pushes GitOps, syncs Argo CD, waits for Ready):
+
+```bash
+kubectl gentian apps install openproject --tenant demo
+# shorthand:
+gtnctl apps install xwiki --tenant demo
+```
+
+Uninstall (removes the app from Git; retains databases and OpenBao secrets by default):
+
+```bash
+kubectl gentian apps uninstall openproject --tenant demo
+```
+
+Purge persistent state (Postgres/MariaDB, S3 bucket, Redis keys, OpenBao paths):
+
+```bash
+kubectl gentian apps uninstall element --tenant demo --purge
+# or
+gtnctl apps uninstall xwiki --tenant demo -f
+```
+
+Inspect app reconciliation:
+
+```bash
+kubectl get app xwiki -n tenant-demo
+kubectl get xapp -A | grep xwiki
+kubectl get pods -n tenant-demo | grep xwiki
+kubectl logs -n tenant-demo -l app.kubernetes.io/instance=xwiki --tail=50
+```
+
+Tenant stage (`dev`, `staging`, `prod`) is selected via `install.env` /
+`GENTIAN_DEPLOYMENTS_ENV` — app commands do not take `--env`; they target the
+active tenant file for that stage.
+
+## 7. Retrieve Admin Credentials
 
 Portal and identity credentials can be read from Kubernetes Secrets.
 
@@ -211,7 +278,7 @@ ArgoCD admin:
 kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
-## 7. Key URLs
+## 8. Key URLs
 
 Given KERNEL_DOMAIN, the main URLs are:
 
@@ -220,7 +287,7 @@ Given KERNEL_DOMAIN, the main URLs are:
 
 ArgoCD URL depends on service exposure (NodePort/LoadBalancer/Ingress) in your cluster.
 
-## 8. Useful Troubleshooting Commands
+## 9. Useful Troubleshooting Commands
 
 ```bash
 kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
@@ -229,9 +296,56 @@ kubectl get integrationbindings -A
 kubectl describe application -n argocd gentian-os
 ```
 
-## 9. Kernel Mail Stack (Dovecot + Postfix)
+### Gateway API edge routing (`ROUTING_MODE=gateway`)
 
-**Two knobs:** `MAIL_SERVICE_MODE` in `install.env` controls whether the
+```bash
+# Platform Gateways and routes
+kubectl get gatewayclass gentian-envoy
+kubectl get gateway -A
+kubectl get httproute -A -l app.kubernetes.io/managed-by=gentian-os
+kubectl describe gateway kernel-public-gateway -n gentian-dev
+
+# Envoy data plane
+kubectl get pods -n envoy-gateway-system
+kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway
+
+# Tenant edge status
+kubectl get tenant -o custom-columns=NAME:.metadata.name,GATEWAY:.status.conditions[?(@.type==\"GatewayReady\")].status,TUNNEL:.status.conditions[?(@.type==\"TunnelIngressReady\")].status
+
+# Envoy policies attached to routes
+kubectl get backendtrafficpolicy -n tenant-demo
+kubectl get backendtrafficpolicy -n gentian-dev -l app.kubernetes.io/managed-by=gentian-os
+```
+
+On `NETWORK_MODE=tunnel`, `Gateway.status.conditions[Programmed]` may be
+`False` (`AddressNotAssigned`) while listener conditions are `Programmed=True`
+and traffic reaches Envoy via Cloudflare tunnel. Check `TunnelIngressReady` on
+the Tenant and external curl to the public hostname.
+
+### OIDC pack catalogue
+
+OpenDesk-style apps depend on the cluster-scoped `OIDCPackCatalog` CR shipped
+from `gentian-apps` (`profiles/opendesk-oidc-catalog/`). Verify it is synced
+before debugging pack Jobs or missing client scopes:
+
+```bash
+kubectl get oidcpackcatalog opendesk -o yaml
+# expect: metadata.labels.gentianos.io/oidc-catalog: opendesk
+```
+
+List pack keys and confirm a profile's `clientId` is present:
+
+```bash
+kubectl get oidcpackcatalog opendesk -o jsonpath='{.spec.packs}' | jq 'keys'
+```
+
+Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
+**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §8.
+
+## 10. Kernel Mail Stack (Dovecot + Postfix)
+
+**Two knobs:** `MAIL_SERVICE_MODE` in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` controls whether the
 **installer** deploys Postfix/Dovecot into `gentian-dev` and how Postfix
 relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
 **operator** provisions per organisation. See [design/mail.md](design/mail.md) §0.
@@ -243,12 +357,14 @@ On dev, in-cluster SMTP is `postfix-dev.gentian-dev.svc.cluster.local:587`.
 Kernel mail mode deploys Dovecot alongside Postfix and configures Postfix
 to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
 
-**Step 1** — Update `install.env`:
+**Step 1** — Update `cluster-settings.env`:
+
 ```ini
 MAIL_SERVICE_MODE=kernel
 ```
 
 **Step 2** — Run `update.sh`. It detects the drift and patches the cluster:
+
 ```bash
 ./update.sh
 ```
@@ -277,7 +393,7 @@ kubectl get externalsecret -n gentian-dev dovecot-sensitive-values postfix-sensi
 ### Switch back to external relay mode
 
 ```ini
-# install.env
+# gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env
 MAIL_SERVICE_MODE=external
 EXTERNAL_SMTP_HOST=smtp.gmail.com
 EXTERNAL_SMTP_PORT=587

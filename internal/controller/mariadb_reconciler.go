@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
 
@@ -28,10 +29,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -99,50 +98,9 @@ func (r *TenantReconciler) collectMariaDBApps(ctx context.Context, tenant *genti
 	return apps, nil
 }
 
-// ensureMariaDBSetupJob creates (or checks) the idempotent SQL setup Job for a
-// single app. Returns true when the Job has completed successfully.
+// ensureMariaDBSetupJob waits for the Crossplane-owned MariaDB setup Job.
 func (r *TenantReconciler) ensureMariaDBSetupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	jobName := mariadbSetupJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
-			return false, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		allowDynamic := false
-		if profile.Spec.KernelRequirements != nil && profile.Spec.KernelRequirements.Database != nil {
-			allowDynamic = profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
-		}
-
-		// Inc 21a: derive the per-app database password and persist it under
-		// the canonical OpenBao path before creating the SQL Job. The Job
-		// receives the same value via DB_PASS so live MariaDB and OpenBao stay
-		// in lockstep. When Seeder is nil the Job falls back to a local random.
-		dbPassword := ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", kernelNamespace),
-				Port: "3306",
-				Name: databaseName(tenant, appName),
-				User: mariadbUserName(tenant.Name, appName),
-			})
-			if seedErr != nil {
-				return false, fmt.Errorf("seed mariadb: %w", seedErr)
-			}
-			dbPassword = creds.Password
-		}
-		return false, r.Create(ctx, makeMariaDBSetupJob(tenant, appName, dbPassword, allowDynamic))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, mariadbSetupJobName(tenant.Name, appName))
 }
 
 // deleteMariaDB handles MariaDB cleanup on tenant deletion.
@@ -186,7 +144,7 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // The database name and username are passed as explicit env vars to avoid shell
 // quoting issues.
 func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string, allowDynamic bool) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	c := mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser)
@@ -220,7 +178,7 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword st
 
 // makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job.
 func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	return &batchv1.Job{

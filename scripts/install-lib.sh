@@ -237,8 +237,13 @@ CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 #   1) CLI flags / existing shell environment
 #   2) installer config files (install.env, install.secrets.env)
 #   3) local caches (.install-secrets.env, .install-state.env)
-#   4) OpenBao backfill for missing values
-#   5) interactive prompts for missing required values
+#   4) gentian-deployments cluster-settings.env (overrides 3 for cluster runtime)
+#   5) OpenBao backfill for missing values
+#   6) interactive prompts for missing required values
+#
+# Cluster runtime vars (KERNEL_DOMAIN, MAIL_SERVICE_MODE, …) belong in
+# clusters/<cluster>/kernel/cluster-settings.env; .install-state.env keeps only
+# installer-local state (see save_install_state).
 INPUT_HIERARCHY_VARS=(
     MASTER_PASSWORD
     OD_PRIVATE_REGISTRY_USERNAME
@@ -258,22 +263,37 @@ INPUT_HIERARCHY_VARS=(
     OPENBAO_INIT_FILE
     LETSENCRYPT_EMAIL
     INGRESS_CLASS_NAME
+    ROUTING_MODE
     GENTIAN_APPS_REPO
     GENTIAN_APPS_BRANCH
     GENTIAN_DEPLOYMENTS_REPO
     GENTIAN_DEPLOYMENTS_BRANCH
     GENTIAN_DEPLOYMENTS_PATH
+    GENTIAN_DEPLOYMENTS_CLUSTER
+    GENTIAN_DEPLOYMENTS_STAGE
+    GENTIAN_DEPLOYMENTS_GIT_TOKEN
+    GENTIAN_DEPLOYMENTS_GIT_USERNAME
+    GITHUB_ACTIONS_OS_REPO
+    CI_BOT_PAT
+    ARGOCD_SERVER
+    ARGOCD_TOKEN
     GENTIAN_NONINTERACTIVE
     INSTALL_CLUSTER_INFRA
     GENTIAN_MANAGED_CERT_MANAGER
     CF_API_TOKEN
     CF_ZONE_NAME
+    SECRET_MODE
+    MINIO_ENDPOINT
+    CNPG_HOST
+    STORAGE_CLASS
 )
 
 # ─── Versions ────────────────────────────────────────────────────────────────
-TOFU_VERSION="1.9.0"
 BAO_VERSION="2.5.1"
 ESO_CHART_VERSION="2.4.1"
+ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-v1.2.5}"
+ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
 
 usage() {
     cat <<'EOF'
@@ -359,7 +379,11 @@ load_env_file() {
 
     set -a
     # shellcheck disable=SC1090
-    source "${file}" || true
+    if ! source "${file}"; then
+        set +a
+        error "Failed to load ${label} from ${file}. Fix shell syntax in this file and retry."
+        return 1
+    fi
     set +a
 
     for var in "${!before[@]}"; do
@@ -369,91 +393,135 @@ load_env_file() {
     info "Loaded ${label} from ${file}."
 }
 
+# Source an env file and allow its values to override any already-set variables.
+# Used for gentian-deployments cluster-settings.env (Git source of truth for
+# cluster runtime behavior).
+load_env_file_override() {
+    local file="$1"
+    local label="$2"
+
+    [[ "${file}" == "/dev/null" ]] && return 0
+    [[ -r "${file}" ]] || return 0
+
+    set -a
+    # shellcheck disable=SC1090
+    if ! source "${file}"; then
+        set +a
+        error "Failed to load ${label} from ${file}. Fix shell syntax in this file and retry."
+        return 1
+    fi
+    set +a
+
+    info "Loaded ${label} from ${file} (overrides prior values)."
+}
+
 # validate_config checks that all required environment variables are set and
 # that key values pass basic format validation. Exits 0 on success, 1 on
 # failure. No cluster actions are taken.
 validate_config() {
     local errors=0 warnings=0
+    local deployments_root cluster stage
+    local cluster_settings_file
 
-    _req() {
-        local var="$1" hint="$2"
+    deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
+    cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
+
+    _file_header() {
+        local file="$1" role="$2"
+        echo ""
+        echo "━━━ ${role} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        if [[ -r "${file}" ]]; then
+            echo "  [FILE]     ${file}"
+        else
+            echo "  [ABSENT]   ${file}"
+        fi
+    }
+
+    _req_from() {
+        local var="$1" hint="$2" source_file="$3"
         if [[ -z "${!var:-}" ]]; then
-            echo "  [MISSING]  ${var}  — ${hint}"
+            echo "  [MISSING]  ${var}  — ${hint} (set in ${source_file})"
             (( errors++ )) || true
         else
             echo "  [OK]       ${var}"
         fi
     }
 
-    _opt() {
-        local var="$1" hint="$2"
+    _opt_from() {
+        local var="$1" hint="$2" source_file="$3"
         if [[ -z "${!var:-}" ]]; then
-            echo "  [WARN]     ${var}  — not set (${hint})"
+            echo "  [WARN]     ${var}  — not set (${hint}; set in ${source_file})"
             (( warnings++ )) || true
         else
             echo "  [OK]       ${var}"
         fi
     }
 
-    echo ""
-    echo "━━━ Required secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    _req MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets"
-    _req OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username"
-    _req OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token"
-    _req OD_SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)"
-    _req OD_SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)"
+    _file_header "${INSTALL_SECRETS_FILE}" "Secrets checks (install.secrets.env)"
+    _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
+    _req_from OD_SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
+    _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "${INSTALL_SECRETS_FILE}"
+    if [[ -z "${CF_ZONE_NAME:-}" ]]; then
+        echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset; set override in ${INSTALL_SECRETS_FILE})"
+    else
+        echo "  [OK]       CF_ZONE_NAME"
+    fi
+
+    _file_header "${cluster_settings_file}" "Cluster checks (cluster-settings.env)"
 
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel'"
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}"
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
-        _req EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)"
+        _req_from EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)" "${cluster_settings_file}"
     fi
 
-    echo ""
-    echo "━━━ Required config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
-        echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix (e.g. platform.example.com)"
+        echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix (e.g. platform.example.com; set in ${cluster_settings_file})"
         (( errors++ )) || true
     elif [[ ! "${KERNEL_DOMAIN}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
-        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$"
+        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$ (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       KERNEL_DOMAIN=${KERNEL_DOMAIN}"
     fi
     TENANCY_MODE="${TENANCY_MODE:-multi}"
     if [[ "${TENANCY_MODE}" != "multi" && "${TENANCY_MODE}" != "single" ]]; then
-        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single'"
+        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single' (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       TENANCY_MODE=${TENANCY_MODE}"
     fi
 
-    echo ""
-    echo "━━━ Optional / recommended config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    _opt LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address"
-    _opt INGRESS_CLASS_NAME "defaults to 'nginx' if not set"
-    _opt NETWORK_MODE       "networking mode: tunnel (default) or static-ip"
-    _opt NODE_IP            "required in static-ip mode; auto-detected otherwise"
-    _opt CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates"
-    _opt CF_ZONE_NAME       "Cloudflare zone — derived from KERNEL_DOMAIN if not set"
-    _opt GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps"
-    _opt GENTIAN_APPS_BRANCH     "defaults to 'main'"
-    _opt GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments"
-    _opt GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'"
+    _opt_from NETWORK_MODE  "networking mode: tunnel (default) or static-ip" "${cluster_settings_file}"
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        _req_from NODE_IP   "required in static-ip mode" "${cluster_settings_file}"
+    else
+        echo "  [OK]       NODE_IP  (not required for NETWORK_MODE=${NETWORK_MODE:-tunnel})"
+    fi
 
-    echo ""
-    echo "━━━ Config sources ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    [[ -r "${INSTALL_CONFIG_FILE}" ]]  && echo "  [FILE]     ${INSTALL_CONFIG_FILE}" \
-                                       || echo "  [ABSENT]   ${INSTALL_CONFIG_FILE}  (optional)"
-    [[ -r "${INSTALL_SECRETS_FILE}" ]] && echo "  [FILE]     ${INSTALL_SECRETS_FILE}" \
-                                       || echo "  [ABSENT]   ${INSTALL_SECRETS_FILE}  (optional, chmod 600)"
-    [[ -r "${INSTALL_SECRETS_CACHE}" ]] && echo "  [CACHE]    ${INSTALL_SECRETS_CACHE}" \
-                                        || echo "  [NO CACHE] ${INSTALL_SECRETS_CACHE}"
+    _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
+    _opt_from LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address" "${INSTALL_CONFIG_FILE}"
+    _opt_from INGRESS_CLASS_NAME "defaults to 'nginx' if not set" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push (install.secrets.env)" "${INSTALL_SECRETS_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "${INSTALL_SECRETS_FILE}"
+    _opt_from CI_BOT_PAT "GitHub PAT for gentian-os image-pin workflows (install.secrets.env)" "${INSTALL_SECRETS_FILE}"
+    _opt_from ARGOCD_SERVER "ArgoCD URL for pin-workflow sync (optional; derived from KERNEL_DOMAIN)" "${INSTALL_SECRETS_FILE}"
+    _opt_from ARGOCD_TOKEN "ArgoCD API token for pin-workflow sync (optional)" "${INSTALL_SECRETS_FILE}"
+    _opt_from GITHUB_ACTIONS_OS_REPO "GitHub repo for Actions secrets upload (install.env)" "${INSTALL_CONFIG_FILE}"
 
     echo ""
     if (( errors > 0 )); then
@@ -566,7 +634,8 @@ save_creds_cache() {
         echo "# Auto-generated by install.sh — keep secret, do not commit."
         echo "# Delete to be re-prompted on next run."
         for var in MASTER_PASSWORD OD_PRIVATE_REGISTRY_USERNAME OD_PRIVATE_REGISTRY_PASSWORD \
-                   OD_SMTP_RELAY_USERNAME OD_SMTP_RELAY_PASSWORD CF_API_TOKEN; do
+                   OD_SMTP_RELAY_USERNAME OD_SMTP_RELAY_PASSWORD CF_API_TOKEN \
+                   GENTIAN_DEPLOYMENTS_GIT_TOKEN CI_BOT_PAT ARGOCD_TOKEN; do
             local val="${!var:-}"
             [[ -n "$val" ]] || continue
             # printf %q escapes safely for re-sourcing.
@@ -651,6 +720,8 @@ prompt_app_repos() {
     local default_apps_branch="main"
     local default_deploy_repo="https://github.com/gentian-org/gentian-deployments"
     local default_deploy_branch="main"
+    local default_deploy_cluster="default-cluster"
+    local default_deploy_stage="${ENV:-dev}"
     local v
 
     if [[ -z "${GENTIAN_APPS_REPO:-}" ]]; then
@@ -691,13 +762,35 @@ prompt_app_repos() {
         fi
     fi
 
+    if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_DEPLOYMENTS_CLUSTER="${default_deploy_cluster}"
+        else
+            read -rp "  gentian-deployments cluster path segment [${default_deploy_cluster}]: " v
+            GENTIAN_DEPLOYMENTS_CLUSTER="${v:-${default_deploy_cluster}}"
+        fi
+    fi
+
+    if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            GENTIAN_DEPLOYMENTS_STAGE="${default_deploy_stage}"
+        else
+            read -rp "  gentian-deployments stage [${default_deploy_stage}]: " v
+            GENTIAN_DEPLOYMENTS_STAGE="${v:-${default_deploy_stage}}"
+        fi
+    fi
+
     : "${GENTIAN_APPS_REPO:=${default_apps_repo}}"
     : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
     : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
+        : "${GENTIAN_DEPLOYMENTS_CLUSTER:=${default_deploy_cluster}}"
+        : "${GENTIAN_DEPLOYMENTS_STAGE:=${default_deploy_stage}}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
     export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH \
-           GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH GENTIAN_DEPLOYMENTS_PATH
+            GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH \
+            GENTIAN_DEPLOYMENTS_CLUSTER GENTIAN_DEPLOYMENTS_STAGE \
+            GENTIAN_DEPLOYMENTS_PATH
 
     # Persist to ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
     # The plugin sources this file directly; keep variable names aligned with the
@@ -712,14 +805,48 @@ GENTIAN_APPS_REPO="${GENTIAN_APPS_REPO}"
 GENTIAN_APPS_BRANCH="${GENTIAN_APPS_BRANCH}"
 GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}"
 GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH}"
+GENTIAN_DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE}"
 GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"
 EOF
     chmod 0600 "$cfg_file"
     success "App repo configuration saved to ${cfg_file}"
+
+    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
+        else
+            read -rsp "  GENTIAN_DEPLOYMENTS_GIT_TOKEN (PAT for gentian-deployments push; optional): " GENTIAN_DEPLOYMENTS_GIT_TOKEN
+            echo ""
+            if [[ -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" ]]; then
+                export GENTIAN_DEPLOYMENTS_GIT_TOKEN
+                save_creds_cache
+            fi
+        fi
+    fi
+    : "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:=x-access-token}"
+    export GENTIAN_DEPLOYMENTS_GIT_USERNAME
+
+    if [[ -z "${CI_BOT_PAT:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            warn "CI_BOT_PAT not set — gentian-ui image builds cannot auto-pin tags in gentian-os."
+        else
+            read -rsp "  CI_BOT_PAT (fine-grained PAT, Contents write on gentian-os; optional): " CI_BOT_PAT
+            echo ""
+            if [[ -n "${CI_BOT_PAT}" ]]; then
+                export CI_BOT_PAT
+                save_creds_cache
+            fi
+        fi
+    fi
+    : "${GITHUB_ACTIONS_OS_REPO:=gentian-org/gentian-os}"
+    export GITHUB_ACTIONS_OS_REPO
 }
 
 # =============================================================================
-# Persist non-secret installer state (kernel domain, etc.) across re-runs.
+# Persist installer-local state across re-runs (.install-state.env).
+# Cluster runtime settings are NOT stored here — they live in gentian-deployments
+# clusters/<cluster>/kernel/cluster-settings.env.
 # =============================================================================
 load_install_state() {
     if [[ -r "${INSTALL_STATE_FILE}" ]]; then
@@ -733,24 +860,9 @@ save_install_state() {
     local val
     tmp="$(mktemp)"
     {
-        echo "# Auto-generated by install.sh — non-secret installer state."
-        echo "# Delete to be re-prompted on next run."
-        val="${KERNEL_DOMAIN:-}"
-        [[ -n "$val" ]] && printf 'export KERNEL_DOMAIN=%q\n' "$val"
-        val="${TENANCY_MODE:-}"
-        [[ -n "$val" ]] && printf 'export TENANCY_MODE=%q\n' "$val"
-        val="${MAIL_SERVICE_MODE:-}"
-        [[ -n "$val" ]] && printf 'export MAIL_SERVICE_MODE=%q\n' "$val"
-        val="${EXTERNAL_SMTP_HOST:-}"
-        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_HOST=%q\n' "$val"
-        val="${EXTERNAL_SMTP_PORT:-}"
-        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_PORT=%q\n' "$val"
-        val="${EXTERNAL_SMTP_SSL:-}"
-        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_SSL=%q\n' "$val"
-        val="${EXTERNAL_SMTP_STARTTLS:-}"
-        [[ -n "$val" ]] && printf 'export EXTERNAL_SMTP_STARTTLS=%q\n' "$val"
-        val="${NETWORK_MODE:-}"
-        [[ -n "$val" ]] && printf 'export NETWORK_MODE=%q\n' "$val"
+        echo "# Auto-generated by install.sh — installer-local state only."
+        echo "# Cluster runtime settings: gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env"
+        echo "# Delete this file to reset installer-local caches."
         val="${GENTIAN_MANAGED_CERT_MANAGER:-}"
         [[ -n "$val" ]] && printf 'export GENTIAN_MANAGED_CERT_MANAGER=%q\n' "$val"
         val="${INSTALL_START_EPOCH:-}"
@@ -762,13 +874,44 @@ save_install_state() {
 }
 
 # =============================================================================
+# Load cluster-scoped non-secret settings from gentian-deployments checkout.
+# File path convention:
+#   ${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/cluster-settings.env
+# =============================================================================
+load_deployments_cluster_settings() {
+    : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
+
+    # Local developer layout often checks out sibling repos under the same
+    # parent directory (../gentian-deployments). Prefer that path when the
+    # default cache location does not exist.
+    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}" ]]; then
+        local sibling_repo
+        sibling_repo="$(cd "${SCRIPT_DIR}/.." && pwd)/gentian-deployments"
+        if [[ -d "${sibling_repo}" ]]; then
+            GENTIAN_DEPLOYMENTS_PATH="${sibling_repo}"
+            export GENTIAN_DEPLOYMENTS_PATH
+            info "Using sibling deployments repo at ${GENTIAN_DEPLOYMENTS_PATH}."
+        fi
+    fi
+
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
+
+    if [[ -r "${settings_file}" ]]; then
+        load_env_file_override "${settings_file}" "deployments cluster settings"
+    else
+        info "No deployments cluster settings file found at ${settings_file} (optional)."
+    fi
+}
+
+# =============================================================================
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
 # which all kernel UIs — Keycloak, Nubus, Argo CD, Intercom — are served, and
 # which provides the tenant app zone fallback when Tenant.spec.domain is unset
 # (shape depends on TENANCY_MODE — see docs/design/multi-tenancy.md §3).
 #
-# Persisted to ${INSTALL_STATE_FILE} so subsequent re-runs do not re-prompt.
-# =============================================================================
+# Persisted via cluster-settings.env in gentian-deployments when set there;
+# prompts only run when the value is still missing after load_deployments_cluster_settings.
 prompt_kernel_domain() {
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
         info "Using KERNEL_DOMAIN=${KERNEL_DOMAIN}"
@@ -1061,19 +1204,54 @@ check_prereqs() {
             error "Set NODE_IP to the cluster node's actual public or reachable IP and re-run."
             exit 1
         fi
-        # Check that the ingress controller's LoadBalancer service actually has an external IP.
-        local lb_ip
-        lb_ip=$(kubectl get svc -A -l 'app.kubernetes.io/name=ingress-nginx' \
-            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        # Check that the edge LoadBalancer service has an external IP.
+        local lb_ip lb_label
+        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
+            lb_label='app.kubernetes.io/name=gateway-helm'
+            lb_ip=$(kubectl get svc -A -l "${lb_label}" \
+                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        else
+            lb_ip=$(kubectl get svc -A -l 'app.kubernetes.io/name=ingress-nginx' \
+                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        fi
         if [[ -z "$lb_ip" ]]; then
-            warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
+            if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
+                warn "NETWORK_MODE=static-ip: Envoy Gateway LoadBalancer has no external IP yet."
+            else
+                warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
+            fi
             warn "  Make sure MetalLB (or a cloud LB) is configured with ${NODE_IP} before traffic can reach the cluster."
         else
             info "Ingress LoadBalancer external IP: ${lb_ip}"
         fi
     fi
 
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
+        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
+        exit 1
+    fi
+
     success "All pre-flight checks passed."
+}
+
+# =============================================================================
+# resolve_ldap_base_dn — cluster LDAP base DN (SoT: LDAP_BASE_DN / LDAP_BASE env,
+# then Cluster XR spec.ldapBaseDn, then dc=* derivation from KERNEL_DOMAIN).
+# =============================================================================
+resolve_ldap_base_dn() {
+    local dn="${LDAP_BASE_DN:-${LDAP_BASE:-}}"
+    if [[ -z "${dn}" ]]; then
+        dn="$(kubectl get cluster dev-cluster -n crossplane-system \
+            -o jsonpath='{.spec.ldapBaseDn}' 2>/dev/null || true)"
+    fi
+    if [[ -z "${dn}" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        dn="$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')"
+    fi
+    if [[ -z "${dn}" && "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        error "LDAP base DN is required (LDAP_BASE_DN in cluster-settings.env or KERNEL_DOMAIN for derivation)."
+        exit 1
+    fi
+    printf '%s' "${dn}"
 }
 
 # =============================================================================
@@ -1090,12 +1268,39 @@ upsert_gentian_cluster_config() {
     fi
     export NODE_IP
 
-    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local}"
-    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-dev}.svc.cluster.local"
+    local _ldap_server="${LDAP_SERVER:-nubus-${ENV:-dev}-ldap-server.${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}.svc.cluster.local}"
+    local _ldap_base_dn
+    _ldap_base_dn="$(resolve_ldap_base_dn)"
+    local _ldap_bind_dn="${LDAP_BIND_DN:-${LDAP_BIND_SEARCH_DN:-}}"
+    local _udm_url="http://nubus-${ENV:-dev}-udm-rest-api.${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}.svc.cluster.local"
     local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
     local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
+    local _storage_class="${STORAGE_CLASS:-}"
+    local _mail_mode="${MAIL_SERVICE_MODE:-external}"
+    local _routing_mode="${ROUTING_MODE:-gateway}"
+    local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
+    local _services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local _openbao_ns="${OPENBAO_NAMESPACE:-openbao}"
+    local _smtp_host="${MAIL_SMTP_HOST:-postfix-${ENV:-dev}.${_services_ns}.svc.cluster.local}"
+    local _kube_api_cidr=""
+    local _kube_api_endpoint_ip=""
+    local _kube_api_endpoint_port=""
+    if _kube_api_ip="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null)"; then
+        [[ -n "${_kube_api_ip}" ]] && _kube_api_cidr="${_kube_api_ip}/32"
+    fi
+    # Calico/Cilium evaluate egress against the post-DNAT apiserver endpoint, not
+    # only the kubernetes Service ClusterIP. Tenant bootstrap Jobs (e.g. Matrix UVS)
+    # need this endpoint reachable from isolated tenant namespaces.
+    _kube_api_endpoint_ip="$(kubectl get endpoints kubernetes -n default \
+        -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+    _kube_api_endpoint_port="$(kubectl get endpoints kubernetes -n default \
+        -o jsonpath='{.subsets[0].ports[?(@.name=="https")].port}' 2>/dev/null || true)"
+    if [[ -z "${_kube_api_endpoint_port}" ]]; then
+        _kube_api_endpoint_port="$(kubectl get endpoints kubernetes -n default \
+            -o jsonpath='{.subsets[0].ports[0].port}' 2>/dev/null || true)"
+    fi
 
-    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, node.ip=${NODE_IP:-<unset>})..."
+    info "Upserting gentian-cluster-config (ldap.server=${_ldap_server}, ldap.baseDn=${_ldap_base_dn}, node.ip=${NODE_IP:-<unset>}, kubeApi=${_kube_api_endpoint_ip}:${_kube_api_endpoint_port:-<unset>})..."
     kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -1107,55 +1312,47 @@ metadata:
     gentianos.io/config-type: cluster-config
 data:
   ldap.server: "${_ldap_server}"
-  ldap.baseDn: "${LDAP_BASE_DN:-}"
+  ldap.baseDn: "${_ldap_base_dn}"
+  ldap.bindDn: "${_ldap_bind_dn}"
+  mail.smtpHost: "${_smtp_host}"
   udm.url: "${_udm_url}"
   minio.endpoint: "${_minio_endpoint}"
   cnpg.host: "${_cnpg_host}"
+  storageClass: "${_storage_class}"
+  mail.serviceMode: "${_mail_mode}"
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
+  appInit.image: "ghcr.io/gentian-org/gentian-app-init:${APP_INIT_IMAGE_TAG:-develop}"
+  network.infraNamespace: "${_infra_ns}"
+  network.servicesNamespace: "${_services_ns}"
+  network.openbaoNamespace: "${_openbao_ns}"
+  network.routingMode: "${_routing_mode}"
+  network.kubeApiServerCidr: "${_kube_api_cidr}"
+  network.kubeApiServerEndpointIp: "${_kube_api_endpoint_ip}"
+  network.kubeApiServerEndpointPort: "${_kube_api_endpoint_port}"
+  tenant.limitRange.default.cpu: "${TENANT_LIMITRANGE_DEFAULT_CPU:-500m}"
+  tenant.limitRange.default.memory: "${TENANT_LIMITRANGE_DEFAULT_MEMORY:-512Mi}"
+  tenant.limitRange.defaultRequest.cpu: "${TENANT_LIMITRANGE_DEFAULT_REQUEST_CPU:-100m}"
+  tenant.limitRange.defaultRequest.memory: "${TENANT_LIMITRANGE_DEFAULT_REQUEST_MEMORY:-128Mi}"
+  tenant.initJob.limits.cpu: "${TENANT_INITJOB_LIMIT_CPU:-500m}"
+  tenant.initJob.limits.memory: "${TENANT_INITJOB_LIMIT_MEMORY:-512Mi}"
+  tenant.initJob.requests.cpu: "${TENANT_INITJOB_REQUEST_CPU:-100m}"
+  tenant.initJob.requests.memory: "${TENANT_INITJOB_REQUEST_MEMORY:-128Mi}"
 EOF
     success "gentian-cluster-config ConfigMap upserted."
 }
 
-# upsert_gentian_jitsi_oidc_overlays_configmap — cluster-wide Jitsi OIDC/JWT file
-# overlays consumed by app-default composition (portal iframe SSO, kernel IdP broker).
-upsert_gentian_jitsi_oidc_overlays_configmap() {
-    local overlay_dir="${SCRIPT_DIR}/overlays/jitsi"
-    if [[ ! -d "${overlay_dir}" ]]; then
-        warn "Jitsi OIDC overlay directory missing (${overlay_dir}); skipping"
-        return
-    fi
-
-    info "Upserting gentian-jitsi-oidc-overlays ConfigMap..."
-    kubectl create configmap gentian-jitsi-oidc-overlays \
-        -n crossplane-system \
-        --from-file="${overlay_dir}" \
-        --dry-run=client -o yaml \
-        | kubectl label --local -f - \
-            gentianos.io/config-type=jitsi-oidc-overlays \
-            app.kubernetes.io/managed-by=gentian-os-install \
-            --dry-run=client -o yaml \
-        | kubectl apply -f - >/dev/null
-    success "gentian-jitsi-oidc-overlays ConfigMap upserted."
-}
-
 # =============================================================================
-# Crossplane platform compositions (not per-AppProfile)
+# Crossplane platform compositions (gentian-os only)
 # =============================================================================
-# Tenant apps (jitsi, cryptpad, …) are AppProfile CRs from gentian-apps; they use
-# one of these composition *variants* via spec.compositionRef (default: app-default).
-# Adding a new AppProfile does not require editing install/update/uninstall unless
-# you introduce a new variant file matching app-<name>.yaml in crossplane/compositions/.
+# Generic app-default and tenant/cluster compositions live in gentian-os.
+# Profile-specific compositions are synced from gentian-apps via Argo CD
+# ApplicationSet gentian-catalogue (see install_catalogue_sync).
 
 apply_crossplane_app_compositions() {
     local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
-    local f
-    shopt -s nullglob
-    for f in "${comp_dir}"/app-*.yaml; do
-        info "Applying Composition $(basename "${f}")..."
-        kubectl apply -f "${f}"
-    done
-    shopt -u nullglob
+    info "Applying Composition app-default..."
+    kubectl apply -f "${comp_dir}/app-default.yaml"
 }
 
 apply_crossplane_platform_compositions() {
@@ -1167,7 +1364,6 @@ apply_crossplane_platform_compositions() {
 }
 
 apply_crossplane_platform_compositions_update() {
-    # Day-2: apply every composition YAML in the directory (including any new app-* variant).
     local f
     shopt -s nullglob
     for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
@@ -1259,18 +1455,6 @@ install_tools() {
 
     banner "Step 1 — Installing CLI tools"
 
-    if command -v tofu &>/dev/null && tofu version 2>/dev/null | grep -q "$TOFU_VERSION"; then
-        success "tofu $TOFU_VERSION already installed."
-    else
-        info "Installing OpenTofu v${TOFU_VERSION}..."
-        local arch; arch=$(uname -m); [[ "$arch" == "x86_64" ]] && arch="amd64"
-        local pkg="tofu_${TOFU_VERSION}_linux_${arch}.deb"
-        curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${pkg}" -o "/tmp/${pkg}"
-        sudo dpkg -i "/tmp/${pkg}"
-        rm -f "/tmp/${pkg}"
-        success "tofu $TOFU_VERSION installed."
-    fi
-
     if command -v bao &>/dev/null && bao version 2>/dev/null | grep -q "$BAO_VERSION"; then
         success "bao $BAO_VERSION already installed."
     else
@@ -1292,7 +1476,10 @@ create_namespaces() {
 
     local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        namespaces+=(stakater-system cnpg-system)
+        namespaces+=(stakater-system cnpg-system cert-manager)
+        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
+            namespaces+=("${ENVOY_GATEWAY_NAMESPACE}")
+        fi
     fi
 
     for ns in "${namespaces[@]}"; do
@@ -1693,6 +1880,380 @@ install_kernel_cert_resources() {
 }
 
 # =============================================================================
+# 3c. Install Envoy Gateway (Gateway API edge stack)
+# =============================================================================
+install_envoy_gateway() {
+    if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
+        warn "Cluster infra disabled: skipping Envoy Gateway installation."
+        return
+    fi
+
+    : "${ROUTING_MODE:=gateway}"
+    export ROUTING_MODE
+    if [[ "${ROUTING_MODE}" != "gateway" ]]; then
+        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
+        exit 1
+    fi
+
+    banner "Step 3c — Installing Envoy Gateway and Gateway API CRDs"
+
+    local ns="${ENVOY_GATEWAY_NAMESPACE}"
+    local chart_version="${ENVOY_GATEWAY_CHART_VERSION}"
+    local svc_type="ClusterIP"
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        svc_type="LoadBalancer"
+    fi
+
+    if helm status eg -n "${ns}" &>/dev/null; then
+        success "Envoy Gateway Helm release already present in ${ns}."
+    else
+        info "Installing Envoy Gateway ${chart_version} (service type ${svc_type})..."
+        helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
+            --version "${chart_version}" \
+            -n "${ns}" \
+            --create-namespace \
+            --set "config.envoyGateway.gateway.controllerName=${GENTIAN_GATEWAY_CONTROLLER_NAME}" \
+            --set deployment.replicas=1 \
+            --set "kubernetesService.type=${svc_type}" \
+            --wait --timeout 5m
+        success "Envoy Gateway installed in namespace ${ns}."
+    fi
+
+    info "Waiting for Envoy Gateway controller deployment..."
+    if ! kubectl rollout status -n "${ns}" deploy/envoy-gateway --timeout=180s >/dev/null 2>&1; then
+        warn "Envoy Gateway deployment not Ready within 180s (continuing)."
+    fi
+
+    info "Verifying Gateway API CRDs..."
+    local crd
+    for crd in \
+        gatewayclasses.gateway.networking.k8s.io \
+        gateways.gateway.networking.k8s.io \
+        httproutes.gateway.networking.k8s.io; do
+        if kubectl get crd "${crd}" &>/dev/null; then
+            kubectl wait --for=condition=Established "crd/${crd}" --timeout=120s >/dev/null 2>&1 \
+                || warn "CRD ${crd} not Established within 120s."
+        else
+            warn "Gateway API CRD ${crd} not found after Envoy Gateway install."
+        fi
+    done
+    success "Envoy Gateway and Gateway API CRDs ready (ROUTING_MODE=gateway)."
+    info "  GatewayClass: ${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+    info "  Controller:   ${GENTIAN_GATEWAY_CONTROLLER_NAME}"
+    info "  Status:       kubectl get gatewayclass,gateway -A"
+}
+
+# =============================================================================
+# apply_kernel_gateway_overlays — gateway-mode Helm value overlays
+# =============================================================================
+apply_kernel_gateway_overlays() {
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
+        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
+        exit 1
+    fi
+    info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud/manifests/dev/gateway-values-configmap.yaml" \
+        >/dev/null 2>&1 || true
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud-notifypush/manifests/dev/gateway-values-configmap.yaml" \
+        >/dev/null 2>&1 || true
+    apply_intercom_gateway_values || true
+    success "Kernel gateway Helm overlays applied (nextcloud, notifypush, intercom)."
+    info "  Nubus gateway overlay: ConfigMap nubus-gateway-values (created in deploy_nubus)."
+    info "  Intercom BASE_URL overlay: ConfigMap intercom-gateway-values (KERNEL_DOMAIN)."
+    print_gateway_tunnel_hints || true
+}
+
+# apply_intercom_gateway_values renders intercom public BASE_URL from KERNEL_DOMAIN.
+apply_intercom_gateway_values() {
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping intercom gateway values ConfigMap."
+        return 0
+    fi
+    local tmpl="${SCRIPT_DIR}/kernel/services/intercom-service/manifests/dev/gateway-values-configmap.yaml.tmpl"
+    if [[ ! -f "$tmpl" ]]; then
+        warn "Missing ${tmpl} — skipping intercom gateway values."
+        return 0
+    fi
+    export ENV="${ENV:-dev}"
+    export KERNEL_DOMAIN
+    envsubst "\${ENV} \${KERNEL_DOMAIN}" < "$tmpl" | kubectl apply -f -
+    sync_intercom_argocd_app || true
+}
+
+# sync_intercom_argocd_app refreshes the intercom Helm release after gateway overlay
+# changes. BASE_URL lives in kernel/services/intercom-service/values/gateway.yaml
+# (must match KERNEL_DOMAIN); a hard refresh ensures the Deployment picks up changes.
+sync_intercom_argocd_app() {
+    local app="intercom-service-${ENV:-dev}"
+    if ! kubectl get application "$app" -n argocd >/dev/null 2>&1; then
+        return 0
+    fi
+    info "Refreshing Argo CD app ${app} (intercom BASE_URL / ICS)..."
+    if command -v argocd >/dev/null 2>&1; then
+        argocd app sync "$app" --force --grpc-web >/dev/null 2>&1 || true
+    else
+        kubectl annotate application "$app" -n argocd \
+            argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+    fi
+    kubectl rollout status "deployment/${app}" -n "${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}" --timeout=180s >/dev/null 2>&1 || true
+}
+
+# verify_intercom_ics checks ICS silent-login prerequisites for portal-embedded Element.
+# Symptom when broken: Nordeck loading screen flicker; intercom logs repeat
+# "Error verifying ICS OIDC access_token" / "Silent login, logged in false".
+verify_intercom_ics() {
+    banner "Step 16b — Verifying intercom / ICS (Element Nordeck banner)"
+
+    local kernel_domain="${KERNEL_DOMAIN:-}"
+    if [[ -z "$kernel_domain" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping intercom verification."
+        return 0
+    fi
+
+    local services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local deploy="intercom-service-${ENV:-dev}"
+    local timeout="${INTERCOM_VERIFY_TIMEOUT:-300}"
+    local interval=10
+    local elapsed=0
+
+    info "Waiting for ${deploy} in ${services_ns}..."
+    while [[ $elapsed -lt $timeout ]]; do
+        if kubectl get deployment "$deploy" -n "$services_ns" >/dev/null 2>&1; then
+            break
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+    if ! kubectl get deployment "$deploy" -n "$services_ns" >/dev/null 2>&1; then
+        warn "Deployment ${deploy} not found — skipping intercom verification."
+        return 0
+    fi
+
+    local base_url
+    base_url=$(kubectl get deployment "$deploy" -n "$services_ns" \
+        -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\t"}{.value}{"\n"}{end}' \
+        2>/dev/null | awk -F'\t' '$1=="BASE_URL"{print $2; exit}')
+    if [[ -z "$base_url" ]]; then
+        base_url=$(kubectl get deployment "$deploy" -n "$services_ns" \
+            -o jsonpath='{range .spec.template.spec.containers[0].envFrom[*]}{.secretRef.name}{"\n"}{end}' \
+            2>/dev/null | head -1)
+        if [[ -n "$base_url" ]]; then
+            base_url=$(kubectl get secret "$base_url" -n "$services_ns" \
+                -o jsonpath='{.data.BASE_URL}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        fi
+    fi
+    local want_base="https://ics.${kernel_domain}"
+    if [[ "$base_url" != "$want_base" ]]; then
+        warn "intercom BASE_URL=${base_url:-<unset>} (want ${want_base})."
+        warn "  Sync intercom-service-${ENV:-dev} in Argo CD or re-run install/update (gateway.yaml extraEnvVars)."
+        return 1
+    else
+        success "intercom BASE_URL=${base_url}"
+    fi
+
+    local node_ca
+    node_ca=$(kubectl get deployment "$deploy" -n "$services_ns" \
+        -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\t"}{.value}{"\n"}{end}' \
+        2>/dev/null | awk -F'\t' '$1=="NODE_EXTRA_CA_CERTS"{print $2; exit}')
+    if [[ "$node_ca" != "/opt/staging-ca/node-extra-ca.crt" ]]; then
+        warn "intercom NODE_EXTRA_CA_CERTS=${node_ca:-<unset>} (want /opt/staging-ca/node-extra-ca.crt)."
+        warn "  OIDC discovery against id.${kernel_domain} will fail on LE staging certs."
+        return 1
+    fi
+    success "intercom NODE_EXTRA_CA_CERTS=${node_ca}"
+
+    local silent_loc
+    silent_loc=$(curl -fsSI "https://ics.${kernel_domain}/silent" 2>/dev/null | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\r' || true)
+    if [[ -n "$silent_loc" && "$silent_loc" == *intercom-service*":8008"* ]]; then
+        warn "ICS /silent still redirects with in-cluster redirect_uri — BASE_URL misconfigured."
+        return 1
+    fi
+    if [[ -n "$silent_loc" && "$silent_loc" == *"redirect_uri=https%3A%2F%2Fics.${kernel_domain}"* ]]; then
+        success "ICS /silent uses public redirect_uri."
+    fi
+
+    info "Checking intercom Redis connectivity..."
+    elapsed=0
+    while [[ $elapsed -lt $timeout ]]; do
+        local logs
+        logs=$(kubectl logs -n "$services_ns" "deployment/${deploy}" --tail=200 2>/dev/null || true)
+        if [[ "$logs" == *"Redis connected"* ]]; then
+            success "intercom logged Redis connected."
+            if [[ "$logs" == *"Redis error"* || "$logs" == *"ENOTFOUND"*redis* ]]; then
+                warn "intercom also reports Redis errors in recent logs — check REDIS_HOST and restart."
+                return 1
+            fi
+            if [[ "$logs" == *"Error verifying ICS OIDC access_token"* ]]; then
+                warn "intercom is rejecting stale ICS session tokens (Nordeck navigation loop)."
+                warn "  Clear browser cookies for ics.${kernel_domain}, reload portal, reopen Element."
+                warn "  If it persists in Firefox, try Ctrl/Cmd+click Element (top-level tab)."
+            fi
+            return 0
+        fi
+        if [[ "$logs" == *"Redis error"* || "$logs" == *"ENOTFOUND"*redis* ]]; then
+            warn "intercom cannot reach Redis — Element Nordeck banner will flicker until Redis is reachable."
+            warn "  kubectl logs -n ${services_ns} deployment/${deploy} | grep -i redis"
+            return 1
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    warn "intercom did not log 'Redis connected' within ${timeout}s."
+    warn "  Try: kubectl rollout restart deployment/${deploy} -n ${services_ns}"
+    return 1
+}
+
+wait_for_gateway_platform() {
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
+        return 0
+    fi
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset; skipping gateway platform wait."
+        return 0
+    fi
+
+    banner "Waiting for kernel Gateway API platform (ROUTING_MODE=gateway)"
+    local ns="gentian-${ENV:-dev}"
+    local deadline=$(( SECONDS + 300 ))
+
+    info "Waiting for GatewayClass gentian-envoy (up to 300s)..."
+    while (( SECONDS < deadline )); do
+        if kubectl get gatewayclass gentian-envoy >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if ! kubectl get gatewayclass gentian-envoy >/dev/null 2>&1; then
+        warn "GatewayClass gentian-envoy not found after 300s."
+        warn "  Check operator logs: kubectl logs -n gentian-system deploy/gentian-os | grep gateway-platform"
+        return 1
+    fi
+    success "GatewayClass gentian-envoy present."
+
+    info "Waiting for Gateway kernel-public-gateway in ${ns} (up to 300s)..."
+    while (( SECONDS < deadline )); do
+        if kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if ! kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
+        warn "Gateway kernel-public-gateway not found after 300s."
+        return 1
+    fi
+    success "Gateway kernel-public-gateway present."
+
+    info "Waiting for kernel HTTPRoutes (up to 300s)..."
+    while (( SECONDS < deadline )); do
+        local count
+        count=$(kubectl get httproute -n "${ns}" -l 'gentianos.io/gateway-component=kernel-route' --no-headers 2>/dev/null | wc -l)
+        if [[ "${count}" -ge 4 ]]; then
+            success "Kernel HTTPRoutes reconciled (${count} routes)."
+            _reconcile_kernel_https_coredns_hairpin
+            print_gateway_tunnel_hints
+            return 0
+        fi
+        sleep 5
+    done
+    warn "Expected kernel HTTPRoutes not ready after 300s."
+    warn "  kubectl get gateway,httproute -n ${ns}"
+    return 1
+}
+
+print_gateway_tunnel_hints() {
+    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
+        return 0
+    fi
+    local ns="gentian-${ENV:-dev}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
+    info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
+    info "  in namespace ${envoy_ns}, not the microk8s/nginx ingress controller."
+    info "  Discover the Service after kernel-public-gateway is Programmed:"
+    info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
+    info "  Typical origin: https://<envoy-svc>.${envoy_ns}.svc.cluster.local:443"
+    info "  Verify: kubectl get gateway -n ${ns} kernel-public-gateway -o yaml | grep -A5 conditions"
+}
+
+# Point CoreDNS kernel HTTPS hairpin entries at the Envoy Gateway ClusterIP.
+# mail.<kernelDomain> is left unchanged (Dovecot). The operator reconciles this
+# continuously; install/update runs it once so clusters recover before sync.
+_reconcile_kernel_https_coredns_hairpin() {
+    [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+
+    local services_ns="gentian-${ENV:-dev}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local mail_domain="mail.${KERNEL_DOMAIN}"
+    local edge_ip
+    edge_ip=$(kubectl get svc -n "${envoy_ns}" \
+        -l "gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway,gateway.envoyproxy.io/owning-gateway-namespace=${services_ns}" \
+        -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || true)
+    if [[ -z "${edge_ip}" ]]; then
+        warn "Envoy kernel Gateway Service not found; skipping CoreDNS hairpin update."
+        return 0
+    fi
+
+    local corefile patched
+    corefile=$(kubectl get configmap coredns -n kube-system \
+        -o jsonpath='{.data.Corefile}' 2>/dev/null || true)
+    if [[ -z "${corefile}" ]]; then
+        warn "CoreDNS ConfigMap not found; skipping kernel hairpin update."
+        return 0
+    fi
+    if ! echo "${corefile}" | grep -q "# BEGIN gentian-hairpin"; then
+        warn "CoreDNS Corefile has no gentian-hairpin block; operator will create it on sync."
+        return 0
+    fi
+
+    # Replace legacy ingress/nginx IPs for kernel HTTPS hosts; preserve mail entry.
+    patched=$(echo "${corefile}" | python3 -c '
+import re, sys
+corefile = sys.stdin.read()
+mail = sys.argv[1]
+edge = sys.argv[2]
+begin, end = "# BEGIN gentian-hairpin", "# END gentian-hairpin"
+i, j = corefile.find(begin), corefile.find(end)
+if i < 0 or j < i:
+    sys.stdout.write(corefile)
+    sys.exit(0)
+block = corefile[i:j + len(end)]
+lines = []
+for line in block.splitlines():
+    stripped = line.strip()
+    if stripped in (begin, end) or not stripped:
+        lines.append(line)
+        continue
+    parts = stripped.split()
+    if len(parts) >= 2 and parts[1] == mail:
+        lines.append(line)
+        continue
+    if len(parts) >= 2 and re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
+        indent = line[: len(line) - len(line.lstrip())]
+        lines.append(f"{indent}{edge} {parts[1]}")
+        continue
+    lines.append(line)
+new_block = "\n".join(lines)
+sys.stdout.write(corefile[:i] + new_block + corefile[j + len(end):])
+' "${mail_domain}" "${edge_ip}")
+
+    if [[ "${corefile}" == "${patched}" ]]; then
+        info "CoreDNS kernel hairpin already points at Envoy (${edge_ip})."
+        return 0
+    fi
+
+    info "Reconciling CoreDNS kernel hairpin → Envoy ${edge_ip}"
+    local patch_json
+    patch_json=$(printf '%s' "${patched}" | python3 -c \
+        'import sys,json; print(json.dumps({"data":{"Corefile":sys.stdin.read()}}))')
+    kubectl patch configmap coredns -n kube-system --type=merge -p "${patch_json}" >/dev/null
+    kubectl rollout restart deployment coredns -n kube-system >/dev/null 2>&1 || true
+    kubectl rollout status deployment coredns -n kube-system --timeout=60s >/dev/null 2>&1 || true
+    success "CoreDNS kernel hairpin updated → ${edge_ip}"
+}
+
+# =============================================================================
 # 12b. Apply the kernel wildcard Certificate + ExternalSecret backing the
 # Cloudflare API token. Runs after seed_secrets so the OpenBao path
 # `secret/gentian-os/kernel/dns/cloudflare` is populated. Skipped silently
@@ -1724,7 +2285,7 @@ install_kernel_wildcard() {
     #    fallback (idempotent).
     if ! kubectl get clustersecretstore openbao &>/dev/null; then
         info "ClusterSecretStore/openbao missing — applying directly."
-        kubectl apply -f "${SCRIPT_DIR}/kernel/eso/cluster-secret-store.yaml"
+        kubectl apply -f "${SCRIPT_DIR}/kernel/services/_globals/eso-cluster-secret-store.yaml"
     fi
     kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/cert-manager/cloudflare-api-token-externalsecret.yaml"
 
@@ -1787,10 +2348,10 @@ spec:
   issuerRef:
     name: ${nubus_issuer}
     kind: Issuer
-  commonName: "*.${KERNEL_DOMAIN:-desk.gentian.org}"
+  commonName: "*.${KERNEL_DOMAIN}"
   dnsNames:
-    - "${KERNEL_DOMAIN:-desk.gentian.org}"
-    - "*.${KERNEL_DOMAIN:-desk.gentian.org}"
+    - "${KERNEL_DOMAIN}"
+    - "*.${KERNEL_DOMAIN}"
   duration: 8760h
   renewBefore: 720h
 EOF
@@ -2062,6 +2623,9 @@ install_argocd() {
     # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
     # the Ingress is safe to create before the Secret exists.
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
+            info "ROUTING_MODE=gateway: ArgoCD edge route is managed by the operator (kernel-argocd HTTPRoute)."
+        else
         info "Creating ArgoCD Ingress for argocd.${KERNEL_DOMAIN}..."
         kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
@@ -2091,6 +2655,7 @@ spec:
     secretName: wildcard-tls
 EOF
         success "ArgoCD Ingress created: https://argocd.${KERNEL_DOMAIN}"
+        fi
     fi
 
     # Print ArgoCD admin credentials early so the user sees them even if
@@ -2504,6 +3069,7 @@ install_app_catalogue() {
 
     local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
     local plugin_dst="/usr/local/bin/kubectl-gentian"
+    local gtnctl_dst="/usr/local/bin/gtnctl"
 
     # Idempotency: skip if destination is identical to source (no sudo needed).
     if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
@@ -2520,34 +3086,64 @@ install_app_catalogue() {
             warn "  sudo install -m 755 ${plugin_src} ${plugin_dst}"
         fi
     fi
+
+    if [[ ! -x "${plugin_dst}" ]]; then
+        warn "Skipping gtnctl symlink — kubectl-gentian is not installed."
+        return 0
+    fi
+
+    if [[ -w /usr/local/bin ]]; then
+        ln -sf kubectl-gentian "${gtnctl_dst}"
+    else
+        sudo ln -sf kubectl-gentian "${gtnctl_dst}" || warn "Failed to link gtnctl -> kubectl-gentian at ${gtnctl_dst}"
+    fi
+
+    # Mirror to ~/.local/bin when present — it often precedes /usr/local/bin in PATH.
+    local user_bin="${HOME}/.local/bin"
+    local user_plugin_dst="${user_bin}/kubectl-gentian"
+    local user_gtnctl_dst="${user_bin}/gtnctl"
+    if [[ -d "${user_bin}" ]]; then
+        if [[ -w "${user_bin}" ]]; then
+            install -m 755 "$plugin_src" "$user_plugin_dst"
+            ln -sf kubectl-gentian "${user_gtnctl_dst}"
+            success "kubectl-gentian and gtnctl (-> kubectl-gentian) installed to ${user_bin}."
+        else
+            warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
+        fi
+    fi
 }
 
 # =============================================================================
-# 14b. Install ArgoCD Application that syncs AppProfiles from gentian-apps
+# 14b. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
 # =============================================================================
-# Renders kernel/bootstrap/appprofiles-application.yaml.tmpl with the user's
-# chosen repo URL and branch, and applies it. Once Synced, every YAML in
-# <gentian-apps>/profiles/ becomes a cluster-scoped AppProfile CR, which the
-# AppStore controller projects into the AppCatalogue singleton (kubectl gentian
-# apps list reads from there).
-install_appprofiles_sync() {
-    banner "Step 14b — ArgoCD Application syncing AppProfiles from gentian-apps"
+# Renders kernel/bootstrap/catalogue-applicationset.yaml.tmpl. Once synced, each
+# profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
+# applies AppProfile, optional composition.yaml, and optional cluster assets.
+install_catalogue_sync() {
+    banner "Step 14b — Argo CD catalogue sync (gentian-apps profile bundles)"
 
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/appprofiles-application.yaml.tmpl"
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-applicationset.yaml.tmpl"
     local rendered
     rendered="$(mktemp)"
     sed -e "s|%REPO_URL%|${GENTIAN_APPS_REPO}|g" \
         -e "s|%BRANCH%|${GENTIAN_APPS_BRANCH}|g" \
         "$tmpl" >"$rendered"
 
-    info "Applying gentian-appprofiles Application:"
+    info "Applying gentian-catalogue ApplicationSet:"
     info "  repo:   ${GENTIAN_APPS_REPO}"
     info "  branch: ${GENTIAN_APPS_BRANCH}"
+    # Legacy flat Application (profiles/*.yaml only) — remove on upgrade.
+    kubectl delete application gentian-appprofiles -n argocd --ignore-not-found=true >/dev/null 2>&1 || true
     kubectl apply -f "$rendered"
     rm -f "$rendered"
-    success "AppProfiles sync configured. ArgoCD will populate AppProfile CRs."
+    success "Catalogue sync configured. Argo CD will sync profiles/<name>/ bundles."
     info "After sync, list available app profiles with:"
     info "  kubectl gentian apps list"
+}
+
+# Back-compat alias for install.sh / update.sh call sites.
+install_appprofiles_sync() {
+    install_catalogue_sync
 }
 
 # =============================================================================
@@ -2558,11 +3154,11 @@ install_appprofiles_sync() {
 #   - Deployment + ServiceAccount + ClusterRole(Binding) for the operator
 #   - ServiceMonitor + Grafana dashboard
 #
-# Two-phase install:
-#   Phase 1 — Direct Helm bootstrap (fast):
+# Two-step install:
+#   Direct Helm bootstrap (fast):
 #     CRDs and the operator Deployment are applied immediately so that
 #     subsequent install steps can use them without waiting for ArgoCD.
-#   Phase 2 — ArgoCD Application handoff:
+#   ArgoCD Application handoff:
 #     The gentian-os ArgoCD Application (rendered from
 #     kernel/bootstrap/gentian-os-application.yaml.tmpl) is applied.
 #     ArgoCD takes ownership of the resources via ServerSideApply and from
@@ -2573,16 +3169,74 @@ install_appprofiles_sync() {
 #     patches image.tag in the Application's Helm parameters and ArgoCD
 #     triggers a Helm upgrade (rolling restart) automatically.
 #
-# Without Phase 2, argocd-image-updater reports "no ImageUpdater CRs to
+# Without the ArgoCD handoff, argocd-image-updater reports "no ImageUpdater CRs to
 # process" and image updates require manual kubectl rollout restart.
 # =============================================================================
+release_gentian_os_helm_bootstrap() {
+    local ns="${1:-gentian-system}"
+    if kubectl get secret -n "$ns" -l "owner=helm,name=gentian-os" --no-headers 2>/dev/null | grep -q .; then
+        info "Removing bootstrap Helm release metadata (ArgoCD owns gentian-os now)..."
+        kubectl delete secret -n "$ns" -l "owner=helm,name=gentian-os" --ignore-not-found
+    fi
+}
+
+# =============================================================================
+# Create git credentials Secret for operator app lifecycle (gentian-deployments push)
+# =============================================================================
+_deployments_git_host() {
+    local repo="${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}"
+    if [[ "${repo}" =~ ^https?://([^/]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "${repo}" =~ ^git@([^:]+): ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "github.com"
+    fi
+}
+
+create_deployments_git_credentials() {
+    local ns="${1:-gentian-system}"
+    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — skipping deployments git credentials Secret."
+        warn "  In-cluster App Store install/uninstall will fail at git push until configured."
+        return 0
+    fi
+
+    banner "Deployments git credentials (operator app lifecycle)"
+    local host username
+    host="$(_deployments_git_host)"
+    username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
+    bash "${SCRIPT_DIR}/scripts/create-deployments-git-credentials.sh" \
+        "${ns}" \
+        "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" \
+        "${username}" \
+        "${host}"
+    success "Deployments git credentials Secret ready in ${ns}."
+}
+
+# =============================================================================
+# Upload CI_BOT_PAT (and optional ArgoCD sync secrets) to gentian-os GitHub repo
+# =============================================================================
+configure_github_actions_secrets() {
+    if [[ -z "${CI_BOT_PAT:-}" ]]; then
+        warn "CI_BOT_PAT not set — skipping GitHub Actions secret upload for image-pin workflows."
+        warn "  Portal/base-router CI can build images but cannot commit pins to gentian-os."
+        warn "  See getting-started.md § GitHub Actions CI and gentian-ui/docs/ci-setup.md."
+        return 0
+    fi
+
+    banner "GitHub Actions secrets (gentian-os image pin)"
+    bash "${SCRIPT_DIR}/scripts/configure-github-actions-secrets.sh"
+}
+
 install_orchestrator() {
     banner "Step 15 — gentian-os orchestrator (CRDs + operator + ArgoCD handoff)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local crd_dir="${chart_dir}/crds"
     local ns="gentian-system"
-    local env="${ENV:-dev}"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local required_crds=(
         tenants.gentianos.io
         appprofiles.gentianos.io
@@ -2594,7 +3248,34 @@ install_orchestrator() {
         kubectl create namespace "$ns"
     fi
 
-    # ── Phase 1: Direct Helm bootstrap ────────────────────────────────────────
+    create_deployments_git_credentials "$ns"
+
+    local helm_sets=(
+        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200"
+        --set argocd.namespace="argocd"
+        --set kernelDomain="${KERNEL_DOMAIN}"
+        --set tenancyMode="${TENANCY_MODE:-multi}"
+        --set routingMode="${ROUTING_MODE:-gateway}"
+    )
+    if [[ -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        helm_sets+=(
+            --set appLifecycle.deployments.enabled=true
+            --set "appLifecycle.deployments.repo=${GENTIAN_DEPLOYMENTS_REPO}"
+            --set "appLifecycle.deployments.cluster=${cluster}"
+            --set "appLifecycle.deployments.stage=${stage}"
+            --set appLifecycle.deployments.gitCredentialsSecret=gentian-deployments-git-credentials
+        )
+    elif [[ "${GENTIAN_DEPLOYMENTS_LIFECYCLE_ENABLED:-0}" == "1" ]]; then
+        helm_sets+=(
+            --set appLifecycle.deployments.enabled=true
+            --set "appLifecycle.deployments.repo=${GENTIAN_DEPLOYMENTS_REPO}"
+            --set "appLifecycle.deployments.cluster=${cluster}"
+            --set "appLifecycle.deployments.stage=${stage}"
+        )
+        warn "App lifecycle enabled without GENTIAN_DEPLOYMENTS_GIT_TOKEN — git push from App Store will fail until configured."
+    fi
+
+    # ── Direct Helm bootstrap ───────────────────────────────────────────────────
     info "Applying orchestrator CRDs (hard requirement for subsequent steps)..."
     if [[ ! -d "$crd_dir" ]]; then
         error "CRD directory not found: ${crd_dir}"
@@ -2644,13 +3325,10 @@ install_orchestrator() {
     fi
 
     info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
-    info "(ArgoCD will take ownership of this release in Phase 2 below.)"
+    info "(ArgoCD will take ownership of this release in the handoff step below.)"
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
-        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
-        --set argocd.namespace="argocd" \
-        --set kernelDomain="${KERNEL_DOMAIN}" \
-        --set tenancyMode="${TENANCY_MODE:-multi}" \
+        "${helm_sets[@]}" \
         --wait --timeout 5m
 
     info "Waiting for orchestrator CRDs to be Established..."
@@ -2661,9 +3339,9 @@ install_orchestrator() {
             exit 1
         }
     done
-    success "Phase 1 complete: CRDs Established, operator running."
+    success "Helm bootstrap complete: CRDs Established, operator running."
 
-    # ── Phase 2: ArgoCD Application handoff ───────────────────────────────────
+    # ── ArgoCD Application handoff ────────────────────────────────────────────
     # Render the Application template and apply it.  ArgoCD adopts the
     # already-running resources via ServerSideApply, adds the ImageUpdater CR
     # (Source 4), and drives all future upgrades from git.
@@ -2676,24 +3354,30 @@ install_orchestrator() {
     sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-        -e "s|%ENV%|${env}|g" \
+        -e "s|%CLUSTER%|${cluster}|g" \
+        -e "s|%STAGE%|${stage}|g" \
         "$tmpl" >"$rendered"
 
-    info "Registering gentian-os + gentian-tenants ArgoCD Applications..."
+    info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
     info "  operator branch:    ${gentian_os_branch}"
     info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
     info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
-    info "  environment:        ${env}"
+    info "  deployments cluster:${cluster}"
+    info "  deployments stage:  ${stage}"
     kubectl apply -f "$rendered"
     rm -f "$rendered"
 
-    success "Phase 2 complete: gentian-os and gentian-tenants Applications registered with ArgoCD."
+    release_gentian_os_helm_bootstrap "$ns"
+    kubectl annotate application gentian-os -n argocd \
+        "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
+
+    success "ArgoCD handoff complete: gentian-os Application and gentian-tenants ApplicationSet registered."
     success "  Image updates are now fully automatic via argocd-image-updater."
     info "Monitor operator:  kubectl get application gentian-os -n argocd"
-    info "Monitor tenants:   kubectl get application gentian-tenants -n argocd"
+    info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"
     info "Monitor updater:   kubectl get imageupdater gentian-os -n argocd"
     info "Provision tenants: kubectl gentian tenants list"
-    info "                   kubectl gentian tenants deploy gtn-demo"
+    info "                   kubectl gentian tenants deploy demo   # activate definition from definitions/"
 }
 
 # =============================================================================
@@ -3043,7 +3727,58 @@ reconcile_nextcloud_office() {
 
 
 # =============================================================================
-# Polls every 15s for up to ${VERIFY_TIMEOUT:-600}s. Considers the platform
+# stack-data-ums job helpers
+#
+# The upstream nubusStackDataUms chart does not set ttlSecondsAfterFinished on
+# its data-loader Job.  A failed retry pod (Error) is left behind even when the
+# Job eventually succeeds — noisy during install verification.
+# =============================================================================
+STACK_DATA_UMS_JOB_TTL_SECONDS="${STACK_DATA_UMS_JOB_TTL_SECONDS:-600}"
+
+_find_stack_data_ums_job() {
+    local release_name="$1" ns="$2"
+    kubectl get jobs -n "${ns}" --no-headers \
+        -o custom-columns=NAME:.metadata.name 2>/dev/null \
+        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true
+}
+
+apply_stack_data_ums_job_from_helm() {
+    local release_name="$1" ns="$2"
+    local ttl="${STACK_DATA_UMS_JOB_TTL_SECONDS}"
+
+    helm get all "${release_name}" -n "${ns}" 2>/dev/null \
+        | python3 -c "
+import sys, yaml
+
+ttl = int('${ttl}')
+for section in sys.stdin.read().split('---'):
+    if 'stack-data-ums' not in section or 'kind: \"Job\"' not in section:
+        continue
+    doc = yaml.safe_load(section)
+    if not doc or doc.get('kind') != 'Job':
+        continue
+    spec = doc.setdefault('spec', {})
+    spec['ttlSecondsAfterFinished'] = ttl
+    print('---')
+    print(yaml.dump(doc, default_flow_style=False).rstrip())
+    break
+" \
+        | kubectl apply -n "${ns}" -f - 2>/dev/null
+}
+
+finalize_stack_data_ums_job() {
+    local ns="$1" job_name="$2"
+    local ttl="${STACK_DATA_UMS_JOB_TTL_SECONDS}"
+
+    [[ -n "${job_name}" ]] || return 0
+
+    kubectl patch job "${job_name}" -n "${ns}" --type=merge \
+        -p "{\"spec\":{\"ttlSecondsAfterFinished\":${ttl}}}" \
+        2>/dev/null || true
+    kubectl delete pods -n "${ns}" -l "job-name=${job_name}" \
+        --field-selector=status.phase=Failed \
+        --ignore-not-found=true 2>/dev/null || true
+}
 
 # =============================================================================
 # wait_for_setup_iam_job — wait for nubus-dev-setup-iam-templates (ArgoCD hook)
@@ -3083,6 +3818,82 @@ wait_for_setup_iam_job() {
     warn "  kubectl logs -n ${ns} -l job-name=${job} --tail=40"
     warn "  Recover with: ./update.sh --setup-iam"
     return 1
+}
+
+# =============================================================================
+# 16a. Verify Keycloak iframe policy (portal-embedded OIDC)
+# =============================================================================
+# Waits for the gentian-os KeycloakPlatformReconciler to patch id.<kernel>
+# HTTPRoute (ROUTING_MODE=gateway) and for browser-security Jobs to clear
+# X-Frame-Options on Keycloak realms.
+verify_keycloak_iframe_policy() {
+    banner "Step 16a — Verifying Keycloak iframe policy"
+
+    local kernel_domain="${KERNEL_DOMAIN:-}"
+    if [[ -z "$kernel_domain" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping Keycloak iframe verification."
+        return 0
+    fi
+
+    local services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local kernel_ns="${KERNEL_NAMESPACE:-${services_ns}}"
+    local route_name="${KEYCLOAK_IDP_HTTPROUTE_NAME:-kernel-idp}"
+    local timeout="${KEYCLOAK_FRAME_VERIFY_TIMEOUT:-300}"
+    local interval=10
+    local elapsed=0
+
+    info "Waiting for Keycloak HTTPRoute ${route_name} and operator frame-ancestors patch..."
+
+    while [[ $elapsed -lt $timeout ]]; do
+        local csp=""
+        csp=$(kubectl get httproute "$route_name" -n "$services_ns" \
+            -o jsonpath='{range .spec.rules[0].filters[*]}{.responseHeaderModifier.set[*].value}{"\n"}{end}' \
+            2>/dev/null || true)
+
+        if [[ -n "$csp" ]] \
+            && [[ "$csp" == *"frame-ancestors"* ]] \
+            && [[ "$csp" == *"https://portal.${kernel_domain}"* ]]; then
+            success "Keycloak HTTPRoute allows portal.${kernel_domain} in frame-ancestors."
+            break
+        fi
+
+        printf "  …waiting for Keycloak HTTPRoute CSP (%ds/%ds)\n" "$elapsed" "$timeout"
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    if [[ $elapsed -ge $timeout ]]; then
+        warn "Keycloak HTTPRoute frame-ancestors not converged within ${timeout}s."
+        warn "Portal-embedded OIDC (WinBox) may show Firefox iframe errors until the operator reconciles."
+        return 1
+    fi
+
+    local bs_jobs
+    bs_jobs=$(kubectl get jobs -n "$kernel_ns" \
+        -l 'gentianos.io/keycloak-browser-security=1' \
+        --no-headers 2>/dev/null | wc -l || echo 0)
+    if [[ "$bs_jobs" -gt 0 ]]; then
+        info "Waiting for Keycloak browser-security header jobs..."
+        elapsed=0
+        while [[ $elapsed -lt $timeout ]]; do
+            local incomplete
+            incomplete=$(kubectl get jobs -n "$kernel_ns" \
+                -l 'gentianos.io/keycloak-browser-security=1' \
+                --no-headers 2>/dev/null \
+                | awk '$2 !~ /1\/1/ {print}' | wc -l || echo 0)
+            if [[ "$incomplete" -eq 0 ]]; then
+                success "Keycloak browser-security header jobs completed."
+                return 0
+            fi
+            sleep "$interval"
+            elapsed=$((elapsed + interval))
+        done
+        warn "Keycloak browser-security jobs did not all complete within ${timeout}s."
+        return 1
+    fi
+
+    info "No browser-security jobs yet (no Tenant CRs?) — HTTPRoute CSP is ready."
+    return 0
 }
 
 # =============================================================================
@@ -3129,6 +3940,13 @@ verify_argocd_apps() {
         synced=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.sync.status=="Synced")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
+        # Bootstrap operator / ApplicationSet parent: kube-defaulted fields or
+        # Argo tracking annotations can leave apps OutOfSync while Healthy.
+        while IFS= read -r _app; do
+            [[ -n "$_app" ]] && synced=$((synced + 1))
+        done < <(kubectl get applications -n argocd \
+            -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null | grep -E '^(gentian-os|gentian-appsets|gentian-portal-portal-frontend-)' || true)
         healthy=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
@@ -3163,24 +3981,57 @@ verify_argocd_apps() {
 }
 
 # =============================================================================
+# Summary — portal admin credentials for install output
+# =============================================================================
+# Portal login uses Keycloak kernel realm LDAP with mailPrimaryAddress (iam.md §1.2),
+# not the LDAP uid "Administrator".
+resolve_portal_admin_email() {
+    local ns="gentian-${ENV:-dev}"
+    local release="nubus-${ENV:-dev}"
+    local ldap_pod email=""
+
+    ldap_pod=$(kubectl get pod -n "${ns}" \
+        -o jsonpath="{.items[?(@.metadata.name==\"${release}-ldap-server-primary-0\")].metadata.name}" \
+        2>/dev/null || true)
+    if [[ -n "${ldap_pod}" ]]; then
+        email=$(kubectl exec -n "${ns}" "${ldap_pod}" -c main -- \
+            ldapsearch -Y EXTERNAL -H ldapi:/// \
+            -b 'uid=Administrator,cn=users,dc=swp-ldap,dc=internal' mailPrimaryAddress 2>/dev/null \
+            | awk -F': ' '/^mailPrimaryAddress:/ {print $2; exit}' || true)
+    fi
+    if [[ -z "${email}" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        email="administrator@${KERNEL_DOMAIN}"
+    fi
+    echo "${email}"
+}
+
+resolve_portal_admin_password() {
+    local ns="gentian-${ENV:-dev}"
+    kubectl get secret nubus-credentials -n "${ns}" \
+        -o jsonpath='{.data.default-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true
+}
+
+# =============================================================================
 # Summary
 # =============================================================================
 print_summary() {
     local argocd_pw
     local argocd_url
     local cluster_admin_pw
+    local cluster_admin_user
     local keycloak_admin_pw
     local nubus_secret_ns
-    nubus_secret_ns="gentian-dev"
+    nubus_secret_ns="gentian-${ENV:-dev}"
 
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
-    cluster_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
-                        -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
+    cluster_admin_user=$(resolve_portal_admin_email)
+    cluster_admin_pw=$(resolve_portal_admin_password)
+    [[ -n "${cluster_admin_pw}" ]] || cluster_admin_pw="(not-ready)"
     keycloak_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
                         -o jsonpath='{.data.keycloak-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
     argocd_url=$(resolve_argocd_url)
-    portal_url="https://portal.${KERNEL_DOMAIN}"
+    portal_url="https://portal.${KERNEL_DOMAIN}/login/"
     keycloak_url="https://id.${KERNEL_DOMAIN}"
 
     echo ""
@@ -3196,23 +4047,25 @@ print_summary() {
         echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
         echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${GREEN}║  Portal URL   : ${portal_url}${NC}"
-        echo -e "${GREEN}║  Portal login : Administrator / ${cluster_admin_pw}${NC}"
+        echo -e "${GREEN}║  Portal login : ${cluster_admin_user:-administrator@${KERNEL_DOMAIN}} / ${cluster_admin_pw}${NC}"
         echo -e "${GREEN}║  Keycloak URL : ${keycloak_url}${NC}"
         echo -e "${GREEN}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
         echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
         echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
         echo -e "${GREEN}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
+        echo -e "${GREEN}║  Routing mode : ${ROUTING_MODE:-gateway}${NC}"
         echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
+        echo -e "${GREEN}║  Tenants      : none (provision when ready)              ║${NC}"
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "  Retrieve credentials later:"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.admin-password}' | base64 -d"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.keycloak-admin-password}' | base64 -d"
+        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.default-admin-password}' | base64 -d"
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
-        echo "  Provision tenant: kubectl gentian tenants list"
-        echo "                    kubectl gentian tenants deploy gtn-demo"
-        echo "  Undeploy tenant: kubectl gentian tenants undeploy gtn-demo"
+        echo "  List tenants:    kubectl gentian tenants list"
+        echo "  Provision tenant: kubectl gentian tenants deploy demo"
+        echo "                    (activates clusters/<cluster>/definitions/<tenant>/<stage>/ on first run)"
+        echo "  Undeploy tenant: kubectl gentian tenants undeploy demo"
         echo "  List apps:       kubectl gentian apps list"
         echo "  Install apps:    kubectl gentian apps install <profile> --tenant <tenant>"
         echo ""
@@ -3222,7 +4075,7 @@ print_summary() {
         echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${YELLOW}║  Portal URL   : ${portal_url}${NC}"
-        echo -e "${YELLOW}║  Portal login : Administrator / ${cluster_admin_pw}${NC}"
+        echo -e "${YELLOW}║  Portal login : ${cluster_admin_user:-administrator@${KERNEL_DOMAIN}} / ${cluster_admin_pw}${NC}"
         echo -e "${YELLOW}║  Keycloak URL : ${keycloak_url}${NC}"
         echo -e "${YELLOW}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
         echo -e "${YELLOW}║  ArgoCD URL   : ${argocd_url}${NC}"
@@ -3242,8 +4095,7 @@ print_summary() {
         fi
         echo ""
         echo "  Retrieve credentials later:"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.admin-password}' | base64 -d"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.keycloak-admin-password}' | base64 -d"
+        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.default-admin-password}' | base64 -d"
         echo ""
         echo "  Re-run verification only:"
         echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"
@@ -3270,7 +4122,7 @@ main() {
     fi
     load_operator_config
     load_creds_cache
-    [[ "${INSTALL_VALIDATE_ONLY}" == "1" ]] && { load_install_state; try_load_creds_from_openbao; validate_config; }
+    [[ "${INSTALL_VALIDATE_ONLY}" == "1" ]] && { load_install_state; load_deployments_cluster_settings; try_load_creds_from_openbao; validate_config; }
     load_install_state
     try_load_creds_from_openbao
     prompt_credentials
@@ -3284,6 +4136,7 @@ main() {
     prewarm_cluster
     install_cert_manager
     install_kernel_cert_resources
+    install_envoy_gateway
     install_eso
     install_argocd
     setup_argocd_repos

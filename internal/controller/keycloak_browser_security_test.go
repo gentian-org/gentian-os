@@ -18,11 +18,14 @@ func TestBuildRealmBrowserSecurityHeadersScript(t *testing.T) {
 }
 
 func TestKeycloakOIDCEmbeddingIngressSnippetStripsXFrameOptions(t *testing.T) {
-	snippet := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"})
+	snippet := keycloakOIDCEmbeddingIngressSnippet("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
 	if !strings.Contains(snippet, `proxy_hide_header X-Frame-Options`) {
 		t.Fatalf("expected X-Frame-Options hide in IdP snippet, got:\n%s", snippet)
 	}
 	if strings.Count(snippet, `proxy_hide_header X-Frame-Options`) < 2 {
 		t.Fatal("expected server+location X-Frame-Options hide for microk8s ingress")
+	}
+	if !strings.Contains(snippet, `add_header X-Frame-Options "" always`) {
+		t.Fatal("expected empty X-Frame-Options override in IdP snippet")
 	}
 }

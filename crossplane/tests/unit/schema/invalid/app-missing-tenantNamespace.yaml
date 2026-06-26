@@ -1,0 +1,9 @@
+# Invalid App claim — tenantNamespace is required by the XRD.
+apiVersion: gentianos.io/v1alpha1
+kind: App
+metadata:
+  name: schema-invalid-app
+  namespace: tenant-schema-fixture
+spec:
+  profileRef:
+    name: element

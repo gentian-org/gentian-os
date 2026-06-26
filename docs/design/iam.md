@@ -30,7 +30,7 @@ dc=swp-ldap,dc=internal
     ├── uid=app-<app>-<tenant>            ← per-app service bind accounts
     ├── cn=users_<tenant>                 ← UDM group: all tenant users (primary group)
     ├── cn=admins_<tenant>               ← UDM group: tenant admins
-    └── cn=managed-by-attribute-*        ← per-tenant app access groups (six groups)
+    └── cn=managed-by-attribute-*        ← per-tenant app access groups (eight groups)
 ```
 
 ### 1.2 Keycloak Realm Topology
@@ -63,15 +63,28 @@ Once per tenant (when any OIDC app is installed), the reconciler also sets the
 realm browser flow to `browser-kernel-idp` (auto-redirect to the kernel IdP)
 so users are not prompted for a tenant-realm LDAP password after portal login.
 
+The kernel IdP uses a custom first-broker-login flow (`first-broker-login-gentian`)
+with **Detect existing broker user** + **Automatically set existing user** so
+LDAP-preprovisioned tenant users are linked by email without the default
+confirm/re-authenticate prompt (tenant users have no local Keycloak password).
+The realm Job registers the kernel IdP with the built-in `first broker login`
+flow first; a dedicated Job (or the broker-idp refresh Job) creates
+`first-broker-login-gentian` and switches the IdP alias once the flow exists.
+The provisioner job also clears stale `kernel` federated-identity links left
+from earlier manual linking attempts so auto-link does not hit duplicate-key errors.
+
 LDAP `group-ldap-mapper` on the tenant realm federation imports
 `managed-by-attribute-*` groups from the tenant OU so pack role mappings resolve.
 
 **Provisioning order (operator):** realm registration (including the group-mapper)
 runs first; the UDM OU Job creates per-tenant `managed-by-attribute-*` groups;
 a Keycloak **LDAP group sync** Job imports them into the tenant realm; only then
-do OpenDesk OIDC pack Jobs map each group to its client role. A final **LDAP user
-sync** runs after the admin user is unlocked in LDAP so portal login stays
-consistent with UDM `shadowExpire` handling.
+do OpenDesk OIDC pack Jobs map each group to its client role. If the
+`ldap-mba-groups` backfill Job completes after an earlier group sync (tenant
+upgrade or new OIDC packs), the identity reconciler deletes the stale sync Job
+and re-imports groups before client Jobs run. A final **LDAP user sync** runs
+after the admin user is unlocked in LDAP so portal login stays consistent with
+UDM `shadowExpire` handling.
 
 ## 2. Roles and User Templates
 
@@ -79,7 +92,7 @@ Gentian OS establishes distinct separation between normal users and administrato
 
 ### The "App User"
 * **Purpose**: Day-to-day employees or members of the organization utilizing applications.
-* **Template**: `cn=1 App User,cn=templates,ou=<tenant>,...` (UMC label **1 App User**; the LDAP RDN matches the template name). One per tenant; upstream `openDesk User` templates are removed. There is **no** kernel-level App User template—app accounts exist only inside tenant OUs. Tenant admins may optionally pick the kernel **2 Admin User** template for tenant IT accounts.
+* **Template**: `cn=App User,cn=templates,ou=<tenant>,...` (UMC label **App User**; the LDAP RDN matches the template name). One per tenant; upstream `openDesk User` templates are removed. There is **no** kernel-level App User template—app accounts exist only inside tenant OUs. Tenant admins may optionally pick the kernel **Admin User** template for tenant IT accounts.
 * **Characteristics**:
   * Pre-fills `mailPrimaryAddress` as `<username>@<tenant>.<kernel-domain>` (same openDesk `@domain` template syntax).
   * Automatically assigned the `opendeskFileshareEnabled`, `opendeskLivecollaborationEnabled`, and `opendeskVideoconferenceEnabled` attributes (granting access to Nextcloud, Element, Jitsi, etc.).
@@ -89,7 +102,7 @@ Gentian OS establishes distinct separation between normal users and administrato
 
 ### The "Admin User" (Tenant Admin)
 * **Purpose**: IT Administrators responsible for managing their tenant's users and groups.
-* **Template**: `cn=Admin User,cn=templates,cn=univention,...` displayed as **2 Admin User** in UMC (kernel-wide; the only user template at the platform LDAP level)
+* **Template**: `cn=Admin User,cn=templates,cn=univention,...` (UMC label **Admin User**; kernel-wide; the only user template at the platform LDAP level)
 * **Characteristics**:
   * Explicitly **lacks** app-enabling attributes (`opendeskFileshareEnabled=False`).
   * Not included in the `App Users` group.

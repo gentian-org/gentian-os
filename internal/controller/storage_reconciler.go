@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -27,10 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -46,8 +45,8 @@ const (
 // ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
 // KernelRequirements.Storage.S3. Each pathway creates a Job in the kernel namespace;
 // StorageReady is set to True once all Jobs complete.
-// Note: per-tenant Nextcloud groups are provisioned separately via ensureNextcloudGroup,
-// which runs for every tenant regardless of installed apps.
+// Note: per-tenant Nextcloud groups are provisioned via the manifest bridge
+// (nc-group Job in jobs.json) and applied by tenant-default.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	s3Apps, err := r.collectStorageApps(ctx, tenant)
 	if err != nil {
@@ -64,9 +63,21 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 
 	// --- S3 buckets (MinIO) ---
 	for _, appName := range s3Apps {
-		done, err := r.ensureS3BucketJob(ctx, tenant, appName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure S3 bucket Job for app %s: %w", appName, err)
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", appName, err)
+		}
+		var done bool
+		if appUsesCrossplaneS3Init(profile) {
+			done, err = r.waitForTenantNamespaceJob(ctx, tenant, appCompositionInitJobName(appName, "s3-init"))
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("wait for s3-init Job for app %s: %w", appName, err)
+			}
+		} else {
+			done, err = r.ensureS3BucketJob(ctx, tenant, appName)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("ensure S3 bucket Job for app %s: %w", appName, err)
+			}
 		}
 		if !done {
 			allDone = false
@@ -84,19 +95,8 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 	return ctrl.Result{}, nil
 }
 
-// ensureNextcloudGroup provisions the per-tenant Nextcloud group on every reconcile.
-// Nextcloud is a kernel file-storage service, available to every tenant regardless of
-// installed apps. This step does NOT block Phase=Ready — it runs concurrently alongside
-// app provisioning (like mail). If Nextcloud is not yet deployed, the Job will pend
-// and be retried on the next reconcile cycle.
-func (r *TenantReconciler) ensureNextcloudGroup(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	_, err := r.ensureNextcloudGroupJob(ctx, tenant)
-	return err
-}
-
 // collectStorageApps returns the app profile names that require an S3 bucket.
-// WebDAV/Files requirements are no longer tracked here — Nextcloud group
-// provisioning happens unconditionally via ensureNextcloudGroup.
+// Per-tenant Nextcloud groups are provisioned via the manifest bridge (nc-group Job).
 func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (s3Apps []string, err error) {
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
@@ -116,56 +116,9 @@ func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *genti
 	return s3Apps, nil
 }
 
-// ensureS3BucketJob creates (or checks) the MinIO bucket setup Job for one app.
-// Returns true when the Job has completed successfully.
+// ensureS3BucketJob waits for the Crossplane-owned MinIO bucket Job.
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	jobName := s3BucketJobName(tenant.Name, appName)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		// Inc 21a: derive the per-app S3 credentials and persist them under
-		// the canonical OpenBao path before creating the bucket Job. The
-		// bucket Job itself runs with admin credentials; provisioning a
-		// MinIO user that matches these derived keys is out of scope for
-		// this increment.
-		if r.Seeder != nil {
-			if _, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-				Bucket: s3BucketName(tenant, appName),
-			}); seedErr != nil {
-				return false, fmt.Errorf("seed s3: %w", seedErr)
-			}
-		}
-		return false, r.Create(ctx, makeS3BucketJob(tenant, appName))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
-}
-
-// ensureNextcloudGroupJob creates (or checks) the Nextcloud group setup Job.
-// One group per tenant covers all WebDAV-requiring apps. Returns true when done.
-func (r *TenantReconciler) ensureNextcloudGroupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	jobName := nextcloudGroupJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, r.Create(ctx, makeNextcloudGroupJob(tenant))
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		prop := metav1.DeletePropagationBackground
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
-		return false, nil
-	}
-	return jobIsComplete(job), nil
+	return r.waitForProvisioningJob(ctx, tenant.Name, s3BucketJobName(tenant.Name, appName))
 }
 
 // deleteStorage handles storage cleanup on tenant deletion.
@@ -198,7 +151,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 	}
 
 	// Always delete the Nextcloud group — provisioned for every tenant
-	// unconditionally by ensureNextcloudGroup.
+	// Nextcloud group delete Job (manifest bridge owns nc-group provisioning).
 	ncDeleteJobName := nextcloudGroupDeleteJobName(tenant.Name)
 	existingNC := &batchv1.Job{}
 	if err := r.Get(ctx, types.NamespacedName{Name: ncDeleteJobName, Namespace: kernelNamespace}, existingNC); errors.IsNotFound(err) {
@@ -222,7 +175,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 
 // makeS3BucketJob creates a MinIO mc Job that provisions a per-app S3 bucket.
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	bucket := s3BucketName(tenant, appName)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -250,7 +203,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.J
 
 // makeS3BucketDeleteJob creates a MinIO mc Job that removes the per-app S3 bucket.
 func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	bucket := s3BucketName(tenant, appName)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -279,7 +232,7 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 // makeNextcloudGroupJob creates a curl Job that provisions a Nextcloud group via
 // the OCS API for all WebDAV-requiring apps in the tenant.
 func makeNextcloudGroupJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	group := nextcloudGroupName(tenant.Name)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -313,7 +266,7 @@ func makeNextcloudGroupJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
 // is not used for user assignment (users are auto-assigned to the cross-tenant
 // managed-by-attribute-Fileshare group via LDAP attributes instead).
 func makeNextcloudGroupDeleteJob(tenant *gentianov1alpha1.Tenant) *batchv1.Job {
-	ttl := int32(3600)
+	ttl := meta.ProvisioningJobTTLSeconds
 	group := nextcloudGroupName(tenant.Name)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

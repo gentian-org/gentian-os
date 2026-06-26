@@ -4,7 +4,8 @@
 
 This document covers **secrets and credentials** (OpenBao, ESO, rotation) and
 **TLS / certificate configuration** (ACME issuers, in-cluster IdP trust, and
-production requirements).
+production requirements). For **AppProfile catalogue tiers, sidecar policy, and
+admission controls** see [app-catalogue-security.md](app-catalogue-security.md).
 
 ---
 
@@ -73,10 +74,11 @@ app's secrets, and no tenant can read another tenant's secrets.
 ## 3. Secret Generation Mode
 
 The platform supports two credential generation strategies, selected
-by setting `SECRET_MODE` in `install.env` before the initial cluster
-install:
+by setting `SECRET_MODE` in
+`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
+before the initial cluster install:
 
-| Mode | `install.env` value | Description |
+| Mode | `cluster-settings.env` value | Description |
 | --- | --- | --- |
 | **Deterministic** (default) | `SECRET_MODE=derived` | All credentials derived from a single master password via HKDF-SHA256. No backup required for recovery. |
 | **Random** | `SECRET_MODE=random` | Each credential generated with `openssl rand -hex 32` at provision time. Recovery requires OpenBao backup. Supports independent per-credential rotation. |
@@ -103,7 +105,7 @@ Properties:
    regenerated from the master password without backup restoration.
 
 The master password itself is written to
-`gentian-os/kernel/master-password` in OpenBao by `seed-openbao.sh`
+`gentian-os/kernel/internal/master-password` in OpenBao by `seed-openbao.sh`
 so that Composition init Jobs can derive per-app credentials at
 app-install time without requiring the operator to be present.
 
@@ -206,23 +208,12 @@ Reloader bridges the gap so rotation happens without a human running
 
 ### Rotation in `random` mode
 
-Annotation-driven rotation on the Tenant CR is **planned** (see
-[roadmap.md](../roadmap.md)); the operator does not implement
-`gentian-os.io/rotate-credentials` yet. Until then, rotate by updating
-OpenBao and rolling affected pods (Reloader where annotated).
-
-```bash
-# Planned interface (not implemented yet):
-# kubectl annotate tenant demo gentian-os.io/rotate-credentials=<app-name>
-# kubectl annotate tenant demo gentian-os.io/rotate-credentials=all
-```
-
-When implemented, a reconciler will write new random credentials to
-OpenBao and let ESO + Reloader propagate the change. OpenBao KV v2 records `updated_time` per secret version,
-giving auditors a verifiable rotation history without any extra tooling.
+Annotation-driven rotation on the Tenant CR is **not implemented** (see
+[roadmap.md](../roadmap.md)). Until then, rotate by updating OpenBao and
+rolling affected pods (Reloader where annotated).
 
 This satisfies SOC 2 Type 1. Scheduled automatic rotation (SOC 2
-Type 2) is a future phase.
+Type 2) is tracked in [roadmap.md](../roadmap.md).
 
 ### Rotation in `derived` mode
 
@@ -281,7 +272,7 @@ path is replaced — see [app-profile-guide.md](../../gentian-apps/app-profile-g
 
 ## 9. TLS and certificates
 
-Gentian OS terminates TLS at the ingress layer using cert-manager DNS-01
+Gentian OS terminates TLS at the edge (Envoy Gateway listeners) using cert-manager DNS-01
 wildcards. Kernel hosts (`portal.<kernel>`, `id.<kernel>`) and each tenant app
 zone (`*.<tenant>.<kernel>`) receive separate certificates. See
 [multi-tenancy.md](multi-tenancy.md) §3 for DNS-01 layout and ACME rate-limit
@@ -300,16 +291,21 @@ adapter**) need extra configuration on staging clusters:
 
 | Mechanism | Purpose | Limitation |
 |---|---|---|
-| `gentian-staging-ca-tls` secret | PEM bundle (Mozilla CAs + LE staging intermediate) replicated into each `tenant-*` namespace by the operator | Works for `curl`, Python `requests`, and similar clients that honour `SSL_CERT_FILE` / `--cacert` |
-| `app-element` / `app-default` composition mounts | Mount `gentian-staging-ca-tls` and set `REQUESTS_CA_BUNDLE` on affected pods | **Insufficient for Synapse** — OIDC discovery uses Twisted `platformTrust()`, which ignores those environment variables |
-| `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (OIDC metadata fetch). **Staging only.** |
+| `gentian-staging-ca-tls` secret | PEM bundle (Mozilla CAs + LE staging issuer chain) replicated into each `tenant-*` namespace by the operator | Works for `curl`, Python `requests`, and similar clients that honour `SSL_CERT_FILE` / `--cacert` |
+| `gentian-staging-ca-tls` → `node-extra-ca.crt` | LE staging issuer chain only (intermediate through root, via AIA) | **`NODE_EXTRA_CA_CERTS` for Node.js** (intercom-service / ICS). Node appends this file to the default Mozilla store; do not point it at `ca.crt` (duplicate Mozilla CAs break verification) |
+| `app-element` / `app-default` composition mounts | Mount `gentian-staging-ca-tls` (`ca.crt` + `truststore.jks`); set `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` via `extraEnvVars` **and** merge the same keys into `values.environment` for charts that only render env from that map (e.g. **OpenProject**); append `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares OIDC or existing `javaOpts` | **Insufficient for Synapse** — OIDC uses in-cluster `KEYCLOAK_INTERNAL_URL` (HTTP) plus `use_insecure_ssl_client_just_for_testing_do_not_use`; do not add Synapse `extraEnvVars` (chart already sets `SSL_CERT_DIR` and duplicates break Helm upgrades). **Required for Java OIDC apps** (e.g. XWiki). **Required for Ruby OIDC apps** (OpenProject). |
+| `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (token/userinfo calls). **Insufficient alone** — also set `discover: false`, explicit https OIDC endpoints, and `user_profile_method: userinfo_endpoint` to skip startup JWKS fetch. **Staging only.** |
+| `app-element` Synapse `additionalConfiguration.oidc_providers` | `discover: false` with public `https://id.<kernel>/realms/<tenant>/…` **authorization_endpoint** (browser) and in-cluster `http://…keycloak…/realms/<tenant>/…` **token/userinfo/jwks** via `KEYCLOAK_INTERNAL_URL` from `gentian-kernel-services`; `user_profile_method: userinfo_endpoint`; public `issuer`/client credentials via Helm `set[]` | Avoids Twisted HTTPS to the Envoy hairpin during OIDC code exchange (login-time failure shows as Element **“Invalid username or password”** even when Synapse starts). Chart-generated `homeserver.oidc` is stripped so only one `oidc_providers` block is emitted. |
 
 **Synapse startup failure (staging):** if `opendesk-synapse` is in
 `CrashLoopBackOff` with `Error while initialising OIDC provider 'oidc'` and a
-timeout fetching `/.well-known/openid-configuration`, the usual cause on a
-staging cluster is TLS verification of `id.<kernel-domain>`, not a wrong issuer
-URL. `skip_verification` on the OIDC provider only skips *metadata validation*
-after a successful HTTPS fetch; it does not disable TLS certificate checks.
+timeout fetching JWKS or `/.well-known/openid-configuration`, the usual cause
+is Twisted HTTPS to `id.<kernel-domain>` on a staging/gateway cluster — not a
+wrong issuer URL. `skip_verification` only skips *metadata validation* after a
+successful HTTPS fetch; it does not disable TLS certificate checks. The
+`app-element` composition disables discovery, sets explicit https endpoints,
+`user_profile_method: userinfo_endpoint` (skip startup JWKS load), and
+`use_insecure_ssl_client_just_for_testing_do_not_use` for runtime token calls.
 
 Bootstrap / refresh staging trust:
 

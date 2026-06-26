@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-render-fixture-provisioning-jobs
+  namespace: platform-kernel
+  labels:
+    gentianos.io/config-type: tenant-provisioning-jobs
+    gentianos.io/tenant: render-fixture
+data:
+  # Minimal identity/LDAP Jobs so function-sequencer rules (non-realm Keycloak /
+  # non-OU LDAP Jobs before app-.*) have matching prerequisites in render goldens.
+  jobs.json: |
+    [
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "keycloak-realm-render-fixture",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "render-fixture"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "keycloak-admin-render-fixture",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "render-fixture"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+          "name": "ldap-bind-render-fixture-keycloak",
+          "namespace": "platform-kernel",
+          "labels": {
+            "gentianos.io/tenant": "render-fixture"
+          }
+        },
+        "spec": {
+          "template": {
+            "spec": {
+              "restartPolicy": "Never",
+              "containers": [
+                {
+                  "name": "provision",
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  objects.json: "[]"

@@ -15,7 +15,7 @@
 #           kubectl delete xcluster dev-cluster
 #
 # Prerequisites:
-#   - Phase 0 complete (Crossplane core running in crossplane-system)
+#   - e2e-p0 complete (Crossplane core running in crossplane-system)
 #   - KUBECONFIG pointing at the dev cluster
 #   - OpenBao running at http://openbao.openbao.svc.cluster.local:8200
 #   - K8s Secret 'gentian-os-master-password' in namespace crossplane-system
@@ -42,7 +42,7 @@ kubectl cluster-info --request-timeout=5s >/dev/null 2>&1 \
 
 info "Cluster: $(kubectl config current-context)"
 
-# Crossplane must be running (Phase 0)
+# Crossplane must be running (e2e-p0)
 kubectl get deployment crossplane -n crossplane-system >/dev/null 2>&1 \
   || fail "Crossplane core not found in crossplane-system — run: make e2e-p0 first"
 
@@ -52,7 +52,7 @@ info "Applying providers (function-go-templating, provider-kubernetes, provider-
 kubectl apply -f "${REPO_ROOT}/providers/providers.yaml"
 
 info "Waiting for providers to become Healthy (timeout: ${TIMEOUT_PROVIDERS})..."
-for provider in function-go-templating provider-kubernetes provider-vault; do
+for provider in function-go-templating function-extra-resources function-auto-ready function-sequencer provider-kubernetes provider-vault; do
   info "  Waiting for: ${provider}"
   kubectl wait "function.pkg.crossplane.io/${provider}" \
     --for=condition=Healthy --timeout="${TIMEOUT_PROVIDERS}" 2>/dev/null \
@@ -155,5 +155,5 @@ fi
 
 pass "All P1 spot-checks passed"
 echo ""
-echo "Phase 1 E2E complete. Kernel structural resources are provisioned."
+echo "P1 E2E complete. Kernel structural resources are provisioned."
 

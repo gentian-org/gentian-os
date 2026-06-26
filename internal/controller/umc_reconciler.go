@@ -19,16 +19,12 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -107,10 +103,10 @@ func legacyUMCResourceNames(tenantName string) []string {
 
 func umcPortalRedirectLabels(tenantName, instance string) map[string]string {
 	return map[string]string{
-		tenantLabel:               tenantName,
-		managedByLabel:            managedByValue,
-		umcFrontendComponentLabel: umcFrontendComponentValue,
-		"app.kubernetes.io/name":  "portal-redirect",
+		tenantLabel:                  tenantName,
+		managedByLabel:               managedByValue,
+		umcFrontendComponentLabel:    umcFrontendComponentValue,
+		"app.kubernetes.io/name":     "portal-redirect",
 		"app.kubernetes.io/instance": instance,
 	}
 }
@@ -169,97 +165,10 @@ func (r *TenantReconciler) removePerTenantUMCStack(ctx context.Context, tenant *
 
 func (r *TenantReconciler) ensureTenantPortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) error {
 	nsName := tenantNamespaceName(tenant)
-	name := tenantPortalRedirectName(tenant.Name)
-	portalURL := kernelPortalURL(r.KernelDomain)
-	ingressClass := "public"
-	pathTypePrefix := networkingv1.PathTypePrefix
-	labels := umcPortalRedirectLabels(tenant.Name, name)
-
-	desired := &networkingv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: nsName,
-			Labels:    labels,
-			Annotations: map[string]string{
-				"nginx.ingress.kubernetes.io/permanent-redirect":   portalURL,
-				"nginx.ingress.kubernetes.io/ssl-redirect":       "false",
-				"nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
-			},
-		},
-		Spec: networkingv1.IngressSpec{
-			IngressClassName: &ingressClass,
-			TLS: []networkingv1.IngressTLS{{
-				Hosts:      []string{effectiveDomain},
-				SecretName: kernelWildcardTenantSecret,
-			}},
-			Rules: []networkingv1.IngressRule{{
-				Host: effectiveDomain,
-				IngressRuleValue: networkingv1.IngressRuleValue{
-					HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &pathTypePrefix,
-							Backend: networkingv1.IngressBackend{
-								Service: &networkingv1.IngressServiceBackend{
-									Name: "placeholder",
-									Port: networkingv1.ServiceBackendPort{Name: "http"},
-								},
-							},
-						}},
-					},
-				},
-			}},
-		},
-	}
-
-	// Redirect-only ingresses need a backend service for the ingress spec; use
-	// any existing Service in the namespace (app releases always create one).
-	svcName, err := r.firstServiceInNamespace(ctx, nsName)
-	if err != nil {
-		return err
-	}
-	if svcName == "" {
-		// No apps yet — skip until a backend exists (redirect annotation still
-		// requires a valid service reference in the ingress API).
-		return nil
-	}
-	desired.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Name = svcName
-
-	existing := &networkingv1.Ingress{}
-	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !ingressSpecEqual(existing, desired) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Spec = desired.Spec
-		existing.Annotations = desired.Annotations
-		existing.Labels = desired.Labels
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return r.ensureTenantPortalRedirectGateway(ctx, tenant, nsName, effectiveDomain)
 }
 
-func (r *TenantReconciler) firstServiceInNamespace(ctx context.Context, nsName string) (string, error) {
-	list := &corev1.ServiceList{}
-	if err := r.List(ctx, list, client.InNamespace(nsName)); err != nil {
-		return "", err
-	}
-	for i := range list.Items {
-		name := list.Items[i].Name
-		if strings.HasPrefix(name, "umc-") {
-			continue
-		}
-		return name, nil
-	}
-	return "", nil
-}
-
-func ingressSpecEqual(a, b *networkingv1.Ingress) bool {
-	return equality.Semantic.DeepEqual(a.Spec, b.Spec) &&
-		equality.Semantic.DeepEqual(a.Annotations, b.Annotations) &&
-		equality.Semantic.DeepEqual(a.Labels, b.Labels)
+func (r *TenantReconciler) ensureTenantPortalRedirectGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
+	desired := buildTenantApexRedirectHTTPRoute(tenant, nsName, effectiveDomain, r.KernelDomain)
+	return ensureHTTPRouteResource(ctx, r.Client, desired)
 }

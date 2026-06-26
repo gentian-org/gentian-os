@@ -3,7 +3,7 @@ name: gentian-os
 description: Gentian OS — multi-tenant application orchestrator operator
 type: application
 version: 0.2.0
-appVersion: "develop"
+appVersion: "0.1.2"
 keywords:
   - gentian
   - operator
