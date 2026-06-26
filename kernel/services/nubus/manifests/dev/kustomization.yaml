@@ -17,6 +17,10 @@ configMapGenerator:
     namespace: gentian-dev
     files:
       - values.yaml=values/dev.yaml
+  - name: nubus-portal-tiles-values
+    namespace: gentian-dev
+    files:
+      - values.yaml=values/portal-tiles-gentian.yaml
   - name: nubus-dev-udm-listener-nats-patch
     namespace: gentian-dev
     files:

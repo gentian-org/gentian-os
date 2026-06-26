@@ -8,7 +8,8 @@
 # Values merge order (last wins):
 #   1. nubus-base-values  ConfigMap  — app defaults (_base.yaml)
 #   2. nubus-dev-values   ConfigMap  — env-specific plain overrides (dev.yaml)
-#   3. nubus-sensitive-values Secret — all sensitive fields (ESO-synced)
+#   3. nubus-portal-tiles-values ConfigMap — Gentian catalogue portal tile icons
+#   4. nubus-sensitive-values Secret — all sensitive fields (ESO-synced)
 #
 # The ConfigMaps and patch ConfigMaps are managed by ArgoCD (nubus-manifests-dev
 # Application) via Kustomize configMapGenerator from values/ and patches/.
@@ -50,7 +51,13 @@ spec:
           namespace: gentian-dev
           key: values.yaml
           optional: false
-      # 3. Sensitive values (ESO-synced from OpenBao identity/nubus + mail/postfix).
+      # 3. Gentian catalogue portal tile icons (overrides openDesk defaults in _base.yaml)
+      - configMapKeyRef:
+          name: nubus-portal-tiles-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      # 4. Sensitive values (ESO-synced from OpenBao identity/nubus + mail/postfix).
       #    Merged LAST so secrets override any accidental non-secret defaults above.
       - secretKeyRef:
           name: nubus-sensitive-values
