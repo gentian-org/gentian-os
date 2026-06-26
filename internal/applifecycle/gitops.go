@@ -26,13 +26,15 @@ import (
 
 // GitOps edits gentian-deployments tenant YAML and pushes commits.
 type GitOps struct {
-	path string
-	repo string
+	path    string
+	repo    string
+	cluster string
+	stage   string
 }
 
 // NewGitOps returns a GitOps helper. Path must be a local git checkout.
-func NewGitOps(path, repo string) *GitOps {
-	return &GitOps{path: path, repo: repo}
+func NewGitOps(path, repo, cluster, stage string) *GitOps {
+	return &GitOps{path: path, repo: repo, cluster: cluster, stage: stage}
 }
 
 func (g *GitOps) requirePath() error {
@@ -62,16 +64,29 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 	if err := g.ensureRepo(); err != nil {
 		return "", err
 	}
-	matches, _ := filepath.Glob(filepath.Join(g.path, "**", "tenants", tenant+".yaml"))
-	for _, p := range matches {
-		return p, nil
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
 	}
+	stage := g.stage
+	if stage == "" {
+		stage = "dev"
+	}
+
+	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/<stage>/).
+	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, stage, "tenant.yaml")
+	if _, err := os.Stat(preferred); err == nil {
+		return preferred, nil
+	}
+
+	// Fallback: search only this cluster's tenants tree (never definitions/ templates).
+	tenantsRoot := filepath.Join(g.path, "clusters", cluster, "tenants")
 	var found []string
-	err := filepath.WalkDir(g.path, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
+	err := filepath.WalkDir(tenantsRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
 		}
-		if !strings.HasSuffix(path, ".yaml") {
+		if filepath.Base(path) != "tenant.yaml" {
 			return nil
 		}
 		b, err := os.ReadFile(path)
@@ -88,7 +103,7 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 		return "", err
 	}
 	if len(found) == 0 {
-		return "", fmt.Errorf("tenant file for %q not found in deployments repo", tenant)
+		return "", fmt.Errorf("tenant file for %q not found under clusters/%s/tenants (stage %q)", tenant, cluster, stage)
 	}
 	return found[0], nil
 }

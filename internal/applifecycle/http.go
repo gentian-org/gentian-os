@@ -80,10 +80,12 @@ func (h *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 	if actor == "" {
 		actor = "app-lifecycle-api"
 	}
+	wait := r.URL.Query().Get("wait") == "true" || r.URL.Query().Get("wait") == "1"
 	result, err := h.Service.Install(r.Context(), InstallRequest{
 		Tenant:  tenant,
 		Profile: profile,
 		Actor:   actor,
+		Wait:    wait,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)

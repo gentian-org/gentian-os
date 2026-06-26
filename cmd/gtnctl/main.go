@@ -145,6 +145,7 @@ func runAppMutation(action string, args []string) error {
 			Tenant:  *tenant,
 			Profile: profile,
 			Actor:   actor,
+			Wait:    true,
 		})
 		if err != nil {
 			return err

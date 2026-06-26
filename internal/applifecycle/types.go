@@ -35,6 +35,9 @@ type InstallRequest struct {
 	Tenant  string
 	Profile string
 	Actor   string
+	// Wait blocks until the App claim is Ready. HTTP clients should leave this false
+	// to avoid gateway timeouts during long provisioning.
+	Wait bool
 }
 
 // UninstallRequest removes an app profile from a tenant.

@@ -71,7 +71,7 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		client:    c,
 		clientset: cs,
 		opts:      opts,
-		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo),
+		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster, opts.DeploymentsStage),
 	}, nil
 }
 
@@ -106,11 +106,28 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		}
 	}
 
-	if err := s.waitForAppReady(ctx, req.Tenant, req.Profile, s.opts.WaitTimeout); err != nil {
-		return nil, err
-	}
 	if status == "" {
 		status = "installed"
+	}
+	if !req.Wait {
+		ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
+		if err != nil {
+			return nil, err
+		}
+		if !ready && msg == "" {
+			msg = "Install requested — provisioning in progress"
+		}
+		return &Result{
+			Status:  status,
+			Tenant:  req.Tenant,
+			Profile: req.Profile,
+			Ready:   ready,
+			Message: msg,
+		}, nil
+	}
+
+	if err := s.waitForAppReady(ctx, req.Tenant, req.Profile, s.opts.WaitTimeout); err != nil {
+		return nil, err
 	}
 	return &Result{
 		Status:  status,
