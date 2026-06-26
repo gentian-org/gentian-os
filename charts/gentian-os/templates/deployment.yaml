@@ -34,6 +34,7 @@ spec:
       serviceAccountName: {{ include "gentian-os.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -258,6 +259,13 @@ spec:
           env:
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+          securityContext:
+            runAsUser: 65532
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
             - name: deployments-checkout
               mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
