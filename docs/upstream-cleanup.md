@@ -138,12 +138,12 @@ Pulled via ArgoCD ApplicationSet or Crossplane `Release` CR.
 
 | Done | Strategy | Component | Chart name | OCI repository (current) | Pinned version | Target | Referenced in |
 |:---:|---|---|---|---|---|---|---|
-| [ ] | **A** | Redis | `redis` | `.../external/charts/bitnami-charts` | 18.6.1 | `oci://registry-1.docker.io/bitnamicharts/redis` | `kernel/appsets/10-infra.yaml` |
-| [ ] | **A** | MinIO | `minio` | `.../external/charts/bitnami-charts` | 16.0.10 | Public Bitnami chart + `bitnamilegacy/*` images | `kernel/appsets/10-infra.yaml` |
+| [x] | **A** | Redis | `redis` | `.../external/charts/bitnami-charts` | 18.6.1 | `oci://registry-1.docker.io/bitnamicharts/redis` | `kernel/appsets/10-infra.yaml` |
+| [x] | **A** | MinIO | `minio` | `.../external/charts/bitnami-charts` | 16.0.10 | Public Bitnami chart + `bitnamilegacy/*` images | `kernel/appsets/10-infra.yaml` |
 | [ ] | **A**† | Intercom | `intercom-service` | `.../supplier/univention/charts-mirror` | 2.19.5 | Univention chart @ `artifacts.software-univention.de` | `kernel/appsets/20-iam.yaml` |
 | [ ] | **D** | Nubus | `nubus` | `.../supplier/univention/charts-mirror` | 1.16.0 | Rebuilt IAM stack; interim: Univention registry | `kernel/services/nubus/manifests/dev/release.yaml` |
-| [ ] | **A** | PostgreSQL | `opendesk-postgresql` | `.../platform-development/charts/opendesk-postgresql` | 2.1.2 | Public CNPG / Bitnami PG or Gentian chart on public image | `kernel/services/opendesk-postgresql/...` |
-| [ ] | **A** | MariaDB | `opendesk-mariadb` | `.../platform-development/charts/opendesk-mariadb` | 3.0.3 | Public MariaDB chart / operator | `kernel/services/opendesk-mariadb/...` |
+| [x] | **A**† | PostgreSQL | `opendesk-postgresql` | `.../platform-development/charts/opendesk-postgresql` | 2.1.2 | Vendored `charts/infra/postgresql` + packages repo (step 2: CNPG) | `kernel/services/opendesk-postgresql/...` |
+| [x] | **A**† | MariaDB | `opendesk-mariadb` | `.../platform-development/charts/opendesk-mariadb` | 3.0.3 | Vendored `charts/infra/mariadb` + packages repo (step 2: operator) | `kernel/services/opendesk-mariadb/...` |
 | [ ] | **C** | Nextcloud (umbrella) | `opendesk-nextcloud` | `.../platform-development/charts/opendesk-nextcloud` | 4.7.2 | Gentian chart + `library/nextcloud` or rebuilt image | `kernel/services/nextcloud/...` |
 | [ ] | **C** | Nextcloud management | `opendesk-nextcloud-management` | same repo | 4.7.2 | Gentian init Job + public NC base | `kernel/services/nextcloud-management/...` |
 | [ ] | **C** | Nextcloud notifypush | `opendesk-nextcloud-notifypush` | same repo | 4.7.2 | Gentian subchart + public notify_push | `kernel/services/nextcloud-notifypush/...` |
@@ -191,8 +191,8 @@ Even after charts are migrated, pods will fail if images still point at opencode
 | [ ] | **D** | Nubus — OpenDesk extensions | `opendesk-nubus`, `opendesk-nubus-a2g-mapper` | `kernel/services/nubus/.../values/_base.yaml` |
 | [ ] | **A**† | Nubus — Univention extensions | `ox-extension`, `portal-extension` | same (→ `artifacts.software-univention.de`) |
 | [ ] | **D** | Nubus — runtime (~36 images) | `nubus/images/*` | Chart defaults / Univention registry until rebuild |
-| [ ] | **A** | MinIO | `images-mirror/minio`, `os-shell` | `kernel/services/minio/values/_base.yaml` |
-| [ ] | **A** | Redis | `images-mirror/redis` | `kernel/services/redis/values/_base.yaml` |
+| [x] | **A** | MinIO | `images-mirror/minio`, `os-shell` | `kernel/services/minio/values/_base.yaml` |
+| [x] | **A** | Redis | `images-mirror/redis` | `kernel/services/redis/values/_base.yaml` |
 | [ ] | **A**† | Intercom | `images-mirror/intercom-service` | `kernel/services/intercom-service/values/_base.yaml` |
 | [ ] | **C** | Nextcloud AIO + mgmt + exporter | `opendesk-nextcloud*` | `nextcloud*`, `nextcloud-management/` |
 | [ ] | **C** | Dovecot | `dovecot-public-sector` | `kernel/services/dovecot/values/_base.yaml` |
@@ -295,10 +295,10 @@ Replace OpenDesk-mirrored **data plane** with public upstream. No Gentian chart
 forks unless Crossplane needs a thin values wrapper.
 
 ```
-[ ] PostgreSQL — drop opendesk-postgresql; public CNPG or Bitnami + vanilla bootstrap
-[ ] MariaDB — drop opendesk-mariadb; public chart / operator
-[ ] Redis — public Bitnami chart + bitnamilegacy image
-[ ] MinIO — public Bitnami chart + bitnamilegacy image
+[x] PostgreSQL — vendored chart; opencode OCI pull removed (step 2: CNPG / vanilla bootstrap)
+[x] MariaDB — vendored chart; opencode OCI pull removed (step 2: public chart / operator)
+[x] Redis — public Bitnami chart + bitnamilegacy image
+[x] MinIO — public Bitnami chart + bitnamilegacy image
 [ ] Intercom — Univention registry direct (drop opencode mirror) or defer until step 3
 ```
 

@@ -1,0 +1,19 @@
+annotations:
+  category: Database
+  licenses: Apache-2.0
+apiVersion: v2
+dependencies:
+- name: common
+  repository: https://charts.bitnami.com/bitnami
+  tags:
+  - bitnami-common
+  version: ^2.x.x
+description: A Helm chart for running MariaDB database
+home: https://zendis.de
+keywords:
+- mariadb
+- database
+- sql
+name: mariadb
+type: application
+version: 3.0.3

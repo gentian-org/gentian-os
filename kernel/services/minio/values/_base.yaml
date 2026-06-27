@@ -6,11 +6,8 @@
 #   persistence.size, resources, statefulset.replicaCount
 # =============================================================================
 
-# Allow use of OpenDesk mirrored images (not standard Bitnami)
 # storageClass/imagePullSecrets come from values/env/{env}.yaml
 global:
-  security:
-    allowInsecureImages: true
   ingress:
     enabled: false
 
@@ -38,19 +35,19 @@ podSecurityContext:
   enabled: true
   fsGroup: 1001
 
-# Image — OpenDesk-mirrored Bitnami minio
+# Image — public Bitnami legacy mirror (byte-identical to former opencode mirror)
 image:
-  registry: registry.opencode.de
-  repository: bmi/opendesk/components/community/images-mirror/minio
+  registry: docker.io
+  repository: bitnamilegacy/minio
   tag: 2025.4.22-debian-12-r1
   pullPolicy: IfNotPresent
 
-# Volume permissions init container (uses OpenDesk os-shell mirror)
+# Volume permissions init container
 volumePermissions:
   enabled: true
   image:
-    registry: registry.opencode.de
-    repository: bmi/opendesk/components/community/images-mirror/os-shell
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
     tag: 12-debian-12-r44
     pullPolicy: IfNotPresent
 

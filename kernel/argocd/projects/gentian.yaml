@@ -11,7 +11,7 @@ spec:
 
   # Source repositories
   sourceRepos:
-  - 'https://github.com/gentian-org/gentian-os'                                                         # OS/infrastructure Git repository
+  - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
@@ -20,7 +20,7 @@ spec:
   - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb'        # MariaDB chart
   - 'registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'                   # Univention charts (Nubus, Intercom)
   - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-keycloak-bootstrap'  # Keycloak Bootstrap
-  - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Bitnami charts (MinIO, Redis)
+  - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Legacy; redis/minio now use public Bitnami OCI
   - 'oci://registry.opencode.de/*'                                                                      # ZenDiS OCI registry (with protocol)
   - 'oci://registry.opencode.de/bmi/opendesk/*'                                                         # All OpenDesk paths with OCI
   - 'oci://registry.opencode.de/bmi/opendesk/components/platform-development/*'                        # OpenDesk platform-development path

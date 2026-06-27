@@ -1,6 +1,8 @@
 ---
-# Infra group: redis, minio (Pattern A — existingSecret supported)
-# postgresql and mariadb managed via provider-helm Releases (Pattern B).
+# Infra group: redis, minio (public Bitnami OCI — strategy A).
+# postgresql and mariadb stay on Crossplane Release CRs (Pattern B); chart
+# source is vendored at charts/infra/packages/ (no registry.opencode.de).
+#
 # Matrix generator: env list × app list  →  one Application per (env, app) pair.
 # To add an environment: add one entry to the env list.
 # To add an application:  add one entry to the app list.
@@ -24,12 +26,12 @@ spec:
           elements:
           - app: redis
             chart: redis
-            repoURL: registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts
+            repoURL: oci://registry-1.docker.io/bitnamicharts
             version: "18.6.1"
             wave: "12"
           - app: minio
             chart: minio
-            repoURL: registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts
+            repoURL: oci://registry-1.docker.io/bitnamicharts
             version: "16.0.10"
             wave: "13"
   template:

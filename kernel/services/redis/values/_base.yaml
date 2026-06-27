@@ -8,10 +8,10 @@
 # Architecture — standalone for all envs; HA via Sentinel configurable in prod
 architecture: standalone
 
-# Image — OpenDesk-mirrored Bitnami redis
+# Image — public Bitnami legacy mirror (byte-identical to former opencode mirror)
 image:
-  registry: registry.opencode.de
-  repository: bmi/opendesk/components/community/images-mirror/redis
+  registry: docker.io
+  repository: bitnamilegacy/redis
   tag: 7.4.3-debian-12-r0
   pullPolicy: IfNotPresent
 

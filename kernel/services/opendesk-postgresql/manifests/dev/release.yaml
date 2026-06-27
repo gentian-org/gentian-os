@@ -9,8 +9,7 @@
 #   3. postgresql-sensitive-values Secret — postgres.password + all job.users[]
 #                                           passwords (ESO-synced from OpenBao)
 #
-# Sensitive values (passwords) never appear in this file, in ArgoCD UI, or
-# in Helm release history.
+# Chart source: vendored packages repo (charts/infra/packages/) — no opencode OCI.
 # =============================================================================
 apiVersion: helm.crossplane.io/v1beta1
 kind: Release
@@ -25,11 +24,8 @@ spec:
   forProvider:
     chart:
       name: postgresql
-      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
       version: "2.1.2"
-      pullSecretRef:
-        name: registry-credentials-helm
-        namespace: crossplane-system
     namespace: gentian-infra-dev
     wait: true
     waitTimeout: "5m"

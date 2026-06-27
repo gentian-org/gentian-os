@@ -1,7 +1,10 @@
 #!/bin/bash
 set -e
 
-# Script to create ArgoCD repository secrets for OCI Helm charts
+# Create ArgoCD repository secrets for OCI Helm charts that still pull from
+# registry.opencode.de. Infra step 1 removed opencode for redis/minio (public
+# Bitnami) and postgres/mariadb (vendored classic repo on GitHub raw).
+#
 # Usage: ./create-argocd-oci-secrets.sh <username> <password>
 
 USERNAME=$1
@@ -16,34 +19,6 @@ fi
 NAMESPACE="argocd"
 
 echo "Creating ArgoCD repository secrets for OCI Helm charts in namespace: $NAMESPACE"
-
-# Create opendesk-postgresql repository secret
-kubectl create secret generic opendesk-postgresql-charts -n "$NAMESPACE" \
-  --from-literal=type=helm \
-  --from-literal=name=opendesk-postgresql \
-  --from-literal=url=registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql \
-  --from-literal=enableOCI=true \
-  --from-literal=username="$USERNAME" \
-  --from-literal=password="$PASSWORD" \
-  --dry-run=client -o yaml | \
-  kubectl label -f - argocd.argoproj.io/secret-type=repository --local --dry-run=client -o yaml | \
-  kubectl apply -f -
-
-echo "✅ Created: opendesk-postgresql-charts"
-
-# Create opendesk-mariadb repository secret
-kubectl create secret generic opendesk-mariadb-charts -n "$NAMESPACE" \
-  --from-literal=type=helm \
-  --from-literal=name=opendesk-mariadb \
-  --from-literal=url=registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb \
-  --from-literal=enableOCI=true \
-  --from-literal=username="$USERNAME" \
-  --from-literal=password="$PASSWORD" \
-  --dry-run=client -o yaml | \
-  kubectl label -f - argocd.argoproj.io/secret-type=repository --local --dry-run=client -o yaml | \
-  kubectl apply -f -
-
-echo "✅ Created: opendesk-mariadb-charts"
 
 # Create univention-charts repository secret (for Nubus and Intercom Service)
 kubectl create secret generic univention-charts -n "$NAMESPACE" \
@@ -73,25 +48,11 @@ kubectl create secret generic opendesk-keycloak-bootstrap-charts -n "$NAMESPACE"
 
 echo "✅ Created: opendesk-keycloak-bootstrap-charts"
 
-# Create bitnami-charts repository secret (for MinIO, Redis)
-kubectl create secret generic bitnami-charts -n "$NAMESPACE" \
-  --from-literal=type=helm \
-  --from-literal=name=bitnami-charts \
-  --from-literal=url=registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts \
-  --from-literal=enableOCI=true \
-  --from-literal=username="$USERNAME" \
-  --from-literal=password="$PASSWORD" \
-  --dry-run=client -o yaml | \
-  kubectl label -f - argocd.argoproj.io/secret-type=repository --local --dry-run=client -o yaml | \
-  kubectl apply -f -
-
-echo "✅ Created: bitnami-charts"
-
 echo ""
 echo "ArgoCD repository secrets created successfully!"
 echo ""
 echo "Verify with:"
 echo "  kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=repository"
 echo ""
-echo "Note: These secrets enable ArgoCD to authenticate to private OCI registries."
-echo "The repo-server deployment will automatically pick up these credentials."
+echo "Note: redis/minio use public oci://registry-1.docker.io/bitnamicharts (no secret)."
+echo "      postgres/mariadb use vendored charts at charts/infra/packages/ (no secret)."

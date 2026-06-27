@@ -9,8 +9,7 @@
 #   3. mariadb-sensitive-values Secret — mariadb.rootPassword.value + job.users[]
 #                                        password (ESO-synced from OpenBao)
 #
-# Sensitive values (passwords) never appear in this file, in ArgoCD UI, or
-# in Helm release history.
+# Chart source: vendored packages repo (charts/infra/packages/) — no opencode OCI.
 # =============================================================================
 apiVersion: helm.crossplane.io/v1beta1
 kind: Release
@@ -25,11 +24,8 @@ spec:
   forProvider:
     chart:
       name: mariadb
-      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
       version: "3.0.3"
-      pullSecretRef:
-        name: registry-credentials-helm
-        namespace: crossplane-system
     namespace: gentian-infra-dev
     wait: true
     waitTimeout: "5m"

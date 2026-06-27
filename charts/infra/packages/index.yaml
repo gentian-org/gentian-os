@@ -1,0 +1,51 @@
+apiVersion: v1
+entries:
+  mariadb:
+  - annotations:
+      category: Database
+      licenses: Apache-2.0
+    apiVersion: v2
+    created: "2026-06-27T23:16:18.165952967+02:00"
+    dependencies:
+    - name: common
+      repository: https://charts.bitnami.com/bitnami
+      tags:
+      - bitnami-common
+      version: ^2.x.x
+    description: A Helm chart for running MariaDB database
+    digest: 61dbac7dc46e050cb26989868dbd65cc7903d58c3fe246470dbb1549e2e51f44
+    home: https://zendis.de
+    keywords:
+    - mariadb
+    - database
+    - sql
+    name: mariadb
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/mariadb-3.0.3.tgz
+    version: 3.0.3
+  postgresql:
+  - annotations:
+      category: Database
+    apiVersion: v2
+    created: "2026-06-27T23:16:18.167483502+02:00"
+    dependencies:
+    - name: common
+      repository: https://charts.bitnami.com/bitnami
+      tags:
+      - bitnami-common
+      version: 2.x.x
+    description: A Helm chart for running PostgreSQL (Postgres) database
+    digest: 88e64f7c353726eab26a697ac02a175e13600b2113ec166c16c34b08d0e91a40
+    home: https://zendis.de
+    keywords:
+    - postgresql
+    - postgres
+    - database
+    - sql
+    name: postgresql
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/postgresql-2.1.2.tgz
+    version: 2.1.2
+generated: "2026-06-27T23:16:18.164835783+02:00"
