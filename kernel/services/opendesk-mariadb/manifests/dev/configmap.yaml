@@ -1,5 +1,5 @@
 # =============================================================================
-# opendesk-mariadb — plain values ConfigMaps
+# Shared kernel MariaDB — plain values ConfigMaps
 #
 # Two ConfigMaps merged by provider-helm before the sensitive-values Secret:
 #   1. mariadb-base-values  — non-secret defaults for all environments

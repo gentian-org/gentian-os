@@ -8,6 +8,9 @@
 
 # storageClass/imagePullSecrets come from values/env/{env}.yaml
 global:
+  security:
+    # Required when using docker.io/bitnamilegacy/* images with the Bitnami chart.
+    allowInsecureImages: true
   ingress:
     enabled: false
 
@@ -35,7 +38,7 @@ podSecurityContext:
   enabled: true
   fsGroup: 1001
 
-# Image — public Bitnami legacy mirror (byte-identical to former opencode mirror)
+# Image — Bitnami MinIO on Debian 12 (docker.io/bitnamilegacy/minio)
 image:
   registry: docker.io
   repository: bitnamilegacy/minio
@@ -100,7 +103,7 @@ provisioning:
   # Make portal-assets publicly readable
   extraCommands:
     - mc anonymous set download provisioning/ums/portal-assets
-  # All OpenDesk S3 buckets
+  # Kernel application buckets (migrations, Nextcloud, Notes, UMS portal assets)
   buckets:
     - name: migrations
       versioning: Suspended

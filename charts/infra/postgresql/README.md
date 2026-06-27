@@ -6,22 +6,16 @@ SPDX-License-Identifier: Apache-2.0
 
 A Helm chart for running PostgreSQL (Postgres) database
 
-## Installing the Chart
+## Gentian deployment
 
-To install the chart with the release name `my-release`, you have two options:
+Kernel installs this chart via Crossplane `Release`. Packaged charts are published
+to `charts/infra/packages/`; run `./scripts/publish-infra-charts.sh` after editing
+the chart source under `charts/infra/postgresql/`.
 
-### Install via Repository
-
-```console
-helm repo add opendesk-postgresql https://gitlab.opencode.de/api/v4/projects/1392/packages/helm/stable
-helm install my-release --version 2.1.2 opendesk-postgresql/postgresql
-```
-
-### Install via OCI Registry
+## Standalone install
 
 ```console
-helm repo add opendesk-postgresql oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql
-helm install my-release --version 2.1.2 opendesk-postgresql/postgresql
+helm install my-release ./charts/infra/postgresql
 ```
 
 ## Requirements
@@ -140,17 +134,9 @@ helm install my-release --version 2.1.2 opendesk-postgresql/postgresql
 
 ## Uninstalling the Chart
 
-To install the release with name `my-release`:
-
 ```bash
 helm uninstall my-release
 ```
-
-## Signing
-
-Helm charts are signed with helm native signing method.
-
-You can verify the chart against [the public GPG key](../../files/gpg-pubkeys/opendesk.gpg).
 
 ## License
 

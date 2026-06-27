@@ -20,8 +20,8 @@ Each component below has a checkbox (`[ ]` = not done, `[x]` = done) and a
 
 | Strategy | Meaning | Target location |
 |---|---|---|
-| **A** | **Replaced with open charts / images** — use public upstream directly (no OpenDesk mirror) | Public chart repos + `docker.io` / vendor registries; Gentian values only |
-| **B** | **Moved to private paid-for repo** — OpenDesk-derived charts/images customers pay for | [`gentian-pro`](https://github.com/gentian-org/gentian-pro) (private) → `ghcr.io/gentian-org-pro/...` |
+| **A** | **Replaced with open charts / images** — genuinely free/open upstream (Apache-2.0, AGPL, vendor public registries with acceptable terms) | Public chart repos + `docker.io` / vendor registries; Gentian values only |
+| **B** | **Commercial / Pro catalogue** — paid charts, images, and `AppProfile`s customers purchase | Private **`gentian-org/gentian-pro`** → private GHCR packages under **`ghcr.io/gentian-org`** (see [roadmap.md](roadmap.md)) |
 | **C** | **Re-wrapped based on public image** — Gentian-owned Helm chart; public or rebuilt container image | `gentian-os/charts/upstream/` + `ghcr.io/gentian-org/mirror/` or public image refs |
 | **D** | **Rebuilt** — replace with Gentian-native implementation (not a mirror of OpenDesk) | Gentian code + public deps (see Nubus replacement doc) |
 
@@ -40,32 +40,63 @@ Each component below has a checkbox (`[ ]` = not done, `[x]` = done) and a
 | Where do paid OpenDesk artefacts go? | **`gentian-pro`** (private repo) — charts + images for premium catalogue apps (Element/Jitsi, OX). Kernel and free tier stay in public `gentian-org` repos. |
 | Migration approach? | **Inside-out kernel rebuild** — infra first, strip OpenDesk wrappers, then IAM, then apps (see §8). |
 | Rescue artefacts? | `upstream-rescue/` (local) — reference only; not the end-state delivery path. |
+| Can we switch opencode → Univention registry? | **No.** Univention (`artifacts.software-univention.de`) is a **separate proprietary stack** (Terms of Use, subscription for commercial use). It is not “open upstream” — same class of problem as OpenDesk/opencode. Nubus, Intercom (ICS), and related Univention images must be **dropped (D)**, not repointed or replaced with another vendor stack. |
+
+### 1.1 Proprietary supply chains (not migration targets)
+
+Two overlapping proprietary stacks appear in today’s kernel. **Neither is an acceptable
+end state** for Gentian OS:
+
+| Source | What it provides | Why we cannot adopt it |
+|---|---|---|
+| **OpenDesk / `registry.opencode.de`** | Mirrored charts and images (Bitnami, Nextcloud wrappers, Nubus extensions, …) | Private ZenDiS supply chain; no entitlement for Gentian to depend on it long-term |
+| **Univention / `artifacts.software-univention.de`** | Nubus umbrella, Intercom Service (ICS), LDAP/portal/UDM runtime (~40+ images) | Vendor Terms of Use; binaries not AGPL; commercial use requires subscription |
+
+Rescue docs (`upstream-rescue/UNIVENTION-IMAGES.md`) describe what those artefacts
+**are**, for comparison and decommission planning — not as a registry to migrate **to**.
+
+**Intercom (ICS):** Univention’s proprietary OIDC/session bridge for OpenDesk (silent
+login iframe, Nordeck Element banner, portal newsfeed credentials). It is **not** a
+general notification service and **not** worth replacing — **drop it** in step 3 and
+rewire portal + Element to use Keycloak (and Gentian UI) directly without `/silent` or
+`navigation.json` from ICS.
 
 ---
 
-## 2. Gentian-pro private supply chain (premium / paid-for)
+## 2. Gentian-pro commercial catalogue (strategy **B**)
 
-OpenDesk-derived charts and images that are part of the **premium catalogue** will
-not be republished to the public `ghcr.io/gentian-org` org. They move to a
-separate private repository so access can be tied to subscription or entitlement.
+OpenDesk-derived charts and images that are part of the **commercial (Pro) catalogue**
+are not published as public `gentian-apps` artefacts. They live in the private
+**`gentian-org/gentian-pro`** repository. **Access is enforced by the Gentian
+controller (entitlement), not by giving tenants a shared registry password.**
 
-### 2.1 Repository and registry
+Terminology: Gentian uses **Community** (`gentian-apps`, OSS licences) vs **Pro**
+(`gentian-pro`, `license: proprietary`). That matches common industry labels
+(Community/Pro, OSS/Commercial). Use **`edition`** on `AppProfile` for variants
+within a tier (e.g. `full` vs `performant`).
+
+### 2.1 Repository and registry (near term)
 
 | Item | Target |
 |---|---|
-| Git repo | **`gentian-org/gentian-pro`** (private) |
-| Helm OCI | `oci://ghcr.io/gentian-org-pro/charts` (or equivalent private GHCR org) |
-| Container images | `ghcr.io/gentian-org-pro/mirror/...` |
-| CI | Package charts + mirror images on release; publish only from protected branches |
-| Auth | Cluster `imagePullSecrets` + Helm `pullSecretRef` provisioned per customer entitlement (not shared opencode PAT) |
+| Community Git repo | **`gentian-org/gentian-apps`** (public) — OSS profiles + free charts |
+| Pro Git repo | **`gentian-org/gentian-pro`** (private) — commercial profiles, charts, mirrored images |
+| Community OCI | `oci://ghcr.io/gentian-org/charts/...` (public packages) |
+| Pro OCI | `oci://ghcr.io/gentian-org/charts/...` with **private** package visibility (same GHCR org) |
+| CI | Each repo publishes its own charts/images on release |
+| Access control | **Entitlement in controller** (`ProfileRequiresEntitlement`, Tenant/AppCatalogue reconcilers); CRM (Odoo) is commercial source of truth |
+
+**Future (not yet):** a separate GitHub org and GHCR org (`gentian-org-pro` /
+`ghcr.io/gentian-org-pro`) for hard supply-chain isolation — see
+[roadmap.md — Commercial layer](roadmap.md#commercial-layer).
 
 ### 2.2 What belongs in gentian-pro (strategy **B**)
 
-| Component | Charts | Images | gentian-apps profile |
+| Component | Charts | Images | Profile source |
 |---|---|---|---|
-| Element (Matrix) | `opendesk-element`, `opendesk-synapse` | `opendesk-element-web`, Synapse-related mirrors | `profiles/element/` |
-| Jitsi (Element sidecar) | `opendesk-jitsi` | Jitsi stack mirrors + Keycloak adapter sidecar | `profiles/element/composition.yaml` |
-| OX App Suite | `appsuite-public-sector` (+ subcharts) | OX public-sector image set | `profiles/ox-appsuite/` |
+| Element (Matrix) | `opendesk-element`, `opendesk-synapse` | Element/Synapse mirrors | `gentian-pro/profiles/element/` (move from gentian-apps when ready) |
+| Jitsi (Element sidecar) | `opendesk-jitsi` | Jitsi stack mirrors | composition in element profile |
+| OX App Suite | `appsuite-public-sector` (+ subcharts) | OX public-sector image set | `gentian-pro/profiles/ox-appsuite/` |
 
 Reference copies (if needed): `upstream-rescue/charts/` and `upstream-rescue/images/`.
 Moved to gentian-pro in roadmap **step 5** — not before Nubus/Nextcloud kernel work.
@@ -75,21 +106,25 @@ Moved to gentian-pro in roadmap **step 5** — not before Nubus/Nextcloud kernel
 | Strategy | Repo | Examples |
 |---|---|---|
 | **A** | `gentian-os` / public upstream — no vendoring | Redis, MinIO, OpenProject |
-| **C** | `gentian-os/charts/upstream/` → `ghcr.io/gentian-org/charts` | Nextcloud, Postfix, Dovecot, Collabora, CryptPad, XWiki |
-| **D** | `gentian-os` (code, not OpenDesk mirror) | Nubus replacement (Keycloak + Gentian directory + ReBAC) |
+| **C** | `gentian-os/charts/upstream/` → public `ghcr.io/gentian-org/charts` | Nextcloud, Postfix, Dovecot, Collabora, CryptPad, XWiki |
+| **D** | `gentian-os` (code, not OpenDesk mirror) | Nubus decommission; Intercom (ICS) dropped; Gentian IAM |
 
-### 2.4 Wiring premium profiles
+### 2.4 Wiring Pro profiles (repo + entitlement)
 
-1. **`AppProfile.spec.license: proprietary`** and `trustTier` gate install (see
-   `docs/design/app-catalogue-security.md`).
-2. **`spec.chart.repository`** on premium profiles points at
-   `oci://ghcr.io/gentian-org-pro/charts` (not `gentian-org`).
-3. **`gentian-os` kernel** does not depend on gentian-pro; only tenant namespaces
-   pull premium charts when a entitled tenant installs a premium app.
-4. Document customer onboarding: entitlement → GHCR robot creds → tenant namespace
-   `registry-credentials` (separate from kernel pull secrets).
+1. **`AppProfile.spec.license: proprietary`** — `ProfileRequiresEntitlement()` in the
+   operator ([`catalogue_helpers.go`](../api/v1alpha1/catalogue_helpers.go)).
+2. **Catalogue sync** — `AppCatalogue` controller lists Pro profiles only when the
+   cluster/tenant has an active entitlement (CRM → fulfillment → cluster state).
+3. **Install gate** — Tenant controller rejects `spec.apps[].profile` for Pro profiles
+   without entitlement; only then Crossplane/Helm provisions the app in that tenant
+   namespace (other tenants on the same cluster never receive the release).
+4. **`spec.chart.repository`** on Pro profiles points at private packages published
+   from **`gentian-pro`** (e.g. `oci://ghcr.io/gentian-org/charts/element`).
+5. **`gentian-os` kernel** does not depend on `gentian-pro`; only entitled tenant
+   installs pull Pro charts/images. Optional: namespace-scoped `imagePullSecret`
+   created by fulfillment when a Pro app is activated.
 
-See **§8 step 5** for when gentian-pro work happens in the kernel rebuild sequence.
+See **§8 step 5** and [business-logic-plan.md](design/business-logic-plan.md).
 
 ---
 
@@ -109,8 +144,8 @@ flowchart LR
   end
   subgraph supply ["Supply chain targets"]
     PUB["Public upstream<br/>Bitnami, vendors"]
-    GHCR["ghcr.io/gentian-org"]
-    PRO["ghcr.io/gentian-org-pro<br/>gentian-pro private"]
+    GHCR["ghcr.io/gentian-org<br/>public + private pkgs"]
+    PRO["gentian-org/gentian-pro<br/>Git + private GHCR"]
   end
   REG["registry.opencode.de<br/>legacy"]
 
@@ -140,10 +175,10 @@ Pulled via ArgoCD ApplicationSet or Crossplane `Release` CR.
 |:---:|---|---|---|---|---|---|---|
 | [x] | **A** | Redis | `redis` | `.../external/charts/bitnami-charts` | 18.6.1 | `oci://registry-1.docker.io/bitnamicharts/redis` | `kernel/appsets/10-infra.yaml` |
 | [x] | **A** | MinIO | `minio` | `.../external/charts/bitnami-charts` | 16.0.10 | Public Bitnami chart + `bitnamilegacy/*` images | `kernel/appsets/10-infra.yaml` |
-| [ ] | **A**† | Intercom | `intercom-service` | `.../supplier/univention/charts-mirror` | 2.19.5 | Univention chart @ `artifacts.software-univention.de` | `kernel/appsets/20-iam.yaml` |
-| [ ] | **D** | Nubus | `nubus` | `.../supplier/univention/charts-mirror` | 1.16.0 | Rebuilt IAM stack; interim: Univention registry | `kernel/services/nubus/manifests/dev/release.yaml` |
-| [x] | **A**† | PostgreSQL | `opendesk-postgresql` | `.../platform-development/charts/opendesk-postgresql` | 2.1.2 | Vendored `charts/infra/postgresql` + packages repo (step 2: CNPG) | `kernel/services/opendesk-postgresql/...` |
-| [x] | **A**† | MariaDB | `opendesk-mariadb` | `.../platform-development/charts/opendesk-mariadb` | 3.0.3 | Vendored `charts/infra/mariadb` + packages repo (step 2: operator) | `kernel/services/opendesk-mariadb/...` |
+| [ ] | **D** | Intercom (ICS) | `intercom-service` | `.../supplier/univention/charts-mirror` | 2.19.5 | **Drop** — remove chart, Keycloak client, gateway route; rewire portal/Element | `kernel/appsets/20-iam.yaml` |
+| [ ] | **D** | Nubus | `nubus` | `.../supplier/univention/charts-mirror` | 1.16.0 | Gentian IAM (Keycloak + directory + ReBAC); decommission Nubus | `kernel/services/nubus/manifests/dev/release.yaml` |
+| [x] | **A** | PostgreSQL | `opendesk-postgresql` | `.../platform-development/charts/opendesk-postgresql` | 2.1.2 | Vendored `charts/infra/postgresql` + packages repo (step 2: CNPG) | `kernel/services/opendesk-postgresql/...` |
+| [x] | **A** | MariaDB | `opendesk-mariadb` | `.../platform-development/charts/opendesk-mariadb` | 3.0.3 | Vendored `charts/infra/mariadb` + packages repo (step 2: operator) | `kernel/services/opendesk-mariadb/...` |
 | [ ] | **C** | Nextcloud (umbrella) | `opendesk-nextcloud` | `.../platform-development/charts/opendesk-nextcloud` | 4.7.2 | Gentian chart + `library/nextcloud` or rebuilt image | `kernel/services/nextcloud/...` |
 | [ ] | **C** | Nextcloud management | `opendesk-nextcloud-management` | same repo | 4.7.2 | Gentian init Job + public NC base | `kernel/services/nextcloud-management/...` |
 | [ ] | **C** | Nextcloud notifypush | `opendesk-nextcloud-notifypush` | same repo | 4.7.2 | Gentian subchart + public notify_push | `kernel/services/nextcloud-notifypush/...` |
@@ -151,10 +186,6 @@ Pulled via ArgoCD ApplicationSet or Crossplane `Release` CR.
 | [ ] | **C** | Dovecot | `opendesk-dovecot` | `.../platform-development/charts/opendesk-dovecot` | 3.4.1 | Gentian chart + public dovecot image | `kernel/services/dovecot/...` |
 | [ ] | **C** | Collabora | `collabora-online` | `.../supplier/collabora/charts-mirror` | 1.1.45 | Collabora upstream chart + CODE image | `kernel/services/collabora/...` |
 | [ ] | **C** | CryptPad | `cryptpad` | `.../supplier/xwiki/charts-mirror` | 0.0.21 | xwiki-labs chart + `docker.io/cryptpad/cryptpad` | `kernel/services/cryptpad/...` |
-
-† Intercom: not OpenDesk-authored; strategy is **drop opencode mirror**, use Univention
-registry directly (see `upstream-rescue/UNIVENTION-IMAGES.md`). Grouped under **A**
-(non-opencode public supplier path).
 
 Also referenced in install/ArgoCD plumbing but not in an active `release.yaml` in-tree:
 
@@ -189,11 +220,11 @@ Even after charts are migrated, pods will fail if images still point at opencode
 | Done | Strategy | Service / group | Example image path | File |
 |:---:|---|---|---|---|
 | [ ] | **D** | Nubus — OpenDesk extensions | `opendesk-nubus`, `opendesk-nubus-a2g-mapper` | `kernel/services/nubus/.../values/_base.yaml` |
-| [ ] | **A**† | Nubus — Univention extensions | `ox-extension`, `portal-extension` | same (→ `artifacts.software-univention.de`) |
-| [ ] | **D** | Nubus — runtime (~36 images) | `nubus/images/*` | Chart defaults / Univention registry until rebuild |
+| [ ] | **D** | Nubus — Univention extensions | `ox-extension`, `portal-extension` | same — decommission with Nubus; no Univention registry target |
+| [ ] | **D** | Nubus — runtime (~36 images) | `nubus/images/*` | Chart defaults — decommission with step 3 |
 | [x] | **A** | MinIO | `images-mirror/minio`, `os-shell` | `kernel/services/minio/values/_base.yaml` |
 | [x] | **A** | Redis | `images-mirror/redis` | `kernel/services/redis/values/_base.yaml` |
-| [ ] | **A**† | Intercom | `images-mirror/intercom-service` | `kernel/services/intercom-service/values/_base.yaml` |
+| [ ] | **D** | Intercom (ICS) | `images-mirror/intercom-service` | `kernel/services/intercom-service/` — delete service tree after consumers rewired |
 | [ ] | **C** | Nextcloud AIO + mgmt + exporter | `opendesk-nextcloud*` | `nextcloud*`, `nextcloud-management/` |
 | [ ] | **C** | Dovecot | `dovecot-public-sector` | `kernel/services/dovecot/values/_base.yaml` |
 | [ ] | **C** | CryptPad | `images-mirror/cryptpad` | `kernel/services/cryptpad/...` |
@@ -225,7 +256,7 @@ After charts and images are self-hosted, delete or replace:
 | [ ] | ArgoCD project allowlist | `kernel/argocd/projects/gentian.yaml` (`registry.opencode.de/*` entries) |
 | [ ] | Crossplane cluster bootstrap | `crossplane/compositions/cluster-default.yaml` (ArgoCD source allowlist) |
 | [ ] | ESO comment / dev values | `kernel/values/env/dev.yaml` |
-| [ ] | gentian-pro pull secrets | New: entitlement-scoped GHCR creds for premium tenant installs |
+| [ ] | gentian-pro entitlement gate | Tenant + AppCatalogue controllers enforce Pro install (see roadmap) |
 
 OpenDesk **semantic** dependencies (OIDC pack client IDs, LDAP attribute names, Keycloak
 scope YAML copied from upstream) can stay initially — they describe behaviour, not registry
@@ -246,13 +277,14 @@ gentian-os/                             # Kernel — rebuilt from inside
 └── charts/upstream/                    # Optional thin wrappers only (e.g. Nextcloud step 4)
 
 gentian-pro/                            # PRIVATE — step 5 (strategy B)
-├── charts/                             # OX, Element, Jitsi (OpenDesk baseline → entitlement)
-└── mirror/
+├── profiles/                           # Commercial AppProfiles (license: proprietary)
+├── charts/                             # OX, Element, Jitsi
+└── mirror/                             # Commercial container images (optional layout)
 
-gentian-apps/                           # PUBLIC catalogue
+gentian-apps/                           # PUBLIC community catalogue
 ├── charts/                             # Free apps (Odoo, OpenProject, …)
-├── apps/                               # First-party only (app-store, …)
-└── profiles/                           # → gentian-org or gentian-org-pro
+├── apps/                               # First-party scaffold (app-store, …)
+└── profiles/                           # Community AppProfiles (OSS licences)
 ```
 
 **Publishing targets:**
@@ -260,8 +292,9 @@ gentian-apps/                           # PUBLIC catalogue
 | Tier | Helm OCI | When (§8) |
 |---|---|---|
 | Public upstream direct (**A**) | Bitnami, CNPG, Docker Hub, … | Steps 1–4, 6–7 |
-| `ghcr.io/gentian-org` | Gentian-owned kernel/catalogue charts | Steps 2, 4, 8 |
-| `ghcr.io/gentian-org-pro` (**B**) | Premium tenant apps | Step 5 |
+| `ghcr.io/gentian-org` (public pkgs) | Community charts from `gentian-apps` | Steps 2, 4, 8 |
+| `ghcr.io/gentian-org` (private pkgs) + **`gentian-pro`** (**B**) | Commercial tenant apps | Step 5 |
+| `ghcr.io/gentian-org-pro` (separate org) | Optional future hard isolation | [roadmap.md](roadmap.md) |
 
 ---
 
@@ -279,7 +312,7 @@ direct) and **D** (Gentian-native rebuild) over vendoring OpenDesk charts into
 flowchart TD
   S1[1 Infra cleanup]
   S2[2 Vanilla Crossplane]
-  S3[3 Nubus rebuild]
+  S3[3 IAM rebuild drop ICS]
   S4[4 Vanilla Nextcloud]
   S5[5 gentian-pro apps]
   S6[6 Vanilla mail + OX]
@@ -299,10 +332,12 @@ forks unless Crossplane needs a thin values wrapper.
 [x] MariaDB — vendored chart; opencode OCI pull removed (step 2: public chart / operator)
 [x] Redis — public Bitnami chart + bitnamilegacy image
 [x] MinIO — public Bitnami chart + bitnamilegacy image
-[ ] Intercom — Univention registry direct (drop opencode mirror) or defer until step 3
 ```
 
 **Inventory:** §4.1 Redis, MinIO, PostgreSQL, MariaDB; §5.1 Redis, MinIO.
+
+Intercom (ICS) and Nubus stay deployed only until **step 3** rewires consumers — there
+is no acceptable “switch registry” shortcut for either (see §1.1).
 
 ### Step 2 — Strip wrappers; vanilla Crossplane provisioning
 
@@ -320,22 +355,42 @@ complexity around infra that step 1 already made vanilla.
 **Principle:** kernel infra = Crossplane + public charts + Gentian values. Nothing
 from `registry.opencode.de` at this layer.
 
-### Step 3 — Rebuild Nubus (strategy **D**)
+### Step 3 — Rebuild IAM; drop Nubus and Intercom (strategy **D**)
 
-Replace the Univention/OpenDesk IAM stack — do **not** permanently vend the Nubus
-umbrella chart to GHCR. Track design in the Nubus replacement doc (Keycloak +
-Gentian directory + ReBAC; LDAP/SCIM as optional bridges).
+Replace the **OpenDesk + Univention IAM stack** (Nubus, UDM/LDAP as system-of-record,
+OpenDesk extensions) with Gentian IAM: **Keycloak** as IdP, **Gentian directory +
+ReBAC**, optional LDAP/SCIM bridges later.
+
+**Drop Intercom (ICS)** — do not replace it with another service. ICS is an OpenDesk-only
+integration layer (silent OIDC iframe, Nordeck Element banner URLs, portal newsfeed
+credentials). Remove it and point consumers at Keycloak + Gentian portal/Element config
+directly:
+
+| Consumer today | ICS dependency | After drop |
+|---|---|---|
+| Gentian portal newsfeed | hidden iframe → `ics…/silent` | Keycloak session / portal-native feed auth |
+| Element (Nordeck module) | `ics_navigation_json_url`, `ics_silent_url` | Remove Nordeck OpenDesk module or vanilla Element config |
+| Keycloak | `opendesk-intercom` client, token exchange | Delete client; apps use their own OIDC clients |
+| Kernel gateway | `ics.<kernel>` → intercom-service | Remove HTTPRoute |
+| Synapse (planned) | `intercom_as_token` app-service | Drop; wire bridges only if needed with public Synapse patterns |
+
+Do **not** vend the Nubus chart to GHCR and do **not** repoint pulls to
+`artifacts.software-univention.de`.
 
 ```
-[ ] Nubus replacement architecture signed off
-[ ] Interim: keep running Nubus only as long as needed for dev parity
+[ ] IAM replacement architecture signed off (Nubus decommission + ICS drop)
+[ ] Interim: keep Nubus/ICS only as long as needed for dev parity (both proprietary)
 [ ] Remove opendesk-nubus / a2g-mapper extensions from values (Gentian bootstrap)
-[ ] Point Univention images at artifacts.software-univention.de (drop opencode mirror)
-[ ] Migrate operator off UDM REST where possible; cut portal-server dependency
-[ ] Decommission Nubus chart from kernel when replacement IAM path is green
+[ ] Delete intercom-service from 20-iam.yaml; remove kernel/services/intercom-service/
+[ ] Remove opendesk-intercom Keycloak client and identity/intercom OpenBao paths
+[ ] Rewire gentian-ui portal newsfeed (no icsSilentLoginUrl)
+[ ] Rewire Element profile (no net.nordeck.element_web.module.opendesk ICS URLs)
+[ ] Remove verify_intercom_ics / gateway overlays from install.sh
+[ ] Migrate operator off UDM REST; cut portal-server dependency on Nubus where possible
+[ ] Decommission Nubus chart when replacement IAM path is green
 ```
 
-**Inventory:** §4.1 Nubus; §5.1 Nubus rows; §9 longer-term LDAP/OIDC items.
+**Inventory:** §4.1 Nubus, Intercom (ICS); §5.1 Nubus and Intercom rows; §9 LDAP/OIDC items.
 
 ### Step 4 — Vanilla Nextcloud in kernel (strategy **C** → public image)
 
@@ -353,18 +408,19 @@ or `occ`, Keycloak `user_oidc`.
 
 **Inventory:** §4.1 Nextcloud (×3); §5.1 Nextcloud images.
 
-### Step 5 — Move OpenDesk apps to gentian-pro (strategy **B**)
+### Step 5 — Move commercial apps to gentian-pro (strategy **B**)
 
-**After** kernel infra and IAM are on Gentian rails, **quarantine** remaining
-OpenDesk-derived **tenant** charts/images in the private repo. Kernel must not
-depend on gentian-pro.
+**After** kernel infra and IAM are on Gentian rails, move OpenDesk-derived **tenant**
+charts/images and **`AppProfile`s** into **`gentian-org/gentian-pro`**. Kernel must not
+depend on gentian-pro. **Install access = private repo + controller entitlement**
+(CRM confirms payment → entitlement → Tenant may reference Pro profile).
 
 ```
-[ ] Create gentian-org/gentian-pro (private) + ghcr.io/gentian-org-pro
+[ ] Create gentian-org/gentian-pro (private): profiles/, charts/, CI publish to private ghcr.io/gentian-org packages
 [ ] Import rescued OX / Element / Jitsi charts + images (reference: upstream-rescue/)
-[ ] CI publish to gentian-org-pro only
-[ ] Update gentian-apps premium profiles (ox-appsuite, element) chart.repository
-[ ] Entitlement → tenant namespace pull secrets
+[ ] Move commercial profiles from gentian-apps; set license: proprietary
+[ ] AppCatalogue + Tenant controllers: enforce entitlement before Pro list/install
+[ ] CRM fulfillment webhook → entitlement record → Tenant.spec.apps (entitled tenants only)
 [ ] Kernel install succeeds with zero gentian-pro references
 ```
 
@@ -432,7 +488,8 @@ These are **not** registry blockers but reduce OpenDesk coupling:
 | OIDC client IDs (`opendesk-synapse`, etc.) | Required by upstream chart templates | Rename when **B** charts forked in gentian-pro |
 | `opendesk-oidc-catalog` profile | Ships OpenDesk scope pack | Gentian-native `OIDCPackCatalog` |
 | Nubus LDAP extensions | OpenDesk-specific schema objects | **D** — Gentian directory + ReBAC |
-| Keycloak scopes YAML | Copied from `opendesk/helmfile/...` | Gentian scope definitions |
+| Intercom (ICS) | Univention OIDC bridge for OpenDesk portal/Element | **D** — drop; rewire consumers to Keycloak / Gentian UI |
+| Keycloak scopes YAML | Copied from upstream helmfile | Gentian scope definitions |
 | Service aliases (`ums-*`) | `kernel/services/nubus/manifests/dev/service-aliases.yaml` | Remove with **D** |
 
 ---
@@ -476,9 +533,10 @@ helm template test gentian-apps/charts/odoo -f profiles/odoo-free-base/profile.y
 |---|---|
 | Charts lost with no rescue pull | Needed only for **step 5** gentian-pro import; kernel path uses public upstream + **D** rebuild |
 | OpenDesk charts embed opencode image defaults | Remove chart entirely (steps 1–4, 6–7); do not vend to gentian-os |
+| Univention / opencode treated as “the other proprietary registry” | **Neither is a target.** Step 3 drops Nubus + ICS; do not repoint to `artifacts.software-univention.de` |
 | Premium images in public GHCR by mistake | **gentian-pro** only for **B**; CI policy on org separation |
 | Licence / redistribution | **B** = proprietary catalogue; **A/C** record provenance in `UPSTREAM.md` |
-| gentian-pro access without payment | Entitlement webhook → short-lived pull tokens; no shared PAT in install.sh |
+| gentian-pro access without payment | Controller entitlement gate on Tenant + AppCatalogue; CRM as source of truth |
 | Large fork maintenance | Avoid — **A** direct public; **D** rebuild; **B** isolated in gentian-pro only |
 
 ---
@@ -486,7 +544,7 @@ helm template test gentian-apps/charts/odoo -f profiles/odoo-free-base/profile.y
 ## 13. Related docs
 
 - [upstream-rescue/UPSTREAM-COMPARISON.md](../../upstream-rescue/UPSTREAM-COMPARISON.md) — chart/image diff vs public upstream
-- [upstream-rescue/UNIVENTION-IMAGES.md](../../upstream-rescue/UNIVENTION-IMAGES.md) — Univention registry (Intercom, interim Nubus)
+- [upstream-rescue/UNIVENTION-IMAGES.md](../../upstream-rescue/UNIVENTION-IMAGES.md) — Univention artefact inventory (licence context; **not** a migration target)
 - [architecture.md](architecture.md) — three-repo model (`gentian-os`, `gentian-apps`, `gentian-deployments`); add **gentian-pro** as fourth private repo
 - [deployment.md](deployment.md) — environment promotion; entitlement / pull secrets
 - [design/app-catalogue-security.md](design/app-catalogue-security.md) — `license: proprietary`, trust tiers

@@ -1,15 +1,14 @@
 # =============================================================================
-# opendesk-mariadb — provider-helm Release CR (Pattern B)
+# Shared kernel MariaDB — Crossplane provider-helm Release
 #
-# Managed by provider-helm (Pattern B).
+# Provisions MariaDB with bootstrap databases for kernel mail and app services.
 #
 # Values merge order (last wins):
-#   1. mariadb-base-values  ConfigMap  — non-secret defaults (_base.yaml)
-#   2. mariadb-dev-values   ConfigMap  — env-specific sizing (values-plain.yaml)
-#   3. mariadb-sensitive-values Secret — mariadb.rootPassword.value + job.users[]
-#                                        password (ESO-synced from OpenBao)
+#   1. mariadb-base-values ConfigMap — non-secret defaults
+#   2. mariadb-dev-values ConfigMap — environment sizing
+#   3. mariadb-sensitive-values Secret — passwords (ESO from OpenBao)
 #
-# Chart source: vendored packages repo (charts/infra/packages/) — no opencode OCI.
+# Chart repository: charts/infra/packages/ (Helm index on GitHub raw).
 # =============================================================================
 apiVersion: helm.crossplane.io/v1beta1
 kind: Release

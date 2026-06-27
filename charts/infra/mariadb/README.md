@@ -6,27 +6,23 @@ SPDX-License-Identifier: Apache-2.0
 
 A Helm chart for running MariaDB database
 
-## Installing the Chart
+## Gentian deployment
 
-To install the chart with the release name `my-release`, you have two options:
+Kernel installs this chart via Crossplane `Release`. Packaged charts are published
+to `charts/infra/packages/`; run `./scripts/publish-infra-charts.sh` after editing
+the chart source under `charts/infra/mariadb/`.
 
-### Install via Repository
+## Standalone install
+
 ```console
-helm repo add opendesk-mariadb https://gitlab.opencode.de/api/v4/projects/1387/packages/helm/stable
-helm install my-release --version 3.0.3 opendesk-mariadb/mariadb
-```
-
-### Install via OCI Registry
-```console
-helm repo add opendesk-mariadb oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb
-helm install my-release --version 3.0.3 opendesk-mariadb/mariadb
+helm install my-release ./charts/infra/mariadb
 ```
 
 ## Requirements
 
 | Repository | Name | Version |
 |------------|------|---------|
-| oci://registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts | common | ^2.x.x |
+| https://charts.bitnami.com/bitnami | common | ^2.x.x |
 
 ## Values
 
@@ -140,16 +136,9 @@ helm install my-release --version 3.0.3 opendesk-mariadb/mariadb
 
 ## Uninstalling the Chart
 
-To install the release with name `my-release`:
-
 ```bash
 helm uninstall my-release
 ```
-## Signing
-
-Helm charts are signed with helm native signing method.
-
-You can verify the chart against [the public GPG key](../../files/gpg-pubkeys/opendesk.gpg).
 
 ## License
 

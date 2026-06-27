@@ -117,11 +117,40 @@ Implement controls in [design/app-catalogue-security.md](design/app-catalogue-se
 ## Commercial layer
 
 Implementation plan:
-[design/business-logic-plan.md](design/business-logic-plan.md) — OSS **`gentian-apps`**,
-private **`gentian-premium`** profiles, **Odoo** for customers, orders, invoices,
-and entitlements.
+[design/business-logic-plan.md](design/business-logic-plan.md).
+
+| Tier | Git repo | Licence | Access |
+|---|---|---|---|
+| **Community** | **`gentian-org/gentian-apps`** (public) | OSS SPDX on `AppProfile` | Open catalogue + install |
+| **Pro** | **`gentian-org/gentian-pro`** (private) | `license: proprietary` | **Controller entitlement** after CRM payment |
 
 Catalogue metadata on **`AppProfile`**: [app-profile-versioning.md](design/app-profile-versioning.md).
+
+### Near-term delivery
+
+- **`gentian-apps`** — community profiles and charts; publish public packages to
+  `ghcr.io/gentian-org`.
+- **`gentian-pro`** — commercial profiles, charts, and mirrored images in one private
+  repo; publish **private** GHCR packages under the same `gentian-org` org.
+- **CRM (Odoo)** — customers, orders, invoices; webhooks drive fulfillment.
+- **Controller** — `ProfileRequiresEntitlement()` (implemented); extend **AppCatalogue**
+  and **Tenant** reconcilers to list/install Pro apps only when entitled (other tenants
+  on the same cluster must not receive Pro releases).
+
+### Future: separate GitHub / GHCR org
+
+When commercial volume or compliance requires hard isolation, split supply chain to
+**`gentian-org-pro`** (Git) and **`ghcr.io/gentian-org-pro`** (registry). Not
+introduced until the Community/Pro + entitlement model is working on a single org.
+
+```
+[ ] Entitlement CR or cluster ConfigMap synced from CRM fulfillment
+[ ] Tenant webhook: reject spec.apps[] for proprietary profiles without entitlement
+[ ] AppCatalogue: hide or mark unavailable Pro profiles until entitled
+[ ] gentian-pro ArgoCD Application (private repo) — sync profiles/charts to cluster
+[ ] Optional: namespace-scoped imagePullSecret on Pro app install
+[ ] Future: migrate Pro packages to ghcr.io/gentian-org-pro + gentian-org-pro Git org
+```
 
 ---
 

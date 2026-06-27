@@ -2,12 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Source | OpenDesk `opendesk-mariadb` OCI chart |
+| Purpose | Multi-database MariaDB bootstrap for Gentian kernel services |
 | Version | 3.0.3 |
-| Rescued from | `registry.opencode.de/.../opendesk-mariadb` |
+| Package repo | `charts/infra/packages/` — regenerate with `scripts/publish-infra-charts.sh` |
 | Licence | Apache-2.0 (chart) |
 
-Vendored for **infra step 1** — removes opencode chart pull. Packaged to
-`charts/infra/packages/` for Crossplane `Release` CRs. Regenerate with
-`scripts/publish-infra-charts.sh`. Replace with a public MariaDB chart in a
-later roadmap step.
+Deployed via Crossplane `Release` CR; Helm values and ESO secrets are in the
+MariaDB service tree under `kernel/services/`.

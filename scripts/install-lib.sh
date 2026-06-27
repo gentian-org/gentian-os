@@ -2504,15 +2504,14 @@ install_argocd() {
     info "Patching argocd-cm with annotation-based resource tracking..."
     # application.resourceTrackingMethod=annotation prevents ArgoCD from
     # treating Helm-managed resources as part of an ArgoCD app via the
-    # default app.kubernetes.io/instance label. Helm charts (e.g. the
-    # opendesk-postgresql/mariadb charts wrapped by Crossplane provider-helm
-    # Release CRs) stamp every rendered resource with
+    # default app.kubernetes.io/instance label. Crossplane-managed Helm charts
+    # (shared kernel PostgreSQL and MariaDB) stamp every rendered resource with
     #   app.kubernetes.io/instance: <release-name>
     # which equals the ArgoCD Application name. With label-based tracking
     # ArgoCD then "adopts" those Helm-rendered StatefulSets/Services/etc.,
     # finds them missing from git, and PRUNES them seconds after Helm
     # creates them — leaving the Helm release in state=failed with errors
-    # like 'services "opendesk-postgresql-dev" not found'. Annotation-based
+    # like 'services "<release-name>" not found'. Annotation-based
     # tracking uses argocd.argoproj.io/tracking-id and only tracks resources
     # ArgoCD itself applied. See:
     # https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/

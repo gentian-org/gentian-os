@@ -113,7 +113,7 @@ func ProfileReferenceMatches(ref ProfileReference, p *AppProfile) bool {
 }
 
 // ProfileRequiresEntitlement reports whether CRM entitlement is required before install.
-// Premium profiles in gentian-premium use license: proprietary.
+// Premium profiles in gentian-pro use license: proprietary.
 func ProfileRequiresEntitlement(p *AppProfile) bool {
 	return strings.EqualFold(p.Spec.License, "proprietary")
 }

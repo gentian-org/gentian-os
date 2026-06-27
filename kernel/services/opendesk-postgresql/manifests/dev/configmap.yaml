@@ -1,5 +1,5 @@
 # =============================================================================
-# opendesk-postgresql — plain values ConfigMaps
+# Shared kernel PostgreSQL — plain values ConfigMaps
 #
 # Two ConfigMaps merged by provider-helm before the sensitive-values Secret:
 #   1. postgresql-base-values  — non-secret defaults for all environments
@@ -26,7 +26,7 @@ data:
     postgres:
       user: postgres
 
-    # Image — pinned to OpenDesk-tested version
+    # Runtime image — official Postgres 15 on Alpine
     image:
       registry: registry-1.docker.io
       repository: library/postgres

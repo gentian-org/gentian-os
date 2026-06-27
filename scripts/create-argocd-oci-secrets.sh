@@ -1,9 +1,10 @@
 #!/bin/bash
 set -e
 
-# Create ArgoCD repository secrets for OCI Helm charts that still pull from
-# registry.opencode.de. Infra step 1 removed opencode for redis/minio (public
-# Bitnami) and postgres/mariadb (vendored classic repo on GitHub raw).
+# Create ArgoCD repository secrets for private OCI Helm chart registries used by
+# kernel services that still pull from registry.opencode.de (Nubus, Nextcloud, mail, …).
+#
+# Redis, MinIO, PostgreSQL, and MariaDB do not require these secrets.
 #
 # Usage: ./create-argocd-oci-secrets.sh <username> <password>
 
@@ -20,7 +21,7 @@ NAMESPACE="argocd"
 
 echo "Creating ArgoCD repository secrets for OCI Helm charts in namespace: $NAMESPACE"
 
-# Create univention-charts repository secret (for Nubus and Intercom Service)
+# Univention chart mirror (Nubus, Intercom Service)
 kubectl create secret generic univention-charts -n "$NAMESPACE" \
   --from-literal=type=helm \
   --from-literal=name=univention-charts \
@@ -34,7 +35,7 @@ kubectl create secret generic univention-charts -n "$NAMESPACE" \
 
 echo "✅ Created: univention-charts"
 
-# Create opendesk-keycloak-bootstrap repository secret
+# Keycloak bootstrap chart registry credential (chart not deployed in current kernel)
 kubectl create secret generic opendesk-keycloak-bootstrap-charts -n "$NAMESPACE" \
   --from-literal=type=helm \
   --from-literal=name=opendesk-keycloak-bootstrap \
@@ -53,6 +54,3 @@ echo "ArgoCD repository secrets created successfully!"
 echo ""
 echo "Verify with:"
 echo "  kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=repository"
-echo ""
-echo "Note: redis/minio use public oci://registry-1.docker.io/bitnamicharts (no secret)."
-echo "      postgres/mariadb use vendored charts at charts/infra/packages/ (no secret)."

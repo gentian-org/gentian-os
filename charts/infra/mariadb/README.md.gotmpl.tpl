@@ -5,20 +5,16 @@ SPDX-License-Identifier: Apache-2.0
 {{ template "chart.header" . }}
 {{ template "chart.description" . }}
 
-## Installing the Chart
+## Gentian deployment
 
-To install the chart with the release name `my-release`, you have two options:
+Kernel installs this chart via Crossplane `Release`. Packaged charts are published
+to `charts/infra/packages/`; run `./scripts/publish-infra-charts.sh` after editing
+the chart source under `charts/infra/mariadb/`.
 
-### Install via Repository
+## Standalone install
+
 ```console
-helm repo add ${CI_PROJECT_NAME} ${CI_SERVER_PROTOCOL}://${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/helm/stable
-helm install my-release --version ${RELEASE_VERSION} ${CI_PROJECT_NAME}/{{ template "chart.name" . }}
-```
-
-### Install via OCI Registry
-```console
-helm repo add ${CI_PROJECT_NAME} oci://${CI_REGISTRY_IMAGE}
-helm install my-release --version ${RELEASE_VERSION} ${CI_PROJECT_NAME}/{{ template "chart.name" . }}
+helm install my-release ./charts/infra/mariadb
 ```
 
 {{ template "chart.requirementsSection" . }}
@@ -27,16 +23,9 @@ helm install my-release --version ${RELEASE_VERSION} ${CI_PROJECT_NAME}/{{ templ
 
 ## Uninstalling the Chart
 
-To install the release with name `my-release`:
-
 ```bash
 helm uninstall my-release
 ```
-## Signing
-
-Helm charts are signed with helm native signing method.
-
-You can verify the chart against [the public GPG key](../../files/gpg-pubkeys/opendesk.gpg).
 
 ## License
 

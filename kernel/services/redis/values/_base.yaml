@@ -8,7 +8,7 @@
 # Architecture — standalone for all envs; HA via Sentinel configurable in prod
 architecture: standalone
 
-# Image — public Bitnami legacy mirror (byte-identical to former opencode mirror)
+# Image — Bitnami Redis 7.4 on Debian 12 (docker.io/bitnamilegacy/redis)
 image:
   registry: docker.io
   repository: bitnamilegacy/redis

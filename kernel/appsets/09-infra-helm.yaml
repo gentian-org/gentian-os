@@ -1,17 +1,14 @@
 ---
-# Infra provider-helm releases: openDesk PostgreSQL and MariaDB.
+# Crossplane provider-helm releases for shared PostgreSQL and MariaDB.
 #
-# These charts use indexed set_sensitive calls (not a single existingSecret key)
-# so they are managed as provider-helm Release CRs with Pattern B migration:
-#   - ESO ExternalSecret renders a sensitive-values.yaml Helm values file
-#   - Release CR consumes it via valuesFrom.secretKeyRef
+# These charts bootstrap multiple databases and users via Helm values (including
+# sensitive fields merged from ESO-rendered Secrets). Pattern B: Release CR +
+# valuesFrom configMapKeyRef / secretKeyRef.
 #
-# Wave 9: after ESO secrets (wave 2) — ensures postgresql-sensitive-values and
-# mariadb-sensitive-values Secrets exist before provider-helm reconciles —
-# and before nubus (wave 11), which depends on PostgreSQL being available.
+# Sync wave 9: after ESO secrets (wave 2) and before Nubus (wave 11).
 #
-# Each Application deploys from kernel/services/<app>/manifests/<env>/ which
-# contains: externalsecret.yaml, configmap.yaml, release.yaml.
+# Each Application syncs kernel/services/<app>/manifests/<env>/:
+#   externalsecret.yaml, configmap.yaml, release.yaml
 # Release CRs are cluster-scoped; ConfigMaps and ExternalSecrets use explicit
 # namespace: gentian-infra-{env} and are deployed there regardless of the
 # Application's destination namespace.

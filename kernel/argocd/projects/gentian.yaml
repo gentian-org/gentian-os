@@ -7,7 +7,7 @@ metadata:
   name: gentian
   namespace: argocd
 spec:
-  description: Gentian OpenDesk deployment across all environments
+  description: Gentian OS kernel and tenant deployments across all environments
 
   # Source repositories
   sourceRepos:
@@ -16,16 +16,16 @@ spec:
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
   - 'registry.opencode.de/*'                                                                            # ZenDiS OCI registry (without protocol)
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql'     # PostgreSQL chart
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb'        # MariaDB chart
-  - 'registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'                   # Univention charts (Nubus, Intercom)
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-keycloak-bootstrap'  # Keycloak Bootstrap
-  - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Legacy; redis/minio now use public Bitnami OCI
-  - 'oci://registry.opencode.de/*'                                                                      # ZenDiS OCI registry (with protocol)
-  - 'oci://registry.opencode.de/bmi/opendesk/*'                                                         # All OpenDesk paths with OCI
-  - 'oci://registry.opencode.de/bmi/opendesk/components/platform-development/*'                        # OpenDesk platform-development path
-  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/*'                         # Univention path
-  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'             # Univention charts-mirror specifically
+  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql'     # Platform charts (pending removal)
+  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb'        # Platform charts (pending removal)
+  - 'registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'                   # Nubus, Intercom
+  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-keycloak-bootstrap'  # Keycloak bootstrap (not deployed)
+  - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Bitnami mirror on opencode registry
+  - 'oci://registry.opencode.de/*'                                                                      # opencode OCI registry (with protocol)
+  - 'oci://registry.opencode.de/bmi/opendesk/*'                                                         # opencode chart and image paths
+  - 'oci://registry.opencode.de/bmi/opendesk/components/platform-development/*'                        # Platform-development chart path
+  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/*'                         # Univention supplier path
+  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'             # Univention charts mirror
   - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
