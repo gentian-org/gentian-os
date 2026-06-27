@@ -110,6 +110,9 @@ spec:
                     license:
                       description: License is the SPDX license identifier.
                       type: string
+                    logo:
+                      description: Logo is the AppProfile logo data URI (image/svg+xml;base64,...).
+                      type: string
                     name:
                       description: Name is the AppProfile CR name.
                       type: string
