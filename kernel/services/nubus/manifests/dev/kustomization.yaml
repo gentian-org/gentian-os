@@ -6,6 +6,7 @@ resources:
   - release.yaml
   - setup-iam-templates-job.yaml
   - stack-data-ums-cleanup-postsync-job.yaml
+  - umc-gateway-upstream-reconciler.yaml
   - umc-gateway-upstream-postsync-job.yaml
 
 configMapGenerator:

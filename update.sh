@@ -13,6 +13,7 @@
 #   ./update.sh --reconcile-releases       # Re-reconcile any failing Crossplane Release CRs
 #   ./update.sh --reconcile-releases --force  # Force re-reconcile ALL Release CRs
 #   ./update.sh --all                      # Run all update operations
+#   ./update.sh --umc-gateway              # Re-apply UMC gateway Apache upstream patch
 #   ./update.sh --mail --dry-run           # Print what would change without applying
 #
 # What it reconciles:
@@ -37,6 +38,9 @@
 #       recreates it (provider-helm does not watch ConfigMaps, so this is the
 #       only way to force value pick-up after a ConfigMap change)
 #     - With --force: also re-reconciles currently healthy Release CRs
+#   --umc-gateway:
+#     - Re-applies the nubus UMC gateway prepare-config patch (Apache upstream
+#       → umc-server). CronJob umc-gateway-upstream-reconciler handles drift.
 #
 # Prerequisites:
 #   - install.sh must have completed at least once.
@@ -76,6 +80,7 @@ OP_ARGOCD=0
 OP_SETUP_IAM=0
 OP_PLUGIN=0
 OP_ACME_ISSUERS=0
+OP_UMC_GATEWAY=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -123,6 +128,8 @@ Options:
                            all Applications.
   --setup-iam              Re-run the nubus-dev-setup-iam-templates job after
                            stack-data-ums has completed (fixes failed IAM hooks).
+  --umc-gateway            Re-apply the UMC gateway Apache upstream patch so
+                           /univention/oidc proxies to umc-server (fixes 503).
   --plugin                 Reinstall the kubectl-gentian plugin from this
                            repository (idempotent: skips if already up-to-date).
   --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
@@ -149,9 +156,10 @@ while [[ $# -gt 0 ]]; do
         --appprofiles)         OP_APPPROFILES=1 ;;
         --argocd)              OP_ARGOCD=1 ;;
         --setup-iam)           OP_SETUP_IAM=1 ;;
+        --umc-gateway)         OP_UMC_GATEWAY=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
         --acme-issuers)        OP_ACME_ISSUERS=1 ;;
-        --all)                 OP_MAIL=1; OP_NEXTCLOUD_OFFICE=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_SETUP_IAM=1; OP_PLUGIN=1 ;;
+        --all)                 OP_MAIL=1; OP_NEXTCLOUD_OFFICE=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_SETUP_IAM=1; OP_PLUGIN=1; OP_UMC_GATEWAY=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -160,7 +168,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" && "${OP_UMC_GATEWAY}" == "0" ]]; then
     OP_MAIL=1
     OP_NEXTCLOUD_OFFICE=1
     OP_SECRETS=1
@@ -171,6 +179,7 @@ if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" 
     OP_ARGOCD=1
     OP_SETUP_IAM=1
     OP_PLUGIN=1
+    OP_UMC_GATEWAY=1
 fi
 
 # =============================================================================
@@ -1114,6 +1123,37 @@ op_setup_iam_recover() {
 }
 
 # =============================================================================
+# op_umc_gateway — re-apply UMC gateway Apache upstream patch
+#
+# Crossplane/Helm upgrades reset prepare-config on nubus-dev-umc-gateway. Without
+# the gentian init hook, Apache proxies OIDC to 0.0.0.0:8090 (503). Day-2 drift
+# is also handled by umc-gateway-upstream-reconciler CronJob on nubus-manifests-dev.
+# =============================================================================
+op_umc_gateway() {
+    banner "UMC gateway upstream patch"
+
+    local ns="gentian-${ENV:-dev}"
+    local deploy="nubus-${ENV:-dev}-umc-gateway"
+    local script="${SCRIPT_DIR}/kernel/services/nubus/manifests/${ENV:-dev}/patches/patch-umc-gateway-upstream.sh"
+
+    if [[ ! -f "${script}" ]]; then
+        warn "Patch script not found: ${script} — skipping."
+        return 0
+    fi
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would run ${script} (deploy=${deploy}, ns=${ns})"
+        return 0
+    fi
+
+    GENTIAN_NAMESPACE="${ns}" \
+    GENTIAN_UMC_GATEWAY_DEPLOY="${deploy}" \
+    GENTIAN_UMC_GATEWAY_WAIT_HELM_SEC=0 \
+    GENTIAN_UMC_GATEWAY_RECONCILE=0 \
+        bash "${script}"
+}
+
+# =============================================================================
 # op_nubus_recover — reapply the stack-data-ums job in the correct namespace
 #
 # Background: install.sh's _wait_and_fix_stack_data_ums() calls `helm get
@@ -1259,6 +1299,7 @@ fi
 [[ "${OP_FIX_KERNEL_LDAP_SCOPE}" == "1" ]] && op_fix_kernel_ldap_scope
 [[ "${OP_PLUGIN}"               == "1" ]] && install_app_catalogue
 [[ "${OP_ACME_ISSUERS}"         == "1" ]] && op_acme_issuers
+[[ "${OP_UMC_GATEWAY}"          == "1" ]] && op_umc_gateway
 
 echo ""
 success "update.sh completed."

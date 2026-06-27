@@ -5,6 +5,7 @@
 #
 # Crossplane Release uses wait=false, so Helm may upgrade umc-gateway AFTER this
 # hook starts. The embedded script waits and retries until the patch sticks.
+# Day-2 drift is handled by umc-gateway-upstream-reconciler CronJob.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -22,16 +23,10 @@ spec:
       serviceAccountName: umc-gateway-upstream-patcher
       containers:
         - name: patch
-          image: alpine:3.19
+          image: alpine/k8s:1.32.3
           command:
-            - sh
-            - -c
-            - |
-              set -euo pipefail
-              apk add --no-cache bash jq >/dev/null
-              wget -qO /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.32.3/bin/linux/amd64/kubectl"
-              chmod +x /usr/local/bin/kubectl
-              bash /scripts/patch-umc-gateway-upstream.sh
+            - /bin/bash
+            - /scripts/patch-umc-gateway-upstream.sh
           volumeMounts:
             - name: patch-script
               mountPath: /scripts
@@ -40,46 +35,3 @@ spec:
           configMap:
             name: nubus-dev-umc-gateway-upstream-patcher
             defaultMode: 0755
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: umc-gateway-upstream-patcher
-  namespace: gentian-dev
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
-    argocd.argoproj.io/sync-wave: "9"
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: umc-gateway-upstream-patcher
-  namespace: gentian-dev
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
-    argocd.argoproj.io/sync-wave: "9"
-rules:
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    resourceNames: ["nubus-dev-umc-gateway"]
-    verbs: ["get", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: umc-gateway-upstream-patcher
-  namespace: gentian-dev
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
-    argocd.argoproj.io/sync-wave: "9"
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: umc-gateway-upstream-patcher
-subjects:
-  - kind: ServiceAccount
-    name: umc-gateway-upstream-patcher
-    namespace: gentian-dev

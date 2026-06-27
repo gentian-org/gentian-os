@@ -7,14 +7,22 @@
 #
 # The upstream chart builds Apache config in the prepare-config init container;
 # extraVolumeMounts on the main container are not enough. Helm upgrades reset
-# the init command, so this script is re-run from the ArgoCD PostSync job
-# (after Crossplane finishes) and manually via: ./update.sh --umc-gateway
+# the init command, so this script is run from:
+#   - ArgoCD PostSync (after Crossplane finishes, with a long wait)
+#   - umc-gateway-upstream-reconciler CronJob (every 5m, check-first)
+#   - ./update.sh --umc-gateway
 set -euo pipefail
 
 DEPLOY="${GENTIAN_UMC_GATEWAY_DEPLOY:-nubus-dev-umc-gateway}"
 NS="${GENTIAN_NAMESPACE:-gentian-dev}"
+RECONCILE="${GENTIAN_UMC_GATEWAY_RECONCILE:-0}"
 WAIT_HELM_SEC="${GENTIAN_UMC_GATEWAY_WAIT_HELM_SEC:-120}"
 MAX_ATTEMPTS="${GENTIAN_UMC_GATEWAY_PATCH_ATTEMPTS:-12}"
+
+if [[ "${RECONCILE}" == "1" ]]; then
+  WAIT_HELM_SEC=0
+  MAX_ATTEMPTS="${GENTIAN_UMC_GATEWAY_PATCH_ATTEMPTS:-3}"
+fi
 
 if ! kubectl get deployment "$DEPLOY" -n "$NS" >/dev/null 2>&1; then
   echo "deployment ${DEPLOY} not found in ${NS}; skipping"
@@ -30,6 +38,18 @@ patch_deployment() {
         "name": "gentian-umc-gateway-upstream",
         "mountPath": "/entrypoint.d/95-gentian-umc-gateway-upstream.sh",
         "subPath": "95-gentian-umc-gateway-upstream.sh"
+      }
+    }
+  ]' 2>/dev/null || true
+
+  kubectl patch deployment "$DEPLOY" -n "$NS" --type=json -p '[
+    {
+      "op": "add",
+      "path": "/spec/template/spec/initContainers/1/volumeMounts/-",
+      "value": {
+        "name": "gentian-umc-template-default",
+        "mountPath": "/entrypoint.d/93-gentian-umc-template-default.sh",
+        "subPath": "93-gentian-umc-template-default.sh"
       }
     }
   ]' 2>/dev/null || true
@@ -80,8 +100,15 @@ gateway_is_patched() {
     /etc/apache2/sites-available/univention.conf 2>/dev/null
 }
 
-echo "Waiting ${WAIT_HELM_SEC}s for Crossplane/Helm to settle before UMC gateway patch..."
-sleep "$WAIT_HELM_SEC"
+if gateway_is_patched; then
+  echo "UMC gateway upstream already patched."
+  exit 0
+fi
+
+if (( WAIT_HELM_SEC > 0 )); then
+  echo "Waiting ${WAIT_HELM_SEC}s for Crossplane/Helm to settle before UMC gateway patch..."
+  sleep "$WAIT_HELM_SEC"
+fi
 
 attempt=1
 while (( attempt <= MAX_ATTEMPTS )); do
