@@ -4,7 +4,8 @@
 # Chart source: oci://registry-1.docker.io/bitnamicharts
 # Values: kernel/services/{redis,minio}/values/ layered with kernel/values/env/
 #
-# PostgreSQL and MariaDB are deployed by gentian-infra-helm (Crossplane Release CRs).
+# PostgreSQL and MariaDB are deployed by the InfraData Crossplane XR
+# (crossplane/compositions/infra-data.yaml); values/secrets synced by 08-infra-data.
 #
 # Matrix generator: env list × app list  →  one Application per (env, app) pair.
 # To add an environment: add one entry to the env list.

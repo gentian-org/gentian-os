@@ -647,6 +647,7 @@ seed_secrets_remaining() {
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
+#   - 08-infra-data:        postgres/mariadb ESO + values ConfigMaps (InfraData XR owns Releases)
 #   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
 #   - 20-iam:              keycloak-bootstrap job
 #   - 21-nubus:            (reserved, currently deployed via provider-helm)
@@ -713,6 +714,69 @@ install_provider_helm() {
     }
 
     success "provider-helm Healthy."
+}
+
+# =============================================================================
+# Step 13b — Apply InfraData XR (shared PostgreSQL + MariaDB)
+#
+# Provisions kernel postgres/mariadb via Crossplane composition instead of
+# Argo-synced Release CRs under kernel/services/*/release.yaml.
+#
+# Prerequisites:
+#   - provider-helm Healthy (Step 13)
+#   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
+# =============================================================================
+apply_infra_data_xr() {
+    banner "Step 13b — Apply InfraData XR (shared PostgreSQL + MariaDB)"
+
+    local env="${ENV:-dev}"
+    local claim="dev-infra-data"
+    local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
+
+    # Legacy Pattern B Release CRs shared the Helm release name as the MR name.
+    # Remove them before the InfraData composition creates new MRs with the
+    # same crossplane.io/external-name (opendesk-postgresql-{env}, etc.).
+    for rel in "opendesk-postgresql-${env}" "opendesk-mariadb-${env}"; do
+        if ! kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
+            continue
+        fi
+        local composite
+        composite=$(kubectl get release.helm.crossplane.io/"${rel}" \
+            -o jsonpath='{.metadata.labels.crossplane\.io/composite}' 2>/dev/null || true)
+        [[ -n "${composite}" ]] && continue
+        warn "Removing legacy infra Release CR ${rel} (superseded by InfraData XR)..."
+        kubectl delete release.helm.crossplane.io/"${rel}" --timeout=180s 2>/dev/null || true
+    done
+
+    info "Applying InfraData claim (${claim})..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-infra-data.yaml"
+
+    info "Waiting for InfraData claim to bind to a composite (up to 60s)..."
+    local xr_name=""
+    local deadline=$((SECONDS + 60))
+    until [[ -n "${xr_name}" ]]; do
+        xr_name=$(kubectl get infradata "${claim}" -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+        if (( SECONDS > deadline )); then
+            error "InfraData claim ${claim} was never bound to a composite after 60s."
+            error "  kubectl describe infradata ${claim} -n crossplane-system"
+            exit 1
+        fi
+        [[ -n "${xr_name}" ]] || sleep 3
+    done
+    info "  Composite name: ${xr_name}"
+
+    info "Waiting for XInfraData ${xr_name} to be Ready (timeout: ${timeout})..."
+    kubectl wait "xinfradata/${xr_name}" \
+        --for=condition=Ready --timeout="${timeout}" \
+    || {
+        error "XInfraData ${xr_name} did not become Ready within ${timeout}."
+        error "  kubectl describe xinfradata ${xr_name}"
+        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+        exit 1
+    }
+
+    success "InfraData XR ${xr_name} is Ready — shared PostgreSQL and MariaDB provisioned."
 }
 
 # =============================================================================
@@ -1263,6 +1327,7 @@ main_cp() {
 
     # ── Pattern B chart deployments ─────────────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
+    apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
     deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
     "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)
     deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)

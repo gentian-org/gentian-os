@@ -1,0 +1,19 @@
+# InfraData XR claim for the dev environment.
+# Provisions shared kernel PostgreSQL and MariaDB via provider-helm Release MRs
+# composed by infra-data (valuesFrom ConfigMaps + ESO Secrets synced by Argo).
+#
+# Prerequisites:
+#   - provider-helm Healthy (install.sh Step 13)
+#   - ESO ExternalSecrets + values ConfigMaps in gentian-infra-dev (08-infra-data AppSet)
+#   - OpenBao paths gentian-os/kernel/database/{postgresql,mariadb} seeded
+#
+# Helm release names remain opendesk-postgresql-dev / opendesk-mariadb-dev so
+# existing kernel consumers (Nubus, Nextcloud, OX) keep stable Service DNS.
+apiVersion: gentianos.io/v1alpha1
+kind: InfraData
+metadata:
+  name: dev-infra-data
+  namespace: crossplane-system
+spec:
+  environment: dev
+  compositeDeletePolicy: Background

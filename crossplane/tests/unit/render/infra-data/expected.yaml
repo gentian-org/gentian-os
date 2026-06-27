@@ -1,0 +1,100 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XInfraData
+metadata:
+  name: dev-infra-data
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: mariadb-release, postgresql-release'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: mariadb-release
+    crossplane.io/external-name: opendesk-mariadb-dev
+  labels:
+    crossplane.io/composite: dev-infra-data
+  name: dev-infra-data-mariadb
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XInfraData
+    name: dev-infra-data
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: mariadb
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 3.0.3
+    namespace: gentian-infra-dev
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: mariadb-base-values
+        namespace: gentian-infra-dev
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: mariadb-dev-values
+        namespace: gentian-infra-dev
+        optional: false
+    - secretKeyRef:
+        key: sensitive-values.yaml
+        name: mariadb-sensitive-values
+        namespace: gentian-infra-dev
+        optional: false
+    wait: true
+    waitTimeout: 5m
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: postgresql-release
+    crossplane.io/external-name: opendesk-postgresql-dev
+  labels:
+    crossplane.io/composite: dev-infra-data
+  name: dev-infra-data-postgresql
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XInfraData
+    name: dev-infra-data
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: postgresql
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 2.1.2
+    namespace: gentian-infra-dev
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: postgresql-base-values
+        namespace: gentian-infra-dev
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: postgresql-dev-values
+        namespace: gentian-infra-dev
+        optional: false
+    - secretKeyRef:
+        key: sensitive-values.yaml
+        name: postgresql-sensitive-values
+        namespace: gentian-infra-dev
+        optional: false
+    wait: true
+    waitTimeout: 5m
+  providerConfigRef:
+    name: kubernetes

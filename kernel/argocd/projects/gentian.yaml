@@ -16,8 +16,6 @@ spec:
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
   - 'registry.opencode.de/*'                                                                            # ZenDiS OCI registry (without protocol)
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql'     # Platform charts (pending removal)
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb'        # Platform charts (pending removal)
   - 'registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'                   # Nubus, Intercom
   - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-keycloak-bootstrap'  # Keycloak bootstrap (not deployed)
   - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Bitnami mirror on opencode registry

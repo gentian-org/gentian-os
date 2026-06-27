@@ -1,11 +1,12 @@
 ---
-# Crossplane provider-helm releases for shared PostgreSQL and MariaDB.
+# Crossplane provider-helm releases for kernel application charts (Nextcloud,
+# mail, etc.). Shared PostgreSQL and MariaDB are provisioned by the InfraData
+# Crossplane XR — see kernel/appsets/08-infra-data.yaml and
+# crossplane/compositions/infra-data.yaml.
 #
-# These charts bootstrap multiple databases and users via Helm values (including
-# sensitive fields merged from ESO-rendered Secrets). Pattern B: Release CR +
-# valuesFrom configMapKeyRef / secretKeyRef.
+# Pattern B: Release CR + valuesFrom configMapKeyRef / secretKeyRef.
 #
-# Sync wave 9: after ESO secrets (wave 2) and before Nubus (wave 11).
+# Sync wave 9: after ESO secrets (wave 2) and infra-data values (wave 8).
 #
 # Each Application syncs kernel/services/<app>/manifests/<env>/:
 #   externalsecret.yaml, configmap.yaml, release.yaml
@@ -35,8 +36,6 @@ spec:
           - env: dev
       - list:
           elements:
-          - app: opendesk-postgresql
-          - app: opendesk-mariadb
           - app: nextcloud-management
           - app: nextcloud
           - app: nextcloud-notifypush

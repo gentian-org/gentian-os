@@ -289,6 +289,39 @@ fi
 # =============================================================================
 banner "Step 1 — Remove Cluster XR (Crossplane GC)"
 
+# InfraData XR owns shared postgres/mariadb Helm releases — remove before Cluster GC
+# so provider-helm can uninstall chart resources cleanly.
+if kubectl get infradata dev-infra-data -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting InfraData claim dev-infra-data..."
+    kubectl delete infradata dev-infra-data -n crossplane-system --timeout=120s || true
+else
+    info "InfraData claim dev-infra-data not found; skipping."
+fi
+
+if kubectl get xinfradata dev-infra-data >/dev/null 2>&1; then
+    info "Waiting for XInfraData dev-infra-data to be garbage-collected (max 5m)..."
+    local_deadline=$((SECONDS + 300))
+    while kubectl get xinfradata dev-infra-data >/dev/null 2>&1; do
+        if (( SECONDS > local_deadline )); then
+            warn "XInfraData dev-infra-data still present after 5m — forcing deletion."
+            kubectl delete xinfradata dev-infra-data --grace-period=0 --force >/dev/null 2>&1 || true
+            break
+        fi
+        sleep 5
+    done
+    success "XInfraData dev-infra-data removed."
+else
+    info "XInfraData dev-infra-data not found; skipping."
+fi
+
+# Legacy infra Release CRs (pre–Step 2 Pattern B) — delete if still present.
+for rel in "opendesk-postgresql-${ENV}" "opendesk-mariadb-${ENV}"; do
+    if kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
+        info "Deleting legacy infra Release ${rel}..."
+        kubectl delete release.helm.crossplane.io/"${rel}" --timeout=120s || true
+    fi
+done
+
 if kubectl get cluster dev-cluster -n crossplane-system >/dev/null 2>&1; then
     info "Deleting Cluster claim dev-cluster..."
     kubectl delete cluster dev-cluster -n crossplane-system --timeout=60s || true

@@ -177,8 +177,8 @@ Pulled via ArgoCD ApplicationSet or Crossplane `Release` CR.
 | [x] | **A** | MinIO | `minio` | `.../external/charts/bitnami-charts` | 16.0.10 | Public Bitnami chart + `bitnamilegacy/*` images | `kernel/appsets/10-infra.yaml` |
 | [ ] | **D** | Intercom (ICS) | `intercom-service` | `.../supplier/univention/charts-mirror` | 2.19.5 | **Drop** — remove chart, Keycloak client, gateway route; rewire portal/Element | `kernel/appsets/20-iam.yaml` |
 | [ ] | **D** | Nubus | `nubus` | `.../supplier/univention/charts-mirror` | 1.16.0 | Gentian IAM (Keycloak + directory + ReBAC); decommission Nubus | `kernel/services/nubus/manifests/dev/release.yaml` |
-| [x] | **A** | PostgreSQL | `opendesk-postgresql` | `.../platform-development/charts/opendesk-postgresql` | 2.1.2 | Vendored `charts/infra/postgresql` + packages repo (step 2: CNPG) | `kernel/services/opendesk-postgresql/...` |
-| [x] | **A** | MariaDB | `opendesk-mariadb` | `.../platform-development/charts/opendesk-mariadb` | 3.0.3 | Vendored `charts/infra/mariadb` + packages repo (step 2: operator) | `kernel/services/opendesk-mariadb/...` |
+| [x] | **A** | PostgreSQL | `infra-postgresql` | Vendored `charts/infra/postgresql` | 2.1.2 | InfraData XR + packages repo (future: CNPG) | `kernel/services/infra-postgresql/`, `crossplane/compositions/infra-data.yaml` |
+| [x] | **A** | MariaDB | `infra-mariadb` | Vendored `charts/infra/mariadb` | 3.0.3 | InfraData XR + packages repo (future: operator) | `kernel/services/infra-mariadb/`, `crossplane/compositions/infra-data.yaml` |
 | [ ] | **C** | Nextcloud (umbrella) | `opendesk-nextcloud` | `.../platform-development/charts/opendesk-nextcloud` | 4.7.2 | Gentian chart + `library/nextcloud` or rebuilt image | `kernel/services/nextcloud/...` |
 | [ ] | **C** | Nextcloud management | `opendesk-nextcloud-management` | same repo | 4.7.2 | Gentian init Job + public NC base | `kernel/services/nextcloud-management/...` |
 | [ ] | **C** | Nextcloud notifypush | `opendesk-nextcloud-notifypush` | same repo | 4.7.2 | Gentian subchart + public notify_push | `kernel/services/nextcloud-notifypush/...` |
@@ -345,12 +345,19 @@ Remove OpenDesk-specific Helm glue, install.sh special cases, and provider-helm
 complexity around infra that step 1 already made vanilla.
 
 ```
-[ ] Delete or replace opendesk-postgresql / opendesk-mariadb Release CRs and service trees
-[ ] Simplify kernel/appsets/10-infra.yaml to public chart repos only
-[ ] Infra provisioning via Crossplane compositions / XRs — no OpenDesk bootstrap Jobs
-[ ] Remove opendesk image overrides from redis/minio/postgres values
-[ ] Tenant DB provisioning stays operator-driven; no LDAP/UDM dependency for infra wave
+[x] Delete or replace opendesk-postgresql / opendesk-mariadb Release CRs and service trees
+[x] Simplify kernel/appsets/10-infra.yaml to public chart repos only
+[x] Infra provisioning via Crossplane compositions / XRs — no OpenDesk bootstrap Jobs
+[x] Remove opendesk image overrides from redis/minio/postgres values
+[x] Tenant DB provisioning stays operator-driven; no LDAP/UDM dependency for infra wave
 ```
+
+**Step 2 done:** Shared PostgreSQL/MariaDB move from Argo-synced `Release` CRs
+(`kernel/services/opendesk-*`) to the **InfraData** Crossplane XR
+(`crossplane/xrds/infra-data.yaml`, `crossplane/compositions/infra-data.yaml`).
+ESO secrets and plain values ConfigMaps sync via `kernel/appsets/08-infra-data.yaml`.
+Helm release names stay `opendesk-postgresql-dev` / `opendesk-mariadb-dev` for DNS
+compatibility until consumers are renamed in a later step.
 
 **Principle:** kernel infra = Crossplane + public charts + Gentian values. Nothing
 from `registry.opencode.de` at this layer.

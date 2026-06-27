@@ -1,7 +1,8 @@
 # =============================================================================
 # Shared kernel PostgreSQL — plain values ConfigMaps
 #
-# Two ConfigMaps merged by provider-helm before the sensitive-values Secret:
+# Two ConfigMaps merged by the InfraData Crossplane composition (provider-helm
+# valuesFrom) before the sensitive-values Secret:
 #   1. postgresql-base-values  — non-secret defaults for all environments
 #   2. postgresql-dev-values   — env-specific sizing and non-secret overrides
 #

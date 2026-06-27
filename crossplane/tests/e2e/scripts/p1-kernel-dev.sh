@@ -78,6 +78,16 @@ kubectl wait xrd xclusters.gentianos.io \
 info "Applying Composition (cluster-default)..."
 kubectl apply -f "${REPO_ROOT}/compositions/cluster-default.yaml"
 
+info "Applying XRD (XInfraData / InfraData)..."
+kubectl apply -f "${REPO_ROOT}/xrds/infra-data.yaml"
+
+info "Waiting for InfraData XRD to be Established..."
+kubectl wait xrd xinfradata.gentianos.io \
+  --for=condition=Established --timeout=2m
+
+info "Applying Composition (infra-data)..."
+kubectl apply -f "${REPO_ROOT}/compositions/infra-data.yaml"
+
 # ── Step 4: Apply dev-cluster Claim ─────────────────────────────────────────
 
 info "Checking that master-password Secret exists..."

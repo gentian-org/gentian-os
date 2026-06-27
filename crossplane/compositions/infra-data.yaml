@@ -1,0 +1,114 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: infra-data
+  labels:
+    gentianos.io/composition: infra-data
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XInfraData
+  mode: Pipeline
+  pipeline:
+    - step: render-infra-data-releases
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec := $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+            {{- $env := $spec.environment }}
+
+            {{- $infraNs := default (printf "gentian-infra-%s" $env) $spec.infraNamespace }}
+            {{- $chartRepo := default "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" $spec.chartRepository }}
+
+            {{- $pgSpec := default dict $spec.postgresql }}
+            {{- $pgRelease := default (printf "opendesk-postgresql-%s" $env) $pgSpec.helmReleaseName }}
+            {{- $pgVersion := default "2.1.2" $pgSpec.chartVersion }}
+
+            {{- $mdbSpec := default dict $spec.mariadb }}
+            {{- $mdbRelease := default (printf "opendesk-mariadb-%s" $env) $mdbSpec.helmReleaseName }}
+            {{- $mdbVersion := default "3.0.3" $mdbSpec.chartVersion }}
+
+            {{- /* ── Shared kernel PostgreSQL (provider-helm Release) ─────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: postgresql-release
+                crossplane.io/external-name: {{ $pgRelease }}
+              name: {{ $name }}-postgresql
+            spec:
+              forProvider:
+                chart:
+                  name: postgresql
+                  repository: {{ $chartRepo }}
+                  version: {{ $pgVersion | quote }}
+                namespace: {{ $infraNs }}
+                wait: true
+                waitTimeout: "5m"
+                valuesFrom:
+                  - configMapKeyRef:
+                      name: postgresql-base-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: postgresql-{{ $env }}-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - secretKeyRef:
+                      name: postgresql-sensitive-values
+                      namespace: {{ $infraNs }}
+                      key: sensitive-values.yaml
+                      optional: false
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Shared kernel MariaDB (provider-helm Release) ──────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: mariadb-release
+                crossplane.io/external-name: {{ $mdbRelease }}
+              name: {{ $name }}-mariadb
+            spec:
+              forProvider:
+                chart:
+                  name: mariadb
+                  repository: {{ $chartRepo }}
+                  version: {{ $mdbVersion | quote }}
+                namespace: {{ $infraNs }}
+                wait: true
+                waitTimeout: "5m"
+                valuesFrom:
+                  - configMapKeyRef:
+                      name: mariadb-base-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: mariadb-{{ $env }}-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - secretKeyRef:
+                      name: mariadb-sensitive-values
+                      namespace: {{ $infraNs }}
+                      key: sensitive-values.yaml
+                      optional: false
+              providerConfigRef:
+                name: kubernetes
+
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready

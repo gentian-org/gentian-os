@@ -37,12 +37,41 @@ if [[ ${#releases[@]} -eq 0 ]]; then
 fi
 
 if [[ ${#releases[@]} -eq 0 ]]; then
-  fail "No Release.helm.crossplane.io in ${SERVICES_NS} — run install.sh first"
+  warn "No standalone kernel Helm Releases in ${SERVICES_NS} — InfraData XR may own postgres/mariadb"
+else
+  pass "Found ${#releases[@]} standalone Helm Release(s) in ${SERVICES_NS}"
 fi
-pass "Found ${#releases[@]} Helm Release(s) in ${SERVICES_NS}"
+
+failed=0
+
+# InfraData XR — shared postgres/mariadb (Step 2 kernel rebuild)
+info "Checking InfraData shared database Releases..."
+for rel in dev-infra-data-postgresql dev-infra-data-mariadb; do
+  if kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
+    if kubectl wait "release.helm.crossplane.io/${rel}" \
+        --for=condition=Synced --timeout="${TIMEOUT_RELEASE}" 2>/dev/null \
+    && kubectl wait "release.helm.crossplane.io/${rel}" \
+        --for=condition=Ready --timeout="${TIMEOUT_RELEASE}" 2>/dev/null; then
+      pass "InfraData Release ${rel} Synced + Ready"
+    else
+      warn "InfraData Release ${rel} not Synced/Ready"
+      failed=1
+    fi
+  else
+    if [[ "${rel}" == *postgresql* ]]; then
+      legacy="opendesk-postgresql-dev"
+    else
+      legacy="opendesk-mariadb-dev"
+    fi
+    if kubectl get release.helm.crossplane.io/"${legacy}" >/dev/null 2>&1; then
+      pass "Legacy infra Release ${legacy} present (pre–Step 2 migration)"
+    else
+      warn "Neither InfraData nor legacy Release found for ${rel}"
+    fi
+  fi
+done
 
 info "Waiting for kernel Releases Synced + Ready (timeout: ${TIMEOUT_RELEASE})..."
-failed=0
 for rel in "${releases[@]}"; do
   if ! kubectl wait "release.helm.crossplane.io/${rel}" -n "${SERVICES_NS}" \
       --for=condition=Synced --timeout="${TIMEOUT_RELEASE}" 2>/dev/null; then
