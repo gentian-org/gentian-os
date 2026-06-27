@@ -47,7 +47,7 @@ spec:
       project: gentian
       sources:
       - repoURL: https://github.com/gentian-org/gentian-os
-        targetRevision: develop
+        targetRevision: feat/new-security
         ref: values
       - repoURL: '{{.repoURL}}'
         chart: '{{.chart}}'

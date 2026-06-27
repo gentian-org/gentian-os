@@ -649,11 +649,7 @@ seed_secrets_remaining() {
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
 #   - 08-infra-data:        postgres/mariadb ESO + values ConfigMaps (InfraData XR owns Releases)
 #   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
-#   - 20-iam:              keycloak-bootstrap job
-#   - 21-nubus:            (reserved, currently deployed via provider-helm)
-#   - 22-gentian-portal:   portal-frontend from gentian-ui (replaces nubusPortalFrontend)
-#   - 30-kernel-services:  mariadb, postgresql, nextcloud, etc.
-#   - 40-apps:             tenant-facing applications
+#   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on feat/new-security.
 #
 # Prerequisites:
 #   - ArgoCD must be installed and the 'gentian' AppProject must exist.
@@ -1193,7 +1189,7 @@ deploy_nubus() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_user portal_pw
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready argocd_url argocd_pw
 
     xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
@@ -1203,40 +1199,39 @@ print_summary_cp() {
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    nubus_synced=$(kubectl get release.helm.crossplane.io/nubus-dev \
-        -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "unknown")
+    infra_pg_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-postgresql \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    infra_mdb_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-mariadb \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    portal_user=$(resolve_portal_admin_email)
-    portal_pw=$(resolve_portal_admin_password)
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete                       ║${NC}"
+    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete (new-security)        ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
     echo -e "${GREEN}  Tenancy mode   : ${TENANCY_MODE:-multi}${NC}"
     echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
-    echo -e "${GREEN}  Nubus Release  : nubus-dev (Synced=${nubus_synced})${NC}"
+    echo -e "${GREEN}  InfraData PG   : dev-infra-data-postgresql (Ready=${infra_pg_ready})${NC}"
+    echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
+    echo ""
+    echo -e "${GREEN}  OpenDesk stack : skipped (Nubus / Intercom / Nextcloud disabled)${NC}"
+    echo -e "${GREEN}  Next step      : deploy Keycloak + OpenFGA IdP (docs/design/new-security-architecture.md)${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
-    echo -e "${GREEN}    kubectl get release.helm.crossplane.io/nubus-dev${NC}"
+    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep dev-infra-data${NC}"
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
     echo -e "${GREEN}    User : admin${NC}"
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
-    echo ""
-    echo -e "${GREEN}  Portal / UMC admin:${NC}"
-    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}/login/${NC}"
-    echo -e "${GREEN}    User : ${portal_user:-administrator@${KERNEL_DOMAIN}}${NC}"
-    echo -e "${GREEN}    Pass : ${portal_pw:-not available}${NC}"
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
@@ -1259,6 +1254,10 @@ main_cp() {
     echo ""
 
     parse_args "$@"
+
+    # feat/new-security: infra-only bootstrap — no OpenDesk chart/image pulls.
+    # OpenBao still seeds legacy identity/* paths for future migration; nothing deploys them.
+    export SKIP_OPENDESK_STACK="${SKIP_OPENDESK_STACK:-1}"
 
     if [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]]; then
         verify_argocd_apps || true
@@ -1308,7 +1307,11 @@ main_cp() {
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────
     install_argocd              # Step 5
-    setup_argocd_repos          # Step 5b
+    if [[ "${SKIP_OPENDESK_STACK:-0}" != "1" ]]; then
+        setup_argocd_repos          # Step 5b — opencode OCI repo credentials for Nubus/Nextcloud charts
+    else
+        info "SKIP_OPENDESK_STACK=1 — skipping Step 5b (opencode Argo OCI repo secrets)."
+    fi
     install_argocd_image_updater  # Step 5c
     bootstrap_transit_app       # Step 6  — transit seal ArgoCD app
     init_openbao_transit        # Step 7  — transit init + auto-unseal Secret
@@ -1328,20 +1331,24 @@ main_cp() {
     # ── Pattern B chart deployments ─────────────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
-    deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
-    "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)
-    deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
+
+    # ── OpenDesk / Nubus / Intercom stack (disabled on feat/new-security) ─────
+    # Cluster is ready for Keycloak + OpenFGA (docs/design/new-security-architecture.md).
+    # deploy_nubus                # Step 14 — Nubus (registry.opencode.de)
+    # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — Nubus LDAP scope
+    # deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (opencode charts)
+
     install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
-    apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays
+    # apply_kernel_gateway_overlays || true  # Step 15a — Nextcloud/Intercom/Nubus gateway overlays
     wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
     bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
 
-    # Step 16 — wait for async ArgoCD hooks / apps, then verify cluster health.
-    wait_for_setup_iam_job || true
+    # Step 16 — verification (OpenDesk-specific checks disabled)
+    # wait_for_setup_iam_job || true
     verify_argocd_apps || true
-    verify_keycloak_iframe_policy || true
-    verify_intercom_ics || true
-    reconcile_nextcloud_office || true  # Step 16c — richdocuments doc_format + WOPI (Collabora is wave 12)
+    # verify_keycloak_iframe_policy || true
+    # verify_intercom_ics || true
+    # reconcile_nextcloud_office || true  # Step 16c — Collabora / Nextcloud office
 
     configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
 

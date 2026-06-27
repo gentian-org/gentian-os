@@ -18,7 +18,7 @@ spec:
     - /metadata/annotations/argocd.argoproj.io~1tracking-id
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: feat/new-security
     path: kernel/appsets
   destination:
     server: https://kubernetes.default.svc

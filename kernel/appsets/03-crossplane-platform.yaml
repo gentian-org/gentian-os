@@ -22,7 +22,7 @@ spec:
   project: gentian
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: feat/new-security
     path: crossplane/xrds
   destination:
     server: https://kubernetes.default.svc
@@ -45,7 +45,7 @@ spec:
   project: gentian
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: feat/new-security
     path: crossplane/compositions
   destination:
     server: https://kubernetes.default.svc
@@ -68,7 +68,7 @@ spec:
   project: gentian
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: feat/new-security
     path: kernel/manifests/job-gc
   destination:
     server: https://kubernetes.default.svc

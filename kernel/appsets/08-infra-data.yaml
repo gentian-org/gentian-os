@@ -39,7 +39,7 @@ spec:
       project: gentian
       source:
         repoURL: https://github.com/gentian-org/gentian-os
-        targetRevision: develop
+        targetRevision: feat/new-security
         path: kernel/services/{{.app}}/manifests/{{.env}}
       destination:
         server: https://kubernetes.default.svc
