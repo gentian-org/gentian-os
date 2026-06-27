@@ -29,6 +29,41 @@ warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 banner()  { echo -e "\n${CYAN}══════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $*${NC}"; echo -e "${CYAN}══════════════════════════════════════════════════${NC}\n"; }
 
+# Retry kubectl when the API server is temporarily unreachable (common on remote
+# clusters or flaky client networks). Only connection-level failures are retried;
+# resource errors (NotFound, wait timeouts, etc.) fail immediately.
+# Override attempts/delay via KUBECTL_RETRY_ATTEMPTS / KUBECTL_RETRY_DELAY_SECS.
+_kubectl_retry() {
+    local attempts="${KUBECTL_RETRY_ATTEMPTS:-12}"
+    local delay="${KUBECTL_RETRY_DELAY_SECS:-5}"
+    local n=1 rc=0 err=""
+    local err_file
+    err_file="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '${err_file}'" RETURN
+
+    while (( n <= attempts )); do
+        if kubectl "$@" 2>"${err_file}"; then
+            return 0
+        fi
+        rc=$?
+        err="$(<"${err_file}")"
+        if [[ -n "$err" ]]; then
+            printf '%s\n' "$err" >&2
+        fi
+        if ! [[ "$err" =~ (connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|timeout[[:space:]]awaiting[[:space:]]response[[:space:]]headers|Unable[[:space:]]to[[:space:]]connect[[:space:]]to[[:space:]]the[[:space:]]server|no[[:space:]]route[[:space:]]to[[:space:]]host|i/o[[:space:]]timeout|dial[[:space:]]tcp) ]]; then
+            return "$rc"
+        fi
+        if (( n >= attempts )); then
+            return "$rc"
+        fi
+        warn "kubectl failed (attempt ${n}/${attempts}): transient API error"
+        warn "  Retrying in ${delay}s..."
+        sleep "$delay"
+        n=$((n + 1))
+    done
+}
+
 # ─── Shared CRI / kubelet runtime helpers ────────────────────────────────────
 # ensure_sudo, cri_cleanup and kubelite_restart live in scripts/lib-runtime.sh
 # so install.sh and uninstall.sh can use the same implementations.
@@ -1446,7 +1481,7 @@ create_namespaces() {
         if kubectl get namespace "$ns" &>/dev/null; then
             success "Namespace $ns already exists."
         else
-            kubectl create namespace "$ns"
+            _kubectl_retry create namespace "$ns"
             success "Namespace $ns created."
         fi
     done

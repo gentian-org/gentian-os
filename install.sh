@@ -178,7 +178,7 @@ install_crossplane_providers() {
     banner "Crossplane 0b/0c — Providers, XRD, Composition"
 
     info "Applying providers (function-go-templating, provider-kubernetes, provider-vault)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
+    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
 
     info "Waiting for providers to become Healthy (timeout: ${PROVIDER_WAIT_TIMEOUT})..."
 
@@ -187,20 +187,20 @@ install_crossplane_providers() {
     # we don't burn the full timeout on the wrong resource kind.
     for fn in function-go-templating function-extra-resources function-auto-ready; do
         info "  Waiting for: ${fn}"
-        kubectl wait "function.pkg.crossplane.io/${fn}" \
+        _kubectl_retry wait "function.pkg.crossplane.io/${fn}" \
             --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
     done
 
     for provider in provider-helm provider-kubernetes provider-vault; do
         info "  Waiting for: ${provider}"
-        kubectl wait "provider.pkg.crossplane.io/${provider}" \
+        _kubectl_retry wait "provider.pkg.crossplane.io/${provider}" \
             --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
     done
 
     # Apply ProviderConfigs only after all providers are Healthy so the CRDs
     # (e.g. vault.upbound.io/v1beta1 ProviderConfig) exist.
     info "Applying ProviderConfigs (InjectedIdentity for both kubernetes and openbao)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
+    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
 
     # After a partial uninstall or a failed prior run the CRDs that Crossplane
     # creates for each XRD (e.g. xapps.gentianos.io, apps.gentianos.io) can
@@ -229,23 +229,23 @@ install_crossplane_providers() {
     }
 
     info "Applying XRD (XCluster / Cluster)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
     _adopt_xrd_crds xclusters.gentianos.io xclusters.gentianos.io clusters.gentianos.io
-    kubectl wait xrd xclusters.gentianos.io \
+    _kubectl_retry wait xrd xclusters.gentianos.io \
         --for=condition=Established --timeout=2m
 
     info "Applying XRD (XApp / App)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
+    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
     _adopt_xrd_crds xapps.gentianos.io xapps.gentianos.io apps.gentianos.io
-    kubectl wait xrd xapps.gentianos.io \
+    _kubectl_retry wait xrd xapps.gentianos.io \
         --for=condition=Established --timeout=2m
 
     apply_crossplane_platform_compositions
 
     info "Applying XRD (XTenant / Tenant)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
+    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
     _adopt_xrd_crds xtenants.gentianos.io xtenants.gentianos.io tenants.gentianos.io
-    kubectl wait xrd xtenants.gentianos.io \
+    _kubectl_retry wait xrd xtenants.gentianos.io \
         --for=condition=Established --timeout=2m
 
     success "Crossplane providers, XRDs, and Compositions are ready."
