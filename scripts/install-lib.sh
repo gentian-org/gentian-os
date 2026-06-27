@@ -813,31 +813,15 @@ EOF
     success "App repo configuration saved to ${cfg_file}"
 
     if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
-        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
-        else
-            read -rsp "  GENTIAN_DEPLOYMENTS_GIT_TOKEN (PAT for gentian-deployments push; optional): " GENTIAN_DEPLOYMENTS_GIT_TOKEN
-            echo ""
-            if [[ -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" ]]; then
-                export GENTIAN_DEPLOYMENTS_GIT_TOKEN
-                save_creds_cache
-            fi
-        fi
+        warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
+        warn "  Add to install.secrets.env when needed."
     fi
     : "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:=x-access-token}"
     export GENTIAN_DEPLOYMENTS_GIT_USERNAME
 
     if [[ -z "${CI_BOT_PAT:-}" ]]; then
-        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            warn "CI_BOT_PAT not set — gentian-ui image builds cannot auto-pin tags in gentian-os."
-        else
-            read -rsp "  CI_BOT_PAT (fine-grained PAT, Contents write on gentian-os; optional): " CI_BOT_PAT
-            echo ""
-            if [[ -n "${CI_BOT_PAT}" ]]; then
-                export CI_BOT_PAT
-                save_creds_cache
-            fi
-        fi
+        warn "CI_BOT_PAT not set — gentian-ui image builds cannot auto-pin tags in gentian-os."
+        warn "  Add to install.secrets.env when needed."
     fi
     : "${GITHUB_ACTIONS_OS_REPO:=gentian-org/gentian-os}"
     export GITHUB_ACTIONS_OS_REPO
@@ -1016,6 +1000,12 @@ _derive_zone_from_domain() {
     echo "$d" | awk -F. '{n=NF; print $(n-1)"."$n}'
 }
 
+# RFC 5737 documentation addresses (TEST-NET-1/2/3).
+_is_testnet_ip() {
+    local ip="$1"
+    [[ "$ip" =~ ^192\.0\.2\.[0-9]+$ || "$ip" =~ ^198\.51\.100\.[0-9]+$ || "$ip" =~ ^203\.0\.113\.[0-9]+$ ]]
+}
+
 # Verify a Cloudflare API token has Zone:Read on the apex zone of
 # KERNEL_DOMAIN by querying /zones?name=<apex>. Notes:
 #   - The /user/tokens/verify endpoint rejects some valid scoped-token
@@ -1070,42 +1060,12 @@ prompt_kernel_secrets() {
         export CF_API_TOKEN
         if ! verify_cloudflare_token "$CF_API_TOKEN" "$KERNEL_DOMAIN"; then
             warn "Cached Cloudflare token failed verification — wildcard issuance"
-            warn "will likely fail. Re-run with CF_API_TOKEN= to clear and re-prompt."
+            warn "will likely fail. Fix CF_API_TOKEN in install.secrets.env and re-run."
         fi
         return
     fi
-    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-        info "CF_API_TOKEN not set; skipping kernel wildcard (non-interactive)."
-        return
-    fi
-
-    echo ""
-    info "Cloudflare API token for kernel wildcard *.${KERNEL_DOMAIN} (optional)."
-    info "Leave empty to skip the kernel wildcard (tenant per-zone certs still need DNS-01)."
-    info "Token requires Zone:Read + DNS:Edit on the ${KERNEL_DOMAIN} zone."
-
-    # Loop: re-prompt up to 3 times on verification failure. User can always
-    # type empty to skip the wildcard entirely.
-    local attempt v
-    for attempt in 1 2 3; do
-        v=""
-        read -rp "  CF_API_TOKEN [empty=skip]: " v
-        if [[ -z "$v" ]]; then
-            warn "No Cloudflare token provided; kernel wildcard Certificate will be skipped."
-            return
-        fi
-        if verify_cloudflare_token "$v" "$KERNEL_DOMAIN"; then
-            export CF_API_TOKEN="$v"
-            save_creds_cache
-            success "Cloudflare token captured (will be stored in OpenBao)."
-            return
-        fi
-        if [[ $attempt -lt 3 ]]; then
-            warn "Token verification failed (attempt ${attempt}/3) — try again, or empty to skip."
-        fi
-    done
-    warn "Three verification failures; skipping kernel wildcard Certificate."
-    warn "Re-run install.sh later with a valid token to enable the wildcard."
+    info "CF_API_TOKEN not set; skipping kernel wildcard Certificate."
+    info "  Add CF_API_TOKEN to install.secrets.env to enable DNS-01 wildcard for *.${KERNEL_DOMAIN}."
 }
 
 # =============================================================================
@@ -2427,11 +2387,6 @@ install_eso() {
 # =============================================================================
 resolve_argocd_url() {
     local ingress_host svc_type node_port lb_host lb_ip
-
-    _is_testnet_ip() {
-        local ip="$1"
-        [[ "$ip" =~ ^192\.0\.2\.[0-9]+$ || "$ip" =~ ^198\.51\.100\.[0-9]+$ || "$ip" =~ ^203\.0\.113\.[0-9]+$ ]]
-    }
 
     _pick_node_ip() {
         local detected
