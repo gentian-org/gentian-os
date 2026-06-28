@@ -37,9 +37,20 @@ tenantProvisioning:
   crossplaneOnly: false
 
 # kernelRealm is the name of the shared Keycloak realm that holds all platform
-# users (synced via Nubus LDAP). Defaults to "kernel" when empty.
+# users. Defaults to "kernel" when empty.
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
+
+# identityMode controls LDAP vs Keycloak-native identity (Stage 1).
+#   legacy-ldap       — Nubus LDAP federation (OpenDesk path)
+#   keycloak-native — skip LDAP/UDM; Keycloak is authoritative
+identityMode: legacy-ldap
+
+# Stage 1 authz bridge (Keycloak → OpenFGA tuple sync).
+authzBridge:
+  enabled: false
+  openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+  openfgaToken: ""
 
 # LDAP configuration for per-tenant realm federation.
 # When ldap.server is empty the operator does not configure LDAP federation

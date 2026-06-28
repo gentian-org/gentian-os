@@ -100,6 +100,7 @@ PG_SELFSERVICE_PW=$(derive_password "postgres" "selfservice_user")
 PG_AUTHSESSION_PW=$(derive_password "postgres" "authsession_user")
 PG_GUARDIAN_PW=$(derive_password "postgres" "guardianmanagementapi_user")
 PG_NOTIFICATIONS_PW=$(derive_password "postgres" "notificationsapi_user")
+PG_OPENFGA_PW=$(derive_password "postgres" "openfga_user")
 # --- MariaDB ---
 MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 MARIA_OX_PW=$(derive_password "mariadb" "openxchange_user")
@@ -239,10 +240,20 @@ kv_put_once "database/postgresql" "$(cat <<EOF
   "selfservice_user_password":      "${PG_SELFSERVICE_PW}",
   "authsession_user_password":      "${PG_AUTHSESSION_PW}",
   "guardianmanagementapi_user_password": "${PG_GUARDIAN_PW}",
-  "notificationsapi_user_password": "${PG_NOTIFICATIONS_PW}"
+  "notificationsapi_user_password": "${PG_NOTIFICATIONS_PW}",
+  "openfga_user_password":           "${PG_OPENFGA_PW}"
 }
 EOF
-)"
+)
+
+# --- OpenFGA (Stage 1 ReBAC PDP) --------------------------------------------
+OPENFGA_PRESHARED=$(derive_password "openfga" "preshared_key")
+kv_put_once "authz/openfga" "$(cat <<EOF
+{
+  "preshared_key": "${OPENFGA_PRESHARED}"
+}
+EOF
+)""
 
 # --- MariaDB ---
 kv_put_once "database/mariadb" "$(cat <<EOF

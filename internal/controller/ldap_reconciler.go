@@ -66,6 +66,12 @@ const (
 // allowedGroups but find it empty in the cache, so admin tiles would not show
 // until the user reloaded the portal after the subsequent user job completed.
 func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	if r.IdentityMode == IdentityModeKeycloakNative {
+		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
+			"SkippedKeycloakNative", "LDAP provisioning disabled in keycloak-native identity mode")
+		return ctrl.Result{}, nil
+	}
+
 	ouDN := tenantOUDN(tenant)
 
 	// When no app requires LDAP federation, skip unless Keycloak LDAP is configured.

@@ -107,6 +107,7 @@ func main() {
 		CloudflareDNS:            buildCloudflareDNSClient(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
+		IdentityMode:             identityModeOrDefault(os.Getenv("IDENTITY_MODE")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
@@ -140,6 +141,24 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AppStore")
 		os.Exit(1)
+	}
+
+	openfgaURL := os.Getenv("OPENFGA_API_URL")
+	if openfgaURL == "" {
+		openfgaURL = "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+	}
+	if err := (&controller.AuthzBridgeReconciler{
+		Client:       mgr.GetClient(),
+		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		OpenFGAURL:   openfgaURL,
+		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
+		Enabled:      controller.AuthzBridgeEnabled(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthzBridge")
+		os.Exit(1)
+	}
+	if controller.AuthzBridgeEnabled() {
+		setupLog.Info("authz bridge enabled", "openfga_url", openfgaURL)
 	}
 
 	if enableWebhook {
@@ -185,6 +204,13 @@ func kernelRealmOrDefault(realm string) string {
 		return "kernel"
 	}
 	return realm
+}
+
+func identityModeOrDefault(mode string) string {
+	if mode == "" {
+		return controller.IdentityModeLegacyLDAP
+	}
+	return mode
 }
 
 // buildSeeder constructs a secrets.Seeder backed by an OpenBao KV v2 client

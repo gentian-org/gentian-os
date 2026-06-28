@@ -1,0 +1,51 @@
+# OpenFGA — plain Helm values (merged by AuthzIdp Crossplane composition).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-base-values
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    replicaCount: 1
+    postgresql:
+      enabled: false
+    mysql:
+      enabled: false
+    datastore:
+      engine: postgres
+      maxOpenConns: 30
+      maxIdleConns: 10
+      connMaxIdleTime: 30s
+      connMaxLifetime: 60s
+      applyMigrations: true
+    grpc:
+      enabled: true
+    telemetry:
+      trace:
+        enabled: false
+      metrics:
+        enabled: false
+    authn:
+      method: preshared
+    ingress:
+      enabled: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-dev-values
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi

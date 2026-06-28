@@ -496,13 +496,8 @@ validate_config() {
 
     _file_header "${INSTALL_SECRETS_FILE}" "Secrets checks (install.secrets.env)"
     _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "${INSTALL_SECRETS_FILE}"
-    if [[ "${SKIP_OPENDESK_STACK:-0}" == "1" ]]; then
-        _opt_from OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username (not needed when SKIP_OPENDESK_STACK=1)" "${INSTALL_SECRETS_FILE}"
-        _opt_from OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token (not needed when SKIP_OPENDESK_STACK=1)" "${INSTALL_SECRETS_FILE}"
-    else
-        _req_from OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username" "${INSTALL_SECRETS_FILE}"
-        _req_from OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token" "${INSTALL_SECRETS_FILE}"
-    fi
+    _opt_from OD_PRIVATE_REGISTRY_USERNAME "registry.opencode.de username (optional until OpenDesk charts deploy)" "${INSTALL_SECRETS_FILE}"
+    _opt_from OD_PRIVATE_REGISTRY_PASSWORD "registry.opencode.de password or token (optional until OpenDesk charts deploy)" "${INSTALL_SECRETS_FILE}"
     _req_from OD_SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
     _req_from OD_SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
     _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "${INSTALL_SECRETS_FILE}"
@@ -598,9 +593,7 @@ try_load_creds_from_openbao() {
     if [[ -n "${MASTER_PASSWORD:-}" \
         && -n "${OD_SMTP_RELAY_USERNAME:-}" \
         && -n "${OD_SMTP_RELAY_PASSWORD:-}" ]]; then
-        if [[ "${SKIP_OPENDESK_STACK:-0}" == "1" || ( -n "${OD_PRIVATE_REGISTRY_USERNAME:-}" && -n "${OD_PRIVATE_REGISTRY_PASSWORD:-}" ) ]]; then
-            return
-        fi
+        return
     fi
 
     # Need a root token to read secrets. Prefer env, fall back to init file.
@@ -698,12 +691,13 @@ prompt_credentials() {
         export MASTER_PASSWORD
         prompted=1
     fi
-    if [[ -z "${OD_PRIVATE_REGISTRY_USERNAME:-}" && "${SKIP_OPENDESK_STACK:-0}" != "1" ]]; then
-        read -rp  "  OD_PRIVATE_REGISTRY_USERNAME (registry.opencode.de): " OD_PRIVATE_REGISTRY_USERNAME; echo ""
+    # Registry credentials are optional until OpenDesk chart deploy is re-enabled.
+    if [[ -z "${OD_PRIVATE_REGISTRY_USERNAME:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        read -rp "  OD_PRIVATE_REGISTRY_USERNAME (registry.opencode.de, optional): " OD_PRIVATE_REGISTRY_USERNAME; echo ""
         export OD_PRIVATE_REGISTRY_USERNAME
-        prompted=1
+        [[ -n "${OD_PRIVATE_REGISTRY_USERNAME:-}" ]] && prompted=1
     fi
-    if [[ -z "${OD_PRIVATE_REGISTRY_PASSWORD:-}" && "${SKIP_OPENDESK_STACK:-0}" != "1" ]]; then
+    if [[ -z "${OD_PRIVATE_REGISTRY_PASSWORD:-}" && -n "${OD_PRIVATE_REGISTRY_USERNAME:-}" ]]; then
         read -rp "  OD_PRIVATE_REGISTRY_PASSWORD (registry.opencode.de token): " OD_PRIVATE_REGISTRY_PASSWORD; echo ""
         export OD_PRIVATE_REGISTRY_PASSWORD
         prompted=1
@@ -2673,6 +2667,10 @@ EOF
 # =============================================================================
 setup_argocd_repos() {
     banner "Step 6 — ArgoCD OCI registry secrets"
+    if [[ -z "${OD_PRIVATE_REGISTRY_USERNAME:-}" || -z "${OD_PRIVATE_REGISTRY_PASSWORD:-}" ]]; then
+        info "OD_PRIVATE_REGISTRY_* not set — skipping OCI repo secrets (optional until OpenDesk charts deploy)."
+        return 0
+    fi
     bash "${SCRIPT_DIR}/scripts/create-argocd-oci-secrets.sh" \
         "$OD_PRIVATE_REGISTRY_USERNAME" \
         "$OD_PRIVATE_REGISTRY_PASSWORD"

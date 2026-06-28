@@ -72,6 +72,18 @@ spec:
               value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
+            - name: IDENTITY_MODE
+              value: {{ .Values.identityMode | default "legacy-ldap" | quote }}
+            {{- if .Values.authzBridge.enabled }}
+            - name: AUTHZ_BRIDGE_ENABLED
+              value: "true"
+            - name: OPENFGA_API_URL
+              value: {{ .Values.authzBridge.openfgaURL | quote }}
+            {{- if .Values.authzBridge.openfgaToken }}
+            - name: OPENFGA_API_TOKEN
+              value: {{ .Values.authzBridge.openfgaToken | quote }}
+            {{- end }}
+            {{- end }}
             - name: LDAP_SERVER
               value: {{ .Values.ldap.server | default "" | quote }}
             - name: LDAP_BASE

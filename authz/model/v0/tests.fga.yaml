@@ -1,0 +1,75 @@
+name: Gentian authorization model v0 tests
+model_file: model.fga
+tests:
+  - name: tenant_member_can_launch_shell_app
+    tuples:
+      - user: user:alice
+        relation: member
+        object: tenant:demo
+      - object: tenant:demo
+        relation: parent
+        user: shell_app:launcher
+    check:
+      user: user:alice
+      object: shell_app:launcher
+      assertions:
+        can_launch: true
+
+  - name: outsider_cannot_launch_shell_app
+    tuples:
+      - user: user:alice
+        relation: member
+        object: tenant:demo
+      - object: tenant:demo
+        relation: parent
+        user: shell_app:launcher
+    check:
+      user: user:bob
+      object: shell_app:launcher
+      assertions:
+        can_launch: false
+
+  - name: tenant_member_can_read_document
+    tuples:
+      - user: user:alice
+        relation: member
+        object: tenant:demo
+      - object: tenant:demo
+        relation: parent
+        user: document:doc-1
+    check:
+      user: user:alice
+      object: document:doc-1
+      assertions:
+        can_read: true
+
+  - name: acting_for_grants_document_read
+    tuples:
+      - user: user:alice
+        relation: member
+        object: tenant:demo
+      - object: tenant:demo
+        relation: parent
+        user: document:doc-1
+      - user: user:agent-1
+        relation: acting_for
+        object: document:doc-1
+    check:
+      user: user:agent-1
+      object: document:doc-1
+      assertions:
+        can_read: true
+
+  - name: acting_for_without_membership_denies
+    tuples:
+      - object: tenant:demo
+        relation: parent
+        user: document:doc-1
+      - user: user:agent-1
+        relation: acting_for
+        object: document:doc-1
+    check:
+      user: user:agent-1
+      object: document:doc-1
+      assertions:
+        can_read: false

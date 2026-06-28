@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Architecture & Nubus Replacement Plan
 
-**Status:** Draft v0.1 · Architecture reference
+**Status:** Draft v0.2 · Architecture reference (Stage 0 progress tracked against [roadmap.md](../roadmap.md))
 **Scope:** Identity, authorization, and isolation for a fully cloud-based, Kubernetes-native sovereign cloud OS, replacing the Univention Nubus IAM stack.
 
 ---
@@ -300,7 +300,7 @@ contract:demo/project-management#consumer@app:crm-app
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-**Today (Stage 1):** OIDC authentication + tenant MAC isolation + `IntegrationBinding` wiring. User-level ReBAC on app APIs is app responsibility until OpenFGA is wired.
+**Today (Stage 0 MAC + legacy IdP):** OIDC authentication (Keycloak via the Nubus stack), tenant MAC isolation, and `IntegrationBinding` wiring. User-level ReBAC on app APIs is not platform-wide until OpenFGA is deployed (Stage 1); first-party apps carry **PEP stubs** (`openfga_client.py` in `gentian-app-template`) that pass through when `OPENFGA_API_URL` is unset.
 
 **Target (Stage 2+):**
 
@@ -353,18 +353,67 @@ An automation platform is a textbook **confused deputy**: a central engine holdi
 A staged path. Each stage is independently useful and leaves a working system.
 
 ### Stage 0 — Foundations (MAC backbone first)
-- Establish per-tenant **K8s namespaces** and a default-deny **NetworkPolicy** (Cilium) including **egress allowlists**.
-- Stand up the **service mesh + SPIFFE/SPIRE** trust domain (one trust domain per tenant) and **admission control** (Kyverno or OPA Gatekeeper) with deploy-time invariants (no privileged pods, required labels, image provenance).
-- *Rationale:* the isolation backbone must exist before identities and grants, so tenant boundaries and egress limits hold independently of any later authZ config. This is the layer Nubus does not provide.
+
+*Rationale:* the isolation backbone must exist before identities and grants, so tenant boundaries and egress limits hold independently of any later authZ config. This is the layer Nubus does not provide.
+
+**Prototype exit criteria (met on `feat/new-security`):** a tenant namespace exists; default-deny egress holds; kernel and contract egress are operator-managed; Kyverno blocks privileged/host-namespace workloads in tenant namespaces.
+
+| Item | Status | Implementation / notes |
+|------|--------|-------------------------|
+| Per-tenant **K8s namespaces** | **Done** | `tenant-default` Composition; operator seeds tenant shell |
+| Default-deny **NetworkPolicy** (tenant MAC floor) | **Done** | `tenant-isolation` — DNS + kube-API egress only; ingress from gateway/ingress namespace ([`internal/kernel/netpolicy/baseline.go`](../../internal/kernel/netpolicy/baseline.go)) |
+| **Kernel egress** from `AppProfile.kernelRequirements` | **Done** | `kernel-access-{app}` policies ([`kernel.go`](../../internal/kernel/netpolicy/kernel.go)) |
+| **Contract egress** from active `IntegrationBinding` | **Done** | `contract-{binding}` policies; all declared binding capabilities allowed until AppGrant ([`integration.go`](../../internal/kernel/netpolicy/integration.go)) |
+| **Kyverno admission** (privileged, host namespaces, non-root) | **Done** | `kernel/appsets/05-admission.yaml`, `kernel/security/kyverno/policies/gentian-baseline.yaml`; install Step 13c |
+| **Cilium** (FQDN/L7 egress, Hubble) | **Deferred** → [roadmap § Cilium](../roadmap.md#cilium-planned) | Standard Kubernetes NetworkPolicy is sufficient for Stage 0 prototype |
+| **Service mesh + SPIFFE/SPIRE** | **Deferred** → [roadmap § Service mesh](../roadmap.md#service-mesh--spiffespire-planned) / **Stage 3** below | Edge TLS is Envoy Gateway; workload mTLS is not required yet |
+| **AppGrant-governed contract allowlists** | **Deferred** → **Stage 2** | Bindings allow full declared capability set today |
+| **Image provenance / cosign / SLSA at admission** | **Deferred** → [roadmap § Horizon A](#horizon-a--harden-immediately-post-rollout) | Not in baseline Kyverno policies yet; see [app-catalogue-security.md](app-catalogue-security.md) |
+| **Required workload labels / tier enforcement** | **Partial** → [roadmap § App catalogue security](../roadmap.md#app-catalogue-security) | Baseline pod security only; `catalogue-tier` webhook and prod Kyverno tier rules not shipped |
+| **Egress drift detection (managed as code)** | **Deferred** → [roadmap § Horizon A](#horizon-a--harden-immediately-post-rollout) | Policies are reconciled by the operator but not continuously audited |
+
+Stage 0 is **complete for dev/homelab**. Remaining rows are optional upgrades (Cilium, mesh) or post-rollout hardening — not blockers for starting Stage 1.
 
 ### Stage 1 — Identity + authorization core
-- Deploy **Keycloak** (Apache 2.0) backed by Postgres; configure realms/Organizations for tenancy, OIDC clients, and SAML brokering for any legacy public-sector IdPs.
-- Deploy **OpenFGA** (Apache 2.0) with a Postgres store; author the base authorization model: `user`, `group`, `tenant`, and core resource types (`document`, `database`, …) including the **derived-ceiling** relations.
-- Wire the **Keycloak→OpenFGA event publisher** + a SCIM extension so identities/groups/roles sync into tuples in real time.
-- *Exit criteria:* a human can authenticate via Keycloak and a PEP can make a correct `Check` against OpenFGA for a real resource.
+
+Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so authorization is graph-backed rather than LDAP-group + app-local checks alone.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via `AuthzIdp` XR (`gentian-idp-keycloak`); OpenDesk Nubus deploy commented out in `install.sh` |
+| Drop **OpenLDAP + UDM**; Keycloak authoritative | **In progress** | `IDENTITY_MODE=keycloak-native` skips LDAP/UDM provisioning; OpenDesk stack deploy commented out in `install.sh` |
+| **`provider-keycloak` Realm MRs** (drift-safe tenant realms) | **Blocked** → [roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation) | Tenant realms still provisioned via manifest-bridge Jobs |
+| Deploy **OpenFGA** + Postgres store | **Done** | `AuthzIdp` XR + `kernel/appsets/09-authz-idp.yaml`; shared Postgres `openfga` database |
+| Author **base authorization model** (`user`, `group`, `tenant`, derived-ceiling) | **Done** | `authz/model/v0/model.fga`, `model.json`, `tests.fga.yaml`; embedded in operator bootstrap |
+| **Keycloak→OpenFGA event publisher** + SCIM sync | **Done (v0 reconcile)** | `AuthzBridgeReconciler` periodic Keycloak user → OpenFGA tuple sync (no SCIM yet) |
+| **PEP** calling OpenFGA `Check` on real requests | **Done (reference path)** | `gentian-ui` `/api/v1/apps` uses `require_shell_launch()` when `OPENFGA_*` env is set |
+| OIDC validation in first-party apps | **Partial** | Template + `gentian-ui` dogfood JWT validation; not enforced catalogue-wide |
+
+**Stage 1 exit criteria** (from original plan): a human authenticates via Keycloak and a PEP makes a correct `Check` against OpenFGA for a real resource — **met on the default install path** (`install.sh` Steps 14–15).
+
+#### What is missing to start / finish Stage 1?
+
+Stage 1 **minimum work package is implemented** on `feat/new-security` (`install.sh` Steps 14–15). Remaining polish (not blockers for Stage 2):
+
+1. **SCIM / event-driven sync** — bridge uses periodic reconciliation; Keycloak event publisher can replace polling.
+2. **provider-keycloak Realm MRs** — tenant realms still use shell Jobs until upstream gaps close ([roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation)).
+3. **Gateway-level AuthZEN** — PEP is wired in `gentian-ui` BFF; Envoy external auth is Stage 2.
+4. **App-template PEP parity** — copy `require_shell_launch()` pattern into `gentian-app-template` for catalogue apps.
+
+**Not required for Stage 1** (correctly deferred): AppGrant CRD (Stage 2), AuthZEN standardization (Stage 2), agent service accounts / Token Exchange (Stage 2), SPIFFE (Stage 3), ITAM (Stage 3), cosign admission (Horizon A).
+
+**Already in place and reused by Stage 1:** Stage 0 MAC (tenant isolation holds regardless of authZ bugs), `IntegrationBinding` credential wiring (Stage 2 will add ReBAC on top), app-template auth/OIDC stubs.
 
 ### Stage 2 — App permissions, agents, and the PEP
-- **`AppProfile` and `IntegrationBinding` are implemented** (§3.4); extend the provisioning bridge to reconcile binding health and credentials into observability, and introduce the planned **`AppGrant`** CRD so tenant-approved subsets — including publish-side `allowConsumers` — become OpenFGA tuples.
+
+| Item | Status |
+|------|--------|
+| **`AppProfile` + `IntegrationBinding`** | **Done** (§3.4) |
+| **`AppGrant` CRD** + OpenFGA tuple reconciliation | **Planned** |
+| **AuthZEN** PEP↔PDP interface | **Planned** |
+| **Agent identities** (Keycloak SA, RFC 8693, OpenFGA Conditions) | **Planned** |
+
+- Extend the provisioning bridge to reconcile binding health and credentials into observability, and introduce the planned **`AppGrant`** CRD so tenant-approved subsets — including publish-side `allowConsumers` — become OpenFGA tuples.
 - Standardize the **PEP↔PDP** interface on the OpenID **AuthZEN** Authorization API so gateways/apps aren't coupled to OpenFGA.
 - Make agents first-class: `agent:` object type, Keycloak service accounts, **RFC 8693** Token Exchange with `act`/`may_act`, TTL via OpenFGA **Conditions**, revocation via tuple delete.
 - *Exit criteria:* an app installed into a tenant operates within `AppProfile` declaration ∩ `IntegrationBinding` wiring ∩ (future) `AppGrant` ∩ user-ceiling; an agent acting for a user provably cannot exceed that user; revoking delegation is a single tuple delete.

@@ -69,6 +69,8 @@ data:
           user: notificationsapi_user
         - name: nextcloud
           user: nextcloud_user
+        - name: openfga
+          user: openfga_user
 
     cleanup:
       deletePodsOnSuccess: true

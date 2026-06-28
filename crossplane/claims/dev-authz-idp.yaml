@@ -1,0 +1,15 @@
+# AuthzIdp XR claim — OpenFGA + standalone Keycloak (Stage 1, no Nubus).
+#
+# Prerequisites:
+#   - provider-helm Healthy (install.sh Step 13)
+#   - InfraData PostgreSQL Ready (shared DB for Keycloak + OpenFGA)
+#   - kernel/appsets/09-authz-idp.yaml synced ESO + values ConfigMaps
+apiVersion: gentianos.io/v1alpha1
+kind: AuthzIdp
+metadata:
+  name: dev-authz-idp
+  namespace: crossplane-system
+spec:
+  environment: dev
+  idpNamespace: platform-kernel
+  compositeDeletePolicy: Background

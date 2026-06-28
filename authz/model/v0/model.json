@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    { "type": "user" },
+    {
+      "type": "group",
+      "relations": {
+        "member": {
+          "union": {
+            "child": [
+              { "this": {} },
+              { "computedUserset": { "relation": "member" } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "tenant",
+      "relations": {
+        "member": { "this": {} },
+        "admin": {
+          "union": {
+            "child": [
+              { "this": {} },
+              { "computedUserset": { "relation": "member" } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "shell_app",
+      "relations": {
+        "parent": { "this": {} },
+        "can_launch": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "parent" },
+                  "computedUserset": { "relation": "member" }
+                }
+              },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "parent" },
+                  "computedUserset": { "relation": "admin" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "document",
+      "relations": {
+        "parent": { "this": {} },
+        "owner": { "this": {} },
+        "reader": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "parent" },
+                  "computedUserset": { "relation": "member" }
+                }
+              },
+              { "computedUserset": { "relation": "owner" } }
+            ]
+          }
+        },
+        "acting_for": { "this": {} },
+        "can_read": {
+          "union": {
+            "child": [
+              { "computedUserset": { "relation": "reader" } },
+              { "computedUserset": { "relation": "acting_for" } }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

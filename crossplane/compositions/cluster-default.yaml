@@ -227,6 +227,7 @@ spec:
                   "storage/minio"
                   "identity/nubus"
                   "identity/keycloak-bootstrap"
+                  "authz/openfga"
                   "mail/postfix"
                   "mail/dovecot"
             }}

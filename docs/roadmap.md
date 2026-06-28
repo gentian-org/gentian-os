@@ -1,12 +1,16 @@
 # Gentian OS — Roadmap
 
 Planned work not yet fully implemented. For the current platform design see
-[architecture.md](architecture.md) and Stage 0–3 in
-[design/new-security-architecture.md](design/new-security-architecture.md).
+[architecture.md](architecture.md). **Stage 0** (MAC backbone) and **Stage 1**
+(OpenFGA) progress are tracked in
+[design/new-security-architecture.md §4](design/new-security-architecture.md#4-implementation-plan--replacing-nubus).
 
 ---
 
 ## Stage 0 — MAC backbone (new security)
+
+Stage 0 is **complete for dev/homelab** on `feat/new-security`. Detailed status tables
+and Stage 1 gap analysis: [new-security-architecture.md §4](design/new-security-architecture.md#stage-0--foundations-mac-backbone-first).
 
 | Item | Status | Notes |
 |------|--------|-------|

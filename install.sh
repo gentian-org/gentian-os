@@ -482,8 +482,8 @@ create_crossplane_secrets() {
             --arg e "$(_derive postgres authsession_user)" \
             --arg f "$(_derive postgres guardianmanagementapi_user)" \
             --arg g "$(_derive postgres notificationsapi_user)" \
-            --arg h "$(_derive postgres nextcloud_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,selfservice_user_password:$d,authsession_user_password:$e,guardianmanagementapi_user_password:$f,notificationsapi_user_password:$g,nextcloud_user_password:$h}')"
+            --arg h "$(_derive postgres openfga_user)" \
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,selfservice_user_password:$d,authsession_user_password:$e,guardianmanagementapi_user_password:$f,notificationsapi_user_password:$g,openfga_user_password:$h}')"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \
@@ -543,6 +543,12 @@ create_crossplane_secrets() {
             --arg a "$(_derive keycloak adminPassword)" \
             --arg b "$(_derive keycloak intercom_client_secret)" \
             '{admin_password:$a,intercom_client_secret:$b}')"
+
+    # ── authz/openfga ─────────────────────────────────────────────────────────
+    _kv_secret "gentian-os-kernel-authz-openfga" \
+        "$(jq -nc \
+            --arg a "$(_derive openfga preshared_key)" \
+            '{preshared_key:$a}')"
 
     # ── mail/postfix (HMAC-derived fields + operator-supplied relay credentials) ─
     _kv_secret "gentian-os-kernel-mail-postfix" \
@@ -648,6 +654,7 @@ seed_secrets_remaining() {
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
 #   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
+#   - 09-authz-idp:         OpenFGA + standalone Keycloak ESO + values (AuthzIdp XR owns Releases)
 #   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on feat/new-security.
 #
 # Prerequisites:
@@ -857,6 +864,101 @@ install_mac_admission() {
     }
 
     success "Kyverno admission controller is ready."
+}
+
+# =============================================================================
+# Step 14 — AuthzIdp XR (OpenFGA + standalone Keycloak, Stage 1)
+# =============================================================================
+apply_authz_idp_xr() {
+    banner "Step 14 — Apply AuthzIdp XR (OpenFGA + standalone Keycloak)"
+
+    local claim="dev-authz-idp"
+    local timeout="${AUTHZ_IDP_XR_TIMEOUT:-15m}"
+
+    info "Waiting for authz-idp prerequisite ConfigMaps/ExternalSecrets (up to 3m)..."
+    local deadline=$((SECONDS + 180))
+    until kubectl get configmap openfga-base-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get externalsecret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get configmap keycloak-idp-base-values -n platform-kernel >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "authz-idp prerequisites not ready — refresh gentian-appsets and retry."
+            warn "  kubectl get applications -n argocd | grep -E 'openfga|keycloak-idp'"
+            break
+        fi
+        sleep 5
+    done
+
+    info "Applying AuthzIdp claim (${claim})..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/authz-idp.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/authz-idp.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-authz-idp.yaml"
+
+    info "Waiting for AuthzIdp claim to bind (up to 60s)..."
+    local xr_name=""
+    deadline=$((SECONDS + 60))
+    until [[ -n "${xr_name}" ]]; do
+        xr_name=$(kubectl get authzidp "${claim}" -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+        if (( SECONDS > deadline )); then
+            error "AuthzIdp claim ${claim} was never bound to a composite after 60s."
+            exit 1
+        fi
+        [[ -n "${xr_name}" ]] || sleep 3
+    done
+    info "  Composite name: ${xr_name}"
+
+    info "Waiting for XAuthzIdp ${xr_name} to be Ready (timeout: ${timeout})..."
+    kubectl wait "xauthzidp/${xr_name}" \
+        --for=condition=Ready --timeout="${timeout}" \
+    || {
+        error "XAuthzIdp ${xr_name} did not become Ready within ${timeout}."
+        error "  kubectl describe xauthzidp ${xr_name}"
+        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+        exit 1
+    }
+
+    success "AuthzIdp XR ${xr_name} is Ready — OpenFGA and standalone Keycloak provisioned."
+}
+
+install_stage1_operator() {
+    banner "Step 15 — gentian-os operator (Stage 1 authz bridge)"
+
+    local env="${ENV:-dev}"
+    local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
+    local ns="gentian-system"
+    local infra_ns="gentian-infra-${env}"
+
+    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+        kubectl create namespace "$ns"
+    fi
+
+    local openfga_token=""
+    if kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
+        openfga_token=$(kubectl get secret openfga-sensitive-values -n platform-kernel \
+            -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
+            | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
+    fi
+
+    kubectl apply -f "${chart_dir}/crds"
+
+    helm upgrade --install gentian-os "$chart_dir" \
+        --namespace "$ns" \
+        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
+        --set kernelDomain="${KERNEL_DOMAIN}" \
+        --set tenancyMode="${TENANCY_MODE:-multi}" \
+        --set routingMode="${ROUTING_MODE:-gateway}" \
+        --set kernelRealm="${KERNEL_REALM:-kernel}" \
+        --set identityMode="keycloak-native" \
+        --set authzBridge.enabled=true \
+        --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
+        --set "authzBridge.openfgaToken=${openfga_token}" \
+        --set infraNamespace="platform-kernel" \
+        --set "servicesNamespace=platform-kernel" \
+        --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak.platform-kernel.svc.cluster.local:8080" \
+        --wait --timeout 5m
+
+    success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED."
+    info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"
 }
 
 # =============================================================================
@@ -1291,6 +1393,12 @@ print_summary_cp() {
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     infra_minio_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-minio \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    local authz_idp_ready openfga_ready keycloak_ready
+    authz_idp_ready=$(kubectl get xauthzidp -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    openfga_ready=$(kubectl get release.helm.crossplane.io/dev-authz-idp-openfga \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    keycloak_ready=$(kubectl get release.helm.crossplane.io/dev-authz-idp-keycloak \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
@@ -1310,10 +1418,14 @@ print_summary_cp() {
     echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
     echo -e "${GREEN}  InfraData Redis: dev-infra-data-redis (Ready=${infra_redis_ready})${NC}"
     echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  AuthzIdp XR   : Ready=${authz_idp_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
-    echo -e "${GREEN}  OpenDesk stack : skipped (Nubus / Intercom / Nextcloud disabled)${NC}"
-    echo -e "${GREEN}  Stopped at     : Step 13b (cluster ready for IdP work)${NC}"
-    echo -e "${GREEN}  Next step      : deploy Keycloak + OpenFGA IdP (docs/design/new-security-architecture.md)${NC}"
+    echo -e "${GREEN}  OpenDesk apps  : not deployed (Nubus / Intercom / Nextcloud commented out in install.sh)${NC}"
+    echo -e "${GREEN}  Completed      : Steps 14–15 (Stage 1 IdP + authz bridge)${NC}"
+    echo ""
+    echo -e "${GREEN}  Inspect authz stack:${NC}"
+    echo -e "${GREEN}    kubectl get xauthzidp,authzidp -n crossplane-system${NC}"
+    echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
@@ -1326,8 +1438,7 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
-    echo -e "${GREEN}  Re-enable later install steps (orchestrator, gateway, tenants) after the new IdP is up.${NC}"
-    echo -e "${GREEN}  Uncomment Steps 14+ in install.sh main_cp() when ready.${NC}"
+    echo -e "${GREEN}  Re-enable OpenDesk app deploy steps in install.sh main_cp() when migrating legacy apps.${NC}"
     echo ""
     echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
     echo ""
@@ -1344,10 +1455,6 @@ main_cp() {
     echo ""
 
     parse_args "$@"
-
-    # feat/new-security: infra-only bootstrap — no OpenDesk chart/image pulls.
-    # OpenBao still seeds legacy identity/* paths for future migration; nothing deploys them.
-    export SKIP_OPENDESK_STACK="${SKIP_OPENDESK_STACK:-1}"
 
     if [[ "${INSTALL_VERIFY_ONLY:-0}" == "1" ]]; then
         verify_argocd_apps || true
@@ -1397,11 +1504,7 @@ main_cp() {
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────
     install_argocd              # Step 5
-    if [[ "${SKIP_OPENDESK_STACK:-0}" != "1" ]]; then
-        setup_argocd_repos          # Step 5b — opencode OCI repo credentials for Nubus/Nextcloud charts
-    else
-        info "SKIP_OPENDESK_STACK=1 — skipping Step 5b (opencode Argo OCI repo secrets)."
-    fi
+    setup_argocd_repos          # Step 5b — opencode OCI repo credentials (optional; for future OpenDesk apps)
     install_argocd_image_updater  # Step 5c
     bootstrap_transit_app       # Step 6  — transit seal ArgoCD app
     init_openbao_transit        # Step 7  — transit init + auto-unseal Secret
@@ -1423,37 +1526,29 @@ main_cp() {
     apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
     install_mac_admission       # Step 13c — Kyverno admission (Stage 0 MAC)
 
-    # feat/new-security handoff: stop once shared infra is up.
-    if [[ "${SKIP_OPENDESK_STACK:-0}" == "1" ]]; then
-        success "Step 13b complete — cluster ready for Keycloak + OpenFGA IdP work."
-        unset INSTALL_START_EPOCH
-        save_install_state
-        print_summary_cp
-        return 0
-    fi
+    # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
+    apply_authz_idp_xr          # Step 14 — OpenFGA + Keycloak via AuthzIdp XR
+    install_stage1_operator     # Step 15 — operator with authz bridge
 
-    # ── Steps 14+ (OpenDesk full install — template for post-IdP re-enable) ───
-    # When the new IdP is live: remove the SKIP_OPENDESK_STACK early return above,
-    # then uncomment the steps below. See docs/design/new-security-architecture.md.
-    #
-    # deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
-    # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE
-    # deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (MAIL_SERVICE_MODE=kernel)
-    # install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
-    # apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays
-    # wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
-    # bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
+    # ── OpenDesk app stack (commented — uncomment when migrating legacy apps) ─
+    # deploy_nubus                # Step 16 — Nubus namespaces + ESO Secrets + Release CR
+    # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 16b — kernel LDAP SUBTREE
+    # deploy_kernel_mail_services # Step 17b — Postfix + Dovecot (MAIL_SERVICE_MODE=kernel)
+    # apply_kernel_gateway_overlays || true  # Step 17a — gateway value overlays
+    # wait_for_gateway_platform || true    # Step 17d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
+    # bootstrap_appprofiles       # Step 17c — AppProfile CRs from gentian-apps repo
     #
     # wait_for_setup_iam_job || true
     # verify_argocd_apps || true
     # verify_keycloak_iframe_policy || true
     # verify_intercom_ics || true
-    # reconcile_nextcloud_office || true  # Step 16c — Collabora / Nextcloud office
-    # configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
-    #
-    # unset INSTALL_START_EPOCH
-    # save_install_state
-    # print_summary_cp
+    # reconcile_nextcloud_office || true  # Step 18c — Collabora / Nextcloud office
+    # configure_github_actions_secrets   # Step 18d — CI_BOT_PAT → gentian-os Actions secrets
+
+    success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA) and authz bridge are live."
+    unset INSTALL_START_EPOCH
+    save_install_state
+    print_summary_cp
 }
 
 main_cp "$@"
