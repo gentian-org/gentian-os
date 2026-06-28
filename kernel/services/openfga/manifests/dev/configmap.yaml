@@ -21,10 +21,11 @@ data:
       connMaxIdleTime: 30s
       connMaxLifetime: 60s
       applyMigrations: true
-      # initContainer avoids a separate migrate Job that Helm/provider-helm can
-      # miss on failed installs (Deployment init then waits forever for the Job).
+      # initContainer runs `openfga migrate` before the server starts. waitForMigrations
+      # must stay true — the chart only renders initContainers when it is true (job
+      # waiter is gated separately on migrationType=job).
       migrationType: initContainer
-      waitForMigrations: false
+      waitForMigrations: true
     grpc:
       enabled: true
     telemetry:

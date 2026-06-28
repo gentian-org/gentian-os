@@ -45,7 +45,13 @@ Deploy a service mesh (Istio or Linkerd) and [SPIFFE/SPIRE](https://spiffe.io/) 
 
 ---
 
-## Crossplane & operator
+## Stage 1 — Identity + authorization (Suze)
+
+**Suze** (**S**ecure **U**niversal **Z**ero-trust **E**nvironment) is the Gentian IdP Crossplane
+composite — Keycloak plus OpenFGA. Status tables and gap analysis:
+[design/new-security-architecture.md §4](design/new-security-architecture.md#stage-1--identity--authorization-core).
+
+---
 
 Today Crossplane owns tenant infrastructure lifecycle via Compositions and the
 manifest bridge (`tenant-{name}-provisioning-jobs`: `jobs.json`, `objects.json`).

@@ -1,5 +1,7 @@
-# Suze — Gentian IdP composite (Keycloak authentication + OpenFGA authorization).
-# Named after the gentian-root bitter; pairs with InfraData for shared Postgres.
+# Suze — Secure Universal Zero-trust Environment
+#
+# Gentian IdP composite (Keycloak authentication + OpenFGA authorization).
+# Provisioned by Crossplane composition `suze`; claim kind `Suze`, composite `XSuze`.
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:

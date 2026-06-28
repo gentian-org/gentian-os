@@ -1,6 +1,7 @@
 # Suze XR claim — Gentian IdP (Keycloak + OpenFGA), Stage 1.
 #
-# Suze is the gentian-root bitter: authentication (Keycloak) + authorization (OpenFGA).
+# **Suze** = **S**ecure **U**niversal **Z**ero-trust **E**nvironment — the Gentian
+# platform identity and authorization plane (Keycloak + OpenFGA).
 #
 # Prerequisites:
 #   - provider-helm Healthy (install.sh Step 13)

@@ -870,11 +870,29 @@ install_mac_admission() {
 # Step 14 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
 # =============================================================================
 retire_legacy_authz_idp_xr() {
-    if ! kubectl get authzidp dev-authz-idp -n crossplane-system >/dev/null 2>&1; then
-        return 0
+    # Legacy AuthzIdp claim (renamed to Suze in feat/new-security).
+    if kubectl get crd authzidps.gentianos.io >/dev/null 2>&1 \
+        && kubectl get authzidp dev-authz-idp -n crossplane-system >/dev/null 2>&1; then
+        warn "Retiring legacy AuthzIdp claim (renamed to Suze)..."
+        kubectl delete authzidp dev-authz-idp -n crossplane-system --timeout=180s 2>/dev/null || true
     fi
-    warn "Retiring legacy AuthzIdp claim (renamed to Suze)..."
-    kubectl delete authzidp dev-authz-idp -n crossplane-system --timeout=180s 2>/dev/null || true
+
+    # Orphaned Helm Release MRs from the deleted AuthzIdp composite.
+    local rel
+    while IFS= read -r rel; do
+        [[ -z "${rel}" ]] && continue
+        warn "Removing orphaned legacy Release ${rel}..."
+        kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
+    done < <(kubectl get release.helm.crossplane.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep -E 'dev-authz-idp' || true)
+
+    for hr in gentian-openfga gentian-idp-keycloak; do
+        if helm status "${hr}" -n platform-kernel >/dev/null 2>&1; then
+            warn "Uninstalling legacy Helm release ${hr} before Suze reinstall..."
+            helm uninstall "${hr}" -n platform-kernel --wait --timeout=3m 2>/dev/null || true
+        fi
+    done
+
     local deadline=$((SECONDS + 120))
     while kubectl get xauthzidp -o name 2>/dev/null | grep -q authz-idp; do
         if (( SECONDS > deadline )); then
@@ -885,11 +903,43 @@ retire_legacy_authz_idp_xr() {
     done
 }
 
+wait_for_crd_established() {
+    local crd="$1"
+    local timeout_sec="${2:-120}"
+    local deadline=$((SECONDS + timeout_sec))
+    until kubectl get crd "${crd}" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null \
+        | grep -q True; do
+        if (( SECONDS > deadline )); then
+            error "CRD ${crd} did not become Established within ${timeout_sec}s."
+            return 1
+        fi
+        sleep 3
+    done
+}
+
+wait_xr_condition_ready() {
+    local api_version_kind="$1"  # e.g. xsuze/my-xr
+    local timeout_sec="$2"
+    local deadline=$((SECONDS + timeout_sec))
+    while true; do
+        local ready
+        ready=$(kubectl get "${api_version_kind}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+        if [[ "${ready}" == "True" ]]; then
+            return 0
+        fi
+        if (( SECONDS > deadline )); then
+            return 1
+        fi
+        sleep 10
+    done
+}
+
 apply_suze_xr() {
-    banner "Step 14 — Apply Suze XR (Gentian IdP: Keycloak + OpenFGA)"
+    banner "Step 14 — Apply Suze XR (Secure Universal Zero-trust Environment)"
 
     local claim="dev-suze"
-    local timeout="${SUZE_XR_TIMEOUT:-20m}"
+    local timeout_sec="${SUZE_XR_TIMEOUT_SEC:-1200}"
 
     retire_legacy_authz_idp_xr
 
@@ -911,6 +961,7 @@ apply_suze_xr() {
 
     info "Applying Suze claim (${claim})..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
+    wait_for_crd_established "xsuze.gentianos.io" 120
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/suze.yaml"
     kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-suze.yaml"
 
@@ -928,7 +979,7 @@ apply_suze_xr() {
     done
     info "  Composite name: ${xr_name}"
 
-    if kubectl wait "xsuze/${xr_name}" --for=condition=Ready --timeout=10s >/dev/null 2>&1; then
+    if wait_xr_condition_ready "xsuze/${xr_name}" 10; then
         success "Suze XR ${xr_name} is already Ready — skipping reinstall."
         return 0
     fi
@@ -955,13 +1006,13 @@ apply_suze_xr() {
         fi
     done
 
-    info "Waiting for XSuze ${xr_name} to be Ready (timeout: ${timeout})..."
-    kubectl wait "xsuze/${xr_name}" \
-        --for=condition=Ready --timeout="${timeout}" \
+    info "Waiting for XSuze ${xr_name} to be Ready (timeout: ${timeout_sec}s)..."
+    wait_xr_condition_ready "xsuze/${xr_name}" "${timeout_sec}" \
     || {
-        error "XSuze ${xr_name} did not become Ready within ${timeout}."
+        error "XSuze ${xr_name} did not become Ready within ${timeout_sec}s."
         error "  kubectl describe xsuze ${xr_name}"
         error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+        error "  kubectl get pods -n platform-kernel"
         exit 1
     }
 

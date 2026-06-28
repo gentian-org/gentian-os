@@ -378,7 +378,7 @@ Stage 0 is **complete for dev/homelab**. Remaining rows are optional upgrades (C
 
 Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so authorization is graph-backed rather than LDAP-group + app-local checks alone.
 
-**Naming:** the Crossplane composite for this pair is **Suze** (after the gentian-root bitter) — claim kind `Suze`, composite `XSuze`, claim `dev-suze`. It sits alongside **InfraData** for shared databases. Component Helm releases remain `gentian-idp-keycloak` and `gentian-openfga`.
+**Naming:** the Crossplane composite for this pair is **Suze** — **S**ecure **U**niversal **Z**ero-trust **E**nvironment (claim kind `Suze`, composite `XSuze`, claim `dev-suze`). It sits alongside **InfraData** for shared databases. Component Helm releases remain `gentian-idp-keycloak` and `gentian-openfga`.
 
 | Item | Status | Notes |
 |------|--------|-------|
