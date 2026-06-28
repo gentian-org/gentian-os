@@ -1222,6 +1222,7 @@ print_summary_cp() {
     echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
     echo ""
     echo -e "${GREEN}  OpenDesk stack : skipped (Nubus / Intercom / Nextcloud disabled)${NC}"
+    echo -e "${GREEN}  Stopped at     : Step 13b (cluster ready for IdP work)${NC}"
     echo -e "${GREEN}  Next step      : deploy Keycloak + OpenFGA IdP (docs/design/new-security-architecture.md)${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
@@ -1235,11 +1236,10 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
-    echo -e "${GREEN}  Tenants: none — provision when ready:${NC}"
-    echo -e "${GREEN}    kubectl gentian tenants list${NC}"
-    echo -e "${GREEN}    kubectl gentian tenants deploy demo${NC}"
+    echo -e "${GREEN}  Re-enable later install steps (orchestrator, gateway, tenants) after the new IdP is up.${NC}"
+    echo -e "${GREEN}  Uncomment Steps 14+ in install.sh main_cp() when ready.${NC}"
     echo ""
-    echo -e "${GREEN}  Gentian OS installation complete.${NC}"
+    echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
     echo ""
 }
 
@@ -1332,32 +1332,37 @@ main_cp() {
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
 
-    # ── OpenDesk / Nubus / Intercom stack (disabled on feat/new-security) ─────
-    # Cluster is ready for Keycloak + OpenFGA (docs/design/new-security-architecture.md).
-    # deploy_nubus                # Step 14 — Nubus (registry.opencode.de)
-    # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — Nubus LDAP scope
-    # deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (opencode charts)
+    # feat/new-security handoff: stop once shared infra is up.
+    if [[ "${SKIP_OPENDESK_STACK:-0}" == "1" ]]; then
+        success "Step 13b complete — cluster ready for Keycloak + OpenFGA IdP work."
+        unset INSTALL_START_EPOCH
+        save_install_state
+        print_summary_cp
+        return 0
+    fi
 
-    install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
-    # apply_kernel_gateway_overlays || true  # Step 15a — Nextcloud/Intercom/Nubus gateway overlays
-    wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
-    bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
-
-    # Step 16 — verification (OpenDesk-specific checks disabled)
+    # ── Steps 14+ (OpenDesk full install — template for post-IdP re-enable) ───
+    # When the new IdP is live: remove the SKIP_OPENDESK_STACK early return above,
+    # then uncomment the steps below. See docs/design/new-security-architecture.md.
+    #
+    # deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
+    # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE
+    # deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (MAIL_SERVICE_MODE=kernel)
+    # install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
+    # apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays
+    # wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
+    # bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
+    #
     # wait_for_setup_iam_job || true
-    verify_argocd_apps || true
+    # verify_argocd_apps || true
     # verify_keycloak_iframe_policy || true
     # verify_intercom_ics || true
     # reconcile_nextcloud_office || true  # Step 16c — Collabora / Nextcloud office
-
-    configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
-
-    # Clear the persisted run-start epoch so the next install (after a future
-    # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.
-    unset INSTALL_START_EPOCH
-    save_install_state
-
-    print_summary_cp
+    # configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
+    #
+    # unset INSTALL_START_EPOCH
+    # save_install_state
+    # print_summary_cp
 }
 
 main_cp "$@"

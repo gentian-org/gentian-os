@@ -1,7 +1,8 @@
 ---
 # Argo Helm releases for shared infrastructure data stores (redis, minio).
 #
-# Chart source: oci://registry-1.docker.io/bitnamicharts
+# Chart source: oci://registry-1.docker.io/bitnamicharts/{redis,minio}
+# (full OCI path per chart — ArgoCD cannot use repoURL + chart for OCI registries)
 # Values: kernel/services/{redis,minio}/values/ layered with kernel/values/env/
 #
 # PostgreSQL and MariaDB are deployed by the InfraData Crossplane XR
@@ -29,13 +30,11 @@ spec:
       - list:
           elements:
           - app: redis
-            chart: redis
-            repoURL: oci://registry-1.docker.io/bitnamicharts
+            repoURL: oci://registry-1.docker.io/bitnamicharts/redis
             version: "18.6.1"
             wave: "12"
           - app: minio
-            chart: minio
-            repoURL: oci://registry-1.docker.io/bitnamicharts
+            repoURL: oci://registry-1.docker.io/bitnamicharts/minio
             version: "16.0.10"
             wave: "13"
   template:
@@ -50,7 +49,6 @@ spec:
         targetRevision: feat/new-security
         ref: values
       - repoURL: '{{.repoURL}}'
-        chart: '{{.chart}}'
         targetRevision: '{{.version}}'
         helm:
           valueFiles:
