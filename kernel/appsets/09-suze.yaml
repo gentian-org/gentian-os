@@ -1,12 +1,12 @@
 ---
-# Stage 1 — OpenFGA + standalone Keycloak prerequisites (ESO secrets, values ConfigMaps).
-# Helm releases are provisioned by the AuthzIdp Crossplane XR (authz-idp composition).
+# Stage 1 — Suze (Gentian IdP): OpenFGA + standalone Keycloak prerequisites.
+# Helm releases are provisioned by the Suze Crossplane XR (suze composition).
 #
-# Sync wave 9: after InfraData prerequisites (wave 8) and before AuthzIdp claim (Step 14).
+# Sync wave 9: after InfraData prerequisites (wave 8) and before Suze claim (Step 14).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: gentian-authz-idp
+  name: gentian-suze
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "9"

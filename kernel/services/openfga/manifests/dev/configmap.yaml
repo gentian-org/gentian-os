@@ -1,4 +1,4 @@
-# OpenFGA — plain Helm values (merged by AuthzIdp Crossplane composition).
+# OpenFGA — plain Helm values (merged by Suze Crossplane composition).
 ---
 apiVersion: v1
 kind: ConfigMap

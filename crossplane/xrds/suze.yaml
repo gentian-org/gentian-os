@@ -1,17 +1,19 @@
+# Suze — Gentian IdP composite (Keycloak authentication + OpenFGA authorization).
+# Named after the gentian-root bitter; pairs with InfraData for shared Postgres.
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: xauthzidps.gentianos.io
+  name: xsuze.gentianos.io
 spec:
   group: gentianos.io
   names:
-    kind: XAuthzIdp
-    plural: xauthzidps
+    kind: XSuze
+    plural: xsuze
   claimNames:
-    kind: AuthzIdp
-    plural: authzidps
+    kind: Suze
+    plural: suze
   defaultCompositionRef:
-    name: authz-idp
+    name: suze
   versions:
     - name: v1alpha1
       served: true

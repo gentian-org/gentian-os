@@ -378,12 +378,14 @@ Stage 0 is **complete for dev/homelab**. Remaining rows are optional upgrades (C
 
 Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so authorization is graph-backed rather than LDAP-group + app-local checks alone.
 
+**Naming:** the Crossplane composite for this pair is **Suze** (after the gentian-root bitter) — claim kind `Suze`, composite `XSuze`, claim `dev-suze`. It sits alongside **InfraData** for shared databases. Component Helm releases remain `gentian-idp-keycloak` and `gentian-openfga`.
+
 | Item | Status | Notes |
 |------|--------|-------|
-| **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via `AuthzIdp` XR (`gentian-idp-keycloak`); OpenDesk Nubus deploy commented out in `install.sh` |
+| **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via **Suze** XR (`gentian-idp-keycloak`); OpenDesk Nubus deploy commented out in `install.sh` |
 | Drop **OpenLDAP + UDM**; Keycloak authoritative | **In progress** | `IDENTITY_MODE=keycloak-native` skips LDAP/UDM provisioning; OpenDesk stack deploy commented out in `install.sh` |
 | **`provider-keycloak` Realm MRs** (drift-safe tenant realms) | **Blocked** → [roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation) | Tenant realms still provisioned via manifest-bridge Jobs |
-| Deploy **OpenFGA** + Postgres store | **Done** | `AuthzIdp` XR + `kernel/appsets/09-authz-idp.yaml`; shared Postgres `openfga` database |
+| Deploy **OpenFGA** + Postgres store | **Done** | **Suze** XR + `kernel/appsets/09-suze.yaml`; shared Postgres `openfga` database |
 | Author **base authorization model** (`user`, `group`, `tenant`, derived-ceiling) | **Done** | `authz/model/v0/model.fga`, `model.json`, `tests.fga.yaml`; embedded in operator bootstrap |
 | **Keycloak→OpenFGA event publisher** + SCIM sync | **Done (v0 reconcile)** | `AuthzBridgeReconciler` periodic Keycloak user → OpenFGA tuple sync (no SCIM yet) |
 | **PEP** calling OpenFGA `Check` on real requests | **Done (reference path)** | `gentian-ui` `/api/v1/apps` uses `require_shell_launch()` when `OPENFGA_*` env is set |

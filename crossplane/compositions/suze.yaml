@@ -1,16 +1,16 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: authz-idp
+  name: suze
   labels:
-    gentianos.io/composition: authz-idp
+    gentianos.io/composition: suze
 spec:
   compositeTypeRef:
     apiVersion: gentianos.io/v1alpha1
-    kind: XAuthzIdp
+    kind: XSuze
   mode: Pipeline
   pipeline:
-    - step: render-authz-idp-releases
+    - step: render-suze-releases
       functionRef:
         name: function-go-templating
       input:
@@ -24,7 +24,6 @@ spec:
             {{- $name := $xr.metadata.name }}
             {{- $env := $spec.environment }}
             {{- $ns := default "platform-kernel" $spec.idpNamespace }}
-            {{- $infraNs := printf "gentian-infra-%s" $env }}
 
             {{- $fgaSpec := default dict $spec.openfga }}
             {{- $fgaRelease := default "gentian-openfga" $fgaSpec.helmReleaseName }}

@@ -1,13 +1,15 @@
-# AuthzIdp XR claim — OpenFGA + standalone Keycloak (Stage 1, no Nubus).
+# Suze XR claim — Gentian IdP (Keycloak + OpenFGA), Stage 1.
+#
+# Suze is the gentian-root bitter: authentication (Keycloak) + authorization (OpenFGA).
 #
 # Prerequisites:
 #   - provider-helm Healthy (install.sh Step 13)
 #   - InfraData PostgreSQL Ready (shared DB for Keycloak + OpenFGA)
-#   - kernel/appsets/09-authz-idp.yaml synced ESO + values ConfigMaps
+#   - kernel/appsets/09-suze.yaml synced ESO + values ConfigMaps
 apiVersion: gentianos.io/v1alpha1
-kind: AuthzIdp
+kind: Suze
 metadata:
-  name: dev-authz-idp
+  name: dev-suze
   namespace: crossplane-system
 spec:
   environment: dev

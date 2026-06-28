@@ -654,7 +654,7 @@ seed_secrets_remaining() {
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
 #   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
-#   - 09-authz-idp:         OpenFGA + standalone Keycloak ESO + values (AuthzIdp XR owns Releases)
+#   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
 #   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on feat/new-security.
 #
 # Prerequisites:
@@ -867,15 +867,33 @@ install_mac_admission() {
 }
 
 # =============================================================================
-# Step 14 — AuthzIdp XR (OpenFGA + standalone Keycloak, Stage 1)
+# Step 14 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
 # =============================================================================
-apply_authz_idp_xr() {
-    banner "Step 14 — Apply AuthzIdp XR (OpenFGA + standalone Keycloak)"
+retire_legacy_authz_idp_xr() {
+    if ! kubectl get authzidp dev-authz-idp -n crossplane-system >/dev/null 2>&1; then
+        return 0
+    fi
+    warn "Retiring legacy AuthzIdp claim (renamed to Suze)..."
+    kubectl delete authzidp dev-authz-idp -n crossplane-system --timeout=180s 2>/dev/null || true
+    local deadline=$((SECONDS + 120))
+    while kubectl get xauthzidp -o name 2>/dev/null | grep -q authz-idp; do
+        if (( SECONDS > deadline )); then
+            warn "Legacy XAuthzIdp still present after 2m — continuing."
+            break
+        fi
+        sleep 5
+    done
+}
 
-    local claim="dev-authz-idp"
-    local timeout="${AUTHZ_IDP_XR_TIMEOUT:-20m}"
+apply_suze_xr() {
+    banner "Step 14 — Apply Suze XR (Gentian IdP: Keycloak + OpenFGA)"
 
-    info "Waiting for authz-idp Argo apps + prerequisites in platform-kernel (up to 3m)..."
+    local claim="dev-suze"
+    local timeout="${SUZE_XR_TIMEOUT:-20m}"
+
+    retire_legacy_authz_idp_xr
+
+    info "Waiting for Suze Argo apps + prerequisites in platform-kernel (up to 3m)..."
     local deadline=$((SECONDS + 180))
     until kubectl get application openfga-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
         && kubectl get application keycloak-idp-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
@@ -884,34 +902,34 @@ apply_authz_idp_xr() {
         && kubectl get configmap keycloak-idp-base-values -n platform-kernel >/dev/null 2>&1 \
         && kubectl get secret keycloak-idp-sensitive-values -n platform-kernel >/dev/null 2>&1; do
         if (( SECONDS > deadline )); then
-            warn "authz-idp prerequisites not ready — refresh gentian-appsets and retry."
+            warn "Suze prerequisites not ready — refresh gentian-appsets and retry."
             warn "  kubectl get applications -n argocd | grep -E 'openfga|keycloak-idp'"
             break
         fi
         sleep 5
     done
 
-    info "Applying AuthzIdp claim (${claim})..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/authz-idp.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/authz-idp.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-authz-idp.yaml"
+    info "Applying Suze claim (${claim})..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/suze.yaml"
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-suze.yaml"
 
-    info "Waiting for AuthzIdp claim to bind (up to 60s)..."
+    info "Waiting for Suze claim to bind (up to 60s)..."
     local xr_name=""
     deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get authzidp "${claim}" -n crossplane-system \
+        xr_name=$(kubectl get suze "${claim}" -n crossplane-system \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
-            error "AuthzIdp claim ${claim} was never bound to a composite after 60s."
+            error "Suze claim ${claim} was never bound to a composite after 60s."
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
     done
     info "  Composite name: ${xr_name}"
 
-    if kubectl wait "xauthzidp/${xr_name}" --for=condition=Ready --timeout=10s >/dev/null 2>&1; then
-        success "AuthzIdp XR ${xr_name} is already Ready — skipping reinstall."
+    if kubectl wait "xsuze/${xr_name}" --for=condition=Ready --timeout=10s >/dev/null 2>&1; then
+        success "Suze XR ${xr_name} is already Ready — skipping reinstall."
         return 0
     fi
 
@@ -924,7 +942,7 @@ apply_authz_idp_xr() {
         synced=$(kubectl get release.helm.crossplane.io/"${rel}" \
             -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)
         if [[ "${state}" == "failed" || "${synced}" == "False" ]]; then
-            warn "Resetting failed AuthzIdp Release ${rel} for clean reinstall..."
+            warn "Resetting failed Suze Release ${rel} for clean reinstall..."
             kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
         fi
     done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
@@ -937,17 +955,17 @@ apply_authz_idp_xr() {
         fi
     done
 
-    info "Waiting for XAuthzIdp ${xr_name} to be Ready (timeout: ${timeout})..."
-    kubectl wait "xauthzidp/${xr_name}" \
+    info "Waiting for XSuze ${xr_name} to be Ready (timeout: ${timeout})..."
+    kubectl wait "xsuze/${xr_name}" \
         --for=condition=Ready --timeout="${timeout}" \
     || {
-        error "XAuthzIdp ${xr_name} did not become Ready within ${timeout}."
-        error "  kubectl describe xauthzidp ${xr_name}"
+        error "XSuze ${xr_name} did not become Ready within ${timeout}."
+        error "  kubectl describe xsuze ${xr_name}"
         error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
         exit 1
     }
 
-    success "AuthzIdp XR ${xr_name} is Ready — OpenFGA and standalone Keycloak provisioned."
+    success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
 }
 
 install_stage1_operator() {
@@ -1423,14 +1441,13 @@ print_summary_cp() {
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     infra_minio_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-minio \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    local authz_idp_ready openfga_ready keycloak_ready
-    authz_idp_ready=$(kubectl get xauthzidp -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    local authz_xr openfga_rel keycloak_rel
-    authz_xr=$(kubectl get authzidp dev-authz-idp -n crossplane-system \
-        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || echo "dev-authz-idp")
-    openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${authz_xr}" \
+    local suze_ready openfga_ready keycloak_ready suze_xr
+    suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    suze_xr=$(kubectl get suze dev-suze -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || echo "dev-suze")
+    openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1)
-    keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${authz_xr}" \
+    keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep keycloak | head -1)
     openfga_ready=$(kubectl get release.helm.crossplane.io/"${openfga_rel}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
@@ -1455,13 +1472,13 @@ print_summary_cp() {
     echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
     echo -e "${GREEN}  InfraData Redis: dev-infra-data-redis (Ready=${infra_redis_ready})${NC}"
     echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
-    echo -e "${GREEN}  AuthzIdp XR   : Ready=${authz_idp_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
+    echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
     echo -e "${GREEN}  OpenDesk apps  : not deployed (Nubus / Intercom / Nextcloud commented out in install.sh)${NC}"
     echo -e "${GREEN}  Completed      : Steps 14–15 (Stage 1 IdP + authz bridge)${NC}"
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
-    echo -e "${GREEN}    kubectl get xauthzidp,authzidp -n crossplane-system${NC}"
+    echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"
     echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
@@ -1564,7 +1581,7 @@ main_cp() {
     install_mac_admission       # Step 13c — Kyverno admission (Stage 0 MAC)
 
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
-    apply_authz_idp_xr          # Step 14 — OpenFGA + Keycloak via AuthzIdp XR
+    apply_suze_xr               # Step 14 — Gentian IdP (Keycloak + OpenFGA) via Suze XR
     install_stage1_operator     # Step 15 — operator with authz bridge
 
     # ── OpenDesk app stack (commented — uncomment when migrating legacy apps) ─
