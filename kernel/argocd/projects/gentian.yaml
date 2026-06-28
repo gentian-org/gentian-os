@@ -11,6 +11,8 @@ spec:
 
   # Source repositories
   sourceRepos:
+  - 'https://github.com/gentian-org/gentian-os'                                                           # Multi-source $values ref (bootstrap + ApplicationSets)
+  - 'https://github.com/gentian-org/gentian-os/*'                                                         # Paths under gentian-os repo
   - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository

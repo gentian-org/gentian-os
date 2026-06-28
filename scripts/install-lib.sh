@@ -2703,6 +2703,60 @@ install_argocd_image_updater() {
 }
 
 # =============================================================================
+# Wait until an Argo CD Application has created its target workload.
+# install.sh applies bootstrap Applications with kubectl; the application-
+# controller reconciles asynchronously. Polling for pods immediately yields
+# permanent "NotScheduledYet" even on a healthy cluster.
+# =============================================================================
+_wait_for_argocd_application_workload() {
+    local app="$1" ns="$2" resource_kind="$3" label_selector="$4" timeout="${5:-300}"
+    local start=$SECONDS elapsed=0 sync_status health sync_msg
+
+    info "Waiting for Argo CD Application '${app}' to deploy ${resource_kind} in ${ns} (up to ${timeout}s)..."
+    kubectl rollout status statefulset/argocd-application-controller -n argocd \
+        --timeout=120s >/dev/null 2>&1 \
+        || warn "argocd-application-controller not Ready yet — continuing to poll."
+
+    kubectl annotate application "${app}" -n argocd \
+        argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+
+    while (( elapsed < timeout )); do
+        if kubectl get "${resource_kind}" -n "${ns}" -l "${label_selector}" \
+                --no-headers 2>/dev/null | grep -q .; then
+            success "Argo CD Application '${app}' created ${resource_kind} in ${ns}."
+            return 0
+        fi
+
+        sync_status=$(kubectl get application "${app}" -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+        health=$(kubectl get application "${app}" -n argocd \
+            -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+        sync_msg=$(kubectl get application "${app}" -n argocd \
+            -o jsonpath='{.status.operationState.message}' 2>/dev/null || true)
+
+        if [[ "${sync_status}" == "Unknown" && -n "${sync_msg}" ]]; then
+            error "Argo CD Application '${app}' failed to sync: ${sync_msg}"
+            error "Inspect: kubectl describe application ${app} -n argocd"
+            return 1
+        fi
+
+        if (( elapsed % 30 == 0 )); then
+            echo "  [${elapsed}s] app=${app} sync=${sync_status:-<none>} health=${health:-<none>}"
+            [[ -n "${sync_msg}" ]] && echo "         message: ${sync_msg}"
+        fi
+        sleep 5
+        elapsed=$((SECONDS - start))
+    done
+
+    error "Timed out waiting for Argo CD Application '${app}' to create ${resource_kind} in ${ns}."
+    error "Inspect: kubectl describe application ${app} -n argocd"
+    kubectl get application "${app}" -n argocd \
+        -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null \
+        | sed 's/^/  /' || true
+    return 1
+}
+
+# =============================================================================
 # 8. Deploy OpenBao transit seal instance
 # =============================================================================
 bootstrap_transit_app() {
@@ -2722,6 +2776,14 @@ bootstrap_transit_app() {
 
     kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/openbao-transit-application.yaml"
     success "Applied openbao-transit-application.yaml"
+
+    _wait_for_argocd_application_workload \
+        openbao-transit openbao statefulset \
+        "app.kubernetes.io/instance=openbao-transit" 300 \
+    || {
+        error "Step 8 failed: Argo CD did not deploy openbao-transit StatefulSet."
+        exit 1
+    }
 
     if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
         error "Step 7 failed: openbao-transit pod never became Ready. Aborting install."

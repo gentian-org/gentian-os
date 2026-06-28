@@ -48,6 +48,8 @@ kubectl wait --for=condition=available --timeout=300s \
 kubectl wait --for=condition=available --timeout=300s \
   deployment/argocd-applicationset-controller -n "${ARGOCD_NAMESPACE}"
 
+kubectl rollout status statefulset/argocd-application-controller -n "${ARGOCD_NAMESPACE}" --timeout=300s
+
 # Expose ArgoCD server via NodePort with static ports
 echo "Configuring ArgoCD server as NodePort (HTTP: 30880, HTTPS: 30443)..."
 kubectl patch svc argocd-server -n "${ARGOCD_NAMESPACE}" -p '{

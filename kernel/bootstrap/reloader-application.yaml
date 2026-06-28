@@ -35,7 +35,7 @@ spec:
       - $values/kernel/values/reloader.yaml
   # Source 2: Values file from Git (referenced as $values by Source 1)
   - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: feat/new-security
     ref: values
   destination:
     server: https://kubernetes.default.svc
