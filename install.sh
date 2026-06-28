@@ -720,13 +720,59 @@ install_provider_helm() {
 # Prerequisites:
 #   - provider-helm Healthy (Step 13)
 #   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
+#   - charts/infra/packages published on GitHub for the target git branch
+#     (run ./scripts/publish-infra-charts.sh and push before install when adding charts)
 # =============================================================================
+detect_infra_chart_repo() {
+    if [[ -n "${INFRA_CHART_REPO:-}" ]]; then
+        echo "${INFRA_CHART_REPO}"
+        return
+    fi
+    local branch
+    branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo develop)"
+    if [[ "${branch}" == "HEAD" ]]; then
+        branch=develop
+    fi
+    echo "https://raw.githubusercontent.com/gentian-org/gentian-os/${branch}/charts/infra/packages"
+}
+
+verify_infra_chart_index() {
+    local repo="$1"
+    local index_url="${repo}/index.yaml"
+    info "Verifying infra Helm index: ${index_url}"
+    local index
+    if ! index="$(curl -fsSL "${index_url}" 2>/dev/null)"; then
+        error "Could not fetch ${index_url}"
+        error "  Publish charts with: ./scripts/publish-infra-charts.sh && git push"
+        error "  Or set INFRA_CHART_REPO to a branch that contains redis/minio packages."
+        return 1
+    fi
+    local missing=()
+    for chart in postgresql mariadb redis minio; do
+        if ! grep -q "^  ${chart}:" <<<"${index}"; then
+            missing+=("${chart}")
+        fi
+    done
+    if ((${#missing[@]} > 0)); then
+        error "Infra chart repo is missing: ${missing[*]}"
+        error "  Index: ${index_url}"
+        error "  Redis/MinIO were added on feat/new-security — merge/push to develop, or:"
+        error "  INFRA_CHART_REPO=https://raw.githubusercontent.com/gentian-org/gentian-os/feat/new-security/charts/infra/packages ./install.sh"
+        return 1
+    fi
+    success "Infra Helm index contains postgresql, mariadb, redis, and minio."
+}
+
 apply_infra_data_xr() {
     banner "Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
 
     local env="${ENV:-dev}"
     local claim="dev-infra-data"
     local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
+    local chart_repo
+    chart_repo="$(detect_infra_chart_repo)"
+
+    verify_infra_chart_index "${chart_repo}"
 
     # Legacy Pattern B Release CRs shared the Helm release name as the MR name.
     # Remove them before the InfraData composition creates new MRs with the
@@ -745,6 +791,10 @@ apply_infra_data_xr() {
 
     info "Applying InfraData claim (${claim})..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-infra-data.yaml"
+
+    info "Setting chartRepository to ${chart_repo}..."
+    kubectl patch infradata "${claim}" -n crossplane-system --type=merge \
+        -p "{\"spec\":{\"chartRepository\":\"${chart_repo}\"}}"
 
     info "Waiting for InfraData claim to bind to a composite (up to 60s)..."
     local xr_name=""
@@ -768,6 +818,8 @@ apply_infra_data_xr() {
         error "XInfraData ${xr_name} did not become Ready within ${timeout}."
         error "  kubectl describe xinfradata ${xr_name}"
         error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+        error "  kubectl describe release.helm.crossplane.io -l crossplane.io/composite=${xr_name}"
+        error "Common cause: chart not found — verify ${chart_repo}/index.yaml lists redis and minio."
         exit 1
     }
 
