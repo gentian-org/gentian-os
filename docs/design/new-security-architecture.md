@@ -9,7 +9,7 @@
 
 Gentian needs an identity and access layer that is (a) simpler and more modern than Nubus, (b) fully open-source and sovereignty-friendly, (c) first-class for **four principal types** — humans, AI agents, applications/workloads, and assets — and (d) designed so that a *compromised principal of any type does the least possible damage*.
 
-This document defines the security principles, the concrete Keycloak + OpenFGA architecture, how application permissions are modeled (the AppProfile/AppGrant split), and a staged plan to stand it up and retire Nubus.
+This document defines the security principles, the concrete Keycloak + OpenFGA architecture, how application permissions are modeled (AppProfile declaration, IntegrationBinding wiring, and the planned AppGrant ReBAC layer), and a staged plan to stand it up and retire Nubus.
 
 The guiding idea, borrowed from Android's sandbox model: **least privilege is not a single access-control model — it is the intersection of several independent layers, each enforcing a different concern, so that breaching one layer does not collapse the others.**
 
@@ -92,7 +92,7 @@ The agent reads a document **only if** it is the user's agent (`acting_for`), th
 |---|---|---|
 | **Keycloak** | Authentication authority + token issuer (*who you are*). Realms/Organizations for tenancy, service accounts for agents, RFC 8693 Token Exchange for on-behalf-of delegation, SAML/OIDC brokering for legacy public-sector IdPs. | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
-| **Provisioning bridge** | Syncs Keycloak identity/group/role/agent events and SCIM into OpenFGA tuples; reconciles AppGrant and ITAM objects into the graph. | (build) |
+| **Provisioning bridge** | Syncs Keycloak identity/group/role/agent events and SCIM into OpenFGA tuples; reconciles `IntegrationBinding` credentials and (future) `AppGrant` into the graph. | (build) |
 | **MAC backbone** | K8s namespaces per tenant, Cilium/NetworkPolicy default-deny egress, service mesh + SPIFFE/SPIRE, admission control (Kyverno / OPA Gatekeeper). | Apache 2.0 / OSS |
 | **PEP** | App / API gateway (Kong, Envoy, or in-app) calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
@@ -111,7 +111,7 @@ Nubus = OpenLDAP + Keycloak + Univention Directory Manager (UDM) + NATS provisio
                 ┌─────────────────────────────────────────────────────┐
                 │  Administration / Self-Service Portal (Gentian UI)   │
                 └───────────────┬─────────────────────────────────────┘
-                                │ (SCIM, Admin API, AppGrant CRDs)
+                                │ (SCIM, Admin API, Tenant.spec.apps, IntegrationBindings)
    Humans / Agents login        ▼
    ────────────────►   ┌──────────────────┐   OIDC / OAuth2 / SAML brokering
                        │    KEYCLOAK       │   RFC 8693 Token Exchange (act / may_act)
@@ -128,11 +128,14 @@ Nubus = OpenLDAP + Keycloak + Univention Directory Manager (UDM) + NATS provisio
                   │ bridge:        │   └─────────┬───────────┘
                   │ KC→OpenFGA     │             │ acts via OBO token (≤ user)
                   │ + SCIM         │             ▼
-                  │ + AppGrant     │   ┌─────────────────────┐
-                  │ + ITAM conn.   │   │  Apps / API Gateway  │ ◄── PEP
-                  └───────┬────────┘   │  (Kong/Envoy/app)    │
-                          │ writes     └─────────┬───────────┘
-                          ▼ tuples               │ AuthZEN Check(subject, relation, object)
+                  │ + Integration  │   ┌─────────────────────┐
+                  │   Binding      │   │  Apps / API Gateway  │ ◄── PEP
+                  │ + AppGrant     │   │  (Kong/Envoy/app)    │
+                  │   (future)     │   └─────────┬───────────┘
+                  │ + ITAM conn.   │             │ AuthZEN Check
+                  └───────┬────────┘             │
+                          │ writes               │
+                          ▼ tuples               ▼
                   ┌────────────────────────────────────────────┐
                   │              OPENFGA  (ReBAC PDP)            │
                   │  user:* agent:* app:* group:* tenant:*       │
@@ -152,48 +155,164 @@ Nubus = OpenLDAP + Keycloak + Univention Directory Manager (UDM) + NATS provisio
         └─────────────────────────────────────────────────────────┘
 ```
 
-**Decision flow:** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Identity/role/group/agent events + SCIM + AppGrant + ITAM flow through the bridge → relationship tuples in OpenFGA. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing token claims as contextual tuples for session context. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log.
+**Decision flow:** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Identity/role/group/agent events + SCIM flow through the bridge → relationship tuples in OpenFGA; `IntegrationBinding` reconciles cross-app credentials today; (future) `AppGrant` reconciles tenant-approved ReBAC edges. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing token claims as contextual tuples for session context. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log.
 
-### 3.4 Application permissions — AppProfile vs. AppGrant
+### 3.4 Application permissions — catalogue contracts and grants
 
-A Gentian app's `AppProfile` declares which contracts it consumes and publishes. **The declaration belongs in the AppProfile; the grant does not — they are orthogonal**, mirroring Android's manifest (`<uses-permission>` = intent) vs. the separate user/platform grant. The requester must never be the grantor.
+Cross-app and kernel access in Gentian is declared in **`AppProfile`**, wired by **`IntegrationBinding`**, and (once Stage 2 ReBAC is live) constrained by a future **`AppGrant`**. This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
 
-Three objects, three authors, three lifecycles:
+Full CRD field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
-1. **Declaration — AppProfile (developer-authored, static).** The *maximum requested surface*: contracts consumed/published, with scope per contract. An upper bound, not an authorization.
-2. **Grant — AppGrant / ContractBinding (tenant-authored, per install).** A *subset* of what the AppProfile requested, decided at install time. The app cannot author it. Covers both sides: consume-side scope, and publish-side `allowConsumers`.
-3. **Runtime authorization — computed at the PEP (per request).** `declared (AppProfile) ∩ granted (AppGrant) ∩ acting-user ceiling (ReBAC) ∩ conditions (ABAC)`.
+#### Terminology — manifest language vs CRD fields
+
+This document and older drafts used *consumes* / *publishes*. The **implemented** `AppProfile` CRD uses different field names:
+
+| Concept (this doc) | `AppProfile` CRD field | Type |
+|---|---|---|
+| Contracts the app **provides** to peers | `spec.provides[]` | `{ name, protocol? }` |
+| Contracts the app **may consume** from peers | `spec.optionalIntegrations[]` | `{ contract, provider?, capabilities? }` |
+| Kernel services (OIDC, Postgres, S3, …) | `spec.kernelRequirements` | Separate from integration contracts |
+
+Contract **names** (e.g. `file-store`, `project-management`) are shared vocabulary. Definitions live under `gentian-apps/contracts/` (when present) and are referenced by name only in profiles — the profile does not embed the full contract schema.
+
+#### Three layers — declaration, wiring, authorization
+
+| Layer | CRD / object | Scope | Author | Status |
+|---|---|---|---|---|
+| **Declaration** | `AppProfile` | Cluster (one per catalogue entry) | Catalogue maintainer (`gentian-apps/profiles/`) | **Implemented** |
+| **Wiring** | `IntegrationBinding` | Namespace (per tenant, per provider↔consumer pair) | gentian-os operator (auto when peers match) | **Implemented** |
+| **Grant (ReBAC)** | `AppGrant` (planned) | Per tenant install | Tenant admin at install | **Planned** |
+
+Do not conflate them:
+
+- **`kernelRequirements`** — what the **platform kernel** must provision (OIDC client, database, mail, …). Validated at admission; secrets injected via `valueMapping` + OpenBao. Not a cross-app contract.
+- **`provides` / `optionalIntegrations`** — what the app **offers to or may use from other catalogue apps**. Optional until peer apps are installed.
+- **`IntegrationBinding`** — the **runtime wire** when both provider and consumer are present in `Tenant.spec.apps`: credentials in OpenBao, OIDC token exchange, capability list. Owned by the `Tenant`; garbage-collected on delete.
+
+#### 1. Declaration — `AppProfile` (developer-authored, static)
+
+`AppProfile` is **cluster-scoped** — one YAML per app type in the catalogue, shared across all tenants. It is the *upper bound* of what the app can request, not an authorization decision.
 
 ```yaml
-# AppProfile (developer-authored) — the manifest / upper bound
+apiVersion: gentianos.io/v1alpha1
 kind: AppProfile
-consumes:
-  - contract: identity
-    scope: [profile:read, email:read]      # requested, not granted
-publishes:
-  - contract: contacts
-    scope: [contacts:read, contacts:write]
+metadata:
+  name: openproject                    # cluster-scoped catalogue id
+spec:
+  displayName: "OpenProject"
 
-# AppGrant (tenant-authored, per install) — actual grant ⊆ requested
+  # Kernel — platform-provisioned services (NOT integration contracts)
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: opendesk-openproject
+        accessType: CONFIDENTIAL
+    database:
+      engine: postgresql
+      databasePerTenant: true
+
+  # Integration contracts this app PROVIDES to other apps
+  provides:
+    - name: project-management         # kebab-case; matches contract definition name
+      protocol: http-json
+
+  # Integration contracts this app MAY CONSUME when a provider is installed
+  optionalIntegrations:
+    - contract: file-store
+      provider: nextcloud              # expected provider profile name (optional hint)
+      capabilities: [webdav:read, webdav:write]
+    - contract: central-navigation
+      provider: portal
+      capabilities: [navigation:register]
+
+  chart:
+    repository: oci://registry.example/charts
+    name: openproject
+    version: "14.2.0"
+
+  valueMapping:                        # maps kernel outputs → Helm keys (Pattern A secrets)
+    oidc:
+      issuerKey: "oidc.issuer"
+      clientIdKey: "oidc.clientId"
+      clientSecretKey: "oidc.clientSecret"
+    # … database, s3, smtp, ldap, cache …
+```
+
+**`provides`** entries identify contract names the app implements as a **provider**. **`optionalIntegrations`** entries identify contract names the app can use as a **consumer**, with optional `capabilities` (the requested capability surface, not yet a grant).
+
+Tenant admins select apps by **profile name** in `Tenant.spec.apps` — they do not edit `AppProfile`.
+
+#### 2. Wiring — `IntegrationBinding` (operator-authored, per tenant)
+
+When the gentian-os operator reconciles a `Tenant` and finds both a **provider** (profile with `spec.provides` containing the contract) and a **consumer** (profile with matching `spec.optionalIntegrations[].contract`) in `spec.apps`, it creates an **`IntegrationBinding`** in the tenant namespace:
+
+```yaml
+apiVersion: gentianos.io/v1alpha1
+kind: IntegrationBinding
+metadata:
+  name: demo-file-store
+  namespace: tenant-demo
+spec:
+  contract: file-store
+  provider:
+    app: nextcloud
+    namespace: tenant-demo
+  consumer:
+    app: openproject
+    namespace: tenant-demo
+  capabilities: [webdav:read, webdav:write]
+  auth:
+    method: oidc-token-exchange
+    vaultPath: gentian-os/tenants/demo/contracts/file-store
+status:
+  state: Ready
+```
+
+This object **provisions credentials and auth method** between two installed apps. It is topology + secret wiring — not user-level ReBAC. Apps receive injected values via Helm/`valueMapping`; they must not implement their own cross-app grant logic (see [app-catalogue.md](app-catalogue.md) §4).
+
+#### 3. Grant — `AppGrant` (tenant-authored, per install) — **planned**
+
+Stage 2 adds a tenant-facing grant that is a **subset** of what `AppProfile` declared — decided at install or by tenant admin, never by the app vendor:
+
+```yaml
+# Planned CRD — not yet in gentianos.io/v1alpha1
 kind: AppGrant
-app: contacts-app
-tenant: acme
-consume:
-  - contract: identity
-    granted: [profile:read]                # email:read withheld
-allowConsumers:                            # publish side
-  - app: crm-app
-    contract: contacts
-    scope: [contacts:read]
+metadata:
+  namespace: tenant-demo
+spec:
+  app: openproject
+  consume:
+    - contract: file-store
+      granted: [webdav:read]             # webdav:write withheld vs optionalIntegrations
+  allowConsumers:                        # publish side — who may call this app's provides
+    - app: crm-app
+      contract: project-management
+      scope: [tasks:read]
 ```
 
-**Publishing is an authorization surface too.** A published contract becomes a **resource object** in the ReBAC graph; a consumption grant becomes a **relationship tuple**. The AppProfile's `publishes` creates the node; the AppGrant's `allowConsumers` creates the edge:
+**Publishing is an authorization surface too.** A provided contract becomes a **resource object** in the ReBAC graph; a consumption grant becomes a **relationship tuple**. `AppProfile.spec.provides` declares the node; (future) `AppGrant.allowConsumers` creates the edge:
 
 ```
-contract:acme/contacts#consumer@app:crm-app
+contract:demo/project-management#consumer@app:crm-app
 ```
 
-"May CRM read Contacts-app's contacts?" is then a single OpenFGA `Check`; the tenant controls the edge; revocation is one tuple delete. Contract wiring (topology) and authorization (grants) share one substrate without being the same thing.
+"May CRM read OpenProject tasks?" is then a single OpenFGA `Check`; the tenant controls the edge; revocation is one tuple delete.
+
+#### 4. Runtime authorization — computed at the PEP (per request)
+
+**Today (Stage 1):** OIDC authentication + tenant MAC isolation + `IntegrationBinding` wiring. User-level ReBAC on app APIs is app responsibility until OpenFGA is wired.
+
+**Target (Stage 2+):**
+
+```
+effective access = declared (AppProfile)
+                 ∩ wired (IntegrationBinding exists + credentials valid)
+                 ∩ granted (AppGrant subset, future)
+                 ∩ acting-user ceiling (ReBAC)
+                 ∩ conditions (ABAC)
+```
+
+The most restrictive layer wins (§2.1).
 
 ### 3.5 Agentic identity
 
@@ -215,7 +334,8 @@ An automation platform is a textbook **confused deputy**: a central engine holdi
 
 | n8n concept | Maps to | Enforcement |
 |---|---|---|
-| The n8n **platform** | App / workload (§2.4) | AppProfile + MAC-confined namespace + **default-deny egress** allowlisted to declared connector endpoints |
+| The n8n **platform** | Catalogue `AppProfile` + tenant `App` install (§3.4) | `kernelRequirements` + MAC-confined namespace + **default-deny egress** allowlisted to declared connector endpoints |
+| Cross-app **connectors** | `optionalIntegrations` → `IntegrationBinding` | Operator-wired credentials; per-step token exchange — not a shared vault |
 | A **workflow** | First-class principal / agent instance (§3.5) — *one identity per workflow*, the "each app is its own UID" port | Own `workflow:` (or `agent:`) identity; no shared vault |
 | A **workflow execution** | `task:` object with TTL Condition | `user → owns → workflow → executes_as → task(ttl)`; revocation = delete `acting_for` |
 | **Credentials** | JIT short-lived scoped tokens | Requested per-step from Keycloak via **RFC 8693** token exchange — no stored long-lived secrets |
@@ -244,10 +364,10 @@ A staged path. Each stage is independently useful and leaves a working system.
 - *Exit criteria:* a human can authenticate via Keycloak and a PEP can make a correct `Check` against OpenFGA for a real resource.
 
 ### Stage 2 — App permissions, agents, and the PEP
-- Define the **AppProfile** (declaration) and **AppGrant** (grant) CRDs (§3.4); extend the provisioning bridge to reconcile AppGrant — including publish-side `allowConsumers` edges — into OpenFGA tuples.
+- **`AppProfile` and `IntegrationBinding` are implemented** (§3.4); extend the provisioning bridge to reconcile binding health and credentials into observability, and introduce the planned **`AppGrant`** CRD so tenant-approved subsets — including publish-side `allowConsumers` — become OpenFGA tuples.
 - Standardize the **PEP↔PDP** interface on the OpenID **AuthZEN** Authorization API so gateways/apps aren't coupled to OpenFGA.
 - Make agents first-class: `agent:` object type, Keycloak service accounts, **RFC 8693** Token Exchange with `act`/`may_act`, TTL via OpenFGA **Conditions**, revocation via tuple delete.
-- *Exit criteria:* an app installed into a tenant operates strictly within `declared ∩ granted ∩ user-ceiling`; an agent acting for a user provably cannot exceed that user; revoking delegation is a single tuple delete.
+- *Exit criteria:* an app installed into a tenant operates within `AppProfile` declaration ∩ `IntegrationBinding` wiring ∩ (future) `AppGrant` ∩ user-ceiling; an agent acting for a user provably cannot exceed that user; revoking delegation is a single tuple delete.
 
 ### Stage 3 — Assets, ITAM, hardening
 - Model devices as resource objects; if inventory warrants, introduce **NetBox/GLPI/Snipe-IT** and feed the graph via the bridge.
@@ -258,7 +378,7 @@ A staged path. Each stage is independently useful and leaves a working system.
 ### Migrating off Nubus specifically
 1. **Identities:** export users/groups from OpenLDAP/UDM; import into Keycloak (its own Postgres store). Decommission OpenLDAP and UDM once Keycloak is authoritative.
 2. **Provisioning:** replace NATS/UDM provisioning with the event/SCIM bridge → OpenFGA.
-3. **Authorization:** there is little to migrate from Guardian (RBAC, and not yet wired into Nubus components); author the equivalent grants directly as ReBAC tuples / AppGrants.
+3. **Authorization:** there is little to migrate from Guardian (RBAC, and not yet wired into Nubus components); author the equivalent grants directly as ReBAC tuples and (future) `AppGrant` objects atop existing `IntegrationBinding` wiring.
 4. **Run in parallel** during cutover: Keycloak can broker to the legacy IdP while apps are migrated app-by-app behind the AuthZEN PEP.
 
 ---

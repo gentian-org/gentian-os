@@ -20,3 +20,4 @@ install.secrets.env.backup
 *.test
 bin/
 __pycache__/
+*.tgz
