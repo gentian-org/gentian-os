@@ -17,6 +17,7 @@ data:
       - "--http-enabled=true"
       - "--hostname-strict=false"
       - "--proxy-headers=xforwarded"
+      - "--cache=local"
     service:
       type: ClusterIP
       httpPort: 8080
@@ -35,6 +36,8 @@ data:
         value: "true"
       - name: KC_METRICS_ENABLED
         value: "false"
+      - name: KC_CACHE
+        value: "local"
 ---
 apiVersion: v1
 kind: ConfigMap

@@ -881,6 +881,13 @@ retire_legacy_authz_idp_xr() {
     local rel
     while IFS= read -r rel; do
         [[ -z "${rel}" ]] && continue
+        if kubectl get release.helm.crossplane.io/"${rel}" \
+            -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null | grep -q .; then
+            warn "Clearing finalizer on terminating legacy Release ${rel}..."
+            kubectl patch release.helm.crossplane.io/"${rel}" \
+                -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            continue
+        fi
         warn "Removing orphaned legacy Release ${rel}..."
         kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
     done < <(kubectl get release.helm.crossplane.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
