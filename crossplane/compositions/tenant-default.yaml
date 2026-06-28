@@ -196,28 +196,13 @@ spec:
                     labels:
                       gentianos.io/tenant: {{ $tenant }}
                       app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/netpolicy-type: baseline
                   spec:
                     podSelector: {}
                     policyTypes:
                       - Ingress
                       - Egress
                     ingress:
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                gentianos.io/tenant: {{ $tenant }}
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: platform-kernel
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $infraNs }}
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $servicesNs }}
                       - from:
                           - namespaceSelector:
                               matchLabels:
@@ -229,40 +214,6 @@ spec:
                                 kubernetes.io/metadata.name: envoy-gateway-system
                       {{- end }}
                     egress:
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: platform-kernel
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $infraNs }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $servicesNs }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $openbaoNs }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: gentian-system
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                gentianos.io/tenant: {{ $tenant }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: ingress
-                      {{- if eq $routingMode "gateway" }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: envoy-gateway-system
-                      {{- end }}
                       - ports:
                           - protocol: UDP
                             port: 53

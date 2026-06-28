@@ -241,38 +241,6 @@ spec:
         namespace: tenant-render-fixture
       spec:
         egress:
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: platform-kernel
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-infra-dev
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-dev
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: openbao
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-system
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                gentianos.io/tenant: render-fixture
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: ingress
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: envoy-gateway-system
         - ports:
           - port: 53
             protocol: UDP
@@ -285,22 +253,6 @@ spec:
           - ipBlock:
               cidr: 10.96.0.0/12
         ingress:
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                gentianos.io/tenant: render-fixture
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: platform-kernel
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-infra-dev
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-dev
         - from:
           - namespaceSelector:
               matchLabels:

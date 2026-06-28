@@ -83,9 +83,8 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 	assertIngressDoesNotAllowNamespace(t, npB, "tenant-iso-a")
 }
 
-// TestIsolation_NetworkPolicyIngressRules verifies the five expected ingress
-// sources: same tenant namespace, platform-kernel, gentian-infra-dev,
-// gentian-dev, and ingress namespace.
+// TestIsolation_NetworkPolicyIngressRules verifies baseline ingress allows edge
+// routing (ingress + Envoy Gateway) only.
 func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -114,12 +113,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	// Must allow same-namespace traffic (via namespace selector with tenant label).
-	if !hasIngressNamespaceLabel(np, "gentianos.io/tenant", "iso-ingress") {
-		t.Error("expected ingress rule allowing from namespace with gentianos.io/tenant=iso-ingress label")
-	}
-
-	expectedNS := []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "ingress"}
+	expectedNS := []string{"ingress", "envoy-gateway-system"}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {
@@ -134,9 +128,8 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	}
 }
 
-// TestIsolation_NetworkPolicyEgressRules verifies egress allows the kernel
-// infrastructure namespaces, DNS, and Kubernetes API, but not other tenant
-// namespaces.
+// TestIsolation_NetworkPolicyEgressRules verifies baseline egress allows DNS
+// and the Kubernetes API only (kernel/contract access is separate policies).
 func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -164,18 +157,8 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 	}
 
 	egressNS := collectEgressNamespaces(np)
-
-	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "gentian-system", "ingress"} {
-		found := false
-		for _, ns := range egressNS {
-			if ns == expected {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected egress to allow namespace %q, allowed: %v", expected, egressNS)
-		}
+	if len(egressNS) != 0 {
+		t.Errorf("baseline egress should not allow namespace peers, got: %v", egressNS)
 	}
 
 	if !hasEgressPort(np, 53) {

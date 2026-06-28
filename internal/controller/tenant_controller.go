@@ -499,6 +499,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// ── Shared-kernel extensions (skipped when TENANT_CROSSPLANE_ONLY) ─────────
 	var mailResult, officeResult ctrl.Result
 	if !r.CrossplaneOnly {

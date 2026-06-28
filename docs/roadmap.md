@@ -1,7 +1,43 @@
 # Gentian OS — Roadmap
 
 Planned work not yet fully implemented. For the current platform design see
-[architecture.md](architecture.md).
+[architecture.md](architecture.md) and Stage 0–3 in
+[design/new-security-architecture.md](design/new-security-architecture.md).
+
+---
+
+## Stage 0 — MAC backbone (new security)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Per-tenant namespace + default-deny NetworkPolicy | **Done** | `tenant-default` baseline + operator-managed allowlists |
+| Kernel egress from `AppProfile.kernelRequirements` | **Done** | `kernel-access-*` NetworkPolicies |
+| Contract egress from active `IntegrationBinding` | **Done** | `contract-*` NetworkPolicies; all declared capabilities allowed until AppGrant |
+| Kyverno baseline admission | **Done** | `kernel/appsets/05-admission.yaml`, `kernel/security/kyverno/policies/` |
+| **Cilium** (FQDN/L7 egress, Hubble) | Planned | Optional upgrade when standard NetworkPolicy is insufficient |
+| **Service mesh + SPIFFE/SPIRE** | Planned | Stage 3 — workload mTLS for autonomous in-cluster agents |
+| AppGrant-governed contract allowlists (OpenFGA) | Planned | Stage 2 — intersect binding capabilities with tenant-approved grants |
+
+### Cilium (planned)
+
+Replace or augment the CNI with [Cilium](https://cilium.io/) when Gentian needs FQDN-based egress allowlists, L7 HTTP policy, or Hubble flow visibility. Not required for Stage 0 on clusters where the stock CNI enforces Kubernetes NetworkPolicy.
+
+```
+[ ] Evaluate Cilium as optional CNI profile in install / gentian-deployments
+[ ] Migrate tenant contract allowlists to CiliumNetworkPolicy where FQDN rules are needed
+[ ] Enable Hubble UI / metrics for MAC audit trails
+```
+
+### Service mesh + SPIFFE/SPIRE (planned)
+
+Deploy a service mesh (Istio or Linkerd) and [SPIFFE/SPIRE](https://spiffe.io/) when autonomous in-cluster agents need secret-less mTLS — not for edge TLS (Envoy Gateway covers that). See [new-security-architecture.md](design/new-security-architecture.md) §3.5 and Stage 3.
+
+```
+[ ] SPIRE server + agent deployment model
+[ ] Mesh control plane integrated with Gentian install
+[ ] Map gentianos.io/app / tenant labels to SPIFFE ID templates
+[ ] Wire mesh policy to IntegrationBinding / future AppGrant tuples
+```
 
 ---
 
@@ -76,9 +112,13 @@ realms once upstream supports the required settings.
 ## IntegrationBindings
 
 `IntegrationBinding` CRs are emitted via the manifest bridge; the operator
-reconciles contract wiring. A follow-up is full Composition-only wiring: gate on
-both provider and consumer Ready, write OpenBao paths, apply NetworkPolicy
-patches, and surface status without a separate operator loop.
+reconciles contract wiring and applies **`contract-*` NetworkPolicies** so
+consumers may reach providers only for active bindings. Today every capability
+declared on the binding is allowed; **AppGrant** (OpenFGA, Stage 2) will
+intersect the allowlist with tenant-approved subsets.
+
+A follow-up is full Composition-only wiring: gate on both provider and consumer
+Ready, write OpenBao paths, and surface status without a separate operator loop.
 
 See [design/app-catalogue.md](design/app-catalogue.md).
 
@@ -110,7 +150,7 @@ Implement controls in [design/app-catalogue-security.md](design/app-catalogue-se
 - CI policy in `gentian-apps` (schema, render goldens, registry/digest checks)
 - Platform **sidecar catalogue** (`sidecarRef`) before generic sidecars in
   `app-default`
-- Kyverno tier rules on prod clusters
+- Kyverno tier rules on prod clusters (**baseline policies shipped** in Stage 0)
 
 ---
 

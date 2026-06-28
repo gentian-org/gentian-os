@@ -32,6 +32,7 @@ spec:
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
   - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
   - 'ghcr.io/cloudnative-pg/charts'                                                                     # CloudNativePG OCI charts registry
+  - 'https://kyverno.github.io/kyverno/*'                                                               # Kyverno admission controller
 
   # Destination clusters and namespaces
   destinations:
@@ -50,6 +51,8 @@ spec:
   - namespace: 'platform-kernel'             # Shared CNPG Cluster + psql provisioner Jobs
     server: https://kubernetes.default.svc
   - namespace: 'crossplane-system'           # Crossplane managed resources (provider-http Requests, ESO)
+    server: https://kubernetes.default.svc
+  - namespace: 'kyverno'                     # Kyverno admission controller
     server: https://kubernetes.default.svc
 
   # Cluster-scoped resources (allowed at cluster level)

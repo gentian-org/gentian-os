@@ -776,6 +776,39 @@ apply_infra_data_xr() {
 }
 
 # =============================================================================
+# Step 13c — Kyverno admission controller (Stage 0 MAC)
+#
+# Deployed by Argo CD via kernel/appsets/05-admission.yaml (sync wave 5–6).
+# This step waits for the controller so later workloads are admitted under policy.
+# =============================================================================
+install_mac_admission() {
+    banner "Step 13c — Kyverno admission controller (Stage 0 MAC)"
+
+    info "Kyverno is synced by gentian-appsets (kernel/appsets/05-admission.yaml)."
+    info "Waiting for kyverno-admission-controller (up to 5m)..."
+
+    local deadline=$((SECONDS + 300))
+    until kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "Kyverno deployment not found after 5m — refresh gentian-appsets and retry."
+            warn "  kubectl patch application gentian-appsets -n argocd --type merge -p '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}}}'"
+            return 0
+        fi
+        sleep 5
+    done
+
+    kubectl wait deployment/kyverno-admission-controller -n kyverno \
+        --for=condition=Available --timeout=300s \
+    || {
+        warn "Kyverno admission controller did not become Available within 300s."
+        warn "  kubectl get pods -n kyverno"
+        return 0
+    }
+
+    success "Kyverno admission controller is ready."
+}
+
+# =============================================================================
 # Step 14: Deploy Nubus via provider-helm (Pattern B migration)
 #
 # Creates:
@@ -1331,6 +1364,7 @@ main_cp() {
     # ── Pattern B chart deployments ─────────────────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
+    install_mac_admission       # Step 13c — Kyverno admission (Stage 0 MAC)
 
     # feat/new-security handoff: stop once shared infra is up.
     if [[ "${SKIP_OPENDESK_STACK:-0}" == "1" ]]; then

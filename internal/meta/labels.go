@@ -10,8 +10,7 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+See the License for the specific language governing the License.
 */
 
 // Package meta holds shared Kubernetes label keys and values used by the
@@ -20,8 +19,15 @@ package meta
 
 const (
 	TenantLabel    = "gentianos.io/tenant"
+	AppLabel       = "gentianos.io/app"
 	ManagedByLabel = "app.kubernetes.io/managed-by"
 	ManagedByValue = "gentian-os"
+
+	// NetPolicyTypeLabel classifies operator-managed NetworkPolicies.
+	NetPolicyTypeLabel = "gentianos.io/netpolicy-type"
+	NetPolicyBaseline  = "baseline"
+	NetPolicyKernel    = "kernel-access"
+	NetPolicyContract  = "contract-allow"
 
 	// UMCFrontendComponent marks portal redirect resources owned by the shared kernel portal.
 	UMCFrontendComponentLabel = "gentianos.io/component"
