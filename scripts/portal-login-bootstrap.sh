@@ -9,155 +9,195 @@ _portal_derive_password() {
     echo -n "portal-bootstrap:user_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
-_portal_kc_admin_token() {
-    local url user pass
-    url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' | base64 -d)
-    user=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.username}' | base64 -d)
-    pass=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.password}' | base64 -d)
-    curl -sf \
-        -X POST "${url}/realms/master/protocol/openid-connect/token" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        --data-urlencode "client_id=admin-cli" \
-        --data-urlencode "username=${user}" \
-        --data-urlencode "password=${pass}" \
-        --data-urlencode "grant_type=password" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
-}
-
-ensure_gentian_portal_oidc_client() {
-    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
-    local kernel_realm="${KERNEL_REALM:-kernel}"
-    local portal_origin="https://portal.${kernel_domain}"
-    local id_origin="https://id.${kernel_domain}"
-
-    info "Ensuring Keycloak OIDC client gentian-portal in realm ${kernel_realm}..."
-
-    local token
-    token=$(_portal_kc_admin_token)
-
-    local kc_url
-    kc_url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' | base64 -d)
-
-    local clients_json
-    clients_json=$(curl -sf -H "Authorization: Bearer ${token}" \
-        "${kc_url}/admin/realms/${kernel_realm}/clients?clientId=gentian-portal")
-
-    local client_uuid
-    client_uuid=$(printf '%s' "${clients_json}" | python3 -c "
-import sys, json
-items = json.load(sys.stdin)
-print(items[0]['id'] if items else '')
-")
-
-    local body
-    body=$(python3 -c "
-import json
-portal = '${portal_origin}'
-print(json.dumps({
-    'clientId': 'gentian-portal',
-    'name': 'Gentian Portal',
-    'enabled': True,
-    'publicClient': True,
-    'standardFlowEnabled': True,
-    'directAccessGrantsEnabled': False,
-    'implicitFlowEnabled': False,
-    'serviceAccountsEnabled': False,
-    'protocol': 'openid-connect',
-    'redirectUris': [
-        portal + '/login',
-        portal + '/login/*',
-        portal + '/*',
-    ],
-    'webOrigins': [portal, '+'],
-    'attributes': {
-        'pkce.code.challenge.method': 'S256',
-    },
-    'rootUrl': portal,
-    'baseUrl': portal,
-}))
-")
-
-    if [[ -n "${client_uuid}" ]]; then
-        curl -sf -X PUT -H "Authorization: Bearer ${token}" \
-            -H "Content-Type: application/json" \
-            "${kc_url}/admin/realms/${kernel_realm}/clients/${client_uuid}" \
-            -d "${body}" >/dev/null
-        success "Updated Keycloak client gentian-portal."
-    else
-        curl -sf -X POST -H "Authorization: Bearer ${token}" \
-            -H "Content-Type: application/json" \
-            "${kc_url}/admin/realms/${kernel_realm}/clients" \
-            -d "${body}" >/dev/null
-        success "Created Keycloak client gentian-portal."
-    fi
-
-    info "OIDC issuer for portal: ${id_origin}/realms/${kernel_realm}"
-}
-
-bootstrap_kernel_portal_user() {
+# Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
+# an in-cluster Service DNS name and is not reachable from the install host.
+run_keycloak_portal_bootstrap_job() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local username="${PORTAL_BOOTSTRAP_USERNAME:-demo}"
     local email="demo@${kernel_domain}"
-    local password
+    local password job_name="keycloak-portal-bootstrap"
+    local ns="platform-kernel"
+
     password=$(_portal_derive_password)
-
-    info "Ensuring kernel realm user ${username} (${email})..."
-
-    local token kc_url
-    token=$(_portal_kc_admin_token)
-    kc_url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' | base64 -d)
-
-    local users_json
-    users_json=$(curl -sf -H "Authorization: Bearer ${token}" \
-        "${kc_url}/admin/realms/${kernel_realm}/users?username=${username}&exact=true" || echo "[]")
-
-    local user_uuid
-    user_uuid=$(printf '%s' "${users_json}" | python3 -c "
-import sys, json
-items = json.load(sys.stdin)
-print(items[0]['id'] if items else '')
-")
-
-    local user_body
-    user_body=$(python3 -c "
-import json
-print(json.dumps({
-    'username': ${username@Q},
-    'email': ${email@Q},
-    'enabled': True,
-    'emailVerified': True,
-}))
-")
-
-    if [[ -z "${user_uuid}" ]]; then
-        curl -sf -X POST -H "Authorization: Bearer ${token}" \
-            -H "Content-Type: application/json" \
-            "${kc_url}/admin/realms/${kernel_realm}/users" \
-            -d "${user_body}" >/dev/null
-        users_json=$(curl -sf -H "Authorization: Bearer ${token}" \
-            "${kc_url}/admin/realms/${kernel_realm}/users?username=${username}&exact=true")
-        user_uuid=$(printf '%s' "${users_json}" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
-        success "Created kernel user ${username}."
-    else
-        curl -sf -X PUT -H "Authorization: Bearer ${token}" \
-            -H "Content-Type: application/json" \
-            "${kc_url}/admin/realms/${kernel_realm}/users/${user_uuid}" \
-            -d "${user_body}" >/dev/null
-        success "Updated kernel user ${username}."
-    fi
-
-    local cred_body
-    cred_body=$(python3 -c "import json; print(json.dumps({'type':'password','value':${password@Q},'temporary':False}))")
-    curl -sf -X PUT -H "Authorization: Bearer ${token}" \
-        -H "Content-Type: application/json" \
-        "${kc_url}/admin/realms/${kernel_realm}/users/${user_uuid}/reset-password" \
-        -d "${cred_body}" >/dev/null
-
     export PORTAL_LOGIN_USERNAME="${username}"
     export PORTAL_LOGIN_EMAIL="${email}"
     export PORTAL_LOGIN_PASSWORD="${password}"
 
+    info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
+
+    kubectl create secret generic portal-bootstrap-credentials -n "${ns}" \
+        --from-literal=kernel_domain="${kernel_domain}" \
+        --from-literal=kernel_realm="${kernel_realm}" \
+        --from-literal=username="${username}" \
+        --from-literal=email="${email}" \
+        --from-literal=password="${password}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+
+    kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/name: keycloak-portal-bootstrap
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bootstrap
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache --quiet curl jq >/dev/null
+              set -eu
+              TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \\
+                -H "Content-Type: application/x-www-form-urlencoded" \\
+                --data-urlencode "client_id=admin-cli" \\
+                --data-urlencode "username=\${KEYCLOAK_ADMIN_USERNAME}" \\
+                --data-urlencode "password=\${KEYCLOAK_ADMIN_PASSWORD}" \\
+                --data-urlencode "grant_type=password" | jq -r .access_token)
+              if [ -z "\${TOKEN}" ] || [ "\${TOKEN}" = "null" ]; then
+                echo "ERROR: Keycloak admin token request failed" >&2
+                exit 1
+              fi
+              AUTH="Authorization: Bearer \${TOKEN}"
+              REALM="\${KERNEL_REALM}"
+              PORTAL="https://portal.\${KERNEL_DOMAIN}"
+
+              realm_http=\$(curl -s -o /dev/null -w '%{http_code}' -H "\${AUTH}" "\${KEYCLOAK_URL}/admin/realms/\${REALM}")
+              if [ "\${realm_http}" = "404" ]; then
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_URL}/admin/realms" \\
+                  -d "{\"realm\":\"\${REALM}\",\"enabled\":true,\"displayName\":\"\${REALM}\"}"
+                echo "Created realm \${REALM}"
+              elif [ "\${realm_http}" = "200" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}" -d '{"enabled":true}'
+                echo "Realm \${REALM} enabled"
+              else
+                echo "ERROR: realm \${REALM} check returned HTTP \${realm_http}" >&2
+                exit 1
+              fi
+
+              CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_URL}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
+                | jq -r '.[0].id // empty')
+              BODY=\$(jq -n --arg portal "\${PORTAL}" '{
+                clientId: "gentian-portal",
+                name: "Gentian Portal",
+                enabled: true,
+                publicClient: true,
+                standardFlowEnabled: true,
+                directAccessGrantsEnabled: false,
+                implicitFlowEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                redirectUris: [(\$portal + "/login"), (\$portal + "/login/*"), (\$portal + "/*")],
+                webOrigins: [\$portal, "+"],
+                attributes: {"pkce.code.challenge.method": "S256"},
+                rootUrl: \$portal,
+                baseUrl: \$portal
+              }')
+              if [ -n "\${CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/clients/\${CLIENT_ID}" -d "\${BODY}"
+                echo "Updated client gentian-portal"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/clients" -d "\${BODY}"
+                echo "Created client gentian-portal"
+              fi
+
+              USER_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
+                | jq -r '.[0].id // empty')
+              USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --arg e "\${PORTAL_EMAIL}" '{
+                username: \$u, email: \$e, enabled: true, emailVerified: true
+              }')
+              if [ -z "\${USER_ID}" ]; then
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users" -d "\${USER_BODY}"
+                USER_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
+                  | jq -r '.[0].id')
+                echo "Created user \${PORTAL_USERNAME}"
+              else
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${USER_BODY}"
+                echo "Updated user \${PORTAL_USERNAME}"
+              fi
+              CRED=\$(jq -n --arg p "\${PORTAL_PASSWORD}" '{type:"password",value:\$p,temporary:false}')
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
+              echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
+          env:
+            - name: KEYCLOAK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: url
+            - name: KEYCLOAK_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: password
+            - name: KERNEL_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: kernel_domain
+            - name: KERNEL_REALM
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: kernel_realm
+            - name: PORTAL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: username
+            - name: PORTAL_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: email
+            - name: PORTAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+EOF
+
+    if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=180s; then
+        error "Keycloak portal bootstrap Job failed."
+        kubectl logs -n "${ns}" "job/${job_name}" --tail=80 2>/dev/null || true
+        return 1
+    fi
+
+    kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
+    success "Keycloak gentian-portal client and kernel user ${username} are ready."
+    info "OIDC issuer: https://id.${kernel_domain}/realms/${kernel_realm}"
     info "Portal login credentials:"
     info "  URL:      https://portal.${kernel_domain}/login"
     info "  Username: ${username}  (or ${email})"
@@ -166,7 +206,7 @@ print(json.dumps({
 
 build_gentian_portal_images() {
     local ui_dir="${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}"
-    local tag="${PORTAL_IMAGE_TAG:-feat-new-security}"
+    local tag="${PORTAL_IMAGE_TAG:-feat-new-ui}"
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local portal_origin="https://portal.${kernel_domain}"
@@ -212,7 +252,7 @@ install_gentian_portal_chart() {
     local ui_dir="${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}"
     local chart_dir="${ui_dir}/chart"
     local ns="platform-kernel"
-    local tag="${PORTAL_IMAGE_TAG:-feat-new-security}"
+    local tag="${PORTAL_IMAGE_TAG:-feat-new-ui}"
     local web_image="${PORTAL_WEB_IMAGE:-ghcr.io/gentian-org/gentian-portal-web:${tag}}"
     local api_image="${PORTAL_API_IMAGE:-ghcr.io/gentian-org/gentian-portal-api:${tag}}"
     local values_file="${SCRIPT_DIR}/kernel/services/gentian-portal-web/values/dev.yaml"
@@ -271,11 +311,10 @@ install_stage1_portal() {
         kubectl apply -f "${kc_manifest}" 2>/dev/null || warn "Could not apply ${kc_manifest} (provider-keycloak may not be ready)."
     fi
 
-    ensure_gentian_portal_oidc_client
-    bootstrap_kernel_portal_user
+    run_keycloak_portal_bootstrap_job
 
     if [[ "${PORTAL_SKIP_IMAGE_BUILD:-false}" != "true" ]]; then
-        build_gentian_portal_images || info "Using pre-built portal images (tag=${PORTAL_IMAGE_TAG:-feat-new-security})."
+        build_gentian_portal_images || info "Using pre-built portal images (tag=${PORTAL_IMAGE_TAG:-feat-new-ui})."
     fi
 
     install_gentian_portal_chart
