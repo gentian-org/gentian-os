@@ -35,6 +35,14 @@ spec:
             {{- $mdbRelease := default (printf "opendesk-mariadb-%s" $env) $mdbSpec.helmReleaseName }}
             {{- $mdbVersion := default "3.0.3" $mdbSpec.chartVersion }}
 
+            {{- $redisSpec := default dict $spec.redis }}
+            {{- $redisRelease := default (printf "redis-%s" $env) $redisSpec.helmReleaseName }}
+            {{- $redisVersion := default "18.6.1" $redisSpec.chartVersion }}
+
+            {{- $minioSpec := default dict $spec.minio }}
+            {{- $minioRelease := default (printf "minio-%s" $env) $minioSpec.helmReleaseName }}
+            {{- $minioVersion := default "16.0.10" $minioSpec.chartVersion }}
+
             {{- /* ── Shared kernel PostgreSQL (provider-helm Release) ─────────── */}}
             ---
             apiVersion: helm.crossplane.io/v1beta1
@@ -105,6 +113,80 @@ spec:
                       name: mariadb-sensitive-values
                       namespace: {{ $infraNs }}
                       key: sensitive-values.yaml
+                      optional: false
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Shared kernel Redis (provider-helm Release) ─────────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: redis-release
+                crossplane.io/external-name: {{ $redisRelease }}
+              name: {{ $name }}-redis
+            spec:
+              forProvider:
+                chart:
+                  name: redis
+                  repository: {{ $chartRepo }}
+                  version: {{ $redisVersion | quote }}
+                namespace: {{ $infraNs }}
+                wait: true
+                waitTimeout: "5m"
+                valuesFrom:
+                  - configMapKeyRef:
+                      name: redis-env-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: redis-base-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: redis-{{ $env }}-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Shared kernel MinIO (provider-helm Release) ────────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: minio-release
+                crossplane.io/external-name: {{ $minioRelease }}
+              name: {{ $name }}-minio
+            spec:
+              forProvider:
+                chart:
+                  name: minio
+                  repository: {{ $chartRepo }}
+                  version: {{ $minioVersion | quote }}
+                namespace: {{ $infraNs }}
+                wait: true
+                waitTimeout: "5m"
+                valuesFrom:
+                  - configMapKeyRef:
+                      name: minio-env-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: minio-base-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: minio-{{ $env }}-values
+                      namespace: {{ $infraNs }}
+                      key: values.yaml
                       optional: false
               providerConfigRef:
                 name: kubernetes

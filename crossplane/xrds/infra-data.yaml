@@ -38,7 +38,8 @@ spec:
                 chartRepository:
                   type: string
                   description: >
-                    Helm repository URL for vendored postgres/mariadb charts.
+                    Helm repository URL for vendored infra charts (postgres, mariadb,
+                    redis, minio).
                   default: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
                 postgresql:
                   type: object
@@ -66,6 +67,29 @@ spec:
                     chartVersion:
                       type: string
                       default: "3.0.3"
+                redis:
+                  type: object
+                  description: Shared kernel Redis cache.
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      description: >
+                        Helm release name. Defaults to redis-{environment}
+                        (Service DNS redis-{environment}-master).
+                    chartVersion:
+                      type: string
+                      default: "18.6.1"
+                minio:
+                  type: object
+                  description: Shared kernel MinIO object storage.
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      description: >
+                        Helm release name. Defaults to minio-{environment}.
+                    chartVersion:
+                      type: string
+                      default: "16.0.10"
             status:
               type: object
               properties:
@@ -75,3 +99,9 @@ spec:
                 mariadbReleaseReady:
                   type: boolean
                   description: True when the MariaDB provider-helm Release is Synced+Ready.
+                redisReleaseReady:
+                  type: boolean
+                  description: True when the Redis provider-helm Release is Synced+Ready.
+                minioReleaseReady:
+                  type: boolean
+                  description: True when the MinIO provider-helm Release is Synced+Ready.

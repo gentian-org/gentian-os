@@ -1,5 +1,5 @@
 ---
-# Shared kernel PostgreSQL and MariaDB — ESO secrets and plain-values ConfigMaps.
+# Shared kernel PostgreSQL, MariaDB, Redis, and MinIO — ESO secrets and plain-values ConfigMaps.
 #
 # Helm releases are provisioned by the InfraData Crossplane XR (infra-data
 # composition), not by Argo-synced Release CRs. This ApplicationSet syncs only
@@ -30,6 +30,8 @@ spec:
           elements:
           - app: infra-postgresql
           - app: infra-mariadb
+          - app: infra-redis
+          - app: infra-minio
   template:
     metadata:
       name: '{{.app}}-{{.env}}'

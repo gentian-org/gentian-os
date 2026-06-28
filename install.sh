@@ -647,8 +647,7 @@ seed_secrets_remaining() {
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
-#   - 08-infra-data:        postgres/mariadb ESO + values ConfigMaps (InfraData XR owns Releases)
-#   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
+#   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
 #   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on feat/new-security.
 #
 # Prerequisites:
@@ -713,17 +712,17 @@ install_provider_helm() {
 }
 
 # =============================================================================
-# Step 13b — Apply InfraData XR (shared PostgreSQL + MariaDB)
+# Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
 #
-# Provisions kernel postgres/mariadb via Crossplane composition instead of
-# Argo-synced Release CRs under kernel/services/*/release.yaml.
+# Provisions kernel data stores via Crossplane composition instead of
+# Argo-synced Helm ApplicationSets.
 #
 # Prerequisites:
 #   - provider-helm Healthy (Step 13)
 #   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
 # =============================================================================
 apply_infra_data_xr() {
-    banner "Step 13b — Apply InfraData XR (shared PostgreSQL + MariaDB)"
+    banner "Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
 
     local env="${ENV:-dev}"
     local claim="dev-infra-data"
@@ -732,7 +731,7 @@ apply_infra_data_xr() {
     # Legacy Pattern B Release CRs shared the Helm release name as the MR name.
     # Remove them before the InfraData composition creates new MRs with the
     # same crossplane.io/external-name (opendesk-postgresql-{env}, etc.).
-    for rel in "opendesk-postgresql-${env}" "opendesk-mariadb-${env}"; do
+    for rel in "opendesk-postgresql-${env}" "opendesk-mariadb-${env}" "redis-${env}" "minio-${env}"; do
         if ! kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
             continue
         fi
@@ -772,7 +771,7 @@ apply_infra_data_xr() {
         exit 1
     }
 
-    success "InfraData XR ${xr_name} is Ready — shared PostgreSQL and MariaDB provisioned."
+    success "InfraData XR ${xr_name} is Ready — shared PostgreSQL, MariaDB, Redis, and MinIO provisioned."
 }
 
 # =============================================================================
@@ -1222,7 +1221,7 @@ deploy_nubus() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready argocd_url argocd_pw
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url argocd_pw
 
     xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
@@ -1235,6 +1234,10 @@ print_summary_cp() {
     infra_pg_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-postgresql \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     infra_mdb_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-mariadb \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    infra_redis_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-redis \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    infra_minio_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-minio \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
@@ -1253,6 +1256,8 @@ print_summary_cp() {
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
     echo -e "${GREEN}  InfraData PG   : dev-infra-data-postgresql (Ready=${infra_pg_ready})${NC}"
     echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
+    echo -e "${GREEN}  InfraData Redis: dev-infra-data-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
     echo ""
     echo -e "${GREEN}  OpenDesk stack : skipped (Nubus / Intercom / Nextcloud disabled)${NC}"
     echo -e "${GREEN}  Stopped at     : Step 13b (cluster ready for IdP work)${NC}"

@@ -44,9 +44,9 @@ fi
 
 failed=0
 
-# InfraData XR — shared postgres/mariadb (Step 2 kernel rebuild)
-info "Checking InfraData shared database Releases..."
-for rel in dev-infra-data-postgresql dev-infra-data-mariadb; do
+# InfraData XR — shared postgres/mariadb/redis/minio
+info "Checking InfraData shared infra Releases..."
+for rel in dev-infra-data-postgresql dev-infra-data-mariadb dev-infra-data-redis dev-infra-data-minio; do
   if kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
     if kubectl wait "release.helm.crossplane.io/${rel}" \
         --for=condition=Synced --timeout="${TIMEOUT_RELEASE}" 2>/dev/null \
@@ -58,13 +58,15 @@ for rel in dev-infra-data-postgresql dev-infra-data-mariadb; do
       failed=1
     fi
   else
-    if [[ "${rel}" == *postgresql* ]]; then
-      legacy="opendesk-postgresql-dev"
-    else
-      legacy="opendesk-mariadb-dev"
-    fi
-    if kubectl get release.helm.crossplane.io/"${legacy}" >/dev/null 2>&1; then
-      pass "Legacy infra Release ${legacy} present (pre–Step 2 migration)"
+    case "${rel}" in
+      *postgresql*) legacy="opendesk-postgresql-dev" ;;
+      *mariadb*)    legacy="opendesk-mariadb-dev" ;;
+      *redis*)      legacy="redis-dev" ;;
+      *minio*)      legacy="minio-dev" ;;
+      *)            legacy="" ;;
+    esac
+    if [[ -n "${legacy}" ]] && kubectl get release.helm.crossplane.io/"${legacy}" >/dev/null 2>&1; then
+      pass "Legacy infra Release ${legacy} present (pre–InfraData migration)"
     else
       warn "Neither InfraData nor legacy Release found for ${rel}"
     fi

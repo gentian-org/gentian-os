@@ -1,0 +1,24 @@
+---
+# DISABLED — superseded by InfraData Crossplane XR (redis/minio Release MRs).
+#
+# Redis and MinIO are provisioned by crossplane/compositions/infra-data.yaml
+# with prerequisites synced by kernel/appsets/08-infra-data.yaml.
+#
+# Previously: Argo CD multi-source Helm apps (Bitnami OCI / vendored packages).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-infra
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements: []
+      - list:
+          elements: []

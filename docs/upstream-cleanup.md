@@ -173,8 +173,8 @@ Pulled via ArgoCD ApplicationSet or Crossplane `Release` CR.
 
 | Done | Strategy | Component | Chart name | OCI repository (current) | Pinned version | Target | Referenced in |
 |:---:|---|---|---|---|---|---|---|
-| [x] | **A** | Redis | `redis` | `.../external/charts/bitnami-charts` | 18.6.1 | `oci://registry-1.docker.io/bitnamicharts/redis` | `kernel/appsets/10-infra.yaml` |
-| [x] | **A** | MinIO | `minio` | `.../external/charts/bitnami-charts` | 16.0.10 | Public Bitnami chart + `bitnamilegacy/*` images | `kernel/appsets/10-infra.yaml` |
+| [x] | **A** | Redis | `redis` | `.../external/charts/bitnami-charts` | 18.6.1 | Vendored `charts/infra/redis` + InfraData XR | `kernel/services/infra-redis/`, `crossplane/compositions/infra-data.yaml` |
+| [x] | **A** | MinIO | `minio` | `.../external/charts/bitnami-charts` | 16.0.10 | Vendored `charts/infra/minio` + InfraData XR | `kernel/services/infra-minio/`, `crossplane/compositions/infra-data.yaml` |
 | [ ] | **D** | Intercom (ICS) | `intercom-service` | `.../supplier/univention/charts-mirror` | 2.19.5 | **Drop** — remove chart, Keycloak client, gateway route; rewire portal/Element | `kernel/appsets/20-iam.yaml` |
 | [ ] | **D** | Nubus | `nubus` | `.../supplier/univention/charts-mirror` | 1.16.0 | Gentian IAM (Keycloak + directory + ReBAC); decommission Nubus | `kernel/services/nubus/manifests/dev/release.yaml` |
 | [x] | **A** | PostgreSQL | `infra-postgresql` | Vendored `charts/infra/postgresql` | 2.1.2 | InfraData XR + packages repo (future: CNPG) | `kernel/services/infra-postgresql/`, `crossplane/compositions/infra-data.yaml` |
