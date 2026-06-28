@@ -8,7 +8,8 @@ MODEL_DIR="${ROOT}/authz/model/v0"
 if ! command -v fga >/dev/null 2>&1; then
   echo "Installing openfga/cli via go install..."
   go install github.com/openfga/cli/cmd/fga@latest
-  export PATH="${PATH}:$(go env GOPATH)/bin"
+  gopath_bin="$(go env GOPATH)/bin"
+  export PATH="${PATH}:${gopath_bin}"
 fi
 
 echo "Validating authorization model..."
