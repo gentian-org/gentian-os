@@ -51,7 +51,7 @@ spec:
                   version: {{ $fgaVersion | quote }}
                 namespace: {{ $ns }}
                 wait: true
-                waitTimeout: "10m"
+                waitTimeout: "15m"
                 valuesFrom:
                   - configMapKeyRef:
                       name: openfga-base-values

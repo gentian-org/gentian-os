@@ -21,6 +21,10 @@ data:
       connMaxIdleTime: 30s
       connMaxLifetime: 60s
       applyMigrations: true
+      # initContainer avoids a separate migrate Job that Helm/provider-helm can
+      # miss on failed installs (Deployment init then waits forever for the Job).
+      migrationType: initContainer
+      waitForMigrations: false
     grpc:
       enabled: true
     telemetry:

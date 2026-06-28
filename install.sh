@@ -873,13 +873,16 @@ apply_authz_idp_xr() {
     banner "Step 14 — Apply AuthzIdp XR (OpenFGA + standalone Keycloak)"
 
     local claim="dev-authz-idp"
-    local timeout="${AUTHZ_IDP_XR_TIMEOUT:-15m}"
+    local timeout="${AUTHZ_IDP_XR_TIMEOUT:-20m}"
 
-    info "Waiting for authz-idp prerequisite ConfigMaps/ExternalSecrets (up to 3m)..."
+    info "Waiting for authz-idp Argo apps + prerequisites in platform-kernel (up to 3m)..."
     local deadline=$((SECONDS + 180))
-    until kubectl get configmap openfga-base-values -n platform-kernel >/dev/null 2>&1 \
-        && kubectl get externalsecret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1 \
-        && kubectl get configmap keycloak-idp-base-values -n platform-kernel >/dev/null 2>&1; do
+    until kubectl get application openfga-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
+        && kubectl get application keycloak-idp-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
+        && kubectl get configmap openfga-base-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get configmap keycloak-idp-base-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get secret keycloak-idp-sensitive-values -n platform-kernel >/dev/null 2>&1; do
         if (( SECONDS > deadline )); then
             warn "authz-idp prerequisites not ready — refresh gentian-appsets and retry."
             warn "  kubectl get applications -n argocd | grep -E 'openfga|keycloak-idp'"
@@ -906,6 +909,33 @@ apply_authz_idp_xr() {
         [[ -n "${xr_name}" ]] || sleep 3
     done
     info "  Composite name: ${xr_name}"
+
+    if kubectl wait "xauthzidp/${xr_name}" --for=condition=Ready --timeout=10s >/dev/null 2>&1; then
+        success "AuthzIdp XR ${xr_name} is already Ready — skipping reinstall."
+        return 0
+    fi
+
+    # Delete failed Helm Release MRs so the composition reinstalls with updated values.
+    local rel state synced
+    while IFS= read -r rel; do
+        [[ -z "${rel}" ]] && continue
+        state=$(kubectl get release.helm.crossplane.io/"${rel}" \
+            -o jsonpath='{.status.atProvider.state}' 2>/dev/null || true)
+        synced=$(kubectl get release.helm.crossplane.io/"${rel}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)
+        if [[ "${state}" == "failed" || "${synced}" == "False" ]]; then
+            warn "Resetting failed AuthzIdp Release ${rel} for clean reinstall..."
+            kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
+        fi
+    done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+
+    for hr in gentian-openfga gentian-idp-keycloak; do
+        if helm status "${hr}" -n platform-kernel 2>/dev/null | grep -qE 'STATUS: (failed|pending-install|pending-upgrade)'; then
+            warn "Uninstalling stuck Helm release ${hr} in platform-kernel..."
+            helm uninstall "${hr}" -n platform-kernel --wait --timeout=3m 2>/dev/null || true
+        fi
+    done
 
     info "Waiting for XAuthzIdp ${xr_name} to be Ready (timeout: ${timeout})..."
     kubectl wait "xauthzidp/${xr_name}" \
@@ -1395,9 +1425,16 @@ print_summary_cp() {
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     local authz_idp_ready openfga_ready keycloak_ready
     authz_idp_ready=$(kubectl get xauthzidp -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    openfga_ready=$(kubectl get release.helm.crossplane.io/dev-authz-idp-openfga \
+    local authz_xr openfga_rel keycloak_rel
+    authz_xr=$(kubectl get authzidp dev-authz-idp -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || echo "dev-authz-idp")
+    openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${authz_xr}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1)
+    keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${authz_xr}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep keycloak | head -1)
+    openfga_ready=$(kubectl get release.helm.crossplane.io/"${openfga_rel}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    keycloak_ready=$(kubectl get release.helm.crossplane.io/dev-authz-idp-keycloak \
+    keycloak_ready=$(kubectl get release.helm.crossplane.io/"${keycloak_rel}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.

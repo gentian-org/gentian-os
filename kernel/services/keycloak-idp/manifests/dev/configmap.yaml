@@ -16,7 +16,7 @@ data:
       - "start"
       - "--http-enabled=true"
       - "--hostname-strict=false"
-      - "--proxy=edge"
+      - "--proxy-headers=xforwarded"
     service:
       type: ClusterIP
       httpPort: 8080
