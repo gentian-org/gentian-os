@@ -300,9 +300,10 @@ build_gentian_portal_images() {
         -t "ghcr.io/gentian-org/gentian-portal-api:${tag}"
 
     if [[ "${PORTAL_IMAGE_PUSH:-true}" == "true" ]]; then
-        docker push "ghcr.io/gentian-org/gentian-portal-web:${tag}" \
-            && docker push "ghcr.io/gentian-org/gentian-portal-api:${tag}" \
-            || warn "Could not push portal images to ghcr.io — ensure docker login ghcr.io"
+        if ! docker push "ghcr.io/gentian-org/gentian-portal-web:${tag}" \
+            || ! docker push "ghcr.io/gentian-org/gentian-portal-api:${tag}"; then
+            warn "Could not push portal images to ghcr.io — ensure docker login ghcr.io"
+        fi
     fi
 
     export PORTAL_WEB_IMAGE="ghcr.io/gentian-org/gentian-portal-web:${tag}"
