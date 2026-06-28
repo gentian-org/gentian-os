@@ -1,0 +1,33 @@
+# Gentian shell (React + FastAPI) — Stage 1 login dogfood values.
+# Chart source: gentian-ui/chart (sibling repo or GENTIAN_UI_DIR).
+
+kernelDomain: desk.gentian.org
+
+auth:
+  disabled: false
+
+api:
+  image:
+    pullPolicy: Always
+  env:
+    ENVIRONMENT: development
+
+web:
+  image:
+    pullPolicy: Always
+
+gateway:
+  enabled: true
+  parentGatewayName: kernel-public-gateway
+  parentGatewayNamespace: gentian-kernel
+  host: portal
+
+existingSecret:
+  name: gentian-portal-secrets
+
+openfga:
+  apiUrl: http://gentian-openfga.platform-kernel.svc.cluster.local:8080
+  storeId: ""
+
+networkPolicy:
+  create: false

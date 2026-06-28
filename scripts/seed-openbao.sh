@@ -27,6 +27,7 @@ set -euo pipefail
 #   storage/minio
 #   identity/nubus
 #   identity/keycloak-bootstrap
+#   identity/portal-bootstrap-user
 #   identity/intercom
 #   apps/nextcloud
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
@@ -371,6 +372,15 @@ kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
   "admin_password":          "${KC_ADMIN_PW}",
   "intercom_client_secret":  "${KC_CLIENT_INTERCOM}"
+}
+EOF
+)"
+
+PORTAL_USER_PW=$(derive_password "portal-bootstrap" "user_password")
+kv_put_once "identity/portal-bootstrap-user" "$(cat <<EOF
+{
+  "username": "demo",
+  "password": "${PORTAL_USER_PW}"
 }
 EOF
 )"

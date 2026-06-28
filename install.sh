@@ -1643,6 +1643,9 @@ main_cp() {
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
     apply_suze_xr               # Step 14 — Gentian IdP (Keycloak + OpenFGA) via Suze XR
     install_stage1_operator     # Step 15 — operator with authz bridge
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    install_stage1_portal       # Step 16 — portal OIDC login dogfood
 
     # ── OpenDesk app stack (commented — uncomment when migrating legacy apps) ─
     # deploy_nubus                # Step 16 — Nubus namespaces + ESO Secrets + Release CR
@@ -1659,10 +1662,30 @@ main_cp() {
     # reconcile_nextcloud_office || true  # Step 18c — Collabora / Nextcloud office
     # configure_github_actions_secrets   # Step 18d — CI_BOT_PAT → gentian-os Actions secrets
 
-    success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA) and authz bridge are live."
+    success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA), authz bridge, and portal login are live."
     unset INSTALL_START_EPOCH
     save_install_state
     print_summary_cp
 }
+
+run_stage1_portal_only() {
+    load_creds_cache
+    load_install_state
+    try_load_creds_from_openbao
+    load_deployments_cluster_settings
+    prompt_kernel_domain 2>/dev/null || true
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || { error "KERNEL_DOMAIN not set — source install.env or run full install first."; exit 1; }
+    [[ -n "${MASTER_PASSWORD:-}" ]] || { error "MASTER_PASSWORD not set — source install.env."; exit 1; }
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    install_stage1_portal
+}
+
+case "${1:-}" in
+    --stage1-portal)
+        run_stage1_portal_only
+        exit 0
+        ;;
+esac
 
 main_cp "$@"
