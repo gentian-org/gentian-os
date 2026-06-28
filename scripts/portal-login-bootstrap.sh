@@ -21,7 +21,8 @@ _keycloak_internal_service_url() {
     [[ -n "${svc}" ]] || return 1
     port=$(kubectl get svc -n "${ns}" "${svc}" -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || true)
     port="${port:-8080}"
-    echo "http://${svc}.${ns}.svc.cluster.local:${port}"
+    # keycloakx chart serves Admin/OIDC under /auth (legacy relative path).
+    echo "http://${svc}.${ns}.svc.cluster.local:${port}/auth"
 }
 
 ensure_keycloak_admin_secret_url() {
@@ -106,29 +107,45 @@ spec:
             - |
               apk add --no-cache --quiet curl jq >/dev/null
               set -eu
-              TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \\
+              resolve_keycloak_base() {
+                local base code
+                for base in "\${KEYCLOAK_URL}" "\${KEYCLOAK_URL%/}/auth" "\${KEYCLOAK_URL%/auth}"; do
+                  code=\$(curl -s -o /dev/null -w '%{http_code}' "\${base}/realms/master/.well-known/openid-configuration")
+                  if [ "\${code}" = "200" ]; then
+                    echo "\${base}"
+                    return 0
+                  fi
+                done
+                return 1
+              }
+              KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
+                echo "ERROR: could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+                exit 1
+              }
+              echo "Using Keycloak base \${KEYCLOAK_BASE}"
+              TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \\
                 -H "Content-Type: application/x-www-form-urlencoded" \\
                 --data-urlencode "client_id=admin-cli" \\
                 --data-urlencode "username=\${KEYCLOAK_ADMIN_USERNAME}" \\
                 --data-urlencode "password=\${KEYCLOAK_ADMIN_PASSWORD}" \\
                 --data-urlencode "grant_type=password" | jq -r .access_token)
               if [ -z "\${TOKEN}" ] || [ "\${TOKEN}" = "null" ]; then
-                echo "ERROR: Keycloak admin token request failed" >&2
+                echo "ERROR: Keycloak admin token request failed at \${KEYCLOAK_BASE}" >&2
                 exit 1
               fi
               AUTH="Authorization: Bearer \${TOKEN}"
               REALM="\${KERNEL_REALM}"
               PORTAL="https://portal.\${KERNEL_DOMAIN}"
 
-              realm_http=\$(curl -s -o /dev/null -w '%{http_code}' -H "\${AUTH}" "\${KEYCLOAK_URL}/admin/realms/\${REALM}")
+              realm_http=\$(curl -s -o /dev/null -w '%{http_code}' -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}")
               if [ "\${realm_http}" = "404" ]; then
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_URL}/admin/realms" \\
+                  "\${KEYCLOAK_BASE}/admin/realms" \\
                   -d "{\"realm\":\"\${REALM}\",\"enabled\":true,\"displayName\":\"\${REALM}\"}"
                 echo "Created realm \${REALM}"
               elif [ "\${realm_http}" = "200" ]; then
                 curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}" -d '{"enabled":true}'
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d '{"enabled":true}'
                 echo "Realm \${REALM} enabled"
               else
                 echo "ERROR: realm \${REALM} check returned HTTP \${realm_http}" >&2
@@ -136,7 +153,7 @@ spec:
               fi
 
               CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_URL}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
                 | jq -r '.[0].id // empty')
               BODY=\$(jq -n --arg portal "\${PORTAL}" '{
                 clientId: "gentian-portal",
@@ -156,35 +173,35 @@ spec:
               }')
               if [ -n "\${CLIENT_ID}" ]; then
                 curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/clients/\${CLIENT_ID}" -d "\${BODY}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}" -d "\${BODY}"
                 echo "Updated client gentian-portal"
               else
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/clients" -d "\${BODY}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${BODY}"
                 echo "Created client gentian-portal"
               fi
 
               USER_ID=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
                 | jq -r '.[0].id // empty')
               USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --arg e "\${PORTAL_EMAIL}" '{
                 username: \$u, email: \$e, enabled: true, emailVerified: true
               }')
               if [ -z "\${USER_ID}" ]; then
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users" -d "\${USER_BODY}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users" -d "\${USER_BODY}"
                 USER_ID=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
                   | jq -r '.[0].id')
                 echo "Created user \${PORTAL_USERNAME}"
               else
                 curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${USER_BODY}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${USER_BODY}"
                 echo "Updated user \${PORTAL_USERNAME}"
               fi
               CRED=\$(jq -n --arg p "\${PORTAL_PASSWORD}" '{type:"password",value:\$p,temporary:false}')
               curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                "\${KEYCLOAK_URL}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
           env:
             - name: KEYCLOAK_URL
