@@ -26,7 +26,7 @@ _keycloak_internal_service_url() {
 
 ensure_keycloak_admin_secret_url() {
     local ns="platform-kernel"
-    local url current
+    local url current eso_manifest
     url=$(_keycloak_internal_service_url "${ns}") || {
         error "No Keycloak HTTP service found in ${ns}."
         return 1
@@ -36,10 +36,24 @@ ensure_keycloak_admin_secret_url() {
         info "keycloak-admin URL: ${url}"
         return 0
     fi
-    warn "Updating keycloak-admin URL (${current:-missing} -> ${url})"
-    kubectl patch secret keycloak-admin -n "${ns}" --type merge \
-        -p "{\"stringData\":{\"url\":\"${url}\"}}"
-    success "keycloak-admin Secret URL corrected."
+    warn "Updating keycloak-admin URL (${current:-missing} -> ${url}) via ExternalSecret"
+    eso_manifest="${SCRIPT_DIR}/kernel/services/postgresql/manifests/dev/externalsecrets.yaml"
+    if [[ -f "${eso_manifest}" ]]; then
+        kubectl apply -f "${eso_manifest}" >/dev/null
+        kubectl annotate externalsecret keycloak-admin -n "${ns}" \
+            "force-sync=$(date +%s)" --overwrite >/dev/null
+        local deadline=$((SECONDS + 30))
+        while (( SECONDS < deadline )); do
+            current=$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
+            if [[ "${current}" == "${url}" ]]; then
+                success "keycloak-admin Secret URL corrected."
+                return 0
+            fi
+            sleep 2
+        done
+    fi
+    error "keycloak-admin URL still ${current:-missing}; expected ${url}"
+    return 1
 }
 
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
