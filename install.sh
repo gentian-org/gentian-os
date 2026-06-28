@@ -1062,7 +1062,7 @@ install_stage1_operator() {
         --set "authzBridge.openfgaToken=${openfga_token}" \
         --set infraNamespace="platform-kernel" \
         --set "servicesNamespace=platform-kernel" \
-        --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak.platform-kernel.svc.cluster.local:8080" \
+        --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080" \
         --wait --timeout 5m
 
     success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED."

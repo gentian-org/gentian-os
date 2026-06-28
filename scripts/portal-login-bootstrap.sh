@@ -9,6 +9,39 @@ _portal_derive_password() {
     echo -n "portal-bootstrap:user_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
+_keycloak_internal_service_url() {
+    local ns="${1:-platform-kernel}"
+    local svc port
+    svc=$(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep -E 'keycloak.*http' | head -1 || true)
+    if [[ -z "${svc}" ]]; then
+        svc=$(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+            | grep keycloak | grep -v headless | head -1 || true)
+    fi
+    [[ -n "${svc}" ]] || return 1
+    port=$(kubectl get svc -n "${ns}" "${svc}" -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || true)
+    port="${port:-8080}"
+    echo "http://${svc}.${ns}.svc.cluster.local:${port}"
+}
+
+ensure_keycloak_admin_secret_url() {
+    local ns="platform-kernel"
+    local url current
+    url=$(_keycloak_internal_service_url "${ns}") || {
+        error "No Keycloak HTTP service found in ${ns}."
+        return 1
+    }
+    current=$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
+    if [[ "${current}" == "${url}" ]]; then
+        info "keycloak-admin URL: ${url}"
+        return 0
+    fi
+    warn "Updating keycloak-admin URL (${current:-missing} -> ${url})"
+    kubectl patch secret keycloak-admin -n "${ns}" --type merge \
+        -p "{\"stringData\":{\"url\":\"${url}\"}}"
+    success "keycloak-admin Secret URL corrected."
+}
+
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
 # an in-cluster Service DNS name and is not reachable from the install host.
 run_keycloak_portal_bootstrap_job() {
@@ -304,6 +337,8 @@ install_stage1_portal() {
         warn "keycloak-admin Secret missing — run Steps 14–15 first."
         return 1
     fi
+
+    ensure_keycloak_admin_secret_url || return 1
 
     local kc_manifest="${SCRIPT_DIR}/kernel/services/keycloak-config/manifests/dev/gentian-portal-client.yaml"
     if [[ -f "${kc_manifest}" ]]; then
