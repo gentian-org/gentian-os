@@ -7,7 +7,7 @@ ignore: |
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/
-  charts/infra/**/templates/
+  charts/infra/
   export/**/chart/templates/
   export/gentian-apps/profiles/
   kernel/manifests/flux-crds/
