@@ -244,7 +244,7 @@ kv_put_once "database/postgresql" "$(cat <<EOF
   "openfga_user_password":           "${PG_OPENFGA_PW}"
 }
 EOF
-)
+)"
 
 # --- OpenFGA (Stage 1 ReBAC PDP) --------------------------------------------
 OPENFGA_PRESHARED=$(derive_password "openfga" "preshared_key")
@@ -253,7 +253,7 @@ kv_put_once "authz/openfga" "$(cat <<EOF
   "preshared_key": "${OPENFGA_PRESHARED}"
 }
 EOF
-)""
+)"
 
 # --- MariaDB ---
 kv_put_once "database/mariadb" "$(cat <<EOF
