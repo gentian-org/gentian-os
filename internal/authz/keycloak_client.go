@@ -86,7 +86,7 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("keycloak list users: %s", resp.Status)
 	}
@@ -130,7 +130,7 @@ func (c *KeycloakAdminClient) adminToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("keycloak token: %s: %s", resp.Status, strings.TrimSpace(string(body)))
@@ -167,7 +167,7 @@ func (c *KeycloakAdminClient) doAdmin(ctx context.Context, token, method, path s
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode, nil
 }

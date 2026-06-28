@@ -3283,6 +3283,48 @@ configure_github_actions_secrets() {
     bash "${SCRIPT_DIR}/scripts/configure-github-actions-secrets.sh"
 }
 
+# Adopt cluster-scoped chart resources left from a prior ArgoCD or manual install so
+# helm upgrade --install gentian-os can proceed (missing meta.helm.sh/release-*).
+adopt_gentian_os_helm_preflight() {
+    local ns="${1:-gentian-system}"
+    local vwc chart_ns
+
+    while IFS= read -r vwc; do
+        [[ -z "$vwc" ]] && continue
+        if kubectl get validatingwebhookconfiguration "$vwc" \
+            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null \
+            | grep -q .; then
+            continue
+        fi
+        kubectl annotate validatingwebhookconfiguration "$vwc" \
+            "meta.helm.sh/release-name=gentian-os" \
+            "meta.helm.sh/release-namespace=${ns}" \
+            --overwrite
+        kubectl label validatingwebhookconfiguration "$vwc" \
+            "app.kubernetes.io/managed-by=Helm" \
+            --overwrite
+        info "Adopted pre-existing ValidatingWebhookConfiguration '${vwc}' into Helm release."
+    done < <(kubectl get validatingwebhookconfigurations \
+                 --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+             | grep "^gentian-os-" || true)
+
+    chart_ns="shared-apps"
+    if kubectl get namespace "${chart_ns}" >/dev/null 2>&1; then
+        if ! kubectl get namespace "${chart_ns}" \
+            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null \
+            | grep -q .; then
+            kubectl annotate namespace "${chart_ns}" \
+                "meta.helm.sh/release-name=gentian-os" \
+                "meta.helm.sh/release-namespace=${ns}" \
+                --overwrite
+            kubectl label namespace "${chart_ns}" \
+                "app.kubernetes.io/managed-by=Helm" \
+                --overwrite
+            info "Adopted pre-existing namespace '${chart_ns}' into Helm release."
+        fi
+    fi
+}
+
 install_orchestrator() {
     banner "Step 15 — gentian-os orchestrator (CRDs + operator + ArgoCD handoff)"
 
@@ -3337,46 +3379,7 @@ install_orchestrator() {
     fi
     kubectl apply -f "$crd_dir"
 
-    # ── Pre-flight: adopt any webhook resources left from a previous run ──────
-    # If ValidatingWebhookConfigurations exist without Helm ownership metadata,
-    # helm upgrade --install will refuse to proceed.  Annotate and label them
-    # so Helm can adopt them (idempotent if annotations are already present).
-    local vwc
-    for vwc in $(kubectl get validatingwebhookconfigurations \
-                     -l "app.kubernetes.io/managed-by=Helm" \
-                     --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                 | grep -v "^$" || true); do
-        :  # already owned
-    done
-    while IFS= read -r vwc; do
-        [[ -z "$vwc" ]] && continue
-        kubectl annotate validatingwebhookconfiguration "$vwc" \
-            "meta.helm.sh/release-name=gentian-os" \
-            "meta.helm.sh/release-namespace=${ns}" \
-            --overwrite
-        kubectl label validatingwebhookconfiguration "$vwc" \
-            "app.kubernetes.io/managed-by=Helm" \
-            --overwrite
-        info "Adopted pre-existing ValidatingWebhookConfiguration '${vwc}' into Helm release."
-    done < <(kubectl get validatingwebhookconfigurations \
-                 --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
-             | grep "^gentian-os-" || true)
-
-    # ── Pre-flight: adopt any namespaces left from a previous run ────────────
-    # The chart owns the shared-apps namespace. After an uninstall the namespace
-    # may still exist (terminating finalizers, manual creation, etc.) without
-    # Helm ownership annotations, causing helm upgrade --install to abort.
-    local chart_ns="shared-apps"
-    if kubectl get namespace "${chart_ns}" >/dev/null 2>&1; then
-        kubectl annotate namespace "${chart_ns}" \
-            "meta.helm.sh/release-name=gentian-os" \
-            "meta.helm.sh/release-namespace=${ns}" \
-            --overwrite
-        kubectl label namespace "${chart_ns}" \
-            "app.kubernetes.io/managed-by=Helm" \
-            --overwrite
-        info "Adopted pre-existing namespace '${chart_ns}' into Helm release."
-    fi
+    adopt_gentian_os_helm_preflight "$ns"
 
     info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
     info "(ArgoCD will take ownership of this release in the handoff step below.)"

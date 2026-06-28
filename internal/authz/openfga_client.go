@@ -57,7 +57,7 @@ func (c *OpenFGAClient) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("openfga health: %s: %s", resp.Status, strings.TrimSpace(string(body)))
@@ -81,7 +81,7 @@ func (c *OpenFGAClient) FindStoreByName(ctx context.Context, name string) (strin
 	if err != nil {
 		return "", false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", false, c.readAPIError(resp)
 	}
@@ -110,7 +110,7 @@ func (c *OpenFGAClient) CreateStore(ctx context.Context, name string) (string, e
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return "", c.readAPIError(resp)
 	}
@@ -147,7 +147,7 @@ func (c *OpenFGAClient) WriteAuthorizationModel(ctx context.Context, storeID str
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return "", c.readAPIError(resp)
 	}
@@ -184,7 +184,7 @@ func (c *OpenFGAClient) WriteTuples(ctx context.Context, storeID string, tuples 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return c.readAPIError(resp)
 	}
@@ -211,7 +211,7 @@ func (c *OpenFGAClient) Check(ctx context.Context, storeID, user, relation, obje
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false, c.readAPIError(resp)
 	}

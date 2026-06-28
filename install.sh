@@ -1047,6 +1047,8 @@ install_stage1_operator() {
 
     kubectl apply -f "${chart_dir}/crds"
 
+    adopt_gentian_os_helm_preflight "$ns"
+
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
         --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \

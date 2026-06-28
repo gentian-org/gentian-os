@@ -236,6 +236,7 @@ spec:
       metadata:
         labels:
           app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/netpolicy-type: baseline
           gentianos.io/tenant: render-fixture
         name: tenant-isolation
         namespace: tenant-render-fixture

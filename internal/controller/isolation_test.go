@@ -621,21 +621,6 @@ func collectIngressNamespaces(np *networkingv1.NetworkPolicy) []string {
 	return result
 }
 
-// hasIngressNamespaceLabel checks if any ingress rule has a namespace selector
-// matching the given label key/value.
-func hasIngressNamespaceLabel(np *networkingv1.NetworkPolicy, key, value string) bool {
-	for _, rule := range np.Spec.Ingress {
-		for _, from := range rule.From {
-			if from.NamespaceSelector != nil {
-				if v, ok := from.NamespaceSelector.MatchLabels[key]; ok && v == value {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // collectEgressNamespaces extracts namespace names from egress rules.
 func collectEgressNamespaces(np *networkingv1.NetworkPolicy) []string {
 	var result []string

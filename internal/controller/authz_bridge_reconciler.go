@@ -13,8 +13,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -96,9 +99,19 @@ func (r *AuthzBridgeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if !r.Enabled {
 		return nil
 	}
+	// Primary trigger: keycloak-admin Secret (Stage 1 runs before any Tenant CR exists).
+	// Secondary: Tenant CR changes add per-tenant realms to the sync loop.
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("authz-bridge").
-		For(&gentianov1alpha1.Tenant{}).
+		For(&corev1.Secret{}, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+			return obj.GetNamespace() == kernelNamespace && obj.GetName() == keycloakAdminSecret
+		}))).
+		Watches(
+			&gentianov1alpha1.Tenant{},
+			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+				return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
+			}),
+		).
 		Complete(r)
 }
 
