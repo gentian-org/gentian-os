@@ -68,6 +68,14 @@ func keycloakProxyServiceName() string {
 	return fmt.Sprintf("%s-keycloak-extensions-proxy", nubusReleaseName())
 }
 
+// suzeKeycloakHTTPServiceName is the keycloakx chart HTTP Service for Stage 1 Suze IdP.
+func suzeKeycloakHTTPServiceName() string {
+	if v := envOrDefault("KEYCLOAK_HTTP_SERVICE", ""); v != "" {
+		return v
+	}
+	return "gentian-idp-keycloak-keycloakx-http"
+}
+
 func portalFrontendServiceName() string {
 	if v := envOrDefault("PORTAL_FRONTEND_SERVICE", ""); v != "" {
 		return v
@@ -132,7 +140,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("ensure ArgoCD ReferenceGrant: %w", err)
 	}
 
-	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames)
+	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames, r.IdentityMode)
 	expected := make(map[string]struct{}, len(specs))
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
@@ -159,6 +167,7 @@ func kernelHTTPRouteSpecs(
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
+	identityMode string,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 	portalHost := kernelPortalHost(kernelDomain)
@@ -168,15 +177,86 @@ func kernelHTTPRouteSpecs(
 	officeHost := fmt.Sprintf("office.%s", kernelDomain)
 	icsHost := fmt.Sprintf("ics.%s", kernelDomain)
 
-	return []kernelHTTPRouteSpec{
+	kcService := keycloakProxyServiceName()
+	kcPort := keycloakProxyServicePort
+	if identityMode == IdentityModeKeycloakNative {
+		kcService = suzeKeycloakHTTPServiceName()
+		kcPort = 8080
+	}
+
+	specs := []kernelHTTPRouteSpec{
 		{
 			name: kernelRouteKeycloakIDP,
 			host: idHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(keycloakProxyServiceName(), keycloakProxyServicePort, keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)),
+				kernelBackendRule(kcService, kcPort, keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
+	}
+	if identityMode != IdentityModeKeycloakNative {
+		specs = append(specs, kernelLegacyPortalHTTPRouteSpecs(portalHost)...)
+	}
+	specs = append(specs,
+		kernelHTTPRouteSpec{
+			name: kernelRouteKernelApex,
+			host: kernelDomain,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelApexRedirectRule(kernelDomain),
+			},
+		},
+		kernelHTTPRouteSpec{
+			name: kernelRouteCryptpad,
+			host: padHost,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRule("cryptpad", 80, kernelCryptpadMainResponseFilters(kernelDomain)),
+			},
+			policy: cryptpadBackendTrafficPolicySpec(),
+		},
+		kernelHTTPRouteSpec{
+			name: kernelRouteCryptpadSandbox,
+			host: padSandboxHost,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRule("cryptpad", 80, kernelCryptpadSandboxResponseFilters(kernelDomain)),
+			},
+			policy: cryptpadBackendTrafficPolicySpec(),
+		},
+		kernelHTTPRouteSpec{
+			name: kernelRouteNextcloud,
+			host: filesHost,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRule(nextcloudServiceName(), 80, kernelNextcloudResponseFilters(kernelDomain)),
+			},
+		},
+		kernelHTTPRouteSpec{
+			name: kernelRouteCollabora,
+			host: officeHost,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRule("collabora", 9980, nil),
+			},
+			policy:       collaboraBackendTrafficPolicySpec(),
+			clientPolicy: collaboraClientTrafficPolicySpec(),
+		},
+		kernelHTTPRouteSpec{
+			name: kernelRouteIntercom,
+			host: icsHost,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRule(intercomServiceName(), 8008, nil),
+			},
+		},
+		kernelHTTPRouteSpec{
+			name: kernelRouteArgoCD,
+			host: fmt.Sprintf("argocd.%s", kernelDomain),
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
+			},
+		},
+	)
+	return specs
+}
+
+func kernelLegacyPortalHTTPRouteSpecs(portalHost string) []kernelHTTPRouteSpec {
+	return []kernelHTTPRouteSpec{
 		{
 			name: kernelRoutePortalLogin,
 			host: portalHost,
@@ -234,59 +314,6 @@ func kernelHTTPRouteSpecs(
 			name:  kernelRoutePortal,
 			host:  portalHost,
 			rules: kernelPortalFrontendRules(portalFrontendServiceName(), 80),
-		},
-		{
-			name: kernelRouteKernelApex,
-			host: kernelDomain,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelApexRedirectRule(kernelDomain),
-			},
-		},
-		{
-			name: kernelRouteCryptpad,
-			host: padHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("cryptpad", 80, kernelCryptpadMainResponseFilters(kernelDomain)),
-			},
-			policy: cryptpadBackendTrafficPolicySpec(),
-		},
-		{
-			name: kernelRouteCryptpadSandbox,
-			host: padSandboxHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("cryptpad", 80, kernelCryptpadSandboxResponseFilters(kernelDomain)),
-			},
-			policy: cryptpadBackendTrafficPolicySpec(),
-		},
-		{
-			name: kernelRouteNextcloud,
-			host: filesHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(nextcloudServiceName(), 80, kernelNextcloudResponseFilters(kernelDomain)),
-			},
-		},
-		{
-			name: kernelRouteCollabora,
-			host: officeHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("collabora", 9980, nil),
-			},
-			policy:       collaboraBackendTrafficPolicySpec(),
-			clientPolicy: collaboraClientTrafficPolicySpec(),
-		},
-		{
-			name: kernelRouteIntercom,
-			host: icsHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(intercomServiceName(), 8008, nil),
-			},
-		},
-		{
-			name: kernelRouteArgoCD,
-			host: fmt.Sprintf("argocd.%s", kernelDomain),
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
-			},
 		},
 	}
 }

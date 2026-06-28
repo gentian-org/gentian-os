@@ -57,6 +57,26 @@ ensure_keycloak_admin_secret_url() {
     return 1
 }
 
+ensure_portal_gateway_readiness() {
+    local ns="platform-kernel"
+    if ! kubectl get secret wildcard-tls -n "${ns}" >/dev/null 2>&1; then
+        if kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1; then
+            info "Copying wildcard-kernel-tls → ${ns}/wildcard-tls for kernel-public-gateway..."
+            kubectl get secret wildcard-kernel-tls -n cert-manager -o json | python3 -c "
+import sys, json
+s = json.load(sys.stdin)
+s['metadata'] = {'name': 'wildcard-tls', 'namespace': '${ns}'}
+for k in ('resourceVersion','uid','creationTimestamp','managedFields','ownerReferences'):
+    s['metadata'].pop(k, None)
+s.pop('status', None)
+print(json.dumps(s))
+" | kubectl apply -f -
+        else
+            warn "wildcard-tls missing in ${ns} — gateway HTTPS listeners may stay invalid."
+        fi
+    fi
+}
+
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
 # an in-cluster Service DNS name and is not reachable from the install host.
 run_keycloak_portal_bootstrap_job() {
@@ -261,7 +281,7 @@ EOF
 
     kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
     success "Keycloak gentian-portal client and kernel user ${username} are ready."
-    info "OIDC issuer: https://id.${kernel_domain}/realms/${kernel_realm}"
+    info "OIDC issuer: https://id.${kernel_domain}/auth/realms/${kernel_realm}"
     info "Portal login credentials:"
     info "  URL:      https://portal.${kernel_domain}/login"
     info "  Username: ${username}  (or ${email})"
@@ -274,7 +294,7 @@ build_gentian_portal_images() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local portal_origin="https://portal.${kernel_domain}"
-    local issuer="https://id.${kernel_domain}/realms/${kernel_realm}"
+    local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
 
     if [[ ! -d "${ui_dir}/frontend" || ! -d "${ui_dir}/backend" ]]; then
         warn "gentian-ui not found at ${ui_dir} — set GENTIAN_UI_DIR or build images manually."
@@ -321,7 +341,7 @@ install_gentian_portal_chart() {
     local web_image="${PORTAL_WEB_IMAGE:-ghcr.io/gentian-org/gentian-portal-web:${tag}}"
     local api_image="${PORTAL_API_IMAGE:-ghcr.io/gentian-org/gentian-portal-api:${tag}}"
     local values_file="${SCRIPT_DIR}/kernel/services/gentian-portal-web/values/dev.yaml"
-    local issuer="https://id.${kernel_domain}/realms/${kernel_realm}"
+    local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
     local portal_origin="https://portal.${kernel_domain}"
 
     if [[ ! -f "${chart_dir}/Chart.yaml" ]]; then
@@ -348,6 +368,7 @@ install_gentian_portal_chart() {
         --namespace "${ns}" \
         --values "${values_file}" \
         --set kernelDomain="${kernel_domain}" \
+        --set gateway.parentGatewayNamespace=platform-kernel \
         --set "api.image.repository=ghcr.io/gentian-org/gentian-portal-api" \
         --set "api.image.tag=${tag}" \
         --set "web.image.repository=ghcr.io/gentian-org/gentian-portal-web" \
@@ -371,6 +392,7 @@ install_stage1_portal() {
     fi
 
     ensure_keycloak_admin_secret_url || return 1
+    ensure_portal_gateway_readiness
 
     local kc_manifest="${SCRIPT_DIR}/kernel/services/keycloak-config/manifests/dev/gentian-portal-client.yaml"
     if [[ -f "${kc_manifest}" ]]; then

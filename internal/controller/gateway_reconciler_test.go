@@ -358,7 +358,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
+	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"}, IdentityModeLegacyLDAP)
 	if len(specs) != 18 {
 		t.Fatalf("spec count = %d, want 18", len(specs))
 	}

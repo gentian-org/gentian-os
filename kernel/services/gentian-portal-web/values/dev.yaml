@@ -19,7 +19,7 @@ web:
 gateway:
   enabled: true
   parentGatewayName: kernel-public-gateway
-  parentGatewayNamespace: gentian-kernel
+  parentGatewayNamespace: platform-kernel
   host: portal
 
 existingSecret:

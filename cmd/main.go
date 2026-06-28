@@ -129,6 +129,7 @@ func main() {
 		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:   os.Getenv("TENANCY_MODE"),
 		RoutingMode:   routingMode,
+		IdentityMode:  identityModeOrDefault(os.Getenv("IDENTITY_MODE")),
 		CloudflareDNS: buildCloudflareDNSClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
