@@ -23,7 +23,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 	backoff := meta.ProvisioningJobBackoffLimit
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
-		corev1.EnvVar{Name: "GENTIAN_GROUP_NAMES", Value: shellQuoteList(groupNames)},
+		corev1.EnvVar{Name: "GENTIAN_GROUP_NAMES", Value: shellWordList(groupNames)},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

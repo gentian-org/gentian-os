@@ -57,10 +57,8 @@ func gentianGroupsJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-gentian-groups-%s", tenantName)
 }
 
-func shellQuoteList(values []string) string {
-	quoted := make([]string, 0, len(values))
-	for _, value := range values {
-		quoted = append(quoted, fmt.Sprintf("%q", value))
-	}
-	return strings.Join(quoted, " ")
+// shellWordList formats values for POSIX sh word-splitting in Job env vars.
+// Do not wrap in shell quotes — literal " characters become part of GROUP_NAME.
+func shellWordList(values []string) string {
+	return strings.Join(values, " ")
 }
