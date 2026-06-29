@@ -71,7 +71,7 @@ If not yet under `tenants/`, deploy copies the definition from `definitions/` fi
 Deploy is transactional:
 
 - waits until the Tenant reaches `status.phase=Ready`
-- retrieves the initial tenant-admin credentials
+- retrieves the initial tenant-admin credentials from OpenBao or the `keycloak-admin-<tenant>` Job
 - only then prints login credentials
 - if provisioning or credential retrieval fails, it rolls back the GitOps deploy and prints `failed to provision tenant, rolling back`
 - rollback reverts the GitOps change, triggers ArgoCD prune, deletes the Tenant CR, and waits for operator finalizers (same cleanup path as `tenants undeploy`)
@@ -117,8 +117,8 @@ Undeploy a tenant instance:
 kubectl gentian tenants undeploy demo
 ```
 
-For destructive cleanup that removes all orchestrator-owned artifacts (LDAP
-users, databases, mail secrets, UMC releases, and labeled kernel Jobs), use:
+For destructive cleanup that removes all orchestrator-owned artifacts (Keycloak
+realm, databases, storage, mail secrets, and labeled kernel Jobs), use:
 
 ```bash
 kubectl gentian tenants undeploy demo --purge
@@ -130,13 +130,14 @@ The purge flag sets `deletionPolicy=Delete` on the live Tenant CR, waits until
 that policy is stable (re-patching if ArgoCD selfHeal reverts it), deletes the
 Tenant CR, removes the instance from Git, and immediately syncs the tenants
 ArgoCD Application so selfHeal cannot recreate the CR from a stale revision.
-It then waits for controller Delete cleanup (LDAP OU delete, databases, etc.).
+It then waits for controller Delete cleanup (Keycloak realm delete, databases,
+storage, mail secrets, and labeled kernel Jobs).
 If the Tenant CR reappears without a `deletionTimestamp`, the plugin re-syncs
 ArgoCD and re-issues delete until cleanup completes. After the Tenant CR is
 gone it also deletes any remaining kernel artifacts labeled
 `gentianos.io/tenant=<name>`.
-If a prior undeploy ran Retain cleanup only, purge falls back to an LDAP OU
-delete Job when it detects `ldap-lock-<tenant>` without `ldap-ou-delete-<tenant>`.
+If a prior undeploy ran Retain cleanup only, purge waits for any in-flight
+`keycloak-realm-delete-*` Job before removing labeled kernel artifacts.
 
 The undeploy command removes the instance from
 `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
@@ -258,18 +259,33 @@ active tenant file for that stage.
 
 ## 7. Retrieve Admin Credentials
 
-Portal and identity credentials can be read from Kubernetes Secrets.
+Portal and identity credentials can be read from Kubernetes Secrets or the
+`kubectl gentian` plugin.
 
-Cluster admin (Nubus/Portal):
+Gentian portal login (derived from `MASTER_PASSWORD` during install):
 
 ```bash
-kubectl get secret nubus-credentials -n gentian-dev -o jsonpath='{.data.admin-password}' | base64 -d && echo
+# Printed at end of install.sh (portal-login-bootstrap helpers)
+kubectl get secret keycloak-admin -n platform-kernel -o yaml
 ```
 
-Keycloak admin (master realm):
+Tenant admin (after `kubectl gentian tenants deploy <tenant>` — or read from Job logs):
 
 ```bash
-kubectl get secret nubus-credentials -n gentian-dev -o jsonpath='{.data.keycloak-admin-password}' | base64 -d && echo
+kubectl logs -n platform-kernel job/keycloak-admin-<tenant> --tail=20
+```
+
+OpenBao fallback (when seeded):
+
+```bash
+bao kv get gentian-os/tenants/<tenant>/identity/admin
+```
+
+Keycloak master-realm admin (Suze stack):
+
+```bash
+kubectl get secret keycloak-admin -n platform-kernel \
+  -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
 ArgoCD admin:

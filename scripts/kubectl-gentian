@@ -83,12 +83,8 @@ Usage:
     kubectl gentian tenants undeploy <instance> [--env <stage>] [--purge|-f]
       Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
       With --purge / -f, set deletionPolicy=Delete before undeploying, which
-      permanently deletes all tenant data including LDAP users, databases,
-      mail secrets, UMC releases, and other orchestrator-owned artifacts.
-
-    kubectl gentian tenants cleanup-ldap <instance> [--env <stage>]
-      Delete the tenant LDAP OU (recursive). Use after a failed purge left users
-      in UMC, or to repair LDAP without a live Tenant CR.
+      permanently deletes tenant data (Keycloak realm, databases, storage,
+      mail secrets, and other orchestrator-owned artifacts).
 
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
@@ -106,7 +102,6 @@ Examples:
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
   kubectl gentian tenants undeploy demo --purge   # or -f
-  kubectl gentian tenants cleanup-ldap demo
 EOF
 }
 
@@ -240,6 +235,14 @@ set_tenant_deletion_policy() {
 
 KERNEL_NAMESPACE="${KERNEL_NAMESPACE:-platform-kernel}"
 
+keycloak_admin_job_succeeded() {
+  local tenant_name="${1}"
+  local kc_job="keycloak-admin-${tenant_name}"
+  local succeeded
+  succeeded="$(kubectl --request-timeout=5s get job -n "${KERNEL_NAMESPACE}" "${kc_job}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+  [[ -n "${succeeded}" && "${succeeded}" != "0" ]]
+}
+
 wait_for_tenant_deletion_policy() {
   local tenant_name="${1}"
   local desired_policy="${2}"
@@ -289,7 +292,7 @@ ensure_tenant_deletion_policy_live() {
 
 # Wait until deletionPolicy is stable on the live CR, re-patching if ArgoCD selfHeal
 # reverts it. Used before purge deletes the Tenant CR so the controller runs Delete
-# cleanup (LDAP OU delete, etc.) instead of Retain (lock/disable only).
+# cleanup (Keycloak realm delete, databases, etc.) instead of Retain (disable only).
 assert_live_tenant_deletion_policy() {
   local tenant_name="${1}"
   local policy="${2}"
@@ -331,7 +334,7 @@ assert_live_tenant_deletion_policy() {
 
 # After pushing deletionPolicy=Delete to Git, wait for ArgoCD to apply it before
 # kubectl delete. Otherwise selfHeal can revert the live CR to Retain while the
-# operator runs Retain cleanup (LDAP lock) instead of destructive delete.
+# operator runs Retain cleanup (realm disable) instead of destructive delete.
 assert_argocd_tenant_delete_synced() {
   local instance="${1}"
   local env_name="${2}"
@@ -376,246 +379,26 @@ wait_with_message() {
   kubectl wait "$@"
 }
 
-tenant_ldap_ou_from_resource() {
-  local resource_file="${1}"
-  local tenant_name="${2}"
-  local instance="${3:-${tenant_name}}"
-  local ou=""
-
-  if [[ -f "${resource_file}" ]]; then
-    ou="$(grep -E '^[[:space:]]*ldapOU:' "${resource_file}" 2>/dev/null \
-      | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
-  fi
-  if [[ -z "${ou}" ]]; then
-    local definition_file
-    definition_file="$(tenant_definition_stage_dir "${instance}" "${DEPLOYMENTS_STAGE}")/tenant.yaml"
-    if [[ -f "${definition_file}" ]]; then
-      ou="$(grep -E '^[[:space:]]*ldapOU:' "${definition_file}" 2>/dev/null \
-        | head -n1 | sed -E 's/^[[:space:]]*ldapOU:[[:space:]]*//' || true)"
-    fi
-  fi
-  if [[ -z "${ou}" ]]; then
-    ou="ou=${tenant_name}"
-  fi
-  echo "${ou}"
-}
-
-run_ldap_ou_delete_fallback() {
-  local tenant_name="${1}"
-  local resource_file="${2}"
-  local force="${3:-false}"
-  local instance="${4:-${tenant_name}}"
-  local ou_spec
-  local job_name="ldap-ou-delete-${tenant_name}"
-
-  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}" "${instance}")"
-  ou_spec="${ou_spec//\"/\\\"}"
-  echo "Running LDAP OU delete for tenant '${tenant_name}' (${ou_spec})..."
-
-  if [[ "${force}" == "true" ]]; then
-    kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
-  elif kubectl get job "${job_name}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
-    wait_with_message \
-      "Waiting for existing LDAP OU delete job '${job_name}' to complete (timeout: 300s)..." \
-      job "${job_name}" -n "${KERNEL_NAMESPACE}" \
-      --for=condition=complete --timeout=300s
-    return $?
-  fi
-
-  kubectl apply -f - <<EOF
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${job_name}
-  namespace: ${KERNEL_NAMESPACE}
-  labels:
-    gentianos.io/tenant: ${tenant_name}
-    app.kubernetes.io/managed-by: gentian-os
-spec:
-  ttlSecondsAfterFinished: 3600
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-      - name: delete-ou
-        image: curlimages/curl:8.7.1
-        command: ["/bin/sh", "-c"]
-        args:
-        - |
-          set -eu
-          urlencode() { printf '%s' "\$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
-          CREDS="-u Administrator:\${UDM_ADMIN_PASSWORD}"
-          BASE_URL="\${UDM_URL}/udm"
-          OU_SPEC="${ou_spec}"
-          case "\${OU_SPEC}" in
-            *,*) OU_POS="\${OU_SPEC}" ;;
-            *) OU_POS="\${OU_SPEC},\${UDM_LDAP_BASE}" ;;
-          esac
-          OU_ENC=\$(urlencode "\${OU_POS}")
-          echo "deleting users under \${OU_POS} (subtree search)"
-          USERS_JSON=\$(curl -s --max-time 30 \${CREDS} \\
-            -H "Accept: application/json" \\
-            "\${BASE_URL}/users/user/?position=\${OU_ENC}&scope=sub")
-          printf '%s' "\${USERS_JSON}" | grep -o '"dn": *"[^"]*"' | sed 's/"dn": *"//;s/"$//' | while IFS= read -r USER_DN; do
-            if [ -n "\${USER_DN}" ]; then
-              USER_ENC=\$(urlencode "\${USER_DN}")
-              HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
-                -H "Accept: application/json" \\
-                "\${BASE_URL}/users/user/\${USER_ENC}")
-              echo "deleted user \${USER_DN} (HTTP \${HTTP})"
-              case "\${HTTP}" in
-                200|204|404) ;;
-                *) echo "ERROR: user delete failed for \${USER_DN} (HTTP \${HTTP})" >&2; exit 1 ;;
-              esac
-            fi
-          done
-          echo "user subtree sweep complete for \${OU_POS}"
-          HTTP=\$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \${CREDS} \\
-            -H "Accept: application/json" \\
-            "\${BASE_URL}/container/ou/\${OU_ENC}?cleanup=1&recursive=1")
-          echo "OU \${OU_POS} deletion requested (HTTP \${HTTP})"
-          case "\${HTTP}" in
-            200|204|404) ;;
-            *) echo "ERROR: OU delete failed (HTTP \${HTTP})" >&2; exit 1 ;;
-          esac
-        env:
-        - name: UDM_URL
-          valueFrom:
-            secretKeyRef:
-              name: udm-admin
-              key: url
-        - name: UDM_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: udm-admin
-              key: password
-        - name: UDM_LDAP_BASE
-          valueFrom:
-            secretKeyRef:
-              name: udm-admin
-              key: ldapBase
-EOF
-
-  wait_with_message \
-    "Waiting for LDAP OU delete job '${job_name}' to complete (timeout: 300s)..." \
-    job "${job_name}" -n "${KERNEL_NAMESPACE}" \
-    --for=condition=complete --timeout=300s
-}
-
-verify_ldap_ou_absent() {
-  local tenant_name="${1}"
-  local resource_file="${2}"
-  local instance="${3:-${tenant_name}}"
-  local ou_spec
-  local job_name="ldap-ou-verify-gone-${tenant_name}"
-
-  ou_spec="$(tenant_ldap_ou_from_resource "${resource_file}" "${tenant_name}" "${instance}")"
-  ou_spec="${ou_spec//\"/\\\"}"
-
-  kubectl delete job "${job_name}" -n "${KERNEL_NAMESPACE}" --ignore-not-found=true >/dev/null 2>&1
-
-  kubectl apply -f - <<EOF
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${job_name}
-  namespace: ${KERNEL_NAMESPACE}
-  labels:
-    gentianos.io/tenant: ${tenant_name}
-    app.kubernetes.io/managed-by: gentian-os
-spec:
-  ttlSecondsAfterFinished: 3600
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-      - name: verify-ou-gone
-        image: curlimages/curl:8.7.1
-        command: ["/bin/sh", "-c"]
-        args:
-        - |
-          set -eu
-          urlencode() { printf '%s' "\$1" | sed 's/%/%25/g; s/ /%20/g; s/,/%2C/g; s/=/=%3D/g'; }
-          CREDS="-u Administrator:\${UDM_ADMIN_PASSWORD}"
-          BASE_URL="\${UDM_URL}/udm"
-          OU_SPEC="${ou_spec}"
-          case "\${OU_SPEC}" in
-            *,*) OU_POS="\${OU_SPEC}" ;;
-            *) OU_POS="\${OU_SPEC},\${UDM_LDAP_BASE}" ;;
-          esac
-          OU_ENC=\$(urlencode "\${OU_POS}")
-          HTTP=\$(curl -s -o /dev/null -w "%{http_code}" \${CREDS} \\
-            -H "Accept: application/json" \\
-            "\${BASE_URL}/container/ou/\${OU_ENC}")
-          echo "OU \${OU_POS} lookup (HTTP \${HTTP})"
-          case "\${HTTP}" in
-            404) echo "OU absent (HTTP 404)" ;;
-            *) echo "ERROR: tenant LDAP OU still present (HTTP \${HTTP})" >&2; exit 1 ;;
-          esac
-          USERS_JSON=\$(curl -s --max-time 30 \${CREDS} \\
-            -H "Accept: application/json" \\
-            "\${BASE_URL}/users/user/?position=\${OU_ENC}&scope=sub")
-          if printf '%s' "\${USERS_JSON}" | grep -q '"dn"'; then
-            echo "ERROR: tenant users still present under \${OU_POS}" >&2
-            printf '%s' "\${USERS_JSON}" | grep -o '"dn": *"[^"]*"' >&2 || true
-            exit 1
-          fi
-          echo "No tenant users remain under \${OU_POS}"
-        env:
-        - name: UDM_URL
-          valueFrom:
-            secretKeyRef:
-              name: udm-admin
-              key: url
-        - name: UDM_ADMIN_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: udm-admin
-              key: password
-        - name: UDM_LDAP_BASE
-          valueFrom:
-            secretKeyRef:
-              name: udm-admin
-              key: ldapBase
-EOF
-
-  wait_with_message \
-    "Waiting for LDAP OU verification job '${job_name}' to complete (timeout: 120s)..." \
-    job "${job_name}" -n "${KERNEL_NAMESPACE}" \
-    --for=condition=complete --timeout=120s
-}
 
 wait_for_purge_controller_cleanup() {
   local tenant_name="${1}"
-  local resource_file="${2}"
-  local instance="${3:-${tenant_name}}"
-  local ou_job="ldap-ou-delete-${tenant_name}"
-  local lock_job="ldap-lock-${tenant_name}"
+  local realm_delete_job="keycloak-realm-delete-${tenant_name}"
+  local realm_disable_job="keycloak-realm-disable-${tenant_name}"
 
-  if kubectl get job "${ou_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+  if kubectl get job "${realm_delete_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
     if ! wait_with_message \
-      "Waiting for controller LDAP OU delete job '${ou_job}' to complete (timeout: 300s)..." \
-      job "${ou_job}" -n "${KERNEL_NAMESPACE}" \
+      "Waiting for Keycloak realm delete job '${realm_delete_job}' (timeout: 300s)..." \
+      job "${realm_delete_job}" -n "${KERNEL_NAMESPACE}" \
       --for=condition=complete --timeout=300s; then
-      echo "WARNING: controller OU delete job did not complete successfully." >&2
+      echo "WARNING: Keycloak realm delete job did not complete successfully." >&2
     fi
-  elif kubectl get job "${lock_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
-    echo "WARNING: Retain LDAP cleanup ran (job '${lock_job}'); tenant CR likely had deletionPolicy=Retain during delete." >&2
-  fi
-
-  # Always re-run OU delete on purge: idempotent (404 = already gone) and covers
-  # cases where GitOps overwrote deletionPolicy=Delete before the controller ran.
-  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true "${instance}"; then
-    return 1
-  fi
-
-  echo "Verifying tenant LDAP OU is gone..."
-  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}" "${instance}"; then
-    return 1
+  elif kubectl get job "${realm_disable_job}" -n "${KERNEL_NAMESPACE}" &>/dev/null; then
+    echo "NOTE: Tenant used Retain policy; realm was disabled (${realm_disable_job}) rather than deleted." >&2
   fi
 
   return 0
 }
+
 
 delete_labeled_resources() {
   local resource="${1}"
@@ -781,10 +564,7 @@ wait_for_tenant_delete() {
   fi
 
   if [[ "${purge}" == "true" ]]; then
-    if ! wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}" "${instance}"; then
-      echo "ERROR: purge LDAP cleanup did not complete for tenant '${tenant_name}'." >&2
-      return 1
-    fi
+    wait_for_purge_controller_cleanup "${tenant_name}" "${resource_file}" "${instance}" || true
   fi
 
   if kubectl get namespace "${ns_name}" &>/dev/null; then
@@ -1035,8 +815,8 @@ print_tenant_admin_login_instructions() {
   echo "─── Shared Gentian Portal (all users) ───────────────────────────────────────"
   echo "  Sign in at the shared kernel portal with your email address."
   echo "  Sign in      : ${portal_base}/login/"
-  echo "  Portal       : ${portal_base}/univention/portal/  (after login)"
-  echo "  UMC (admins) : ${portal_base}/univention/management/"
+  echo "  Portal shell : ${portal_base}/"
+  echo "  Admin Console: ${portal_base}/ (tenant administrators)"
   echo "  Login email  : ${login_email}"
   echo "  Password     : ${password}"
   echo ""
@@ -1389,16 +1169,50 @@ platform_kernel_job_logs() {
   kubectl --request-timeout=5s logs -n platform-kernel "job/${job_name}" 2>/dev/null
 }
 
-ldap_admin_password_synced() {
+platform_kernel_job_logs() {
+  local job_name="${1}"
+  kubectl --request-timeout=5s logs -n platform-kernel "job/${job_name}" 2>/dev/null
+}
+
+try_retrieve_tenant_admin_credentials() {
   local tenant_name="${1}"
-  local ldap_job="ldap-admin-user-${tenant_name}"
-  local succeeded
-  succeeded="$(kubectl --request-timeout=5s get job -n platform-kernel "${ldap_job}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
-  if [[ -z "${succeeded}" || "${succeeded}" == "0" ]]; then
-    return 1
+
+  local k8s_creds
+  k8s_creds="$(fetch_tenant_admin_credentials_via_k8s_auth "${tenant_name}")"
+  if [[ -n "${k8s_creds}" ]]; then
+    IFS=$'\t' read -r TENANT_ADMIN_USERNAME TENANT_ADMIN_PASSWORD <<<"${k8s_creds}"
+    if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
+      TENANT_ADMIN_USERNAME="admin-${tenant_name}"
+    fi
+    return 0
   fi
-  platform_kernel_job_logs "${ldap_job}" \
-    | grep -qE 'TENANT_ADMIN_LDAP_PASSWORD_SYNCED|password synced via interim rotation|user admin-'"${tenant_name}"' password synced \(HTTP'
+
+  if command -v bao >/dev/null 2>&1; then
+    local bao_user
+    local bao_pw
+    bao_user="$(bao kv get -mount=secret -field=username "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+    bao_pw="$(bao kv get -mount=secret -field=password "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+    if [[ -n "${bao_pw}" ]]; then
+      TENANT_ADMIN_USERNAME="${bao_user}"
+      if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
+        TENANT_ADMIN_USERNAME="admin-${tenant_name}"
+      fi
+      TENANT_ADMIN_PASSWORD="${bao_pw}"
+      return 0
+    fi
+  fi
+
+  local line
+  line="$(kubectl --request-timeout=5s logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
+  if [[ -n "${line}" ]]; then
+    TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
+    TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
+    if [[ -n "${TENANT_ADMIN_USERNAME}" && -n "${TENANT_ADMIN_PASSWORD}" ]]; then
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 fetch_tenant_admin_credentials() {
@@ -1414,75 +1228,37 @@ fetch_tenant_admin_credentials() {
   echo "Retrieving tenant-admin credentials for '${tenant_name}' (timeout: ${timeout_secs}s)..."
 
   while true; do
-    if ! ldap_admin_password_synced "${tenant_name}"; then
-      local now_ldap
-      now_ldap="$(date +%s)"
-      local elapsed_ldap
-      elapsed_ldap=$((now_ldap - start))
-      if (( elapsed_ldap >= next_progress_at )); then
-        echo "  waiting for LDAP admin password sync (elapsed: ${elapsed_ldap}s)"
+    if try_retrieve_tenant_admin_credentials "${tenant_name}"; then
+      local now_ok
+      now_ok="$(date +%s)"
+      echo "Retrieved tenant-admin credentials ($((now_ok - start))s)."
+      return 0
+    fi
+
+    if keycloak_admin_job_succeeded "${tenant_name}"; then
+      local now_kc elapsed_kc
+      now_kc="$(date +%s)"
+      elapsed_kc=$((now_kc - start))
+      if (( elapsed_kc >= next_progress_at )); then
+        echo "  Keycloak admin Job finished; waiting for credentials in OpenBao (elapsed: ${elapsed_kc}s)"
         next_progress_at=$((next_progress_at + 30))
       fi
     else
-      # Portal login validates against LDAP; prefer OpenBao (canonical) once LDAP sync is done.
-      local k8s_creds
-      k8s_creds="$(fetch_tenant_admin_credentials_via_k8s_auth "${tenant_name}")"
-      if [[ -n "${k8s_creds}" ]]; then
-        IFS=$'\t' read -r TENANT_ADMIN_USERNAME TENANT_ADMIN_PASSWORD <<<"${k8s_creds}"
-        if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
-          TENANT_ADMIN_USERNAME="admin-${tenant_name}"
-        fi
-        local now_k8s
-        now_k8s="$(date +%s)"
-        echo "Retrieved tenant-admin credentials from OpenBao after LDAP sync ($((now_k8s - start))s)."
-        return 0
+      local now_kc elapsed_kc
+      now_kc="$(date +%s)"
+      elapsed_kc=$((now_kc - start))
+      if (( elapsed_kc >= next_progress_at )); then
+        echo "  waiting for Keycloak realm/admin Jobs (elapsed: ${elapsed_kc}s)"
+        next_progress_at=$((next_progress_at + 30))
       fi
-
-      if command -v bao >/dev/null 2>&1; then
-        local bao_user
-        local bao_pw
-        bao_user="$(bao kv get -mount=secret -field=username "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
-        bao_pw="$(bao kv get -mount=secret -field=password "gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
-        if [[ -n "${bao_pw}" ]]; then
-          TENANT_ADMIN_USERNAME="${bao_user}"
-          if [[ -z "${TENANT_ADMIN_USERNAME}" ]]; then
-            TENANT_ADMIN_USERNAME="admin-${tenant_name}"
-          fi
-          TENANT_ADMIN_PASSWORD="${bao_pw}"
-          local now_bao
-          now_bao="$(date +%s)"
-          echo "Retrieved tenant-admin credentials from OpenBao after LDAP sync ($((now_bao - start))s)."
-          return 0
-        fi
-      fi
-
-      local line
-      line="$(kubectl --request-timeout=5s logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
-      if [[ -n "${line}" ]]; then
-        TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
-        TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
-        if [[ -n "${TENANT_ADMIN_USERNAME}" && -n "${TENANT_ADMIN_PASSWORD}" ]]; then
-          local now_ok
-          now_ok="$(date +%s)"
-          echo "Retrieved tenant-admin credentials from Keycloak admin Job logs after LDAP sync ($((now_ok - start))s)."
-          return 0
-        fi
-      fi
-    fi
-
-    local now_status
-    now_status="$(date +%s)"
-    local elapsed
-    elapsed=$((now_status - start))
-    if (( elapsed >= next_progress_at )); then
-      echo "  still waiting for tenant-admin credentials (elapsed: ${elapsed}s)"
-      next_progress_at=$((next_progress_at + 30))
     fi
 
     local now
     now="$(date +%s)"
     if (( now - start >= timeout_secs )); then
-      echo "Timed out waiting for LDAP admin password sync and tenant-admin credentials." >&2
+      echo "Timed out waiting for tenant-admin credentials." >&2
+      echo "  Inspect: kubectl get jobs -n platform-kernel -l gentianos.io/tenant=${tenant_name}" >&2
+      echo "  Logs:    kubectl logs -n platform-kernel job/keycloak-admin-${tenant_name}" >&2
       return 1
     fi
 
@@ -2068,39 +1844,6 @@ cmd_tenant_undeploy_purge() {
   fi
 
   echo "Done. Tenant instance '${instance}' undeployed with purge behavior in '${env_name}'."
-}
-
-cmd_tenant_cleanup_ldap() {
-  local instance="${1:-}"
-  local env_name="${2:-dev}"
-
-  if [[ -z "${instance}" ]]; then
-    echo "ERROR: usage: kubectl gentian tenants cleanup-ldap <instance> [--env <env>]" >&2
-    exit 1
-  fi
-
-  ensure_repo
-  tenant_definition_stage_dir "${instance}" "${env_name}" >/dev/null
-
-  local resource_file tenant_name
-  resource_file="$(tenant_definition_stage_dir "${instance}" "${env_name}")/tenant.yaml"
-  if [[ ! -f "${resource_file}" ]]; then
-    resource_file="$(tenant_instance_resource_file "${instance}" "${env_name}")"
-  fi
-  tenant_name="${instance}"
-  if [[ -f "${resource_file}" ]]; then
-    tenant_name="$(tenant_instance_name_from_patch "${resource_file}")"
-    [[ -z "${tenant_name}" ]] && tenant_name="${instance}"
-  fi
-
-  echo "Deleting LDAP OU for tenant '${tenant_name}' (instance '${instance}')..."
-  if ! run_ldap_ou_delete_fallback "${tenant_name}" "${resource_file}" true "${instance}"; then
-    exit 1
-  fi
-  if ! verify_ldap_ou_absent "${tenant_name}" "${resource_file}" "${instance}"; then
-    exit 1
-  fi
-  echo "Done. LDAP OU for tenant '${tenant_name}' is removed."
 }
 
 # ---------------------------------------------------------------------------
@@ -2850,23 +2593,6 @@ case "${SUBCOMMAND}" in
           esac
         done
         cmd_tenant_undeploy "${TENANT_INSTANCE}" "${TENANT_ENV}" "${PURGE}"
-        ;;
-      cleanup-ldap)
-        TENANT_INSTANCE="${1:-}"
-        shift || true
-        while [[ $# -gt 0 ]]; do
-          case "${1}" in
-            --env|-e)
-              TENANT_ENV="${2:-}"
-              shift 2
-              ;;
-            *)
-              echo "ERROR: unknown flag: ${1}" >&2
-              exit 1
-              ;;
-          esac
-        done
-        cmd_tenant_cleanup_ldap "${TENANT_INSTANCE}" "${TENANT_ENV}"
         ;;
       *)
         echo "ERROR: unknown tenants subcommand: ${TENANT_CMD}" >&2

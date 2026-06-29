@@ -12,8 +12,7 @@
 #   ./update.sh --secrets                  # Re-seed all OpenBao KV secrets
 #   ./update.sh --reconcile-releases       # Re-reconcile any failing Crossplane Release CRs
 #   ./update.sh --reconcile-releases --force  # Force re-reconcile ALL Release CRs
-#   ./update.sh --all                      # Run all update operations
-#   ./update.sh --umc-gateway              # Re-apply UMC gateway Apache upstream patch
+#   ./update.sh --all                      # Run all Suze-path update operations
 #   ./update.sh --mail --dry-run           # Print what would change without applying
 #
 # What it reconciles:
@@ -38,10 +37,10 @@
 #       recreates it (provider-helm does not watch ConfigMaps, so this is the
 #       only way to force value pick-up after a ConfigMap change)
 #     - With --force: also re-reconciles currently healthy Release CRs
-#   --umc-gateway:
-#     - Re-applies the nubus UMC gateway prepare-config patch (Apache upstream
-#       → umc-server). CronJob umc-gateway-upstream-reconciler handles drift.
 #
+# Legacy Nubus/LDAP flags (--ldap-acl, --keycloak-sync, --fix-kernel-ldap-scope,
+# --nubus-recover, --setup-iam, --umc-gateway) are accepted but no-op on the
+# Suze (Keycloak-native) path.
 # Prerequisites:
 #   - install.sh must have completed at least once.
 #   - kubectl configured to the target cluster.
@@ -103,20 +102,10 @@ Options:
   --force                  Modifier for --reconcile-releases: also re-reconcile
                            currently healthy Release CRs (forces value pick-up
                            after a ConfigMap change on a working release).
-  --nubus-recover          Recover a stuck nubus installation: reapply the
-                           stack-data-ums job in the correct namespace when the
-                           done marker is absent and register-consumers is stuck.
-  --ldap-acl               Update the LDAP ACL configmap from source and restart
-                           the LDAP primary pod to apply the latest ACL patches.
-                           Also triggers a Keycloak LDAP full sync so users are
-                           re-imported with the correct enabled state.
-  --keycloak-sync          Trigger a full Keycloak LDAP sync in the kernel realm
-                           to re-import all users with up-to-date LDAP attributes.
-                           Run this after provisioning new tenants so their admin
-                           accounts are immediately visible in the portal.
-  --fix-kernel-ldap-scope  Patch the kernel realm LDAP federation for shared-portal
-                           login: SUBTREE on the LDAP base, mailPrimaryAddress
-                           as username. Idempotent (see ldap-federation-patch.yaml).
+  --nubus-recover          [legacy, no-op on Suze] Recover a stuck Nubus install.
+  --ldap-acl               [legacy, no-op on Suze] LDAP ACL patch + Keycloak sync.
+  --keycloak-sync          [legacy, no-op on Suze] Kernel-realm LDAP user import.
+  --fix-kernel-ldap-scope  [legacy, no-op on Suze] Kernel LDAP federation patch.
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository (tenant-default manifest bridge, app-*).
                            Run after Crossplane XRD/Composition changes; included in --all.
@@ -126,15 +115,13 @@ Options:
   --argocd                 Re-apply gentian-os / appprofiles ArgoCD Application
                            manifests (ignoreDifferences updates) and hard-refresh
                            all Applications.
-  --setup-iam              Re-run the nubus-dev-setup-iam-templates job after
-                           stack-data-ums has completed (fixes failed IAM hooks).
-  --umc-gateway            Re-apply the UMC gateway Apache upstream patch so
-                           /univention/oidc proxies to umc-server (fixes 503).
+  --setup-iam              [legacy, no-op on Suze] Re-run nubus setup-iam-templates.
+  --umc-gateway            [legacy, no-op on Suze] UMC gateway upstream patch.
   --plugin                 Reinstall the kubectl-gentian plugin from this
                            repository (idempotent: skips if already up-to-date).
   --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
                            (ACME_ENV=production or staging). Not included in --all.
-  --all                    Run all update operations (default when no options).
+  --all                    Run Suze-path update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
 EOF
@@ -159,7 +146,7 @@ while [[ $# -gt 0 ]]; do
         --umc-gateway)         OP_UMC_GATEWAY=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
         --acme-issuers)        OP_ACME_ISSUERS=1 ;;
-        --all)                 OP_MAIL=1; OP_NEXTCLOUD_OFFICE=1; OP_SECRETS=1; OP_RECONCILE=1; OP_LDAP_ACL=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_SETUP_IAM=1; OP_PLUGIN=1; OP_UMC_GATEWAY=1 ;;
+        --all)                 OP_MAIL=1; OP_NEXTCLOUD_OFFICE=1; OP_SECRETS=1; OP_RECONCILE=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -173,14 +160,15 @@ if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" 
     OP_NEXTCLOUD_OFFICE=1
     OP_SECRETS=1
     OP_RECONCILE=1
-    OP_LDAP_ACL=1
     OP_CROSSPLANE=1
     OP_APPPROFILES=1
     OP_ARGOCD=1
-    OP_SETUP_IAM=1
     OP_PLUGIN=1
-    OP_UMC_GATEWAY=1
 fi
+
+_legacy_update_op_disabled() {
+    warn "Legacy Nubus/LDAP operation ignored on Suze path: $1"
+}
 
 # =============================================================================
 # Bootstrap: load config and credentials
@@ -1168,15 +1156,15 @@ fi
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
 [[ "${OP_ARGOCD}"          == "1" ]] && op_argocd_bootstrap
-[[ "${OP_SETUP_IAM}"       == "1" ]] && op_setup_iam_recover
+[[ "${OP_SETUP_IAM}"       == "1" ]] && _legacy_update_op_disabled --setup-iam
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
-[[ "${OP_LDAP_ACL}"        == "1" ]] && op_ldap_acl_upgrade
-[[ "${OP_NUBUS_RECOVER}"   == "1" ]] && op_nubus_recover
-[[ "${OP_KEYCLOAK_SYNC}"        == "1" ]] && op_keycloak_sync
-[[ "${OP_FIX_KERNEL_LDAP_SCOPE}" == "1" ]] && op_fix_kernel_ldap_scope
+[[ "${OP_LDAP_ACL}"        == "1" ]] && _legacy_update_op_disabled --ldap-acl
+[[ "${OP_NUBUS_RECOVER}"   == "1" ]] && _legacy_update_op_disabled --nubus-recover
+[[ "${OP_KEYCLOAK_SYNC}"        == "1" ]] && _legacy_update_op_disabled --keycloak-sync
+[[ "${OP_FIX_KERNEL_LDAP_SCOPE}" == "1" ]] && _legacy_update_op_disabled --fix-kernel-ldap-scope
 [[ "${OP_PLUGIN}"               == "1" ]] && install_app_catalogue
 [[ "${OP_ACME_ISSUERS}"         == "1" ]] && op_acme_issuers
-[[ "${OP_UMC_GATEWAY}"          == "1" ]] && op_umc_gateway
+[[ "${OP_UMC_GATEWAY}"          == "1" ]] && _legacy_update_op_disabled --umc-gateway
 
 echo ""
 success "update.sh completed."

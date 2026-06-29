@@ -1619,15 +1619,13 @@ print_summary_cp() {
     echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
-    echo -e "${GREEN}  Completed      : Steps 14–16 (Stage 1 IdP, authz bridge, Gentian portal)${NC}"
+    echo -e "${GREEN}  Completed      : Steps 14–17 (Stage 1 IdP, authz bridge, portal, app catalogue)${NC}"
     # Portal credentials (MASTER_PASSWORD-derived; same as keycloak-portal-bootstrap Job).
     if [[ -f "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh" ]]; then
         # shellcheck source=scripts/portal-login-bootstrap.sh
         source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
         print_portal_login_summary
     fi
-    echo ""
-    echo -e "${GREEN}  OpenDesk apps  : not deployed (Nubus / Intercom / Nextcloud commented out in install.sh)${NC}"
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
     echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"
@@ -1643,8 +1641,6 @@ print_summary_cp() {
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
-    echo ""
-    echo -e "${GREEN}  Re-enable OpenDesk app deploy steps in install.sh main_cp() when migrating legacy apps.${NC}"
     echo ""
     echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
     echo ""
@@ -1740,13 +1736,16 @@ main_cp() {
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     install_stage1_portal       # Step 16 — portal OIDC login dogfood
 
+    # ── App catalogue + CLI (required for kubectl gentian apps install) ─────
+    bootstrap_appprofiles       # Step 17 — AppProfile CRs from gentian-apps repo
+    install_app_catalogue       # Step 17b — kubectl-gentian plugin + AppCatalogue CRD
+
     # ── OpenDesk app stack (commented — uncomment when migrating legacy apps) ─
     # deploy_nubus                # Step 16 — Nubus namespaces + ESO Secrets + Release CR
     # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 16b — kernel LDAP SUBTREE
     # deploy_kernel_mail_services # Step 17b — Postfix + Dovecot (MAIL_SERVICE_MODE=kernel)
     # apply_kernel_gateway_overlays || true  # Step 17a — gateway value overlays
     # wait_for_gateway_platform || true    # Step 17d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
-    # bootstrap_appprofiles       # Step 17c — AppProfile CRs from gentian-apps repo
     #
     # wait_for_setup_iam_job || true
     # verify_argocd_apps || true

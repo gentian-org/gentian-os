@@ -26,12 +26,12 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func TestLDAP_SkippedKeycloakNative(t *testing.T) {
+func TestLDAP_SuzeKeycloakNative(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "ldap-skip"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "LDAP Skip Co",
+			DisplayName: "Suze Identity Co",
 			Domain:      "ldap-skip.example.com",
 			AdminEmail:  "admin@ldap-skip.example.com",
 		},
@@ -47,7 +47,7 @@ func TestLDAP_SkippedKeycloakNative(t *testing.T) {
 		for i := range updated.Status.Conditions {
 			if updated.Status.Conditions[i].Type == "LDAPReady" &&
 				updated.Status.Conditions[i].Status == metav1.ConditionTrue &&
-				updated.Status.Conditions[i].Reason == "SkippedKeycloakNative" {
+				updated.Status.Conditions[i].Reason == "SuzeKeycloakNative" {
 				return true
 			}
 		}

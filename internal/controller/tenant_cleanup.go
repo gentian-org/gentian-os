@@ -69,10 +69,6 @@ func isTenantCleanupJobName(tenantName, jobName string) bool {
 	cleanupPrefixes := []string{
 		fmt.Sprintf("keycloak-realm-delete-%s", tenantName),
 		fmt.Sprintf("keycloak-realm-disable-%s", tenantName),
-		fmt.Sprintf("ldap-ou-delete-%s", tenantName),
-		fmt.Sprintf("ldap-lock-%s", tenantName),
-		fmt.Sprintf("ldap-admin-user-delete-%s", tenantName),
-		fmt.Sprintf("ldap-portal-entry-delete-%s-", tenantName),
 		fmt.Sprintf("mariadb-delete-%s-", tenantName),
 		fmt.Sprintf("s3-delete-%s-", tenantName),
 		fmt.Sprintf("nc-group-delete-%s", tenantName),

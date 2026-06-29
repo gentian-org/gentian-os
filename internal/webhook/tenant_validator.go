@@ -124,13 +124,6 @@ func (v *TenantValidator) validateTenancy(ctx context.Context, tenant *gentianov
 			gentianov1alpha1.SingleTenantName, tenant.Name,
 		)
 	}
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
-		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
-			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
-		)
-	}
 	var others gentianov1alpha1.TenantList
 	if err := v.Client.List(ctx, &others); err != nil {
 		return fmt.Errorf("list tenants: %w", err)

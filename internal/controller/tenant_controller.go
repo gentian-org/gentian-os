@@ -322,13 +322,6 @@ func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenan
 			gentianov1alpha1.SingleTenantName, tenant.Name,
 		)
 	}
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
-		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
-			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
-		)
-	}
 	var others gentianov1alpha1.TenantList
 	if err := r.List(ctx, &others); err != nil {
 		return err
@@ -437,7 +430,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 6. LDAP (UDM OU + groups + bind accounts)
+	// 6. Directory readiness (Suze: Keycloak realm is authoritative; hook retained for status compat)
 	ldapResult, err := r.ensureLDAP(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -652,7 +645,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return res, err
 	}
 
-	// Clean up LDAP resources before removing the namespace.
+	// Clean up identity artifacts before removing the namespace.
 	if requeue, res, err := awaitJob(r.deleteLDAP(ctx, tenant)); requeue {
 		return res, err
 	}

@@ -2,9 +2,9 @@
 
 This guide covers the prerequisites and steps to bootstrap a Gentian OS kernel
 cluster using **`install.sh`**. After completing this guide
-you will have Crossplane, cert-manager, External Secrets Operator, ArgoCD, and
-OpenBao running, with all kernel structural resources provisioned by the Cluster XR,
-and Nubus deployed via the `provider-helm` Release CR.
+you will have Crossplane, cert-manager, External Secrets Operator, ArgoCD,
+OpenBao, and the **Suze** identity stack (Keycloak + OpenFGA) running, with
+kernel structural resources provisioned by the Cluster XR.
 
 ---
 
@@ -160,10 +160,9 @@ The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
 
 For templated installs, define `KERNEL_DOMAIN` in
 `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
-(and optionally `LDAP_BASE_DN`) before `install.sh` runs. The installer renders
+before `install.sh` runs. The installer renders
 `crossplane/claims/dev-cluster.yaml` from `dev-cluster.yaml.tmpl` using those
-resolved values. The checked-in `dev-cluster.yaml` example uses
-`ldapBaseDn: dc=swp-ldap,dc=internal` for the dev cluster.
+resolved values.
 
 ---
 
@@ -190,12 +189,14 @@ resolved values. The checked-in `dev-cluster.yaml` example uses
 | 12b | Secrets | Seed remaining secrets: registry, DNS/Cloudflare, internal |
 | 12c _(optional)_ | TLS | Install kernel wildcard Certificate for platform UIs (requires `CF_API_TOKEN`); tenant apps use per-tenant DNS-01 wildcards via the operator |
 | 13 | Crossplane | Wait for `provider-helm` Healthy |
-| 14 | Nubus | Create `gentian-dev` / `gentian-infra-dev` namespaces, registry Secrets, non-secret value ConfigMaps, NATS patch ConfigMap, ESO ExternalSecrets (`nubus-credentials`, `nubus-sensitive-values`), provider-helm Release CR |
-| 14b | LDAP scope | `update.sh --fix-kernel-ldap-scope` (kernel realm SUBTREE + mailPrimaryAddress for portal login) |
+| 13b | InfraData | Shared PostgreSQL, MariaDB, Redis, MinIO via InfraData XR |
+| 13c | Admission | Kyverno MAC admission (Stage 0) |
+| 14 | Suze | Gentian IdP: Keycloak + OpenFGA via Suze XR |
 | 15 | Operator | Install gentian-os controller (CRDs + reconcilers in `gentian-system`); optional deployments git credentials Secret for in-cluster app lifecycle |
-| 15b | Mail | Postfix + Dovecot when `MAIL_SERVICE_MODE=kernel` |
-| 15c | App catalogue | ArgoCD Application `gentian-appprofiles` syncs `gentian-apps/profiles/` |
-| 16d | GitHub Actions | Upload `CI_BOT_PAT` to `gentian-os` + `gentian-ui`, optional ArgoCD pin secrets on `gentian-os` |
+| 15b | Mail | External SMTP or kernel Postfix/Dovecot when `MAIL_SERVICE_MODE=kernel` |
+| 16 | Portal | Gentian portal OIDC login (Stage 1 dogfood) |
+| 17 | AppProfiles | ArgoCD ApplicationSet syncs `gentian-apps/profiles/` → AppProfile CRs |
+| 17b | App catalogue | `kubectl-gentian` plugin + AppCatalogue CRD |
 
 ---
 
@@ -311,7 +312,7 @@ Install completes with **no tenants** deployed. Tenant definitions (such as
 at `clusters/<cluster>/definitions/<tenant>/<stage>/`.
 
 **Catalogue** (cluster-wide): `gentian-apps/profiles/` → ArgoCD app
-**`gentian-appprofiles`** (install step 15c). **Tenant apps** (per org):
+**`gentian-appprofiles`** (install step 17). **Tenant apps** (per org):
 add profiles to `spec.apps` in `gentian-deployments` (GitOps). The operator
 creates `App` claims after Argo CD syncs the tenant manifest; Crossplane
 installs helm Releases.
@@ -351,15 +352,14 @@ kubectl get tenant demo -w
 
 The orchestrator provisions these in order:
 1. Tenant namespace (`tenant-demo`)
-2. Keycloak realm + OIDC clients (via Jobs in `platform-kernel`)
-3. LDAP OU + bind accounts (via UDM REST API Jobs)
-4. PostgreSQL databases (CloudNativePG `Database` CRs)
-5. MariaDB databases (SQL Jobs)
-6. MinIO S3 buckets + Nextcloud groups
-7. Redis ACL users + Memcached (ArgoCD Application when cache required)
-8. App deployment (`App` claims → Crossplane helm Releases)
-9. Ingress + TLS certificate
-10. IntegrationBinding CRs (auto-wired cross-app contracts)
+2. Keycloak realm, Gentian groups, tenant admin, and broker IdP (Jobs in `platform-kernel`)
+3. PostgreSQL databases (CloudNativePG `Database` CRs)
+4. MariaDB databases (SQL Jobs)
+5. MinIO S3 buckets + Nextcloud groups
+6. Redis ACL users + Memcached (ArgoCD Application when cache required)
+7. App deployment (`App` claims → Crossplane helm Releases)
+8. Ingress + TLS certificate
+9. IntegrationBinding CRs (auto-wired cross-app contracts)
 
 Provisioning is complete when:
 
@@ -506,22 +506,18 @@ kubectl get secret argocd-initial-admin-secret -n argocd \
   -o jsonpath='{.data.password}' | base64 -d
 ```
 
-### Nubus deployment status
+### Suze / Keycloak status
 
 ```bash
-# provider-helm Release status
-kubectl get release.helm.crossplane.io/nubus-dev
-kubectl describe release.helm.crossplane.io/nubus-dev | tail -20
+# Suze composite and Helm releases
+kubectl get xsuze,suze -n crossplane-system
+kubectl get release.helm.crossplane.io -l crossplane.io/composite=dev-suze
 
-# ESO secret sync status
-kubectl get externalsecret -n gentian-dev
+# Keycloak and OpenFGA pods (platform-kernel)
+kubectl get pods -n platform-kernel -l app.kubernetes.io/part-of=suze
 
-# Nubus pods
-kubectl get pods -n gentian-dev -l app.kubernetes.io/part-of=nubus
-
-# Values actually applied (sensitive values are redacted by Helm)
-kubectl get release.helm.crossplane.io/nubus-dev \
-  -o jsonpath='{.status.atProvider.releaseDescription}'
+# OpenFGA runtime secret
+kubectl get secret openfga-runtime -n platform-kernel
 ```
 
 ### provider-helm not Healthy
@@ -540,10 +536,10 @@ kubectl logs -n crossplane-system \
 kubectl logs -n external-secrets deploy/external-secrets --tail=50
 
 # Describe the failing ExternalSecret
-kubectl describe externalsecret nubus-sensitive-values -n gentian-dev
+kubectl describe externalsecret -n platform-kernel
 
-# Verify the OpenBao path exists
-bao kv get gentian-os/kernel/identity/nubus
+# Verify the OpenBao path exists (example)
+bao kv get gentian-os/kernel/identity/keycloak
 bao kv get gentian-os/kernel/mail/postfix
 ```
 
