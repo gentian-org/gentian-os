@@ -496,9 +496,9 @@ Last reviewed against `gentian-ui` (`develop`).
 | **BFF mutation audit** | **Done** | `record_admin_audit()` on Members, Groups, Security, Sessions mutations |
 | **Keycloak sign-in events** | **Done** | `KeycloakAuditFetcher` merges realm user/admin events when `KEYCLOAK_ADMIN_*` configured |
 | Admin Console Audit tab | **Done** | `AuditSection.tsx` — filters, table, CSV/JSON export |
-| Durable audit store / retention | **Later** | v1 uses in-process memory for BFF events; cluster retention policy not yet enforced |
+| Durable audit store / retention | **Done (v1)** | PostgreSQL `admin_audit_events` when `DATABASE_URL` is set; falls back to in-memory without it |
 
-**P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. BFF-recorded admin actions are held in memory on the portal API pod (lost on restart) until a persistent Gentian audit store ships.
+**P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. **BFF-recorded admin actions** are stored in PostgreSQL table `admin_audit_events` when the portal API has `DATABASE_URL` set (see `docker-compose.dev.yaml`); without it, the API falls back to in-process memory (lost on restart). Sign-in events are still fetched live from Keycloak at query time and are not duplicated into the database. Cluster retention policy is not yet enforced.
 
 ---
 
