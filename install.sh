@@ -997,7 +997,10 @@ ensure_suze_idp_workloads() {
         _reset_suze_ghost_helm_releases "${xr_name}"
     fi
 
-    info "Waiting for Suze IdP Services (${_suze_keycloak_service_name}, ${_suze_openfga_service_name}) in ${ns}..."
+    local kc_svc fga_svc
+    kc_svc=$(_suze_keycloak_service_name)
+    fga_svc=$(_suze_openfga_service_name)
+    info "Waiting for Suze IdP Services (${kc_svc}, ${fga_svc}) in ${ns}..."
     local deadline=$((SECONDS + timeout_sec))
     while (( SECONDS < deadline )); do
         if _suze_idp_workloads_ready; then
