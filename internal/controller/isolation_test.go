@@ -335,7 +335,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	// incomplete delete Jobs survive after the Tenant finalizer is removed.
 	cleanupJobs := []string{
 		"keycloak-realm-delete-del-full",
-		"ldap-ou-delete-del-full",
 		"mariadb-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
@@ -359,7 +358,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	// Completed cleanup Jobs should be purged as final destructive cleanup.
 	for _, jobName := range []string{
 		"keycloak-realm-delete-del-full",
-		"ldap-ou-delete-del-full",
 		"mariadb-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",

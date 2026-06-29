@@ -1,3 +1,5 @@
+//go:build legacy_ldap
+
 // Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
 
 package controller

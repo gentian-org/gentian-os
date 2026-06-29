@@ -29,7 +29,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
 const (
@@ -160,74 +159,6 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 	return jobs, nil
 }
 
-func (r *TenantReconciler) buildLDAPProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, error) {
-	ouDN := tenantOUDN(tenant)
-	mbaGroups, err := oidc.ManagedByAttributeGroupNames(ctx, r.Client)
-	if err != nil {
-		return nil, fmt.Errorf("resolve managed-by-attribute groups: %w", err)
-	}
-	if len(mbaGroups) == 0 {
-		return nil, fmt.Errorf("no managed-by-attribute groups found in OIDCPackCatalog")
-	}
-
-	var jobs []batchv1.Job
-
-	jobs = append(jobs, *makeOUJob(tenant, ouDN, mbaGroups))
-	jobs = append(jobs, *makeMBAGroupsJob(tenant, ouDN, mbaGroups))
-
-	mailDomain := tenantUserMailDomain(tenant, r.KernelDomain, r.TenancyMode)
-	if mailDomain != "" {
-		jobs = append(jobs, *makeAppUserTemplateJob(tenant, ouDN, mailDomain))
-	}
-	jobs = append(jobs, *makeAppUserCapabilitiesJob(tenant, ouDN))
-
-	adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-	jobs = append(jobs, *makeAdminUserJob(tenant, ouDN, adminCreds))
-	jobs = append(jobs, *makeAdminPolicyJob(tenant, ouDN))
-
-	ldapApps, err := r.collectLDAPApps(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-	ldapApps = append(ldapApps, "keycloak")
-	ldapApps = dedupeStrings(ldapApps)
-
-	for _, appName := range ldapApps {
-		bindPassword := ""
-		if r.Seeder != nil {
-			creds, seedErr := r.Seeder.SeedLDAP(ctx, tenant.Name, appName, secrets.LDAPCreds{
-				BindDN: fmt.Sprintf("uid=app-%s-%s,%s", appName, tenant.Name, ouDN),
-				BaseDN: ouDN,
-			})
-			if seedErr != nil {
-				return nil, fmt.Errorf("seed ldap bind for %s: %w", appName, seedErr)
-			}
-			bindPassword = creds.BindPassword
-		}
-		jobs = append(jobs, *makeBindAccountJob(tenant, ouDN, appName, bindPassword))
-	}
-
-	portalApps, err := r.collectDedicatedPortalApps(ctx, tenant)
-	if err != nil {
-		return nil, fmt.Errorf("collect dedicated portal apps: %w", err)
-	}
-	tenantDomain := r.tenantEffectiveDomain(tenant)
-	for _, pa := range portalApps {
-		jobs = append(jobs, *makePortalEntryJob(tenant, ouDN, pa, tenantDomain))
-	}
-
-	meetURL, chatURL := r.portalRealtimeLinkTargets(tenant)
-	if meetURL != "" || chatURL != "" {
-		includeLegacy := gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) == gentianov1alpha1.TenancyModeSingle
-		jobs = append(jobs, *makePortalRealtimeLinksJob(tenant, ouDN, meetURL, chatURL, includeLegacy))
-	}
-
-	return jobs, nil
-}
-
 func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {
 	var jobs []batchv1.Job
 
@@ -302,28 +233,6 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	}
 
 	return jobs, nil
-}
-
-func (r *TenantReconciler) buildRealmLDAPParams(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*realmLDAPParams, error) {
-	if r.LDAPBase == "" || r.LDAPServer == "" || r.Seeder == nil {
-		return nil, nil
-	}
-	ouDN := tenantConcreteOUDN(tenant, r.LDAPBase)
-	bindDN := fmt.Sprintf("uid=app-keycloak-%s,%s", tenant.Name, ouDN)
-	creds, err := r.Seeder.SeedLDAP(ctx, tenant.Name, "keycloak", secrets.LDAPCreds{
-		BindDN: bindDN,
-		BaseDN: ouDN,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("seed keycloak ldap: %w", err)
-	}
-	return &realmLDAPParams{
-		server:   r.LDAPServer,
-		bindDN:   bindDN,
-		bindPW:   creds.BindPassword,
-		usersDN:  "ou=users," + ouDN,
-		groupsDN: ouDN,
-	}, nil
 }
 
 func (r *TenantReconciler) seedTenantAdminCreds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (secrets.TenantAdminCreds, error) {

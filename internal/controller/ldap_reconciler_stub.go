@@ -20,6 +20,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -35,4 +36,16 @@ func (r *TenantReconciler) ensureLDAP(ctx context.Context, tenant *gentianov1alp
 	r.setCondition(tenant, conditionLDAPReady, metav1.ConditionTrue,
 		"SkippedKeycloakNative", "LDAP provisioning disabled; Keycloak is authoritative")
 	return ctrl.Result{}, nil
+}
+
+// deleteLDAP is a no-op on the Keycloak-native path (no UDM/LDAP resources).
+func (r *TenantReconciler) deleteLDAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	_ = ctx
+	_ = tenant
+	return nil
+}
+
+// mbaGroupsJobName is referenced when cleaning up legacy LDAP Jobs from older clusters.
+func mbaGroupsJobName(tenantName string) string {
+	return fmt.Sprintf("ldap-mba-groups-%s", tenantName)
 }

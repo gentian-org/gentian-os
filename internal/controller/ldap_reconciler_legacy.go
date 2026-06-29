@@ -1851,6 +1851,28 @@ func tenantOUDN(tenant *gentianov1alpha1.Tenant) string {
 	return fmt.Sprintf("ou=%s,${UDM_LDAP_BASE}", tenant.Name)
 }
 
+func (r *TenantReconciler) buildRealmLDAPParams(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*realmLDAPParams, error) {
+	if r.LDAPBase == "" || r.LDAPServer == "" || r.Seeder == nil {
+		return nil, nil
+	}
+	ouDN := tenantConcreteOUDN(tenant, r.LDAPBase)
+	bindDN := fmt.Sprintf("uid=app-keycloak-%s,%s", tenant.Name, ouDN)
+	creds, err := r.Seeder.SeedLDAP(ctx, tenant.Name, "keycloak", secrets.LDAPCreds{
+		BindDN: bindDN,
+		BaseDN: ouDN,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("seed keycloak ldap: %w", err)
+	}
+	return &realmLDAPParams{
+		server:   r.LDAPServer,
+		bindDN:   bindDN,
+		bindPW:   creds.BindPassword,
+		usersDN:  "ou=users," + ouDN,
+		groupsDN: ouDN,
+	}, nil
+}
+
 // tenantConcreteOUDN returns the concrete LDAP DN for a tenant's OU by substituting
 // ldapBase for the ${UDM_LDAP_BASE} shell-interpolation placeholder.
 // Used where a real DN (not a shell expression) is needed — e.g. Keycloak job env vars.
