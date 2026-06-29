@@ -72,8 +72,6 @@ spec:
               value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
-            - name: IDENTITY_MODE
-              value: {{ .Values.identityMode | default "legacy-ldap" | quote }}
             {{- if .Values.authzBridge.enabled }}
             - name: AUTHZ_BRIDGE_ENABLED
               value: "true"
@@ -84,10 +82,11 @@ spec:
               value: {{ .Values.authzBridge.openfgaToken | quote }}
             {{- end }}
             {{- end }}
-            - name: LDAP_SERVER
-              value: {{ .Values.ldap.server | default "" | quote }}
-            - name: LDAP_BASE
-              value: {{ .Values.ldap.base | default "" | quote }}
+            # LDAP env vars disabled — Keycloak-native identity only.
+            # - name: LDAP_SERVER
+            #   value: {{ .Values.ldap.server | default "" | quote }}
+            # - name: LDAP_BASE
+            #   value: {{ .Values.ldap.base | default "" | quote }}
             - name: CLOUDFLARE_ZONE_ID
               value: {{ .Values.cloudflare.zoneID | default "" | quote }}
             - name: CLOUDFLARE_TUNNEL_CNAME

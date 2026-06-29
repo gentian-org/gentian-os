@@ -18,6 +18,7 @@ func buildOIDCPackScript(
 	templates map[string]oidc.MapperTemplate,
 	redirectURIs []string,
 	clientSecret string,
+	entitlementGroup string,
 ) string {
 	redirectJSON, _ := json.Marshal(redirectURIs)
 	mapperBlocks := buildMapperPOSTBlocks(pack, templates)
@@ -34,6 +35,11 @@ func buildOIDCPackScript(
 	secretClause := ""
 	if clientSecret != "" {
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
+	}
+
+	groupName := entitlementGroup
+	if groupName == "" {
+		groupName = pack.LDAPGroup
 	}
 
 	scopeLookupBlock := keycloakShellLookupClientScopeID()
@@ -119,7 +125,7 @@ done
 SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
 
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
-		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, pack.LDAPGroup,
+		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
 		string(redirectJSON), publicClient, fullScope,
 		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
 }

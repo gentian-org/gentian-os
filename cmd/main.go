@@ -107,7 +107,6 @@ func main() {
 		CloudflareDNS:            buildCloudflareDNSClient(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
-		IdentityMode:             identityModeOrDefault(os.Getenv("IDENTITY_MODE")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
@@ -129,7 +128,6 @@ func main() {
 		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:   os.Getenv("TENANCY_MODE"),
 		RoutingMode:   routingMode,
-		IdentityMode:  identityModeOrDefault(os.Getenv("IDENTITY_MODE")),
 		CloudflareDNS: buildCloudflareDNSClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
@@ -205,13 +203,6 @@ func kernelRealmOrDefault(realm string) string {
 		return "kernel"
 	}
 	return realm
-}
-
-func identityModeOrDefault(mode string) string {
-	if mode == "" {
-		return controller.IdentityModeLegacyLDAP
-	}
-	return mode
 }
 
 // buildSeeder constructs a secrets.Seeder backed by an OpenBao KV v2 client

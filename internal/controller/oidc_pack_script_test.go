@@ -47,11 +47,11 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	script := buildOIDCPackScript("demo", "opendesk-jitsi", pack, templates,
-		[]string{"https://meet.demo.desk.gentian.org/*"}, "")
+		[]string{"https://meet.demo.desk.gentian.org/*"}, "", "gentian:tenant:demo:app:opendesk-jitsi")
 	for _, want := range []string{
 		"opendesk-jitsi-scope",
 		"opendesk-jitsi-access-control",
-		"managed-by-attribute-Videoconference",
+		"gentian:tenant:demo:app:opendesk-jitsi",
 		"PUBLIC_CLIENT=true",
 		"https://meet.demo.desk.gentian.org/*",
 	} {

@@ -2,19 +2,20 @@
 # Chart source: gentian-ui/chart (sibling repo or GENTIAN_UI_DIR).
 
 kernelDomain: desk.gentian.org
+kernelRealm: kernel
 
 auth:
   disabled: false
 
 api:
   image:
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
   env:
     ENVIRONMENT: development
 
 web:
   image:
-    pullPolicy: Always
+    pullPolicy: IfNotPresent
 
 gateway:
   enabled: true

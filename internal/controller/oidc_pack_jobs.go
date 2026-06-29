@@ -29,15 +29,19 @@ type oidcAppConfig struct {
 	templates     map[string]oidc.MapperTemplate
 }
 
-// oidcPacksNeedLDAPGroups reports whether any resolved OIDC config uses an
-// OpenDesk pack that maps a managed-by-attribute-* LDAP group to a client role.
-func oidcPacksNeedLDAPGroups(configs []oidcAppConfig) bool {
+// oidcPacksNeedEntitlementGroups reports whether any OIDC pack maps a group to a client role.
+func oidcPacksNeedEntitlementGroups(configs []oidcAppConfig) bool {
 	for _, cfg := range configs {
 		if cfg.pack != nil && cfg.pack.LDAPGroup != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// oidcPacksNeedLDAPGroups is a legacy alias retained for call-site grep during LDAP cutover.
+func oidcPacksNeedLDAPGroups(configs []oidcAppConfig) bool {
+	return oidcPacksNeedEntitlementGroups(configs)
 }
 
 func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]oidcAppConfig, error) {
@@ -312,10 +316,10 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
-func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret string) *batchv1.Job {
+func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret, entitlementGroup string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	container := keycloakContainer("provision-oidc-pack",
-		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret))
+		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret, entitlementGroup))
 	if clientSecret != "" {
 		container.Env = append(container.Env, corev1.EnvVar{
 			Name:  "OIDC_CLIENT_SECRET",

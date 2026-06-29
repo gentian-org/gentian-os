@@ -21,7 +21,7 @@ func ensureKernelGatewayTunnelIngress(
 	ctx context.Context,
 	c client.Client,
 	cf *CloudflareDNSClient,
-	kernelDomain, tenancyMode, identityMode string,
+	kernelDomain, tenancyMode string,
 ) error {
 	if cf == nil || kernelDomain == "" {
 		return nil
@@ -51,8 +51,11 @@ func ensureKernelGatewayTunnelIngress(
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
 	}
 
-	hosts := map[string]struct{}{kernelDomain: {}}
-	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames, identityMode) {
+	hosts := map[string]struct{}{
+		kernelDomain:                      {},
+		kernelPortalHost(kernelDomain):    {},
+	}
+	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}

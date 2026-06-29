@@ -140,7 +140,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("ensure ArgoCD ReferenceGrant: %w", err)
 	}
 
-	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames, r.IdentityMode)
+	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames)
 	expected := make(map[string]struct{}, len(specs))
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
@@ -167,22 +167,16 @@ func kernelHTTPRouteSpecs(
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
-	identityMode string,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
-	portalHost := kernelPortalHost(kernelDomain)
 	padHost := fmt.Sprintf("pad.%s", kernelDomain)
 	padSandboxHost := fmt.Sprintf("pad-sandbox.%s", kernelDomain)
 	filesHost := fmt.Sprintf("files.%s", kernelDomain)
 	officeHost := fmt.Sprintf("office.%s", kernelDomain)
 	icsHost := fmt.Sprintf("ics.%s", kernelDomain)
 
-	kcService := keycloakProxyServiceName()
-	kcPort := keycloakProxyServicePort
-	if identityMode == IdentityModeKeycloakNative {
-		kcService = suzeKeycloakHTTPServiceName()
-		kcPort = 8080
-	}
+	kcService := suzeKeycloakHTTPServiceName()
+	kcPort := int32(8080)
 
 	specs := []kernelHTTPRouteSpec{
 		{
@@ -194,9 +188,7 @@ func kernelHTTPRouteSpecs(
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
 	}
-	if identityMode != IdentityModeKeycloakNative {
-		specs = append(specs, kernelLegacyPortalHTTPRouteSpecs(portalHost)...)
-	}
+	// Legacy Nubus portal HTTPRoutes (kernelLegacyPortalHTTPRouteSpecs) removed — gentian-ui serves portal.
 	specs = append(specs,
 		kernelHTTPRouteSpec{
 			name: kernelRouteKernelApex,

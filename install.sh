@@ -1056,7 +1056,6 @@ install_stage1_operator() {
         --set tenancyMode="${TENANCY_MODE:-multi}" \
         --set routingMode="${ROUTING_MODE:-gateway}" \
         --set kernelRealm="${KERNEL_REALM:-kernel}" \
-        --set identityMode="keycloak-native" \
         --set authzBridge.enabled=true \
         --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
         --set "authzBridge.openfgaToken=${openfga_token}" \
@@ -1534,8 +1533,15 @@ print_summary_cp() {
     echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
+    echo -e "${GREEN}  Completed      : Steps 14–16 (Stage 1 IdP, authz bridge, Gentian portal)${NC}"
+    # Portal credentials (MASTER_PASSWORD-derived; same as keycloak-portal-bootstrap Job).
+    if [[ -f "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh" ]]; then
+        # shellcheck source=scripts/portal-login-bootstrap.sh
+        source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+        print_portal_login_summary
+    fi
+    echo ""
     echo -e "${GREEN}  OpenDesk apps  : not deployed (Nubus / Intercom / Nextcloud commented out in install.sh)${NC}"
-    echo -e "${GREEN}  Completed      : Steps 14–15 (Stage 1 IdP + authz bridge)${NC}"
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
     echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"

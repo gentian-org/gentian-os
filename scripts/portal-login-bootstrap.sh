@@ -9,6 +9,10 @@ _portal_derive_password() {
     echo -n "portal-bootstrap:user_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
+_platform_admin_derive_password() {
+    echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+}
+
 _keycloak_internal_service_url() {
     local ns="${1:-platform-kernel}"
     local svc port
@@ -82,12 +86,13 @@ print(json.dumps(s))
 run_keycloak_portal_bootstrap_job() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
-    local username="${PORTAL_BOOTSTRAP_USERNAME:-demo}"
-    local email="demo@${kernel_domain}"
+    local username="administrator"
+    local email="administrator@${kernel_domain}"
     local password job_name="keycloak-portal-bootstrap"
     local ns="platform-kernel"
+    local platform_superadmin_group="gentian:platform:superadmin"
 
-    password=$(_portal_derive_password)
+    password=$(_platform_admin_derive_password)
     export PORTAL_LOGIN_USERNAME="${username}"
     export PORTAL_LOGIN_EMAIL="${email}"
     export PORTAL_LOGIN_PASSWORD="${password}"
@@ -100,6 +105,7 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=username="${username}" \
         --from-literal=email="${email}" \
         --from-literal=password="${password}" \
+        --from-literal=platform_superadmin_group="${platform_superadmin_group}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
@@ -225,6 +231,36 @@ spec:
               CRED=\$(jq -n --arg p "\${PORTAL_PASSWORD}" '{type:"password",value:\$p,temporary:false}')
               curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
+
+              SUPERADMIN_GROUP="\${PLATFORM_SUPERADMIN_GROUP}"
+              GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SUPERADMIN_GROUP}&exact=true")
+              GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${SUPERADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+              if [ -z "\${GROUP_ID}" ] || [ "\${GROUP_ID}" = "null" ]; then
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups" \\
+                  -d "{\"name\":\"\${SUPERADMIN_GROUP}\"}"
+                GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SUPERADMIN_GROUP}&exact=true")
+                GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${SUPERADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+                echo "Created group \${SUPERADMIN_GROUP}"
+              else
+                echo "Group \${SUPERADMIN_GROUP} already exists"
+              fi
+              curl -sf -X PUT -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
+              echo "User \${PORTAL_USERNAME} joined \${SUPERADMIN_GROUP}"
+
+              if [ -n "\${CLIENT_ID}" ]; then
+                SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
+                GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
+                if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                  echo "gentian-portal default scope: groups"
+                fi
+              fi
+
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
           env:
             - name: KEYCLOAK_URL
@@ -267,6 +303,11 @@ spec:
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: password
+            - name: PLATFORM_SUPERADMIN_GROUP
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: platform_superadmin_group
           resources:
             requests:
               cpu: 50m
@@ -283,7 +324,7 @@ EOF
     fi
 
     kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
-    success "Keycloak gentian-portal client and kernel user ${username} are ready."
+    success "Keycloak gentian-portal client and platform admin ${username} are ready."
     info "OIDC issuer: https://id.${kernel_domain}/auth/realms/${kernel_realm}"
     info "Portal login credentials:"
     info "  URL:      https://portal.${kernel_domain}/login"
@@ -315,7 +356,7 @@ build_gentian_portal_images() {
         --build-arg "VITE_OIDC_ISSUER=${issuer}" \
         --build-arg "VITE_OIDC_CLIENT_ID=gentian-portal" \
         --build-arg "VITE_OIDC_REDIRECT_URI=${portal_origin}/login" \
-        --build-arg "VITE_OIDC_SCOPES=openid profile email" \
+        --build-arg "VITE_OIDC_SCOPES=openid profile email groups" \
         --build-arg "VITE_AUTH_DISABLED=false" \
         -t "ghcr.io/gentian-org/gentian-portal-web:${tag}"
 
@@ -360,10 +401,26 @@ install_gentian_portal_chart() {
         warn "openfga-runtime.store_id missing — PEP checks may fail until authz bridge syncs."
     fi
 
+    secret_args=(
+        --from-literal=OIDC_ISSUER="${issuer}"
+        --from-literal=OIDC_CLIENT_ID="gentian-portal"
+        --from-literal=OIDC_AUDIENCE="gentian-portal"
+    )
+
+    local kc_url kc_user kc_pass
+    kc_url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
+    kc_user=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || true)
+    kc_pass=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+    if [[ -n "${kc_url}" && -n "${kc_pass}" ]]; then
+        secret_args+=(
+            --from-literal=KEYCLOAK_ADMIN_URL="${kc_url}"
+            --from-literal=KEYCLOAK_ADMIN_USERNAME="${kc_user:-admin}"
+            --from-literal=KEYCLOAK_ADMIN_PASSWORD="${kc_pass}"
+        )
+    fi
+
     kubectl create secret generic gentian-portal-secrets -n "${ns}" \
-        --from-literal=OIDC_ISSUER="${issuer}" \
-        --from-literal=OIDC_CLIENT_ID="gentian-portal" \
-        --from-literal=OIDC_AUDIENCE="gentian-portal" \
+        "${secret_args[@]}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     info "Installing gentian-portal Helm release..."
@@ -371,11 +428,14 @@ install_gentian_portal_chart() {
         --namespace "${ns}" \
         --values "${values_file}" \
         --set kernelDomain="${kernel_domain}" \
+        --set kernelRealm="${kernel_realm}" \
         --set gateway.parentGatewayNamespace=platform-kernel \
         --set "api.image.repository=ghcr.io/gentian-org/gentian-portal-api" \
         --set "api.image.tag=${tag}" \
         --set "web.image.repository=ghcr.io/gentian-org/gentian-portal-web" \
         --set "web.image.tag=${tag}" \
+        --set "api.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}" \
+        --set "web.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}" \
         --set "api.env.ENVIRONMENT=development" \
         --set "api.env.BACKEND_CORS_ORIGINS=${portal_origin}" \
         --set "openfga.apiUrl=http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
@@ -406,7 +466,14 @@ install_stage1_portal() {
     run_keycloak_portal_bootstrap_job
 
     if [[ "${PORTAL_SKIP_IMAGE_BUILD:-false}" != "true" ]]; then
-        build_gentian_portal_images || info "Using pre-built portal images (tag=${PORTAL_IMAGE_TAG:-feat-new-ui})."
+        if build_gentian_portal_images; then
+            export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
+        else
+            info "Using pre-built portal images (tag=${PORTAL_IMAGE_TAG:-feat-new-ui})."
+            export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-Always}"
+        fi
+    else
+        export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-Always}"
     fi
 
     install_gentian_portal_chart
@@ -426,5 +493,20 @@ install_stage1_portal() {
 
     success "Stage 1 portal login ready."
     info "  https://portal.${KERNEL_DOMAIN}/login"
-    info "  user: ${PORTAL_LOGIN_USERNAME:-demo}@${KERNEL_DOMAIN}  password: (OpenBao identity/portal-bootstrap-user or MASTER_PASSWORD-derived)"
+    info "  user: administrator@${KERNEL_DOMAIN}"
+    info "  password: $(_platform_admin_derive_password)"
+}
+
+print_portal_login_summary() {
+    local kernel_domain="${KERNEL_DOMAIN:-}"
+    [[ -n "${kernel_domain}" ]] || return 0
+    local password
+    password=$(_platform_admin_derive_password 2>/dev/null || echo "")
+    [[ -n "${password}" ]] || password="(set MASTER_PASSWORD in install.env)"
+    echo ""
+    echo -e "${GREEN}  Gentian portal (cluster admin):${NC}"
+    echo -e "${GREEN}    URL      : https://portal.${kernel_domain}/login${NC}"
+    echo -e "${GREEN}    User     : administrator@${kernel_domain}${NC}"
+    echo -e "${GREEN}    Password : ${password}${NC}"
+    echo -e "${GREEN}    OIDC     : https://id.${kernel_domain}/auth/realms/${KERNEL_REALM:-kernel}${NC}"
 }

@@ -187,15 +187,7 @@ type TenantReconciler struct {
 	// driven by the Crossplane graph alone. Used for P3/P4 e2e and rollback
 	// testing via TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
 	CrossplaneOnly bool
-	// IdentityMode selects how users are stored and federated. keycloak-native
-	// disables LDAP/UDM provisioning (Stage 1 greenfield IdP).
-	IdentityMode string
 }
-
-const (
-	IdentityModeLegacyLDAP     = "legacy-ldap"
-	IdentityModeKeycloakNative = "keycloak-native"
-)
 
 // SetupWithManager registers the controller with the controller-manager.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -137,13 +137,14 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 	var jobs []batchv1.Job
 	realmName := keycloakRealmName(tenant)
 
-	if r.LDAPBase != "" {
-		ldapJobs, err := r.buildLDAPProvisioningJobs(ctx, tenant)
-		if err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, ldapJobs...)
-	}
+	// Legacy LDAP provisioning (OpenDesk / Nubus) is disabled — Keycloak is authoritative.
+	// if r.LDAPBase != "" {
+	// 	ldapJobs, err := r.buildLDAPProvisioningJobs(ctx, tenant)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	jobs = append(jobs, ldapJobs...)
+	// }
 
 	identityJobs, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
 	if err != nil {
@@ -230,10 +231,8 @@ func (r *TenantReconciler) buildLDAPProvisioningJobs(ctx context.Context, tenant
 func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {
 	var jobs []batchv1.Job
 
-	ldap, err := r.buildRealmLDAPParams(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
+	// LDAP User Storage Provider disabled — native Keycloak users/groups only.
+	// ldap, err := r.buildRealmLDAPParams(ctx, tenant)
 	var broker *realmBrokerParams
 	if r.KernelRealm != "" && r.KernelDomain != "" {
 		broker = &realmBrokerParams{
@@ -241,7 +240,15 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 			kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
 		}
 	}
-	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, ldap, broker))
+	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, nil, broker))
+
+	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+
+	groupNames := collectGentianTenantGroupNames(tenant, oidcConfigs)
+	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupNames))
 
 	adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
 	if err != nil {
@@ -249,19 +256,15 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	}
 	jobs = append(jobs, *makeAdminJob(tenant, realmName, adminCreds))
 
-	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-
 	if len(oidcConfigs) > 0 {
 		jobs = append(jobs, *makeOIDCBrowserFlowJob(tenant, realmName))
 		jobs = append(jobs, *makeBrokerFirstLoginFlowJob(tenant, realmName))
 	}
 
-	if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
-		jobs = append(jobs, *makeKCLDAPGroupSyncJob(tenant, realmName))
-	}
+	// Legacy LDAP group import before OIDC packs — replaced by makeGentianGroupsJob.
+	// if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
+	// 	jobs = append(jobs, *makeKCLDAPGroupSyncJob(tenant, realmName))
+	// }
 
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
@@ -281,16 +284,17 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *job)
 	}
 
-	if r.KernelRealm != "" {
-		adminEmail := tenant.Spec.AdminEmail
-		if adminEmail == "" {
-			adminEmail = fmt.Sprintf("admin-%s@gentian.org", tenant.Name)
-		}
-		jobs = append(jobs, *makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
-		jobs = append(jobs, *makeKernelLDAPSyncJob(tenant, r.KernelRealm))
-		jobs = append(jobs, *makeKCLDAPSyncJob(tenant, realmName))
-		jobs = append(jobs, *makeKCLDAPOpenDeskMappersJob(tenant, realmName))
-	}
+	// Legacy kernel LDAP federation sync (OpenDesk portal login) — disabled.
+	// if r.KernelRealm != "" {
+	// 	adminEmail := tenant.Spec.AdminEmail
+	// 	if adminEmail == "" {
+	// 		adminEmail = fmt.Sprintf("admin-%s@gentian.org", tenant.Name)
+	// 	}
+	// 	jobs = append(jobs, *makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
+	// 	jobs = append(jobs, *makeKernelLDAPSyncJob(tenant, r.KernelRealm))
+	// 	jobs = append(jobs, *makeKCLDAPSyncJob(tenant, realmName))
+	// 	jobs = append(jobs, *makeKCLDAPOpenDeskMappersJob(tenant, realmName))
+	// }
 
 	if r.KernelRealm != "" && r.KernelDomain != "" {
 		kernelExternalURL := fmt.Sprintf("https://id.%s", r.KernelDomain)
@@ -361,7 +365,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 			}
 			clientSecret = creds.ClientSecret
 		}
-		return makeOIDCPackJob(tenant, realmName, cfg, clientSecret), nil
+		return makeOIDCPackJob(tenant, realmName, cfg, clientSecret, gentianTenantAppGroup(tenant.Name, cfg.profileName)), nil
 	}
 
 	clientSecret := ""

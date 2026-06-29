@@ -64,16 +64,16 @@ kernel services).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
-| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **In progress** |
-| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | Planned |
-| **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | Planned |
-| **P3** | Per-user TOTP enablement | Planned |
-| **P4** | Security policies — password, session, lockout, MFA realm rules | Planned |
+| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **Done** — [admin-console.md §8.1](design/admin-console.md#81-p0--p1-status) |
+| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | **Done** (`gentian-ui`, deploy pending) |
+| **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — [admin-console.md §8.2](design/admin-console.md#82-p2-status) |
+| **P3** | Per-user TOTP enablement | **Done** (`gentian-ui`) — [admin-console.md §8.3](design/admin-console.md#83-p3-status) |
+| **P4** | Security policies — password, session, lockout, MFA realm rules | **Done** (`gentian-ui`) — [admin-console.md §8.4](design/admin-console.md#84-p4-status) |
 | **P5** | Sessions — list/revoke; auto-revoke on member disable | Planned |
 | **P6** | Audit — sign-in + admin-action log, export | Planned |
 | **P7** | `admin-notifications` gateway + publish UI | Planned |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus | Planned |
-| **P9** | Shell admin desktop tiles; OpenFGA `can_launch` for admin modules | Planned |
+| **P9** | OpenFGA `can_launch` for admin modules (shell tile in P1) | Planned |
 | **Stage 2** | Integrations & grants, agents, access requests, federation — [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance) | Planned |
 
 **Explicitly deferred:** App Store in console until Stage 2; app-side provisioner execution before P8; Stage 2 authorization surfaces in [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance).

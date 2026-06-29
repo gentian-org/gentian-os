@@ -37,9 +37,9 @@ in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-s
 
 | Module | Responsibility | Phase |
 |---|---|---|
-| **Members** | Workspace user lifecycle | P1 — CRUD; P2 — invite, reset; P3 — per-user MFA |
-| **Groups** | Membership and entitlements | P1 — CRUD, app access groups |
-| **Security policies** | Tenant realm authentication rules | P4 — password, session, lockout, MFA policy |
+| **Members** | Workspace user lifecycle | P1 — CRUD via Admin API; **P2 — invite, reset** |
+| **Groups** | Membership and entitlements | P1 — CRUD via Admin API |
+| **Security policies** | Tenant realm authentication rules | **P4 — password, session, lockout, MFA policy** |
 | **Sessions** | Active login inventory and revocation | P5 — list sessions, sign-out everywhere |
 | **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
 | **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract |
@@ -371,21 +371,104 @@ See [roadmap.md § Platform admin least-privilege](../roadmap.md#platform-admin-
 
 Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-console-replaces-umc).
 
-| Phase | Deliverable |
-|---|---|
-| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users |
-| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) |
-| **P2** | Invite + reset password (`inviteEmail`, Gentian email theme) |
-| **P3** | Per-user TOTP enablement; required-action flows |
-| **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) |
-| **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) |
-| **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) |
-| **P7** | `admin-notifications` gateway + publish UI |
-| **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status |
-| **P9** | Shell desktop: admin builtin apps; OpenFGA `can_launch` for admin modules |
-| **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies |
+| Phase | Deliverable | Status |
+|---|---|---|
+| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **Done** — see [§8.1](#81-p0--p1-status) |
+| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | **Done** (`gentian-ui`) — see [§8.1](#81-p0--p1-status) |
+| **P2** | Invite + reset password (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — see [§8.2](#82-p2-status); branded email theme pending Keycloak SMTP |
+| **P3** | Per-user TOTP enablement; required-action flows | **Done** (`gentian-ui`) — see [§8.3](#83-p3-status) |
+| **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) | **Done** (`gentian-ui`) — see [§8.4](#84-p4-status) |
+| **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) | Planned |
+| **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) | Planned |
+| **P7** | `admin-notifications` gateway + publish UI | Planned |
+| **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
+| **P9** | OpenFGA `can_launch` for admin modules (shell tile shipped in P1) | Planned |
+| **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies | Planned |
 
 **Explicitly not in P0–P7:** tenant app install (GitOps / `kubectl gentian apps`), app-side provisioner execution, Stage 2 authorization surfaces (§9).
+
+### 8.1 P0 / P1 status
+
+Last reviewed against `gentian-os` (`feat/new-security`) and `gentian-ui` (`feat/new-ui`).
+
+#### P0 — Suze identity bootstrap (**done**)
+
+`IDENTITY_MODE` removed — Keycloak-native (Suze) is the only path. LDAP provisioning Jobs and reconcile are disabled (legacy helpers retained in source for reference).
+
+| Item | Status | Notes |
+|---|---|---|
+| Suze Keycloak + OpenFGA install | **Done** | `install.sh` Steps 14–15 |
+| Kernel realm + `gentian-portal` client | **Done** | `scripts/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
+| Platform admin bootstrap | **Done** | `administrator@<KERNEL_DOMAIN>` + `gentian:platform:superadmin`; password `MASTER_PASSWORD`-derived; `groups` scope on `gentian-portal` |
+| Tenant realm Jobs | **Done** | `keycloak-realm-*`, `keycloak-gentian-groups-*`, `keycloak-admin-*`, `keycloak-broker-idp-*` (`tenant_identity_manifests.go`) |
+| LDAP disabled | **Done** | `ensureLDAP` no-op; `buildLDAPProvisioningJobs` not called; LDAP env vars commented in operator chart |
+| **`gentian:tenant:<t>:*` group taxonomy** | **Done** | `makeGentianGroupsJob` — `members`, `admins`, `app:<profile>` per tenant apps |
+| Tenant admin in `gentian:tenant:<t>:admins` | **Done** | `keycloak-admin-*` Job joins admin user to admins group (+ `realm-admin` for Keycloak Admin API) |
+| OIDC pack entitlement groups | **Done** | Packs map `gentian:tenant:<t>:app:<profile>` (not LDAP MBA names) |
+| Kernel broker IdP per tenant | **Done** | `makeBrokerIdentityProviderJob` |
+
+**Deploy note:** rebuild/push `gentian-os` operator and re-run tenant provisioning (or delete/recreate tenant Jobs) on existing clusters to pick up group bootstrap Jobs.
+
+#### P1 — Admin Console BFF + UI (**done in `gentian-ui`**)
+
+| Item | Status | Location |
+|---|---|---|
+| Tenant-scoped admin auth | **Done** | `gentian-ui/backend/app/core/admin_context.py`, `gentian_groups.py` — JWT groups + `admin-<tenant>@` fallback |
+| Keycloak Admin API store | **Done** | `gentian-ui/backend/app/services/keycloak_admin_store.py` (`KEYCLOAK_ADMIN_*` from `gentian-portal-secrets`) |
+| Dev in-memory store | **Done** | `memory_admin_store.py` when `AUTH_DISABLED=true` |
+| **Members** CRUD API | **Done** | `GET/POST/PATCH/DELETE /api/v1/admin/members` |
+| **Groups** CRUD + membership | **Done** | `GET/POST/PATCH/DELETE /api/v1/admin/groups`, `PUT …/members/{id}/groups` |
+| Admin Console UI (Members + Groups) | **Done** | `gentian-ui/frontend/src/admin/` — builtin shell app tile |
+| Cluster secret wiring | **Done** | `portal-login-bootstrap.sh` copies `keycloak-admin` → `gentian-portal-secrets` |
+| Deployed to cluster | **Pending** | Rebuild/push `gentian-portal-api` + `gentian-portal-web`; commit on `feat/new-ui` may be outstanding |
+
+**P1 caveats:** Admin API targets the **tenant Keycloak realm** (`realm == tenant id`). Operators must set `KEYCLOAK_ADMIN_*` on the portal API pod. OpenFGA `can_launch` checks for admin routes remain **P9**. `admin-<tenant>@` username fallback in BFF remains for clusters not yet reprovisioned.
+
+### 8.2 P2 status
+
+Last reviewed against `gentian-ui` (`feat/new-ui`).
+
+| Item | Status | Location |
+|---|---|---|
+| **Invite member** API | **Done** | `POST /api/v1/admin/members/invite` — creates user (no password), optional `inviteEmail` attribute, group entitlements, `execute-actions-email` (`VERIFY_EMAIL`, `UPDATE_PASSWORD`) |
+| **Reset password** API | **Done** | `POST /api/v1/admin/members/{id}/reset-password` — `execute-actions-email` (`UPDATE_PASSWORD`); delivery to `gentian.inviteEmail` when set |
+| Admin Console invite UI | **Done** | `MembersSection.tsx` — invite form, optional recovery email, app group checkboxes, reset-password action |
+| Shell placeholder removal | **Done** | Mail/Chat/Files/Settings tiles removed; notifications tray hidden until P7 |
+| Gentian-branded email theme | **Pending** | Requires Keycloak realm SMTP + email theme packaging (cluster mail stack) |
+| Portal redirect on invite/reset | **Done** | `redirect_uri=https://portal.<KERNEL_DOMAIN>/login`, `client_id=gentian-portal` |
+
+**P2 caveats:** Invite/reset emails require Keycloak realm SMTP configuration. Until Postfix/SMTP is enabled in the cluster, `execute-actions-email` calls succeed only when Keycloak can send mail.
+
+### 8.3 P3 status
+
+Last reviewed against `gentian-ui` (`feat/new-ui`).
+
+| Item | Status | Location |
+|---|---|---|
+| **Per-user TOTP enable** | **Done** | `POST /api/v1/admin/members/{id}/totp/enable` — `CONFIGURE_TOTP` via `execute-actions-email` (default) or required-action on next login (`sendEmail: false`) |
+| **Remove TOTP** | **Done** | `DELETE /api/v1/admin/members/{id}/totp` — deletes OTP credentials and clears `CONFIGURE_TOTP` required action |
+| **Invite with TOTP** | **Done** | `POST /api/v1/admin/members/invite` — optional `requireTotp` adds `CONFIGURE_TOTP` to invite actions |
+| **Member MFA status** | **Done** | `totpConfigured` / `totpPending` on member responses (Keycloak credentials + required actions) |
+| Admin Console MFA UI | **Done** | `MembersSection.tsx` — MFA column, Require/Remove TOTP, invite checkbox |
+| Realm-wide MFA policy | **Done (P4)** | Security policies tab — require TOTP for admins / members |
+
+**P3 caveats:** TOTP uses Keycloak built-in OTP only (no WebAuthn). Realm-wide MFA rules are configured in the **Security** tab (P4).
+
+### 8.4 P4 status
+
+Last reviewed against `gentian-ui` (`feat/new-ui`).
+
+| Item | Status | Location |
+|---|---|---|
+| **Security policies** API | **Done** | `GET/PUT /api/v1/admin/security-policies` |
+| Password policy | **Done** | Keycloak `passwordPolicy` — length, complexity, history, max age |
+| Session policy | **Done** | `ssoSessionIdleTimeout`, `ssoSessionMaxLifespan`, `rememberMe` |
+| Lockout policy | **Done** | `bruteForceProtected`, `failureFactor`, `maxFailureWaitSeconds` |
+| MFA realm rules | **Done** | Realm attributes `gentian.security.requireTotpAdmins` / `requireTotpMembers`; syncs `CONFIGURE_TOTP` to group members on save |
+| Admin Console Security tab | **Done** | `SecurityPoliciesSection.tsx` |
+| Audit log on policy change | **P6** | BFF mutation audit deferred |
+
+**P4 caveats:** MFA realm rules use required-action sync (not Keycloak authentication-flow binding). `requireTotpMembers: optional` is a policy marker only — enforcement remains per-user via Members (P3). Kernel realm defaults for platform admins use the same API when scoped to `kernel`.
 
 ---
 

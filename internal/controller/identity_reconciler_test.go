@@ -90,6 +90,17 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 	t.Fatalf("update Job %s status: too many conflicts", jobName)
 }
 
+func markGentianGroupsComplete(t *testing.T, tenantName string) {
+	t.Helper()
+	jobName := "keycloak-gentian-groups-" + tenantName
+	waitFor(t, jobAppearTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, jobName, "platform-kernel")
+}
+
 // markJobCompleteWhenReady polls until the named Job appears in namespace,
 // then marks it as Complete. Designed to be called in a goroutine during
 // deletion tests so the reconciler can proceed past errDeleteJobPending.
@@ -139,6 +150,7 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-realm-noidc", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-realm-noidc", "platform-kernel")
+	markGentianGroupsComplete(t, "noidc")
 
 	// Wait for admin Job, then mark it complete.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -147,6 +159,13 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-admin-noidc", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-admin-noidc", "platform-kernel")
+
+	waitFor(t, jobAppearTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-broker-idp-noidc", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-broker-idp-noidc", "platform-kernel")
 
 	updated := &gentianov1alpha1.Tenant{}
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -248,6 +267,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-realm-clienttest", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-realm-clienttest", "platform-kernel")
+	markGentianGroupsComplete(t, "clienttest")
 
 	// Wait for admin Job, then mark it complete.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -318,6 +338,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-realm-allready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-realm-allready", "platform-kernel")
+	markGentianGroupsComplete(t, "allready")
 
 	// Mark admin Job complete.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -349,29 +370,12 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-client-allready-oidc-app3", "platform-kernel")
 
-	// Wait for kernel-realm admin re-enable and LDAP sync Jobs (after LDAP
-	// admin-user completes via ensureLDAPBase / test auto-completion).
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-kernel-enable-allready", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-broker-idp-allready", Namespace: "platform-kernel"}, j) == nil
 	})
-	markJobComplete(t, "keycloak-kernel-enable-allready", "platform-kernel")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-kernel-ldap-sync-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-kernel-ldap-sync-allready", "platform-kernel")
-
-	// Wait for the Keycloak LDAP sync Job, then mark it complete.
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-ldap-sync-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-ldap-sync-allready", "platform-kernel")
+	markJobComplete(t, "keycloak-broker-idp-allready", "platform-kernel")
 
 	// Wait for Phase=Ready (identity and remaining tenant paths must converge first).
 	updated := &gentianov1alpha1.Tenant{}
@@ -432,6 +436,8 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningRealm")
 
 	markJobComplete(t, "keycloak-realm-admintest", "platform-kernel")
+	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningGroups")
+	markGentianGroupsComplete(t, "admintest")
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningAdmin")
 
 	adminJob := &batchv1.Job{}

@@ -41,10 +41,8 @@ tenantProvisioning:
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
-# identityMode controls LDAP vs Keycloak-native identity (Stage 1).
-#   legacy-ldap       — Nubus LDAP federation (OpenDesk path)
-#   keycloak-native — skip LDAP/UDM; Keycloak is authoritative
-identityMode: legacy-ldap
+# LDAP / identityMode removed — Suze Keycloak is always authoritative (Stage 1).
+# Legacy OpenDesk LDAP settings are no longer plumbed into the operator.
 
 # Stage 1 authz bridge (Keycloak → OpenFGA tuple sync).
 authzBridge:
@@ -52,16 +50,10 @@ authzBridge:
   openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
   openfgaToken: ""
 
-# LDAP configuration for per-tenant realm federation.
-# When ldap.server is empty the operator does not configure LDAP federation
-# for tenant Keycloak realms. Set both ldap.server and ldap.base to enable.
+# LDAP configuration — disabled (Keycloak-native). Keys retained so values files do not break.
 ldap:
-  # LDAP connection URL including scheme and port, e.g.:
-  # ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389
   server: ""
-  # LDAP base DN, e.g. dc=swp-ldap,dc=internal
   base: ""
-  # Optional LDAP bind DN for apps that read a shared search account (OX).
   bindSearchDn: ""
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).

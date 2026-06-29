@@ -90,6 +90,16 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
+	groupsDone, err := r.ensureGentianGroupsJob(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure Gentian groups Job: %w", err)
+	}
+	if !groupsDone {
+		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+			"ProvisioningGroups", "Waiting for Gentian groups Job to complete")
+		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+	}
+
 	// Ensure realm-admin user exists in the realm (Option A tenant admin).
 	adminDone, err := r.ensureAdminJob(ctx, tenant, realmName)
 	if err != nil {
@@ -122,30 +132,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		}
 	}
 
-	// OpenDesk OIDC packs map managed-by-attribute-* LDAP groups to client roles.
-	// Those groups must exist in LDAP (OU Job) and be imported into Keycloak
-	// (group-ldap-mapper sync) before client Jobs run — see docs/design/iam.md §1.3.
-	if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
-		ouDone, err := r.ldapManagedGroupsReady(ctx, tenant.Name)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if !ouDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"WaitingLDAPOU", "Waiting for tenant LDAP OU and managed-by-attribute groups")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-		groupSyncDone, err := r.ensureKCLDAPGroupSyncJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Keycloak LDAP group sync Job: %w", err)
-		}
-		if !groupSyncDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"SyncingKCLDAPGroups", "Waiting for Keycloak LDAP group sync before OIDC client Jobs")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-	}
-
+	// OIDC packs require Gentian entitlement groups (provisioned above).
 	allDone := true
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
@@ -172,89 +159,12 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
-	// Gate the kernel realm user re-enable on LDAP admin-user job completion.
-	// Both the realm job and the LDAP admin-user job start in the same reconcile
-	// iteration. The realm job finishes quickly; the LDAP job may still be
-	// running. If we re-enable the Keycloak user before UDM clears shadowExpire,
-	// Keycloak's next LDAP federation import sees the still-locked user and
-	// re-disables them, causing "Invalid username or password" on subsequent logins.
-	// If the LDAP job doesn't exist yet (first deploy before LDAP reconciler runs,
-	// or test environment) we proceed optimistically — the user was never disabled
-	// in Keycloak so there is no stale state to race against.
-	adminLDAPJob := &batchv1.Job{}
-	switch ldapJobErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, adminLDAPJob); {
-	case errors.IsNotFound(ldapJobErr):
-		// If LDAP federation is enabled globally, we must wait for the LDAP reconciler
-		// to create and complete the admin-user job. Otherwise we race against Keycloak
-		// federation syncs.
-		if r.LDAPBase != "" {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"WaitingLDAPAdminUnlock", "Waiting for LDAP admin-user job to be created")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-		// Proceed without waiting only if LDAP is completely disabled.
-	case ldapJobErr != nil:
-		return ctrl.Result{}, ldapJobErr
-	case !jobIsComplete(adminLDAPJob):
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-			"WaitingLDAPAdminUnlock", "Waiting for LDAP admin-user job to complete before re-enabling kernel realm user")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-	}
+	// Legacy LDAP admin-user unlock + kernel LDAP sync — disabled (Keycloak-native).
+	// adminLDAPJob := &batchv1.Job{}
+	// switch ldapJobErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, adminLDAPJob); {
+	// ...
 
-	// Re-enable the kernel realm user and trigger an LDAP sync only when a
-	// kernel Keycloak realm is configured. When KernelRealm is empty (test
-	// environments, or deployments without Keycloak) there is no kernel realm
-	// user to re-enable and no LDAP provider to sync, so skip these steps.
 	if r.KernelRealm != "" {
-		adminEmail := tenant.Spec.AdminEmail
-		if adminEmail == "" {
-			adminEmail = fmt.Sprintf("admin-%s@gentian.org", tenant.Name)
-		}
-		opendeskEnableDone, err := r.ensureOpendeskAdminEnableJob(ctx, tenant, adminEmail)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure kernel admin re-enable Job: %w", err)
-		}
-		if !opendeskEnableDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningOpendeskEnable", "Waiting for opendesk admin enable Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-
-		kernelLDAPSyncDone, err := r.ensureKernelLDAPSyncJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure kernel Keycloak LDAP sync Job: %w", err)
-		}
-		if !kernelLDAPSyncDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"SyncingKernelLDAP", "Waiting for kernel Keycloak LDAP sync before portal login")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-
-		// Trigger a full Keycloak LDAP sync after all LDAP provisioning is stable.
-		// This re-imports all users with their current LDAP attributes, clearing any
-		// cached enabled=false state caused by the brief UDM shadowExpire race during
-		// user creation (the univention-ldap-mapper sets isEnabled()=false while
-		// shadowExpire=1 is set, and the cached state persists until a sync refreshes it).
-		kcLDAPSyncDone, err := r.ensureKCLDAPSyncJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Keycloak LDAP sync Job: %w", err)
-		}
-		if !kcLDAPSyncDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"SyncingKCLDAP", "Waiting for Keycloak LDAP sync Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-
-		kcMappersDone, err := r.ensureKCLDAPOpenDeskMappersJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OpenDesk LDAP mapper Job: %w", err)
-		}
-		if !kcMappersDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"SyncingKCLDAPOpenDeskMappers", "Waiting for OpenDesk LDAP mapper sync Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
-		}
-
 		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure broker IdP Job: %w", err)
@@ -326,8 +236,9 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 		if jobIsComplete(existing) {
 			// Delete provisioning jobs so they are re-created on the next deploy.
 			provNames := []string{
-				realmJobName(tenant.Name), adminJobName(tenant.Name),
+				realmJobName(tenant.Name), gentianGroupsJobName(tenant.Name), adminJobName(tenant.Name),
 				oidcBrowserFlowJobName(tenant.Name),
+				// Legacy LDAP jobs (cleanup if present from older clusters):
 				kernelAdminEnableJobName(tenant.Name), kernelLDAPSyncJobName(tenant.Name),
 				kcLDAPGroupSyncJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
 				mbaGroupsJobName(tenant.Name),
@@ -444,6 +355,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: creds.Username},
 		corev1.EnvVar{Name: "TENANT_ADMIN_PASSWORD", Value: creds.Password},
 		corev1.EnvVar{Name: "TENANT_ADMIN_EMAIL", Value: adminEmail},
+		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1103,7 +1015,7 @@ func buildAdminScript(realmName string) string {
 	//
 	// All steps are idempotent: users/roles are checked for existence before
 	// POST so re-running the Job is safe.
-	return fmt.Sprintf(`set -eu
+	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -1184,10 +1096,29 @@ else
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}" \
     -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]"
   echo "realm-admin role granted"
+fi
+
+# --- 4. Assign gentian:tenant:<t>:admins group membership ---
+GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/%s/groups?search=${TENANT_ADMINS_GROUP}&exact=true")
+keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${TENANT_ADMINS_GROUP}"
+ADMINS_GROUP_ID="${_kj_id}"
+if [ -z "${ADMINS_GROUP_ID}" ]; then
+  echo "ERROR: tenant admins group ${TENANT_ADMINS_GROUP} not found in realm %s" >&2
+  exit 1
+fi
+MEMBER_GROUPS=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups")
+if echo "${MEMBER_GROUPS}" | grep -q "\"name\":\"${TENANT_ADMINS_GROUP}\""; then
+  echo "tenant admin already in group ${TENANT_ADMINS_GROUP}"
+else
+  curl -sf -X PUT -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups/${ADMINS_GROUP_ID}"
+  echo "tenant admin joined group ${TENANT_ADMINS_GROUP}"
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {
