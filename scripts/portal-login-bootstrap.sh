@@ -437,6 +437,15 @@ wait_for_openfga_runtime_store_id() {
     return 1
 }
 
+_openfga_api_token() {
+    if ! kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
+        return 0
+    fi
+    kubectl get secret openfga-sensitive-values -n platform-kernel \
+        -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
+        | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true
+}
+
 install_gentian_portal_chart() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
@@ -477,6 +486,12 @@ install_gentian_portal_chart() {
             --from-literal=KEYCLOAK_ADMIN_USERNAME="${kc_user:-admin}"
             --from-literal=KEYCLOAK_ADMIN_PASSWORD="${kc_pass}"
         )
+    fi
+
+    local openfga_token
+    openfga_token=$(_openfga_api_token)
+    if [[ -n "${openfga_token}" ]]; then
+        secret_args+=(--from-literal=OPENFGA_API_TOKEN="${openfga_token}")
     fi
 
     kubectl create secret generic gentian-portal-secrets -n "${ns}" \
