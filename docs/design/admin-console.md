@@ -379,7 +379,7 @@ Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-c
 | **P3** | Per-user TOTP enablement; required-action flows | **Done** (`gentian-ui`) — see [§8.3](#83-p3-status) |
 | **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) | **Done** (`gentian-ui`) — see [§8.4](#84-p4-status) |
 | **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) | **Done** (`gentian-ui`) — see [§8.5](#85-p5-status) |
-| **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) | Planned |
+| **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) | **Done** (`gentian-ui`) — see [§8.6](#86-p6-status) |
 | **P7** | `admin-notifications` gateway + publish UI | Planned |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
 | **P9** | OpenFGA `can_launch` for admin modules (shell tile shipped in P1) | Planned |
@@ -466,7 +466,7 @@ Last reviewed against `gentian-ui` (`feat/new-ui`).
 | Lockout policy | **Done** | `bruteForceProtected`, `failureFactor`, `maxFailureWaitSeconds` |
 | MFA realm rules | **Done** | Realm attributes `gentian.security.requireTotpAdmins` / `requireTotpMembers`; syncs `CONFIGURE_TOTP` to group members on save |
 | Admin Console Security tab | **Done** | `SecurityPoliciesSection.tsx` |
-| Audit log on policy change | **P6** | BFF mutation audit deferred |
+| Audit log on policy change | **Done (P6)** | BFF mutation audit |
 
 **P4 caveats:** MFA realm rules use required-action sync (not Keycloak authentication-flow binding). `requireTotpMembers: optional` is a policy marker only — enforcement remains per-user via Members (P3). Kernel realm defaults for platform admins use the same API when scoped to `kernel`.
 
@@ -484,6 +484,21 @@ Last reviewed against `gentian-ui` (`develop`).
 | Audit log on session revoke | **P6** | BFF mutation audit deferred |
 
 **P5 caveats:** Session list aggregates Keycloak user-session API per member (acceptable for v1 tenant sizes). Offline sessions are not revoked (`isOffline=false`). CAEP / shared-signals push is Stage 2.
+
+### 8.6 P6 status
+
+Last reviewed against `gentian-ui` (`develop`).
+
+| Item | Status | Location |
+|---|---|---|
+| **Audit events** API | **Done** | `GET /api/v1/admin/audit-events` with user/action/category/time filters |
+| **Export** API | **Done** | `GET /api/v1/admin/audit-events/export?format=json\|csv` |
+| **BFF mutation audit** | **Done** | `record_admin_audit()` on Members, Groups, Security, Sessions mutations |
+| **Keycloak sign-in events** | **Done** | `KeycloakAuditFetcher` merges realm user/admin events when `KEYCLOAK_ADMIN_*` configured |
+| Admin Console Audit tab | **Done** | `AuditSection.tsx` — filters, table, CSV/JSON export |
+| Durable audit store / retention | **Later** | v1 uses in-process memory for BFF events; cluster retention policy not yet enforced |
+
+**P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. BFF-recorded admin actions are held in memory on the portal API pod (lost on restart) until a persistent Gentian audit store ships.
 
 ---
 
