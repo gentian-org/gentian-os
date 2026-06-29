@@ -24,8 +24,25 @@ spec:
           replicas: 1
         cleanupController:
           replicas: 1
+          # Default 128Mi OOMs on Crossplane-heavy clusters (~500+ CRDs): the TTL
+          # manager starts an informer per GVR.
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
         reportsController:
           replicas: 1
+        # bitnami/kubectl tags often fail to pull on homelab; use alpine/k8s (bash + kubectl).
+        webhooksCleanup:
+          image:
+            repository: alpine/k8s
+            tag: "1.32.3"
+        policyReportsCleanup:
+          image:
+            repository: alpine/k8s
+            tag: "1.32.3"
   destination:
     server: https://kubernetes.default.svc
     namespace: kyverno
