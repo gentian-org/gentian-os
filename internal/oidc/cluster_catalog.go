@@ -48,7 +48,7 @@ func packFromCR(spec gentianov1alpha1.OIDCPackSpec) Pack {
 		ScopeName:        spec.ScopeName,
 		ScopeDescription: spec.ScopeDescription,
 		ClientRole:       spec.ClientRole,
-		LDAPGroup:        spec.LDAPGroup,
+		EntitlementGroup: spec.EntitlementGroup,
 		PublicClient:     spec.PublicClient,
 		FullScopeAllowed: spec.FullScopeAllowed,
 		DefaultScopes:    append([]string(nil), spec.DefaultScopes...),

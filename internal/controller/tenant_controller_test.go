@@ -50,7 +50,7 @@ var testClient client.Client
 
 // envtestWaitTimeout is the default poll deadline for controller envtest waits.
 // Tests share one manager; under t.Parallel() load on CI runners, shorter
-// deadlines flake when many tenants reconcile and extra Keycloak/LDAP Jobs run.
+// deadlines flake when many tenants reconcile and extra Keycloak Jobs run.
 const envtestWaitTimeout = 45 * time.Second
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
@@ -58,13 +58,6 @@ const tenantReadyTimeout = envtestWaitTimeout
 
 // jobAppearTimeout is an alias for waits on Job creation or intermediate conditions.
 const jobAppearTimeout = envtestWaitTimeout
-
-// ldapManualTestTenants lists tenant names whose LDAP base jobs must not be
-// auto-completed because ldap_reconciler_test.go asserts provisioning order.
-var ldapManualTestTenants = map[string]struct{}{
-	"adminpolicy": {},
-	"bindtest":    {},
-}
 
 // dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
 // manually in reconciler tests (redis/pg/mariadb/s3/nc-group assertions).
@@ -85,34 +78,8 @@ var deleteRetainManualTestTenants = map[string]struct{}{
 	"identretain": {},
 }
 
-func ldapBaseJobTenant(jobName string) (tenant string, ok bool) {
-	for _, prefix := range []string{
-		"ldap-ou-",
-		"ldap-mba-groups-",
-		"ldap-app-user-template-",
-		"ldap-app-user-capabilities-",
-		"ldap-admin-user-",
-		"ldap-admin-policy-",
-	} {
-		if strings.HasPrefix(jobName, prefix) {
-			return strings.TrimPrefix(jobName, prefix), true
-		}
-	}
-	return "", false
-}
-
-func shouldAutoCompleteLDAPJob(jobName string) bool {
-	tenant, ok := ldapBaseJobTenant(jobName)
-	if !ok {
-		return false
-	}
-	_, manual := ldapManualTestTenants[tenant]
-	return !manual
-}
-
 func provisioningJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
-		"ldap-bind-",
 		"redis-acl-",
 		"pg-role-",
 		"mariadb-setup-",
@@ -135,9 +102,6 @@ func shouldAutoCompleteProvisioningJob(jobName string) bool {
 	if !ok {
 		return false
 	}
-	if _, manual := ldapManualTestTenants[tenant]; manual {
-		return false
-	}
 	if _, manual := dataPlaneManualTestTenants[tenant]; manual {
 		switch {
 		case strings.HasPrefix(jobName, "redis-acl-"):
@@ -157,8 +121,6 @@ func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
 		"keycloak-realm-delete-",
 		"keycloak-realm-disable-",
-		"ldap-ou-delete-",
-		"ldap-lock-",
 		"mariadb-delete-",
 		"s3-delete-",
 		"nc-group-delete-",
@@ -261,8 +223,6 @@ func TestMain(m *testing.M) {
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,
-		LDAPBase:                 "dc=swp-ldap,dc=internal",
-		LDAPServer:               "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -354,10 +314,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// Auto-complete Keycloak Jobs and LDAP base provisioning Jobs for tests that
-	// do not assert job ordering manually. ensureIdentity blocks on the LDAP
-	// admin-user Job when ensureLDAPBase has created it; without auto-completion
-	// most controller tests time out waiting for Phase=Ready.
+	// Auto-complete Keycloak Jobs and data-plane provisioning Jobs for tests that
+	// do not assert job ordering manually.
 	go func() {
 		for {
 			time.Sleep(50 * time.Millisecond)
@@ -370,10 +328,9 @@ func TestMain(m *testing.M) {
 					}
 					name := j.Name
 					autoKeycloak := strings.HasPrefix(name, "keycloak-")
-					autoLDAP := shouldAutoCompleteLDAPJob(name)
 					autoProv := shouldAutoCompleteProvisioningJob(name)
 					autoDeleteCleanup := shouldAutoCompleteDeleteCleanupJob(name)
-					if !autoKeycloak && !autoLDAP && !autoProv && !autoDeleteCleanup {
+					if !autoKeycloak && !autoProv && !autoDeleteCleanup {
 						continue
 					}
 					if autoDeleteCleanup && strings.Contains(name, "realm-disable") {
@@ -713,7 +670,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// For Retain policy deleteLDAP preserves the admin user (no delete job created).
 	// For Retain policy deleteIdentity is a no-op: retainer has no apps so no realm was provisioned.
 
 	// Wait for Tenant CR to be gone (finalizer removed)
@@ -753,9 +709,8 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// For Delete policy deleteIdentity and deleteLDAP create cleanup jobs.
+	// For Delete policy deleteIdentity creates cleanup jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-destroyer", "platform-kernel")
 	go markJobCompleteWhenReady("nc-group-delete-destroyer", "platform-kernel")
 
 	// Wait for Tenant CR to be gone

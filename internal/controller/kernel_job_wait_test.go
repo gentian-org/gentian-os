@@ -11,8 +11,8 @@ import (
 
 func TestProvisioningJobObjectName(t *testing.T) {
 	t.Parallel()
-	got := provisioningJobObjectName("demo", "keycloak-ldap-sync-demo")
-	if got != "demo-job-keycloak-ldap-sync-demo" {
+	got := provisioningJobObjectName("demo", "keycloak-gentian-groups-demo")
+	if got != "demo-job-keycloak-gentian-groups-demo" {
 		t.Fatalf("got %q", got)
 	}
 }

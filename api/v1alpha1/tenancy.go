@@ -10,14 +10,11 @@ const (
 	TenancyModeMulti = "multi"
 
 	// TenancyModeSingle is for dedicated single-tenant clusters: one Tenant CR
-	// named "default", users in ou=default, flat app URLs on {sub}.{kernelDomain}.
+	// named "default", flat app URLs on {sub}.{kernelDomain}.
 	TenancyModeSingle = "single"
 
 	// SingleTenantName is the required Tenant metadata.name in single-tenancy mode.
 	SingleTenantName = "default"
-
-	// SingleTenantLDAPOU is the recommended spec.isolation.ldapOU in single mode.
-	SingleTenantLDAPOU = "ou=default"
 )
 
 // NormalizeTenancyMode returns TenancyModeSingle or TenancyModeMulti.

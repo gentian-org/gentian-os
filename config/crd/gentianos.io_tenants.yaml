@@ -182,11 +182,6 @@ spec:
                       KeycloakRealm is the Keycloak realm name for this tenant.
                       Defaults to the tenant name.
                     type: string
-                  ldapOU:
-                    description: |-
-                      LDAPOu is the LDAP OU path for this tenant's users and groups.
-                      Defaults to "ou={tenant-name}" under the root DN.
-                    type: string
                   mode:
                     default: namespace
                     description: Mode selects the isolation strategy. Defaults to

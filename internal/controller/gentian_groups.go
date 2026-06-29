@@ -58,9 +58,7 @@ func gentianGroupsJobName(tenantName string) string {
 }
 
 func shellQuoteList(values []string) string {
-	quoted := make([]string, 0, len(values))
-	for _, value := range values {
-		quoted = append(quoted, fmt.Sprintf("%q", value))
-	}
-	return strings.Join(quoted, " ")
+	// Space-separated tokens for `for x in ${VAR}` — do not shell-quote; quoted
+	// values keep literal " characters and break Keycloak API search params.
+	return strings.Join(values, " ")
 }

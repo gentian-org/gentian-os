@@ -68,34 +68,14 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, "keycloak_json_id_by_attr") {
 		t.Fatal("expected keycloak_json_id_by_attr helper in realm script")
 	}
-	if strings.Contains(script, `tr ',' '\\n' | grep -F '"name":"ldap"'`) {
-		t.Fatal("realm script must not use fragile tr/grep LDAP_ID extraction")
-	}
-	if !strings.Contains(script, `keycloak_json_id_by_attr "${LDAP_COMPONENTS}" "name" "ldap"`) {
-		t.Fatal("expected quoted LDAP_COMPONENTS JSON for keycloak_json_id_by_attr")
-	}
-	if !strings.Contains(script, `ensure_ldap_uid_attribute_mapper "demo" "ldap"`) {
-		t.Fatal("expected uid ldap mapper helper invocation in realm script")
-	}
-	if !strings.Contains(script, "ensure_ldap_email_attribute_mapper") {
-		t.Fatal("expected email ldap mapper helper in realm script")
-	}
-	if !strings.Contains(script, "mailPrimaryAddress") {
-		t.Fatal("expected mailPrimaryAddress in realm script email mapper")
-	}
-	if !strings.Contains(script, `"${KEYCLOAK_URL}/admin/realms/demo")`) {
-		t.Fatal("realm script must not corrupt HTTP realm URL with misplaced format args")
-	}
-	if strings.Contains(script, "keycloak_json_id_by_attr ${LDAP_COMPONENTS}") &&
-		strings.Contains(script, "/admin/realms/keycloak_json") {
-		t.Fatal("realm script must not splice ldapIDBlock into the HTTP curl line")
-	}
-
-	if strings.Contains(script, firstBrokerLoginFlowAlias) {
-		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
+	if !strings.Contains(script, "SSO Identity Brokering") {
+		t.Fatal("expected kernel SSO brokering block in realm script")
 	}
 	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`) {
 		t.Fatal("realm script must use built-in first broker login flow for initial IdP registration")
+	}
+	if strings.Contains(script, firstBrokerLoginFlowAlias) {
+		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
 	}
 
 	path := t.TempDir() + "/realm.sh"

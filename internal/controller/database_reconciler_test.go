@@ -345,7 +345,6 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	}
 	// deleteIdentity and deleteLDAP run before deleteDatabase; mark their jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-dbdelete", "platform-kernel")
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -416,7 +415,6 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-dborphan", "platform-kernel")
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}

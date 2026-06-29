@@ -19,7 +19,7 @@ import (
 const brokerIdentityProviderVersion = "7"
 
 // firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
-// kernel IdP logins to pre-provisioned LDAP users by email (no confirm/re-auth).
+// kernel IdP logins to pre-provisioned users by email (no confirm/re-auth).
 const firstBrokerLoginFlowAlias = "first-broker-login-gentian"
 
 // brokerFirstLoginFlowJobVersion bumps when the auto-link flow script changes.
@@ -34,7 +34,7 @@ func tenantBrokerIdPJobName(tenantName string) string {
 // so Keycloak does not hairpin through the public id.<kernel> URL during broker
 // code exchange; browser-facing issuer and authorizationUrl stay external.
 func buildBrokerIdentityProviderScript() string {
-	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + fmt.Sprintf(`
+	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
@@ -78,14 +78,13 @@ else
   echo "ERROR: kernel IdP update for realm ${REALM_NAME} failed (HTTP ${HTTP})" >&2
   exit 1
 fi
-ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
 %s%s
 `, brokerResolveIDShell, buildEnsureFirstBrokerLoginFlowShell(`"${REALM_NAME}"`), firstBrokerLoginFlowAlias,
 		brokerKernelClientUsernameMapperShell, brokerIdPUsernameImporterShell)
 }
 
 const brokerKernelClientUsernameMapperShell = `
-# Kernel broker client must emit opendesk_username (LDAP uid) in tokens issued
+# Kernel broker client must emit opendesk_username in tokens issued
 # during tenant→kernel broker login; otherwise tenant scope mappers see empty uid.
 BROKER_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" || echo "[]")

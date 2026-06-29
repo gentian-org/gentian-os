@@ -160,19 +160,9 @@ type TenantReconciler struct {
 	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
 	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.
 	TenantDNS01ClusterIssuer string
-	// KernelRealm is the name of the shared Keycloak realm that holds all
-	// platform users (synced via Nubus LDAP). Defaults to "kernel".
+	// KernelRealm is the name of the shared Keycloak realm for platform identity.
 	// Sourced from the KERNEL_REALM env var at startup.
 	KernelRealm string
-	// LDAPServer is the LDAP connection URL including scheme and port
-	// (e.g. ldap://nubus-ldap.gentian-dev.svc.cluster.local:389).
-	// When empty, LDAP federation is not configured for tenant Keycloak realms.
-	// Sourced from the LDAP_SERVER env var at startup.
-	LDAPServer string
-	// LDAPBase is the LDAP base DN (e.g. dc=swp-ldap,dc=internal).
-	// Used to construct per-tenant bind DNs and users DNs for LDAP federation.
-	// Sourced from the LDAP_BASE env var at startup.
-	LDAPBase string
 	// CloudflareDNS is an optional edge-DNS adapter: when set, the operator
 	// ensures a proxied CNAME *.<effectiveDomain> → tunnel so Cloudflare Total
 	// TLS can provision edge certs for tenant app hostnames (e.g.
@@ -183,7 +173,7 @@ type TenantReconciler struct {
 	// gateway (Gateway API + Envoy Gateway). Sourced from ROUTING_MODE.
 	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, office, portal/UMC
-	// convergence, Nextcloud group, LDAP base helpers) so tenant lifecycle is
+	// convergence, Nextcloud group) so tenant lifecycle is driven by the
 	// driven by the Crossplane graph alone. Used for P3/P4 e2e and rollback
 	// testing via TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
 	CrossplaneOnly bool
@@ -322,13 +312,6 @@ func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenan
 			gentianov1alpha1.SingleTenantName, tenant.Name,
 		)
 	}
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
-		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
-			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
-		)
-	}
 	var others gentianov1alpha1.TenantList
 	if err := r.List(ctx, &others); err != nil {
 		return err
@@ -437,15 +420,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 6. LDAP (UDM OU + groups + bind accounts)
-	ldapResult, err := r.ensureLDAP(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 7. Database (CloudNativePG Database CRs + psql role Jobs)
+	// 6. Database (CloudNativePG Database CRs + psql role Jobs)
 	databaseResult, err := r.ensureDatabase(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -535,7 +510,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	tenant.Status.Namespace = nsName
 	tenant.Status.AppCount = len(tenant.Spec.Apps)
 	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
-	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
+	provisioning := identityResult.RequeueAfter > 0 ||
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
 		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
 	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
@@ -559,9 +534,6 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		logger.Info("tenant provisioning in progress", "tenant", tenant.Name)
 		if identityResult.RequeueAfter > 0 {
 			return identityResult, nil
-		}
-		if ldapResult.RequeueAfter > 0 {
-			return ldapResult, nil
 		}
 		if databaseResult.RequeueAfter > 0 {
 			return databaseResult, nil
@@ -649,11 +621,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up identity resources before removing the namespace.
 	if requeue, res, err := awaitJob(r.deleteIdentity(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up LDAP resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteLDAP(ctx, tenant)); requeue {
 		return res, err
 	}
 
@@ -1012,9 +979,6 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 		if tenant.Spec.Isolation.Namespace != "" {
 			iso["namespace"] = tenant.Spec.Isolation.Namespace
-		}
-		if tenant.Spec.Isolation.LDAPOu != "" {
-			iso["ldapOU"] = tenant.Spec.Isolation.LDAPOu
 		}
 		if tenant.Spec.Isolation.KeycloakRealm != "" {
 			iso["keycloakRealm"] = tenant.Spec.Isolation.KeycloakRealm

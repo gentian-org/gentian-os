@@ -401,7 +401,6 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	}
 	// deleteIdentity and deleteLDAP run before deleteStorage; mark their jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-storagedelete", "platform-kernel")
 
 	// S3 delete Job should appear.
 	s3DeleteJob := &batchv1.Job{}

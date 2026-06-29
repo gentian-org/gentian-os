@@ -55,7 +55,7 @@ type AppProfileSpec struct {
 	Tile *TileSpec `json:"tile,omitempty"`
 
 	// Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
-	// The LDAP reconciler writes the resolved value to pathToLogo on portal entries.
+	// The portal reconciler writes the resolved value to pathToLogo on portal entries.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
 	Logo string `json:"logo,omitempty"`
@@ -215,7 +215,7 @@ type PortalTileSpec struct {
 	// +kubebuilder:validation:Enum=newwindow;samewindow;embedded
 	LinkTarget PortalLinkTarget `json:"linkTarget,omitempty"`
 
-	// AllowedGroup is the LDAP CN of the group whose members can see this tile.
+	// AllowedGroup is the Keycloak group whose members can see this tile.
 	// Defaults to "Domain Users" (all authenticated portal users).
 	// Use managed-by-attribute-{Capability} groups (e.g., "managed-by-attribute-Groupware")
 	// to restrict to users with a specific provisioned capability.
@@ -314,7 +314,7 @@ type IngressSpec struct {
 
 // KernelRequirements specifies which kernel services the app requires.
 type KernelRequirements struct {
-	// Identity specifies OIDC and/or LDAP requirements.
+	// Identity specifies OIDC requirements.
 	// +optional
 	Identity *IdentityRequirement `json:"identity,omitempty"`
 
@@ -341,7 +341,7 @@ type KernelRequirements struct {
 	MCP *MCPRequirement `json:"mcp,omitempty"`
 }
 
-// IdentityRequirement specifies OIDC and/or LDAP needs.
+// IdentityRequirement specifies OIDC needs.
 type IdentityRequirement struct {
 	// OIDC describes the OIDC client to register in the tenant's Keycloak realm.
 	// When set, the composition emits a Client CR so every newly deployed tenant
@@ -350,10 +350,6 @@ type IdentityRequirement struct {
 	// (e.g. kernel-realm clients managed via keycloak-config).
 	// +optional
 	OIDC *OIDCClientSpec `json:"oidc,omitempty"`
-
-	// LDAP requests a per-tenant LDAP bind account in the UCS LDAP directory.
-	// +optional
-	LDAP *LDAPRequirement `json:"ldap,omitempty"`
 }
 
 // OIDCClientSpec describes an OIDC client to be registered in the tenant's
@@ -403,23 +399,6 @@ type OIDCClientSpec struct {
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
-}
-
-// LDAPRequirement describes per-tenant LDAP needs.
-type LDAPRequirement struct {
-	// Search provisions a per-tenant LDAP search account via the app init Job on first install.
-	// Credentials are written to OpenBao and injected via valueMapping.ldap.
-	// +optional
-	Search bool `json:"search,omitempty"`
-
-	// Sync enables periodic user/group sync from LDAP into the app's own store.
-	// +optional
-	Sync bool `json:"sync,omitempty"`
-
-	// Interval is the sync interval (e.g., "1h"). Defaults to "1h" when sync is true.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^[0-9]+(s|m|h|d)$`
-	Interval string `json:"interval,omitempty"`
 }
 
 // DatabaseRequirement specifies a relational database need.
@@ -579,10 +558,6 @@ type ValueMapping struct {
 	// IMAP maps mail access values to Helm keys.
 	// +optional
 	IMAP *IMAPValueMapping `json:"imap,omitempty"`
-
-	// LDAP maps LDAP directory values to Helm keys.
-	// +optional
-	LDAP *LDAPValueMapping `json:"ldap,omitempty"`
 }
 
 // OIDCValueMapping maps OIDC provider values to Helm chart keys.
@@ -698,29 +673,6 @@ type IMAPValueMapping struct {
 	// PortKey is the Helm value key for the IMAP port.
 	// +optional
 	PortKey string `json:"portKey,omitempty"`
-}
-
-// LDAPValueMapping maps LDAP directory values to Helm chart keys.
-// Supports deeply nested key paths for apps like OX App Suite that store
-// LDAP config in properties files.
-type LDAPValueMapping struct {
-	// HostKey is the Helm value key for the LDAP host.
-	// +optional
-	HostKey string `json:"hostKey,omitempty"`
-	// PortKey is the Helm value key for the LDAP port.
-	// +optional
-	PortKey string `json:"portKey,omitempty"`
-	// BaseDNKey is the Helm value key for the LDAP base DN.
-	// +optional
-	BaseDNKey string `json:"baseDnKey,omitempty"`
-	// BindDNKey is the Helm value key for the LDAP bind DN.
-	// +optional
-	BindDNKey string `json:"bindDnKey,omitempty"`
-	// BindPasswordKey is the Helm value key for the LDAP bind password.
-	// Supports bracket notation for deeply nested propertiesFiles paths, e.g.:
-	// `appsuite.core-mw.propertiesFiles["/opt/.../ldapauth.properties"].bindDNPassword`
-	// +optional
-	BindPasswordKey string `json:"bindPasswordKey,omitempty"`
 }
 
 // AppSidecarSpec declares a companion service deployed alongside the primary

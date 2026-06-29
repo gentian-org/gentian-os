@@ -42,16 +42,6 @@ const (
 	identityRequeueAfter     = 2 * time.Second
 )
 
-// realmLDAPParams holds LDAP federation parameters for the realm provisioning job.
-// When nil, LDAP federation is not configured for the realm.
-type realmLDAPParams struct {
-	server   string // LDAP connection URL, e.g. ldap://host:389
-	bindDN   string // bind account DN, e.g. uid=app-keycloak,ou=tenant,dc=...
-	bindPW   string // bind account password (from OpenBao seeder)
-	usersDN  string // users search base, e.g. ou=users,ou=tenant,dc=...
-	groupsDN string // tenant OU where managed-by-attribute-* groups live
-}
-
 // realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.
 // When nil, no identity brokering is configured for the realm.
 // The broker registers the shared kernel realm as an OIDC Identity Provider in the
@@ -158,11 +148,6 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 	}
 
-	// Legacy LDAP admin-user unlock + kernel LDAP sync — disabled (Keycloak-native).
-	// adminLDAPJob := &batchv1.Job{}
-	// switch ldapJobErr := r.Get(ctx, types.NamespacedName{Name: adminUserJobName(tenant.Name), Namespace: kernelNamespace}, adminLDAPJob); {
-	// ...
-
 	if r.KernelRealm != "" {
 		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
 		if err != nil {
@@ -237,10 +222,6 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			provNames := []string{
 				realmJobName(tenant.Name), gentianGroupsJobName(tenant.Name), adminJobName(tenant.Name),
 				oidcBrowserFlowJobName(tenant.Name),
-				// Legacy LDAP jobs (cleanup if present from older clusters):
-				kernelAdminEnableJobName(tenant.Name), kernelLDAPSyncJobName(tenant.Name),
-				kcLDAPGroupSyncJobName(tenant.Name), kcLDAPSyncJobName(tenant.Name),
-				mbaGroupsJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -268,21 +249,12 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, ldap *realmLDAPParams, broker *realmBrokerParams) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, broker *realmBrokerParams) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
 	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
-	if ldap != nil {
-		c.Env = append(c.Env,
-			corev1.EnvVar{Name: "LDAP_SERVER", Value: ldap.server},
-			corev1.EnvVar{Name: "LDAP_BIND_DN", Value: ldap.bindDN},
-			corev1.EnvVar{Name: "LDAP_BIND_PASSWORD", Value: ldap.bindPW},
-			corev1.EnvVar{Name: "LDAP_USERS_DN", Value: ldap.usersDN},
-			corev1.EnvVar{Name: "LDAP_GROUPS_DN", Value: ldap.groupsDN},
-		)
-	}
 	if broker != nil {
 		c.Env = append(c.Env,
 			corev1.EnvVar{Name: "KERNEL_REALM", Value: broker.kernelRealm},
@@ -470,19 +442,11 @@ func keycloakContainer(name, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
-// buildRealmScript creates or updates a Keycloak realm and ensures it is enabled.
-// It does NOT re-enable the tenant admin user in the kernel realm here because
-// this job runs concurrently with the LDAP admin-user unlock job. Re-enabling
-// Keycloak before LDAP clears shadowExpire triggers a re-import that re-disables
-// the user. The dedicated ensureOpendeskAdminEnableJob handles the re-enable
-// after the LDAP admin-user job is confirmed complete.
-const (
-	realmScriptLDAPIDPlaceholder   = "__GENTIAN_LDAP_ID_BLOCK__"
-	realmScriptBrokerIDPlaceholder = "__GENTIAN_BROKER_ID_BLOCK__"
-)
+// buildRealmScript creates or updates a Keycloak realm and optionally registers
+// kernel→tenant SSO brokering when KERNEL_REALM / KERNEL_EXTERNAL_URL are set.
+const realmScriptBrokerIDPlaceholder = "__GENTIAN_BROKER_ID_BLOCK__"
 
 func buildRealmScript(realmName, displayName string) string {
-	ldapIDBlock := keycloakShellRequireID("LDAP_ID", "${LDAP_COMPONENTS}", "name", "ldap")
 	brokerResolveID := `keycloak_json_id_by_attr "${BROKER_RESP}" "clientId" "${BROKER_CLIENT_ID}"
 BROKER_KC_ID="${_kj_id}"
 if [ -z "${BROKER_KC_ID}" ]; then
@@ -516,121 +480,17 @@ else
   echo "realm %s already exists, ensured enabled=true and browserSecurityHeaders (was HTTP ${HTTP})"
 fi
 
-# Register LDAP User Storage Provider for per-tenant user federation.
-# Only runs when LDAP_SERVER env var is set (injected by makeRealmJob when
-# r.LDAPBase and r.LDAPServer are configured). Idempotent: checks for an
-# existing provider named "ldap" before creating a new one.
-if [ -n "${LDAP_SERVER:-}" ]; then
-  LDAP_COMPONENTS=$(curl -sf \
-    -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider")
-  if echo "${LDAP_COMPONENTS}" | grep -q '"name":"ldap"'; then
-    echo "LDAP federation provider already registered in realm %s"
-  else
-    curl -sf \
-      -X POST "${KEYCLOAK_URL}/admin/realms/%s/components" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"name\":\"ldap\",
-        \"providerId\":\"ldap\",
-        \"providerType\":\"org.keycloak.storage.UserStorageProvider\",
-        \"config\":{
-          \"connectionUrl\":[\"${LDAP_SERVER}\"],
-          \"bindDn\":[\"${LDAP_BIND_DN}\"],
-          \"bindCredential\":[\"${LDAP_BIND_PASSWORD}\"],
-          \"usersDn\":[\"${LDAP_USERS_DN}\"],
-          \"searchScope\":[\"1\"],
-          \"authType\":[\"simple\"],
-          \"vendor\":[\"other\"],
-          \"usernameLDAPAttribute\":[\"uid\"],
-          \"rdnLDAPAttribute\":[\"uid\"],
-          \"uuidLDAPAttribute\":[\"entryUUID\"],
-          \"userObjectClasses\":[\"person\"],
-          \"customUserSearchFilter\":[\"(uid=*)\"],
-          \"importEnabled\":[\"true\"],
-          \"editMode\":[\"READ_ONLY\"],
-          \"syncRegistrations\":[\"false\"],
-          \"fullSyncPeriod\":[\"-1\"],
-          \"changedSyncPeriod\":[\"-1\"],
-          \"pagination\":[\"false\"],
-          \"connectionPooling\":[\"true\"],
-          \"batchSizeForSync\":[\"1000\"],
-          \"cachePolicy\":[\"MAX_LIFESPAN\"],
-          \"maxLifespan\":[\"300000\"],
-          \"enabled\":[\"true\"]
-        }
-      }"
-    echo "LDAP federation provider registered in realm %s"
-  fi
-
-  # Sync managed-by-attribute-* groups from the tenant OU for OIDC role mapping.
-  if [ -n "${LDAP_GROUPS_DN:-}" ]; then
-    LDAP_COMPONENTS=$(curl -sf \
-      -H "Authorization: Bearer ${TOKEN}" \
-      "${KEYCLOAK_URL}/admin/realms/%s/components?type=org.keycloak.storage.UserStorageProvider")
-`+realmScriptLDAPIDPlaceholder+`
-    GROUP_MAPPERS=$(curl -sf \
-      -H "Authorization: Bearer ${TOKEN}" \
-      "${KEYCLOAK_URL}/admin/realms/%s/components?parent=${LDAP_ID}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper" || echo "[]")
-    if echo "${GROUP_MAPPERS}" | grep -q '"name":"group-mapper"'; then
-      echo "LDAP group-mapper already registered in realm %s"
-    else
-      curl -sf \
-        -X POST "${KEYCLOAK_URL}/admin/realms/%s/components" \
-        -H "Authorization: Bearer ${TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "{
-          \"name\":\"group-mapper\",
-          \"providerId\":\"group-ldap-mapper\",
-          \"providerType\":\"org.keycloak.storage.ldap.mappers.LDAPStorageMapper\",
-          \"parentId\":\"${LDAP_ID}\",
-          \"config\":{
-            \"groups.dn\":[\"${LDAP_GROUPS_DN}\"],
-            \"group.name.ldap.attribute\":[\"cn\"],
-            \"group.object.classes\":[\"univentionGroup\"],
-            \"groups.ldap.filter\":[\"(&(cn=managed-by-attribute*)(objectClass=univentionGroup))\"],
-            \"membership.attribute.type\":[\"DN\"],
-            \"membership.ldap.attribute\":[\"uniqueMember\"],
-            \"membership.user.ldap.attribute\":[\"uid\"],
-            \"mode\":[\"LDAP_ONLY\"],
-            \"ignore.missing.groups\":[\"true\"],
-            \"drop.non.existing.groups.during.sync\":[\"false\"]
-          }
-        }"
-      echo "LDAP group-mapper registered in realm %s (groupsDn=${LDAP_GROUPS_DN})"
-      curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
-        "${KEYCLOAK_URL}/admin/realms/%s/user-storage/${LDAP_ID}/sync?action=triggerFullSync" >/dev/null 2>&1 || true
-    fi
-  fi
-
-  ensure_ldap_uid_attribute_mapper "%s" "ldap"
-  ensure_ldap_email_attribute_mapper "%s" "ldap"
-  ensure_ldap_oxcontext_attribute_mapper "%s" "ldap"
-  ensure_ldap_entryuuid_attribute_mapper "%s" "ldap"
-fi
-
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
-# Runs only when KERNEL_REALM and KERNEL_EXTERNAL_URL are injected by makeRealmJob
-# (i.e. when r.KernelRealm and r.KernelDomain are configured in the operator).
-# Configures the tenant realm to delegate authentication to the shared kernel realm
-# so users already logged into the portal are not prompted to log in again for
-# tenant-specific apps (e.g. Element/Matrix chat).
-# All steps are idempotent: existing resources are updated rather than recreated.
 if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   BROKER_CLIENT_ID="broker-${REALM_NAME}"
   BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${REALM_NAME}/broker/kernel/endpoint"
 
-  # Refresh the admin token here because the realm + LDAP steps above may have
-  # consumed more than the default token lifetime (60 s).
   TOKEN=$(curl -sf --max-time 30 \
     -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
     | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 
-  # 1. Ensure broker client exists in the kernel realm.
-  #    This client is used by the tenant realm's IdP to authenticate TO kernel.
   BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
   if echo "${BROKER_RESP}" | grep -q "\"clientId\":\"${BROKER_CLIENT_ID}\""; then
@@ -654,13 +514,8 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
     | sed 's/.*"value":"\([^"]*\)".*/\1/')
 
-  # 2. Register kernel as an OIDC Identity Provider in the tenant realm (idempotent).
-  #    hideOnLoginPage:true prevents showing the "Login with Gentian SSO" button
-  #    redundantly; the defaultProvider setting (step 3) handles the auto-redirect.
   IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
-  # Server-side OIDC endpoints use KEYCLOAK_URL (cluster-internal) so broker code
-  # exchange does not hairpin through the public id.<kernel> URL.
   IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
   if [ "${IDP_HTTP}" = "200" ]; then
     curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
@@ -673,112 +528,10 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
       -d "${IDP_BODY}"
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
-ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
 `+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
-  # (No defaultProvider is set on the identity-provider-redirector execution.
-  #  Tenant users sign in at the shared kernel portal (SUBTREE LDAP federation
-  #  on mailPrimaryAddress). The kernel IdP registered above remains available
-  #  for explicit kc_idp_hint=kernel flows when apps need a brokered session.)
-fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName)
-	script = strings.ReplaceAll(script, realmScriptLDAPIDPlaceholder, ldapIDBlock)
+fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	// Realm Job registers the kernel IdP with the built-in "first broker login" flow.
-	// The custom first-broker-login-gentian flow is created later (dedicated Job or
-	// broker-idp Job) before the IdP alias is switched — see docs/design/iam.md.
-	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + ensureLDAPEmailAttributeMapperShell + ensureLDAPOpenDeskAttributeMappersShell + script
-}
-
-// buildOpendeskAdminEnableScript re-enables the tenant admin user in the shared
-// kernel Keycloak realm. This job is intentionally separate from
-// buildRealmScript so it only runs after the LDAP admin-user job has cleared
-// shadowExpire, preventing Keycloak's next LDAP import from overriding the
-// re-enable with the previously-locked LDAP state.
-//
-// The kernel realm uses mailPrimaryAddress as the Keycloak username, so lookup
-// is by email (portal login identifier), not uid=admin-<tenant>.
-func buildOpendeskAdminEnableScript(adminEmail, kernelRealm string) string {
-	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users?email=%s&exact=true" || echo "")
-if echo "${USER_RESP}" | grep -q '"id"'; then
-  UID=$(echo "${USER_RESP}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
-    -d '{"enabled":true}'
-  echo "admin %s re-enabled in %s realm (LDAP shadowExpire already cleared)"
-else
-  echo "admin %s not found in %s realm (first deploy, no action needed)"
-fi`, kernelRealm, adminEmail, kernelRealm, adminEmail, kernelRealm, adminEmail, kernelRealm)
-}
-
-// buildKCLDAPSyncScript triggers a full Keycloak LDAP user import after admin
-// unlock. See buildKCLDAPFederationSyncScript for the shared preamble.
-func buildKCLDAPSyncScript(realmName string) string {
-	return buildKCLDAPFederationSyncScript(realmName, true, false)
-}
-
-// buildKCLDAPGroupSyncScript imports managed-by-attribute-* groups from the
-// tenant OU into Keycloak before OpenDesk OIDC pack Jobs map them to client roles.
-func buildKCLDAPGroupSyncScript(realmName string) string {
-	return buildKCLDAPFederationSyncScript(realmName, false, true)
-}
-
-func buildKCLDAPFederationSyncScript(realmName string, syncUsers, syncGroups bool) string {
-	var steps string
-	if syncGroups {
-		steps += `
-MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/components?parent=${PROVIDER_ID}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper")
-MAPPER_ID=$(printf '%s' "${MAPPERS}" | jq -r '.[] | select(.name=="group-mapper") | .id' 2>/dev/null | head -1)
-if [ -z "${MAPPER_ID}" ] || [ "${MAPPER_ID}" = "null" ]; then
-  echo "group-mapper not found in realm ${REALM}" >&2
-  exit 1
-fi
-RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/mappers/${MAPPER_ID}/sync?direction=fedToKeycloak")
-echo "Keycloak LDAP group sync complete for realm ${REALM}: ${RESULT}"
-`
-	}
-	if syncUsers {
-		steps += `
-ensure_ldap_email_attribute_mapper "${REALM}" "ldap"
-ensure_ldap_oxcontext_attribute_mapper "${REALM}" "ldap"
-ensure_ldap_entryuuid_attribute_mapper "${REALM}" "ldap"
-RESULT=$(curl -sf -X POST -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/user-storage/${PROVIDER_ID}/sync?action=triggerFullSync")
-echo "Keycloak LDAP user sync complete for realm ${REALM}: ${RESULT}"
-`
-	}
-	return keycloakShellJSONIDExtractor() + ensureLDAPEmailAttributeMapperShell + ensureLDAPOpenDeskAttributeMappersShell + fmt.Sprintf(`set -eu
-REALM=%q
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-PROVIDER_ID=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/components?type=org.keycloak.storage.UserStorageProvider" \
-  | jq -r '.[0].id // empty' 2>/dev/null | head -1)
-if [ -z "${PROVIDER_ID}" ]; then
-  PROVIDER_ID=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/components?type=org.keycloak.storage.UserStorageProvider" \
-    | sed 's/.*"id":"\([^"]*\)".*/\1/')
-fi
-if [ -z "${PROVIDER_ID}" ]; then
-  echo "LDAP provider not found in ${REALM} realm — skipping sync"
-  exit 0
-fi
-%s`, realmName, steps)
+	return keycloakShellJSONIDExtractor() + script
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -856,38 +609,25 @@ else
 fi
 
 # --- 2. Sync OpenBao-canonical password (idempotent; required after Retain redeploy) ---
-# LDAP-federated users cannot use reset-password; portal auth uses kernel LDAP + UDM.
-USER_JSON=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}")
-FEDERATED=0
-if echo "${USER_JSON}" | grep -q '"federationLink"'; then
-  FEDERATED=1
-  echo "tenant admin ${TENANT_ADMIN_USERNAME} is LDAP-federated; password is managed in UDM (skip Keycloak reset-password)"
-else
-  HTTP=$(curl -s -o /tmp/kc-pw-body -w "%%{http_code}" -X PUT -H "${AUTH_HEADER}" \
-    -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
-    -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}")
-  case "${HTTP}" in
-  200|204)
-    echo "password synced from OpenBao (temporary=false)"
-    ;;
-  *)
-    echo "Keycloak reset-password failed (HTTP ${HTTP})" >&2
-    cat /tmp/kc-pw-body >&2 2>/dev/null || true
-    exit 1
-    ;;
-  esac
-fi
-if [ "${FEDERATED}" = "1" ]; then
-  echo "tenant admin user attributes managed by LDAP federation (skip Keycloak user PUT)"
-else
-  curl -sf -X PUT -H "${AUTH_HEADER}" \
-    -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
-    -d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"requiredActions\":[]}"
-  echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
-fi
+HTTP=$(curl -s -o /tmp/kc-pw-body -w "%%{http_code}" -X PUT -H "${AUTH_HEADER}" \
+  -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/reset-password" \
+  -d "{\"type\":\"password\",\"value\":\"${TENANT_ADMIN_PASSWORD}\",\"temporary\":false}")
+case "${HTTP}" in
+200|204)
+  echo "password synced from OpenBao (temporary=false)"
+  ;;
+*)
+  echo "Keycloak reset-password failed (HTTP ${HTTP})" >&2
+  cat /tmp/kc-pw-body >&2 2>/dev/null || true
+  exit 1
+  ;;
+esac
+curl -sf -X PUT -H "${AUTH_HEADER}" \
+  -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
+  -d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"requiredActions\":[]}"
+echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
 echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
 echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
 
@@ -931,7 +671,7 @@ else
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName, realmName, realmName, realmName, realmName)
 }
 
 func buildRealmDeleteScript(realmName string) string {
@@ -949,10 +689,7 @@ echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 }
 
 // buildRealmDisableScript disables a Keycloak realm on Retain undeploy,
-// invalidating all active sessions. It also explicitly sets enabled:false on
-// the tenant admin user in the shared kernel realm. This is necessary because
-// Keycloak caches LDAP state (MAX_LIFESPAN policy) and would otherwise continue
-// to authenticate the user even after UDM sets shadowExpire.
+// invalidating all active sessions.
 func buildRealmDisableScript(realmName, adminUsername, kernelRealm string) string {
 	return fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
@@ -973,8 +710,7 @@ else
     -d '{"realm":"%s","enabled":false}'
   echo "realm %s disabled (sessions invalidated)"
 fi
-# Also disable tenant admin in kernel realm; the LDAP federation cache
-# means Keycloak must be told directly rather than relying on shadowExpire.
+# Also disable tenant admin in kernel realm when brokering is configured.
 USER_RESP=$(curl -sf -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s/users?username=%s&exact=true" || echo "")
 if echo "${USER_RESP}" | grep -q '"id"'; then
@@ -1018,34 +754,6 @@ func realmDeleteJobName(tenantName string) string {
 
 func realmDisableJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-realm-disable-%s", tenantName)
-}
-
-// kernelAdminEnableJobName returns the name of the post-LDAP Keycloak
-// re-enable job. This job runs after the LDAP admin-user job clears
-// shadowExpire so the re-enable is durable against Keycloak LDAP re-imports.
-func kernelAdminEnableJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-kernel-enable-%s", tenantName)
-}
-
-// kernelLDAPSyncJobName returns the kernel-realm LDAP user sync job used for
-// shared-portal login (iam.md §1.2). Distinct from kcLDAPSyncJobName, which
-// targets the tenant realm for per-app OIDC.
-func kernelLDAPSyncJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-kernel-ldap-sync-%s", tenantName)
-}
-
-// kcLDAPGroupSyncJobName returns the Keycloak LDAP group import job run after
-// the OU Job and before OpenDesk OIDC pack Jobs.
-func kcLDAPGroupSyncJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-ldap-group-sync-%s", tenantName)
-}
-
-// kcLDAPSyncJobName returns the name of the Keycloak LDAP user sync job.
-// This job runs after the admin-enable job so all LDAP users (not just the
-// admin) are re-imported with their correct enabled state, clearing any cached
-// disabled entries caused by the brief UDM shadowExpire race during provisioning.
-func kcLDAPSyncJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-ldap-sync-%s", tenantName)
 }
 
 func oidcClientID(tenantName, appName string) string {
