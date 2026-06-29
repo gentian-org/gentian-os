@@ -314,6 +314,36 @@ else
     info "XInfraData dev-infra-data not found; skipping."
 fi
 
+# Suze XR (Keycloak + OpenFGA) — remove before Crossplane core so Helm releases GC cleanly.
+if kubectl get suze dev-suze -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting Suze claim dev-suze..."
+    kubectl delete suze dev-suze -n crossplane-system --timeout=120s || true
+else
+    info "Suze claim dev-suze not found; skipping."
+fi
+
+if kubectl get xsuze -o name 2>/dev/null | grep -q .; then
+    info "Waiting for XSuze composite(s) to be garbage-collected (max 5m)..."
+    local_deadline=$((SECONDS + 300))
+    while kubectl get xsuze -o name 2>/dev/null | grep -q .; do
+        if (( SECONDS > local_deadline )); then
+            warn "XSuze still present after 5m — forcing finalizer removal."
+            kubectl get xsuze -o name 2>/dev/null \
+                | xargs -r -I{} kubectl patch {} \
+                    --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                    2>/dev/null || true
+            kubectl get xsuze -o name 2>/dev/null \
+                | xargs -r kubectl delete --grace-period=0 --force \
+                    2>/dev/null || true
+            break
+        fi
+        sleep 5
+    done
+    success "XSuze composite(s) removed."
+else
+    info "XSuze composite not found; skipping."
+fi
+
 # Legacy infra Release CRs (pre–Step 2 Pattern B) — delete if still present.
 for rel in "opendesk-postgresql-${ENV}" "opendesk-mariadb-${ENV}"; do
     if kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
@@ -510,7 +540,8 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
     for file in \
         "${SCRIPT_DIR}/crossplane/xrds/app.yaml" \
         "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml" \
-        "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+        "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml" \
+        "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
     do
         if [[ -f "${file}" ]]; then
             kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
@@ -535,7 +566,9 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
         xtenants.gentianos.io \
         tenants.gentianos.io \
         xclusters.gentianos.io \
-        clusters.gentianos.io
+        clusters.gentianos.io \
+        xsuze.gentianos.io \
+        suze.gentianos.io
     do
         # Strip finalizers from all CR instances before deleting the CRD.
         kubectl get "${crd}" -A -o name 2>/dev/null \
