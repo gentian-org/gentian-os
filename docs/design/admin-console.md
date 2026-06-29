@@ -42,7 +42,7 @@ in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-s
 | **Security policies** | Tenant realm authentication rules | **P4 — password, session, lockout, MFA policy** |
 | **Sessions** | Active login inventory and revocation | P5 — list sessions, sign-out everywhere |
 | **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
-| **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract |
+| **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract (**done**) |
 | **App Store** | Catalogue installs | **Stage 2** — see [§9](#9-stage-2--authorization-and-governance) |
 
 Implementation: Gentian BFF + React UI (`gentian-ui`, `ui_kits/console` aesthetic)
@@ -380,7 +380,7 @@ Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-c
 | **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) | **Done** (`gentian-ui`) — see [§8.4](#84-p4-status) |
 | **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) | **Done** (`gentian-ui`) — see [§8.5](#85-p5-status) |
 | **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) | **Done** (`gentian-ui`) — see [§8.6](#86-p6-status) |
-| **P7** | `admin-notifications` gateway + publish UI | Planned |
+| **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) — see [§8.7](#87-p7-status) |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
 | **P9** | OpenFGA `can_launch` for admin modules (shell tile shipped in P1) | Planned |
 | **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies | Planned |
@@ -433,7 +433,7 @@ Last reviewed against `gentian-ui` (`feat/new-ui`).
 | **Invite member** API | **Done** | `POST /api/v1/admin/members/invite` — creates user (no password), optional `inviteEmail` attribute, group entitlements, `execute-actions-email` (`VERIFY_EMAIL`, `UPDATE_PASSWORD`) |
 | **Reset password** API | **Done** | `POST /api/v1/admin/members/{id}/reset-password` — `execute-actions-email` (`UPDATE_PASSWORD`); delivery to `gentian.inviteEmail` when set |
 | Admin Console invite UI | **Done** | `MembersSection.tsx` — invite form, optional recovery email, app group checkboxes, reset-password action |
-| Shell placeholder removal | **Done** | Mail/Chat/Files/Settings tiles removed; notifications tray hidden until P7 |
+| Shell placeholder removal | **Done** | Mail/Chat/Files/Settings tiles removed; shell notification tray enabled in P7 |
 | Gentian-branded email theme | **Pending** | Requires Keycloak realm SMTP + email theme packaging (cluster mail stack) |
 | Portal redirect on invite/reset | **Done** | `redirect_uri=https://portal.<KERNEL_DOMAIN>/login`, `client_id=gentian-portal` |
 
@@ -499,6 +499,23 @@ Last reviewed against `gentian-ui` (`develop`).
 | Durable audit store / retention | **Done (v1)** | PostgreSQL `admin_audit_events` when `DATABASE_URL` is set; falls back to in-memory without it |
 
 **P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. **BFF-recorded admin actions** are stored in PostgreSQL table `admin_audit_events` when the portal API has `DATABASE_URL` set (see `docker-compose.dev.yaml`); without it, the API falls back to in-process memory (lost on restart). Sign-in events are still fetched live from Keycloak at query time and are not duplicated into the database. Cluster retention policy is not yet enforced.
+
+### 8.7 P7 status
+
+Last reviewed against `gentian-ui` (`develop`).
+
+| Item | Status | Location |
+|---|---|---|
+| **Publish** API | **Done** | `POST /api/v1/admin/notifications` — audience validation, CloudEvents envelope in response |
+| **Admin list** API | **Done** | `GET /api/v1/admin/notifications` |
+| **Inbox** API | **Done** | `GET /api/v1/notifications/inbox`, `POST /api/v1/notifications/{id}/dismiss` |
+| **Audience extension** | **Done** | `gentianaudience` (`scope`, `tenant`, `groups`) on CloudEvent + REST |
+| **Durable storage** | **Done (v1)** | PostgreSQL `admin_notifications` + `admin_notification_dismissals` when `DATABASE_URL` set |
+| Admin Console Notifications tab | **Done** | `NotificationsSection.tsx` — publish form + history |
+| Shell notification tray | **Done** | `NotificationInbox.tsx` — bell + dismiss in `AppMenu` |
+| External consumers | **Deferred** | Email/Matrix consumers not wired in v1 |
+
+**P7 caveats:** v1 stores notifications and serves the portal inbox only — no Postfix or Element fan-out yet. Platform-wide publishes require platform administrator privileges. Dismissals are per-user and stored in `admin_notification_dismissals`.
 
 ---
 

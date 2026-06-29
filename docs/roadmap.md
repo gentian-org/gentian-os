@@ -71,7 +71,7 @@ kernel services).
 | **P4** | Security policies — password, session, lockout, MFA realm rules | **Done** (`gentian-ui`) — [admin-console.md §8.4](design/admin-console.md#84-p4-status) |
 | **P5** | Sessions — list/revoke; auto-revoke on member disable | **Done** (`gentian-ui`) |
 | **P6** | Audit — sign-in + admin-action log, CSV/JSON export | **Done** (`gentian-ui`) |
-| **P7** | `admin-notifications` gateway + publish UI | Planned |
+| **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus | Planned |
 | **P9** | OpenFGA `can_launch` for admin modules (shell tile in P1) | Planned |
 | **Stage 2** | Integrations & grants, agents, access requests, federation — [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance) | Planned |
