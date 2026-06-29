@@ -90,7 +90,7 @@ The agent reads a document **only if** it is the user's agent (`acting_for`), th
 
 | Component | Role | License |
 |---|---|---|
-| **Keycloak** | Authentication authority + token issuer (*who you are*). Realms/Organizations for tenancy, service accounts for agents, RFC 8693 Token Exchange for on-behalf-of delegation, SAML/OIDC brokering for legacy public-sector IdPs. | Apache 2.0 |
+| **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
 | **Provisioning bridge** | Syncs Keycloak identity/group/role/agent events and SCIM into OpenFGA tuples; reconciles `IntegrationBinding` credentials and (future) `AppGrant` into the graph. | (build) |
 | **MAC backbone** | K8s namespaces per tenant, Cilium/NetworkPolicy default-deny egress, service mesh + SPIFFE/SPIRE, admission control (Kyverno / OPA Gatekeeper). | Apache 2.0 / OSS |
@@ -109,9 +109,9 @@ Nubus = OpenLDAP + Keycloak + Univention Directory Manager (UDM) + NATS provisio
 
 ```
                 ┌─────────────────────────────────────────────────────┐
-                │  Administration / Self-Service Portal (Gentian UI)   │
+                │  Gentian shell — portal + Admin Console (replaces UMC) │
                 └───────────────┬─────────────────────────────────────┘
-                                │ (SCIM, Admin API, Tenant.spec.apps, IntegrationBindings)
+                                │ (Admin BFF, SCIM bus, Tenant.spec.apps, IntegrationBindings)
    Humans / Agents login        ▼
    ────────────────►   ┌──────────────────┐   OIDC / OAuth2 / SAML brokering
                        │    KEYCLOAK       │   RFC 8693 Token Exchange (act / may_act)
@@ -205,7 +205,7 @@ spec:
   kernelRequirements:
     identity:
       oidc:
-        clientId: opendesk-openproject
+        clientId: gentian-openproject          # catalogue key → OIDC pack in tenant realm
         accessType: CONFIDENTIAL
     database:
       engine: postgresql
@@ -300,7 +300,9 @@ contract:demo/project-management#consumer@app:crm-app
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-**Today (Stage 0 MAC + legacy IdP):** OIDC authentication (Keycloak via the Nubus stack), tenant MAC isolation, and `IntegrationBinding` wiring. User-level ReBAC on app APIs is not platform-wide until OpenFGA is deployed (Stage 1); first-party apps carry **PEP stubs** (`openfga_client.py` in `gentian-app-template`) that pass through when `OPENFGA_API_URL` is unset.
+**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. User/group administration is moving to the [Gentian Admin Console](admin-console.md) (replaces UMC). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
+
+**Legacy cutover clusters** may still run Nubus + LDAP (`IDENTITY_MODE=legacy-ldap`) until migrated.
 
 **Target (Stage 2+):**
 
@@ -384,6 +386,8 @@ Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so 
 |------|--------|-------|
 | **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via **Suze** XR (`gentian-idp-keycloak`); OpenDesk Nubus deploy commented out in `install.sh` |
 | Drop **OpenLDAP + UDM**; Keycloak authoritative | **In progress** | `IDENTITY_MODE=keycloak-native` skips LDAP/UDM provisioning; OpenDesk stack deploy commented out in `install.sh` |
+| **Gentian Admin Console** (UMC replacement) | **Planned** → [roadmap § Admin Console](../roadmap.md#gentian-admin-console-replaces-umc) | Design: [admin-console.md](admin-console.md); P0 realm bootstrap → P6 shell tiles |
+| **Group entitlements** (`gentian:tenant:<t>:app:<profile>`) | **Designed** | Replaces `managed-by-attribute-*` / `opendesk*Enabled`; portal + OIDC packs |
 | **`provider-keycloak` Realm MRs** (drift-safe tenant realms) | **Blocked** → [roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation) | Tenant realms still provisioned via manifest-bridge Jobs |
 | Deploy **OpenFGA** + Postgres store | **Done** | **Suze** XR + `kernel/appsets/09-suze.yaml`; shared Postgres `openfga` database |
 | Author **base authorization model** (`user`, `group`, `tenant`, derived-ceiling) | **Done** | `authz/model/v0/model.fga`, `model.json`, `tests.fga.yaml`; embedded in operator bootstrap |

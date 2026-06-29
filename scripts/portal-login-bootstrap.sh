@@ -186,8 +186,11 @@ spec:
                 serviceAccountsEnabled: false,
                 protocol: "openid-connect",
                 redirectUris: [(\$portal + "/login"), (\$portal + "/login/*"), (\$portal + "/*")],
+                attributes: {
+                  "pkce.code.challenge.method": "S256",
+                  "post.logout.redirect.uris": ((\$portal + "/login") + "##" + (\$portal + "/*"))
+                },
                 webOrigins: [\$portal, "+"],
-                attributes: {"pkce.code.challenge.method": "S256"},
                 rootUrl: \$portal,
                 baseUrl: \$portal
               }')

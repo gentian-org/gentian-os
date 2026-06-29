@@ -157,10 +157,10 @@ Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
 
 1. **OpenBao seeding** — credentials before Compositions reconcile  
 2. **Manifest bridge** — operator writes `tenant-{name}-provisioning-jobs` (`jobs.json`, `objects.json`)  
-3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity/LDAP Jobs are Ready  
-4. **Wait-only ensures** — identity/LDAP Jobs, databases, storage, cache, gateway objects, IntegrationBindings  
+3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity Jobs are Ready  
+4. **Wait-only ensures** — identity Jobs (Keycloak-native or legacy LDAP per `IDENTITY_MODE`), databases, storage, cache, gateway objects, IntegrationBindings  
 5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
-6. **Shared-kernel extensions** — portal/UMC convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
+6. **Shared-kernel extensions** — portal shell convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
 7. **Status** — per-step conditions; `CrossplaneReady` from `XTenant` Ready; **`Phase=Ready` requires both operator paths and `CrossplaneReady`**
 
 Crossplane owns creation; the operator seeds secrets, drives the ConfigMap, and waits
@@ -216,9 +216,10 @@ isolation mode (namespace), resource quotas, mail mode, a deletion
 policy, and **`spec.apps`** — the list of catalogue profiles to install
 for this tenant (e.g. `element` — Jitsi is deployed as an Element sidecar). Creating a `Tenant`
 provisions kernel-layer infrastructure: namespace, RBAC, OpenBao
-policies, LDAP entries, DNS/TLS, and the Keycloak realm. The operator
-then creates one **`App` claim per `spec.apps` entry**; Crossplane
-deploys the Helm charts.
+policies, DNS/TLS, and the Keycloak tenant realm (plus legacy LDAP OUs when
+`IDENTITY_MODE=legacy-ldap`). The operator then creates one **`App` claim per
+`spec.apps` entry**; Crossplane deploys the Helm charts. User/group administration
+is via the [Gentian Admin Console](design/admin-console.md) on the Suze path.
 
 ### 4.3 `App` (namespace-scoped) — the tenant's app installation
 
@@ -268,13 +269,13 @@ that must exist before any tenant app can run, because they back the
 
 | Kernel function | Default-install component | Desktop OS analogue |
 |---|---|---|
-| Identity & SSO | **Nubus** (Keycloak + UCS LDAP) | `/etc/passwd` + PAM |
+| Identity & SSO | **Suze** (Keycloak + OpenFGA); legacy: Nubus (Keycloak + LDAP) | `/etc/passwd` + PAM |
 | Hierarchical files | **Nextcloud** (WebDAV) | `C:` drive / home directory |
 | Object storage | **MinIO** (S3) | Page cache, scratch space |
 | Relational data | **CloudNativePG** + **MariaDB Operator** | Per-app SQLite / registry |
 | Cache | **Redis** + **Memcached** | Page cache / `tmpfs` |
 | Mail (extension) | **Postfix + Dovecot + Rspamd** | Built-in mail spool |
-| Window manager | **Gentian Portal** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
+| Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
 | Notifications | **Notification Gateway** | Notification daemon |
 | Secrets keyring | **OpenBao** | Keychain |
 | Pod restart on secret rotation | **Stakater Reloader** | (no equivalent) |
@@ -391,8 +392,7 @@ Keycloak proxy route must allow both `https://portal.<kernel_domain>` and
 `https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). The
 **KeycloakPlatformReconciler** (gentian-os operator) owns frame-ancestors policy
 on the Keycloak IdP HTTPRoute and re-converges it when tenants change or Helm
-drifts; Nubus Helm values only strip
-upstream framing headers via `server-snippet`.
+drifts.
 
 ---
 

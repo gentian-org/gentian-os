@@ -53,17 +53,55 @@ composite — Keycloak plus OpenFGA. Status tables and gap analysis:
 
 ---
 
+## Gentian Admin Console (replaces UMC)
+
+**Design:** [design/admin-console.md](design/admin-console.md) · **IAM:** [design/iam.md](design/iam.md)
+
+The Univention Management Console (UMC) is **not** part of the Suze path. User/group
+administration, tenant notifications, and member onboarding move to the **Gentian Admin
+Console** — shell builtin apps backed by a Gentian BFF (Keycloak Admin API + Gentian
+kernel services).
+
+| Phase | Deliverable | Status |
+|-------|-------------|--------|
+| **P0** | Suze bootstrap: kernel + tenant realm Jobs without LDAP; group taxonomy; platform + tenant admin users | **In progress** |
+| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | Planned |
+| **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | Planned |
+| **P3** | TOTP MFA policies | Planned |
+| **P4** | `admin-notifications` gateway + publish UI | Planned |
+| **P5** | Provisioning controller + CloudEvents/SCIM bus | Planned |
+| **P6** | Shell admin desktop tiles; OpenFGA `can_launch` for admin modules | Planned |
+
+**Explicitly deferred:** App Store in console (stays `kubectl gentian apps` until Stage 2+),
+UMC iframes, LDAP listener parity, app-side provisioner execution in P0–P4.
+
+### Platform admin least-privilege
+
+Bootstrap uses `gentian:platform:superadmin` with cross-tenant visibility for operational
+convenience. Target state flips via cluster config `platformAdminMode: constrained` — platform
+admins see tenant metadata and break-glass only, not routine cross-tenant member access.
+
+```
+[ ] BFF tenant-scope enforcement on every Admin Console route
+[ ] Separate Keycloak groups: superadmin, operator, break-glass
+[ ] OpenFGA relations platform#admin vs tenant#admin
+[ ] Audit log on admin mutations (Keycloak admin events + BFF)
+[ ] platformAdminMode: constrained cluster setting + docs
+```
+
+---
+
 Today Crossplane owns tenant infrastructure lifecycle via Compositions and the
 manifest bridge (`tenant-{name}-provisioning-jobs`: `jobs.json`, `objects.json`).
 The operator seeds OpenBao credentials, writes the ConfigMap, patches `XTenant`,
 and waits on composed resources.
 
 **Still operator-owned by design:** Cloudflare DNS and stale gateway cleanup,
-tenant deletion Jobs, mail/office, portal/UMC convergence, Keycloak
+tenant deletion Jobs, mail/office, portal shell convergence, Keycloak
 browser-security header Jobs.
 
 Set `tenantProvisioning.crossplaneOnly: true` (`TENANT_CROSSPLANE_ONLY=true`) to
-skip shared-kernel side effects (portal/UMC, Nextcloud group, LDAP base helpers,
+skip shared-kernel side effects (portal shell, Nextcloud group, legacy LDAP base helpers,
 browser-security Jobs).
 
 ---
@@ -235,7 +273,8 @@ See [design/agentic-ai.md](design/agentic-ai.md).
 
 | Topic | Where documented |
 |-------|------------------|
-| Tenant identity & LDAP (manifest bridge) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
+| Tenant identity (manifest bridge) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
+| Admin Console (UMC replacement) | [design/admin-console.md](design/admin-console.md) |
 | Gateway / ingress | [design/gateway.md](design/gateway.md) |
 | `RestoreTenant` CR | [design/operations.md](design/operations.md) §2 |
 | Bootstrap install | [getting-started.md](../getting-started.md) |
