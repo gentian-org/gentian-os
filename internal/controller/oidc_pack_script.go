@@ -262,6 +262,12 @@ echo "realm ${REALM} browser flow set to ${FLOW_ALIAS}"`, realmName)
 // buildEnsureFirstBrokerLoginFlowShell creates the custom first-broker-login flow
 // when missing. Requires TOKEN and sets REALM from realmExpr (e.g. "demo" or "${REALM_NAME}").
 func buildEnsureFirstBrokerLoginFlowShell(realmExpr string) string {
+	return buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, firstBrokerLoginFlowAlias)
+}
+
+// buildEnsureFirstBrokerLoginFlowShellWithAlias is like buildEnsureFirstBrokerLoginFlowShell
+// but allows a custom flow alias (e.g. kernel portal broker login).
+func buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, flowAlias string) string {
 	return fmt.Sprintf(`
 REALM=%s
 FLOW_ALIAS=%q
@@ -296,7 +302,7 @@ for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
       -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
   fi
 done
-echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmExpr, firstBrokerLoginFlowAlias)
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmExpr, flowAlias)
 }
 
 // buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow

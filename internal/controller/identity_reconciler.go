@@ -173,6 +173,15 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningBrokerIdP", "Waiting for broker IdP Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+		kernelBrokerDone, err := r.ensureKernelTenantBrokerJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure kernel tenant broker Job: %w", err)
+		}
+		if !kernelBrokerDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningKernelTenantBroker", "Waiting for kernel tenant broker Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,

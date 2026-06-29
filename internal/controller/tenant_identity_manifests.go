@@ -168,7 +168,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	if r.KernelRealm != "" && r.KernelDomain != "" {
 		broker = &realmBrokerParams{
 			kernelRealm:       r.KernelRealm,
-			kernelExternalURL: fmt.Sprintf("https://id.%s", r.KernelDomain),
+			kernelExternalURL: kernelExternalURL(r.KernelDomain),
 		}
 	}
 	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, nil, broker))
@@ -228,8 +228,9 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	// }
 
 	if r.KernelRealm != "" && r.KernelDomain != "" {
-		kernelExternalURL := fmt.Sprintf("https://id.%s", r.KernelDomain)
-		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, kernelExternalURL))
+		externalURL := kernelExternalURL(r.KernelDomain)
+		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, externalURL))
+		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm, externalURL))
 	}
 
 	return jobs, nil

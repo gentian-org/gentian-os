@@ -822,7 +822,7 @@ print_tenant_admin_login_instructions() {
   echo ""
   echo "─── Tenant Keycloak Realm Admin (secondary) ─────────────────────────────────"
   echo "  Same user manages OIDC clients and realm settings in Keycloak."
-  echo "  Keycloak Admin Console: ${id_base}/admin/${realm}/console"
+  echo "  Keycloak Admin Console: ${id_base}/admin/master/console/#/${realm}"
   echo "  Login email: ${login_email}"
   echo "  Password    : ${password}"
   echo "─────────────────────────────────────────────────────────────────────────────"

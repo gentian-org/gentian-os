@@ -12,6 +12,7 @@ api:
     pullPolicy: IfNotPresent
   env:
     ENVIRONMENT: development
+    TENANCY_MODE: multi
 
 web:
   image:
