@@ -9,11 +9,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-const (
-	gentianPlatformSuperadmin = "gentian:platform:superadmin"
-	gentianRoleMember         = "gentian:role:member"
-)
-
 func gentianTenantPrefix(tenant string) string {
 	return "gentian:tenant:" + tenant + ":"
 }

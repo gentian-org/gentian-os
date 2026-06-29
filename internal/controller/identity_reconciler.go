@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -428,40 +427,6 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 	}
 }
 
-func makeOpendeskAdminEnableJob(tenant *gentianov1alpha1.Tenant, adminEmail, kernelRealm string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kernelAdminEnableJobName(tenant.Name),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("re-enable-kernel-admin", buildOpendeskAdminEnableScript(adminEmail, kernelRealm)),
-					},
-				},
-			},
-		},
-	}
-}
-
-// ensureOpendeskAdminEnableJob creates the job that re-enables the tenant admin
-// in the shared kernel Keycloak realm. It is called only after the LDAP
-// admin-user job has completed so shadowExpire is already cleared in LDAP,
-// making the Keycloak re-enable durable against subsequent LDAP federation
-// imports.
-func (r *TenantReconciler) ensureOpendeskAdminEnableJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, adminEmail string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, tenant.Name, kernelAdminEnableJobName(tenant.Name))
-}
-
 // keycloakContainer returns a Container spec that runs a shell script via the
 // Alpine-based Keycloak provisioner image (wget + jq). Credentials are injected
 // from the well-known keycloak-admin Secret in the kernel namespace.
@@ -816,158 +781,6 @@ fi
 %s`, realmName, steps)
 }
 
-// makeKCLDAPGroupSyncJob imports LDAP groups before OpenDesk OIDC pack Jobs.
-func makeKCLDAPGroupSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	return makeKCLDAPFederationSyncJob(tenant, kcLDAPGroupSyncJobName(tenant.Name), "kc-ldap-group-sync",
-		buildKCLDAPGroupSyncScript(realmName))
-}
-
-// makeKCLDAPSyncJob returns the Job that triggers a Keycloak LDAP user sync in
-// the tenant realm after admin provisioning is stable.
-func makeKCLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	return makeKCLDAPFederationSyncJob(tenant, kcLDAPSyncJobName(tenant.Name), "kc-ldap-sync",
-		buildKCLDAPSyncScript(realmName))
-}
-
-// makeKCLDAPOpenDeskMappersJob re-imports LDAP users after ensuring oxContextIDNum and
-// entryUUID attribute mappers exist. Separate from kc-ldap-sync so existing tenants
-// pick up mapper fixes without recreating the realm Job.
-func makeKCLDAPOpenDeskMappersJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	return makeKCLDAPFederationSyncJob(tenant, kcLDAPOpenDeskMappersJobName(tenant.Name), "kc-ldap-opendesk-mappers",
-		buildKCLDAPSyncScript(realmName))
-}
-
-func (r *TenantReconciler) ensureKCLDAPOpenDeskMappersJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPOpenDeskMappersJobName(tenant.Name),
-		func() *batchv1.Job { return makeKCLDAPOpenDeskMappersJob(tenant, keycloakRealmName(tenant)) })
-}
-
-// makeKernelLDAPSyncJob returns the Job that re-imports LDAP users into the
-// shared kernel realm for portal login (iam.md §1.2).
-func makeKernelLDAPSyncJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	return makeKCLDAPFederationSyncJob(tenant, kernelLDAPSyncJobName(tenant.Name), "kernel-ldap-sync",
-		buildKCLDAPSyncScript(realmName))
-}
-
-func makeKCLDAPFederationSyncJob(tenant *gentianov1alpha1.Tenant, jobName, containerName, script string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer(containerName, script),
-					},
-				},
-			},
-		},
-	}
-}
-
-// ensureKCLDAPGroupSyncJob creates the pre-OIDC LDAP group import job.
-// If managed-by-attribute groups were backfilled after the last sync (e.g. tenant
-// upgrade or new OpenDesk OIDC packs), the completed sync Job is deleted so LDAP
-// groups are re-imported before OIDC client Jobs run.
-func (r *TenantReconciler) ensureKCLDAPGroupSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	jobName := kcLDAPGroupSyncJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if err == nil && jobIsComplete(job) {
-		stale, staleErr := r.kcLDAPGroupSyncStaleAfterManagedGroups(ctx, tenant.Name, job)
-		if staleErr != nil {
-			return false, staleErr
-		}
-		if stale {
-			prop := metav1.DeletePropagationBackground
-			if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil {
-				return false, delErr
-			}
-			return false, nil
-		}
-	}
-	if err != nil && !errors.IsNotFound(err) {
-		return false, err
-	}
-	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, jobName,
-		func() *batchv1.Job { return makeKCLDAPGroupSyncJob(tenant, keycloakRealmName(tenant)) })
-}
-
-// kcLDAPGroupSyncStaleAfterManagedGroups reports whether LDAP OU or managed-by-attribute
-// group Jobs finished after the last Keycloak LDAP group sync.
-func (r *TenantReconciler) kcLDAPGroupSyncStaleAfterManagedGroups(ctx context.Context, tenantName string, groupSync *batchv1.Job) (bool, error) {
-	for _, sourceName := range []string{ouJobName(tenantName), mbaGroupsJobName(tenantName)} {
-		source := &batchv1.Job{}
-		err := r.Get(ctx, types.NamespacedName{Name: sourceName, Namespace: kernelNamespace}, source)
-		if errors.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		if jobIsComplete(source) && jobCompletedAfter(groupSync, source) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// ldapManagedGroupsReady reports whether the UDM OU Job and the managed-by-attribute
-// group backfill Job have both completed successfully.
-func (r *TenantReconciler) ldapManagedGroupsReady(ctx context.Context, tenantName string) (bool, error) {
-	for _, jobName := range []string{ouJobName(tenantName), mbaGroupsJobName(tenantName)} {
-		done, err := r.kernelJobSucceeded(ctx, jobName)
-		if err != nil || !done {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
-func (r *TenantReconciler) kernelJobSucceeded(ctx context.Context, jobName string) (bool, error) {
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if errors.IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if jobIsFailed(job) {
-		return false, nil
-	}
-	return jobIsComplete(job), nil
-}
-
-func (r *TenantReconciler) ensureKCLDAPFederationSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, jobName string, _ func() *batchv1.Job) (bool, error) {
-	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
-}
-
-// ensureKCLDAPSyncJob creates the Keycloak LDAP full-sync job if absent and
-// returns true when it has completed. Called after the admin-enable job so
-// all LDAP changes (including shadowExpire clearance) are stable in LDAP
-// before the sync re-imports users into Keycloak.
-func (r *TenantReconciler) ensureKCLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kcLDAPSyncJobName(tenant.Name),
-		func() *batchv1.Job { return makeKCLDAPSyncJob(tenant, keycloakRealmName(tenant)) })
-}
-
-// ensureKernelLDAPSyncJob re-imports LDAP users into the shared kernel realm so
-// portal login sees up-to-date enabled state and mailPrimaryAddress usernames.
-func (r *TenantReconciler) ensureKernelLDAPSyncJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	return r.ensureKCLDAPFederationSyncJob(ctx, tenant, kernelLDAPSyncJobName(tenant.Name),
-		func() *batchv1.Job { return makeKernelLDAPSyncJob(tenant, r.KernelRealm) })
-}
-
 func buildClientScript(realmName, clientID, redirectURI string) string {
 	// The script is idempotent: it creates the client on first run, and on
 	// subsequent runs it always updates redirectUris + secret so config stays
@@ -1233,10 +1046,6 @@ func kcLDAPGroupSyncJobName(tenantName string) string {
 // disabled entries caused by the brief UDM shadowExpire race during provisioning.
 func kcLDAPSyncJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-ldap-sync-%s", tenantName)
-}
-
-func kcLDAPOpenDeskMappersJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-ldap-opendesk-mappers-%s", tenantName)
 }
 
 func oidcClientID(tenantName, appName string) string {

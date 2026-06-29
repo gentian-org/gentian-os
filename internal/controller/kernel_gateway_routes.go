@@ -19,16 +19,6 @@ import (
 
 const (
 	kernelRouteKeycloakIDP       = "kernel-idp"
-	kernelRoutePortal            = "kernel-portal"
-	kernelRoutePortalRewrites    = "kernel-portal-rewrite-assets"
-	kernelRoutePortalRewritesApp = "kernel-portal-rewrite-app"
-	kernelRoutePortalLogin       = "kernel-portal-login"
-	kernelRoutePortalBaseRouter  = "kernel-portal-base-router"
-	kernelRoutePortalShellPrefs  = "kernel-portal-shell-prefs"
-	kernelRoutePortalServer      = "kernel-portal-server"
-	kernelRoutePortalUMC         = "kernel-portal-umc"
-	kernelRoutePortalUMCShell    = "kernel-portal-umc-shell"
-	kernelRoutePortalUDM         = "kernel-portal-udm"
 	kernelRouteKernelApex        = "kernel-apex-redirect"
 	kernelRouteCryptpad          = "kernel-cryptpad"
 	kernelRouteCryptpadSandbox   = "kernel-cryptpad-sandbox"
@@ -38,11 +28,6 @@ const (
 	kernelRouteArgoCD            = "kernel-argocd"
 
 	argocdServerServiceName = "argocd-server"
-
-	keycloakProxyServicePort = int32(8181)
-	baseRouterServicePort    = int32(8080)
-	shellPrefsServicePort    = int32(8081)
-	udmRestAPIServicePort    = int32(9979)
 )
 
 type kernelHTTPRouteSpec struct {
@@ -57,54 +42,12 @@ func kernelStage() string {
 	return envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
 }
 
-func nubusReleaseName() string {
-	return fmt.Sprintf("nubus-%s", kernelStage())
-}
-
-func keycloakProxyServiceName() string {
-	if v := envOrDefault("KEYCLOAK_PROXY_SERVICE", ""); v != "" {
-		return v
-	}
-	return fmt.Sprintf("%s-keycloak-extensions-proxy", nubusReleaseName())
-}
-
 // suzeKeycloakHTTPServiceName is the keycloakx chart HTTP Service for Stage 1 Suze IdP.
 func suzeKeycloakHTTPServiceName() string {
 	if v := envOrDefault("KEYCLOAK_HTTP_SERVICE", ""); v != "" {
 		return v
 	}
 	return "gentian-idp-keycloak-keycloakx-http"
-}
-
-func portalFrontendServiceName() string {
-	if v := envOrDefault("PORTAL_FRONTEND_SERVICE", ""); v != "" {
-		return v
-	}
-	return fmt.Sprintf("%s-portal-frontend", nubusReleaseName())
-}
-
-func gentianLoginServiceName() string {
-	return fmt.Sprintf("gentian-portal-gentian-login-%s-gentian-login", kernelStage())
-}
-
-func baseRouterServiceName() string {
-	return fmt.Sprintf("gentian-portal-base-router-%s-base-router", kernelStage())
-}
-
-func shellPrefsServiceName() string {
-	return fmt.Sprintf("gentian-portal-shell-prefs-%s-shell-prefs", kernelStage())
-}
-
-func portalServerServiceName() string {
-	return fmt.Sprintf("%s-portal-server", nubusReleaseName())
-}
-
-func umcGatewayServiceName() string {
-	return fmt.Sprintf("%s-umc-gateway", nubusReleaseName())
-}
-
-func udmRestAPIServiceName() string {
-	return fmt.Sprintf("%s-udm-rest-api", nubusReleaseName())
 }
 
 func nextcloudServiceName() string {
@@ -245,69 +188,6 @@ func kernelHTTPRouteSpecs(
 		},
 	)
 	return specs
-}
-
-func kernelLegacyPortalHTTPRouteSpecs(portalHost string) []kernelHTTPRouteSpec {
-	return []kernelHTTPRouteSpec{
-		{
-			name: kernelRoutePortalLogin,
-			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(gentianLoginServiceName(), 80, "/login"),
-			},
-		},
-		{
-			name: kernelRoutePortalBaseRouter,
-			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(baseRouterServiceName(), baseRouterServicePort, "/u/base-router"),
-			},
-		},
-		{
-			name: kernelRoutePortalShellPrefs,
-			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelURLRewriteBackendRule(shellPrefsServiceName(), shellPrefsServicePort, "/univention/shell-prefs", "/"),
-			},
-		},
-		{
-			name:  kernelRoutePortalServer,
-			host:  portalHost,
-			rules: kernelPortalServerDataRules(portalServerServiceName(), 80),
-		},
-		{
-			name:  kernelRoutePortalUMC,
-			host:  portalHost,
-			rules: kernelUMCGatewayRules(umcGatewayServiceName(), 80),
-		},
-		{
-			name:  kernelRoutePortalUMCShell,
-			host:  portalHost,
-			rules: kernelUMCGatewayShellRules(umcGatewayServiceName(), 80),
-		},
-		{
-			name: kernelRoutePortalUDM,
-			host: portalHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefix(udmRestAPIServiceName(), udmRestAPIServicePort, "/univention/udm"),
-			},
-		},
-		{
-			name:  kernelRoutePortalRewrites,
-			host:  portalHost,
-			rules: kernelPortalFrontendAssetRewriteRules(portalFrontendServiceName(), 80),
-		},
-		{
-			name:  kernelRoutePortalRewritesApp,
-			host:  portalHost,
-			rules: kernelPortalFrontendAppRewriteRules(portalFrontendServiceName(), 80),
-		},
-		{
-			name:  kernelRoutePortal,
-			host:  portalHost,
-			rules: kernelPortalFrontendRules(portalFrontendServiceName(), 80),
-		},
-	}
 }
 
 func kernelPortalServerDataRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
