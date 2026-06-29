@@ -19,8 +19,10 @@ package controller_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -60,19 +62,28 @@ func patchDatabaseCRReady(t *testing.T, name, namespace string) {
 		Version: "v1",
 		Kind:    "Database",
 	}
-	db := &unstructured.Unstructured{}
-	db.SetGroupVersionKind(dbGVK)
 
-	if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, db); err != nil {
-		t.Fatalf("get Database CR %s: %v", name, err)
-	}
+	for range 20 {
+		db := &unstructured.Unstructured{}
+		db.SetGroupVersionKind(dbGVK)
 
-	if err := unstructured.SetNestedField(db.Object, true, "status", "applied"); err != nil {
-		t.Fatalf("set Database status.applied: %v", err)
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, db); err != nil {
+			t.Fatalf("get Database CR %s: %v", name, err)
+		}
+
+		if err := unstructured.SetNestedField(db.Object, true, "status", "applied"); err != nil {
+			t.Fatalf("set Database status.applied: %v", err)
+		}
+		if err := testClient.Status().Update(context.Background(), db); err != nil {
+			if k8serrors.IsConflict(err) {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("patch Database %s status: %v", name, err)
+		}
+		return
 	}
-	if err := testClient.Status().Update(context.Background(), db); err != nil {
-		t.Fatalf("patch Database %s status: %v", name, err)
-	}
+	t.Fatalf("patch Database %s status: too many conflicts", name)
 }
 
 // TestDB_NoPostgresApps verifies that a Tenant with no apps does not create any
