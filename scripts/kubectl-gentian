@@ -1169,11 +1169,6 @@ platform_kernel_job_logs() {
   kubectl --request-timeout=5s logs -n platform-kernel "job/${job_name}" 2>/dev/null
 }
 
-platform_kernel_job_logs() {
-  local job_name="${1}"
-  kubectl --request-timeout=5s logs -n platform-kernel "job/${job_name}" 2>/dev/null
-}
-
 try_retrieve_tenant_admin_credentials() {
   local tenant_name="${1}"
 
@@ -1203,7 +1198,7 @@ try_retrieve_tenant_admin_credentials() {
   fi
 
   local line
-  line="$(kubectl --request-timeout=5s logs -n platform-kernel "job/keycloak-admin-${tenant_name}" 2>/dev/null | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
+  line="$(platform_kernel_job_logs "keycloak-admin-${tenant_name}" | grep 'INITIAL_TENANT_ADMIN ' | tail -n1 || true)"
   if [[ -n "${line}" ]]; then
     TENANT_ADMIN_USERNAME="$(echo "${line}" | sed -n 's/.*username=\([^[:space:]]*\).*/\1/p')"
     TENANT_ADMIN_PASSWORD="$(echo "${line}" | sed -n 's/.*password=\([^[:space:]]*\).*/\1/p')"
