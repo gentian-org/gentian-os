@@ -1,3 +1,5 @@
+//go:build legacy_ldap
+
 /*
 Copyright 2026 The Gentian Authors.
 
@@ -29,6 +31,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -2170,4 +2173,18 @@ else
 	exit 1
 fi`,
 		appName, tenantName)
+}
+
+func (r *TenantReconciler) deleteProvisioningJobObject(ctx context.Context, tenantName, jobName string) {
+	if tenantName == "" {
+		return
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(crossplaneObjectGVK)
+	objName := provisioningJobObjectName(tenantName, jobName)
+	if err := r.Get(ctx, types.NamespacedName{Name: objName}, obj); err != nil {
+		return
+	}
+	prop := metav1.DeletePropagationBackground
+	_ = r.Delete(ctx, obj, &client.DeleteOptions{PropagationPolicy: &prop})
 }
