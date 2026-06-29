@@ -13,6 +13,21 @@ _platform_admin_derive_password() {
     echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
+_portal_bff_derive_secret() {
+    echo -n "portal-bootstrap:bff_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+}
+
+ensure_portal_bff_secret() {
+    local ns="platform-kernel"
+    local secret
+    secret="$(_portal_bff_derive_secret)"
+    kubectl create secret generic gentian-portal-bff -n "${ns}" \
+        --from-literal=client_id="gentian-portal-bff" \
+        --from-literal=client_secret="${secret}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    echo "${secret}"
+}
+
 _keycloak_internal_service_url() {
     local ns="${1:-platform-kernel}"
     local release="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}"
@@ -403,6 +418,8 @@ run_keycloak_portal_bootstrap_job() {
 
     info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
 
+    ensure_portal_bff_secret >/dev/null
+
     local -a bootstrap_secret_args=(
         --from-literal=kernel_domain="${kernel_domain}"
         --from-literal=kernel_realm="${kernel_realm}"
@@ -599,6 +616,38 @@ spec:
                 fi
               fi
 
+              BFF_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal-bff" \\
+                | jq -r '.[0].id // empty')
+              BFF_BODY=\$(jq -n --arg secret "\${PORTAL_BFF_CLIENT_SECRET}" '{
+                clientId: "gentian-portal-bff",
+                name: "Gentian Portal BFF",
+                enabled: true,
+                publicClient: false,
+                standardFlowEnabled: false,
+                directAccessGrantsEnabled: true,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                secret: \$secret
+              }')
+              if [ -n "\${BFF_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${BFF_CLIENT_ID}" -d "\${BFF_BODY}"
+                echo "Updated client gentian-portal-bff"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${BFF_BODY}"
+                BFF_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal-bff" \\
+                  | jq -r '.[0].id')
+                echo "Created client gentian-portal-bff"
+              fi
+              if [ -n "\${BFF_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                curl -sf -X PUT -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${BFF_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                echo "gentian-portal-bff default scope: groups"
+              fi
+
 ${smtp_shell}
 
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
@@ -648,6 +697,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: platform_superadmin_group
+            - name: PORTAL_BFF_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gentian-portal-bff
+                  key: client_secret
             - name: MAIL_SERVICE_MODE
               valueFrom:
                 secretKeyRef:
@@ -831,6 +885,22 @@ install_gentian_portal_chart() {
         --from-literal=OIDC_CLIENT_ID="gentian-portal"
         --from-literal=OIDC_AUDIENCE="gentian-portal"
     )
+    if kubectl get secret gentian-portal-bff -n "${ns}" >/dev/null 2>&1; then
+        local bff_secret
+        bff_secret=$(kubectl get secret gentian-portal-bff -n "${ns}" -o jsonpath='{.data.client_secret}' | base64 -d)
+        secret_args+=(
+            --from-literal=PORTAL_BFF_CLIENT_ID="gentian-portal-bff"
+            --from-literal=PORTAL_BFF_CLIENT_SECRET="${bff_secret}"
+        )
+    else
+        ensure_portal_bff_secret >/dev/null
+        local bff_secret
+        bff_secret=$(kubectl get secret gentian-portal-bff -n "${ns}" -o jsonpath='{.data.client_secret}' | base64 -d)
+        secret_args+=(
+            --from-literal=PORTAL_BFF_CLIENT_ID="gentian-portal-bff"
+            --from-literal=PORTAL_BFF_CLIENT_SECRET="${bff_secret}"
+        )
+    fi
 
     local kc_url kc_user kc_pass
     kc_url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)

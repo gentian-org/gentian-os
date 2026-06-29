@@ -231,6 +231,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		externalURL := kernelExternalURL(r.KernelDomain)
 		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, externalURL))
 		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm, externalURL))
+		jobs = append(jobs, *makePortalBFFClientJob(tenant.Name, realmName))
 	}
 
 	return jobs, nil

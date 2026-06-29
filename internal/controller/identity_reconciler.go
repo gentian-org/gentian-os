@@ -182,6 +182,15 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningKernelTenantBroker", "Waiting for kernel tenant broker Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+		portalBFFDone, err := r.ensurePortalBFFClientJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure portal BFF client Job: %w", err)
+		}
+		if !portalBFFDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningPortalBFFClient", "Waiting for portal BFF client Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
