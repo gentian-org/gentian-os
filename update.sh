@@ -76,6 +76,7 @@ OP_FIX_KERNEL_LDAP_SCOPE=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
 OP_ARGOCD=0
+OP_PORTAL=0
 OP_SETUP_IAM=0
 OP_PLUGIN=0
 OP_ACME_ISSUERS=0
@@ -115,6 +116,10 @@ Options:
   --argocd                 Re-apply gentian-os / appprofiles ArgoCD Application
                            manifests (ignoreDifferences updates) and hard-refresh
                            all Applications.
+  --portal                 Reconcile Gentian portal login: Keycloak clients
+                           (gentian-portal + BFF), platform admin, Helm upgrade
+                           of gentian-portal-web/api (same as install.sh
+                           --stage1-portal).
   --setup-iam              [legacy, no-op on Suze] Re-run nubus setup-iam-templates.
   --umc-gateway            [legacy, no-op on Suze] UMC gateway upstream patch.
   --plugin                 Reinstall the kubectl-gentian plugin from this
@@ -142,6 +147,7 @@ while [[ $# -gt 0 ]]; do
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
         --argocd)              OP_ARGOCD=1 ;;
+        --portal)              OP_PORTAL=1 ;;
         --setup-iam)           OP_SETUP_IAM=1 ;;
         --umc-gateway)         OP_UMC_GATEWAY=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
@@ -155,7 +161,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" && "${OP_UMC_GATEWAY}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_PORTAL}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" && "${OP_UMC_GATEWAY}" == "0" ]]; then
     OP_MAIL=1
     OP_NEXTCLOUD_OFFICE=1
     OP_SECRETS=1
@@ -939,6 +945,27 @@ op_argocd_bootstrap() {
 }
 
 # =============================================================================
+# op_portal — reconcile Gentian portal login (Keycloak + gentian-portal Helm)
+# =============================================================================
+op_portal() {
+    banner "Portal login reconciliation (Stage 1)"
+
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || {
+        echo "ERROR: KERNEL_DOMAIN not set — check gentian-deployments cluster-settings.env." >&2
+        exit 1
+    }
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would run install_stage1_portal (Keycloak bootstrap + gentian-portal Helm)"
+        return 0
+    fi
+
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    install_stage1_portal
+}
+
+# =============================================================================
 # op_setup_iam_recover — delete and re-run nubus-dev-setup-iam-templates
 #
 # The job is an ArgoCD PostSync hook on nubus-manifests-dev.  Failures usually
@@ -1156,6 +1183,7 @@ fi
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
 [[ "${OP_ARGOCD}"          == "1" ]] && op_argocd_bootstrap
+[[ "${OP_PORTAL}"          == "1" ]] && op_portal
 [[ "${OP_SETUP_IAM}"       == "1" ]] && _legacy_update_op_disabled --setup-iam
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_LDAP_ACL}"        == "1" ]] && _legacy_update_op_disabled --ldap-acl
