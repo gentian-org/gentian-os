@@ -1048,10 +1048,6 @@ func kcLDAPSyncJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-ldap-sync-%s", tenantName)
 }
 
-func kcLDAPOpenDeskMappersJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-ldap-opendesk-mappers-%s", tenantName)
-}
-
 func oidcClientID(tenantName, appName string) string {
 	return fmt.Sprintf("%s-%s", tenantName, appName)
 }
