@@ -942,6 +942,77 @@ wait_xr_condition_ready() {
     done
 }
 
+# Suze Keycloak uses keycloakx chart service {release}-keycloakx-http (default release gentian-idp-keycloak).
+_suze_keycloak_service_name() {
+    echo "${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http"
+}
+
+_suze_openfga_service_name() {
+    echo "${GENTIAN_OPENFGA_RELEASE:-gentian-openfga}"
+}
+
+# True when Crossplane Helm releases have live Endpoints (not just MR status=deployed).
+_suze_idp_workloads_ready() {
+    local ns="platform-kernel"
+    local kc_svc fga_svc
+    kc_svc=$(_suze_keycloak_service_name)
+    fga_svc=$(_suze_openfga_service_name)
+    kubectl get svc -n "${ns}" "${kc_svc}" >/dev/null 2>&1 \
+        && kubectl get endpoints -n "${ns}" "${kc_svc}" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q . \
+        && kubectl get svc -n "${ns}" "${fga_svc}" >/dev/null 2>&1 \
+        && kubectl get endpoints -n "${ns}" "${fga_svc}" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .
+}
+
+_reset_suze_ghost_helm_releases() {
+    local xr_name="$1"
+    warn "Suze XR ${xr_name} reports Ready but IdP Services are missing — resetting Helm Release MRs..."
+    while IFS= read -r rel; do
+        [[ -z "${rel}" ]] && continue
+        warn "  Deleting Release ${rel}..."
+        kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
+    done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+}
+
+# Heal ghost Suze state and wait for Keycloak + OpenFGA Services (used by Steps 14 and 16).
+ensure_suze_idp_workloads() {
+    local xr_name="${1:-}"
+    local timeout_sec="${2:-600}"
+    local ns="platform-kernel"
+
+    if [[ -z "${xr_name}" ]]; then
+        xr_name=$(kubectl get suze dev-suze -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+    fi
+    [[ -n "${xr_name}" ]] || {
+        error "Suze composite not found — run Step 14 first."
+        return 1
+    }
+
+    if _suze_idp_workloads_ready; then
+        return 0
+    fi
+
+    if [[ "$(kubectl get "xsuze/${xr_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" == "True" ]]; then
+        _reset_suze_ghost_helm_releases "${xr_name}"
+    fi
+
+    info "Waiting for Suze IdP Services (${_suze_keycloak_service_name}, ${_suze_openfga_service_name}) in ${ns}..."
+    local deadline=$((SECONDS + timeout_sec))
+    while (( SECONDS < deadline )); do
+        if _suze_idp_workloads_ready; then
+            success "Suze IdP workloads are live."
+            return 0
+        fi
+        sleep 10
+    done
+
+    error "Suze IdP workloads not ready within ${timeout_sec}s."
+    error "  kubectl get release.helm.crossplane.io -l crossplane.io/composite=${xr_name}"
+    error "  kubectl get svc,pods -n ${ns} | grep -E 'keycloak|openfga'"
+    return 1
+}
+
 apply_suze_xr() {
     banner "Step 14 — Apply Suze XR (Secure Universal Zero-trust Environment)"
 
@@ -986,9 +1057,13 @@ apply_suze_xr() {
     done
     info "  Composite name: ${xr_name}"
 
-    if wait_xr_condition_ready "xsuze/${xr_name}" 10; then
-        success "Suze XR ${xr_name} is already Ready — skipping reinstall."
+    if wait_xr_condition_ready "xsuze/${xr_name}" 10 && _suze_idp_workloads_ready; then
+        success "Suze XR ${xr_name} is already Ready with live IdP workloads — skipping reinstall."
         return 0
+    fi
+
+    if wait_xr_condition_ready "xsuze/${xr_name}" 10 && ! _suze_idp_workloads_ready; then
+        _reset_suze_ghost_helm_releases "${xr_name}"
     fi
 
     # Delete failed Helm Release MRs so the composition reinstalls with updated values.
@@ -1022,6 +1097,8 @@ apply_suze_xr() {
         error "  kubectl get pods -n platform-kernel"
         exit 1
     }
+
+    ensure_suze_idp_workloads "${xr_name}" 300 || exit 1
 
     success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
 }

@@ -15,27 +15,56 @@ _platform_admin_derive_password() {
 
 _keycloak_internal_service_url() {
     local ns="${1:-platform-kernel}"
+    local release="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}"
     local svc port
-    svc=$(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-        | grep -E 'keycloak.*http' | head -1 || true)
-    if [[ -z "${svc}" ]]; then
-        svc=$(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-            | grep keycloak | grep -v headless | head -1 || true)
-    fi
-    [[ -n "${svc}" ]] || return 1
-    port=$(kubectl get svc -n "${ns}" "${svc}" -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || true)
-    port="${port:-8080}"
-    # keycloakx chart serves Admin/OIDC under /auth (legacy relative path).
-    echo "http://${svc}.${ns}.svc.cluster.local:${port}/auth"
+    # keycloakx Helm chart publishes {release}-keycloakx-http (Suze default release name).
+    for svc in "${release}-keycloakx-http" \
+        $(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+            | grep -E 'keycloak.*http' | head -1) \
+        $(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+            | grep keycloak | grep -v headless | head -1); do
+        [[ -n "${svc}" ]] || continue
+        if ! kubectl get svc -n "${ns}" "${svc}" >/dev/null 2>&1; then
+            continue
+        fi
+        port=$(kubectl get svc -n "${ns}" "${svc}" -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || true)
+        port="${port:-8080}"
+        echo "http://${svc}.${ns}.svc.cluster.local:${port}/auth"
+        return 0
+    done
+    return 1
+}
+
+wait_for_keycloak_http_service() {
+    local ns="${1:-platform-kernel}"
+    local timeout_sec="${2:-300}"
+    local deadline=$((SECONDS + timeout_sec))
+    while (( SECONDS < deadline )); do
+        if _keycloak_internal_service_url "${ns}" >/dev/null 2>&1; then
+            _keycloak_internal_service_url "${ns}"
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
 }
 
 ensure_keycloak_admin_secret_url() {
     local ns="platform-kernel"
     local url current eso_manifest
-    url=$(_keycloak_internal_service_url "${ns}") || {
-        error "No Keycloak HTTP service found in ${ns}."
+
+    if ! url=$(wait_for_keycloak_http_service "${ns}" 120); then
+        if declare -F ensure_suze_idp_workloads >/dev/null 2>&1; then
+            warn "Keycloak Service not found — attempting Suze IdP heal..."
+            ensure_suze_idp_workloads "" 600 || true
+            url=$(wait_for_keycloak_http_service "${ns}" 180) || true
+        fi
+    fi
+
+    if [[ -z "${url:-}" ]]; then
+        error "No Keycloak HTTP service found in ${ns} (expected ${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http)."
         return 1
-    }
+    fi
     current=$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
     if [[ "${current}" == "${url}" ]]; then
         info "keycloak-admin URL: ${url}"
