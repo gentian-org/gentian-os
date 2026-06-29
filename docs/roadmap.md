@@ -64,16 +64,19 @@ kernel services).
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
-| **P0** | Suze bootstrap: kernel + tenant realm Jobs without LDAP; group taxonomy; platform + tenant admin users | **In progress** |
+| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **In progress** |
 | **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | Planned |
 | **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | Planned |
-| **P3** | TOTP MFA policies | Planned |
-| **P4** | `admin-notifications` gateway + publish UI | Planned |
-| **P5** | Provisioning controller + CloudEvents/SCIM bus | Planned |
-| **P6** | Shell admin desktop tiles; OpenFGA `can_launch` for admin modules | Planned |
+| **P3** | Per-user TOTP enablement | Planned |
+| **P4** | Security policies — password, session, lockout, MFA realm rules | Planned |
+| **P5** | Sessions — list/revoke; auto-revoke on member disable | Planned |
+| **P6** | Audit — sign-in + admin-action log, export | Planned |
+| **P7** | `admin-notifications` gateway + publish UI | Planned |
+| **P8** | Provisioning controller + CloudEvents/SCIM bus | Planned |
+| **P9** | Shell admin desktop tiles; OpenFGA `can_launch` for admin modules | Planned |
+| **Stage 2** | Integrations & grants, agents, access requests, federation — [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance) | Planned |
 
-**Explicitly deferred:** App Store in console (stays `kubectl gentian apps` until Stage 2+),
-UMC iframes, LDAP listener parity, app-side provisioner execution in P0–P4.
+**Explicitly deferred:** App Store in console until Stage 2; app-side provisioner execution before P8; Stage 2 authorization surfaces in [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance).
 
 ### Platform admin least-privilege
 

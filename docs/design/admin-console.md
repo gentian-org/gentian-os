@@ -1,24 +1,53 @@
 # Gentian Admin Console — design
 
 **Status:** Draft v0.1  
-**Scope:** User and group administration, tenant-scoped notifications, member onboarding, and the identity/provisioning contracts that replace Nubus UMC + LDAP listeners in the Suze (`keycloak-native`) path.
+**Scope:** User and group administration, tenant-scoped notifications, member onboarding, and the identity/provisioning contracts for the Suze (`keycloak-native`) path.
 
-**Companion docs:** [iam.md](iam.md), [new-security-architecture.md](new-security-architecture.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md).
+**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [new-security-architecture.md](new-security-architecture.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md).
 
 ---
 
 ## 1. Purpose
 
-Gentian needs a **first-party administration product** that replaces the Univention Management Console (UMC) for:
+A desktop operating system is not complete without a way to **manage who may use
+the machine and what they may do** — user accounts, group membership, and
+administrative privilege. Gentian OS applies the same requirement at platform
+scale: every tenant organisation needs a first-party surface to govern **who**
+belongs to the workspace and **which apps and capabilities** each person may use.
 
-| Legacy UMC module | Gentian Admin Console module | v1 scope |
+See [architecture.md §2](../architecture.md#2-the-os-analogy) (OS analogy) and
+[architecture.md §5](../architecture.md#5-the-kernel--default-install-components)
+(kernel default install). The Admin Console sits alongside the Gentian Portal as
+a **kernel shell component** — not a catalogue app tenants install, but
+infrastructure every tenant relies on:
+
+| Traditional OS | Gentian OS |
+|---|---|
+| Settings → Users & Groups; `sudoers`; login security; system log | **Gentian Admin Console** (Members, Groups, Security policies, Sessions, Audit, Notifications) |
+| Desktop shell / Start menu | **Gentian Portal** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) |
+
+[architecture.md §13](../architecture.md#13-operational-roles) defines three
+operational roles (cluster admin, tenant admin, tenant user). The Admin Console
+is how **tenant admins** (and, during bootstrap, **platform admins**) exercise
+their scope: create members, assign entitlements, publish tenant notifications,
+and enforce the separation between administrators and day-to-day app users described
+in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-separation-of-duties).
+
+### 1.1 Modules
+
+| Module | Responsibility | Phase |
 |---|---|---|
-| Users (`udm:users/user`) | **Members** | CRUD, invite, disable, password reset, MFA |
-| Groups (`udm:groups/group`) | **Groups** | CRUD, membership, app entitlements |
-| Announcements / notifications | **Notifications** | Publish scoped broadcasts (`admin-notifications` contract) |
-| App Store (separate tile) | **Deferred** | Stays on `kubectl gentian apps` until Stage 2+ |
+| **Members** | Workspace user lifecycle | P1 — CRUD; P2 — invite, reset; P3 — per-user MFA |
+| **Groups** | Membership and entitlements | P1 — CRUD, app access groups |
+| **Security policies** | Tenant realm authentication rules | P4 — password, session, lockout, MFA policy |
+| **Sessions** | Active login inventory and revocation | P5 — list sessions, sign-out everywhere |
+| **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
+| **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract |
+| **App Store** | Catalogue installs | **Stage 2** — see [§9](#9-stage-2--authorization-and-governance) |
 
-The console is **not** a fork of UMC. It is a Gentian BFF + React UI (`gentian-ui`, `ui_kits/console` aesthetic) calling **Keycloak Admin API** (Suze) and Gentian kernel services. Branding, copy, and flows are Gentian-native.
+Implementation: Gentian BFF + React UI (`gentian-ui`, `ui_kits/console` aesthetic)
+calling **Keycloak Admin API** (Suze), Gentian kernel services, and (from P6) aggregated
+event stores.
 
 ---
 
@@ -64,7 +93,7 @@ Users are **managed in the tenant realm**. The shared portal login flow uses the
  (users live here)
 ```
 
-Tenant apps (Jitsi, Nextcloud, …) continue to use the **tenant realm** for OIDC. The tenant realm **brokers to the kernel IdP** so a user with an active portal session is not prompted again (existing `browser-kernel-idp` / `first-broker-login-gentian` pattern, adapted for native Keycloak users instead of LDAP federation).
+Tenant apps (Jitsi, Nextcloud, …) continue to use the **tenant realm** for OIDC. The tenant realm **brokers to the kernel IdP** so a user with an active portal session is not prompted again (`browser-kernel-idp` / `first-broker-login-gentian` flows).
 
 ### 3.2 Login identifiers
 
@@ -72,38 +101,39 @@ Tenant apps (Jitsi, Nextcloud, …) continue to use the **tenant realm** for OID
 |---|---|
 | **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.desk.gentian.org`) |
 | **`inviteEmail`** | Optional secondary address for **invite**, **password reset**, and **account recovery** only |
-| **Tenant admin bootstrap** | Username `admin-<tenant>`; login email from `Tenant.spec.adminEmail`; password from OpenBao `gentian-os/tenants/<tenant>/admin` (unchanged convention) |
-| **Platform admin bootstrap** | `administrator@<KERNEL_DOMAIN>`; password derived from install `MASTER_PASSWORD` (unchanged convention) |
+| **Tenant admin bootstrap** | Username `admin-<tenant>`; login email from `Tenant.spec.adminEmail`; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
+| **Platform admin bootstrap** | `administrator@<KERNEL_DOMAIN>`; password derived from install `MASTER_PASSWORD` |
 
-### 3.3 Group naming (replaces `managed-by-attribute-*`)
+### 3.3 Group taxonomy
 
-Legacy Univention groups (`managed-by-attribute-Fileshare`, `opendesk*Enabled` LDAP attributes) are **not** used in the Suze path.
+Gentian uses explicit Keycloak group names for platform scope, tenant membership,
+and per-app entitlements:
 
-| Gentian Keycloak group | Replaces (legacy) | Purpose |
-|---|---|---|
-| `gentian:platform:superadmin` | `cn=Domain Admins` (kernel) | Platform operator (bootstrap; broad access initially) |
-| `gentian:platform:operator` | — | Future read-only / constrained platform role |
-| `gentian:platform:break-glass` | — | Future emergency access (audited) |
-| `gentian:tenant:<t>:members` | `cn=users_<t>` | All workspace members |
-| `gentian:tenant:<t>:admins` | `cn=admins_<t>` | Tenant IT admins (Admin Console scope) |
-| `gentian:tenant:<t>:app:<profile>` | `managed-by-attribute-<App>` | App entitlement (portal + future provisioning) |
-| `gentian:role:member` | `cn=App Users` | Cross-tenant marker for “workspace member” (token claim) |
+| Gentian Keycloak group | Purpose |
+|---|---|
+| `gentian:platform:superadmin` | Platform operator (bootstrap; broad access initially) |
+| `gentian:platform:operator` | Future read-only / constrained platform role |
+| `gentian:platform:break-glass` | Future emergency access (audited) |
+| `gentian:tenant:<t>:members` | All workspace members |
+| `gentian:tenant:<t>:admins` | Tenant IT admins (Admin Console scope) |
+| `gentian:tenant:<t>:app:<profile>` | App entitlement (portal tile + future provisioning) |
+| `gentian:role:member` | Token marker for workspace members |
 
 **OpenFGA sync** (authz bridge): group membership → tuples, e.g. `user:alice#member@group:demo-app-nextcloud`, `group:demo-app-nextcloud#parent@tenant:demo`.
 
-**Portal visibility:** shell reads JWT groups / OpenFGA `can_launch` — not LDAP `allowedGroups` on Nubus portal entries.
+**Portal visibility:** shell reads JWT **groups** and OpenFGA `can_launch` to decide which app tiles appear on the desktop.
 
 ### 3.4 Member vs administrator (mutually exclusive)
 
-Same invariant as legacy UMC templates:
+Tenant administrators and regular members are **separate identities** — an admin
+account must not double as a day-to-day app user (license, audit, and separation
+of duties). Enforced by group assignment in the Admin Console.
 
 | Role | Groups | Portal desktop |
 |---|---|---|
 | **Member** | `gentian:tenant:<t>:members`, optional `gentian:tenant:<t>:app:*` | User app tiles only |
-| **Tenant admin** | `gentian:tenant:<t>:admins` | Admin Console tiles (Users, Groups, Notifications) — **no** app tiles |
+| **Tenant admin** | `gentian:tenant:<t>:admins` | Admin Console tiles (Members, Groups, Notifications) — **no** app tiles |
 | **Platform admin** | `gentian:platform:superadmin` | Admin Console (all tenants) + future platform tools |
-
-Enforced by group assignment in the Admin Console, not LDAP templates.
 
 ---
 
@@ -117,9 +147,12 @@ One web app embedded in the Gentian shell (builtin desktop apps). Menu items sho
 |---|---|---|
 | Members | All tenants (initially) | Own tenant only |
 | Groups | All tenants (initially) | Own tenant only |
+| Security policies | Kernel + tenant realms | Own tenant realm only |
+| Sessions | All tenants (initially) | Own tenant members only |
+| Audit | Platform + all tenants | Own tenant only |
 | Notifications | Platform-wide publish | Tenant-scoped publish |
 | Tenants | Yes | Hidden |
-| App Store | Later | Later |
+| App Store | Stage 2 | Stage 2 |
 
 **BFF rule:** every Admin API call resolves `tenant` from the authenticated subject and **rejects** cross-tenant mutations unless the caller holds `gentian:platform:superadmin`.
 
@@ -161,9 +194,64 @@ Use **Keycloak built-in TOTP** (`CONFIGURE_TOTP` required action) — no custom 
 
 | Capability | v1 |
 |---|---|
-| Admin enables TOTP per user | Yes |
-| Realm policy “require TOTP for admins” | Yes |
-| WebAuthn / passkeys | Phase 2 |
+| Admin enables TOTP per user | Yes (P3) |
+| Realm policy “require TOTP for admins” | Yes (P4 — Security policies) |
+| WebAuthn / passkeys | Stage 2 |
+
+### 4.5 Security policies (P4)
+
+Tenant admins configure a **subset** of Keycloak realm authentication settings
+for their tenant realm. The BFF exposes only safe, tenant-scoped knobs — not
+Keycloak operator internals.
+
+| Policy area | Tenant-admin controls | Source |
+|---|---|---|
+| **Password** | Minimum length, complexity, expiry, history | Keycloak realm password policy |
+| **Session** | SSO idle timeout, max session lifespan, remember-me | Keycloak realm / client session settings |
+| **Lockout** | Max failed attempts, lockout duration | Keycloak brute-force detection |
+| **MFA** | Require TOTP for admins, optional/required for members | Keycloak authentication flows + required actions |
+
+Platform admins may set **kernel realm** defaults separately. Changes are
+recorded in the **Audit** module (§4.7).
+
+### 4.6 Sessions (P5)
+
+Maps to the desktop-OS question *“who is logged in right now?”* Disabling a
+member or offboarding must not leave stale portal or app sessions valid until
+token expiry alone ([new-security-architecture.md §5](new-security-architecture.md#the-five-most-important-next-steps-in-priority-order) — continuous authorization / CAEP is Stage 2).
+
+| Capability | Behaviour |
+|---|---|
+| **List sessions** | Per member: client, IP, started, last access (Keycloak user sessions API) |
+| **Revoke session** | End one session |
+| **Sign out everywhere** | Revoke all sessions for a user (admin action + self-service on portal later) |
+| **On disable** | BFF automatically revokes all sessions when `enabled: false` |
+
+Future: **Shared Signals / CAEP** pushes revocation to resource servers without
+waiting for token TTL (Stage 2).
+
+### 4.7 Audit (P6)
+
+Maps to the OS **system / security event log**. Read-only for tenant admins;
+feeds SOC2 access reviews and incident response.
+
+| Event stream | Examples | Source |
+|---|---|---|
+| **Sign-in** | Success, failure, MFA challenge, lockout | Keycloak event listener → Gentian audit store |
+| **Admin actions** | Member created, group changed, policy updated, session revoked | BFF mutation log + Keycloak admin events |
+| **Entitlement changes** | App group added/removed | BFF + provisioning bus (when P8 live) |
+
+| Capability | Phase |
+|---|---|
+| Filterable log UI (user, action, time range) | P6 |
+| CSV / JSON export for SIEM | P6 |
+| Retention policy (per cluster config) | P6 |
+| Access certification campaigns | Stage 2 |
+
+All admin **mutations** through the BFF include actor, tenant, target, and
+correlation id. Platform operators use the same module with broader scope during
+bootstrap; `platformAdminMode: constrained` limits routine cross-tenant visibility
+(§7).
 
 ---
 
@@ -215,7 +303,8 @@ Downstream app provisioning (Nextcloud account, Matrix ID, …) is **deferred** 
 
 ### 6.2 Provisioning bus (v1 design, v2 implementation)
 
-Replace LDAP listeners with a **standards-based event pipeline**:
+Identity changes in the Admin Console propagate to installed apps through a
+**standards-based event pipeline** (replacing ad-hoc per-app account sync):
 
 ```
 Keycloak admin event (user/group CRUD)
@@ -247,16 +336,12 @@ Provisioner plugins live in **`gentian-apps`** (app-developer authored); the con
 
 Keycloak **26.6+ experimental SCIM Realm API** is complementary (external IdPs syncing **into** a tenant realm), not the primary internal trigger.
 
-### 6.3 OIDC packs (legacy name: “openDesk OIDC packs”)
+### 6.3 OIDC packs
 
-Per-app tenant-realm OIDC client scopes and role mappings remain in the operator catalog (`internal/oidc/packs/`). Migration:
-
-| Legacy field | Suze field |
-|---|---|
-| `ldapGroup: managed-by-attribute-Jitsi` | `entitlementGroup: gentian:tenant:<t>:app:jitsi` (template; tenant suffix applied at reconcile) |
-| Pack file `opendesk.yaml` | Rename to `catalog.yaml` when touched (not required for doc-only) |
-
-LDAP `group-ldap-mapper` sync Jobs are **skipped** when `IDENTITY_MODE=keycloak-native`.
+Per-app tenant-realm OIDC client scopes and role mappings are declared in the
+operator catalogue (`internal/oidc/packs/`). Each pack maps an **entitlement
+group** (`gentian:tenant:<t>:app:<profile>`) to client roles so OIDC tokens
+reflect app access granted in the Admin Console.
 
 ---
 
@@ -276,7 +361,7 @@ Structures baked in from day one:
 - Separate Keycloak groups (`superadmin`, `operator`, `break-glass`)
 - OpenFGA relations `platform#admin` vs `tenant#admin`
 - BFF checks on every route
-- Audit log on all admin mutations (Keycloak admin events + BFF)
+- Audit module (§4.7) on all admin mutations
 
 See [roadmap.md § Platform admin least-privilege](../roadmap.md#platform-admin-least-privilege).
 
@@ -284,49 +369,133 @@ See [roadmap.md § Platform admin least-privilege](../roadmap.md#platform-admin-
 
 ## 8. Implementation phases
 
+Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-console-replaces-umc).
+
 | Phase | Deliverable |
 |---|---|
-| **P0** | Suze bootstrap: kernel + tenant realm Jobs without LDAP; group taxonomy; platform + tenant admin users |
+| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users |
 | **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) |
 | **P2** | Invite + reset password (`inviteEmail`, Gentian email theme) |
-| **P3** | TOTP MFA policies |
-| **P4** | `admin-notifications` gateway + publish UI |
-| **P5** | Provisioning controller + CloudEvents/SCIM bus (no-op plugins OK) |
-| **P6** | Shell desktop: admin builtin apps; OpenFGA `can_launch` for admin modules |
-| **Later** | App Store in console; `platformAdminMode: constrained`; WebAuthn |
+| **P3** | Per-user TOTP enablement; required-action flows |
+| **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) |
+| **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) |
+| **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) |
+| **P7** | `admin-notifications` gateway + publish UI |
+| **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status |
+| **P9** | Shell desktop: admin builtin apps; OpenFGA `can_launch` for admin modules |
+| **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies |
 
-**Explicitly not in P0–P4:** tenant app install, LDAP Jobs, UMC iframes, app-side provisioner execution.
-
----
-
-## 9. Design conflicts and migration notes
-
-Issues when moving from documented Nubus/LDAP behaviour to this design:
-
-| # | Prior decision | New decision | Resolution |
-|---|---|---|---|
-| 1 | **Kernel realm SUBTREE LDAP** imports all humans ([iam.md](iam.md) old §1.2) | Users authoritative in **tenant realm**; kernel brokers | Update iam.md; disable LDAP federation on kernel realm in `keycloak-native`; implement broker IdP per tenant in kernel realm |
-| 2 | **LDAP OU** is source of truth for users | Keycloak tenant realm is source of truth | `ensureLDAP` skipped when `IDENTITY_MODE=keycloak-native`; tenant Jobs emit Keycloak-only manifests |
-| 3 | **`managed-by-attribute-*` / `opendesk*Enabled`** | `gentian:tenant:<t>:app:<profile>` groups | New groups only in Suze path; migration Job for cutover clusters optional |
-| 4 | **UMC delegated admin policy** (OU-scoped) | BFF tenant scope + OpenFGA | No UMC; portal admin tiles → shell builtin apps |
-| 5 | **Portal `allowedGroups` LDAP DNs** | JWT `groups` claim + OpenFGA | Deprecate Nubus portal-server entries for admin tiles; gentian-portal catalog filters on groups |
-| 6 | **Tenant lifecycle** lists LDAP in architecture.md step 4 | LDAP optional per `identityMode` | Document dual path in tenant-identity-composition.md |
-| 7 | **OIDC pack `ldapGroup` field** | `entitlementGroup` (name TBD in code) | Alias during migration; packs work on group **name** in Keycloak not LDAP DN |
-| 8 | **`kernel-portal-*` HTTPRoutes** to Nubus UMC | Routes to gentian-portal admin modules | Already skipped in `keycloak-native` gateway reconciler |
-| 9 | **Authz bridge** polls Keycloak users | Should sync **groups** and entitlements | Extend bridge in P6; not blocking Admin Console P1 |
-| 10 | **install.sh** still seeds `nubus` OpenBao paths | Suze bootstrap uses Keycloak-native paths | Install paths can coexist until Nubus removed; portal bootstrap Job targets kernel realm |
-
-**Open design point:** Email-domain → tenant routing at kernel login must handle `multi` tenancy (`user@demo.desk.gentian.org`) and `single` tenancy (`user@desk.gentian.org`). Reuse `Tenant.EffectiveDomain()` logic in the broker authenticator.
+**Explicitly not in P0–P7:** tenant app install (GitOps / `kubectl gentian apps`), app-side provisioner execution, Stage 2 authorization surfaces (§9).
 
 ---
 
-## 10. References
+## 9. Stage 2 — authorization and governance
+
+Stage 2 in [new-security-architecture.md §4](new-security-architecture.md#stage-2--app-permissions-agents-and-the-pep) adds **ReBAC**, **AppGrant**, and **agent identities** on top of the P0–P9 identity admin baseline. The Admin Console grows new modules — still tenant-scoped unless noted.
+
+### 9.1 Integrations & grants
+
+Manage the authorization layer between installed apps, not just portal tile visibility.
+
+| Capability | Description | CRD / backend |
+|---|---|---|
+| **Integration overview** | Read-only list of active `IntegrationBinding` objects, health, last credential rotation | `IntegrationBinding.status` |
+| **AppGrant editor** | Approve subset of declared contract capabilities (e.g. `webdav:read` without `write`) | Planned `AppGrant` CRD → OpenFGA tuples |
+| **Consumer allowlist** | Control which apps may call this app's `provides` contracts | `AppGrant.spec.allowConsumers` |
+| **Effective access preview** | Show `AppProfile ∩ Binding ∩ Grant ∩ user` for a member | OpenFGA `Check` + BFF aggregation |
+
+Tenant admins decide grants; they cannot exceed what `AppProfile` declares ([new-security-architecture.md §3.4](new-security-architecture.md#34-application-permissions--catalogue-contracts-and-grants)).
+
+### 9.2 Agents & delegation
+
+Humans are not the only principals ([new-security-architecture.md §3.5](new-security-architecture.md#35-agentic-identity)).
+
+| Capability | Description |
+|---|---|
+| **Agent registry** | List workflow/agent service accounts in the tenant |
+| **Delegation graph** | View `acting_for` edges (user → agent) |
+| **Revoke delegation** | Single action removes agent ceiling (tuple delete) |
+| **Task TTL** | Show time-boxed `task:` objects and expiry |
+
+User-owned agents cannot exceed the delegating user's rights (derived-ceiling invariant).
+
+### 9.3 Access requests & break-glass
+
+| Capability | Description |
+|---|---|
+| **Approval queue** | Members request elevated or time-boxed access; tenant admin approves/denies |
+| **AuthZEN-style grants** | Approved requests become short-lived OpenFGA tuples or Keycloak roles |
+| **Break-glass (platform)** | `gentian:platform:break-glass` workflow with mandatory audit + alerting — platform scope only |
+
+Maps to human-in-the-loop steps in [new-security-architecture.md §3.7](new-security-architecture.md#37-automation-n8n-like-workflows).
+
+### 9.4 Federation & machine identities
+
+| Capability | Description |
+|---|---|
+| **External IdP** | Per-tenant SAML/OIDC upstream ("login with customer IdP") |
+| **Service accounts** | Registry of non-human integration principals (distinct from members) |
+| **OAuth consent** | Admin view of issued tokens / consented scopes per app |
+| **HRIS / SCIM inbound** | Optional connector UI for directory sync into tenant realm |
+
+### 9.5 Advanced membership & governance
+
+| Capability | Description |
+|---|---|
+| **Delegated admin** | Sub-scope admins (e.g. manage one group only) |
+| **Dynamic groups** | Rule-based membership (attribute or email-domain rules) |
+| **Guest / external users** | Time-limited membership (`validUntil` attribute) |
+| **Access certification** | Periodic "still needs access?" campaigns built on Audit (§4.7) |
+| **WebAuthn / passkeys** | Tenant policy + per-user credential management |
+| **App Store** | Self-service catalogue install from console (replaces CLI-only path) |
+
+### 9.6 Stage 2 phase mapping
+
+| Console phase | Depends on | Security-arch milestone |
+|---|---|---|
+| **S2-A** Integrations & grants | P9, AppGrant CRD | Stage 2 — AppGrant + OpenFGA reconciliation |
+| **S2-B** Agents & delegation | S2-A, agent identities | Stage 2 — RFC 8693 Token Exchange, `agent:` tuples |
+| **S2-C** Access requests | S2-A, AuthZEN PEP | Stage 2 — approval profile |
+| **S2-D** Federation & service accounts | P4 policies | Stage 2+ IdP brokering |
+| **S2-E** Governance & App Store | P6 Audit, P8 provisioning | Stage 2 polish + GitOps integration |
+
+### 9.7 Explicit non-goals (console)
+
+These stay outside the Admin Console — cluster admin, GitOps, or dedicated tools:
+
+- MAC / NetworkPolicy / Kyverno editing
+- `AppProfile` catalogue authoring
+- SPIFFE / mesh identity
+- ITAM device inventory (optional future thin view only)
+- Platform operator PAM / session recording (separate operator tool)
+- Crypto tiering / envelope encryption admin
+
+---
+
+## 10. Open design points
+
+| Topic | Notes |
+|---|---|
+| **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.desk.gentian.org`) and `single` tenancy (`user@desk.gentian.org`). Reuse `Tenant.EffectiveDomain()` logic. |
+| **Authz bridge** | Currently syncs users; group/entitlement sync needed for accurate portal tiles (P6). |
+| **OIDC pack field names** | Catalogue may still use `ldapGroup`; target field is `entitlementGroup` (alias during migration). |
+| **Platform vs tenant admin UI** | Single console with scoped menus; BFF enforces tenant boundary on every mutation. |
+
+| **Audit retention** | Default retention and SIEM forwarder config are cluster-level; tenant admins see only their slice. |
+| **Session API limits** | Keycloak session APIs may paginate; BFF normalizes for Members detail view. |
+
+---
+
+## 11. References
 
 | Topic | Location |
 |---|---|
+| OS analogy & kernel install | [architecture.md §2, §5](../architecture.md) |
+| Operational roles | [architecture.md §13](../architecture.md#13-operational-roles) |
 | MAC backbone | [new-security-architecture.md §4 Stage 0](new-security-architecture.md#stage-0--foundations-mac-backbone-first) |
+| IAM & group taxonomy | [iam.md](iam.md) |
 | OpenFGA model | `authz/model/v0/model.fga` |
-| Legacy LDAP / UMC | [iam.md § Legacy](iam.md#5-legacy-nubus--ldap-path) |
 | Tenant provisioning Jobs | [tenant-identity-composition.md](tenant-identity-composition.md) |
 | App contracts | [app-catalogue.md](app-catalogue.md) |
 | UI shell | `gentian-ui/legacy/design-system/ui_kits/console/` |
+| Stage 2 authorization | [new-security-architecture.md §4 Stage 2](new-security-architecture.md#stage-2--app-permissions-agents-and-the-pep) |
