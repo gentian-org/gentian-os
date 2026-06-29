@@ -1049,6 +1049,10 @@ install_stage1_operator() {
 
     adopt_gentian_os_helm_preflight "$ns"
 
+    # CI publishes ghcr.io/gentian-org/gentian-os:develop on every develop push (see .github/workflows/ci.yaml).
+    local operator_tag="${GENTIAN_OS_IMAGE_TAG:-develop}"
+    info "Using gentian-os operator image ghcr.io/gentian-org/gentian-os:${operator_tag} (CI)."
+
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
         --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
@@ -1062,6 +1066,8 @@ install_stage1_operator() {
         --set infraNamespace="platform-kernel" \
         --set "servicesNamespace=platform-kernel" \
         --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
+        --set "image.tag=${operator_tag}" \
+        --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
         --wait --timeout 5m
 
     success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED."

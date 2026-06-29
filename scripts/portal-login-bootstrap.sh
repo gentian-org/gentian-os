@@ -334,7 +334,7 @@ EOF
 
 build_gentian_portal_images() {
     local ui_dir="${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}"
-    local tag="${PORTAL_IMAGE_TAG:-feat-new-ui}"
+    local tag="${PORTAL_IMAGE_TAG:-develop}"
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local portal_origin="https://portal.${kernel_domain}"
@@ -375,13 +375,46 @@ build_gentian_portal_images() {
     success "Portal images ready: ${PORTAL_WEB_IMAGE}"
 }
 
+_openfga_runtime_store_id() {
+    if ! kubectl get secret openfga-runtime -n platform-kernel >/dev/null 2>&1; then
+        return 1
+    fi
+    kubectl get secret openfga-runtime -n platform-kernel \
+        -o jsonpath='{.data.store_id}' 2>/dev/null | base64 -d 2>/dev/null || true
+}
+
+wait_for_openfga_runtime_store_id() {
+    local timeout_sec="${1:-180}"
+    info "Waiting for openfga-runtime store_id (authz bridge bootstrap, up to ${timeout_sec}s)..."
+
+    kubectl rollout restart deployment/gentian-os -n gentian-system 2>/dev/null || true
+    kubectl rollout status deployment/gentian-os -n gentian-system --timeout=180s 2>/dev/null || true
+
+    local deadline=$((SECONDS + timeout_sec))
+    while (( SECONDS < deadline )); do
+        local store_id
+        store_id=$(_openfga_runtime_store_id)
+        if [[ -n "${store_id}" ]]; then
+            success "OpenFGA store_id ready."
+            return 0
+        fi
+        if kubectl logs -n gentian-system deploy/gentian-os --tail=30 2>/dev/null | grep -q "authz bridge sync complete"; then
+            store_id=$(_openfga_runtime_store_id)
+            [[ -n "${store_id}" ]] && return 0
+        fi
+        sleep 10
+    done
+    warn "openfga-runtime.store_id not ready within ${timeout_sec}s."
+    return 1
+}
+
 install_gentian_portal_chart() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local ui_dir="${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}"
     local chart_dir="${ui_dir}/chart"
     local ns="platform-kernel"
-    local tag="${PORTAL_IMAGE_TAG:-feat-new-ui}"
+    local tag="${PORTAL_IMAGE_TAG:-develop}"
     local web_image="${PORTAL_WEB_IMAGE:-ghcr.io/gentian-org/gentian-portal-web:${tag}}"
     local api_image="${PORTAL_API_IMAGE:-ghcr.io/gentian-org/gentian-portal-api:${tag}}"
     local values_file="${SCRIPT_DIR}/kernel/services/gentian-portal-web/values/dev.yaml"
@@ -393,12 +426,10 @@ install_gentian_portal_chart() {
         return 1
     fi
 
-    local store_id=""
-    if kubectl get secret openfga-runtime -n platform-kernel >/dev/null 2>&1; then
-        store_id=$(kubectl get secret openfga-runtime -n platform-kernel -o jsonpath='{.data.store_id}' | base64 -d 2>/dev/null || true)
-    fi
+    local store_id
+    store_id=$(_openfga_runtime_store_id)
     if [[ -z "${store_id}" ]]; then
-        warn "openfga-runtime.store_id missing — PEP checks may fail until authz bridge syncs."
+        info "OpenFGA store_id not ready — portal API will start without OPENFGA_* until authz bridge syncs."
     fi
 
     secret_args=(
@@ -424,24 +455,31 @@ install_gentian_portal_chart() {
         --dry-run=client -o yaml | kubectl apply -f -
 
     info "Installing gentian-portal Helm release..."
-    helm upgrade --install gentian-portal "${chart_dir}" \
-        --namespace "${ns}" \
-        --values "${values_file}" \
-        --set kernelDomain="${kernel_domain}" \
-        --set kernelRealm="${kernel_realm}" \
-        --set gateway.parentGatewayNamespace=platform-kernel \
-        --set "api.image.repository=ghcr.io/gentian-org/gentian-portal-api" \
-        --set "api.image.tag=${tag}" \
-        --set "web.image.repository=ghcr.io/gentian-org/gentian-portal-web" \
-        --set "web.image.tag=${tag}" \
-        --set "api.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}" \
-        --set "web.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}" \
-        --set "api.env.ENVIRONMENT=development" \
-        --set "api.env.BACKEND_CORS_ORIGINS=${portal_origin}" \
-        --set "openfga.apiUrl=http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
-        --set "openfga.storeId=${store_id}" \
-        --set "auth.disabled=false" \
+    local helm_args=(
+        --namespace "${ns}"
+        --values "${values_file}"
+        --set kernelDomain="${kernel_domain}"
+        --set kernelRealm="${kernel_realm}"
+        --set gateway.parentGatewayNamespace=platform-kernel
+        --set "api.image.repository=ghcr.io/gentian-org/gentian-portal-api"
+        --set "api.image.tag=${tag}"
+        --set "web.image.repository=ghcr.io/gentian-org/gentian-portal-web"
+        --set "web.image.tag=${tag}"
+        --set "api.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
+        --set "web.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
+        --set "api.env.ENVIRONMENT=development"
+        --set "api.env.BACKEND_CORS_ORIGINS=${portal_origin}"
+        --set "auth.disabled=false"
         --wait --timeout 5m
+    )
+    if [[ -n "${store_id}" ]]; then
+        helm_args+=(
+            --set "openfga.apiUrl=http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+            --set "openfga.storeId=${store_id}"
+        )
+    fi
+
+    helm upgrade --install gentian-portal "${chart_dir}" "${helm_args[@]}"
 
     success "gentian-portal installed at ${portal_origin}/login"
 }
@@ -465,31 +503,36 @@ install_stage1_portal() {
 
     run_keycloak_portal_bootstrap_job
 
-    if [[ "${PORTAL_SKIP_IMAGE_BUILD:-false}" != "true" ]]; then
+    if [[ "${PORTAL_SKIP_IMAGE_BUILD:-true}" != "true" ]]; then
         if build_gentian_portal_images; then
             export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
         else
-            info "Using pre-built portal images (tag=${PORTAL_IMAGE_TAG:-feat-new-ui})."
+            info "Using CI portal images (tag=${PORTAL_IMAGE_TAG:-develop})."
             export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-Always}"
         fi
     else
+        info "Using CI portal images (tag=${PORTAL_IMAGE_TAG:-develop})."
         export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-Always}"
     fi
 
     install_gentian_portal_chart
 
-    info "Restarting authz bridge to sync portal user into OpenFGA..."
-    kubectl rollout restart deployment/gentian-os -n gentian-system 2>/dev/null || true
-    kubectl rollout status deployment/gentian-os -n gentian-system --timeout=180s 2>/dev/null || true
-
-    info "Waiting for authz bridge sync (up to 3m)..."
-    local deadline=$((SECONDS + 180))
-    while (( SECONDS < deadline )); do
-        if kubectl logs -n gentian-system deploy/gentian-os --tail=20 2>/dev/null | grep -q "authz bridge sync complete"; then
-            break
+    if wait_for_openfga_runtime_store_id 180; then
+        local store_id
+        store_id=$(_openfga_runtime_store_id)
+        if [[ -n "${store_id}" ]]; then
+            info "Upgrading portal with OpenFGA PEP configuration..."
+            helm upgrade gentian-portal "${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}/chart" \
+                --namespace platform-kernel \
+                --reuse-values \
+                --set "openfga.apiUrl=http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
+                --set "openfga.storeId=${store_id}" \
+                --wait --timeout 3m 2>/dev/null || \
+                warn "Portal OpenFGA upgrade skipped or timed out — login still works; PEP may be deferred."
         fi
-        sleep 15
-    done
+    else
+        warn "Authz bridge did not publish openfga-runtime — ensure operator uses CI image (GENTIAN_OS_IMAGE_TAG=develop)."
+    fi
 
     success "Stage 1 portal login ready."
     info "  https://portal.${KERNEL_DOMAIN}/login"
