@@ -61,6 +61,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 
 	nsName := tenantNamespaceName(tenant)
 	allDone := true
+	kernelManaged := false
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
@@ -70,15 +71,11 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		}
 
 		if appUsesCrossplaneDBInit(profile) {
-			done, err := r.waitForTenantNamespaceJob(ctx, tenant, appCompositionInitJobName(appName, "db-init"))
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("wait for db-init Job for app %s: %w", appName, err)
-			}
-			if !done {
-				allDone = false
-			}
+			// app-default emits {app}-db-init after the App claim is sequenced (post-identity).
+			// AppsReady tracks composition convergence; do not block tenant Phase=Ready.
 			continue
 		}
+		kernelManaged = true
 
 		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
@@ -105,8 +102,14 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		return ctrl.Result{RequeueAfter: databaseRequeueAfter}, nil
 	}
 
-	r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
-		"Provisioned", "All PostgreSQL databases and roles are ready")
+	reason := "Provisioned"
+	message := "All PostgreSQL databases and roles are ready"
+	if !kernelManaged {
+		reason = "AppCompositionOwnsDatabase"
+		message = "PostgreSQL is provisioned by app compositions"
+	}
+
+	r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue, reason, message)
 	return ctrl.Result{}, nil
 }
 

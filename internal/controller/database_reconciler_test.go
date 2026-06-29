@@ -127,6 +127,45 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	}
 }
 
+// TestDB_CrossplaneAppDefersDatabase verifies Crossplane apps with databasePerTenant
+// do not block tenant Phase=Ready on element-db-init (owned by app-default).
+func TestDB_CrossplaneAppDefersDatabase(t *testing.T) {
+	t.Parallel()
+	profile := newPostgresProfile("element")
+	profile.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodCrossplane
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "cpgdb"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Crossplane DB Co",
+			Domain:      "cpgdb.example.com",
+			AdminEmail:  "admin@cpgdb.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "element"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, tenantReadyTimeout, func() bool {
+		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "cpgdb"}, updated)
+		for i := range updated.Status.Conditions {
+			if updated.Status.Conditions[i].Type == "DatabaseReady" &&
+				updated.Status.Conditions[i].Status == metav1.ConditionTrue &&
+				updated.Status.Conditions[i].Reason == "AppCompositionOwnsDatabase" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 // TestDB_CreatesDatabaseCR verifies that a Tenant with an app requiring PostgreSQL
 // creates the CloudNativePG Database CR in platform-kernel (after the role Job completes).
 func TestDB_CreatesDatabaseCR(t *testing.T) {
