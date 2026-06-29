@@ -835,6 +835,7 @@ TOKEN=$(curl -sf \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+%s
 CREATED=0
 
 # --- 1. Create tenant admin user if absent ---
@@ -913,7 +914,7 @@ fi
 
 # --- 4. Assign gentian:tenant:<t>:admins group membership ---
 GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/groups?search=${TENANT_ADMINS_GROUP}&exact=true")
+  "${KEYCLOAK_URL}/admin/realms/%s/groups?max=1000")
 keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${TENANT_ADMINS_GROUP}"
 ADMINS_GROUP_ID="${_kj_id}"
 if [ -z "${ADMINS_GROUP_ID}" ]; then
@@ -929,6 +930,7 @@ else
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups/${ADMINS_GROUP_ID}"
   echo "tenant admin joined group ${TENANT_ADMINS_GROUP}"
 fi`,
+		keycloakShellWaitForRealm(realmName),
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName, realmName, realmName)

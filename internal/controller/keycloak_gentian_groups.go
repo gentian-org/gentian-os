@@ -20,6 +20,7 @@ func (r *TenantReconciler) ensureGentianGroupsJob(ctx context.Context, tenant *g
 
 func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, groupNames []string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	backoff := meta.ProvisioningJobBackoffLimit
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "GENTIAN_GROUP_NAMES", Value: shellQuoteList(groupNames)},
@@ -34,6 +35,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 			},
 		},
 		Spec: batchv1.JobSpec{
+			BackoffLimit:            &backoff,
 			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
@@ -48,7 +50,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 // buildGentianGroupsScript creates Gentian entitlement groups in a tenant realm and
 // ensures the built-in "groups" client scope is available for JWT group claims.
 func buildGentianGroupsScript(realmName string) string {
-	groupLoop := keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -56,10 +58,11 @@ TOKEN=$(curl -sf \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+%s
 
 for GROUP_NAME in ${GENTIAN_GROUP_NAMES}; do
   GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?search=${GROUP_NAME}&exact=true")
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?max=1000")
   keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${GROUP_NAME}"
   if [ -n "${_kj_id}" ]; then
     echo "group ${GROUP_NAME} already exists"
@@ -80,6 +83,5 @@ if [ -z "${GROUPS_SCOPE_ID}" ]; then
 else
   echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
 fi
-`, realmName)
-	return groupLoop
+`, realmName, keycloakShellWaitForRealm("${REALM}"))
 }

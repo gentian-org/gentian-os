@@ -1097,13 +1097,16 @@ wait_for_tenant_ready() {
 
   while true; do
     local failed_jobs
-    # Only consider jobs whose creation timestamp is >= the tenant CR creation time.
+    # Only treat Jobs as failed once Kubernetes marks BackoffLimitExceeded.
+    # Transient pod failures while keycloak-realm-* is still running are normal.
     if [[ -n "${tenant_created_at}" ]]; then
       failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" \
-        -o jsonpath='{range .items[?(@.status.failed>0)]}{.metadata.creationTimestamp}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-        | awk -v cutoff="${tenant_created_at}" '$1 >= cutoff {print $2}' || true)"
+        -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{" "}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Failed")]}{.status}{end}{"\n"}{end}' 2>/dev/null \
+        | awk -v cutoff="${tenant_created_at}" '$1 >= cutoff && $3 == "True" {print $2}' || true)"
     else
-      failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" -o jsonpath='{range .items[?(@.status.failed>0)]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)"
+      failed_jobs="$(kubectl --request-timeout=5s get jobs -n platform-kernel -l "gentianos.io/tenant=${tenant_name}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.conditions[?(@.type=="Failed")]}{.status}{end}{"\n"}{end}' 2>/dev/null \
+        | awk '$2 == "True" {print $1}' || true)"
     fi
     if [[ -n "${failed_jobs}" ]]; then
       local first_failed_job

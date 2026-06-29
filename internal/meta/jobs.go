@@ -25,6 +25,10 @@ import (
 // TTL controller deletes them. Keep short so tenant CPU quotas free quickly.
 const ProvisioningJobTTLSeconds int32 = 600
 
+// ProvisioningJobBackoffLimit allows dependent identity Jobs to survive transient
+// failures while keycloak-realm-* is still running (Jobs are applied in parallel).
+const ProvisioningJobBackoffLimit int32 = 12
+
 // InitJobResources caps CPU/memory for operator-owned provisioning Jobs in
 // platform-kernel. Tenant-scoped init Jobs read tenant.initJob.* from
 // gentian-cluster-config via app-default composition instead.

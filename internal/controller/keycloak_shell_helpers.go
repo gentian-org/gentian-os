@@ -38,6 +38,26 @@ func keycloakShellJSONIDExtractor() string {
 `
 }
 
+// keycloakShellWaitForRealm polls until the tenant realm exists. Crossplane applies
+// all provisioning Jobs from jobs.json at once; dependent Jobs must wait for
+// keycloak-realm-* before calling realm-scoped Admin API endpoints.
+func keycloakShellWaitForRealm(realmExpr string) string {
+	return fmt.Sprintf(`
+_wait_realm=0
+while [ ${_wait_realm} -lt 90 ]; do
+  if curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s" >/dev/null 2>&1; then
+    break
+  fi
+  _wait_realm=$((_wait_realm + 1))
+  sleep 2
+done
+if ! curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s" >/dev/null 2>&1; then
+  echo "ERROR: realm %s not available after waiting" >&2
+  exit 1
+fi
+`, realmExpr, realmExpr, realmExpr)
+}
+
 // keycloakShellRequireID emits shell that assigns outVar from the extractor or exits 1.
 // jsonVar must be a shell expansion such as ${EXISTING}; it is always double-quoted
 // so JSON arrays/objects are not word-split by the shell.
