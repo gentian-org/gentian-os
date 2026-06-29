@@ -110,6 +110,281 @@ print(json.dumps(s))
     fi
 }
 
+# Resolve Keycloak realm SMTP settings from MAIL_SERVICE_MODE.
+# Sets: KC_SMTP_HOST, KC_SMTP_PORT, KC_SMTP_USER, KC_SMTP_PASSWORD,
+#       KC_SMTP_SSL, KC_SMTP_STARTTLS, KC_SMTP_FROM
+# Returns 0 when settings are complete, 1 when SMTP cannot be configured.
+_keycloak_smtp_settings() {
+    local mode="${MAIL_SERVICE_MODE:-external}"
+    local env="${ENV:-dev}"
+    local kernel_domain="${KERNEL_DOMAIN:-}"
+
+    KC_SMTP_HOST=""
+    KC_SMTP_PORT=""
+    KC_SMTP_USER=""
+    KC_SMTP_PASSWORD=""
+    KC_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
+    KC_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
+    KC_SMTP_FROM=""
+
+    [[ -n "${kernel_domain}" ]] || return 1
+
+    case "${mode}" in
+        external)
+            if [[ -z "${EXTERNAL_SMTP_HOST:-}" || -z "${OD_SMTP_RELAY_USERNAME:-}" \
+                || -z "${OD_SMTP_RELAY_PASSWORD:-}" ]]; then
+                return 1
+            fi
+            KC_SMTP_HOST="${EXTERNAL_SMTP_HOST}"
+            KC_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
+            KC_SMTP_USER="${OD_SMTP_RELAY_USERNAME}"
+            KC_SMTP_PASSWORD="${OD_SMTP_RELAY_PASSWORD}"
+            KC_SMTP_FROM="noreply@${kernel_domain}"
+            ;;
+        kernel)
+            if ! declare -F _derive >/dev/null 2>&1; then
+                return 1
+            fi
+            KC_SMTP_HOST="postfix-dev.gentian-${env}.svc.cluster.local"
+            KC_SMTP_PORT="587"
+            KC_SMTP_USER="opendesk-system@${kernel_domain}"
+            KC_SMTP_PASSWORD="$(_derive smtp password)"
+            KC_SMTP_SSL="false"
+            KC_SMTP_STARTTLS="true"
+            KC_SMTP_FROM="noreply@${kernel_domain}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# In-cluster shell fragment: configure realm smtpServer via Keycloak Admin API.
+_keycloak_smtp_configure_shell() {
+    cat <<'EOSMTP'
+              if [ "${SMTP_CONFIGURE}" = "true" ]; then
+                REALM_JSON=$(curl -sf -H "${AUTH}" "${KEYCLOAK_BASE}/admin/realms/${REALM}")
+                SMTP_JSON=$(jq -n \
+                  --arg host "${SMTP_HOST}" \
+                  --arg port "${SMTP_PORT}" \
+                  --arg from "${SMTP_FROM}" \
+                  --arg user "${SMTP_USER}" \
+                  --arg pass "${SMTP_PASSWORD}" \
+                  --arg ssl "${SMTP_SSL}" \
+                  --arg starttls "${SMTP_STARTTLS}" \
+                  '{
+                    host: $host,
+                    port: $port,
+                    from: $from,
+                    fromDisplayName: "Gentian",
+                    auth: "true",
+                    user: $user,
+                    password: $pass,
+                    ssl: $ssl,
+                    starttls: $starttls
+                  }')
+                UPDATED=$(printf '%s' "${REALM_JSON}" | jq --argjson smtp "${SMTP_JSON}" '.smtpServer = $smtp')
+                curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${KEYCLOAK_BASE}/admin/realms/${REALM}" -d "${UPDATED}"
+                echo "Configured realm SMTP (MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}) → ${SMTP_HOST}:${SMTP_PORT}"
+              else
+                echo "Skipping Keycloak SMTP configuration (credentials not available)"
+              fi
+EOSMTP
+}
+
+# Apply keycloak-smtp-credentials Secret used by bootstrap / SMTP-only Jobs.
+_apply_keycloak_smtp_secret() {
+    local ns="${1:-platform-kernel}"
+    local mail_mode="${MAIL_SERVICE_MODE:-external}"
+
+    if ! _keycloak_smtp_settings; then
+        kubectl delete secret keycloak-smtp-credentials -n "${ns}" --ignore-not-found=true \
+            >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    kubectl create secret generic keycloak-smtp-credentials -n "${ns}" \
+        --from-literal=mail_service_mode="${mail_mode}" \
+        --from-literal=smtp_configure="true" \
+        --from-literal=smtp_host="${KC_SMTP_HOST}" \
+        --from-literal=smtp_port="${KC_SMTP_PORT}" \
+        --from-literal=smtp_user="${KC_SMTP_USER}" \
+        --from-literal=smtp_password="${KC_SMTP_PASSWORD}" \
+        --from-literal=smtp_ssl="${KC_SMTP_SSL}" \
+        --from-literal=smtp_starttls="${KC_SMTP_STARTTLS}" \
+        --from-literal=smtp_from="${KC_SMTP_FROM}" \
+        --from-literal=kernel_realm="${KERNEL_REALM:-kernel}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    return 0
+}
+
+# Configure Keycloak kernel realm SMTP (standalone Job; used by update.sh --mail).
+configure_keycloak_realm_smtp() {
+    local ns="platform-kernel"
+    local job_name="keycloak-smtp-configure"
+    local kernel_realm="${KERNEL_REALM:-kernel}"
+
+    if ! kubectl get secret keycloak-admin -n "${ns}" >/dev/null 2>&1; then
+        warn "keycloak-admin Secret missing — cannot configure realm SMTP."
+        return 1
+    fi
+
+    if ! _apply_keycloak_smtp_secret "${ns}"; then
+        warn "SMTP credentials incomplete — set EXTERNAL_SMTP_* + OD_SMTP_RELAY_*" \
+             "(external) or MAIL_SERVICE_MODE=kernel with derived smtp password."
+        return 1
+    fi
+
+    info "Configuring Keycloak realm SMTP (MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE:-external})..."
+
+    kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
+
+    local smtp_shell
+    smtp_shell=$(_keycloak_smtp_configure_shell)
+
+    kubectl apply -f - <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/name: keycloak-smtp-configure
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: configure
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache --quiet curl jq >/dev/null
+              set -eu
+              resolve_keycloak_base() {
+                local base code
+                for base in "\${KEYCLOAK_URL}" "\${KEYCLOAK_URL%/}/auth" "\${KEYCLOAK_URL%/auth}"; do
+                  code=\$(curl -s -o /dev/null -w '%{http_code}' "\${base}/realms/master/.well-known/openid-configuration")
+                  if [ "\${code}" = "200" ]; then
+                    echo "\${base}"
+                    return 0
+                  fi
+                done
+                return 1
+              }
+              KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
+                echo "ERROR: could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+                exit 1
+              }
+              TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \\
+                -H "Content-Type: application/x-www-form-urlencoded" \\
+                --data-urlencode "client_id=admin-cli" \\
+                --data-urlencode "username=\${KEYCLOAK_ADMIN_USERNAME}" \\
+                --data-urlencode "password=\${KEYCLOAK_ADMIN_PASSWORD}" \\
+                --data-urlencode "grant_type=password" | jq -r .access_token)
+              AUTH="Authorization: Bearer \${TOKEN}"
+              REALM="\${KERNEL_REALM}"
+              SMTP_CONFIGURE="\${SMTP_CONFIGURE}"
+              MAIL_SERVICE_MODE="\${MAIL_SERVICE_MODE}"
+              SMTP_HOST="\${SMTP_HOST}"
+              SMTP_PORT="\${SMTP_PORT}"
+              SMTP_USER="\${SMTP_USER}"
+              SMTP_PASSWORD="\${SMTP_PASSWORD}"
+              SMTP_SSL="\${SMTP_SSL}"
+              SMTP_STARTTLS="\${SMTP_STARTTLS}"
+              SMTP_FROM="\${SMTP_FROM}"
+${smtp_shell}
+          env:
+            - name: KEYCLOAK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: url
+            - name: KEYCLOAK_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: password
+            - name: KERNEL_REALM
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: kernel_realm
+            - name: MAIL_SERVICE_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: mail_service_mode
+            - name: SMTP_CONFIGURE
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_configure
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_host
+            - name: SMTP_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_port
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_user
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_password
+            - name: SMTP_SSL
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_ssl
+            - name: SMTP_STARTTLS
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_starttls
+            - name: SMTP_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-smtp-credentials
+                  key: smtp_from
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+EOF
+
+    if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=120s; then
+        error "Keycloak SMTP configure Job failed."
+        kubectl logs -n "${ns}" "job/${job_name}" --tail=40 2>/dev/null || true
+        return 1
+    fi
+
+    kubectl logs -n "${ns}" "job/${job_name}" --tail=5 2>/dev/null || true
+    success "Keycloak realm ${kernel_realm} SMTP configured (${MAIL_SERVICE_MODE:-external})."
+}
+
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
 # an in-cluster Service DNS name and is not reachable from the install host.
 run_keycloak_portal_bootstrap_job() {
@@ -128,14 +403,48 @@ run_keycloak_portal_bootstrap_job() {
 
     info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
 
+    local -a bootstrap_secret_args=(
+        --from-literal=kernel_domain="${kernel_domain}"
+        --from-literal=kernel_realm="${kernel_realm}"
+        --from-literal=username="${username}"
+        --from-literal=email="${email}"
+        --from-literal=password="${password}"
+        --from-literal=platform_superadmin_group="${platform_superadmin_group}"
+    )
+    if _keycloak_smtp_settings; then
+        bootstrap_secret_args+=(
+            --from-literal=smtp_configure=true
+            --from-literal=mail_service_mode="${MAIL_SERVICE_MODE:-external}"
+            --from-literal=smtp_host="${KC_SMTP_HOST}"
+            --from-literal=smtp_port="${KC_SMTP_PORT}"
+            --from-literal=smtp_user="${KC_SMTP_USER}"
+            --from-literal=smtp_password="${KC_SMTP_PASSWORD}"
+            --from-literal=smtp_ssl="${KC_SMTP_SSL}"
+            --from-literal=smtp_starttls="${KC_SMTP_STARTTLS}"
+            --from-literal=smtp_from="${KC_SMTP_FROM}"
+        )
+    else
+        warn "SMTP credentials incomplete — Keycloak invite/reset emails will not send" \
+             "until ./update.sh --mail (set EXTERNAL_SMTP_* or MAIL_SERVICE_MODE=kernel)."
+        bootstrap_secret_args+=(
+            --from-literal=smtp_configure=false
+            --from-literal=mail_service_mode="${MAIL_SERVICE_MODE:-external}"
+            --from-literal=smtp_host=""
+            --from-literal=smtp_port=""
+            --from-literal=smtp_user=""
+            --from-literal=smtp_password=""
+            --from-literal=smtp_ssl="false"
+            --from-literal=smtp_starttls="true"
+            --from-literal=smtp_from=""
+        )
+    fi
+
     kubectl create secret generic portal-bootstrap-credentials -n "${ns}" \
-        --from-literal=kernel_domain="${kernel_domain}" \
-        --from-literal=kernel_realm="${kernel_realm}" \
-        --from-literal=username="${username}" \
-        --from-literal=email="${email}" \
-        --from-literal=password="${password}" \
-        --from-literal=platform_superadmin_group="${platform_superadmin_group}" \
+        "${bootstrap_secret_args[@]}" \
         --dry-run=client -o yaml | kubectl apply -f -
+
+    local smtp_shell
+    smtp_shell=$(_keycloak_smtp_configure_shell)
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
@@ -290,6 +599,8 @@ spec:
                 fi
               fi
 
+${smtp_shell}
+
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
           env:
             - name: KEYCLOAK_URL
@@ -337,6 +648,51 @@ spec:
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: platform_superadmin_group
+            - name: MAIL_SERVICE_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: mail_service_mode
+            - name: SMTP_CONFIGURE
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_configure
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_host
+            - name: SMTP_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_port
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_user
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_password
+            - name: SMTP_SSL
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_ssl
+            - name: SMTP_STARTTLS
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_starttls
+            - name: SMTP_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: smtp_from
           resources:
             requests:
               cpu: 50m

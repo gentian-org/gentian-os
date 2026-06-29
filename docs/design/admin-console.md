@@ -378,7 +378,7 @@ Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-c
 | **P2** | Invite + reset password (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — see [§8.2](#82-p2-status); branded email theme pending Keycloak SMTP |
 | **P3** | Per-user TOTP enablement; required-action flows | **Done** (`gentian-ui`) — see [§8.3](#83-p3-status) |
 | **P4** | **Security policies** UI — password, session, lockout, MFA realm rules (§4.5) | **Done** (`gentian-ui`) — see [§8.4](#84-p4-status) |
-| **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) | Planned |
+| **P5** | **Sessions** UI — list/revoke; auto-revoke on member disable (§4.6) | **Done** (`gentian-ui`) — see [§8.5](#85-p5-status) |
 | **P6** | **Audit** UI — sign-in + admin-action log, export (§4.7) | Planned |
 | **P7** | `admin-notifications` gateway + publish UI | Planned |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
@@ -469,6 +469,21 @@ Last reviewed against `gentian-ui` (`feat/new-ui`).
 | Audit log on policy change | **P6** | BFF mutation audit deferred |
 
 **P4 caveats:** MFA realm rules use required-action sync (not Keycloak authentication-flow binding). `requireTotpMembers: optional` is a policy marker only — enforcement remains per-user via Members (P3). Kernel realm defaults for platform admins use the same API when scoped to `kernel`.
+
+### 8.5 P5 status
+
+Last reviewed against `gentian-ui` (`develop`).
+
+| Item | Status | Location |
+|---|---|---|
+| **List sessions** API | **Done** | `GET /api/v1/admin/sessions`, `GET /api/v1/admin/members/{id}/sessions` |
+| **Revoke session** API | **Done** | `DELETE /api/v1/admin/members/{id}/sessions/{sessionId}` |
+| **Sign out everywhere** API | **Done** | `POST /api/v1/admin/members/{id}/sessions/revoke-all` |
+| **Auto-revoke on disable** | **Done** | `KeycloakAdminStore.update_member` + `MemoryAdminStore.update_member` when `enabled: false` |
+| Admin Console Sessions tab | **Done** | `SessionsSection.tsx` — grouped by member, revoke + sign-out everywhere |
+| Audit log on session revoke | **P6** | BFF mutation audit deferred |
+
+**P5 caveats:** Session list aggregates Keycloak user-session API per member (acceptable for v1 tenant sizes). Offline sessions are not revoked (`isOffline=false`). CAEP / shared-signals push is Stage 2.
 
 ---
 

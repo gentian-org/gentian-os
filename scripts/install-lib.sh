@@ -4213,6 +4213,10 @@ main() {
     print_summary
 }
 
+# Mail delivery helpers (MAIL_SERVICE_MODE, Postfix ConfigMap patching).
+# shellcheck source=scripts/mail-lib.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mail-lib.sh"
+
 # Allow this file to be sourced as a function library without running main().
 # Set GENTIAN_INSTALL_LIB_ONLY=1 before sourcing (done by install.sh).
 [[ "${GENTIAN_INSTALL_LIB_ONLY:-0}" == "1" ]] || main "$@"

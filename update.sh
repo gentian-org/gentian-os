@@ -234,140 +234,8 @@ _kv_secret() {
     success "  ${name}"
 }
 
-# =============================================================================
-# Detect the mail delivery mode that is currently active on the cluster by
-# reading the postfix-dev-values ConfigMap. Returns "external" or "kernel".
-# Falls back to "unknown" when the ConfigMap or the key is absent.
-# =============================================================================
-_detect_deployed_mail_mode() {
-    local cm_yaml
-    cm_yaml=$(kubectl get configmap postfix-dev-values -n "${KERNEL_NAMESPACE}" \
-        -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
-
-    if [[ -z "$cm_yaml" ]]; then
-        echo "unknown"
-        return
-    fi
-
-    # "relayHost:\n  enabled: true" indicates external mode.
-    if echo "$cm_yaml" | grep -qE '^\s+enabled:\s+true'; then
-        echo "external"
-    else
-        echo "kernel"
-    fi
-}
-
-# =============================================================================
-# Build the desired postfix-dev-values YAML snippet for the given mode.
-# External mode: relay credentials + SASL auth.
-# Kernel mode:   relay disabled; Dovecot LMTP transport maps.
-# =============================================================================
-_postfix_dev_values_yaml() {
-    local mode="$1"
-    local ldap_host="nubus-dev-ldap-server-primary.${KERNEL_NAMESPACE}.svc.cluster.local"
-    local lmtp_target="dovecot-dev.${KERNEL_NAMESPACE}.svc.cluster.local"
-
-    if [[ "$mode" == "external" ]]; then
-        local relay_host="${EXTERNAL_SMTP_HOST:-smtp.gmail.com}"
-        local relay_port="${EXTERNAL_SMTP_PORT:-587}"
-        cat <<YAML
-postfix:
-  hostname: "postfix-dev"
-
-  ldap:
-    host: "${ldap_host}"
-
-  relayHost:
-    enabled: true
-    host: ${relay_host}
-    port: ${relay_port}
-    disableMXLookup: true
-    authentication:
-      enabled: true
-      username:
-        value: "placeholder"
-      password:
-        value: "placeholder"
-
-  smtpSASLAuthEnable: "yes"
-  relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-
-resources:
-  limits:
-    cpu: "500m"
-    memory: 256Mi
-  requests:
-    cpu: 50m
-    memory: 64Mi
-YAML
-    else
-        # kernel mode — LMTP delivery via Dovecot
-        cat <<YAML
-postfix:
-  hostname: "postfix-dev"
-
-  ldap:
-    host: "${ldap_host}"
-
-  relayHost:
-    enabled: false
-
-  smtpSASLAuthEnable: "no"
-  relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-
-  ldapVirtualMailboxDomains:
-    server: "ldap://${ldap_host}:389"
-    searchBase: "cn=domain,cn=virtual,cn=postfix,cn=mail,cn=univention,dc=swp-ldap,dc=internal"
-    queryFilter: "(|(&(objectClass=organizationalUnit)(ou=%d))(&(objectClass=univentionMailDomainname)(cn=%d)))"
-    resultAttribute: "ou"
-    bindDn: "uid=ldapsearch_postfix,cn=users,dc=swp-ldap,dc=internal"
-    bindPw: "placeholder"
-    version: 3
-  ldapTransportMaps:
-    server: "ldap://${ldap_host}:389"
-    searchBase: "dc=swp-ldap,dc=internal"
-    queryFilter: "(&(objectClass=univentionMailDomainname)(cn=%s))"
-    resultAttribute: "cn"
-    resultFormat: "lmtp:${lmtp_target}:24"
-    bindDn: "uid=ldapsearch_postfix,cn=users,dc=swp-ldap,dc=internal"
-    bindPw: "placeholder"
-    version: 3
-
-resources:
-  limits:
-    cpu: "500m"
-    memory: 256Mi
-  requests:
-    cpu: 50m
-    memory: 64Mi
-YAML
-    fi
-}
-
-# =============================================================================
-# Patch the postfix-dev-values ConfigMap in-cluster to match the desired mode.
-# =============================================================================
-_patch_postfix_configmap() {
-    local mode="$1"
-    local values_yaml
-    values_yaml=$(_postfix_dev_values_yaml "$mode")
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "  [dry-run] Would patch ConfigMap postfix-dev-values (mode=${mode})"
-        return
-    fi
-
-    # Upsert via create --dry-run=client | apply to preserve annotations.
-    kubectl create configmap postfix-dev-values \
-        -n "${KERNEL_NAMESPACE}" \
-        --from-literal="values.yaml=${values_yaml}" \
-        --dry-run=client -o yaml \
-        | kubectl annotate --local -f - \
-            "argocd.argoproj.io/sync-wave=-1" \
-            --dry-run=client -o yaml \
-        | kubectl apply -f - >/dev/null
-    success "  patched postfix-dev-values (mode=${mode})"
-}
+# _detect_deployed_mail_mode, _postfix_dev_values_yaml, _patch_postfix_configmap,
+# install_stage1_mail — see scripts/mail-lib.sh (sourced via install-lib.sh).
 
 # =============================================================================
 # op_mail — reconcile mail configuration per MAIL_SERVICE_MODE
@@ -448,6 +316,15 @@ op_mail() {
     # (kubectl apply) so safe to call on every --mail run when mode=kernel.
     if [[ "${mode}" == "kernel" ]]; then
         deploy_kernel_mail_services
+        _patch_postfix_configmap kernel
+    fi
+
+    # ── 6. Configure Keycloak kernel realm SMTP (invite/reset password emails) ─
+    if [[ "${DRY_RUN}" != "1" ]] \
+        && kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; then
+        # shellcheck source=scripts/portal-login-bootstrap.sh
+        source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+        configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
     fi
 }
 

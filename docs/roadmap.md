@@ -69,7 +69,7 @@ kernel services).
 | **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — [admin-console.md §8.2](design/admin-console.md#82-p2-status) |
 | **P3** | Per-user TOTP enablement | **Done** (`gentian-ui`) — [admin-console.md §8.3](design/admin-console.md#83-p3-status) |
 | **P4** | Security policies — password, session, lockout, MFA realm rules | **Done** (`gentian-ui`) — [admin-console.md §8.4](design/admin-console.md#84-p4-status) |
-| **P5** | Sessions — list/revoke; auto-revoke on member disable | Planned |
+| **P5** | Sessions — list/revoke; auto-revoke on member disable | **Done** (`gentian-ui`) |
 | **P6** | Audit — sign-in + admin-action log, export | Planned |
 | **P7** | `admin-notifications` gateway + publish UI | Planned |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus | Planned |

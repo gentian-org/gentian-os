@@ -1735,6 +1735,7 @@ main_cp() {
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
     apply_suze_xr               # Step 14 — Gentian IdP (Keycloak + OpenFGA) via Suze XR
     install_stage1_operator     # Step 15 — operator with authz bridge
+    install_stage1_mail         # Step 15b — MAIL_SERVICE_MODE (external SMTP or Postfix)
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     install_stage1_portal       # Step 16 — portal OIDC login dogfood
