@@ -141,6 +141,9 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 type TenantReconciler struct {
 	client.Client
+	// APIReader is an optional uncached client for kernel Secret lookups. The
+	// default cached Client can lag behind direct API writes (e.g. envtest).
+	APIReader client.Reader
 	Scheme *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave

@@ -55,9 +55,18 @@ func withNextcloudAdminSecret(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		_ = testClient.Delete(context.Background(), testNextcloudAdminSecret())
 		nextcloudSecretTestMu.Unlock()
 	})
+}
+
+func ensureTestNextcloudAdminSecret(t *testing.T) {
+	t.Helper()
+	secret := testNextcloudAdminSecret()
+	if err := testClient.Get(context.Background(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, secret); err != nil {
+		if err := testClient.Create(context.Background(), secret); err != nil {
+			t.Fatalf("ensure nextcloud-admin Secret: %v", err)
+		}
+	}
 }
 
 func withoutNextcloudAdminSecret(t *testing.T) {
@@ -419,28 +428,26 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	})
 
 	// Delete the tenant.
+	ensureTestNextcloudAdminSecret(t)
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteStorage; mark their jobs.
+	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
 	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", "platform-kernel")
+	go markJobCompleteWhenReady("nc-group-delete-storagedelete", "platform-kernel")
 
-	// S3 delete Job should appear.
 	s3DeleteJob := &batchv1.Job{}
+	ncDeleteJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
+		s3OK := testClient.Get(context.Background(),
 			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "platform-kernel"}, s3DeleteJob) == nil
+		ncOK := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "nc-group-delete-storagedelete", Namespace: "platform-kernel"}, ncDeleteJob) == nil
+		return s3OK && ncOK
 	})
 	if s3DeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
 		t.Errorf("expected tenant label 'storagedelete', got %q", s3DeleteJob.Labels["gentianos.io/tenant"])
 	}
-
-	// Nextcloud delete Job should appear.
-	ncDeleteJob := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "nc-group-delete-storagedelete", Namespace: "platform-kernel"}, ncDeleteJob) == nil
-	})
 	if ncDeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
 		t.Errorf("expected tenant label 'storagedelete' on NC delete job, got %q", ncDeleteJob.Labels["gentianos.io/tenant"])
 	}

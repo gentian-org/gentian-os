@@ -73,6 +73,12 @@ var dataPlaneManualTestTenants = map[string]struct{}{
 	"nccreate":     {},
 }
 
+// deleteCleanupManualTestTenants lists tenants whose delete-cleanup Jobs must not be
+// auto-completed so tests can observe Job creation.
+var deleteCleanupManualTestTenants = map[string]struct{}{
+	"storagedelete": {},
+}
+
 // deleteRetainManualTestTenants lists tenants that assert Retain cleanup Job creation.
 var deleteRetainManualTestTenants = map[string]struct{}{
 	"identretain": {},
@@ -140,6 +146,9 @@ func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
 func shouldAutoCompleteDeleteCleanupJob(jobName string) bool {
 	tenant, ok := deleteCleanupJobTenant(jobName)
 	if !ok {
+		return false
+	}
+	if _, manual := deleteCleanupManualTestTenants[tenant]; manual {
 		return false
 	}
 	_, manual := deleteRetainManualTestTenants[tenant]
@@ -218,6 +227,7 @@ func TestMain(m *testing.M) {
 
 	if err := (&controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
+		APIReader:                mgr.GetAPIReader(),
 		Scheme:                   mgr.GetScheme(),
 		KernelDomain:             "desk.gentian.org",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
@@ -299,6 +309,23 @@ func TestMain(m *testing.M) {
 			"password": []byte("test-kc-password"),
 		},
 	}); err != nil {
+		panic(err)
+	}
+
+	// minio-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
+	if err := testClient.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"endpoint":  []byte("http://minio.platform-kernel.svc:9000"),
+			"accessKey": []byte("minioadmin"),
+			"secretKey": []byte("minioadmin"),
+		},
+	}); err != nil {
+		panic(err)
+	}
+
+	// nextcloud-admin Secret gates nc-group provisioning and delete Jobs.
+	if err := testClient.Create(context.Background(), testNextcloudAdminSecret()); err != nil {
 		panic(err)
 	}
 

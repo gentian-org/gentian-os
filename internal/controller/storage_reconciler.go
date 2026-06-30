@@ -234,9 +234,15 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 // nextcloudKernelAvailable reports whether the shared Nextcloud kernel service is
 // deployed (nextcloud-admin Secret present in platform-kernel).
 func (r *TenantReconciler) nextcloudKernelAvailable(ctx context.Context) bool {
+	key := types.NamespacedName{Name: nextcloudAdminSecret, Namespace: kernelNamespace}
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: nextcloudAdminSecret, Namespace: kernelNamespace}, secret)
-	return err == nil
+	if err := r.Get(ctx, key, secret); err == nil {
+		return true
+	}
+	if r.APIReader != nil {
+		return r.APIReader.Get(ctx, key, secret) == nil
+	}
+	return false
 }
 
 // cleanupOrphanedNextcloudGroupJob removes nc-group Jobs when Nextcloud is not deployed.
