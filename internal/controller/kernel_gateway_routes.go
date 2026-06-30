@@ -139,7 +139,7 @@ func kernelHTTPRouteSpecs(
 					kernelNamespace,
 					kcPort,
 					"/",
-					keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames),
+					keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)...,
 				),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
