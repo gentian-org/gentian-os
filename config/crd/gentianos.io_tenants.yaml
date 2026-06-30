@@ -41,7 +41,7 @@ spec:
 
           Tenant is cluster-scoped and represents a customer organisation. Creating a
           Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
-          creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
+          creation, Keycloak realm, per-app databases/buckets/cache, and
           ArgoCD Application (or Crossplane App claim) CRs for each requested app.
         properties:
           apiVersion:
