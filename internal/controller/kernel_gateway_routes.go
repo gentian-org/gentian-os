@@ -26,6 +26,10 @@ const (
 	kernelRouteCollabora         = "kernel-collabora"
 	kernelRouteIntercom          = "kernel-intercom"
 	kernelRouteArgoCD            = "kernel-argocd"
+	kernelRouteGentianPortal     = "kernel-gentian-portal"
+
+	gentianPortalAPIService = "gentian-portal-gentian-portal-api"
+	gentianPortalWebService = "gentian-portal-gentian-portal-web"
 
 	argocdServerServiceName = "argocd-server"
 )
@@ -82,6 +86,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err := r.ensureArgoCDReferenceGrant(ctx); err != nil {
 		return fmt.Errorf("ensure ArgoCD ReferenceGrant: %w", err)
 	}
+	if err := r.ensureGentianPortalReferenceGrant(ctx); err != nil {
+		return fmt.Errorf("ensure Gentian portal ReferenceGrant: %w", err)
+	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames)
 	expected := make(map[string]struct{}, len(specs))
@@ -117,6 +124,7 @@ func kernelHTTPRouteSpecs(
 	filesHost := fmt.Sprintf("files.%s", kernelDomain)
 	officeHost := fmt.Sprintf("office.%s", kernelDomain)
 	icsHost := fmt.Sprintf("ics.%s", kernelDomain)
+	portalHost := kernelPortalHost(kernelDomain)
 
 	kcService := suzeKeycloakHTTPServiceName()
 	kcPort := int32(8080)
@@ -131,6 +139,13 @@ func kernelHTTPRouteSpecs(
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
 	}
+	// Gentian UI portal (API + SPA) runs in platform-kernel; edge traffic reaches
+	// kernel-public-gateway in servicesNamespace via Cloudflare tunnel.
+	specs = append(specs, kernelHTTPRouteSpec{
+		name:  kernelRouteGentianPortal,
+		host:  portalHost,
+		rules: kernelGentianPortalHTTPRouteRules(),
+	})
 	// Legacy Nubus portal HTTPRoutes (kernelLegacyPortalHTTPRouteSpecs) removed — gentian-ui serves portal.
 	specs = append(specs,
 		kernelHTTPRouteSpec{
@@ -188,6 +203,15 @@ func kernelHTTPRouteSpecs(
 		},
 	)
 	return specs
+}
+
+func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
+	return []gatewayv1.HTTPRouteRule{
+		kernelBackendRulePrefixNS(gentianPortalAPIService, kernelNamespace, 8000, "/api"),
+		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/healthz"),
+		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/readyz"),
+		kernelBackendRulePrefixNS(gentianPortalWebService, kernelNamespace, 8080, "/"),
+	}
 }
 
 func kernelPortalServerDataRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
@@ -368,18 +392,23 @@ func kernelBackendRule(serviceName string, port int32, filters []gatewayv1.HTTPR
 }
 
 func kernelBackendRulePrefix(serviceName string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+	return kernelBackendRulePrefixNS(serviceName, "", port, prefix, filters...)
+}
+
+func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
+	ref := gatewayv1.BackendObjectReference{
+		Name: gatewayv1.ObjectName(serviceName),
+		Port: &p,
+	}
+	if namespace != "" {
+		ns := gatewayv1.Namespace(namespace)
+		ref.Namespace = &ns
+	}
 	rule := gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{
-				BackendRef: gatewayv1.BackendRef{
-					BackendObjectReference: gatewayv1.BackendObjectReference{
-						Name: gatewayv1.ObjectName(serviceName),
-						Port: &p,
-					},
-				},
-			},
+			{BackendRef: gatewayv1.BackendRef{BackendObjectReference: ref}},
 		},
 	}
 	if len(filters) > 0 {
@@ -389,18 +418,23 @@ func kernelBackendRulePrefix(serviceName string, port int32, prefix string, filt
 }
 
 func kernelBackendRuleExact(serviceName string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+	return kernelBackendRuleExactNS(serviceName, "", port, path, filters...)
+}
+
+func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
+	ref := gatewayv1.BackendObjectReference{
+		Name: gatewayv1.ObjectName(serviceName),
+		Port: &p,
+	}
+	if namespace != "" {
+		ns := gatewayv1.Namespace(namespace)
+		ref.Namespace = &ns
+	}
 	rule := gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(path)},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{
-				BackendRef: gatewayv1.BackendRef{
-					BackendObjectReference: gatewayv1.BackendObjectReference{
-						Name: gatewayv1.ObjectName(serviceName),
-						Port: &p,
-					},
-				},
-			},
+			{BackendRef: gatewayv1.BackendRef{BackendObjectReference: ref}},
 		},
 	}
 	if len(filters) > 0 {
@@ -458,6 +492,52 @@ func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Conte
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(referenceGrantGVK)
 	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: argocdNamespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+			return err
+		}
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+func (r *GatewayPlatformReconciler) ensureGentianPortalReferenceGrant(ctx context.Context) error {
+	spec := map[string]interface{}{
+		"from": []interface{}{
+			map[string]interface{}{
+				"group":     gatewayv1.GroupName,
+				"kind":      "HTTPRoute",
+				"namespace": servicesNamespace,
+			},
+		},
+		"to": []interface{}{
+			map[string]interface{}{
+				"group": "",
+				"kind":  "Service",
+			},
+		},
+	}
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(referenceGrantGVK)
+	desired.SetName("allow-kernel-gateway-routes")
+	desired.SetNamespace(kernelNamespace)
+	desired.SetLabels(map[string]string{
+		managedByLabel: managedByValue,
+	})
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(referenceGrantGVK)
+	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: kernelNamespace}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}

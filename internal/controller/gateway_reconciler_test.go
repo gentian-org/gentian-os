@@ -359,8 +359,8 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 8 {
-		t.Fatalf("spec count = %d, want 8", len(specs))
+	if len(specs) != 9 {
+		t.Fatalf("spec count = %d, want 9", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -371,6 +371,17 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
 		t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
+	}
+	portalRoute := buildKernelHTTPRoute(specs[1])
+	if portalRoute.Name != kernelRouteGentianPortal {
+		t.Fatalf("portal route name = %q", portalRoute.Name)
+	}
+	if string(portalRoute.Spec.Hostnames[0]) != "portal.desk.gentian.org" {
+		t.Fatalf("portal host = %v", portalRoute.Spec.Hostnames[0])
+	}
+	ns := portalRoute.Spec.Rules[0].BackendRefs[0].Namespace
+	if ns == nil || string(*ns) != kernelNamespace {
+		t.Fatalf("portal api backend namespace = %v, want %s", ns, kernelNamespace)
 	}
 }
 
