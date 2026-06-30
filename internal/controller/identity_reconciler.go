@@ -646,7 +646,7 @@ esac
 curl -sf -X PUT -H "${AUTH_HEADER}" \
   -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}" \
-  -d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"requiredActions\":[]}"
+  -d "{\"enabled\":true,\"email\":\"${TENANT_ADMIN_EMAIL}\",\"emailVerified\":true,\"firstName\":\"Tenant\",\"lastName\":\"Administrator\",\"requiredActions\":[]}"
 echo "tenant admin user enabled; requiredActions cleared; email=${TENANT_ADMIN_EMAIL}"
 echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
 echo "INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password gentian-os/tenants/${TENANT_NAME}/admin"
