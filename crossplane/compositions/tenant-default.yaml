@@ -198,7 +198,12 @@ spec:
                       app.kubernetes.io/managed-by: gentian-os
                       gentianos.io/netpolicy-type: baseline
                   spec:
-                    podSelector: {}
+                    podSelector:
+                      matchExpressions:
+                        - key: gentianos.io/component
+                          operator: NotIn
+                          values:
+                            - app-init
                     policyTypes:
                       - Ingress
                       - Egress
