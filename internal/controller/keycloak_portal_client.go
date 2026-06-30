@@ -28,7 +28,7 @@ func buildPortalPublicClientScript(realmExpr string) string {
 set -eu
 REALM=%s
 CLIENT_ID=%q
-PORTAL="${PORTAL_ORIGIN%/}"
+PORTAL="${PORTAL_ORIGIN%%/}"
 
 if [ -z "${PORTAL:-}" ]; then
   echo "ERROR: PORTAL_ORIGIN unset" >&2
