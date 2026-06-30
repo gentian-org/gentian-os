@@ -479,10 +479,9 @@ spec:
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
-            {{- $ccSmtpHost := dig "data" "mail.smtpHost" "" $cc }}
+            {{- $smtpHost     := "" }}
+            {{- $ccSmtpHost := dig "mail.smtpHost" "" $ccData }}
             {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
-            {{- end }}
             {{- if not $smtpHost }}
             {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
             {{- end }}
