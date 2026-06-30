@@ -74,6 +74,21 @@ spec:
                   - key: gentianos.io/oidc-catalog
                     type: Value
                     value: opendesk
+            # Optional portal-bridge SSO helper page shipped with the AppProfile catalogue.
+            - kind: ConfigMap
+              into: portalBridgeSso
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+                  - key: gentianos.io/asset
+                    type: Value
+                    value: portal-bridge-sso
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -731,7 +746,33 @@ spec:
                 name: kubernetes
             {{- end }}
 
-
+            {{- /* Copy optional portal-bridge SSO helper into the tenant namespace. */}}
+            {{- $portalSsoRes := dig "portalBridgeSso" list $extraRes }}
+            {{- if gt (len $portalSsoRes) 0 }}
+            {{- $ssoCM := index $portalSsoRes 0 }}
+            {{- $ssoData := dig "data" dict $ssoCM }}
+            {{- if gt (len $ssoData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-portal-bridge-sso-cm
+              name: {{ $xrName }}-portal-bridge-sso-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-portal-bridge-sso
+                    namespace: {{ $ns }}
+                  data:
+                    {{ toYaml $ssoData | nindent 20 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
 
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
             {{- $extraVals = $extraVals | toJson | fromJson }}
