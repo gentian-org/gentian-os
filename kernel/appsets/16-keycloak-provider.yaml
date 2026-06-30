@@ -1,0 +1,51 @@
+---
+# Keycloak provider-keycloak bootstrap: admin credentials + ProviderConfig.
+#
+# Required for tenant app OIDC Client MRs created by app-default (realm per tenant).
+# The full opendesk client catalogue in keycloak-config/manifests/<env>/ remains
+# disabled while OpenDesk/Nubus is replaced (see kernel/appsets/disabled/).
+#
+# Wave 16: after Keycloak IDP (09-suze) and before tenant app reconciliation.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-keycloak-provider
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "16"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+  template:
+    metadata:
+      name: "keycloak-provider-{{.env}}"
+      annotations:
+        argocd.argoproj.io/sync-wave: "16"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: feat/new-security
+        path: "kernel/services/keycloak-config/manifests/{{.env}}/provider"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: crossplane-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+          - CreateNamespace=false
+          - ServerSideApply=true

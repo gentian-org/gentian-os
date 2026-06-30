@@ -404,6 +404,11 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return res, err
 	}
 
+	// MAC policies before app Compositions emit db-init/s3-init Jobs (need OpenBao egress).
+	if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Bootstrap side-effects retained until moved into tenant-default.
 	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
@@ -471,10 +476,6 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if _, err := r.ensureIntegrationBindings(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

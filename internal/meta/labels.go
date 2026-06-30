@@ -27,10 +27,16 @@ const (
 	NetPolicyTypeLabel = "gentianos.io/netpolicy-type"
 	NetPolicyBaseline  = "baseline"
 	NetPolicyKernel    = "kernel-access"
+	NetPolicyAppInit   = "app-init-access"
 	NetPolicyContract  = "contract-allow"
 
+	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
+	ComponentLabel = "gentianos.io/component"
+	// AppInitComponentValue marks bootstrap Jobs (db-init, s3-init) that need OpenBao + kernel egress.
+	AppInitComponentValue = "app-init"
+
 	// UMCFrontendComponent marks portal redirect resources owned by the shared kernel portal.
-	UMCFrontendComponentLabel = "gentianos.io/component"
+	UMCFrontendComponentLabel = ComponentLabel
 	UMCFrontendComponentValue = "umc-frontend"
 
 	EnvoyGatewayInstallNamespace = "envoy-gateway-system"

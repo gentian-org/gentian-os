@@ -238,6 +238,53 @@ spec:
                       {{- end }}
 
             ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-networkpolicy-app-init
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: networkpolicy-app-init
+            spec:
+              providerConfigRef:
+                name: kubernetes
+              forProvider:
+                manifest:
+                  apiVersion: networking.k8s.io/v1
+                  kind: NetworkPolicy
+                  metadata:
+                    name: app-init-access
+                    namespace: {{ $ns }}
+                    labels:
+                      gentianos.io/tenant: {{ $tenant }}
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/netpolicy-type: app-init-access
+                  spec:
+                    podSelector:
+                      matchLabels:
+                        gentianos.io/component: app-init
+                    policyTypes:
+                      - Egress
+                    egress:
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $openbaoNs }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $infraNs }}
+                      {{- if $servicesNs }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: {{ $servicesNs }}
+                      {{- end }}
+                      - to:
+                          - namespaceSelector:
+                              matchLabels:
+                                kubernetes.io/metadata.name: platform-kernel
+
+            ---
             apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
             metadata:
@@ -345,6 +392,7 @@ spec:
             - namespace
             - limitrange
             - networkpolicy
+            - networkpolicy-app-init
             - vault-policy
           # Keycloak realm before other identity Jobs; identity before App Compositions.
           # job-keycloak-(admin|…)-.* deliberately excludes job-keycloak-realm-* —

@@ -31,11 +31,14 @@ func TestBuildDesired_BaselineOnly(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 1 {
-		t.Fatalf("expected 1 baseline policy, got %d", len(policies))
+	if len(policies) != 2 {
+		t.Fatalf("expected baseline + app-init policies, got %d", len(policies))
 	}
 	if policies[0].Name != "tenant-isolation" {
 		t.Fatalf("expected tenant-isolation, got %q", policies[0].Name)
+	}
+	if policies[1].Name != "app-init-access" {
+		t.Fatalf("expected app-init-access, got %q", policies[1].Name)
 	}
 	if len(policies[0].Spec.Egress) < 1 {
 		t.Fatal("expected DNS egress on baseline")
@@ -70,7 +73,7 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 3 {
-		t.Fatalf("expected baseline + kernel + contract policies, got %d", len(policies))
+	if len(policies) != 4 {
+		t.Fatalf("expected baseline + app-init + kernel + contract policies, got %d", len(policies))
 	}
 }
