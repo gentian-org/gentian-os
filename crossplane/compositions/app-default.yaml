@@ -833,7 +833,7 @@ spec:
                 name: kubernetes
             {{- end }}
 
- resources (when AppProfile requires storage.s3.bucketPerTenant) */}}
+            {{- /* ── Emit S3-init resources (when AppProfile requires storage.s3.bucketPerTenant) */}}
             {{- /* Provisions a per-tenant MinIO user + bucket and writes credentials            */}}
             {{- /* to OpenBao at tenants/<tenant>/apps/<app>/s3. Idempotent on retries.         */}}
             {{- $storageReqs := default dict $kr.storage }}
