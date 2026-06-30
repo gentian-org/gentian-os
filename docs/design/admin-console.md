@@ -496,9 +496,9 @@ Last reviewed against `gentian-ui` (`develop`).
 | **BFF mutation audit** | **Done** | `record_admin_audit()` on Members, Groups, Security, Sessions mutations |
 | **Keycloak sign-in events** | **Done** | `KeycloakAuditFetcher` merges realm user/admin events when `KEYCLOAK_ADMIN_*` configured |
 | Admin Console Audit tab | **Done** | `AuditSection.tsx` — filters, table, CSV/JSON export |
-| Durable audit store / retention | **Done (v1)** | PostgreSQL `admin_audit_events` when `DATABASE_URL` is set; falls back to in-memory without it |
+| Durable audit store / retention | **Done (v1)** | PostgreSQL `admin_audit_events` in the kernel `gentian_shell` database (provisioned with each tenant) |
 
-**P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. **BFF-recorded admin actions** are stored in PostgreSQL table `admin_audit_events` when the portal API has `DATABASE_URL` set (see `docker-compose.dev.yaml`); without it, the API falls back to in-process memory (lost on restart). Sign-in events are still fetched live from Keycloak at query time and are not duplicated into the database. Cluster retention policy is not yet enforced.
+**P6 caveats:** Keycloak must have user/admin events enabled on the realm for sign-in rows to appear. **BFF-recorded admin actions** are stored in PostgreSQL table `admin_audit_events` in the kernel `gentian_shell` database (see `gentian-portal-db` Secret / `DATABASE_URL`). Sign-in events are still fetched live from Keycloak at query time and are not duplicated into the database. Cluster retention policy is not yet enforced.
 
 ### 8.7 P7 status
 
@@ -510,7 +510,7 @@ Last reviewed against `gentian-ui` (`develop`).
 | **Admin list** API | **Done** | `GET /api/v1/admin/notifications` |
 | **Inbox** API | **Done** | `GET /api/v1/notifications/inbox`, `POST /api/v1/notifications/{id}/dismiss` |
 | **Audience extension** | **Done** | `gentianaudience` (`scope`, `tenant`, `groups`) on CloudEvent + REST |
-| **Durable storage** | **Done (v1)** | PostgreSQL `admin_notifications` + `admin_notification_dismissals` when `DATABASE_URL` set |
+| **Durable storage** | **Done (v1)** | PostgreSQL `admin_notifications` + `admin_notification_dismissals` in `gentian_shell` |
 | Admin Console Notifications tab | **Done** | `NotificationsSection.tsx` — publish form + history |
 | Shell notification tray | **Done** | `NotificationInbox.tsx` — bell + dismiss in `AppMenu` |
 | External consumers | **Deferred** | Email/Matrix consumers not wired in v1 |

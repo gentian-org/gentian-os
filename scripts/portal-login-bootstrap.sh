@@ -908,6 +908,14 @@ install_gentian_portal_secrets() {
         secret_args+=(--from-literal=OPENFGA_API_TOKEN="${openfga_token}")
     fi
 
+    if kubectl get secret gentian-portal-db -n "${ns}" >/dev/null 2>&1; then
+        local database_url
+        database_url=$(kubectl get secret gentian-portal-db -n "${ns}" -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
+        if [[ -n "${database_url}" ]]; then
+            secret_args+=(--from-literal=DATABASE_URL="${database_url}")
+        fi
+    fi
+
     kubectl create secret generic gentian-portal-secrets -n "${ns}" \
         "${secret_args[@]}" \
         --dry-run=client -o yaml | kubectl apply -f -

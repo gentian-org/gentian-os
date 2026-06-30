@@ -48,6 +48,16 @@ const (
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	portalShellDone, err := r.ensurePortalShellDatabase(ctx)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure portal shell database: %w", err)
+	}
+	if !portalShellDone {
+		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
+			"ProvisioningPortalShell", "Waiting for portal shell PostgreSQL database")
+		return ctrl.Result{RequeueAfter: databaseRequeueAfter}, nil
+	}
+
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -55,7 +65,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 
 	if len(pgApps) == 0 {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
-			"NoDatabaseRequired", "No apps require PostgreSQL provisioning")
+			"PortalShellReady", "Portal shell database ready; no app databases required")
 		return ctrl.Result{}, nil
 	}
 

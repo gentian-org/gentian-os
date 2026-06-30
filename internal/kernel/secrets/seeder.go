@@ -142,6 +142,29 @@ type DatabaseCreds struct {
 	Password string
 }
 
+// SeedKernelDatabase derives a kernel-scoped database password and writes the
+// connection record under gentian-os/kernel/database/{category}.
+func (s *Seeder) SeedKernelDatabase(ctx context.Context, category string, conn DatabaseCreds) (DatabaseCreds, error) {
+	salt := KernelPath("database", category)
+	if conn.Password == "" {
+		conn.Password = s.gen(salt, "password", 40)
+	}
+	got, err := s.seedAndRead(ctx, salt, map[string]string{
+		"host":     conn.Host,
+		"port":     conn.Port,
+		"name":     conn.Name,
+		"user":     conn.User,
+		"password": conn.Password,
+	})
+	if err != nil {
+		return DatabaseCreds{}, fmt.Errorf("seed kernel database(%s): %w", category, err)
+	}
+	return DatabaseCreds{
+		Host: got["host"], Port: got["port"], Name: got["name"],
+		User: got["user"], Password: got["password"],
+	}, nil
+}
+
 // SeedDatabase derives the role password and writes the connection record.
 // host/port/name/user are supplied by the caller.
 func (s *Seeder) SeedDatabase(ctx context.Context, tenant, app string, conn DatabaseCreds) (DatabaseCreds, error) {
