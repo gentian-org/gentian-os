@@ -351,15 +351,7 @@ spec:
           # realm matches both patterns if the broad job-keycloak-.* form is used.
           - sequence:
             - job-keycloak-realm-.*
-            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
+            - job-keycloak-(admin|broker|client|kernel|oidc)-.*
           - sequence:
-            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
-            - app-.*
-          # LDAP OU before remaining LDAP Jobs; LDAP before App Compositions.
-          # job-ldap-(admin|…)-.* excludes job-ldap-ou-* for the same reason.
-          - sequence:
-            - job-ldap-ou-.*
-            - job-ldap-(admin|app|bind|mba|portal)-.*
-          - sequence:
-            - job-ldap-(admin|app|bind|mba|portal)-.*
+            - job-keycloak-(admin|broker|client|kernel|oidc)-.*
             - app-.*

@@ -119,13 +119,10 @@ spec:
             {{- $chart     := $pSpec.chart }}
 
             {{- /* ── Load cluster-config ConfigMap for app init Jobs ────────────── */}}
-            {{- /* Provides ldap.baseDn, udm.url, and secretMode injected as env    */}}
-            {{- /* vars into ldap-search-init Jobs (and future s3/db init Jobs).    */}}
+            {{- /* Provides secretMode and infra endpoints for app init Jobs.       */}}
             {{- $ccRes      := dig "clusterConfig" list $extraRes }}
             {{- $ccCM       := default dict (index $ccRes 0) }}
             {{- $ccData     := dig "data" dict $ccCM }}
-            {{- $ldapBaseDn    := dig "ldap.baseDn"    "" $ccData }}
-            {{- $udmUrl        := dig "udm.url"        "" $ccData }}
             {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
             {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
             {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
@@ -260,27 +257,7 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- /* LDAP */}}
-            {{- if $vm.ldap }}
-            {{- $ldapPath := printf "gentian-os/tenants/%s/apps/%s/ldap" $tenant $app }}
-            {{- if $vm.ldap.hostKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-host"          "remoteRef" (dict "key" $ldapPath "property" "host")) }}
-            {{- end }}
-            {{- if $vm.ldap.portKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-port"          "remoteRef" (dict "key" $ldapPath "property" "port")) }}
-            {{- end }}
-            {{- if $vm.ldap.baseDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base-dn")) }}
-            {{- end }}
-            {{- if $vm.ldap.bindDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind-dn")) }}
-            {{- end }}
-            {{- if $vm.ldap.bindPasswordKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind-password")) }}
-            {{- end }}
-            {{- end }}
-
-            {{- /* App-internal secrets (AppProfile.spec.appSecrets) */}}
+ secrets (AppProfile.spec.appSecrets) */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
             {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
@@ -467,30 +444,7 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- if $vm.ldap }}
-            {{- if $vm.ldap.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.hostKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-host"))) }}
-            {{- end }}
-            {{- if $vm.ldap.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.portKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-port"))) }}
-            {{- end }}
-            {{- if $vm.ldap.baseDnKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.baseDnKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-base-dn"))) }}
-            {{- end }}
-            {{- if $vm.ldap.bindDnKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindDnKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-dn"))) }}
-            {{- end }}
-            {{- if $vm.ldap.bindPasswordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindPasswordKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-password"))) }}
-            {{- end }}
-            {{- end }}
-
-            {{- /* App-internal secrets */}}
+ */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
             {{- $relSet = append $relSet (dict "name" $s.valuePath
@@ -507,8 +461,6 @@ spec:
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
             {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
-            {{- /*   ${LDAP_HOST}        — UCS LDAP service (from cluster-config)  */}}
-            {{- /*   ${LDAP_BASE_DN}     — LDAP base DN (from cluster-config)     */}}
             {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
@@ -528,15 +480,6 @@ spec:
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
             {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
-            {{- $ldapServer  := "" }}
-            {{- $ldapBaseDn  := "" }}
-            {{- $smtpHost    := "" }}
-            {{- if gt (len $clusterCfgs) 0 }}
-            {{- $cc := index $clusterCfgs 0 }}
-            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
-            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
-            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
-            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
             {{- $ccSmtpHost := dig "data" "mail.smtpHost" "" $cc }}
             {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
             {{- end }}
@@ -551,8 +494,6 @@ spec:
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
-            {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
-            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
             {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
             {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
             {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
@@ -892,168 +833,7 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
-            {{- /* Provisions a per-tenant LDAP search user in UDM and writes its          */}}
-            {{- /* credential to OpenBao. Runs once; idempotent on retries.                */}}
-            {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}
-            {{- if and $ldapReqs.search $ldapBaseDn $udmUrl }}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-sa
-              name: {{ $xrName }}-ldap-init-sa
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ServiceAccount
-                  metadata:
-                    name: app-init
-                    namespace: {{ $ns }}
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-cm
-              name: {{ $xrName }}-ldap-init-cm
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
-                  metadata:
-                    name: {{ $app }}-ldap-init
-                    namespace: {{ $ns }}
-                  data:
-                    init.sh: |
-                      #!/bin/sh
-                      set -eu
-                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
-                        | jq -r '.auth.client_token')
-                      EXISTING=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap" \
-                        2>/dev/null || echo '{}')
-                      if echo "${EXISTING}" | jq -e '.data.data."bind-password"' >/dev/null 2>&1; then
-                        echo "[ldap-init] credential already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
-                      if [ "${SECRET_MODE}" = "random" ]; then
-                        PASSWORD=$(openssl rand -hex 32)
-                      else
-                        MASTER=$(curl -sf \
-                          -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
-                          | jq -r '.data.data.value')
-                        PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
-                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
-                      fi
-                      NUBUS=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/identity/nubus")
-                      ADMIN_PW=$(echo "${NUBUS}" | jq -r '.data.data.admin_password')
-                      USERNAME="ldapsearch-${TENANT}-${APP}"
-                      BIND_DN="uid=${USERNAME},cn=users,${LDAP_BASE_DN}"
-                      DN_ENC=$(printf '%s' "${BIND_DN}" | jq -Rr @uri)
-                      HTTP_CREATE=$(curl -sf -o /tmp/resp -w '%{http_code}' \
-                        "${UDM_URL}/univention/udm/users/user/" \
-                        -u "Administrator:${ADMIN_PW}" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"properties\":{\"username\":\"${USERNAME}\",\"lastname\":\"LDAP-Search\",\"password\":\"${PASSWORD}\",\"primaryGroup\":\"cn=Domain Service Users,cn=groups,${LDAP_BASE_DN}\"},\"position\":\"cn=users,${LDAP_BASE_DN}\"}" \
-                        2>/dev/null || echo '000')
-                      case "${HTTP_CREATE}" in
-                        201) echo "[ldap-init] UDM user ${USERNAME} created" ;;
-                        422|409)
-                          echo "[ldap-init] UDM user ${USERNAME} already exists — updating password"
-                          curl -sf \
-                            "${UDM_URL}/univention/udm/users/user/${DN_ENC}" \
-                            -u "Administrator:${ADMIN_PW}" \
-                            -X PATCH \
-                            -H 'Content-Type: application/json' \
-                            -d "{\"properties\":{\"password\":\"${PASSWORD}\"}}" >/dev/null ;;
-                        *) echo "[ldap-init] ERROR: UDM create HTTP ${HTTP_CREATE}"; cat /tmp/resp; exit 1 ;;
-                      esac
-                      curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        -H 'Content-Type: application/json' \
-                        -X POST \
-                        -d "{\"data\":{\"bind-dn\":\"${BIND_DN}\",\"bind-password\":\"${PASSWORD}\",\"base-dn\":\"${LDAP_BASE_DN}\"}}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap"
-                      echo "[ldap-init] OpenBao credential written for ${TENANT}/${APP}"
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-job
-              name: {{ $xrName }}-ldap-init-job
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: batch/v1
-                  kind: Job
-                  metadata:
-                    name: {{ $app }}-ldap-init
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/tenant: {{ $tenant }}
-                      gentianos.io/app: {{ $app }}
-                  spec:
-                    ttlSecondsAfterFinished: 600
-                    backoffLimit: 10
-                    template:
-                      spec:
-                        serviceAccountName: app-init
-                        restartPolicy: OnFailure
-                        volumes:
-                          - name: scripts
-                            configMap:
-                              name: {{ $app }}-ldap-init
-                        containers:
-                          - name: ldap-search-init
-                            image: {{ $appInitImage | quote }}
-                            command:
-                              - /bin/sh
-                              - /scripts/init.sh
-                            volumeMounts:
-                              - name: scripts
-                                mountPath: /scripts
-                            env:
-                              - name: TENANT
-                                value: {{ $tenant }}
-                              - name: APP
-                                value: {{ $app }}
-                              - name: BAO_ADDR
-                                value: "http://openbao.openbao.svc.cluster.local:8200"
-                              - name: UDM_URL
-                                value: {{ $udmUrl | quote }}
-                              - name: LDAP_BASE_DN
-                                value: {{ $ldapBaseDn | quote }}
-                              - name: SECRET_MODE
-                                value: {{ $secretMode | quote }}
-                            resources:
-                              limits:
-                                cpu: {{ $initJobLimitCPU | quote }}
-                                memory: {{ $initJobLimitMem | quote }}
-                              requests:
-                                cpu: {{ $initJobRequestCPU | quote }}
-                                memory: {{ $initJobRequestMem | quote }}
-              providerConfigRef:
-                name: kubernetes
-            {{- end }}
-
-            {{- /* ── Emit S3-init resources (when AppProfile requires storage.s3.bucketPerTenant) */}}
+ resources (when AppProfile requires storage.s3.bucketPerTenant) */}}
             {{- /* Provisions a per-tenant MinIO user + bucket and writes credentials            */}}
             {{- /* to OpenBao at tenants/<tenant>/apps/<app>/s3. Idempotent on retries.         */}}
             {{- $storageReqs := default dict $kr.storage }}
