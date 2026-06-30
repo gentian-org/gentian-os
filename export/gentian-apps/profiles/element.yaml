@@ -215,7 +215,7 @@ spec:
       # Tighter rate limits for non-chat Matrix apps and widgets (NeoBoard etc).
       additionalConfiguration:
         # Chain Element logout into the tenant Keycloak session (openDesk default).
-        logout_redirect_url: "https://id.${KERNEL_DOMAIN}/realms/${TENANT_ID}/protocol/openid-connect/logout?client_id=opendesk-synapse&post_logout_redirect_uri=https%3A%2F%2Fportal.${KERNEL_DOMAIN}"
+        logout_redirect_url: "https://id.${KERNEL_DOMAIN}/auth/realms/${TENANT_ID}/protocol/openid-connect/logout?client_id=opendesk-synapse&post_logout_redirect_uri=https%3A%2F%2Fportal.${KERNEL_DOMAIN}"
         # Required by opendesk-element-web (Nordeck OpenDesk module). Without this
         # block Element throws "value is required" at startup and stays on loading.
         "net.nordeck.element_web.module.opendesk":

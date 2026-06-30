@@ -50,6 +50,7 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile.Spec.KernelRequirements, in.Config); np != nil {
 			out = append(out, np)
 		}
+		out = append(out, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile))
 	}
 
 	for _, binding := range in.Bindings {
@@ -68,6 +69,7 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	}
 	for _, app := range in.Apps {
 		names[kernelPolicyName(app.Profile)] = struct{}{}
+		names[appInternalPolicyName(app.Profile)] = struct{}{}
 	}
 	for _, binding := range in.Bindings {
 		names[contractPolicyName(binding.Name)] = struct{}{}

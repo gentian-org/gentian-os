@@ -21,6 +21,7 @@ import (
 // reconciler tests can substitute an in-memory fake.
 type Writer interface {
 	PutOnce(ctx context.Context, logicalPath string, data map[string]string) error
+	Put(ctx context.Context, logicalPath string, data map[string]string) error
 	Get(ctx context.Context, logicalPath string) (map[string]string, error)
 }
 
@@ -94,17 +95,34 @@ type OIDCCreds struct {
 }
 
 // SeedOIDC derives the OIDC client secret for (tenant, app) from the master,
-// persists the full record, and returns the effective credentials.
+// persists the full record, and returns the effective credentials. Issuer and
+// client-id are refreshed on reconcile; client-secret is write-once.
 func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID string) (OIDCCreds, error) {
 	salt := CategoryPath(tenant, app, "oidc")
+	existing, _ := s.w.Get(ctx, salt)
+	secret := s.gen(salt, "client-secret", 40)
+	if existing != nil {
+		if v := existing["client-secret"]; v != "" {
+			secret = v
+		}
+	}
 	want := map[string]string{
 		"issuer":        issuer,
 		"client-id":     clientID,
-		"client-secret": s.gen(salt, "client-secret", 40),
+		"client-secret": secret,
 	}
-	got, err := s.seedAndRead(ctx, salt, want)
+	var err error
+	if existing == nil {
+		err = s.w.PutOnce(ctx, salt, want)
+	} else {
+		err = s.w.Put(ctx, salt, want)
+	}
 	if err != nil {
 		return OIDCCreds{}, fmt.Errorf("seed oidc(%s/%s): %w", tenant, app, err)
+	}
+	got, err := s.w.Get(ctx, salt)
+	if err != nil {
+		got = want
 	}
 	return OIDCCreds{
 		Issuer:       got["issuer"],

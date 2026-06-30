@@ -93,6 +93,30 @@ func TestKVClientPutOnceIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSeederSeedOIDCUpdatesIssuerPreservesSecret(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
+
+	ctx := context.Background()
+	first, err := s.SeedOIDC(ctx, "demo", "element",
+		"https://id.example/realms/demo", "opendesk-synapse")
+	if err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	second, err := s.SeedOIDC(ctx, "demo", "element",
+		"https://id.example/auth/realms/demo", "opendesk-synapse")
+	if err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+	if second.Issuer != "https://id.example/auth/realms/demo" {
+		t.Fatalf("issuer not updated: %q", second.Issuer)
+	}
+	if first.ClientSecret != second.ClientSecret {
+		t.Fatalf("client secret changed: %q → %q", first.ClientSecret, second.ClientSecret)
+	}
+}
+
 func TestSeederSeedOIDCReturnsStoredSecretOnRepeat(t *testing.T) {
 	srv := newFakeBao()
 	defer srv.Close()

@@ -73,7 +73,7 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 4 {
-		t.Fatalf("expected baseline + app-init + kernel + contract policies, got %d", len(policies))
+	if len(policies) != 5 {
+		t.Fatalf("expected baseline + app-init + kernel + app-internal + contract policies, got %d", len(policies))
 	}
 }

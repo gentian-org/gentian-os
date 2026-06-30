@@ -27,8 +27,9 @@ const (
 	NetPolicyTypeLabel = "gentianos.io/netpolicy-type"
 	NetPolicyBaseline  = "baseline"
 	NetPolicyKernel    = "kernel-access"
-	NetPolicyAppInit   = "app-init-access"
-	NetPolicyContract  = "contract-allow"
+	NetPolicyAppInit     = "app-init-access"
+	NetPolicyAppInternal = "app-internal-access"
+	NetPolicyContract    = "contract-allow"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"

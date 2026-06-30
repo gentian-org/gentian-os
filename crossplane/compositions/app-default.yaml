@@ -509,6 +509,10 @@ spec:
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
+            {{- /* Match tenant kernel-access NetworkPolicy (gentianos.io/app selector). */}}
+            {{- $podLabels := default dict (dig "podLabels" dict $extraVals) }}
+            {{- $podLabels = mergeOverwrite $podLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "podLabels" $podLabels) }}
 
             {{- /* opendesk/Bitnami charts expect imagePullSecrets as a string list. */}}
             {{- $rawImagePull := dig "imagePullSecrets" list $extraVals }}
