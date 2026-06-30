@@ -110,7 +110,6 @@ func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
 	p := makeProfileWithKernel("cat-with-kernel", &gentianov1alpha1.KernelRequirements{
 		Identity: &gentianov1alpha1.IdentityRequirement{
 			OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "test-client"},
-			LDAP: &gentianov1alpha1.LDAPRequirement{Sync: true},
 		},
 		Database: &gentianov1alpha1.DatabaseRequirement{
 			Engine:            gentianov1alpha1.DatabaseEnginePostgreSQL,
@@ -144,7 +143,7 @@ func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
 		t.Fatalf("AppProfile cat-with-kernel not found in catalogue: %v", err)
 	}
 
-	wantLabels := map[string]bool{"oidc": true, "ldap": true, "postgresql": true, "s3": true}
+	wantLabels := map[string]bool{"oidc": true, "postgresql": true, "s3": true}
 	for _, l := range entry.KernelRequirements {
 		if !wantLabels[l] {
 			t.Errorf("unexpected kernel requirement label %q", l)

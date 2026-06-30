@@ -19,8 +19,6 @@ func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 		firstBrokerLoginFlowAlias,
 		`idp-detect-existing-broker-user`,
 		`first broker login flow ${FLOW_ALIAS} ready`,
-		`user-attribute-ldap-mapper`,
-		`ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"`,
 		`oidc-user-attribute-idp-mapper`,
 		`claim.name":"opendesk_username`,
 		`user.attribute":"uid"`,

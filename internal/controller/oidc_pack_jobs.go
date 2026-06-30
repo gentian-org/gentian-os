@@ -32,16 +32,11 @@ type oidcAppConfig struct {
 // oidcPacksNeedEntitlementGroups reports whether any OIDC pack maps a group to a client role.
 func oidcPacksNeedEntitlementGroups(configs []oidcAppConfig) bool {
 	for _, cfg := range configs {
-		if cfg.pack != nil && cfg.pack.LDAPGroup != "" {
+		if cfg.pack != nil && cfg.pack.EntitlementGroup != "" {
 			return true
 		}
 	}
 	return false
-}
-
-// oidcPacksNeedLDAPGroups is a legacy alias retained for call-site grep during LDAP cutover.
-func oidcPacksNeedLDAPGroups(configs []oidcAppConfig) bool {
-	return oidcPacksNeedEntitlementGroups(configs)
 }
 
 func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]oidcAppConfig, error) {

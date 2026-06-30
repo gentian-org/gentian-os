@@ -136,15 +136,6 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 	var jobs []batchv1.Job
 	realmName := keycloakRealmName(tenant)
 
-	// Legacy LDAP provisioning (OpenDesk / Nubus) is disabled — Keycloak is authoritative.
-	// if r.LDAPBase != "" {
-	// 	ldapJobs, err := r.buildLDAPProvisioningJobs(ctx, tenant)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	jobs = append(jobs, ldapJobs...)
-	// }
-
 	identityJobs, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
 	if err != nil {
 		return nil, err
@@ -162,8 +153,6 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {
 	var jobs []batchv1.Job
 
-	// LDAP User Storage Provider disabled — native Keycloak users/groups only.
-	// ldap, err := r.buildRealmLDAPParams(ctx, tenant)
 	var broker *realmBrokerParams
 	if r.KernelRealm != "" && r.KernelDomain != "" {
 		broker = &realmBrokerParams{
@@ -171,7 +160,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 			kernelExternalURL: kernelExternalURL(r.KernelDomain),
 		}
 	}
-	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, nil, broker))
+	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
 
 	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
@@ -192,11 +181,6 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeBrokerFirstLoginFlowJob(tenant, realmName))
 	}
 
-	// Legacy LDAP group import before OIDC packs — replaced by makeGentianGroupsJob.
-	// if len(oidcConfigs) > 0 && r.LDAPBase != "" && oidcPacksNeedLDAPGroups(oidcConfigs) {
-	// 	jobs = append(jobs, *makeKCLDAPGroupSyncJob(tenant, realmName))
-	// }
-
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
 		if err != nil {
@@ -214,18 +198,6 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		}
 		jobs = append(jobs, *job)
 	}
-
-	// Legacy kernel LDAP federation sync (OpenDesk portal login) — disabled.
-	// if r.KernelRealm != "" {
-	// 	adminEmail := tenant.Spec.AdminEmail
-	// 	if adminEmail == "" {
-	// 		adminEmail = fmt.Sprintf("admin-%s@gentian.org", tenant.Name)
-	// 	}
-	// 	jobs = append(jobs, *makeOpendeskAdminEnableJob(tenant, adminEmail, r.KernelRealm))
-	// 	jobs = append(jobs, *makeKernelLDAPSyncJob(tenant, r.KernelRealm))
-	// 	jobs = append(jobs, *makeKCLDAPSyncJob(tenant, realmName))
-	// 	jobs = append(jobs, *makeKCLDAPOpenDeskMappersJob(tenant, realmName))
-	// }
 
 	if r.KernelRealm != "" && r.KernelDomain != "" {
 		externalURL := kernelExternalURL(r.KernelDomain)

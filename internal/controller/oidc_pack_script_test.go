@@ -13,30 +13,17 @@ import (
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
-func TestOIDCPacksNeedLDAPGroups(t *testing.T) {
+func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
 	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
 	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	if !oidcPacksNeedLDAPGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
-		t.Fatal("expected opendesk-jitsi pack to require LDAP groups")
+	if !oidcPacksNeedEntitlementGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
+		t.Fatal("expected opendesk-jitsi pack to require entitlement groups")
 	}
-	if oidcPacksNeedLDAPGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
-		t.Fatal("expected custom client without pack to skip LDAP group gate")
-	}
-}
-
-func TestBuildKCLDAPGroupSyncScript(t *testing.T) {
-	script := buildKCLDAPGroupSyncScript("demo")
-	for _, want := range []string{
-		`REALM="demo"`,
-		"group-mapper",
-		"mappers/${MAPPER_ID}/sync?direction=fedToKeycloak",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("script missing %q", want)
-		}
+	if oidcPacksNeedEntitlementGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
+		t.Fatal("expected custom client without pack to skip entitlement group gate")
 	}
 }
 

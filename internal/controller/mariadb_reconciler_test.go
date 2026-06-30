@@ -263,7 +263,6 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	}
 	// deleteIdentity and deleteLDAP run before deleteMariaDB; mark their jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-mariadelete", "platform-kernel")
 
 	// A delete Job should be created in the kernel namespace.
 	deleteJob := &batchv1.Job{}

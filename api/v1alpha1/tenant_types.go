@@ -81,11 +81,6 @@ type TenantIsolation struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9\-]*[a-z0-9]$`
 	Namespace string `json:"namespace,omitempty"`
 
-	// LDAPOu is the LDAP OU path for this tenant's users and groups.
-	// Defaults to "ou={tenant-name}" under the root DN.
-	// +optional
-	LDAPOu string `json:"ldapOU,omitempty"`
-
 	// KeycloakRealm is the Keycloak realm name for this tenant.
 	// Defaults to the tenant name.
 	// +optional
@@ -252,7 +247,7 @@ type TenantMailStatus struct {
 //
 // Tenant is cluster-scoped and represents a customer organisation. Creating a
 // Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
-// creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
+// creation, Keycloak realm, per-app databases/buckets/cache, and
 // ArgoCD Application (or Crossplane App claim) CRs for each requested app.
 //
 // +kubebuilder:object:root=true

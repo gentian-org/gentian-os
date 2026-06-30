@@ -9,7 +9,7 @@ spec:
     opendesk-openproject:
       scopeName: opendesk-openproject-scope
       clientRole: opendesk-openproject-access-control
-      ldapGroup: managed-by-attribute-Projectmanagement
+      entitlementGroup: managed-by-attribute-Projectmanagement
       fullScopeAllowed: false
       defaultScopes:
         - profile

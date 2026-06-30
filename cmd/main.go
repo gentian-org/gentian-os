@@ -102,8 +102,6 @@ func main() {
 		TenancyMode:              os.Getenv("TENANCY_MODE"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		LDAPServer:               os.Getenv("LDAP_SERVER"),
-		LDAPBase:                 os.Getenv("LDAP_BASE"),
 		CloudflareDNS:            buildCloudflareDNSClient(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),

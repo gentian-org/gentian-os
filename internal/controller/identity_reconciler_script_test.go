@@ -27,21 +27,4 @@ func TestBuildAdminScript_UsesSafeAuthHeaderExpansion(t *testing.T) {
 	if strings.Contains(script, "password reset skipped") {
 		t.Fatal("script must always sync tenant admin password from OpenBao")
 	}
-	if !strings.Contains(script, "federationLink") {
-		t.Fatal("script must skip Keycloak reset-password for LDAP-federated users")
-	}
-	if !strings.Contains(script, "skip Keycloak user PUT") {
-		t.Fatal("script must skip Keycloak user PUT for LDAP-federated users")
-	}
-}
-
-func TestBuildOpendeskAdminEnableScript_LookupByEmail(t *testing.T) {
-	t.Parallel()
-	script := buildOpendeskAdminEnableScript("admin-demo@gentian.org", "kernel")
-	if !strings.Contains(script, `users?email=admin-demo@gentian.org&exact=true`) {
-		t.Fatal("kernel admin enable must look up federated user by portal email")
-	}
-	if strings.Contains(script, `users?username=admin-demo&exact=true`) {
-		t.Fatal("kernel admin enable must not look up by LDAP uid username")
-	}
 }

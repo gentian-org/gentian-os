@@ -460,7 +460,6 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// Retain policy: deleteLDAP preserves the admin user (no delete job created).
 	// Retain policy: deleteIdentity is a no-op for tenants with no OIDC apps (ret-app has none).
 
 	// Wait for Tenant CR to be gone (finalizer completed).
@@ -506,12 +505,6 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		Name: "keycloak-realm-delete-ret-full", Namespace: "platform-kernel",
 	}, identityDeleteJob); err == nil {
 		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
-	}
-	ldapDeleteJob := &batchv1.Job{}
-	if err := testClient.Get(ctx, types.NamespacedName{
-		Name: "ldap-ou-delete-ret-full", Namespace: "platform-kernel",
-	}, ldapDeleteJob); err == nil {
-		t.Error("LDAP OU deletion Job should NOT be created for Retain policy")
 	}
 }
 

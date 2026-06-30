@@ -54,9 +54,6 @@ spec:
                       description: >
                         Override the target namespace name.
                         Defaults to "tenant-{name}" when omitted.
-                    ldapOU:
-                      type: string
-                      description: LDAP OU path for this tenant's users and groups.
                     keycloakRealm:
                       type: string
                       description: Keycloak realm name. Defaults to the tenant name.

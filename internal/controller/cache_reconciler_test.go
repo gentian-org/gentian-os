@@ -323,7 +323,6 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	}
 	// deleteIdentity and deleteLDAP run before deleteCache; mark their jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-cachedelete", "platform-kernel")
 	go markJobCompleteWhenReady("nc-group-delete-cachedelete", "platform-kernel")
 
 	// Redis delete Job should appear.

@@ -395,27 +395,8 @@ spec:
                         type: string
                     type: object
                   identity:
-                    description: Identity specifies OIDC and/or LDAP requirements.
+                    description: Identity specifies OIDC requirements.
                     properties:
-                      ldap:
-                        description: LDAP requests a per-tenant LDAP bind account
-                          in the UCS LDAP directory.
-                        properties:
-                          interval:
-                            description: Interval is the sync interval (e.g., "1h").
-                              Defaults to "1h" when sync is true.
-                            pattern: ^[0-9]+(s|m|h|d)$
-                            type: string
-                          search:
-                            description: |-
-                              Search provisions a per-tenant LDAP search account via the app init Job on first install.
-                              Credentials are written to OpenBao and injected via valueMapping.ldap.
-                            type: boolean
-                          sync:
-                            description: Sync enables periodic user/group sync from
-                              LDAP into the app's own store.
-                            type: boolean
-                        type: object
                       oidc:
                         description: |-
                           OIDC describes the OIDC client to register in the tenant's Keycloak realm.
@@ -574,7 +555,7 @@ spec:
               logo:
                 description: |-
                   Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
-                  The LDAP reconciler writes the resolved value to pathToLogo on portal entries.
+                  The portal reconciler writes the resolved value to pathToLogo on portal entries.
                 pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
                 type: string
               optionalIntegrations:
@@ -617,7 +598,7 @@ spec:
                     allowedGroup:
                       default: Domain Users
                       description: |-
-                        AllowedGroup is the LDAP CN of the group whose members can see this tile.
+                        AllowedGroup is the Keycloak group whose members can see this tile.
                         Defaults to "Domain Users" (all authenticated portal users).
                         Use managed-by-attribute-{Capability} groups (e.g., "managed-by-attribute-Groupware")
                         to restrict to users with a specific provisioned capability.
@@ -818,27 +799,8 @@ spec:
                               type: string
                           type: object
                         identity:
-                          description: Identity specifies OIDC and/or LDAP requirements.
+                          description: Identity specifies OIDC requirements.
                           properties:
-                            ldap:
-                              description: LDAP requests a per-tenant LDAP bind account
-                                in the UCS LDAP directory.
-                              properties:
-                                interval:
-                                  description: Interval is the sync interval (e.g.,
-                                    "1h"). Defaults to "1h" when sync is true.
-                                  pattern: ^[0-9]+(s|m|h|d)$
-                                  type: string
-                                search:
-                                  description: |-
-                                    Search provisions a per-tenant LDAP search account via the app init Job on first install.
-                                    Credentials are written to OpenBao and injected via valueMapping.ldap.
-                                  type: boolean
-                                sync:
-                                  description: Sync enables periodic user/group sync
-                                    from LDAP into the app's own store.
-                                  type: boolean
-                              type: object
                             oidc:
                               description: |-
                                 OIDC describes the OIDC client to register in the tenant's Keycloak realm.
@@ -1111,30 +1073,6 @@ spec:
                         type: string
                       portKey:
                         description: PortKey is the Helm value key for the IMAP port.
-                        type: string
-                    type: object
-                  ldap:
-                    description: LDAP maps LDAP directory values to Helm keys.
-                    properties:
-                      baseDnKey:
-                        description: BaseDNKey is the Helm value key for the LDAP
-                          base DN.
-                        type: string
-                      bindDnKey:
-                        description: BindDNKey is the Helm value key for the LDAP
-                          bind DN.
-                        type: string
-                      bindPasswordKey:
-                        description: |-
-                          BindPasswordKey is the Helm value key for the LDAP bind password.
-                          Supports bracket notation for deeply nested propertiesFiles paths, e.g.:
-                          `appsuite.core-mw.propertiesFiles["/opt/.../ldapauth.properties"].bindDNPassword`
-                        type: string
-                      hostKey:
-                        description: HostKey is the Helm value key for the LDAP host.
-                        type: string
-                      portKey:
-                        description: PortKey is the Helm value key for the LDAP port.
                         type: string
                     type: object
                   oidc:

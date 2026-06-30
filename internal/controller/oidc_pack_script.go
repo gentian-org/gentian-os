@@ -39,12 +39,12 @@ func buildOIDCPackScript(
 
 	groupName := entitlementGroup
 	if groupName == "" {
-		groupName = pack.LDAPGroup
+		groupName = pack.EntitlementGroup
 	}
 
 	scopeLookupBlock := keycloakShellLookupClientScopeID()
 	clientUUIDBlock := keycloakShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
-	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${LDAP_GROUP}")
+	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${ENTITLEMENT_GROUP}")
 
 	return keycloakShellJSONIDExtractor() + keycloakShellScopeIDFromList() + fmt.Sprintf(`set -eu
 REALM=%q
@@ -52,7 +52,7 @@ CLIENT_ID=%q
 SCOPE_NAME=%q
 SCOPE_DESC=%q
 CLIENT_ROLE=%q
-LDAP_GROUP=%q
+ENTITLEMENT_GROUP=%q
 REDIRECT_URIS='%s'
 PUBLIC_CLIENT=%s
 FULL_SCOPE_ALLOWED=%s
@@ -63,7 +63,6 @@ TOKEN=$(curl -sf \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-%s
 
 # --- Client scope ---
 %s
@@ -107,12 +106,12 @@ ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 
 # --- Map entitlement group to client role ---
 GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?max=1000")
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?search=${ENTITLEMENT_GROUP}")
 %s
 curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${GROUP_ID}/role-mappings/clients/${CLIENT_UUID}" \
   -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${CLIENT_ROLE}\"}]" >/dev/null || true
-echo "group ${LDAP_GROUP} mapped to client role ${CLIENT_ROLE}"
+echo "group ${ENTITLEMENT_GROUP} mapped to client role ${CLIENT_ROLE}"
 
 # --- Default client scopes (built-ins + app scope) ---
 for SCOPE in profile email roles web-origins acr ${SCOPE_NAME}; do
@@ -128,7 +127,6 @@ SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
 		string(redirectJSON), publicClient, fullScope,
-		keycloakShellWaitForRealm(realmName),
 		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
 }
 
@@ -279,7 +277,7 @@ if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-link kernel IdP to LDAP users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-link kernel IdP to tenant users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
   echo "first broker login flow ${FLOW_ALIAS} created"
 fi
 
@@ -306,7 +304,7 @@ echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmE
 }
 
 // buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
-// that links kernel IdP identities to existing LDAP users by email without prompting.
+// that links kernel IdP identities to existing tenant users by email without prompting.
 // See Keycloak docs: "Detect existing user first login flow".
 func buildFirstBrokerLoginFlowScript(realmName string) string {
 	return fmt.Sprintf(`set -eu

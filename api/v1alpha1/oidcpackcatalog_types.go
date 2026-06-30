@@ -45,7 +45,7 @@ type OIDCPackCatalogSpec struct {
 	Packs map[string]OIDCPackSpec `json:"packs,omitempty"`
 
 	// ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
-	// provisioned per tenant OU that are not tied to an OIDC pack ldapGroup (e.g.
+	// provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
 	// openDesk portal admin groups).
 	// +optional
 	ExtraManagedByAttributeGroups []string `json:"extraManagedByAttributeGroups,omitempty"`
@@ -77,14 +77,13 @@ type OIDCPackSpec struct {
 	// +optional
 	ScopeDescription string `json:"scopeDescription,omitempty"`
 
-	// ClientRole is the Keycloak client role mapped from the LDAP group.
+	// ClientRole is the Keycloak client role mapped from the entitlement group.
 	// +kubebuilder:validation:Required
 	ClientRole string `json:"clientRole"`
 
-	// LDAPGroup is the managed-by-attribute-* LDAP group (full cn suffix or short
-	// name — the operator normalizes to the short suffix for OU provisioning).
+	// EntitlementGroup is the Keycloak group name mapped to the pack client role.
 	// +kubebuilder:validation:Required
-	LDAPGroup string `json:"ldapGroup"`
+	EntitlementGroup string `json:"entitlementGroup"`
 
 	// PublicClient marks the OIDC client as PUBLIC (PKCE, no secret).
 	// +optional

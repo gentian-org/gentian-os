@@ -18,7 +18,7 @@ type Pack struct {
 	ScopeName        string   `json:"scopeName"`
 	ScopeDescription string   `json:"scopeDescription"`
 	ClientRole       string   `json:"clientRole"`
-	LDAPGroup        string   `json:"ldapGroup"`
+	EntitlementGroup string   `json:"entitlementGroup"`
 	PublicClient     bool     `json:"publicClient"`
 	FullScopeAllowed bool     `json:"fullScopeAllowed"`
 	DefaultScopes    []string `json:"defaultScopes"`
@@ -26,8 +26,8 @@ type Pack struct {
 }
 
 func validatePack(clientID string, pack Pack, templates map[string]MapperTemplate) error {
-	if pack.ScopeName == "" || pack.ClientRole == "" || pack.LDAPGroup == "" {
-		return fmt.Errorf("oidc pack %q: scopeName, clientRole, and ldapGroup are required", clientID)
+	if pack.ScopeName == "" || pack.ClientRole == "" || pack.EntitlementGroup == "" {
+		return fmt.Errorf("oidc pack %q: scopeName, clientRole, and entitlementGroup are required", clientID)
 	}
 	for _, name := range pack.Mappers {
 		if _, ok := templates[name]; !ok {

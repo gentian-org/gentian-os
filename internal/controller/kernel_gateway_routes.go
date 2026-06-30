@@ -18,14 +18,14 @@ import (
 )
 
 const (
-	kernelRouteKeycloakIDP     = "kernel-idp"
-	kernelRouteKernelApex      = "kernel-apex-redirect"
-	kernelRouteCryptpad        = "kernel-cryptpad"
-	kernelRouteCryptpadSandbox = "kernel-cryptpad-sandbox"
-	kernelRouteNextcloud       = "kernel-nextcloud"
-	kernelRouteCollabora       = "kernel-collabora"
-	kernelRouteIntercom        = "kernel-intercom"
-	kernelRouteArgoCD          = "kernel-argocd"
+	kernelRouteKeycloakIDP       = "kernel-idp"
+	kernelRouteKernelApex        = "kernel-apex-redirect"
+	kernelRouteCryptpad          = "kernel-cryptpad"
+	kernelRouteCryptpadSandbox   = "kernel-cryptpad-sandbox"
+	kernelRouteNextcloud         = "kernel-nextcloud"
+	kernelRouteCollabora         = "kernel-collabora"
+	kernelRouteIntercom          = "kernel-intercom"
+	kernelRouteArgoCD            = "kernel-argocd"
 
 	argocdServerServiceName = "argocd-server"
 )
