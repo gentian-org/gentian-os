@@ -197,6 +197,9 @@ spec:
         - registry-credentials
       imagePullSecrets:
       - registry-credentials
+      podLabels:
+        gentianos.io/app: openproject
+        gentianos.io/tenant: demo
     wait: false
   providerConfigRef:
     name: kubernetes
