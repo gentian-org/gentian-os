@@ -257,7 +257,7 @@ spec:
             {{- end }}
             {{- end }}
 
- secrets (AppProfile.spec.appSecrets) */}}
+            {{- /* App-internal secrets (AppProfile.spec.appSecrets) */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
             {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
@@ -444,7 +444,7 @@ spec:
             {{- end }}
             {{- end }}
 
- */}}
+            {{- /* App-internal secrets */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
             {{- $relSet = append $relSet (dict "name" $s.valuePath
