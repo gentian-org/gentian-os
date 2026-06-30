@@ -654,6 +654,25 @@ Environment policies:
 | staging | `newest-build` | Latest push to `staging` |
 | prod | `semver` | Semver tags `v*` only |
 
+### 11.1.1 Portal shell images (`gentian-portal-api` / `gentian-portal-web`)
+
+The Gentian portal shell uses the same Image Updater pattern as the operator:
+
+1. `gentian-ui` CI pushes `ghcr.io/gentian-org/gentian-portal-{api,web}:develop`
+   (and a short-SHA tag) on every merge to `develop`.
+2. The `gentian-portal` Argo CD Application (see
+   `gentian-deployments/clusters/<cluster>/kernel/gentian-portal-<stage>.yaml`)
+   carries Image Updater annotations for both images (`newest-build` on
+   `:develop`).
+3. The `ImageUpdater` CR in `image-updater-<stage>.yaml` includes
+   `gentian-portal` in `applicationRefs`.
+4. New digests trigger a Helm upgrade and rolling restart of API and web
+   Deployments — typically within 30–60 seconds of the CI push.
+
+Keycloak clients and `gentian-portal-secrets` are still created by
+`install.sh` Step 16 (`portal-login-bootstrap.sh`); Argo CD owns only the
+Helm release.
+
 For cluster-to-environment mapping, promotion workflows (with and without a
 staging tier), and `gentian-deployments` layout, see
 [deployment.md](deployment.md).

@@ -1,5 +1,0 @@
-# =============================================================================
-# gentian-ui base-router — dev environment overrides
-# =============================================================================
-# No dev-specific overrides needed at this time.
-# The base-router is stateless; all env-specific settings live in _base.yaml.

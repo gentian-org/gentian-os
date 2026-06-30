@@ -1,6 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2034
-# Portal login bootstrap — Keycloak OIDC client, kernel user, gentian-ui Helm release.
+# Portal login bootstrap — Keycloak OIDC client, kernel user, gentian-portal ArgoCD app.
 # Sourced from install.sh Step 16 (Stage 1 login dogfood).
 
 set -euo pipefail
@@ -856,23 +856,11 @@ _openfga_api_token() {
         | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true
 }
 
-install_gentian_portal_chart() {
+install_gentian_portal_secrets() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
-    local ui_dir="${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}"
-    local chart_dir="${ui_dir}/chart"
     local ns="platform-kernel"
-    local tag="${PORTAL_IMAGE_TAG:-develop}"
-    local web_image="${PORTAL_WEB_IMAGE:-ghcr.io/gentian-org/gentian-portal-web:${tag}}"
-    local api_image="${PORTAL_API_IMAGE:-ghcr.io/gentian-org/gentian-portal-api:${tag}}"
-    local values_file="${SCRIPT_DIR}/kernel/services/gentian-portal-web/values/dev.yaml"
     local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
-    local portal_origin="https://portal.${kernel_domain}"
-
-    if [[ ! -f "${chart_dir}/Chart.yaml" ]]; then
-        error "gentian-ui chart not found at ${chart_dir}"
-        return 1
-    fi
 
     local store_id
     store_id=$(_openfga_runtime_store_id)
@@ -923,35 +911,95 @@ install_gentian_portal_chart() {
     kubectl create secret generic gentian-portal-secrets -n "${ns}" \
         "${secret_args[@]}" \
         --dry-run=client -o yaml | kubectl apply -f -
+}
 
-    info "Installing gentian-portal Helm release..."
-    local helm_args=(
-        --namespace "${ns}"
-        --values "${values_file}"
-        --set kernelDomain="${kernel_domain}"
-        --set kernelRealm="${kernel_realm}"
-        --set gateway.parentGatewayNamespace=platform-kernel
-        --set "api.image.repository=ghcr.io/gentian-org/gentian-portal-api"
-        --set "api.image.tag=${tag}"
-        --set "web.image.repository=ghcr.io/gentian-org/gentian-portal-web"
-        --set "web.image.tag=${tag}"
-        --set "api.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
-        --set "web.image.pullPolicy=${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
-        --set "api.env.ENVIRONMENT=development"
-        --set "api.env.BACKEND_CORS_ORIGINS=${portal_origin}"
-        --set "auth.disabled=false"
-        --wait --timeout 5m
-    )
-    if [[ -n "${store_id}" ]]; then
-        helm_args+=(
-            --set "openfga.apiUrl=http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
-            --set "openfga.storeId=${store_id}"
-        )
+release_gentian_portal_helm_bootstrap() {
+    local ns="platform-kernel"
+    if kubectl get secret -n "$ns" -l "owner=helm,name=gentian-portal" --no-headers 2>/dev/null | grep -q .; then
+        info "Removing bootstrap Helm release metadata (ArgoCD owns gentian-portal now)..."
+        kubectl delete secret -n "$ns" -l "owner=helm,name=gentian-portal" --ignore-not-found
+    fi
+}
+
+apply_gentian_portal_argocd_application() {
+    local gentian_os_branch gentian_ui_branch portal_tag rendered tmpl deployments_app
+    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"
+    portal_tag="${PORTAL_IMAGE_TAG:-develop}"
+    tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-portal-application.yaml.tmpl"
+    rendered="$(mktemp)"
+    deployments_app="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER:-test}/kernel/gentian-portal-${GENTIAN_DEPLOYMENTS_STAGE:-dev}.yaml"
+
+    if [[ -f "${deployments_app}" ]]; then
+        info "Applying gentian-portal ArgoCD Application from ${deployments_app}..."
+        kubectl apply -f "${deployments_app}"
+        return 0
     fi
 
-    helm upgrade --install gentian-portal "${chart_dir}" "${helm_args[@]}"
+    if [[ ! -f "${tmpl}" ]]; then
+        error "gentian-portal Application template not found at ${tmpl}"
+        return 1
+    fi
 
-    success "gentian-portal installed at ${portal_origin}/login"
+    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+        -e "s|%GENTIAN_UI_BRANCH%|${gentian_ui_branch}|g" \
+        -e "s|%PORTAL_IMAGE_TAG%|${portal_tag}|g" \
+        "${tmpl}" >"${rendered}"
+    info "Registering gentian-portal ArgoCD Application (os=${gentian_os_branch}, ui=${gentian_ui_branch}, tag=${portal_tag})..."
+    kubectl apply -f "${rendered}"
+    rm -f "${rendered}"
+}
+
+wait_for_gentian_portal_argocd() {
+    local timeout_sec="${1:-300}"
+    info "Waiting for gentian-portal ArgoCD Application (up to ${timeout_sec}s)..."
+    local elapsed=0
+    local interval=10
+    while (( elapsed < timeout_sec )); do
+        if ! kubectl get application gentian-portal -n argocd >/dev/null 2>&1; then
+            sleep 5
+            elapsed=$((elapsed + 5))
+            continue
+        fi
+        local health sync
+        health=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+        sync=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+        if [[ "${health}" == "Healthy" && "${sync}" == "Synced" ]]; then
+            success "gentian-portal ArgoCD Application is Synced and Healthy."
+            return 0
+        fi
+        printf "  gentian-portal: sync=%s health=%s (%ds/%ds)\n" \
+            "${sync:-unknown}" "${health:-unknown}" "${elapsed}" "${timeout_sec}"
+        sleep "${interval}"
+        elapsed=$((elapsed + interval))
+    done
+    warn "gentian-portal ArgoCD Application did not become Synced/Healthy within ${timeout_sec}s."
+    kubectl get application gentian-portal -n argocd \
+        -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null || true
+    return 1
+}
+
+refresh_gentian_portal_openfga() {
+    local store_id="$1"
+    [[ -n "${store_id}" ]] || return 0
+    local ns="platform-kernel"
+    info "Refreshing portal API with OpenFGA store_id..."
+    install_gentian_portal_secrets
+    kubectl patch secret gentian-portal-secrets -n "${ns}" --type merge \
+        -p "{\"stringData\":{\"OPENFGA_STORE_ID\":\"${store_id}\"}}" 2>/dev/null || true
+    kubectl rollout restart deployment/gentian-portal-gentian-portal-api -n "${ns}" 2>/dev/null || true
+}
+
+install_gentian_portal_chart() {
+    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
+    local portal_origin="https://portal.${kernel_domain}"
+
+    install_gentian_portal_secrets
+    apply_gentian_portal_argocd_application
+    release_gentian_portal_helm_bootstrap
+    wait_for_gentian_portal_argocd 300 || true
+
+    success "gentian-portal registered at ${portal_origin}/login"
 }
 
 install_stage1_portal() {
@@ -991,14 +1039,7 @@ install_stage1_portal() {
         local store_id
         store_id=$(_openfga_runtime_store_id)
         if [[ -n "${store_id}" ]]; then
-            info "Upgrading portal with OpenFGA PEP configuration..."
-            helm upgrade gentian-portal "${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}/chart" \
-                --namespace platform-kernel \
-                --reuse-values \
-                --set "openfga.apiUrl=http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
-                --set "openfga.storeId=${store_id}" \
-                --wait --timeout 3m 2>/dev/null || \
-                warn "Portal OpenFGA upgrade skipped or timed out — login still works; PEP may be deferred."
+            refresh_gentian_portal_openfga "${store_id}"
         fi
     else
         warn "Authz bridge did not publish openfga-runtime — ensure operator uses CI image (GENTIAN_OS_IMAGE_TAG=develop)."

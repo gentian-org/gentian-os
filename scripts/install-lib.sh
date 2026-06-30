@@ -3274,7 +3274,7 @@ create_deployments_git_credentials() {
 configure_github_actions_secrets() {
     if [[ -z "${CI_BOT_PAT:-}" ]]; then
         warn "CI_BOT_PAT not set — skipping GitHub Actions secret upload for image-pin workflows."
-        warn "  Portal/base-router CI can build images but cannot commit pins to gentian-os."
+        warn "  CI_BOT_PAT not configured — gentian-os git automation from Actions may fail."
         warn "  See getting-started.md § GitHub Actions CI and gentian-ui/docs/ci-setup.md."
         return 0
     fi
@@ -4003,7 +4003,7 @@ verify_argocd_apps() {
             [[ -n "$_app" ]] && synced=$((synced + 1))
         done < <(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
-            2>/dev/null | grep -E '^(gentian-os|gentian-appsets|gentian-portal-portal-frontend-)' || true)
+            2>/dev/null | grep -E '^(gentian-os|gentian-appsets|gentian-portal)$' || true)
         healthy=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)

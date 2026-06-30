@@ -928,11 +928,6 @@ op_argocd_bootstrap() {
 
     # Pick up ApplicationSet template changes (ignoreDifferences, etc.) without
     # waiting for gentian-appsets to poll git.
-    local portal_appset="${SCRIPT_DIR}/kernel/appsets/22-gentian-portal.yaml"
-    if [[ -f "${portal_appset}" ]]; then
-        info "Re-applying gentian-portal ApplicationSet..."
-        kubectl apply -f "${portal_appset}"
-    fi
 
     info "Hard-refreshing all ArgoCD Applications..."
     kubectl get applications -n argocd -o name 2>/dev/null \
@@ -945,7 +940,7 @@ op_argocd_bootstrap() {
 }
 
 # =============================================================================
-# op_portal — reconcile Gentian portal login (Keycloak + gentian-portal Helm)
+# op_portal — reconcile Gentian portal login (Keycloak + gentian-portal ArgoCD)
 # =============================================================================
 op_portal() {
     banner "Portal login reconciliation (Stage 1)"
@@ -956,7 +951,7 @@ op_portal() {
     }
 
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would run install_stage1_portal (Keycloak bootstrap + gentian-portal Helm)"
+        info "[dry-run] would run install_stage1_portal (Keycloak bootstrap + gentian-portal ArgoCD)"
         return 0
     fi
 

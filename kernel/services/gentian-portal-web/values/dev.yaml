@@ -1,5 +1,5 @@
-# Gentian shell (React + FastAPI) — Stage 1 login dogfood values.
-# Chart source: gentian-ui/chart (sibling repo or GENTIAN_UI_DIR).
+# Gentian shell (React + FastAPI) — Stage 1 portal values for ArgoCD.
+# Chart source: gentian-ui/chart
 
 kernelDomain: desk.gentian.org
 kernelRealm: kernel
@@ -9,14 +9,19 @@ auth:
 
 api:
   image:
-    pullPolicy: IfNotPresent
+    repository: ghcr.io/gentian-org/gentian-portal-api
+    tag: develop
+    pullPolicy: Always
   env:
     ENVIRONMENT: development
     TENANCY_MODE: multi
+    BACKEND_CORS_ORIGINS: https://portal.desk.gentian.org
 
 web:
   image:
-    pullPolicy: IfNotPresent
+    repository: ghcr.io/gentian-org/gentian-portal-web
+    tag: develop
+    pullPolicy: Always
 
 gateway:
   enabled: true

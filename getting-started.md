@@ -259,35 +259,19 @@ kubectl get applications -n argocd
 kubectl get pods -A
 ```
 
-### GitHub Actions CI (portal / base-router image pin)
+### GitHub Actions CI (gentian-portal images)
 
-`gentian-ui` builds container images on push; reusable workflows in `gentian-os`
-commit the new image tag to `develop` so ArgoCD rolls out the portal.
+`gentian-ui` builds `gentian-portal-api` and `gentian-portal-web` on push to
+`develop`. **Argo CD Image Updater** watches GHCR for new `:develop` digests and
+patches the `gentian-portal` Application so the cluster rolls out automatically
+(no manual `kubectl rollout restart`).
 
-**Credentials:** one fine-grained `CI_BOT_PAT` (Contents write on
-`gentian-org/gentian-os`). Cross-repo `workflow_call` requires the same secret
-on **gentian-ui** so the caller can pass it through; gentian-ui does not use it
-for its own git operations.
+The `gentian-portal` Argo CD Application lives in
+`gentian-deployments/clusters/<cluster>/kernel/gentian-portal-<stage>.yaml`
+and is applied by `install.sh` Step 16 after Keycloak bootstrap.
 
-**During install:** add `CI_BOT_PAT` to `install.secrets.env`. When `install.sh`
-finishes and `gh` is logged in, it runs `scripts/configure-github-actions-secrets.sh`
-to upload `CI_BOT_PAT` to `GITHUB_ACTIONS_OS_REPO` and `GITHUB_ACTIONS_UI_REPO`
-(`install.env`), plus optional `ARGOCD_SERVER` / `ARGOCD_TOKEN` on `gentian-os`.
-
-**After install (manual):**
-
-```bash
-# From gentian-os checkout with install.secrets.env sourced:
-set -a && source install.secrets.env && set +a
-export KERNEL_DOMAIN=your.kernel.domain   # if ARGOCD_SERVER should be derived
-./scripts/configure-github-actions-secrets.sh
-```
-
-**Org policy:** enable *Allow gentian-org actions and reusable workflows* under
-organisation Actions settings so `gentian-ui` can call pin workflows in
-`gentian-os`.
-
-Full pipeline details: [gentian-ui/docs/ci-setup.md](../gentian-ui/docs/ci-setup.md).
+**Optional:** `CI_BOT_PAT` in `install.secrets.env` is still used for other
+automation; portal image rollouts do not require image-pin workflows.
 
 ### Verify the App Store
 
