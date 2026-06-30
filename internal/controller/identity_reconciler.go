@@ -178,6 +178,16 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningPortalBFF", "Waiting for portal BFF client Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+
+		portalClientDone, err := r.ensurePortalPublicClientJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure portal public client Job: %w", err)
+		}
+		if !portalClientDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningPortalPublicClient", "Waiting for portal public OIDC client Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
