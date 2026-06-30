@@ -14,7 +14,7 @@ import (
 )
 
 // kernelTenantBrokerVersion bumps when the kernel→tenant IdP PUT payload changes.
-const kernelTenantBrokerVersion = "1"
+const kernelTenantBrokerVersion = "2"
 
 // kernelPortalBrokerClientID is the OIDC client in each tenant realm used when the
 // shared kernel realm brokers login to that tenant.
@@ -76,8 +76,8 @@ BROKER_REDIRECT="${EXT_BASE}${BROKER_REDIRECT_SUFFIX}"
 # 1. Confidential broker client in the tenant realm (kernel IdP callback).
 BROKER_RESP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-%s
 if echo "${BROKER_RESP}" | grep -q "\"clientId\":\"${BROKER_CLIENT_ID}\""; then
+  %s
   curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients/${BROKER_KC_ID}" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}" >/dev/null

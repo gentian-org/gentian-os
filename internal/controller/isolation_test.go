@@ -266,6 +266,20 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
+	ncSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"url":      []byte("http://nextcloud.platform-kernel.svc.cluster.local"),
+			"username": []byte("admin"),
+			"password": []byte("test-nc-password"),
+		},
+	}
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "nextcloud-admin", Namespace: "platform-kernel"}, ncSecret); err != nil {
+		if err := testClient.Create(ctx, ncSecret); err != nil {
+			t.Fatalf("create nextcloud-admin Secret: %v", err)
+		}
+	}
+
 	pgProfile := newFullAppProfile("del-pgapp", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
 	mariaProfile := newFullAppProfile("del-mariaapp", gentianov1alpha1.DatabaseEngineMariaDB, true, false, true)
 

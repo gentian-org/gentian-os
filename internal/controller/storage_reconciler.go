@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -150,19 +151,20 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		}
 	}
 
-	// Always delete the Nextcloud group — provisioned for every tenant
 	// Nextcloud group delete Job (manifest bridge owns nc-group provisioning).
-	ncDeleteJobName := nextcloudGroupDeleteJobName(tenant.Name)
-	existingNC := &batchv1.Job{}
-	if err := r.Get(ctx, types.NamespacedName{Name: ncDeleteJobName, Namespace: kernelNamespace}, existingNC); errors.IsNotFound(err) {
-		if err := r.Create(ctx, makeNextcloudGroupDeleteJob(tenant)); err != nil {
-			return fmt.Errorf("create Nextcloud delete Job: %w", err)
+	if r.nextcloudKernelAvailable(ctx) {
+		ncDeleteJobName := nextcloudGroupDeleteJobName(tenant.Name)
+		existingNC := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ncDeleteJobName, Namespace: kernelNamespace}, existingNC); errors.IsNotFound(err) {
+			if err := r.Create(ctx, makeNextcloudGroupDeleteJob(tenant)); err != nil {
+				return fmt.Errorf("create Nextcloud delete Job: %w", err)
+			}
+			pending = true
+		} else if err != nil {
+			return err
+		} else if !jobIsComplete(existingNC) {
+			pending = true
 		}
-		pending = true
-	} else if err != nil {
-		return err
-	} else if !jobIsComplete(existingNC) {
-		pending = true
 	}
 
 	if pending {
@@ -227,6 +229,31 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 			},
 		},
 	}
+}
+
+// nextcloudKernelAvailable reports whether the shared Nextcloud kernel service is
+// deployed (nextcloud-admin Secret present in platform-kernel).
+func (r *TenantReconciler) nextcloudKernelAvailable(ctx context.Context) bool {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: nextcloudAdminSecret, Namespace: kernelNamespace}, secret)
+	return err == nil
+}
+
+// cleanupOrphanedNextcloudGroupJob removes nc-group Jobs when Nextcloud is not deployed.
+func (r *TenantReconciler) cleanupOrphanedNextcloudGroupJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.nextcloudKernelAvailable(ctx) {
+		return nil
+	}
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: nextcloudGroupJobName(tenant.Name), Namespace: kernelNamespace}, job)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	prop := metav1.DeletePropagationBackground
+	return r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
 }
 
 // makeNextcloudGroupJob creates a curl Job that provisions a Nextcloud group via

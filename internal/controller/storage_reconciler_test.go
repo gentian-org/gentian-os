@@ -18,16 +18,67 @@ package controller_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// newS3Profile creates a minimal AppProfile that requires an S3 bucket.
+// nextcloudSecretTestMu serializes tests that require presence or absence of the
+// shared nextcloud-admin Secret in platform-kernel.
+var nextcloudSecretTestMu sync.Mutex
+
+func testNextcloudAdminSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"url":      []byte("http://nextcloud.platform-kernel.svc.cluster.local"),
+			"username": []byte("admin"),
+			"password": []byte("test-nc-password"),
+		},
+	}
+}
+
+func withNextcloudAdminSecret(t *testing.T) {
+	t.Helper()
+	nextcloudSecretTestMu.Lock()
+	secret := testNextcloudAdminSecret()
+	if err := testClient.Get(context.Background(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, secret); err != nil {
+		if err := testClient.Create(context.Background(), secret); err != nil {
+			nextcloudSecretTestMu.Unlock()
+			t.Fatalf("create nextcloud-admin Secret: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = testClient.Delete(context.Background(), testNextcloudAdminSecret())
+		nextcloudSecretTestMu.Unlock()
+	})
+}
+
+func withoutNextcloudAdminSecret(t *testing.T) {
+	t.Helper()
+	nextcloudSecretTestMu.Lock()
+	existing := testNextcloudAdminSecret()
+	hadSecret := testClient.Get(context.Background(), types.NamespacedName{Name: existing.Name, Namespace: existing.Namespace}, existing) == nil
+	if hadSecret {
+		if err := testClient.Delete(context.Background(), existing); err != nil {
+			nextcloudSecretTestMu.Unlock()
+			t.Fatalf("delete nextcloud-admin Secret: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		if hadSecret {
+			_ = testClient.Create(context.Background(), testNextcloudAdminSecret())
+		}
+		nextcloudSecretTestMu.Unlock()
+	})
+}
+
 func newS3Profile(name string) *gentianov1alpha1.AppProfile {
 	return &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -111,17 +162,17 @@ func TestStorage_NoStorageApps(t *testing.T) {
 	}
 }
 
-// TestStorage_NextcloudGroupAlwaysCreated verifies that a Tenant with NO storage-requiring
-// apps still gets a Nextcloud group Job — Nextcloud is a kernel service, not app-gated.
-func TestStorage_NextcloudGroupAlwaysCreated(t *testing.T) {
-	t.Parallel()
+// TestStorage_NextcloudGroupSkippedWithoutKernelSecret verifies that nc-group Jobs
+// are not created when the shared Nextcloud kernel service is not deployed.
+func TestStorage_NextcloudGroupSkippedWithoutKernelSecret(t *testing.T) {
+	withoutNextcloudAdminSecret(t)
+
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "nc-always"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "NC Always Co",
 			Domain:      "nc-always.example.com",
 			AdminEmail:  "admin@nc-always.example.com",
-			// Intentionally no Apps — NC group should appear regardless.
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -129,47 +180,17 @@ func TestStorage_NextcloudGroupAlwaysCreated(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	// NC group job must be created even with no apps.
-	job := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "nc-group-nc-always", Namespace: "platform-kernel"}, job) == nil
-	})
-
-	if job.Labels["gentianos.io/tenant"] != "nc-always" {
-		t.Errorf("expected tenant label 'nc-always', got %q", job.Labels["gentianos.io/tenant"])
-	}
-	if len(job.Spec.Template.Spec.Containers) == 0 {
-		t.Fatal("expected container in NC group Job")
-	}
-	// Confirm credentials come from the nextcloud-admin Secret.
-	secretEnvs := make(map[string]string)
-	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
-		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
-		}
-	}
-	for _, required := range []string{"NEXTCLOUD_URL", "NEXTCLOUD_ADMIN_USER", "NEXTCLOUD_ADMIN_PASSWORD"} {
-		if secretEnvs[required] != "nextcloud-admin" {
-			t.Errorf("expected %s from nextcloud-admin Secret, got %q", required, secretEnvs[required])
-		}
-	}
-
-	// StorageReady must still be True/NoStorageRequired (no S3 apps).
-	updated := &gentianov1alpha1.Tenant{}
 	waitFor(t, tenantReadyTimeout, func() bool {
+		updated := &gentianov1alpha1.Tenant{}
 		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nc-always"}, updated)
 		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
 	})
-	var cond *metav1.Condition
-	for i := range updated.Status.Conditions {
-		if updated.Status.Conditions[i].Type == "StorageReady" {
-			cond = &updated.Status.Conditions[i]
-			break
-		}
-	}
-	if cond == nil || cond.Reason != "NoStorageRequired" {
-		t.Errorf("expected StorageReady/NoStorageRequired, got %v", cond)
+
+	job := &batchv1.Job{}
+	err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "nc-group-nc-always", Namespace: "platform-kernel"}, job)
+	if err == nil {
+		t.Fatal("expected nc-group Job to be absent without nextcloud-admin Secret")
 	}
 }
 
@@ -246,7 +267,8 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 // TestStorage_CreatesNextcloudGroupJob verifies that a Tenant with a WebDAV-requiring
 // app creates the Nextcloud group Job in the kernel namespace.
 func TestStorage_CreatesNextcloudGroupJob(t *testing.T) {
-	t.Parallel()
+	withNextcloudAdminSecret(t)
+
 	profile := newWebDAVProfile("webdav-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
@@ -358,7 +380,8 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 // TestStorage_DeleteDeletePolicy_CreatesDeleteJobs verifies that both the S3 delete
 // Job and Nextcloud delete Job are created on DeletionPolicy=Delete.
 func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
-	t.Parallel()
+	withNextcloudAdminSecret(t)
+
 	s3Prof := newS3Profile("s3-app3")
 	if err := testClient.Create(context.Background(), s3Prof); err != nil {
 		t.Fatalf("create S3 AppProfile: %v", err)

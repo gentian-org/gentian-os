@@ -113,7 +113,9 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		jobs = append(jobs, *makeS3BucketJob(tenant, appName))
 	}
 
-	jobs = append(jobs, *makeNextcloudGroupJob(tenant))
+	if r.nextcloudKernelAvailable(ctx) {
+		jobs = append(jobs, *makeNextcloudGroupJob(tenant))
+	}
 
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant)
 	if err != nil {

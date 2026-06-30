@@ -15,7 +15,7 @@ import (
 )
 
 const portalBFFClientID = "gentian-portal-bff"
-const portalBFFClientVersion = "1"
+const portalBFFClientVersion = "2"
 
 func tenantPortalBFFClientJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-portal-bff-%s", tenantName)
@@ -45,9 +45,9 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 EXISTING=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}" || echo "[]")
-%s
 BODY="{\"clientId\":\"${CLIENT_ID}\",\"name\":\"Gentian Portal BFF\",\"protocol\":\"openid-connect\",\"publicClient\":false,\"standardFlowEnabled\":false,\"directAccessGrantsEnabled\":true,\"serviceAccountsEnabled\":false,\"fullScopeAllowed\":true,\"secret\":\"${PORTAL_BFF_CLIENT_SECRET}\"}"
 if echo "${EXISTING}" | grep -q "\"clientId\":\"${CLIENT_ID}\""; then
+  %s
   curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_KC_ID}" \
     -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     -d "${BODY}" >/dev/null
