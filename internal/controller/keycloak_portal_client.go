@@ -46,8 +46,8 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 EXISTING=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}" || echo "[]")
-BODY=$(jq -n --arg portal "${PORTAL}" '{
-  clientId: "%s",
+BODY=$(jq -n --arg portal "${PORTAL}" --arg clientId "${CLIENT_ID}" '{
+  clientId: $clientId,
   name: "Gentian Portal",
   enabled: true,
   publicClient: true,
