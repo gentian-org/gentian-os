@@ -372,6 +372,10 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
 		t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
 	}
+	idNS := idRoute.Spec.Rules[0].BackendRefs[0].Namespace
+	if idNS == nil || string(*idNS) != kernelNamespace {
+		t.Fatalf("id backend namespace = %v, want %s", idNS, kernelNamespace)
+	}
 	portalRoute := buildKernelHTTPRoute(specs[1])
 	if portalRoute.Name != kernelRouteGentianPortal {
 		t.Fatalf("portal route name = %q", portalRoute.Name)

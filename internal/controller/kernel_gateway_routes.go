@@ -134,7 +134,13 @@ func kernelHTTPRouteSpecs(
 			name: kernelRouteKeycloakIDP,
 			host: idHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(kcService, kcPort, keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)),
+				kernelBackendRulePrefixNS(
+					kcService,
+					kernelNamespace,
+					kcPort,
+					"/",
+					keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames),
+				),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
