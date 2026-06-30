@@ -6,7 +6,7 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-element'
+    message: 'Unready resources: app-element, networkpolicy-app-init'
     reason: Creating
     status: "False"
     type: Ready
