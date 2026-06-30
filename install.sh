@@ -655,7 +655,7 @@ seed_secrets_remaining() {
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
 #   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
 #   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
-#   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on feat/new-security.
+#   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on develop.
 #
 # Prerequisites:
 #   - ArgoCD must be installed and the 'gentian' AppProject must exist.
@@ -763,8 +763,8 @@ verify_infra_chart_index() {
     if ((${#missing[@]} > 0)); then
         error "Infra chart repo is missing: ${missing[*]}"
         error "  Index: ${index_url}"
-        error "  Redis/MinIO were added on feat/new-security — merge/push to develop, or:"
-        error "  INFRA_CHART_REPO=https://raw.githubusercontent.com/gentian-org/gentian-os/feat/new-security/charts/infra/packages ./install.sh"
+        error "  Redis/MinIO were added on develop — merge/push to develop, or:"
+        error "  INFRA_CHART_REPO=https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages ./install.sh"
         return 1
     fi
     success "Infra Helm index contains postgresql, mariadb, redis, and minio."
@@ -870,7 +870,7 @@ install_mac_admission() {
 # Step 14 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
 # =============================================================================
 retire_legacy_authz_idp_xr() {
-    # Legacy AuthzIdp claim (renamed to Suze in feat/new-security).
+    # Legacy AuthzIdp claim (renamed to Suze in develop).
     if kubectl get crd authzidps.gentianos.io >/dev/null 2>&1 \
         && kubectl get authzidp dev-authz-idp -n crossplane-system >/dev/null 2>&1; then
         warn "Retiring legacy AuthzIdp claim (renamed to Suze)..."

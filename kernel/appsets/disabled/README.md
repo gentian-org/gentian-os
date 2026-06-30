@@ -1,4 +1,4 @@
-# Disabled ApplicationSets (feat/new-security)
+# Disabled ApplicationSets (develop)
 
 These ApplicationSets are moved out of `kernel/appsets/` so Argo CD does not
 sync them while the OpenDesk/Nubus/Intercom stack is replaced by Keycloak +

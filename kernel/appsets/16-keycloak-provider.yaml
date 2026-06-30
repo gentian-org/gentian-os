@@ -31,7 +31,7 @@ spec:
       project: gentian
       source:
         repoURL: https://github.com/gentian-org/gentian-os
-        targetRevision: feat/new-security
+        targetRevision: develop
         path: "kernel/services/keycloak-config/manifests/{{.env}}/provider"
       destination:
         server: https://kubernetes.default.svc

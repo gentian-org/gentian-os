@@ -24,7 +24,7 @@ spec:
   project: gentian
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: feat/new-security
+    targetRevision: develop
     path: kernel/services/postgresql/manifests/dev
   destination:
     server: https://kubernetes.default.svc
