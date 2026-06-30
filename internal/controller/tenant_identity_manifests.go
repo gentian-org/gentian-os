@@ -209,6 +209,9 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makePortalBFFClientJob(tenant.Name, realmName))
 		portalOrigin := fmt.Sprintf("https://%s", kernelPortalHost(r.KernelDomain))
 		jobs = append(jobs, *makePortalPublicClientJob(tenant.Name, realmName, portalOrigin))
+		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
+			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName))
+		}
 	}
 
 	return jobs, nil

@@ -188,6 +188,16 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningPortalPublicClient", "Waiting for portal public OIDC client Job to complete")
 			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
 		}
+
+		smtpDone, err := r.ensureTenantSMTPJob(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure tenant SMTP Job: %w", err)
+		}
+		if !smtpDone {
+			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+				"ProvisioningTenantSMTP", "Waiting for tenant realm SMTP Job to complete")
+			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		}
 	}
 
 	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
