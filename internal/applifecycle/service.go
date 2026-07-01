@@ -199,13 +199,6 @@ func (s *Service) validateProfile(ctx context.Context, profile string) error {
 	return nil
 }
 
-func profileUsesPostgres(ap *gentianov1alpha1.AppProfile) bool {
-	if ap == nil || ap.Spec.KernelRequirements == nil || ap.Spec.KernelRequirements.Database == nil {
-		return false
-	}
-	return ap.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL
-}
-
 func (s *Service) appClaimExists(ctx context.Context, tenant, profile string) bool {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(appClaimGVK)
