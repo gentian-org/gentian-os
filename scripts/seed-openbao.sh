@@ -36,6 +36,8 @@ set -euo pipefail
 MASTER_PASSWORD="${1:-sovereign-workplace}"
 SMTP_RELAY_USER="${2:-}"
 SMTP_RELAY_PASS="${3:-}"
+REGISTRY_USER="${REGISTRY_USER:-}"
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
