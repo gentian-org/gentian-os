@@ -32,9 +32,6 @@ gateway:
 existingSecret:
   name: gentian-portal-secrets
 
-databaseSecret:
-  name: gentian-portal-db
-
 openfga:
   apiUrl: http://gentian-openfga.platform-kernel.svc.cluster.local:8080
   storeId: ""

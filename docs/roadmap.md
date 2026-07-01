@@ -43,6 +43,19 @@ Deploy a service mesh (Istio or Linkerd) and [SPIFFE/SPIRE](https://spiffe.io/) 
 [ ] Wire mesh policy to IntegrationBinding / future AppGrant tuples
 ```
 
+### MAC hardening: mediated data plane (planned)
+
+Horizon A goal from [new-security-architecture.md](design/new-security-architecture.md): apps and Gentian-native services reach data only through **contract-mediated APIs** that pass the PEP — no standing off-PEP SQL credentials in workload pods. Depends on **AppGrant/AuthZEN** (Stage 2) and **SPIFFE/mesh** (Stage 3).
+
+```
+[ ] Gentian-native stores (portal shell, audit, notifications) — tenant-scoped DB today; add store sidecar / proxy next
+[ ] Postgres proxy pilot on one catalogue app (e.g. app-store)
+[ ] Service/port-scoped kernel egress (Cilium FQDN) replacing coarse infra-namespace allowlists
+[ ] Catalogue-wide: apps connect via localhost proxy; operator holds DATABASE_URL
+```
+
+Per-tenant **`{tenant}_shell`** databases (settings, audit, notifications) are **Done** — same CNPG pattern as catalogue apps; portal API resolves `portal-shell-{tenant}` Secrets.
+
 ---
 
 ## Stage 1 — Identity + authorization (Suze)

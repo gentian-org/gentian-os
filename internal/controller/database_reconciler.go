@@ -48,7 +48,7 @@ const (
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	portalShellDone, err := r.ensurePortalShellDatabase(ctx)
+	portalShellDone, err := r.ensurePortalShellDatabase(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure portal shell database: %w", err)
 	}
