@@ -562,14 +562,29 @@ spec:
               else
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${BODY}"
+                CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
+                  | jq -r '.[0].id // empty')
                 echo "Created client gentian-portal"
+              fi
+
+              GROUPS_SCOPE_ID=""
+              if [ -n "\${CLIENT_ID}" ]; then
+                SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
+                GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
+                if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                  echo "gentian-portal default scope: groups"
+                fi
               fi
 
               USER_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
                 | jq -r '.[0].id // empty')
               USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --arg e "\${PORTAL_EMAIL}" '{
-                username: \$u, email: \$e, enabled: true, emailVerified: true
+                username: \$u, email: \$e, firstName: "Platform", lastName: "Administrator",
+                enabled: true, emailVerified: true
               }')
               if [ -z "\${USER_ID}" ]; then
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
@@ -605,16 +620,6 @@ spec:
               curl -sf -X PUT -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
               echo "User \${PORTAL_USERNAME} joined \${SUPERADMIN_GROUP}"
-
-              if [ -n "\${CLIENT_ID}" ]; then
-                SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
-                GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
-                if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
-                  curl -sf -X PUT -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                  echo "gentian-portal default scope: groups"
-                fi
-              fi
 
               BFF_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal-bff" \\
