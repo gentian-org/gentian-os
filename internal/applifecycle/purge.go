@@ -124,28 +124,6 @@ func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []strin
 	return nil
 }
 
-func (s *Service) cleanupElementSynapseIdentities(ctx context.Context, tenant string) []string {
-	dbName := dbRoleName(tenant, "element")
-	pod, err := s.postgresPod(ctx)
-	if err != nil || pod == "" {
-		return []string{fmt.Sprintf("Postgres pod not found; skipped Synapse identity cleanup for %s", dbName)}
-	}
-	sql := fmt.Sprintf(`
-BEGIN;
-DELETE FROM "%s".access_tokens;
-DELETE FROM "%s".devices;
-DELETE FROM "%s".user_external_ids;
-DELETE FROM "%s".user_threepids;
-DELETE FROM "%s".profiles;
-DELETE FROM "%s".users;
-COMMIT;
-`, dbName, dbName, dbName, dbName, dbName, dbName)
-	if out, err := s.execPostgres(ctx, pod, sql); err != nil || strings.Contains(strings.ToUpper(out), "ERROR") {
-		return []string{fmt.Sprintf("Synapse identity cleanup failed for %s: %s", dbName, out)}
-	}
-	return nil
-}
-
 func (s *Service) postgresPod(ctx context.Context) (string, error) {
 	pods, err := s.clientset.CoreV1().Pods(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "cnpg.io/cluster=postgres",

@@ -18,8 +18,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/provisioning/nextcloud"
-	"github.com/gentian-org/gentian-os/internal/provisioning/privilege"
 )
 
 const (
@@ -212,50 +210,7 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	default:
 		return fmt.Errorf("unsupported privileged role kind %q", role.Kind)
 	}
-
-	switch profileName {
-	case "nextcloud":
-		return r.syncNextcloudPrivilegedGroup(ctx, tenant, role.Name, members)
-	default:
-		return fmt.Errorf("privileged role sync is not implemented for profile %q", profileName)
-	}
-}
-
-func (r *TenantReconciler) syncNextcloudPrivilegedGroup(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	groupName string,
-	members []authz.KeycloakUser,
-) error {
-	nsName := tenantNamespaceName(tenant)
-	adminUser, adminPassword, err := r.readTenantNextcloudAdmin(ctx, nsName)
-	if err != nil {
-		return err
-	}
-	client := &nextcloud.Client{
-		BaseURL:  privilege.NextcloudTenantServiceURL(nsName),
-		Username: adminUser,
-		Password: adminPassword,
-	}
-	return privilege.SyncNextcloudGroup(ctx, members, client, groupName, []string{"admin"})
-}
-
-func (r *TenantReconciler) readTenantNextcloudAdmin(ctx context.Context, tenantNamespace string) (string, string, error) {
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      "nextcloud-sensitive-values",
-		Namespace: tenantNamespace,
-	}, secret); err != nil {
-		if errors.IsNotFound(err) {
-			return "", "", fmt.Errorf("nextcloud admin secret not found in %s", tenantNamespace)
-		}
-		return "", "", err
-	}
-	raw, ok := secret.Data["internal-admin_password"]
-	if !ok || len(raw) == 0 {
-		return "", "", fmt.Errorf("nextcloud admin password missing in %s", tenantNamespace)
-	}
-	return "admin", string(raw), nil
+	return fmt.Errorf("privileged role sync is not implemented for profile %q", profileName)
 }
 
 func (r *TenantReconciler) appPrivilegeSynced(tenant *gentianov1alpha1.Tenant, profileName, fingerprint string) bool {

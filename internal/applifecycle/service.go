@@ -174,8 +174,6 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 	var warnings []string
 	if req.Purge {
 		warnings = s.purge(ctx, tenant, profileCR, req.Profile)
-	} else if req.Profile == "element" && profileUsesPostgres(profileCR) {
-		warnings = append(warnings, s.cleanupElementSynapseIdentities(ctx, req.Tenant)...)
 	}
 
 	return &Result{
