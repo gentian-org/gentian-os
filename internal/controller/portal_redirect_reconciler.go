@@ -30,6 +30,23 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
+var helmReleaseGVK = schema.GroupVersionKind{
+	Group:   "helm.crossplane.io",
+	Version: "v1beta1",
+	Kind:    "Release",
+}
+
+func kernelPortalHost(kernelDomain string) string {
+	if kernelDomain == "" {
+		return ""
+	}
+	return "portal." + kernelDomain
+}
+
+func kernelPortalURL(kernelDomain string) string {
+	return "https://" + kernelPortalHost(kernelDomain) + "/login/"
+}
+
 // ensurePortalRedirect converges tenants onto the shared kernel portal login at
 // portal.<kernel-domain>/login/. Legacy per-tenant portal stacks are removed;
 // tenant effective domains redirect / to the shared login page.
