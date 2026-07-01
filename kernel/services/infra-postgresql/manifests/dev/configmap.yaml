@@ -59,16 +59,6 @@ data:
           user: keycloak_user
         - name: keycloak_extensions
           user: keycloak_extensions_user
-        - name: selfservice
-          user: selfservice_user
-        - name: platform_authsession
-          user: authsession_user
-        - name: guardianmanagementapi
-          user: guardianmanagementapi_user
-        - name: notificationsapi
-          user: notificationsapi_user
-        - name: nextcloud
-          user: nextcloud_user
         - name: openfga
           user: openfga_user
 

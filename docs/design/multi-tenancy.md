@@ -161,7 +161,7 @@ tenant admin vs member are separated, see [iam.md](iam.md) and
 ## 6. Database Isolation
 
 Each app within each tenant gets a database named
-`{databasePrefix}_{app}` (e.g., `gtn_openproject`) with a dedicated
+`{databasePrefix}_{app}` (e.g., `gtn_demo_app`) with a dedicated
 user that has grants limited to that database only. There is no
 shared schema, no cross-app access, no possibility of one tenant
 seeing another's data via SQL.

@@ -55,20 +55,20 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		},
 	}
 	binding := &gentianov1alpha1.IntegrationBinding{}
-	binding.Name = "demo--openproject--file-store"
+	binding.Name = "demo--consumer--file-store"
 	binding.Namespace = "tenant-demo"
 	binding.Spec = gentianov1alpha1.IntegrationBindingSpec{
 		Contract: "file-store",
-		Consumer: gentianov1alpha1.AppEndpoint{App: "openproject", Namespace: "tenant-demo"},
-		Provider: gentianov1alpha1.AppEndpoint{App: "nextcloud", Namespace: "tenant-demo"},
+		Consumer: gentianov1alpha1.AppEndpoint{App: "consumer-app", Namespace: "tenant-demo"},
+		Provider: gentianov1alpha1.AppEndpoint{App: "provider-app", Namespace: "tenant-demo"},
 		Capabilities: []string{"webdav:read"},
 	}
 
 	in := netpolicy.BuildInput{
 		TenantName: "demo",
 		Namespace:  "tenant-demo",
-		Apps:       []gentianov1alpha1.TenantApp{{Profile: "openproject"}},
-		Profiles:   map[string]*gentianov1alpha1.AppProfile{"openproject": profile},
+		Apps:       []gentianov1alpha1.TenantApp{{Profile: "consumer-app"}},
+		Profiles:   map[string]*gentianov1alpha1.AppProfile{"consumer-app": profile},
 		Bindings:   []*gentianov1alpha1.IntegrationBinding{binding},
 		Config:     netpolicy.DefaultConfig(),
 	}

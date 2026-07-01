@@ -3,7 +3,7 @@
 #
 # Required for tenant app OIDC Client MRs created by app-default (realm per tenant).
 # The full Keycloak client catalogue in keycloak-config/manifests/<env>/ remains
-# disabled while OpenDesk/Nubus is replaced (see kernel/appsets/disabled/).
+# Keycloak provider ConfigMap — applied when enabled (see kernel/appsets/disabled/).
 #
 # Wave 16: after Keycloak IDP (09-suze) and before tenant app reconciliation.
 apiVersion: argoproj.io/v1alpha1

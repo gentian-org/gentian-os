@@ -209,34 +209,34 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	}
 }
 
-func TestBuildAppHTTPRouteOXRootRedirect(t *testing.T) {
+func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain:   "webmail",
-		ServiceName: "appsuite",
+		SubDomain:   "app",
+		ServiceName: "ui",
 	}
-	oxProfile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "ox-appsuite",
+			Name: "multi-route-app",
 			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/appsuite/",
-				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/appsuite/api","serviceName":"appsuite-api"}]`,
+				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/ui/",
+				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/ui/api","serviceName":"api"}]`,
 			},
 		},
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "ox-appsuite", oxProfile, ingress, "webmail.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	route := buildAppHTTPRoute(tenant, "tenant-demo", "multi-route-app", profile, ingress, "app.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
 	if len(route.Spec.Rules) != 3 {
 		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
 	}
 	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
-	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/appsuite/" {
+	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/ui/" {
 		t.Fatalf("redirect = %+v", redirect)
 	}
-	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "appsuite-api" {
+	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "api" {
 		t.Fatalf("api backend rule = %+v", route.Spec.Rules[1].BackendRefs)
 	}
-	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "appsuite" {
+	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "ui" {
 		t.Fatalf("ui backend rule = %+v", route.Spec.Rules[2].BackendRefs)
 	}
 }
@@ -265,15 +265,12 @@ func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
-	if policy.Mode != gatewayFrameAncestorsAppend {
+	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "chat")
+	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if !strings.Contains(policy.Origins, "https://pad.demo.desk.gentian.org") {
+	if policy.Origins != "https://portal.desk.gentian.org" {
 		t.Fatalf("origins = %q", policy.Origins)
-	}
-	if !strings.Contains(policy.Origins, "https://files.desk.gentian.org") {
-		t.Fatalf("sandbox origins must include kernel Files host, got %q", policy.Origins)
 	}
 }
 

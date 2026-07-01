@@ -3,7 +3,7 @@
 
 replicaCount: 1
 
-# stage names kernel Helm releases (postfix-dev, nextcloud-dev, …).
+# stage names kernel Helm releases (postfix-dev, keycloak-dev, …).
 stage: dev
 
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).

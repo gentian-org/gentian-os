@@ -30,11 +30,6 @@ func kernelHTTPSHairpinHosts(kernelDomain string) map[string]struct{} {
 		kernelDomain,
 		"portal." + kernelDomain,
 		"id." + kernelDomain,
-		"ics." + kernelDomain,
-		"openproject." + kernelDomain,
-		"webmail." + kernelDomain,
-		"pad." + kernelDomain,
-		"pad-sandbox." + kernelDomain,
 		"argocd." + kernelDomain,
 	}
 	out := make(map[string]struct{}, len(hosts))
@@ -147,13 +142,8 @@ func sortedHairpinHosts(kernelDomain string) []string {
 	return []string{
 		kernelDomain,
 		"argocd." + kernelDomain,
-		"ics." + kernelDomain,
 		"id." + kernelDomain,
-		"openproject." + kernelDomain,
-		"pad-sandbox." + kernelDomain,
-		"pad." + kernelDomain,
 		"portal." + kernelDomain,
-		"webmail." + kernelDomain,
 	}
 }
 

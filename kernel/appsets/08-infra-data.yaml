@@ -5,9 +5,9 @@
 # composition), not by Argo-synced Release CRs. This ApplicationSet syncs only
 # the prerequisites: ExternalSecrets and ConfigMaps in gentian-infra-{env}.
 #
-# MariaDB includes a PostSync grant Job for OX App Suite global privileges.
+# MariaDB is provisioned for tenant catalogue apps via the operator.
 #
-# Sync wave 8: before InfraData claim (install.sh Step 13b) and Nubus (wave 11).
+# Sync wave 8: before InfraData claim (install.sh Step 13b).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

@@ -94,9 +94,9 @@ Environment / ~/.gentian/config:
 
 Examples:
   kubectl gentian apps list
-  kubectl gentian apps install openproject --tenant gtn-demo
-  kubectl gentian apps uninstall openproject --tenant gtn-demo
-  kubectl gentian apps uninstall openproject --tenant gtn-demo --purge   # wipe DB, S3, secrets
+  kubectl gentian apps install demo-app --tenant gtn-demo
+  kubectl gentian apps uninstall demo-app --tenant gtn-demo
+  kubectl gentian apps uninstall demo-app --tenant gtn-demo --purge   # wipe DB, S3, secrets
   kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
   kubectl gentian tenants deploy demo

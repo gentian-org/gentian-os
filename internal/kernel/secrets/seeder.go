@@ -65,9 +65,8 @@ func (s *Seeder) gen(salt, info string, n int) string {
 	return hex.EncodeToString(buf)[:n]
 }
 
-// genTenantAdminPassword returns a password that satisfies typical UCS/Nubus
-// complexity rules (mixed character classes). Pure-hex derived passwords are
-// rejected on PATCH even when CREATE succeeded on an earlier deploy.
+// genTenantAdminPassword returns a password with mixed character classes.
+// Pure-hex derived passwords are rejected on PATCH even when CREATE succeeded on an earlier deploy.
 func (s *Seeder) genTenantAdminPassword(salt string) string {
 	return "Gt!" + s.gen(salt, "password", 24)
 }

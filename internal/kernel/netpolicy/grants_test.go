@@ -50,16 +50,16 @@ func TestEffectiveContractCapabilities(t *testing.T) {
 func TestBuildDesired_GrantIntersectionSkipsContractNP(t *testing.T) {
 	t.Parallel()
 	binding := &gentianov1alpha1.IntegrationBinding{}
-	binding.Name = "demo--openproject--file-store"
+	binding.Name = "demo--consumer--file-store"
 	binding.Namespace = "tenant-demo"
 	binding.Spec = gentianov1alpha1.IntegrationBindingSpec{
 		Contract: "file-store",
-		Consumer: gentianov1alpha1.AppEndpoint{App: "openproject"},
-		Provider: gentianov1alpha1.AppEndpoint{App: "nextcloud"},
+		Consumer: gentianov1alpha1.AppEndpoint{App: "consumer-app"},
+		Provider: gentianov1alpha1.AppEndpoint{App: "provider-app"},
 		Capabilities: []string{"webdav:read"},
 	}
 	grant := &gentianov1alpha1.AppGrant{}
-	grant.Spec.App = "openproject"
+	grant.Spec.App = "consumer-app"
 	grant.Spec.Consume = []gentianov1alpha1.ConsumeGrantSpec{
 		{Contract: "file-store", Granted: []string{}},
 	}
@@ -68,12 +68,12 @@ func TestBuildDesired_GrantIntersectionSkipsContractNP(t *testing.T) {
 		TenantName: "demo",
 		Namespace:  "tenant-demo",
 		Bindings:   []*gentianov1alpha1.IntegrationBinding{binding},
-		Grants:     map[string]*gentianov1alpha1.AppGrant{"openproject": grant},
+		Grants:     map[string]*gentianov1alpha1.AppGrant{"consumer-app": grant},
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
 	for _, np := range policies {
-		if np.Name == "contract-demo--openproject--file-store" {
+		if np.Name == "contract-demo--consumer--file-store" {
 			t.Fatal("expected no contract NP when grant is empty")
 		}
 	}

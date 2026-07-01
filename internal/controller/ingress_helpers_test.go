@@ -81,53 +81,18 @@ more_set_headers "Content-Security-Policy: frame-ancestors 'self' https://portal
 	}
 }
 
-func TestCryptpadSandboxFrameAncestorOrigins(t *testing.T) {
-	t.Parallel()
-	origins := cryptpadSandboxFrameAncestorOrigins("desk.gentian.org", "demo.desk.gentian.org")
-	for _, want := range []string{
-		"https://pad.demo.desk.gentian.org",
-		"https://portal.desk.gentian.org",
-		"https://files.desk.gentian.org",
-	} {
-		if !strings.Contains(origins, want) {
-			t.Fatalf("origins = %q, missing %q", origins, want)
-		}
-	}
-}
-
-func TestEnsurePortalEmbeddingAnnotationsCryptpadSandbox(t *testing.T) {
-	annotations := map[string]string{}
-	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
-	got := annotations[nginxConfigurationSnippetAnnotation]
-	if !strings.Contains(got, "https://pad.demo.desk.gentian.org") {
-		t.Fatalf("expected main CryptPad origin in sandbox snippet, got:\n%s", got)
-	}
-	if !strings.Contains(got, "https://portal.desk.gentian.org") {
-		t.Fatal("sandbox ingress must allow kernel portal in frame-ancestors for nested portal→pad→sandbox")
-	}
-	if !strings.Contains(got, "https://files.desk.gentian.org") {
-		t.Fatal("sandbox ingress must allow kernel Nextcloud Files (openincryptpad direct embed)")
-	}
-}
-
-func TestEnsurePortalEmbeddingAnnotationsPreservesCustomSnippetCryptpadMain(t *testing.T) {
+func TestEnsurePortalEmbeddingAnnotationsPreservesCustomSnippet(t *testing.T) {
 	annotations := map[string]string{
 		nginxConfigurationSnippetAnnotation: `proxy_set_header Accept-Encoding "";
 sub_filter_once on;`,
 	}
-	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", cryptpadMainSubDomain)
+	ensurePortalEmbeddingAnnotations(annotations, "desk.gentian.org", "demo.desk.gentian.org", "chat")
 	got := annotations[nginxConfigurationSnippetAnnotation]
 	if !strings.Contains(got, "sub_filter_once on;") {
 		t.Fatalf("expected custom snippet preserved, got:\n%s", got)
 	}
-	if !strings.Contains(got, "frame-ancestors") {
-		t.Fatalf("expected portal embedding directives prepended, got:\n%s", got)
-	}
-	if strings.Contains(got, `proxy_hide_header Content-Security-Policy`) {
-		t.Fatal("CryptPad main ingress must append CSP, not replace upstream policy")
-	}
-	if !strings.Contains(got, `add_header Content-Security-Policy "frame-ancestors`) {
-		t.Fatalf("expected appended frame-ancestors CSP, got:\n%s", got)
+	if !strings.Contains(got, "https://portal.desk.gentian.org") {
+		t.Fatalf("expected kernel portal in merged snippet, got:\n%s", got)
 	}
 }
 
@@ -161,11 +126,8 @@ func TestKeycloakOIDCEmbeddingIngressSnippet(t *testing.T) {
 	if !strings.Contains(snippet, "https://id.desk.gentian.org") {
 		t.Fatalf("expected explicit id origin for nested IdP iframes, got:\n%s", snippet)
 	}
-	if !strings.Contains(snippet, "https://ics.desk.gentian.org") {
-		t.Fatalf("expected explicit ics origin for Nordeck silent login, got:\n%s", snippet)
-	}
 	if !strings.Contains(snippet, "https://*.desk.gentian.org") {
-		t.Fatalf("expected kernel-zone wildcard for files/ics SSO, got:\n%s", snippet)
+		t.Fatalf("expected kernel-zone wildcard for nested OIDC SSO, got:\n%s", snippet)
 	}
 	if !strings.Contains(snippet, "https://*.demo.desk.gentian.org") {
 		t.Fatalf("expected tenant wildcard origin, got:\n%s", snippet)

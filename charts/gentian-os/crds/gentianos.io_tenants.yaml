@@ -124,7 +124,7 @@ spec:
                               type: string
                             family:
                               description: Family is the stable logical application
-                                id (e.g. "openproject").
+                                id (e.g. "demo-app").
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$

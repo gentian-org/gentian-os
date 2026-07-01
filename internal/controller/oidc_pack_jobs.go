@@ -186,7 +186,7 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 
 // getOIDCOwnerProfile returns the AppProfile that owns an OIDC config. Sidecar
 // configs (element-jitsi) live on the parent profile (element); there is no
-// standalone AppProfile for sidecars (openDesk pattern).
+// standalone AppProfile for sidecars; sidecar OIDC configs live on the parent profile.
 func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppConfig) (*gentianov1alpha1.AppProfile, error) {
 	ownerName := cfg.profileName
 	if cfg.parentProfile != "" {

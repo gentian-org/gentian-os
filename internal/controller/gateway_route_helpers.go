@@ -293,26 +293,14 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain string) gatewayFrameAncestorsPolicy {
-	switch {
-	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
-		return gatewayFrameAncestorsPolicy{
-			Mode:    gatewayFrameAncestorsAppend,
-			Origins: cryptpadSandboxFrameAncestorOrigins(kernelDomain, effectiveDomain),
-		}
-	case ingressSubDomain == cryptpadMainSubDomain && kernelDomain != "":
-		return gatewayFrameAncestorsPolicy{
-			Mode:    gatewayFrameAncestorsAppend,
-			Origins: fmt.Sprintf("https://portal.%s", kernelDomain),
-		}
-	case kernelDomain != "":
+func computeGatewayFrameAncestorsPolicy(kernelDomain, _, _ string) gatewayFrameAncestorsPolicy {
+	if kernelDomain != "" {
 		return gatewayFrameAncestorsPolicy{
 			Mode:    gatewayFrameAncestorsReplace,
 			Origins: fmt.Sprintf("https://portal.%s", kernelDomain),
 		}
-	default:
-		return gatewayFrameAncestorsPolicy{}
 	}
+	return gatewayFrameAncestorsPolicy{}
 }
 
 func keycloakGatewayResponseFilters(kernelDomain string, tenantEffectiveDomains []string, tenantOIDCSubdomains map[string][]string, tenantNames []string) []gatewayv1.HTTPRouteFilter {

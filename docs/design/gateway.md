@@ -98,11 +98,6 @@ Default app policy:
 - enforce `Content-Security-Policy` with `frame-ancestors 'self'` plus
   `https://portal.<kernelDomain>`
 
-CryptPad policy:
-
-- preserve upstream CSP directives that are required for runtime behavior
-- append `frame-ancestors` entries for portal and CryptPad sandbox/main origins
-
 Keycloak OIDC broker policy:
 
 - kernel IdP routes include portal origin plus tenant app OIDC origins in

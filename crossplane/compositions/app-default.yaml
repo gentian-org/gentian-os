@@ -110,7 +110,7 @@ spec:
             {{- $xr     := .observed.composite.resource }}
             {{- $spec   := $xr.spec }}
             {{- $xrName := $xr.metadata.name }}
-            {{- /* App claim name (e.g. "nextcloud"). Used as the Helm release name
+            {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
                  and ExternalSecret name so both resources are discoverable by
                  app label without needing to know the generated XR name. */}}
             {{- $app    := $spec.claimRef.name }}

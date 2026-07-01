@@ -43,7 +43,7 @@ spec:
                   default: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
                 postgresql:
                   type: object
-                  description: Shared kernel PostgreSQL (Keycloak, Nubus, Nextcloud).
+                  description: Shared kernel PostgreSQL (Keycloak and platform services).
                   properties:
                     helmReleaseName:
                       type: string

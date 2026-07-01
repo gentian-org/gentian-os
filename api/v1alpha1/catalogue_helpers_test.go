@@ -10,11 +10,11 @@ import (
 
 func TestProfileIdentityFor_Defaults(t *testing.T) {
 	p := &v1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "openproject"},
-		Spec:       v1alpha1.AppProfileSpec{DisplayName: "OpenProject"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-app"},
+		Spec:       v1alpha1.AppProfileSpec{DisplayName: "Demo App"},
 	}
 	id := v1alpha1.ProfileIdentityFor(p)
-	if id.Family != "openproject" {
+	if id.Family != "demo-app" {
 		t.Errorf("family: got %q", id.Family)
 	}
 	if id.CatalogueVersion != "1.0.0" {
@@ -42,10 +42,10 @@ func TestEffectiveDeploymentRole(t *testing.T) {
 func TestProfileRequiresProfile(t *testing.T) {
 	mod := &v1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{v1alpha1.AnnotationProfileRequiresProfile: "odoo-free-base"},
+			Annotations: map[string]string{v1alpha1.AnnotationProfileRequiresProfile: "base-app"},
 		},
 	}
-	if v1alpha1.ProfileRequiresProfile(mod) != "odoo-free-base" {
+	if v1alpha1.ProfileRequiresProfile(mod) != "base-app" {
 		t.Fatalf("requires: got %q", v1alpha1.ProfileRequiresProfile(mod))
 	}
 }
@@ -54,16 +54,16 @@ func TestProfileGatewayAnnotations(t *testing.T) {
 	p := &v1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				v1alpha1.AnnotationProfileGatewayRootRedirect: "/appsuite/",
-				v1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/appsuite/api","serviceName":"appsuite-api"}]`,
+				v1alpha1.AnnotationProfileGatewayRootRedirect: "/app/",
+				v1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/app/api","serviceName":"demo-api"}]`,
 			},
 		},
 	}
-	if v1alpha1.ProfileGatewayRootRedirect(p) != "/appsuite/" {
+	if v1alpha1.ProfileGatewayRootRedirect(p) != "/app/" {
 		t.Fatalf("root redirect: %q", v1alpha1.ProfileGatewayRootRedirect(p))
 	}
 	backends, err := v1alpha1.ProfileGatewayAPIBackends(p)
-	if err != nil || len(backends) != 1 || backends[0].ServiceName != "appsuite-api" {
+	if err != nil || len(backends) != 1 || backends[0].ServiceName != "demo-api" {
 		t.Fatalf("api backends: %v, %v", backends, err)
 	}
 }
@@ -72,12 +72,12 @@ func TestProfileOIDCDefaultRedirectURIs(t *testing.T) {
 	p := &v1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				v1alpha1.AnnotationProfileOIDCDefaultRedirectURIs: `["https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback"]`,
+				v1alpha1.AnnotationProfileOIDCDefaultRedirectURIs: `["https://demo.${TENANT_DOMAIN}/oidc/callback"]`,
 			},
 		},
 	}
 	uris, err := v1alpha1.ProfileOIDCDefaultRedirectURIs(p)
-	if err != nil || len(uris) != 1 || uris[0] != "https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback" {
+	if err != nil || len(uris) != 1 || uris[0] != "https://demo.${TENANT_DOMAIN}/oidc/callback" {
 		t.Fatalf("oidc defaults: %v, %v", uris, err)
 	}
 }
@@ -99,9 +99,9 @@ func TestProfileRequiresEntitlement(t *testing.T) {
 
 func TestProfileCatalogueLabels(t *testing.T) {
 	p := &v1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "openproject"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-app"},
 		Spec: v1alpha1.AppProfileSpec{
-			Family:           "openproject",
+			Family:           "demo-app",
 			CatalogueVersion: "1.0.0",
 			Edition:          v1alpha1.EditionFull,
 			TrustTier:        v1alpha1.TrustTierCertified,
@@ -117,9 +117,9 @@ func TestProfileCatalogueLabels(t *testing.T) {
 func TestResolveProfileReference_ByIdentity(t *testing.T) {
 	profiles := []v1alpha1.AppProfile{
 		{
-			ObjectMeta: metav1.ObjectMeta{Name: "openproject-2.1.0-full"},
+			ObjectMeta: metav1.ObjectMeta{Name: "demo-app-2.1.0-full"},
 			Spec: v1alpha1.AppProfileSpec{
-				Family:           "openproject",
+				Family:           "demo-app",
 				CatalogueVersion: "2.1.0",
 				Edition:          v1alpha1.EditionFull,
 			},
@@ -127,13 +127,13 @@ func TestResolveProfileReference_ByIdentity(t *testing.T) {
 	}
 	ref := v1alpha1.ProfileReference{
 		Identity: &v1alpha1.ProfileIdentity{
-			Family:           "openproject",
+			Family:           "demo-app",
 			CatalogueVersion: "2.1.0",
 			Edition:          v1alpha1.EditionFull,
 		},
 	}
 	name, ok := v1alpha1.ResolveProfileReference(profiles, ref)
-	if !ok || name != "openproject-2.1.0-full" {
+	if !ok || name != "demo-app-2.1.0-full" {
 		t.Fatalf("resolve by identity: got %q, %v", name, ok)
 	}
 }

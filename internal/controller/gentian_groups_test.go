@@ -15,7 +15,7 @@ func TestCollectGentianTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
 			Apps: []gentianov1alpha1.TenantApp{
-				{Profile: "nextcloud"},
+				{Profile: "demo-app"},
 			},
 		},
 	}
@@ -24,7 +24,7 @@ func TestCollectGentianTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 		"gentian:tenant:demo:members",
 		"gentian:tenant:demo:admins",
 		"gentian:tenant:demo:app-admins",
-		"gentian:tenant:demo:app:nextcloud",
+		"gentian:tenant:demo:app:demo-app",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("collectGentianTenantGroupNames() = %v, want %v", names, want)

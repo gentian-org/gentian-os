@@ -9,7 +9,7 @@ import (
 func TestAppUsesCrossplaneS3Init(t *testing.T) {
 	t.Parallel()
 
-	openproject := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.AppProfile{
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
@@ -19,17 +19,17 @@ func TestAppUsesCrossplaneS3Init(t *testing.T) {
 			},
 		},
 	}
-	if !appUsesCrossplaneS3Init(openproject) {
+	if !appUsesCrossplaneS3Init(profile) {
 		t.Fatal("expected crossplane app with bucketPerTenant to use composition s3-init")
 	}
 
-	withCompositionRef := *openproject
+	withCompositionRef := *profile
 	withCompositionRef.Spec.CompositionRef = "app-custom"
 	if !appUsesCrossplaneS3Init(&withCompositionRef) {
 		t.Fatal("expected explicit compositionRef to remain supported")
 	}
 
-	nonCrossplane := *openproject
+	nonCrossplane := *profile
 	nonCrossplane.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodArgoCD
 	if appUsesCrossplaneS3Init(&nonCrossplane) {
 		t.Fatal("expected non-crossplane app to skip composition s3-init")

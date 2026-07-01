@@ -7,7 +7,7 @@
 # Purpose:
 #   Watches Deployments/StatefulSets annotated with reloader.stakater.com/auto: "true"
 #   and restarts them when any referenced Secret changes. This prevents credential
-#   drift in Nubus provisioning components after Helm upgrades rotate secrets.
+#   drift in kernel Helm releases after upgrades rotate secrets.
 #
 # Safety guards:
 #   prune: false   — ArgoCD never auto-deletes the controller deployment

@@ -282,7 +282,7 @@ that must exist before any tenant app can run, because they back the
 These are not "apps" the user picks à la carte — they are the **kernel
 devices** that must be Ready before a `Tenant` claim can reach Ready.
 
-**Catalogue apps** (Nextcloud, Collabora, CryptPad, Element, …) install
+**Catalogue apps** (Nextcloud, Collabora, Element, …) install
 per tenant from `gentian-apps` via `AppProfile` + the `app-default`
 Crossplane composition — the same "install from app store" path as any
 other catalogue entry. See [design/kernel.md](design/kernel.md) for the
@@ -376,15 +376,10 @@ For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstre
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single
 `frame-ancestors 'self' https://portal.<kernel_domain>` policy — many charts
 only emit `frame-ancestors 'self'`, and **appending** a second CSP header
-leaves both active so browsers still block the portal iframe. CryptPad
-(`pad` / `pad-sandbox` subdomains) **appends** a second header instead so
-upstream `script-src` without `'unsafe-eval'` stays intact. Per-tenant portal hostnames are not used;
-tenants authenticate via the kernel portal. CryptPad's additional
-`pad-sandbox.<tenant>` route instead allows `https://pad.<tenant>` and
-`https://portal.<kernel_domain>` because CSP checks the full ancestor chain when
-the portal embeds CryptPad in a window and CryptPad embeds the sandbox. Apps with
-extra edge snippet needs (e.g. CryptPad `sub_filter`) keep those lines;
-frame-ancestors is still injected on each route according to its role.
+leaves both active so browsers still block the portal iframe. Per-tenant portal
+hostnames are not used; tenants authenticate via the kernel portal. Apps with
+extra edge snippet needs keep those lines; frame-ancestors is still injected on
+each route according to its role.
 
 **IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
 `chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
@@ -558,17 +553,17 @@ are in [design/mail.md](design/mail.md).
 
 ---
 
-## 9b. Collabora and CryptPad (catalogue apps)
+## 9b. Collabora (catalogue app)
 
-Collaborative document editing (Collabora) and diagram editing (CryptPad)
-are **catalogue apps**, not kernel services. Profiles in `gentian-apps`
-(e.g. `nextcloud`, `od-nextcloud`, Collabora/CryptPad integration packs)
-declare the Helm charts and OIDC packs; Crossplane `app-default` deploys
-them into the tenant namespace when listed in `Tenant.spec.apps`.
+Collaborative document editing (Collabora) is a **catalogue app**, not a kernel
+service. Profiles in `gentian-apps` (e.g. `nextcloud`, `od-nextcloud`, Collabora
+integration packs) declare the Helm charts and OIDC packs; Crossplane
+`app-default` deploys them into the tenant namespace when listed in
+`Tenant.spec.apps`.
 
-Nextcloud is the primary file-store app; Collabora and CryptPad integrate
-with it via WOPI/embed contracts declared in their `AppProfile` optional
-integrations. See [design/app-catalogue.md](design/app-catalogue.md).
+Nextcloud is a common file-store catalogue app; Collabora integrates with it
+via WOPI/embed contracts declared in `AppProfile` optional integrations. See
+[design/app-catalogue.md](design/app-catalogue.md).
 
 ---
 

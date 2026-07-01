@@ -231,7 +231,7 @@ func kernelRealmOrDefault(realm string) string {
 // secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that
 // every (tenant, app, category) credential the operator generates is fully
 // deterministic — uninstalling and reinstalling an app yields the same
-// credentials, mirroring the OpenDesk pattern.
+// credentials.
 //
 // Returns nil (with a warning) when BAO_ADDR is unset — in that mode
 // reconcilers skip the seeding step and behave as they did pre-Inc 21a.

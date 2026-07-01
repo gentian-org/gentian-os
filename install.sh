@@ -475,19 +475,14 @@ create_crossplane_secrets() {
             --arg a "$(_derive postgres postgres_user)" \
             --arg b "$(_derive postgres keycloak_user)" \
             --arg c "$(_derive postgres keycloak_extensions_user)" \
-            --arg d "$(_derive postgres selfservice_user)" \
-            --arg e "$(_derive postgres authsession_user)" \
-            --arg f "$(_derive postgres guardianmanagementapi_user)" \
-            --arg g "$(_derive postgres notificationsapi_user)" \
             --arg h "$(_derive postgres openfga_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,selfservice_user_password:$d,authsession_user_password:$e,guardianmanagementapi_user_password:$f,notificationsapi_user_password:$g,openfga_user_password:$h}')"
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h}')"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \
         "$(jq -nc \
             --arg a "$(_derive mariadb root_password)" \
-            --arg b "$(_derive mariadb openxchange_user)" \
-            '{root_password:$a,openxchange_password:$b}')"
+            '{root_password:$a}')"
 
     # ── cache/redis ───────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-cache-redis" \
@@ -500,10 +495,7 @@ create_crossplane_secrets() {
         "$(jq -nc \
             --arg a "minio" \
             --arg b "$(_derive minio root_password)" \
-            --arg c "$(_derive minio ums_user)" \
-            --arg h "$(_derive minio migrations_user)" \
-            --arg i "$(_derive minio dovecot_user)" \
-            '{root_user:$a,root_password:$b,ums_password:$c,migrations_password:$h,dovecot_password:$i}')"
+            '{root_user:$a,root_password:$b}')"
 
     # ── identity/keycloak-bootstrap (Suze Keycloak admin password) ─────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
@@ -532,7 +524,7 @@ create_crossplane_secrets() {
     # the minio secret for cross-service derivation consistency.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
-            --arg doveadm "$(_derive minio dovecot_user)" \
+            --arg doveadm "$(_derive dovecot doveadm_password)" \
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
@@ -598,7 +590,7 @@ apply_cluster_xr() {
 # =============================================================================
 # seed_secrets_remaining — Seed the KV paths that the Cluster XR does not
 # manage: internal/master-password, storage/registry, dns/cloudflare,
-# database/cnpg, and app-level paths (nextcloud, intercom, etc.).
+# database/cnpg, and other kernel paths.
 # Delegates to the existing seed-openbao.sh (uses kv_put_once for safety).
 # =============================================================================
 seed_secrets_remaining() {
@@ -1255,7 +1247,6 @@ main_cp() {
     # wait_for_gateway_platform || true
     # verify_argocd_apps || true
     # verify_keycloak_iframe_policy || true
-    # verify_intercom_ics || true
     # configure_github_actions_secrets   # Step 18d — CI_BOT_PAT → gentian-os Actions secrets
 
     success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA), authz bridge, and portal login are live."

@@ -296,7 +296,7 @@ gentian-apps/
 │   ├── nextcloud.yaml        # community nextcloud
 │   ├── od-nextcloud.yaml     # Gentian-packaged Nextcloud profile
 │   # Jitsi is bundled with Element, not a standalone AppProfile
-│   # Collabora, CryptPad, and mail UI install as catalogue profiles when listed in spec.apps
+│   # Collabora and mail UI install as catalogue profiles when listed in spec.apps
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml

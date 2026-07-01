@@ -1,26 +1,26 @@
 apiVersion: gentianos.io/v1alpha1
 kind: AppProfile
 metadata:
-  name: openproject
+  name: demo-app
   labels:
-    gentianos.io/profile-name: openproject
+    gentianos.io/profile-name: demo-app
 spec:
-  displayName: OpenProject
-  compositionRef: app-od-openproject
+  displayName: Demo App
+  compositionRef: app-demo-app
   chart:
-    repository: oci://example.invalid/openproject
-    name: openproject
-    version: "10.1.0"
+    repository: oci://example.invalid/demo-app
+    name: demo-app
+    version: "1.0.0"
   kernelRequirements:
     identity:
       oidc:
         clientId: catalogue-test-client
-        name: OpenProject
+        name: Demo App
         accessType: CONFIDENTIAL
         redirectUris:
-          - "https://projects.${TENANT_DOMAIN}/auth/keycloak/callback"
+          - "https://demo.${TENANT_DOMAIN}/oidc/callback"
         postLogoutRedirectUris:
-          - "https://projects.${TENANT_DOMAIN}/"
+          - "https://demo.${TENANT_DOMAIN}/"
   valueMapping:
     oidc:
-      clientSecretKey: openproject.oidc.secret
+      clientSecretKey: demo-app.oidc.secret

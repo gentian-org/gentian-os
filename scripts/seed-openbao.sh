@@ -27,7 +27,6 @@ set -euo pipefail
 #   storage/minio
 #   identity/keycloak-bootstrap
 #   authz/openfga
-#   apps/nextcloud
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
 #   storage/registry              (optional, requires args 2+3)
@@ -90,23 +89,15 @@ echo "Deriving passwords..."
 PG_POSTGRES_PW=$(derive_password "postgres" "postgres_user")
 PG_KEYCLOAK_PW=$(derive_password "postgres" "keycloak_user")
 PG_KC_EXT_PW=$(derive_password "postgres" "keycloak_extensions_user")
-PG_SELFSERVICE_PW=$(derive_password "postgres" "selfservice_user")
-PG_AUTHSESSION_PW=$(derive_password "postgres" "authsession_user")
-PG_GUARDIAN_PW=$(derive_password "postgres" "guardianmanagementapi_user")
-PG_NOTIFICATIONS_PW=$(derive_password "postgres" "notificationsapi_user")
 PG_OPENFGA_PW=$(derive_password "postgres" "openfga_user")
 # --- MariaDB ---
 MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
-MARIA_OX_PW=$(derive_password "mariadb" "openxchange_user")
 
 # --- Redis ---
 REDIS_PW=$(derive_password "redis" "password")
 
 # --- MinIO ---
 MINIO_ROOT_PW=$(derive_password "minio" "root_password")
-MINIO_UMS_PW=$(derive_password "minio" "ums_user")
-MINIO_MIGRATIONS_PW=$(derive_password "minio" "migrations_user")
-MINIO_DOVECOT_PW=$(derive_password "minio" "dovecot_user")
 
 # --- Keycloak ---
 KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
@@ -191,16 +182,12 @@ kv_put_once "database/cnpg" "$(cat <<EOF
 EOF
 )"
 
-# --- Bitnami PostgreSQL (Nubus components) ----------------------------------
+# --- Bitnami PostgreSQL (kernel platform services) ---------------------------
 kv_put_once "database/postgresql" "$(cat <<EOF
 {
   "postgres_password":              "${PG_POSTGRES_PW}",
   "keycloak_user_password":         "${PG_KEYCLOAK_PW}",
   "keycloak_extensions_user_password": "${PG_KC_EXT_PW}",
-  "selfservice_user_password":      "${PG_SELFSERVICE_PW}",
-  "authsession_user_password":      "${PG_AUTHSESSION_PW}",
-  "guardianmanagementapi_user_password": "${PG_GUARDIAN_PW}",
-  "notificationsapi_user_password": "${PG_NOTIFICATIONS_PW}",
   "openfga_user_password":           "${PG_OPENFGA_PW}"
 }
 EOF
@@ -218,8 +205,7 @@ EOF
 # --- MariaDB ---
 kv_put_once "database/mariadb" "$(cat <<EOF
 {
-  "root_password":        "${MARIA_ROOT_PW}",
-  "openxchange_password": "${MARIA_OX_PW}"
+  "root_password": "${MARIA_ROOT_PW}"
 }
 EOF
 )"
@@ -235,41 +221,8 @@ EOF
 # --- MinIO ---
 kv_put_once "storage/minio" "$(cat <<EOF
 {
-  "root_user":             "minio",
-  "root_password":         "${MINIO_ROOT_PW}",
-  "ums_password":          "${MINIO_UMS_PW}",
-  "migrations_password":   "${MINIO_MIGRATIONS_PW}",
-  "dovecot_password":      "${MINIO_DOVECOT_PW}"
-}
-EOF
-)"
-
-# --- Collabora (kernel office service) ---
-COLLABORA_ADMIN_PW=$(derive_password "collabora" "admin_password")
-kv_put_once "apps/collabora" "$(cat <<EOF
-{
-  "admin_password": "${COLLABORA_ADMIN_PW}"
-}
-EOF
-)"
-
-# --- Nextcloud ---
-NC_ADMIN_PW=$(derive_password "nextcloud" "admin_password")
-NC_STATUS_PW=$(derive_password "nextcloud" "status_password")
-NC_OIDC_SECRET=$(derive_password "nextcloud" "oidc_client_secret")
-NC_INTEGRATION_PW=$(derive_password "nextcloud" "integration_password")
-NC_METRICS_TOKEN=$(derive_password "nextcloud" "metrics_token")
-NC_MINIO_PW=$(derive_password "nextcloud" "minio_password")
-NC_DB_PW=$(derive_password "postgres" "nextcloud_user")
-kv_put_once "apps/nextcloud" "$(cat <<EOF
-{
-  "admin_password":       "${NC_ADMIN_PW}",
-  "status_password":      "${NC_STATUS_PW}",
-  "oidc_client_secret":   "${NC_OIDC_SECRET}",
-  "integration_password": "${NC_INTEGRATION_PW}",
-  "metrics_token":        "${NC_METRICS_TOKEN}",
-  "minio_password":       "${NC_MINIO_PW}",
-  "db_password":          "${NC_DB_PW}"
+  "root_user":     "minio",
+  "root_password": "${MINIO_ROOT_PW}"
 }
 EOF
 )"

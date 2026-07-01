@@ -1,8 +1,8 @@
 // Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
 
 // Package stagingca builds the gentian-staging-ca-tls trust bundle for ACME
-// staging clusters. openDesk charts mount this secret so in-cluster OIDC
-// clients (Synapse, Jitsi adapter) trust https://id.<kernel-domain>.
+// staging clusters. Catalogue apps mount this secret so in-cluster OIDC
+// clients trust https://id.<kernel-domain>.
 package stagingca
 
 import (

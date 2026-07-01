@@ -320,7 +320,7 @@ if [ "${DB_EXISTS}" != "1" ]; then
   echo "database %s created"
 fi
 psql -c "GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";" postgres
-# openDesk XWiki uses PostgreSQL schema virtual_mode: tables live in a schema
+# Some catalogue apps (e.g. XWiki) use PostgreSQL schema virtual_mode: tables live in a schema
 # matching the database name (e.g. demo_xwiki), not public.
 psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZATION \"%s\";"
 psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"

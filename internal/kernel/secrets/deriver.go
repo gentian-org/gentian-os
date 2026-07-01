@@ -24,8 +24,7 @@ import (
 //
 // The derivation is fully deterministic: same (master, salt, info, length) →
 // same bytes. This means an app uninstalled and reinstalled gets the same
-// credentials back without needing any persistent state outside OpenBao,
-// which mirrors the OpenDesk pattern.
+// credentials back without needing any persistent state outside OpenBao.
 //
 // Salts are canonical KV paths (see CategoryPath, InternalPath, KernelPath).
 // Tenant-scoped paths include the tenant name, kernel-shared paths do not —

@@ -197,9 +197,9 @@ Do not conflate them:
 apiVersion: gentianos.io/v1alpha1
 kind: AppProfile
 metadata:
-  name: openproject                    # cluster-scoped catalogue id
+  name: demo-app                    # cluster-scoped catalogue id
 spec:
-  displayName: "OpenProject"
+  displayName: "Demo App"
 
   # Kernel — platform-provisioned services (NOT integration contracts)
   kernelRequirements:
@@ -219,7 +219,7 @@ spec:
   # Integration contracts this app MAY CONSUME when a provider is installed
   optionalIntegrations:
     - contract: file-store
-      provider: nextcloud              # expected provider profile name (optional hint)
+      provider: file-store-app              # expected provider profile name (optional hint)
       capabilities: [webdav:read, webdav:write]
     - contract: central-navigation
       provider: portal
@@ -227,8 +227,8 @@ spec:
 
   chart:
     repository: oci://registry.example/charts
-    name: openproject
-    version: "14.2.0"
+    name: demo-app
+    version: "1.0.0"
 
   valueMapping:                        # maps kernel outputs → Helm keys (Pattern A secrets)
     oidc:
@@ -255,10 +255,10 @@ metadata:
 spec:
   contract: file-store
   provider:
-    app: nextcloud
+    app: provider-app
     namespace: tenant-demo
   consumer:
-    app: openproject
+    app: consumer-app
     namespace: tenant-demo
   capabilities: [webdav:read, webdav:write]
   auth:
@@ -280,7 +280,7 @@ kind: AppGrant
 metadata:
   namespace: tenant-demo
 spec:
-  app: openproject
+  app: demo-app
   consume:
     - contract: file-store
       granted: [webdav:read]             # webdav:write withheld vs optionalIntegrations
@@ -386,7 +386,7 @@ Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so 
 | Keycloak authoritative per tenant | **Done** | Keycloak-native identity; OIDC packs in `gentian-apps` per profile |
 | **Gentian Admin Console** | **In progress** → [roadmap § Admin Console](../roadmap.md#gentian-admin-console) | Design: [admin-console.md](admin-console.md); P0 realm bootstrap → P7 notifications |
 | **Group entitlements** (`gentian:tenant:<t>:app:<profile>`) | **Done** | Portal tiles + OIDC packs; distinct from in-app admin |
-| **App administrators** (`gentian:tenant:<t>:app-admins`) | **Done** | Admin Console assignment; `AppProfile.spec.provisioning.privilegedRole`; operator sync (Nextcloud v1) |
+| **App administrators** (`gentian:tenant:<t>:app-admins`) | **Done** | Admin Console assignment; `AppProfile.spec.provisioning.privilegedRole`; catalogue app sync via plugin |
 | **`provider-keycloak` Realm MRs** (drift-safe tenant realms) | **Blocked** → [roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation) | Tenant realms still provisioned via manifest-bridge Jobs |
 | Deploy **OpenFGA** + Postgres store | **Done** | **Suze** XR + `kernel/appsets/09-suze.yaml`; shared Postgres `openfga` database |
 | Author **base authorization model** (`user`, `group`, `tenant`, derived-ceiling) | **Done** | `authz/model/v0/model.fga`, `model.json`, `tests.fga.yaml`; embedded in operator bootstrap |

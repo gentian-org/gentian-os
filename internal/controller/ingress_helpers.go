@@ -9,16 +9,6 @@ import (
 
 const nginxConfigurationSnippetAnnotation = "nginx.ingress.kubernetes.io/configuration-snippet"
 
-// cryptpadSandboxSubDomain is the additional CryptPad ingress hostname prefix for
-// httpSafeOrigin (client-side crypto isolation). That origin is framed by the
-// main CryptPad host (pad.<tenant>), not by the kernel portal.
-const cryptpadSandboxSubDomain = "pad-sandbox"
-
-// cryptpadMainSubDomain is the main CryptPad ingress hostname prefix. CryptPad
-// ships a full Content-Security-Policy (script-src without 'unsafe-eval'); the
-// operator must append frame-ancestors, not replace the upstream header.
-const cryptpadMainSubDomain = "pad"
-
 // keycloakOIDCAncestorOrigins builds space-separated https origins for the
 // Keycloak proxy ingress frame-ancestors policy: kernel portal plus, per tenant
 // effective domain, a tenant wildcard and explicit OIDC app ingress hosts
@@ -45,12 +35,11 @@ func keycloakOIDCAncestorOrigins(
 		origins = append(origins, origin)
 	}
 	add(fmt.Sprintf("https://portal.%s", kernelDomain))
-	// Explicit kernel IdP + ICS origins (visible in curl checks; also covers browsers
+	// Explicit kernel IdP origin (visible in curl checks; also covers browsers
 	// that treat 'self' / *.kernel wildcards differently in nested iframe chains).
 	add(fmt.Sprintf("https://id.%s", kernelDomain))
-	add(fmt.Sprintf("https://ics.%s", kernelDomain))
-	// Kernel-zone apps (Nextcloud Files, …) run on *.<kernelDomain> and may embed
-	// id.<kernel> in a nested iframe during OIDC — not under tenant zones.
+	// Kernel-zone apps run on *.<kernelDomain> and may embed id.<kernel> in a
+	// nested iframe during OIDC — not under tenant zones.
 	add(fmt.Sprintf("https://*.%s", kernelDomain))
 	for i, effective := range tenantEffectiveDomains {
 		if effective == "" {
@@ -133,59 +122,6 @@ func portalEmbeddingIngressSnippet(kernelDomain string) string {
 	return frameAncestorsIngressSnippetReplace(portalOrigin)
 }
 
-func portalEmbeddingIngressSnippetAppend(kernelDomain string) string {
-	portalOrigin := fmt.Sprintf("https://portal.%s", kernelDomain)
-	return frameAncestorsIngressSnippetAppend(portalOrigin)
-}
-
-// cryptpadSandboxFrameAncestorOrigins lists https origins allowed to embed
-// pad-sandbox.<padDomain>. Shared by kernel HTTPRoutes, tenant AppProfile
-// ingress snippets, and Gateway API response filters (DRY embedding policy).
-//
-// Nextcloud Files (files.<kernelDomain>) may iframe the sandbox directly via
-// openincryptpad, not only via pad.<padDomain>. With CryptPad's upstream CSP
-// still present, the appended frame-ancestors policy must allow every direct
-// parent — browsers enforce all CSP headers.
-func cryptpadSandboxFrameAncestorOrigins(kernelDomain, padDomain string) string {
-	var origins []string
-	add := func(origin string) {
-		if origin != "" {
-			origins = append(origins, origin)
-		}
-	}
-	add(padOrigin(padDomain))
-	add(kernelPortalOrigin(kernelDomain))
-	add(kernelFilesOrigin(kernelDomain))
-	return strings.Join(origins, " ")
-}
-
-func kernelPortalOrigin(kernelDomain string) string {
-	if kernelDomain == "" {
-		return ""
-	}
-	return fmt.Sprintf("https://portal.%s", kernelDomain)
-}
-
-func kernelFilesOrigin(kernelDomain string) string {
-	if kernelDomain == "" {
-		return ""
-	}
-	return fmt.Sprintf("https://files.%s", kernelDomain)
-}
-
-func padOrigin(padDomain string) string {
-	if padDomain == "" {
-		return ""
-	}
-	return fmt.Sprintf("https://pad.%s", padDomain)
-}
-
-// cryptpadSandboxIngressSnippet allows pad, portal, and kernel Nextcloud Files
-// to embed the CryptPad sandbox iframe (append mode — preserve upstream script-src).
-func cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain string) string {
-	return frameAncestorsIngressSnippetAppend(cryptpadSandboxFrameAncestorOrigins(kernelDomain, effectiveDomain))
-}
-
 // frameAncestorsIngressSnippetReplace clears upstream X-Frame-Options and
 // Content-Security-Policy, then sets a single frame-ancestors policy. Use for
 // standard AppProfile apps (Element, Jitsi, OpenProject, …) whose nginx only
@@ -201,8 +137,8 @@ add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancesto
 }
 
 // frameAncestorsIngressSnippetAppend adds a second CSP header without clearing
-// the upstream policy. Required for CryptPad, which relies on upstream
-// script-src/connect-src (sandbox must not gain 'unsafe-eval').
+// the upstream policy. Use when an app ships its own strict CSP and only needs
+// an additional frame-ancestors directive.
 func frameAncestorsIngressSnippetAppend(ancestorOrigins string) string {
 	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
 add_header X-Frame-Options "" always;
@@ -234,22 +170,13 @@ func stripLegacyPortalEmbeddingSnippet(snippet string) string {
 	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
-// ensurePortalEmbeddingAnnotations merges iframe CSP into ingress annotations.
-// Most app ingresses allow the shared kernel portal (portal.<kernelDomain>).
-// CryptPad's pad-sandbox additional ingress instead allows the main app origin
-// (pad.<tenantDomain>) because the sandbox is embedded inside CryptPad, not the portal.
-func ensurePortalEmbeddingAnnotations(annotations map[string]string, kernelDomain, effectiveDomain, ingressSubDomain string) {
-	var embedding string
-	switch {
-	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
-		embedding = cryptpadSandboxIngressSnippet(effectiveDomain, kernelDomain)
-	case ingressSubDomain == cryptpadMainSubDomain && kernelDomain != "":
-		embedding = portalEmbeddingIngressSnippetAppend(kernelDomain)
-	case kernelDomain != "":
-		embedding = portalEmbeddingIngressSnippet(kernelDomain)
-	default:
+// ensurePortalEmbeddingAnnotations merges iframe CSP into ingress annotations so
+// the shared kernel portal (portal.<kernelDomain>) can embed the app.
+func ensurePortalEmbeddingAnnotations(annotations map[string]string, kernelDomain, _, _ string) {
+	if kernelDomain == "" {
 		return
 	}
+	embedding := portalEmbeddingIngressSnippet(kernelDomain)
 	if existing, ok := annotations[nginxConfigurationSnippetAnnotation]; ok && strings.TrimSpace(existing) != "" {
 		if rest := stripLegacyPortalEmbeddingSnippet(existing); rest != "" {
 			annotations[nginxConfigurationSnippetAnnotation] = embedding + "\n" + rest

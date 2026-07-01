@@ -119,7 +119,7 @@ and per-app entitlements:
 | `gentian:tenant:<t>:app:<profile>` | App entitlement (portal tile + future provisioning) |
 | `gentian:role:member` | Token marker for workspace members |
 
-**OpenFGA sync** (authz bridge): group membership → tuples, e.g. `user:alice#member@group:demo-app-nextcloud`, `group:demo-app-nextcloud#parent@tenant:demo`.
+**OpenFGA sync** (authz bridge): group membership → tuples, e.g. `user:alice#member@group:demo-app-a`, `group:demo-app-a#parent@tenant:demo`.
 
 **Portal visibility:** shell reads JWT **groups** and OpenFGA `can_launch` to decide which app tiles appear on the desktop.
 
@@ -295,7 +295,7 @@ When creating/editing a member, the Admin Console sets **Keycloak group membersh
 ```yaml
 # Conceptual — stored as group joins, not a separate CRD in v1
 entitlements:
-  apps: [nextcloud, element]   # → gentian:tenant:demo:app:nextcloud, …
+  apps: [app-a, app-b]   # → gentian:tenant:demo:app:app-a, …
   roles: [member]              # member | tenant-admin
 ```
 
@@ -328,7 +328,7 @@ CloudEvents bus   type: gentian.identity.user.updated.v1
 spec:
   provisioning:
     mode: plugin              # none | native-scim | plugin
-    pluginRef: nextcloud-user-provisioner
+    pluginRef: catalogue-app-provisioner
     scimEndpoint: ""          # when mode=native-scim
 ```
 

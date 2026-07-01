@@ -194,8 +194,8 @@ Portal: tenant admins see an **App Store** tile (`allowedGroup: Tenant Admins`).
 
 ```bash
 kubectl gentian apps list
-kubectl gentian apps install openproject --tenant gtn-demo
-kubectl gentian apps uninstall openproject --tenant gtn-demo
+kubectl gentian apps install demo-app --tenant gtn-demo
+kubectl gentian apps uninstall demo-app --tenant gtn-demo
 ```
 
 Guides:
@@ -225,7 +225,7 @@ gtnctl apps list
 Install an app on a tenant (commits/pushes GitOps, syncs Argo CD, waits for Ready):
 
 ```bash
-kubectl gentian apps install openproject --tenant demo
+kubectl gentian apps install demo-app --tenant demo
 # shorthand:
 gtnctl apps install xwiki --tenant demo
 ```
@@ -233,7 +233,7 @@ gtnctl apps install xwiki --tenant demo
 Uninstall (removes the app from Git; retains databases and OpenBao secrets by default):
 
 ```bash
-kubectl gentian apps uninstall openproject --tenant demo
+kubectl gentian apps uninstall demo-app --tenant demo
 ```
 
 Purge persistent state (Postgres/MariaDB, S3 bucket, Redis keys, OpenBao paths):
@@ -345,7 +345,7 @@ from `gentian-apps` (`profiles/<app>/oidc-catalog.yaml`). Verify packs are synce
 before debugging pack Jobs or missing client scopes:
 
 ```bash
-kubectl get oidcpackcatalog -l gentianos.io/profile-name=openproject -o yaml
+kubectl get oidcpackcatalog -l gentianos.io/profile-name=demo-app -o yaml
 ```
 
 List pack keys and confirm a profile's `clientId` is present:

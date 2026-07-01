@@ -452,12 +452,12 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "openproject-oidc-seed",
+			Name:      "catalogue-app-oidc-seed",
 			Namespace: nsName,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "gentian-os",
 				"gentianos.io/tenant":          tenant.Name,
-				"gentianos.io/app":             "openproject",
+				"gentianos.io/app":             "catalogue-app",
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -479,12 +479,12 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 	controller := true
 	orphanPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "openproject-oidc-seed-orphan",
+			Name:      "catalogue-app-oidc-seed-orphan",
 			Namespace: nsName,
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: "batch/v1",
 				Kind:       "Job",
-				Name:       "openproject-oidc-seed",
+				Name:       "catalogue-app-oidc-seed",
 				UID:        "00000000-0000-0000-0000-000000000001",
 				Controller: &controller,
 			}},
@@ -517,13 +517,13 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 
 	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "openproject-oidc-seed", Namespace: nsName}, &batchv1.Job{})
+			types.NamespacedName{Name: "catalogue-app-oidc-seed", Namespace: nsName}, &batchv1.Job{})
 		return apierrors.IsNotFound(err)
 	})
 
 	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "openproject-oidc-seed-orphan", Namespace: nsName}, &corev1.Pod{})
+			types.NamespacedName{Name: "catalogue-app-oidc-seed-orphan", Namespace: nsName}, &corev1.Pod{})
 		return apierrors.IsNotFound(err)
 	})
 }
@@ -559,12 +559,12 @@ func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 
 	ownerlessPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ox-appsuite-connector-register-orphan",
+			Name:      "consumer-app-connector-register-orphan",
 			Namespace: nsName,
 			Labels: map[string]string{
-				"batch.kubernetes.io/job-name": "ox-appsuite-connector-register",
-				"job-name":                     "ox-appsuite-connector-register",
-				"gentianos.io/app":             "ox-appsuite",
+				"batch.kubernetes.io/job-name": "consumer-app-connector-register",
+				"job-name":                     "consumer-app-connector-register",
+				"gentianos.io/app":             "consumer-app",
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -595,7 +595,7 @@ func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 
 	waitFor(t, tenantReadyTimeout, func() bool {
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "ox-appsuite-connector-register-orphan", Namespace: nsName}, &corev1.Pod{})
+			types.NamespacedName{Name: "consumer-app-connector-register-orphan", Namespace: nsName}, &corev1.Pod{})
 		return apierrors.IsNotFound(err)
 	})
 }

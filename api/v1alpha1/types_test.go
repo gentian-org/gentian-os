@@ -17,14 +17,14 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	qty := resource.MustParse("5Gi")
 
 	original := &v1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "openproject"},
+		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-app"},
 		Spec: v1alpha1.AppProfileSpec{
-			DisplayName:      "OpenProject",
+			DisplayName:      "Catalogue App",
 			DeploymentMethod: v1alpha1.DeploymentMethodArgoCD,
 			Chart: v1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
-				Name:       "openproject",
-				Version:    "14.2.0",
+				Name:       "catalogue-app",
+				Version:    "1.0.0",
 			},
 			KernelRequirements: &v1alpha1.KernelRequirements{
 				Identity: &v1alpha1.IdentityRequirement{
@@ -57,7 +57,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 				},
 			},
 			AppSecrets: []v1alpha1.AppSecret{
-				{Name: "admin_password", ValuePath: "openproject.adminPassword"},
+				{Name: "admin_password", ValuePath: "catalogue-app.adminPassword"},
 			},
 		},
 	}
@@ -163,9 +163,9 @@ func TestTenant_DeepCopy(t *testing.T) {
 				Memory:  &memory,
 			},
 			Apps: []v1alpha1.TenantApp{
-				{Profile: "nextcloud"},
-				{Profile: "ox-appsuite"},
-				{Profile: "openproject", Config: &v1alpha1.TenantAppConfig{Replicas: &replicas}},
+				{Profile: "app-a"},
+				{Profile: "app-b"},
+				{Profile: "app-c", Config: &v1alpha1.TenantAppConfig{Replicas: &replicas}},
 			},
 		},
 	}
@@ -226,7 +226,7 @@ func TestTenant_StatusDeepCopy(t *testing.T) {
 		Status: v1alpha1.TenantStatus{
 			Phase:           v1alpha1.TenantPhaseReady,
 			Namespace:       "tenant-acme",
-			ProvisionedApps: []string{"nextcloud", "ox-appsuite"},
+			ProvisionedApps: []string{"app-a", "app-b"},
 			Conditions: []metav1.Condition{
 				{
 					Type:               "NamespaceReady",
@@ -266,8 +266,8 @@ func TestIntegrationBinding_DeepCopy(t *testing.T) {
 		},
 		Spec: v1alpha1.IntegrationBindingSpec{
 			Contract:     "filepicker",
-			Provider:     v1alpha1.AppEndpoint{App: "nextcloud", Namespace: "tenant-gtn-demo"},
-			Consumer:     v1alpha1.AppEndpoint{App: "ox-appsuite", Namespace: "tenant-gtn-demo"},
+			Provider:     v1alpha1.AppEndpoint{App: "provider-app", Namespace: "tenant-gtn-demo"},
+			Consumer:     v1alpha1.AppEndpoint{App: "consumer-app", Namespace: "tenant-gtn-demo"},
 			Capabilities: []string{"webdav:read", "webdav:write", "ocs:shares"},
 			Auth: &v1alpha1.BindingAuth{
 				Method:    "oidc-token-exchange",
@@ -335,8 +335,8 @@ func TestIntegrationBinding_StateValues(t *testing.T) {
 func TestAppProfileList_DeepCopy(t *testing.T) {
 	list := &v1alpha1.AppProfileList{
 		Items: []v1alpha1.AppProfile{
-			{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}},
-			{ObjectMeta: metav1.ObjectMeta{Name: "ox-appsuite"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "app-a"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "app-b"}},
 		},
 	}
 	copy := list.DeepCopy()

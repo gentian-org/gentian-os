@@ -250,7 +250,7 @@ op_mail() {
     info "Seeding mail/dovecot credentials in crossplane-system..."
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
-            --arg doveadm "$(_derive minio dovecot_user)" \
+            --arg doveadm "$(_derive dovecot doveadm_password)" \
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
@@ -313,7 +313,7 @@ op_secrets() {
     info "Re-seeding mail/dovecot..."
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
-            --arg doveadm "$(_derive minio dovecot_user)" \
+            --arg doveadm "$(_derive dovecot doveadm_password)" \
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
@@ -593,8 +593,6 @@ op_argocd_bootstrap() {
             "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
 
     verify_argocd_apps || true
-    apply_intercom_gateway_values || true
-    verify_intercom_ics || true
 }
 
 # =============================================================================

@@ -88,58 +88,7 @@ data:
     statefulset:
       drivesPerNode: 1
     provisioning:
-      enabled: true
-      cleanupAfterFinished:
-        enabled: true
-        seconds: 60
-      extraCommands:
-        - mc anonymous set download provisioning/ums/portal-assets
-      buckets:
-        - name: migrations
-          versioning: Suspended
-          withLock: false
-        - name: nextcloud
-          versioning: Suspended
-          withLock: false
-        - name: notes
-          versioning: Versioned
-          withLock: false
-        - name: ums
-          versioning: Suspended
-          withLock: false
-      policies:
-        - name: migrations-bucket-policy
-          statements:
-            - resources: [arn:aws:s3:::migrations]
-              effect: Allow
-              actions: [s3:*]
-            - resources: [arn:aws:s3:::migrations/*]
-              effect: Allow
-              actions: [s3:*]
-        - name: nextcloud-bucket-policy
-          statements:
-            - resources: [arn:aws:s3:::nextcloud]
-              effect: Allow
-              actions: [s3:*]
-            - resources: [arn:aws:s3:::nextcloud/*]
-              effect: Allow
-              actions: [s3:*]
-        - name: notes-bucket-policy
-          statements:
-            - resources: [arn:aws:s3:::notes]
-              effect: Allow
-              actions: [s3:*]
-            - resources: [arn:aws:s3:::notes/*]
-              effect: Allow
-              actions: [s3:*]
-        - name: ums-bucket-policy
-          statements:
-            - resources: [arn:aws:s3:::ums]
-              effect: Allow
-              actions: [s3:*]
-            - resources: [arn:aws:s3:::ums/*]
-              effect: Allow
-              actions: [s3:*]
+      enabled: false
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -156,15 +105,7 @@ data:
     persistence:
       size: 10Gi
     provisioning:
-      resources:
-        limits:
-          cpu: "4"
-          memory: 512Mi
-        requests:
-          cpu: 100m
-          memory: 128Mi
-      usersExistingSecrets:
-        - minio-provisioning-users
+      enabled: false
     resources:
       limits:
         cpu: "4"

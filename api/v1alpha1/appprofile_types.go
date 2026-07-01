@@ -128,9 +128,8 @@ type AppProfileSpec struct {
 
 	// AdditionalIngresses declares extra Ingress resources to create alongside
 	// the primary Ingress. Use this when an app requires a second hostname
-	// routed to the same (or a different) Service — for example, CryptPad
-	// requires a separate sandbox subdomain for its client-side iframe
-	// isolation model (httpSafeOrigin must differ from httpUnsafeOrigin).
+	// routed to the same (or a different) Service — for example, an app that
+	// requires a separate sandbox subdomain for client-side iframe isolation.
 	// Each entry is treated identically to Ingress: the orchestrator creates
 	// one Kubernetes Ingress per entry with its own host, TLS secret reference,
 	// and lifecycle management (stale entries are deleted on app removal).
@@ -143,9 +142,9 @@ type AppProfileSpec struct {
 	// +optional
 	Sidecars []AppSidecarSpec `json:"sidecars,omitempty"`
 
-	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
+	// PortalTiles defines the tiles this app contributes to the gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
-	// UDM portal entry under swp.{tile.name}_{tenantName}.
+	// portal entry keyed as {tile.name}_{tenantName}.
 	// Requires ingress.subDomain to be set (used as the tile base URL).
 	// When empty no per-tenant portal entries are created.
 	// +optional
@@ -230,15 +229,15 @@ const (
 // PortalTileSpec defines a single tile this app contributes to the portal when
 // deployed for a tenant in dedicated mode.
 type PortalTileSpec struct {
-	// Name is the unique tile identifier, forming the portal entry CN:
-	// swp.{name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
+	// Name is the unique tile identifier, forming the portal entry key:
+	// {name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
 	Name string `json:"name"`
 
 	// DisplayName is the localized label shown in the portal.
-	// Locale keys follow the UDM convention (e.g., "de_DE", "en_US").
+	// Locale keys use BCP 47-style tags (e.g., "de_DE", "en_US").
 	// At least one entry is required.
 	// +kubebuilder:validation:Required
 	DisplayName map[string]string `json:"displayName"`

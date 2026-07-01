@@ -149,7 +149,7 @@ func (r *TenantReconciler) deleteAppDeployment(_ context.Context, _ *gentianov1a
 
 // cleanupOrphanedAppWorkload removes tenant-namespace Jobs and orphan Job pods for
 // apps no longer listed in tenant.Spec.Apps. Crossplane deletes App claims on
-// uninstall, but composition Jobs (e.g. openproject-oidc-seed) can leave pods
+// uninstall, but composition Jobs (e.g. catalogue-app-oidc-seed) can leave pods
 // running when the owning Job disappears first.
 func (r *TenantReconciler) cleanupOrphanedAppWorkload(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	desired := make(map[string]struct{}, len(tenant.Spec.Apps))

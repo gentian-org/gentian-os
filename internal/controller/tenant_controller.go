@@ -151,7 +151,7 @@ type TenantReconciler struct {
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
 	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
-	// on which kernel UIs (Keycloak, Argo CD, Nubus, Intercom) are served.
+	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
 	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
 	// unset. Sourced from KERNEL_DOMAIN at startup.
 	// See docs/design/multi-tenancy.md §3.

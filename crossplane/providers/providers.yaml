@@ -67,7 +67,6 @@ metadata:
   name: provider-http
 spec:
   # crossplane-contrib/provider-http: full CRUD against arbitrary HTTP/REST APIs.
-  # Used for UDM identity provisioning (users, groups) via the Nubus UDM REST API.
   package: xpkg.upbound.io/crossplane-contrib/provider-http:v1.0.14
 ---
 apiVersion: pkg.crossplane.io/v1

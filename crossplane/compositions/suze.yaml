@@ -70,7 +70,7 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- /* ── Standalone Keycloak (no Nubus umbrella) ─────────────────── */}}
+            {{- /* ── Standalone Keycloak ─────────────────────────────────────── */}}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release

@@ -43,14 +43,7 @@ data:
       fsGroupChangePolicy: OnRootMismatch
 
     job:
-      enabled: true
-      retries: 10
-      wait: 30
-      databases:
-        - name: configdb
-          user: ""
-        - name: openxchange_dummy
-          user: openxchange_user
+      enabled: false
 
     cleanup:
       deletePodsOnSuccess: true

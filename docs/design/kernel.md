@@ -68,7 +68,7 @@ somewhere to read/write data through a standard API.
 
 Gentian OS ships a **kernel** that must be Ready before any tenant app
 can run. Kernel components provide **platform primitives**; catalogue
-apps (Nextcloud, Collabora, CryptPad, mail, …) are installed per tenant
+apps (Nextcloud, Collabora, mail, …) are installed per tenant
 via `AppProfile` + the `app-default` composition in `gentian-apps`.
 
 | Kernel function | Default-install component | Desktop OS analogue | Standard contract exposed to apps |
@@ -87,9 +87,9 @@ in `Tenant.spec.apps`:
 
 | Capability | Catalogue profile(s) | Contract |
 |---|---|---|
-| Hierarchical files (WebDAV) | `nextcloud`, `od-nextcloud` | `file-store` |
-| Collaborative editing | Collabora (via Nextcloud integration) | WOPI |
-| Diagram editing | CryptPad (via Nextcloud integration) | embed |
+| Hierarchical files (WebDAV) | catalogue file-store profiles | `file-store` |
+| Collaborative editing | catalogue WOPI providers | WOPI |
+| Office editing | **Collabora** (catalogue app) | embed |
 | Self-hosted mail UI | mail app profiles in `gentian-apps` | SMTP/IMAP kernel requirements |
 
 In Crossplane terms: the default install is the set of `Cluster`-XR

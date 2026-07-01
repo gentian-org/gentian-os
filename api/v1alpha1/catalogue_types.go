@@ -74,7 +74,7 @@ const (
 // ProfileIdentity uniquely identifies an immutable AppProfile catalogue revision
 // within the tuple (family, catalogueVersion, edition).
 type ProfileIdentity struct {
-	// Family is the stable logical application id (e.g. "openproject").
+	// Family is the stable logical application id (e.g. "demo-app").
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63

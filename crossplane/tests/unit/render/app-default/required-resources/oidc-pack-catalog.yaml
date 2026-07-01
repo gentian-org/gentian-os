@@ -4,7 +4,7 @@ metadata:
   name: test-oidc-catalog
   labels:
     gentianos.io/oidc-catalog: test
-    gentianos.io/profile-name: openproject
+    gentianos.io/profile-name: demo-app
 spec:
   mapperTemplates:
     gentian_useruuid:

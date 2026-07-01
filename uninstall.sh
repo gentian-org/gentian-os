@@ -396,8 +396,6 @@ for ns in "${SERVICES_NS}" "${INFRA_NS}"; do
         postgresql-dev-values \
         mariadb-base-values \
         mariadb-dev-values \
-        cryptpad-base-values \
-        cryptpad-dev-values \
         postfix-base-values \
         postfix-dev-values \
         dovecot-base-values \
