@@ -907,6 +907,9 @@ install_gentian_portal_secrets() {
     if [[ -n "${openfga_token}" ]]; then
         secret_args+=(--from-literal=OPENFGA_API_TOKEN="${openfga_token}")
     fi
+    if [[ -n "${store_id}" ]]; then
+        secret_args+=(--from-literal=OPENFGA_STORE_ID="${store_id}")
+    fi
 
     kubectl create secret generic gentian-portal-secrets -n "${ns}" \
         "${secret_args[@]}" \
@@ -952,6 +955,7 @@ apply_gentian_portal_argocd_application() {
 
 wait_for_gentian_portal_argocd() {
     local timeout_sec="${1:-300}"
+    local ns="platform-kernel"
     info "Waiting for gentian-portal ArgoCD Application (up to ${timeout_sec}s)..."
     local elapsed=0
     local interval=10
@@ -964,8 +968,22 @@ wait_for_gentian_portal_argocd() {
         local health sync
         health=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)
         sync=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
-        if [[ "${health}" == "Healthy" && "${sync}" == "Synced" ]]; then
-            success "gentian-portal ArgoCD Application is Synced and Healthy."
+
+        # Gateway API HTTPRoute + ServerSideApply adds default backendRef fields that
+        # keep sync=OutOfSync even when the route is Accepted and serving traffic.
+        local sync_ok=0
+        [[ "${sync}" == "Synced" || "${sync}" == "OutOfSync" ]] && sync_ok=1
+
+        if [[ "${health}" == "Healthy" && "${sync_ok}" -eq 1 ]] \
+            && kubectl wait "deployment/gentian-portal-gentian-portal-api" -n "${ns}" \
+                --for=condition=Available --timeout=10s >/dev/null 2>&1 \
+            && kubectl wait "deployment/gentian-portal-gentian-portal-web" -n "${ns}" \
+                --for=condition=Available --timeout=10s >/dev/null 2>&1; then
+            if [[ "${sync}" == "OutOfSync" ]]; then
+                success "gentian-portal ArgoCD Application is Healthy (HTTPRoute SSA drift ignored)."
+            else
+                success "gentian-portal ArgoCD Application is Synced and Healthy."
+            fi
             return 0
         fi
         printf "  gentian-portal: sync=%s health=%s (%ds/%ds)\n" \
@@ -973,9 +991,11 @@ wait_for_gentian_portal_argocd() {
         sleep "${interval}"
         elapsed=$((elapsed + interval))
     done
-    warn "gentian-portal ArgoCD Application did not become Synced/Healthy within ${timeout_sec}s."
+    warn "gentian-portal ArgoCD Application did not become Healthy within ${timeout_sec}s."
     kubectl get application gentian-portal -n argocd \
         -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null || true
+    kubectl get deploy -n "${ns}" -l app.kubernetes.io/instance=gentian-portal \
+        -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas' 2>/dev/null || true
     return 1
 }
 
@@ -997,9 +1017,8 @@ install_gentian_portal_chart() {
     install_gentian_portal_secrets
     apply_gentian_portal_argocd_application
     release_gentian_portal_helm_bootstrap
-    wait_for_gentian_portal_argocd 300 || true
 
-    success "gentian-portal registered at ${portal_origin}/login"
+    success "gentian-portal ArgoCD Application registered at ${portal_origin}/login"
 }
 
 install_stage1_portal() {
@@ -1044,6 +1063,8 @@ install_stage1_portal() {
     else
         warn "Authz bridge did not publish openfga-runtime — ensure operator uses CI image (GENTIAN_OS_IMAGE_TAG=develop)."
     fi
+
+    wait_for_gentian_portal_argocd 300 || warn "gentian-portal ArgoCD Application not Healthy yet — check portal API /readyz and OPENFGA_STORE_ID."
 
     success "Stage 1 portal login ready."
     info "  https://portal.${KERNEL_DOMAIN}/login"

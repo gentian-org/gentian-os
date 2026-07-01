@@ -33,6 +33,17 @@ metadata:
 spec:
   project: gentian
   ignoreDifferences:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: platform-kernel
+    jqPathExpressions:
+    - .status
+    - .metadata.annotations
+    - .spec.parentRefs[].group
+    - .spec.parentRefs[].kind
+    - .spec.rules[].backendRefs[].group
+    - .spec.rules[].backendRefs[].kind
+    - .spec.rules[].backendRefs[].weight
   - group: apps
     kind: Deployment
     namespace: platform-kernel
