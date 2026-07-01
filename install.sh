@@ -1075,7 +1075,6 @@ install_stage1_operator() {
     local env="${ENV:-dev}"
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local ns="gentian-system"
-    local infra_ns="gentian-infra-${env}"
 
     if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
         kubectl create namespace "$ns"
