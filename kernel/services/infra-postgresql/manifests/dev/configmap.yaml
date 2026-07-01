@@ -67,6 +67,8 @@ data:
           user: guardianmanagementapi_user
         - name: notificationsapi
           user: notificationsapi_user
+        - name: nextcloud
+          user: nextcloud_user
         - name: openfga
           user: openfga_user
 

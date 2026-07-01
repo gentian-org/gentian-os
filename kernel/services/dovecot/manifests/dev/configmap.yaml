@@ -84,7 +84,7 @@ data:
         enabled: true
         introspectionScheme: "http"
         introspectionPath: "/realms/kernel/protocol/openid-connect/token/introspect"
-        usernameAttribute: "gentian_username"
+        usernameAttribute: "opendesk_username"
       migration:
         enabled: false
       protocol:
@@ -123,7 +123,7 @@ data:
       oidc:
         introspectionHost: "nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080"
         clientID:
-          value: "gentian-dovecot"
+          value: "opendesk-dovecot"
       submission:
         host: "postfix-dev.gentian-dev.svc.cluster.local:25"
       loginTrustedNetworks: "10.0.0.0/8"

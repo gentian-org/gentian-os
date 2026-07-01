@@ -13,7 +13,7 @@ dovecot:
   oidc:
     introspectionHost: "nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080"
     clientID:
-      value: "gentian-dovecot"
+      value: "opendesk-dovecot"
   submission:
     host: "postfix-dev.gentian-dev.svc.cluster.local:25"
   loginTrustedNetworks: "10.0.0.0/8"
