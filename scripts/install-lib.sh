@@ -3009,8 +3009,8 @@ seed_secrets() {
     EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}" \
     bash "${SCRIPT_DIR}/scripts/seed-openbao.sh" \
         "$MASTER_PASSWORD" \
-        "$SMTP_RELAY_USERNAME" \
-        "$SMTP_RELAY_PASSWORD"
+        "${SMTP_RELAY_USERNAME:-}" \
+        "${SMTP_RELAY_PASSWORD:-}"
     success "All kernel secrets seeded."
 }
 
