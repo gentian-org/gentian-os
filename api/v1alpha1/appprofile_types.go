@@ -150,6 +150,43 @@ type AppProfileSpec struct {
 	// When empty no per-tenant portal entries are created.
 	// +optional
 	PortalTiles []PortalTileSpec `json:"portalTiles,omitempty"`
+
+	// Provisioning configures how Gentian maps workspace groups to in-app roles.
+	// Members of gentian:tenant:<t>:app-admins are reconciled into the privileged
+	// role declared here when the app is installed for a tenant.
+	// +optional
+	Provisioning *ProvisioningSpec `json:"provisioning,omitempty"`
+}
+
+// ProvisioningSpec declares app-specific user lifecycle mappings.
+type ProvisioningSpec struct {
+	// PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
+	// administrator role (for example the Nextcloud "admin" group).
+	// +optional
+	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
+}
+
+// PrivilegedRoleKind is the native app role type referenced by PrivilegedRoleSpec.
+// +kubebuilder:validation:Enum=group
+type PrivilegedRoleKind string
+
+const (
+	// PrivilegedRoleKindGroup maps app-admins to an application-native group.
+	PrivilegedRoleKindGroup PrivilegedRoleKind = "group"
+)
+
+// PrivilegedRoleSpec identifies the in-app privileged role for app-admins members.
+type PrivilegedRoleSpec struct {
+	// Kind is the application's native role type. Only "group" is supported today.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=group
+	Kind PrivilegedRoleKind `json:"kind"`
+
+	// Name is the in-app role identifier (for example Nextcloud group "admin").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	Name string `json:"name"`
 }
 
 // TileSpec configures a Gentian portal tile icon (52×52 SVG).

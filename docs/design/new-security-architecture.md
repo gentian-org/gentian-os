@@ -300,7 +300,7 @@ contract:demo/project-management#consumer@app:crm-app
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. User/group administration is moving to the [Gentian Admin Console](admin-console.md) (replaces UMC). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
+**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. **App administrators** use a separate cross-app group (`gentian:tenant:<t>:app-admins`) reconciled into each app's declared `AppProfile.spec.provisioning.privilegedRole` (see [app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) §6h). User/group administration is the [Gentian Admin Console](admin-console.md) (replaces UMC). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
 
 **Legacy cutover clusters** may still run Nubus + LDAP (`IDENTITY_MODE=legacy-ldap`) until migrated.
 
@@ -387,7 +387,8 @@ Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so 
 | **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via **Suze** XR (`gentian-idp-keycloak`); OpenDesk Nubus deploy commented out in `install.sh` |
 | Drop **OpenLDAP + UDM**; Keycloak authoritative | **In progress** | `IDENTITY_MODE=keycloak-native` skips LDAP/UDM provisioning; OpenDesk stack deploy commented out in `install.sh` |
 | **Gentian Admin Console** (UMC replacement) | **Planned** → [roadmap § Admin Console](../roadmap.md#gentian-admin-console-replaces-umc) | Design: [admin-console.md](admin-console.md); P0 realm bootstrap → P6 shell tiles |
-| **Group entitlements** (`gentian:tenant:<t>:app:<profile>`) | **Designed** | Replaces `managed-by-attribute-*` / `opendesk*Enabled`; portal + OIDC packs |
+| **Group entitlements** (`gentian:tenant:<t>:app:<profile>`) | **Done** | Portal tiles + OIDC packs; distinct from in-app admin |
+| **App administrators** (`gentian:tenant:<t>:app-admins`) | **Done** | Admin Console assignment; `AppProfile.spec.provisioning.privilegedRole`; operator sync (Nextcloud v1) |
 | **`provider-keycloak` Realm MRs** (drift-safe tenant realms) | **Blocked** → [roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation) | Tenant realms still provisioned via manifest-bridge Jobs |
 | Deploy **OpenFGA** + Postgres store | **Done** | **Suze** XR + `kernel/appsets/09-suze.yaml`; shared Postgres `openfga` database |
 | Author **base authorization model** (`user`, `group`, `tenant`, derived-ceiling) | **Done** | `authz/model/v0/model.fga`, `model.json`, `tests.fga.yaml`; embedded in operator bootstrap |
@@ -401,7 +402,7 @@ Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so 
 
 Stage 1 **minimum work package is implemented** on `feat/new-security` (`install.sh` Steps 14–15). Remaining polish (not blockers for Stage 2):
 
-1. **SCIM / event-driven sync** — bridge uses periodic reconciliation; Keycloak event publisher can replace polling.
+1. **SCIM / event-driven sync** — bridge uses periodic reconciliation; Keycloak event publisher can replace polling. App-admin provisioning uses Admin Console → `Tenant` annotation → operator reconcile (immediate) plus 5m safety requeue.
 2. **provider-keycloak Realm MRs** — tenant realms still use shell Jobs until upstream gaps close ([roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation)).
 3. **Gateway-level AuthZEN** — PEP is wired in `gentian-ui` BFF; Envoy external auth is Stage 2.
 4. **App-template PEP parity** — copy `require_shell_launch()` pattern into `gentian-app-template` for catalogue apps.

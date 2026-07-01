@@ -468,6 +468,13 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	privilegeResult, err := r.ensureAppPrivileges(ctx, tenant)
+	if err != nil {
+		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, err
+	}
+
 	// 12. Edge routing — Gateway API (Envoy Gateway).
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -575,6 +582,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if appsResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
 		return appsResult, nil
+	}
+	if privilegeResult.RequeueAfter > 0 {
+		logger.Info("tenant ready; app privilege sync scheduled", "tenant", tenant.Name)
+		return privilegeResult, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil

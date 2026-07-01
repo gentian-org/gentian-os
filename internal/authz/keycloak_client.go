@@ -18,9 +18,11 @@ const keycloakAdminCLI = "admin-cli"
 
 // KeycloakUser is a minimal Keycloak user representation.
 type KeycloakUser struct {
-	ID       string
-	Username string
-	Enabled  bool
+	ID         string
+	Username   string
+	Enabled    bool
+	Email      string
+	Attributes map[string][]string
 }
 
 // KeycloakAdminClient calls the Keycloak Admin REST API.
@@ -91,9 +93,11 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 		return nil, fmt.Errorf("keycloak list users: %s", resp.Status)
 	}
 	var raw []struct {
-		ID       string `json:"id"`
-		Username string `json:"username"`
-		Enabled  bool   `json:"enabled"`
+		ID         string              `json:"id"`
+		Username   string              `json:"username"`
+		Enabled    bool                `json:"enabled"`
+		Email      string              `json:"email"`
+		Attributes map[string][]string `json:"attributes"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
@@ -103,9 +107,100 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 		if !u.Enabled || u.ID == "" {
 			continue
 		}
-		out = append(out, KeycloakUser{ID: u.ID, Username: u.Username, Enabled: u.Enabled})
+		out = append(out, KeycloakUser{
+			ID:         u.ID,
+			Username:   u.Username,
+			Enabled:    u.Enabled,
+			Email:      u.Email,
+			Attributes: u.Attributes,
+		})
 	}
 	return out, nil
+}
+
+// ListGroupMembers returns enabled users in a Keycloak group by group name.
+func (c *KeycloakAdminClient) ListGroupMembers(ctx context.Context, realm, groupName string) ([]KeycloakUser, error) {
+	groupID, err := c.findGroupID(ctx, realm, groupName)
+	if err != nil {
+		return nil, err
+	}
+	if groupID == "" {
+		return nil, nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/groups/%s/members?max=1000", url.PathEscape(realm), url.PathEscape(groupID))
+	req, err := c.newAdminRequest(ctx, token, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("keycloak list group members: %s", resp.Status)
+	}
+	var raw []struct {
+		ID         string              `json:"id"`
+		Username   string              `json:"username"`
+		Enabled    bool                `json:"enabled"`
+		Email      string              `json:"email"`
+		Attributes map[string][]string `json:"attributes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	out := make([]KeycloakUser, 0, len(raw))
+	for _, u := range raw {
+		if !u.Enabled || u.ID == "" {
+			continue
+		}
+		out = append(out, KeycloakUser{
+			ID:         u.ID,
+			Username:   u.Username,
+			Enabled:    u.Enabled,
+			Email:      u.Email,
+			Attributes: u.Attributes,
+		})
+	}
+	return out, nil
+}
+
+func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName string) (string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/groups?max=1000", url.PathEscape(realm))
+	req, err := c.newAdminRequest(ctx, token, http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("keycloak list groups: %s", resp.Status)
+	}
+	var raw []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return "", err
+	}
+	for _, g := range raw {
+		if g.Name == groupName && g.ID != "" {
+			return g.ID, nil
+		}
+	}
+	return "", nil
 }
 
 func (c *KeycloakAdminClient) adminToken(ctx context.Context) (string, error) {

@@ -691,6 +691,37 @@ spec:
                   - name
                   type: object
                 type: array
+              provisioning:
+                description: |-
+                  Provisioning configures how Gentian maps workspace groups to in-app roles.
+                  Members of gentian:tenant:<t>:app-admins are reconciled into the privileged
+                  role declared here when the app is installed for a tenant.
+                properties:
+                  privilegedRole:
+                    description: |-
+                      PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
+                      administrator role (for example the Nextcloud "admin" group).
+                    properties:
+                      kind:
+                        allOf:
+                        - enum:
+                          - group
+                        - enum:
+                          - group
+                        description: Kind is the application's native role type. Only
+                          "group" is supported today.
+                        type: string
+                      name:
+                        description: Name is the in-app role identifier (for example
+                          Nextcloud group "admin").
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                    required:
+                    - kind
+                    - name
+                    type: object
+                type: object
               sidecars:
                 description: |-
                   Sidecars declares companion services deployed by purpose-built compositions

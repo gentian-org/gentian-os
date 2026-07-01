@@ -25,14 +25,20 @@ func gentianTenantAppGroup(tenant, profile string) string {
 	return gentianTenantPrefix(tenant) + "app:" + profile
 }
 
+func gentianTenantAppAdminsGroup(tenant string) string {
+	return gentianTenantPrefix(tenant) + "app-admins"
+}
+
 func collectGentianTenantGroupNames(tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) []string {
 	seen := map[string]struct{}{
-		gentianTenantMembersGroup(tenant.Name): {},
-		gentianTenantAdminsGroup(tenant.Name):  {},
+		gentianTenantMembersGroup(tenant.Name):   {},
+		gentianTenantAdminsGroup(tenant.Name):    {},
+		gentianTenantAppAdminsGroup(tenant.Name): {},
 	}
 	names := []string{
 		gentianTenantMembersGroup(tenant.Name),
 		gentianTenantAdminsGroup(tenant.Name),
+		gentianTenantAppAdminsGroup(tenant.Name),
 	}
 	add := func(group string) {
 		if group == "" {
