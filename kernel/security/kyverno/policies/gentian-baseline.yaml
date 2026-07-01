@@ -124,6 +124,10 @@ spec:
           - envoy-gateway-system
           - platform-kernel
           - gentian-system
+      - resources:
+          selector:
+            matchLabels:
+              gentianos.io/mac-waiver/gentian-require-non-root: "approved"
     validate:
       message: Containers must run as non-root or declare runAsNonRoot.
       pattern:

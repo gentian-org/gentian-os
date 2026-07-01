@@ -156,6 +156,11 @@ type AppProfileSpec struct {
 	// role declared here when the app is installed for a tenant.
 	// +optional
 	Provisioning *ProvisioningSpec `json:"provisioning,omitempty"`
+
+	// Security declares MAC and other security requests for this catalogue entry.
+	// Cluster administrators approve waivers via PlatformSecurityPolicy.
+	// +optional
+	Security *SecuritySpec `json:"security,omitempty"`
 }
 
 // ProvisioningSpec declares app-specific user lifecycle mappings.

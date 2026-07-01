@@ -1,0 +1,11 @@
+{{- if .Values.platformSecurityPolicy.create }}
+apiVersion: gentianos.io/v1alpha1
+kind: PlatformSecurityPolicy
+metadata:
+  name: default
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  allowedMacWaivers:
+    {{- toYaml .Values.platformSecurityPolicy.allowedMacWaivers | nindent 4 }}
+{{- end }}

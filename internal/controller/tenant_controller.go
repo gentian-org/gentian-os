@@ -177,8 +177,8 @@ type TenantReconciler struct {
 	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, office, portal/UMC
 	// convergence, Nextcloud group) so tenant lifecycle is driven by the
-	// driven by the Crossplane graph alone. Used for P3/P4 e2e and rollback
-	// testing via TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
+	// Crossplane graph alone. Used for P3/P4 e2e and rollback testing via
+	// TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
 	CrossplaneOnly bool
 }
 
@@ -444,7 +444,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 9. Storage (MinIO S3 buckets + Nextcloud groups)
+	// 9. Storage (MinIO S3 buckets)
 	storageResult, err := r.ensureStorage(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -461,6 +461,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// 11. App deployment (ArgoCD Application CRs per app)
+	if _, err := r.ensureMacWaivers(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure mac waivers: %w", err)
+	}
+
 	appsResult, err := r.ensureAppDeployment(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
@@ -487,6 +491,12 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, err
+	}
+
+	// 14. App grants (tenant-approved integration subsets → OpenFGA)
+	if _, err := r.ensureAppGrants(ctx, tenant); err != nil {
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, fmt.Errorf("ensure app grants: %w", err)
 	}
 
 	// ── Shared-kernel extensions (skipped when TENANT_CROSSPLANE_ONLY) ─────────
@@ -671,6 +681,9 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
 	if err := r.deleteIntegrationBindings(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.deleteAppGrants(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

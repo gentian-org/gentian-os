@@ -18,6 +18,12 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["integrationbindings", "integrationbindings/status", "integrationbindings/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gentianos.io"]
+    resources: ["appgrants", "appgrants/status", "appgrants/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gentianos.io"]
+    resources: ["platformsecuritypolicies", "platformsecuritypolicies/status", "platformsecuritypolicies/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Core resources
   - apiGroups: [""]
     resources: ["namespaces"]

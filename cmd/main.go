@@ -158,6 +158,24 @@ func main() {
 		setupLog.Info("authz bridge enabled", "openfga_url", openfgaURL)
 	}
 
+	if err := (&controller.PlatformSecurityPolicyReconciler{
+		Client:            mgr.GetClient(),
+		OperatorNamespace: "gentian-system",
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PlatformSecurityPolicy")
+		os.Exit(1)
+	}
+
+	if err := (&controller.AppGrantReconciler{
+		Client:       mgr.GetClient(),
+		OpenFGAURL:   openfgaURL,
+		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
+		Enabled:      controller.AuthzBridgeEnabled(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AppGrant")
+		os.Exit(1)
+	}
+
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),

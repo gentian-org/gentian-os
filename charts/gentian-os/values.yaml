@@ -28,9 +28,8 @@ routingMode: gateway
 tenantDNS01ClusterIssuer: ""
 
 # tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
-# is true the operator skips shared-kernel side effects (mail, office, portal
-# redirect, Nextcloud group) so tenant lifecycle is validated via the Crossplane
-# graph alone (P3/P4 e2e).
+# is true the operator skips shared-kernel side effects (mail, portal redirect)
+# so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).
 # Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
 # if a cutover regresses; leave false for normal production behaviour.
 tenantProvisioning:
@@ -46,6 +45,17 @@ authzBridge:
   enabled: false
   openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
   openfgaToken: ""
+
+# platformSecurityPolicy is the cluster singleton edited by platform administrators
+# (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests
+# are intersected with this allowlist before MAC labels are applied to workloads.
+platformSecurityPolicy:
+  create: true
+  allowedMacWaivers: []
+  # Example (dev Element Jitsi sidecar):
+  # - profile: element
+  #   policy: gentian-require-non-root
+  #   scope: sidecar-jitsi
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
 # Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).

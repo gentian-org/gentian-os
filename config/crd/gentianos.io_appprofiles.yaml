@@ -722,6 +722,35 @@ spec:
                     - name
                     type: object
                 type: object
+              security:
+                description: |-
+                  Security declares MAC and other security requests for this catalogue entry.
+                  Cluster administrators approve waivers via PlatformSecurityPolicy.
+                properties:
+                  macWaivers:
+                    description: |-
+                      MacWaivers lists Kyverno MAC policies the app may need when upstream charts
+                      cannot satisfy baseline pod security (for example s6-based init as root).
+                    items:
+                      description: MacWaiverRequest identifies a MAC policy exception
+                        scope requested by the profile.
+                      properties:
+                        policy:
+                          description: Policy is the Kyverno ClusterPolicy name (for
+                            example gentian-require-non-root).
+                          minLength: 1
+                          type: string
+                        scope:
+                          description: Scope narrows the waiver to a composition component
+                            (for example sidecar-jitsi).
+                          minLength: 1
+                          type: string
+                      required:
+                      - policy
+                      - scope
+                      type: object
+                    type: array
+                type: object
               sidecars:
                 description: |-
                   Sidecars declares companion services deployed by purpose-built compositions
