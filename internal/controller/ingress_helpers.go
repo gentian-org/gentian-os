@@ -159,15 +159,6 @@ func cryptpadSandboxFrameAncestorOrigins(kernelDomain, padDomain string) string 
 	return strings.Join(origins, " ")
 }
 
-// cryptpadKernelMainFrameAncestorOrigins lists embedders for the shared kernel
-// CryptPad service at pad.<kernelDomain> (diagrams.net from Nextcloud Files).
-func cryptpadKernelMainFrameAncestorOrigins(kernelDomain string) string {
-	return strings.Join([]string{
-		kernelFilesOrigin(kernelDomain),
-		kernelPortalOrigin(kernelDomain),
-	}, " ")
-}
-
 func kernelPortalOrigin(kernelDomain string) string {
 	if kernelDomain == "" {
 		return ""

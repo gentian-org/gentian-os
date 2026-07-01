@@ -333,31 +333,3 @@ func keycloakGatewayResponseFilters(kernelDomain string, tenantEffectiveDomains 
 		},
 	}
 }
-
-func kernelCryptpadMainResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
-	return cryptpadGatewayAppendFrameAncestorsFilters(cryptpadKernelMainFrameAncestorOrigins(kernelDomain))
-}
-
-func kernelCryptpadSandboxResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
-	return cryptpadGatewayAppendFrameAncestorsFilters(cryptpadSandboxFrameAncestorOrigins(kernelDomain, kernelDomain))
-}
-
-// cryptpadGatewayAppendFrameAncestorsFilters appends a frame-ancestors CSP header
-// without removing CryptPad's upstream policy (script-src must stay strict).
-func cryptpadGatewayAppendFrameAncestorsFilters(origins string) []gatewayv1.HTTPRouteFilter {
-	if origins == "" {
-		return nil
-	}
-	modifier := gatewayv1.HTTPHeaderFilter{
-		Remove: []string{"X-Frame-Options"},
-		Add: []gatewayv1.HTTPHeader{
-			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", origins)},
-		},
-	}
-	return []gatewayv1.HTTPRouteFilter{
-		{
-			Type:                   gatewayv1.HTTPRouteFilterResponseHeaderModifier,
-			ResponseHeaderModifier: &modifier,
-		},
-	}
-}

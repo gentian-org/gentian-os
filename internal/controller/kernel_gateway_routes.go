@@ -167,19 +167,6 @@ func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
 	}
 }
 
-func ptrPortNumber(port int32) *gatewayv1.PortNumber {
-	p := gatewayv1.PortNumber(port)
-	return &p
-}
-
-func kernelBackendRule(serviceName string, port int32, filters []gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	return kernelBackendRulePrefix(serviceName, port, "/", filters...)
-}
-
-func kernelBackendRulePrefix(serviceName string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	return kernelBackendRulePrefixNS(serviceName, "", port, prefix, filters...)
-}
-
 func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
 	ref := gatewayv1.BackendObjectReference{
@@ -200,10 +187,6 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 		rule.Filters = filters
 	}
 	return rule
-}
-
-func kernelBackendRuleExact(serviceName string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	return kernelBackendRuleExactNS(serviceName, "", port, path, filters...)
 }
 
 func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
@@ -337,26 +320,6 @@ func (r *GatewayPlatformReconciler) ensureGentianPortalReferenceGrant(ctx contex
 		return r.Patch(ctx, existing, patch)
 	}
 	return nil
-}
-
-func kernelRedirectRule(path, target string, status int) gatewayv1.HTTPRouteRule {
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	targetPath := target
-	return gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(path)},
-		Filters: []gatewayv1.HTTPRouteFilter{
-			{
-				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-					Path: &gatewayv1.HTTPPathModifier{
-						Type:            pathType,
-						ReplaceFullPath: &targetPath,
-					},
-					StatusCode: &status,
-				},
-			},
-		},
-	}
 }
 
 func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
