@@ -44,8 +44,8 @@ spec:
     template:
       engineVersion: v2
       data:
-        doveadm_password: {{ .doveadm_password | quote }}
-        oidc_client_secret: {{ .oidc_client_secret | quote }}
+        doveadm_password: "{{ .doveadm_password }}"
+        oidc_client_secret: "{{ .oidc_client_secret }}"
   data:
     - secretKey: doveadm_password
       remoteRef:
