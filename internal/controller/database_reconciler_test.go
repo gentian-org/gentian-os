@@ -18,6 +18,7 @@ package controller_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,8 +87,42 @@ func patchDatabaseCRReady(t *testing.T, name, namespace string) {
 	t.Fatalf("patch Database %s status: too many conflicts", name)
 }
 
-// TestDB_NoPostgresApps verifies that a Tenant with no apps does not create any
-// Database CRs or role Jobs, and gets DatabaseReady=True with NoDatabaseRequired.
+// completePortalShellDatabase satisfies portal shell prerequisites while manual
+// data-plane tests keep app-specific role Jobs pending.
+func completePortalShellDatabase(t *testing.T, tenantName string) {
+	t.Helper()
+	jobName := "pg-role-" + tenantName + "-shell"
+	waitFor(t, jobAppearTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, jobName, "platform-kernel")
+
+	crName := "db-" + tenantName + "-shell"
+	dbGVK := schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"}
+	db := &unstructured.Unstructured{}
+	db.SetGroupVersionKind(dbGVK)
+	err := testClient.Get(context.Background(), types.NamespacedName{Name: crName, Namespace: "platform-kernel"}, db)
+	if err != nil {
+		safe := strings.ReplaceAll(tenantName, "-", "_")
+		db = &unstructured.Unstructured{}
+		db.SetGroupVersionKind(dbGVK)
+		db.SetName(crName)
+		db.SetNamespace("platform-kernel")
+		_ = unstructured.SetNestedField(db.Object, "postgres", "spec", "cluster", "name")
+		_ = unstructured.SetNestedField(db.Object, safe+"_shell", "spec", "name")
+		_ = unstructured.SetNestedField(db.Object, safe+"_shell", "spec", "owner")
+		_ = unstructured.SetNestedField(db.Object, "present", "spec", "ensure")
+		if err := testClient.Create(context.Background(), db); err != nil && !k8serrors.IsAlreadyExists(err) {
+			t.Fatalf("create shell Database CR %s: %v", crName, err)
+		}
+	}
+	patchDatabaseCRReady(t, crName, "platform-kernel")
+}
+
+// TestDB_NoPostgresApps verifies that a Tenant with no apps still provisions the
+// portal shell database and gets DatabaseReady=True with PortalShellReady.
 func TestDB_NoPostgresApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -122,8 +157,8 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	if dbCond.Status != metav1.ConditionTrue {
 		t.Errorf("expected DatabaseReady=True, got %v", dbCond.Status)
 	}
-	if dbCond.Reason != "NoDatabaseRequired" {
-		t.Errorf("expected reason NoDatabaseRequired, got %q", dbCond.Reason)
+	if dbCond.Reason != "PortalShellReady" {
+		t.Errorf("expected reason PortalShellReady, got %q", dbCond.Reason)
 	}
 }
 
@@ -197,6 +232,8 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
 	})
 
+	completePortalShellDatabase(t, "dbcreate")
+
 	// Reconciler should wait on the role Job before Database CR is applied.
 	waitForTenantConditionReason(t, "dbcreate", "DatabaseReady", "Provisioning")
 
@@ -254,6 +291,8 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
 	})
+
+	completePortalShellDatabase(t, "rolejob")
 
 	waitForTenantConditionReason(t, "rolejob", "DatabaseReady", "Provisioning")
 

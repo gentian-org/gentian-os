@@ -113,6 +113,11 @@ func shouldAutoCompleteProvisioningJob(jobName string) bool {
 		case strings.HasPrefix(jobName, "redis-acl-"):
 			return false
 		case strings.HasPrefix(jobName, "pg-role-"):
+			// Portal shell DB is required for every tenant; manual data-plane tests
+			// control app-specific role jobs only.
+			if strings.HasSuffix(jobName, "-shell") {
+				return true
+			}
 			return false
 		case strings.HasPrefix(jobName, "mariadb-setup-"):
 			return false
