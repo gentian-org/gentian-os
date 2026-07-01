@@ -392,6 +392,28 @@ type IdentityRequirement struct {
 	// (e.g. kernel-realm clients managed via keycloak-config).
 	// +optional
 	OIDC *OIDCClientSpec `json:"oidc,omitempty"`
+
+	// LDAP is retained for AppProfile catalogue compatibility. Legacy OpenDesk
+	// profiles still declare ldap blocks; the operator no longer provisions LDAP.
+	// +optional
+	LDAP *LDAPRequirement `json:"ldap,omitempty"`
+}
+
+// LDAPRequirement declares optional LDAP integration metadata on an AppProfile.
+// Deprecated: Gentian OS no longer provisions Nubus/LDAP; field is schema-only.
+type LDAPRequirement struct {
+	// Search documents a per-tenant LDAP search account in legacy profiles.
+	// +optional
+	Search bool `json:"search,omitempty"`
+
+	// Sync documents periodic LDAP sync in legacy profiles.
+	// +optional
+	Sync bool `json:"sync,omitempty"`
+
+	// Interval is the sync interval (e.g., "1h").
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-9]+(s|m|h|d)$`
+	Interval string `json:"interval,omitempty"`
 }
 
 // OIDCClientSpec describes an OIDC client to be registered in the tenant's
@@ -600,6 +622,10 @@ type ValueMapping struct {
 	// IMAP maps mail access values to Helm keys.
 	// +optional
 	IMAP *IMAPValueMapping `json:"imap,omitempty"`
+
+	// LDAP maps LDAP directory values to Helm keys (legacy OpenDesk profiles).
+	// +optional
+	LDAP *LDAPValueMapping `json:"ldap,omitempty"`
 }
 
 // OIDCValueMapping maps OIDC provider values to Helm chart keys.
@@ -715,6 +741,26 @@ type IMAPValueMapping struct {
 	// PortKey is the Helm value key for the IMAP port.
 	// +optional
 	PortKey string `json:"portKey,omitempty"`
+}
+
+// LDAPValueMapping maps LDAP directory values to Helm chart keys.
+// Deprecated: retained for legacy OpenDesk AppProfile catalogue entries.
+type LDAPValueMapping struct {
+	// HostKey is the Helm value key for the LDAP host.
+	// +optional
+	HostKey string `json:"hostKey,omitempty"`
+	// PortKey is the Helm value key for the LDAP port.
+	// +optional
+	PortKey string `json:"portKey,omitempty"`
+	// BaseDNKey is the Helm value key for the LDAP base DN.
+	// +optional
+	BaseDNKey string `json:"baseDnKey,omitempty"`
+	// BindDNKey is the Helm value key for the LDAP bind DN.
+	// +optional
+	BindDNKey string `json:"bindDNKey,omitempty"`
+	// BindPasswordKey is the Helm value key for the LDAP bind password.
+	// +optional
+	BindPasswordKey string `json:"bindPasswordKey,omitempty"`
 }
 
 // AppSidecarSpec declares a companion service deployed alongside the primary
