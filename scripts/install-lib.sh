@@ -2067,7 +2067,8 @@ wait_for_gateway_platform() {
     fi
 
     banner "Waiting for kernel Gateway API platform (ROUTING_MODE=gateway)"
-    local ns="gentian-${ENV:-dev}"
+    local ns
+    ns="$(_gentian_os_services_namespace)"
     local deadline=$(( SECONDS + 300 ))
 
     info "Waiting for GatewayClass gentian-envoy (up to 300s)..."
@@ -3236,6 +3237,179 @@ adopt_gentian_os_helm_preflight() {
     fi
 }
 
+_gentian_os_deployments_kernel_dir() {
+    : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    echo "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
+}
+
+_gentian_os_collect_operator_value_files() {
+    local -n _files=$1
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local kernel_dir
+    kernel_dir="$(_gentian_os_deployments_kernel_dir)"
+    _files=()
+    if [[ -f "${kernel_dir}/values-base.yaml" ]]; then
+        _files+=(-f "${kernel_dir}/values-base.yaml")
+    else
+        warn "Missing ${kernel_dir}/values-base.yaml — operator Cloudflare/DNS settings may be incomplete."
+    fi
+    if [[ -f "${kernel_dir}/values-${stage}.yaml" ]]; then
+        _files+=(-f "${kernel_dir}/values-${stage}.yaml")
+        info "Layering operator Helm values from gentian-deployments (values-${stage}.yaml)."
+    else
+        warn "Missing ${kernel_dir}/values-${stage}.yaml — operator stage overlay not applied."
+    fi
+}
+
+_gentian_os_services_namespace() {
+    local ns
+    ns=$(kubectl get deploy gentian-os -n gentian-system \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env[?(@.name=="SERVICES_NAMESPACE")].value}' 2>/dev/null || true)
+    if [[ -n "$ns" ]]; then
+        echo "$ns"
+        return
+    fi
+    echo "gentian-${ENV:-dev}"
+}
+
+wait_for_operator_cloudflare_token() {
+    local ns="${1:-gentian-system}"
+    local secret_name="${2:-cloudflare-api-token-gentian-system}"
+    if ! kubectl get externalsecret "${secret_name}" -n "${ns}" >/dev/null 2>&1; then
+        info "No operator Cloudflare ExternalSecret in ${ns}; skipping API token wait."
+        return 0
+    fi
+    info "Waiting for operator Cloudflare API token Secret ${secret_name} (max 120s)..."
+    local i
+    for (( i=1; i<=60; i++ )); do
+        if kubectl get secret "${secret_name}" -n "${ns}" >/dev/null 2>&1; then
+            success "Operator Cloudflare API token ready after $((i * 2))s."
+            return 0
+        fi
+        sleep 2
+    done
+    warn "Secret ${secret_name} did not materialize within 120s."
+    warn "  kubectl describe externalsecret ${secret_name} -n ${ns}"
+    warn "  Ensure CF_API_TOKEN was seeded (Step 12b) and OpenBao path gentian-os/kernel/dns/cloudflare exists."
+    return 1
+}
+
+handoff_gentian_os_to_argocd() {
+    local openfga_token="${1:-}"
+    local gentian_os_branch
+    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
+    local rendered
+    rendered="$(mktemp)"
+    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
+        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
+        -e "s|%CLUSTER%|${cluster}|g" \
+        -e "s|%STAGE%|${stage}|g" \
+        "$tmpl" >"$rendered"
+
+    info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
+    info "  operator branch:    ${gentian_os_branch}"
+    info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
+    info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
+    info "  deployments cluster:${cluster}"
+    info "  deployments stage:  ${stage}"
+    kubectl apply -f "$rendered"
+    rm -f "$rendered"
+
+    if [[ -n "${openfga_token}" ]]; then
+        info "Pinning Stage 1 authz bridge settings on Argo CD Application gentian-os..."
+        kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
+            --arg token "${openfga_token}" \
+            '[{"op":"add","path":"/spec/sources/0/helm/parameters","value":[
+                {"name":"authzBridge.enabled","value":"true"},
+                {"name":"authzBridge.openfgaToken","value":$token},
+                {"name":"infraNamespace","value":"platform-kernel"},
+                {"name":"servicesNamespace","value":"platform-kernel"}
+            ]}]')" 2>/dev/null \
+        || kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
+            --arg token "${openfga_token}" \
+            '[{"op":"replace","path":"/spec/sources/0/helm/parameters","value":[
+                {"name":"authzBridge.enabled","value":"true"},
+                {"name":"authzBridge.openfgaToken","value":$token},
+                {"name":"infraNamespace","value":"platform-kernel"},
+                {"name":"servicesNamespace","value":"platform-kernel"}
+            ]}]')"
+    fi
+
+    release_gentian_os_helm_bootstrap "gentian-system"
+    kubectl annotate application gentian-os -n argocd \
+        "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
+
+    success "ArgoCD handoff complete: gentian-os Application and gentian-tenants ApplicationSet registered."
+    success "  Image updates are now fully automatic via argocd-image-updater."
+    info "Monitor operator:  kubectl get application gentian-os -n argocd"
+    info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"
+}
+
+install_stage1_operator() {
+    banner "Step 15 — gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
+
+    local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
+    local crd_dir="${chart_dir}/crds"
+    local ns="gentian-system"
+
+    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+        kubectl create namespace "$ns"
+    fi
+
+    create_deployments_git_credentials "$ns"
+
+    local openfga_token=""
+    if kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
+        openfga_token=$(kubectl get secret openfga-sensitive-values -n platform-kernel \
+            -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
+            | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
+    fi
+
+    local value_files=()
+    _gentian_os_collect_operator_value_files value_files
+
+    if [[ ! -d "$crd_dir" ]]; then
+        error "CRD directory not found: ${crd_dir}"
+        exit 1
+    fi
+    kubectl apply -f "$crd_dir"
+    adopt_gentian_os_helm_preflight "$ns"
+
+    local operator_tag="${GENTIAN_OS_IMAGE_TAG:-develop}"
+    info "Using gentian-os operator image ghcr.io/gentian-org/gentian-os:${operator_tag} (CI)."
+
+    helm upgrade --install gentian-os "$chart_dir" \
+        --namespace "$ns" \
+        "${value_files[@]}" \
+        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
+        --set kernelDomain="${KERNEL_DOMAIN}" \
+        --set tenancyMode="${TENANCY_MODE:-multi}" \
+        --set routingMode="${ROUTING_MODE:-gateway}" \
+        --set kernelRealm="${KERNEL_REALM:-kernel}" \
+        --set authzBridge.enabled=true \
+        --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
+        --set "authzBridge.openfgaToken=${openfga_token}" \
+        --set infraNamespace="platform-kernel" \
+        --set servicesNamespace="platform-kernel" \
+        --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
+        --set "image.tag=${operator_tag}" \
+        --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
+        --wait --timeout 5m
+
+    wait_for_operator_cloudflare_token "$ns" || true
+
+    handoff_gentian_os_to_argocd "${openfga_token}"
+
+    success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED and Cloudflare tunnel wiring."
+    info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"
+    info "Operator Cloudflare:    kubectl logs -n gentian-system deploy/gentian-os | grep -i cloudflare"
+}
+
 install_orchestrator() {
     banner "Step 15 — gentian-os orchestrator (CRDs + operator + ArgoCD handoff)"
 
@@ -3256,6 +3430,9 @@ install_orchestrator() {
     fi
 
     create_deployments_git_credentials "$ns"
+
+    local value_files=()
+    _gentian_os_collect_operator_value_files value_files
 
     local helm_sets=(
         --set openbao.address="http://openbao.openbao.svc.cluster.local:8200"
@@ -3296,6 +3473,7 @@ install_orchestrator() {
     info "(ArgoCD will take ownership of this release in the handoff step below.)"
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
+        "${value_files[@]}" \
         "${helm_sets[@]}" \
         --wait --timeout 5m
 
@@ -3309,40 +3487,9 @@ install_orchestrator() {
     done
     success "Helm bootstrap complete: CRDs Established, operator running."
 
-    # ── ArgoCD Application handoff ────────────────────────────────────────────
-    # Render the Application template and apply it.  ArgoCD adopts the
-    # already-running resources via ServerSideApply, adds the ImageUpdater CR
-    # (Source 4), and drives all future upgrades from git.
-    local gentian_os_branch
-    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    wait_for_operator_cloudflare_token "$ns" || true
+    handoff_gentian_os_to_argocd
 
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
-    local rendered
-    rendered="$(mktemp)"
-    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
-        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
-        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-        -e "s|%CLUSTER%|${cluster}|g" \
-        -e "s|%STAGE%|${stage}|g" \
-        "$tmpl" >"$rendered"
-
-    info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
-    info "  operator branch:    ${gentian_os_branch}"
-    info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
-    info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
-    info "  deployments cluster:${cluster}"
-    info "  deployments stage:  ${stage}"
-    kubectl apply -f "$rendered"
-    rm -f "$rendered"
-
-    release_gentian_os_helm_bootstrap "$ns"
-    kubectl annotate application gentian-os -n argocd \
-        "argocd.argoproj.io/refresh=hard" --overwrite >/dev/null 2>&1 || true
-
-    success "ArgoCD handoff complete: gentian-os Application and gentian-tenants ApplicationSet registered."
-    success "  Image updates are now fully automatic via argocd-image-updater."
-    info "Monitor operator:  kubectl get application gentian-os -n argocd"
-    info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"
     info "Monitor updater:   kubectl get imageupdater gentian-os -n argocd"
     info "Provision tenants: kubectl gentian tenants list"
     info "                   kubectl gentian tenants deploy demo   # activate definition from definitions/"

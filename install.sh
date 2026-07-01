@@ -1073,53 +1073,6 @@ apply_suze_xr() {
     success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
 }
 
-install_stage1_operator() {
-    banner "Step 15 — gentian-os operator (Stage 1 authz bridge)"
-
-    local env="${ENV:-dev}"
-    local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
-    local ns="gentian-system"
-
-    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
-        kubectl create namespace "$ns"
-    fi
-
-    local openfga_token=""
-    if kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
-        openfga_token=$(kubectl get secret openfga-sensitive-values -n platform-kernel \
-            -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
-            | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
-    fi
-
-    kubectl apply -f "${chart_dir}/crds"
-
-    adopt_gentian_os_helm_preflight "$ns"
-
-    # CI publishes ghcr.io/gentian-org/gentian-os:develop on every develop push (see .github/workflows/ci.yaml).
-    local operator_tag="${GENTIAN_OS_IMAGE_TAG:-develop}"
-    info "Using gentian-os operator image ghcr.io/gentian-org/gentian-os:${operator_tag} (CI)."
-
-    helm upgrade --install gentian-os "$chart_dir" \
-        --namespace "$ns" \
-        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
-        --set kernelDomain="${KERNEL_DOMAIN}" \
-        --set tenancyMode="${TENANCY_MODE:-multi}" \
-        --set routingMode="${ROUTING_MODE:-gateway}" \
-        --set kernelRealm="${KERNEL_REALM:-kernel}" \
-        --set authzBridge.enabled=true \
-        --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
-        --set "authzBridge.openfgaToken=${openfga_token}" \
-        --set infraNamespace="platform-kernel" \
-        --set "servicesNamespace=platform-kernel" \
-        --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
-        --set "image.tag=${operator_tag}" \
-        --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
-        --wait --timeout 5m
-
-    success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED."
-    info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"
-}
-
 
 # =============================================================================
 # Print Crossplane-aware installation summary
@@ -1285,7 +1238,8 @@ main_cp() {
 
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
     apply_suze_xr               # Step 14 — Gentian IdP (Keycloak + OpenFGA) via Suze XR
-    install_stage1_operator     # Step 15 — operator with authz bridge
+    install_stage1_operator     # Step 15 — operator with authz bridge + Cloudflare tunnel
+    wait_for_gateway_platform || true
     install_stage1_mail         # Step 15b — MAIL_SERVICE_MODE (external SMTP or Postfix)
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
@@ -1310,20 +1264,46 @@ main_cp() {
     print_summary_cp
 }
 
-run_stage1_portal_only() {
+run_stage1_operator_only() {
+    load_operator_config
     load_creds_cache
     load_install_state
-    try_load_creds_from_openbao
     load_deployments_cluster_settings
-    prompt_kernel_domain 2>/dev/null || true
-    [[ -n "${KERNEL_DOMAIN:-}" ]] || { error "KERNEL_DOMAIN not set — source install.env or run full install first."; exit 1; }
-    [[ -n "${MASTER_PASSWORD:-}" ]] || { error "MASTER_PASSWORD not set — source install.env."; exit 1; }
+    try_load_creds_from_openbao
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        error "KERNEL_DOMAIN not set after loading install.env and cluster-settings.env."
+        error "  Set GENTIAN_DEPLOYMENTS_CLUSTER in install.env (e.g. test)."
+        error "  Ensure gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env defines KERNEL_DOMAIN."
+        exit 1
+    fi
+    info "Using KERNEL_DOMAIN=${KERNEL_DOMAIN}"
+    install_stage1_operator
+    wait_for_gateway_platform || true
+}
+
+run_stage1_portal_only() {
+    load_operator_config
+    load_creds_cache
+    load_install_state
+    load_deployments_cluster_settings
+    try_load_creds_from_openbao
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        error "KERNEL_DOMAIN not set after loading install.env and cluster-settings.env."
+        error "  Set GENTIAN_DEPLOYMENTS_CLUSTER in install.env (e.g. test)."
+        error "  Ensure gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env defines KERNEL_DOMAIN."
+        exit 1
+    fi
+    [[ -n "${MASTER_PASSWORD:-}" ]] || { error "MASTER_PASSWORD not set — add to install.secrets.env."; exit 1; }
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     install_stage1_portal
 }
 
 case "${1:-}" in
+    --stage1-operator)
+        run_stage1_operator_only
+        exit 0
+        ;;
     --stage1-portal)
         run_stage1_portal_only
         exit 0
