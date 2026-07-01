@@ -85,9 +85,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - name: imap
-              containerPort: 31143
+              containerPort: 143
             - name: lmtp
-              containerPort: 31024
+              containerPort: 24
           env:
             - name: USER_PASSWORD
               value: "{CRYPT}*"
