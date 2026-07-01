@@ -37,6 +37,9 @@ data:
       method: preshared
     ingress:
       enabled: false
+    # AuthZEN evaluation API (experimental) — required when portal BFF uses OPENFGA_AUTHZEN_ENABLED.
+    experimentals:
+      - authzen
 ---
 apiVersion: v1
 kind: ConfigMap

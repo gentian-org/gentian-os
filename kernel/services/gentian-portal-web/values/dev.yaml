@@ -35,6 +35,7 @@ existingSecret:
 openfga:
   apiUrl: http://gentian-openfga.platform-kernel.svc.cluster.local:8080
   storeId: ""
+  authzenEnabled: true
 
 networkPolicy:
   create: false
