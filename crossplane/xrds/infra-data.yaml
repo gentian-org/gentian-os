@@ -49,7 +49,7 @@ spec:
                       type: string
                       description: >
                         Helm release name (and primary Service DNS label).
-                        Defaults to opendesk-postgresql-{environment} for
+                        Defaults to gentian-postgresql-{environment} for
                         backward compatibility with existing consumers.
                     chartVersion:
                       type: string
@@ -62,7 +62,7 @@ spec:
                       type: string
                       description: >
                         Helm release name (and primary Service DNS label).
-                        Defaults to opendesk-mariadb-{environment} for backward
+                        Defaults to gentian-mariadb-{environment} for backward
                         compatibility with existing consumers.
                     chartVersion:
                       type: string

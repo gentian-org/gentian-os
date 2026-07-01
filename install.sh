@@ -341,15 +341,12 @@ POLICY
     # ── 3c. app-init policy ───────────────────────────────────────────────────
     # App init Jobs (Crossplane Compositions) authenticate via K8s SA JWT and
     # use this policy to provision per-tenant/app credentials in OpenBao on
-    # first app install (ldap, s3, database).
+    # first app install (s3, database).
     bao policy write app-init - <<POLICY
 path "${_kv_mount}/data/gentian-os/kernel/internal/master-password"   { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/kernel/identity/nubus"            { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/kernel/database/cnpg"             { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/kernel/storage/minio"             { capabilities = ["read"] }
 path "${_kv_mount}/metadata/gentian-os/kernel/database/cnpg"         { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/ldap"            { capabilities = ["create", "read", "update"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/ldap"        { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/s3"              { capabilities = ["create", "read", "update"] }
 path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/s3"          { capabilities = ["read"] }
 path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/database"        { capabilities = ["create", "read", "update"] }
@@ -508,41 +505,11 @@ create_crossplane_secrets() {
             --arg i "$(_derive minio dovecot_user)" \
             '{root_user:$a,root_password:$b,ums_password:$c,migrations_password:$h,dovecot_password:$i}')"
 
-    # ── identity/nubus ────────────────────────────────────────────────────────
-    # shellcheck disable=SC2016
-    _kv_secret "gentian-os-kernel-identity-nubus" \
-        "$(jq -nc \
-            --arg mp "${MASTER_PASSWORD}" \
-            --arg a  "$(_derive nubus Administrator)" \
-            --arg b  "$(_derive "cn=admin" ldap)" \
-            --arg c  "$(_derive keycloak adminPassword)" \
-            --arg e  "$(_nats api nats)" \
-            --arg f  "$(_nats dispatcher nats)" \
-            --arg g  "$(_nats prefill nats)" \
-            --arg h  "$(_nats udmListener nats)" \
-            --arg i  "$(_nats udmTransformer nats)" \
-            --arg j  "$(_derive minio ums_user)" \
-            --arg k  "$(_derive postgres selfservice_user)" \
-            --arg l  "$(_derive postgres authsession_user)" \
-            --arg m  "$(_derive postgres keycloak_user)" \
-            --arg n  "$(_derive postgres keycloak_extensions_user)" \
-            --arg o  "$(_derive postgres guardianmanagementapi_user)" \
-            --arg p  "$(_derive postgres notificationsapi_user)" \
-            --arg q  "$(_derive nubus ldapsearch_keycloak)" \
-            --arg s  "$(_derive nubus ldapsearch_dovecot)" \
-            --arg v  "$(_derive nubus ldapsearch_postfix)" \
-            --arg y  "$(_derive centralnavigation api_key)" \
-            --arg z  "$(_derive portal-consumer provisioning-api)" \
-            --arg z2 "$(_derive selfservice-consumer provisioning-api)" \
-            --arg z3 "$(_derive smtp password)" \
-            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_dovecot:$s,ldapsearch_postfix:$v,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
-
-    # ── identity/keycloak-bootstrap ───────────────────────────────────────────
+    # ── identity/keycloak-bootstrap (Suze Keycloak admin password) ─────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --arg a "$(_derive keycloak adminPassword)" \
-            --arg b "$(_derive keycloak intercom_client_secret)" \
-            '{admin_password:$a,intercom_client_secret:$b}')"
+            '{admin_password:$a}')"
 
     # ── authz/openfga ─────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-authz-openfga" \
@@ -582,10 +549,6 @@ apply_cluster_xr() {
     banner "Step 12 — Apply Cluster XR (kernel structural provisioning)"
 
     # Derive defaults for template variables not already set.
-    # LDAP_BASE_DN: dc= decomposition of KERNEL_DOMAIN (e.g. desk.example.com → dc=desk,dc=example,dc=com)
-    local _dn_parts
-    _dn_parts=$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')
-    export LDAP_BASE_DN="${LDAP_BASE_DN:-${_dn_parts}}"
     export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
     export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
     export INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-nginx}"
@@ -783,8 +746,8 @@ apply_infra_data_xr() {
 
     # Legacy Pattern B Release CRs shared the Helm release name as the MR name.
     # Remove them before the InfraData composition creates new MRs with the
-    # same crossplane.io/external-name (opendesk-postgresql-{env}, etc.).
-    for rel in "opendesk-postgresql-${env}" "opendesk-mariadb-${env}" "redis-${env}" "minio-${env}"; do
+    # same crossplane.io/external-name (gentian-postgresql-{env}, etc.).
+    for rel in "gentian-postgresql-${env}" "gentian-mariadb-${env}" "redis-${env}" "minio-${env}"; do
         if ! kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
             continue
         fi
@@ -1154,415 +1117,6 @@ install_stage1_operator() {
     info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"
 }
 
-# =============================================================================
-# Step 14: Deploy Nubus via provider-helm (Pattern B migration)
-#
-# Creates:
-#   - gentian-dev + gentian-infra-dev namespaces
-#   - registry-credentials-helm Secret (crossplane-system) for OCI chart pull
-#   - registry-credentials imagePullSecret (gentian-dev) for pod image pull
-#   - nubus-base-values + nubus-dev-values ConfigMaps (non-sensitive values)
-#   - nubus-dev-udm-listener-nats-patch ConfigMap (NATS subject bug workaround)
-#     These are seeded by install.sh on first boot; ArgoCD (nubus-manifests-dev)
-#     manages them going forward via Kustomize in kernel/services/nubus/manifests/dev/.
-#   - ExternalSecrets: nubus-credentials + nubus-sensitive-values (via ESO)
-#   - provider-helm Release CR (nubus-dev)
-# =============================================================================
-deploy_nubus() {
-    banner "Step 14 — Deploy Nubus via provider-helm"
-
-    local ns="gentian-${ENV:-dev}"
-    local infra_ns="gentian-infra-${ENV:-dev}"
-    local release_name="nubus-${ENV:-dev}"
-    local install_start_epoch="${INSTALL_START_EPOCH:-0}"
-
-    # Return lines: <pvc_name>\t<reason>
-    # reason is one of: pvc-created-before-install, pv-created-before-install
-    # This avoids false positives when ArgoCD app-of-apps creates fresh PVCs
-    # during the same install run.
-    _find_stale_pvcs() {
-        local scan_ns="$1"
-        local exclude_regex="$2"
-        local cutoff=$((install_start_epoch - 15))
-        local pvc_list pvc pvc_epoch pvc_ts pv pv_epoch pv_ts reason
-
-        pvc_list=$(kubectl get pvc -n "${scan_ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
-        [[ -z "${pvc_list}" ]] && return 0
-
-        while IFS= read -r pvc; do
-            [[ -z "${pvc}" ]] && continue
-            [[ -n "${exclude_regex}" && "${pvc}" =~ ${exclude_regex} ]] && continue
-
-            reason=""
-            pvc_ts=$(kubectl get pvc "${pvc}" -n "${scan_ns}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
-            pvc_epoch=0
-            [[ -n "${pvc_ts}" ]] && pvc_epoch=$(date -d "${pvc_ts}" +%s 2>/dev/null || echo 0)
-            if (( install_start_epoch > 0 && pvc_epoch > 0 && pvc_epoch < cutoff )); then
-                reason="pvc-created-before-install"
-            fi
-
-            pv=$(kubectl get pvc "${pvc}" -n "${scan_ns}" -o jsonpath='{.spec.volumeName}' 2>/dev/null || true)
-            if [[ -n "${pv}" ]]; then
-                pv_ts=$(kubectl get pv "${pv}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
-                pv_epoch=0
-                [[ -n "${pv_ts}" ]] && pv_epoch=$(date -d "${pv_ts}" +%s 2>/dev/null || echo 0)
-                if (( install_start_epoch > 0 && pv_epoch > 0 && pv_epoch < cutoff )); then
-                    if [[ -n "${reason}" ]]; then
-                        reason="${reason},pv-created-before-install"
-                    else
-                        reason="pv-created-before-install"
-                    fi
-                fi
-            fi
-
-            [[ -n "${reason}" ]] && printf '%s\t%s\n' "${pvc}" "${reason}"
-        done <<< "${pvc_list}"
-        # Always return 0: under set -e, an exit code of 1 from the loop's
-        # last `[[ -n ... ]] && printf` (when the final PVC is non-stale) would
-        # propagate through $(...) and abort the caller silently.
-        return 0
-    }
-
-    # ── Namespaces ────────────────────────────────────────────────────────────
-    # Guard: if a previous uninstall is still in progress, the namespace may be
-    # Terminating. Applying into a Terminating namespace reuses existing PVCs
-    # (incl. LDAP data), defeating a clean reinstall. Wait up to 120s.
-    for _guard_ns in "${ns}" "${infra_ns}"; do
-        local _deadline=$(( SECONDS + 120 ))
-        while [[ "$(kubectl get namespace "${_guard_ns}" \
-                -o jsonpath='{.status.phase}' 2>/dev/null)" == "Terminating" ]]; do
-            if (( SECONDS > _deadline )); then
-                error "Namespace ${_guard_ns} is still Terminating after 120s."
-                error "Run: kubectl delete namespace ${_guard_ns} --force --grace-period=0"
-                exit 1
-            fi
-            info "  Waiting for ${_guard_ns} to finish terminating..."
-            sleep 5
-        done
-    done
-
-    info "Creating namespaces ${ns} and ${infra_ns}..."
-    kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f -
-    kubectl create namespace "${infra_ns}" --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Registry credentials ──────────────────────────────────────────────────
-    info "Creating registry-credentials-helm Secret in ${CROSSPLANE_NAMESPACE}..."
-    kubectl create secret generic registry-credentials-helm \
-        -n "${CROSSPLANE_NAMESPACE}" \
-        --from-literal=username="${OD_PRIVATE_REGISTRY_USERNAME}" \
-        --from-literal=password="${OD_PRIVATE_REGISTRY_PASSWORD}" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    info "Creating registry-credentials imagePullSecret in ${ns}..."
-    kubectl create secret docker-registry registry-credentials \
-        -n "${ns}" \
-        --docker-server="registry.opencode.de" \
-        --docker-username="${OD_PRIVATE_REGISTRY_USERNAME}" \
-        --docker-password="${OD_PRIVATE_REGISTRY_PASSWORD}" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Non-sensitive values ConfigMaps ───────────────────────────────────────
-    # Seeded here for install sequencing; ArgoCD owns them after first sync.
-    info "Creating nubus values ConfigMaps in ${ns}..."
-    kubectl create configmap nubus-base-values \
-        -n "${ns}" \
-        --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/_base.yaml" \
-        --dry-run=client -o yaml | kubectl apply -f -
-    kubectl create configmap nubus-dev-values \
-        -n "${ns}" \
-        --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/dev.yaml" \
-        --dry-run=client -o yaml | kubectl apply -f -
-    if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-        info "Creating nubus gateway values ConfigMap (ROUTING_MODE=gateway)..."
-        kubectl create configmap nubus-gateway-values \
-            -n "${ns}" \
-            --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/gateway.yaml" \
-            --dry-run=client -o yaml | kubectl apply -f -
-    fi
-
-    # ── NATS subject patch ConfigMap ──────────────────────────────────────────
-    # Fixes LDAP_SUBJECT mismatch between udm-listener and udm-transformer
-    # images in nubus 1.16.0. Referenced by nubusUdmListener.extraVolumes.
-    info "Creating ${release_name}-udm-listener-nats-patch ConfigMap in ${ns}..."
-    kubectl create configmap "${release_name}-udm-listener-nats-patch" \
-        -n "${ns}" \
-        --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/mq_adapter_nats.py" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Multi-tenant LDAP ACL patch ConfigMap ─────────────────────────────────
-    # Adds cn=Tenant Admins to the cn=temporary ACL rules so tenant admins can
-    # provision users (UID lock objects). Referenced by nubusLdapServer.extraVolumes.
-    info "Creating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
-    kubectl create configmap "${release_name}-ldap-gentian-acl" \
-        -n "${ns}" \
-        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/92-gentian-tenant-acl.sh" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Pre-flight: abort if stale data PVCs exist ───────────────────────────
-    # Nubus StatefulSets (LDAP, UDM listener, portal-consumer, …) bind to
-    # volumeClaimTemplate PVCs by name. Helm never deletes these PVCs on
-    # uninstall. If they survive from a previous installation the new
-    # StatefulSets silently reuse the old volumes, inheriting old users, old
-    # LDAP passwords, and expired SSL certificates. Abort loudly instead.
-    local _stale_pvcs _stale_list
-    _stale_pvcs=$(_find_stale_pvcs "${ns}" "^nats-data-${release_name}-provisioning-nats-0$")
-    if [[ -n "${_stale_pvcs}" ]]; then
-        error "Stale PVCs detected in ${ns} — aborting to avoid installing on old data:"
-        while IFS=$'\t' read -r pvc reason; do
-            [[ -z "${pvc}" ]] && continue
-            _stale_list+="|${pvc}|${reason}|\n"
-        done <<< "${_stale_pvcs}"
-        printf '%b' "${_stale_list}" | sed 's/^/    /' >&2 || true
-        error ""
-        error "These PVCs are from a previous installation (LDAP data, SSL certs, etc.)."
-        error "Clean them up first, then re-run install.sh:"
-        error "    ./uninstall.sh -f && ./install.sh"
-        exit 1
-    fi
-    _stale_list=""
-    _stale_pvcs=$(_find_stale_pvcs "${infra_ns}" "")
-    if [[ -n "${_stale_pvcs}" ]]; then
-        error "Stale PVCs detected in ${infra_ns} — aborting to avoid installing on old data:"
-        while IFS=$'\t' read -r pvc reason; do
-            [[ -z "${pvc}" ]] && continue
-            _stale_list+="|${pvc}|${reason}|\n"
-        done <<< "${_stale_pvcs}"
-        printf '%b' "${_stale_list}" | sed 's/^/    /' >&2 || true
-        error ""
-        error "These PVCs are from a previous installation (postgres, MariaDB, MinIO, …)."
-        error "Clean them up first, then re-run install.sh:"
-        error "    ./uninstall.sh -f && ./install.sh"
-        exit 1
-    fi
-
-    # ── Pre-flight: clear stale NATS consumer state ──────────────────────────
-    # The provisioning register-consumers job fails with 409 if NATS retained
-    # consumer registrations from a previous interrupted install/uninstall.
-    # Delete the NATS PVC (only when NATS is not running) so NATS starts with
-    # clean JetStream state and consumer registration always succeeds with 201.
-    local nats_pvc="nats-data-${release_name}-provisioning-nats-0"
-    local _stale_nats=0
-    if kubectl get pvc "${nats_pvc}" -n "${ns}" >/dev/null 2>&1; then
-        # Use jsonpath to reliably read the pod phase; --field-selector is
-        # ignored by kubectl when a specific resource name is also given.
-        local _nats_phase
-        _nats_phase=$(kubectl get pod "${release_name}-provisioning-nats-0" \
-            -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
-        if [[ "$_nats_phase" != "Running" ]]; then
-            info "Deleting stale NATS PVC (consumer state from previous install)..."
-            # --wait=false: mark for deletion and return immediately; the PVC
-            # will be reclaimed once the old NATS pod (if any) fully terminates.
-            kubectl delete pvc "${nats_pvc}" -n "${ns}" --wait=false 2>/dev/null || true
-            _stale_nats=1
-        else
-            info "NATS pod is Running; skipping PVC deletion (healthy install)."
-        fi
-    fi
-    # Remove any leftover failed register-consumers job so Helm creates it fresh.
-    # Match any revision suffix (-1, -2, …) to cover manual helm upgrade remnants.
-    kubectl get jobs -n "${ns}" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-provisioning-register-consumers-" \
-        | xargs -r kubectl delete job -n "${ns}" --ignore-not-found=true 2>/dev/null || true
-
-    # ── ExternalSecrets (ESO → OpenBao → K8s Secrets) ────────────────────────
-    info "Applying nubus ExternalSecrets..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/externalsecrets.yaml"
-
-    info "Waiting for ESO to sync nubus-credentials (up to 60s)..."
-    kubectl wait externalsecret/nubus-credentials \
-        -n "${ns}" --for=condition=Ready --timeout=60s \
-    || { error "nubus-credentials ExternalSecret did not sync. Check ESO logs."; exit 1; }
-
-    info "Waiting for ESO to sync nubus-sensitive-values (up to 60s)..."
-    kubectl wait externalsecret/nubus-sensitive-values \
-        -n "${ns}" --for=condition=Ready --timeout=60s \
-    || { error "nubus-sensitive-values ExternalSecret did not sync. Check ESO logs."; exit 1; }
-
-    success "  nubus-credentials synced."
-    success "  nubus-sensitive-values synced."
-
-    # ── provider-helm Release CR ──────────────────────────────────────────────
-    info "Applying nubus Release CR (provider-helm)..."
-    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/release.yaml"
-
-    # If stale NATS was detected and cleared, provider-helm may already report
-    # the release as Synced (from a previous reconcile) and will NOT run helm
-    # upgrade automatically — leaving the NATS StatefulSet missing. Force a
-    # direct helm upgrade in that case to guarantee all resources are present.
-    if [[ "$_stale_nats" == "1" ]]; then
-        info "Stale NATS was cleared; running helm upgrade to restore missing resources..."
-        local _base_vals _dev_vals _sens_vals _reg_cfg
-        _base_vals=$(kubectl get configmap nubus-base-values \
-            -n "${ns}" -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
-        _dev_vals=$(kubectl get configmap nubus-dev-values \
-            -n "${ns}" -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
-        _sens_vals=$(kubectl get secret nubus-sensitive-values \
-            -n "${ns}" -o jsonpath='{.data.sensitive-values\.yaml}' \
-            2>/dev/null | base64 -d 2>/dev/null || true)
-        _reg_cfg=$(
-            if _u=$(kubectl get secret registry-credentials-helm \
-                -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d) && \
-                _p=$(kubectl get secret registry-credentials-helm \
-                    -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) && \
-                _auth=$(printf '%s:%s' "${_u}" "${_p}" | base64 -w0); then
-                printf '{"auths":{"registry.opencode.de":{"auth":"%s"}}}' "${_auth}"
-            fi
-        )
-        local _nubus_chart_repo _nubus_chart_ver
-        _nubus_chart_repo=$(kubectl get release.helm.crossplane.io "${release_name}" \
-            -o jsonpath='{.spec.forProvider.chart.repository}' 2>/dev/null || true)
-        _nubus_chart_ver=$(kubectl get release.helm.crossplane.io "${release_name}" \
-            -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null || true)
-        if [[ -n "$_base_vals" && -n "$_sens_vals" && -n "$_nubus_chart_repo" ]]; then
-            printf '%s' "$_base_vals"  > /tmp/_nubus_base.yaml
-            printf '%s' "$_dev_vals"   > /tmp/_nubus_dev.yaml
-            printf '%s' "$_sens_vals"  > /tmp/_nubus_sens.yaml
-            printf '%s' "$_reg_cfg"    > /tmp/_nubus_reg.json
-            helm upgrade "${release_name}" \
-                "${_nubus_chart_repo}/nubus" \
-                --version "${_nubus_chart_ver}" \
-                -n "${ns}" \
-                --reuse-values \
-                -f /tmp/_nubus_base.yaml \
-                -f /tmp/_nubus_dev.yaml \
-                -f /tmp/_nubus_sens.yaml \
-                --registry-config /tmp/_nubus_reg.json \
-                --timeout 5m 2>&1 | tail -3 || true
-            rm -f /tmp/_nubus_base.yaml /tmp/_nubus_dev.yaml \
-                  /tmp/_nubus_sens.yaml /tmp/_nubus_reg.json
-            success "helm upgrade complete — NATS StatefulSet restored."
-        else
-            warn "Could not gather helm values for forced upgrade; NATS may need manual recovery."
-        fi
-    fi
-
-    # Wait for the register-consumers job to appear (provider-helm must reconcile
-    # and helm-install the chart first) then wait for it to complete successfully.
-    info "Waiting for register-consumers job to appear (up to 5m)..."
-    # Match any revision suffix to be resilient to multiple helm upgrade cycles.
-    local deadline=$((SECONDS + 300))
-    local job_name=""
-    until [[ -n "$job_name" ]]; do
-        job_name=$(kubectl get jobs -n "${ns}" --no-headers \
-            -o custom-columns=NAME:.metadata.name 2>/dev/null \
-            | grep "^${release_name}-provisioning-register-consumers-" \
-            | tail -1 || true)
-        if (( SECONDS > deadline )); then
-            warn "  register-consumers job did not appear within 5m — continuing async."
-            warn "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=register-consumers"
-            success "Nubus Release submitted via provider-helm."
-            return 0
-        fi
-        [[ -n "$job_name" ]] || sleep 5
-    done
-    info "Waiting for register-consumers job to complete (up to 2m)..."
-    if kubectl wait "job/${job_name}" -n "${ns}" \
-            --for=condition=Complete --timeout=120s 2>/dev/null; then
-        success "  Consumer registration complete."
-    else
-        warn "  register-consumers job did not complete within 2m."
-        warn "  Check: kubectl logs -n ${ns} -l job-name=${job_name} --tail=20"
-    fi
-    success "Nubus deployed via provider-helm."
-
-    # ── Wait for stack-data-ums job; auto-recover if it fails ────────────────
-    # The stack-data-ums job:
-    #   1. Creates settings/extended_attribute LDAP objects (opendesk properties)
-    #   2. Immediately uses those properties to update the Administrator user
-    # The UDM REST API caches its module registry at startup, so it doesn't
-    # know about extended_attributes created in step 1.  If the job fails with
-    # "The User module has no property opendeskFileshare*", restart the UDM
-    # REST API (which reloads the module registry from LDAP) then reapply the job.
-    # Also handles: if the job fails with "globaladdressbookdisabled has invalid
-    # value" (stale opendesk_standard profile from a previous partial install),
-    # remove the stale profile from LDAP, restart UDM, and reapply the job.
-    _wait_and_fix_stack_data_ums() {
-        local sdu_job="" sdu_ns="${ns}" sdu_deadline
-        info "Waiting for stack-data-ums job to appear (up to 5m)..."
-        sdu_deadline=$((SECONDS + 300))
-        until [[ -n "$sdu_job" ]]; do
-            sdu_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
-                -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-            if (( SECONDS > sdu_deadline )); then
-                warn "  stack-data-ums job did not appear in 5m — skipping wait."
-                return 0
-            fi
-            [[ -n "$sdu_job" ]] || sleep 5
-        done
-
-        # Patch TTL early so failed retry pods are garbage-collected even if
-        # install is interrupted before finalize_stack_data_ums_job runs.
-        finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
-
-        info "Waiting for stack-data-ums job '${sdu_job}' to complete (up to 10m)..."
-        if kubectl wait "job/${sdu_job}" -n "${sdu_ns}" \
-                --for=condition=Complete --timeout=600s 2>/dev/null; then
-            success "  stack-data-ums job completed successfully."
-            finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
-            return 0
-        fi
-
-        # Job failed — check if it's the known extended_attribute cache issue.
-        local sdu_logs
-        sdu_logs=$(kubectl logs -n "${sdu_ns}" \
-            -l "app.kubernetes.io/name=stack-data-ums,job-name=${sdu_job}" \
-            --tail=30 2>/dev/null || true)
-        if printf '%s' "${sdu_logs}" | grep -qE "has no property opendesk|globaladdressbookdisabled"; then
-            if printf '%s' "${sdu_logs}" | grep -q "globaladdressbookdisabled"; then
-                warn "  stack-data-ums failed: stale opendesk_standard profile (invalid globaladdressbookdisabled)."
-                warn "  Removing stale opendesk_standard accessprofile from LDAP..."
-                kubectl exec -n "${sdu_ns}" \
-                    "${release_name}-ldap-server-primary-0" -- \
-                    ldapdelete -Y EXTERNAL -H ldapi:/// \
-                    "cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
-                    2>/dev/null || true
-            else
-                warn "  stack-data-ums failed: UDM REST API had stale module cache."
-            fi
-            warn "  Restarting UDM REST API to reload extended_attribute definitions..."
-            kubectl rollout restart deployment "${release_name}-udm-rest-api" \
-                -n "${sdu_ns}" 2>/dev/null || true
-            kubectl rollout status deployment "${release_name}-udm-rest-api" \
-                -n "${sdu_ns}" --timeout=2m 2>/dev/null || true
-            success "  UDM REST API restarted."
-
-            # Delete the failed job and reapply from the Helm manifest.
-            info "  Reapplying stack-data-ums job..."
-            kubectl delete job "${sdu_job}" -n "${sdu_ns}" \
-                --ignore-not-found=true 2>/dev/null || true
-            apply_stack_data_ums_job_from_helm "${release_name}" "${sdu_ns}" || true
-
-            info "  Waiting for reapplied stack-data-ums job to complete (up to 10m)..."
-            sdu_deadline=$((SECONDS + 600))
-            local new_job=""
-            until [[ -n "$new_job" ]]; do
-                new_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
-                    -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                    | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-                if (( SECONDS > sdu_deadline )); then
-                    warn "  Reapplied stack-data-ums job did not appear — check manually."
-                    return 1
-                fi
-                [[ -n "$new_job" ]] || sleep 3
-            done
-            if kubectl wait "job/${new_job}" -n "${sdu_ns}" \
-                    --for=condition=Complete --timeout=600s 2>/dev/null; then
-                success "  stack-data-ums job succeeded after UDM restart."
-                finalize_stack_data_ums_job "${sdu_ns}" "${new_job}"
-            else
-                warn "  stack-data-ums still failing after UDM restart."
-                warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${new_job} --tail=40"
-                return 1
-            fi
-        else
-            warn "  stack-data-ums job failed for an unknown reason."
-            warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${sdu_job} --tail=40"
-            return 1
-        fi
-    }
-    _wait_and_fix_stack_data_ums || true
-}
 
 # =============================================================================
 # Print Crossplane-aware installation summary
@@ -1706,7 +1260,6 @@ main_cp() {
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────
     install_argocd              # Step 5
-    setup_argocd_repos          # Step 5b — opencode OCI repo credentials (optional; for future OpenDesk apps)
     install_argocd_image_updater  # Step 5c
     bootstrap_transit_app       # Step 6  — transit seal ArgoCD app
     init_openbao_transit        # Step 7  — transit init + auto-unseal Secret
@@ -1741,7 +1294,6 @@ main_cp() {
     install_app_catalogue       # Step 17b — kubectl-gentian plugin + AppCatalogue CRD
 
     # ── OpenDesk app stack (commented — uncomment when migrating legacy apps) ─
-    # deploy_nubus                # Step 16 — Nubus namespaces + ESO Secrets + Release CR
     # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 16b — kernel LDAP SUBTREE
     # deploy_kernel_mail_services # Step 17b — Postfix + Dovecot (MAIL_SERVICE_MODE=kernel)
     # apply_kernel_gateway_overlays || true  # Step 17a — gateway value overlays

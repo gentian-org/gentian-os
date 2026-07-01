@@ -6,7 +6,6 @@ metadata:
     crossplane.io/external-name: dev-cluster
 spec:
   kernelDomain: desk.gentian.org
-  ldapBaseDn: "dc=gentian,dc=org"
   masterPasswordSecretRef:
     name: gentian-os-master-password
     namespace: crossplane-system

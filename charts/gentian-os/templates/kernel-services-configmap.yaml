@@ -2,9 +2,9 @@
 {{- $stage := .Values.stage | default "dev" -}}
 {{- $keycloakInternal := $ks.keycloakInternalURL -}}
 {{- if not $keycloakInternal -}}
-{{- $keycloakInternal = printf "http://nubus-%s-keycloak.%s.svc.cluster.local:8080" $stage .Values.servicesNamespace -}}
+{{- $keycloakInternal = printf "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080" -}}
 {{- end -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode .Values.ldap.server .Values.ldap.base .Values.ldap.bindSearchDn $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,15 +21,6 @@ data:
   {{- $issuer := .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
   ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
   KEYCLOAK_INTERNAL_URL: {{ $keycloakInternal | quote }}
-  {{- with .Values.ldap.server }}
-  LDAP_SERVER: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.ldap.base }}
-  LDAP_BASE_DN: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.ldap.bindSearchDn }}
-  LDAP_BIND_DN: {{ . | quote }}
-  {{- end }}
   {{- with $ks.smtpHost }}
   SMTP_HOST: {{ . | quote }}
   {{- end }}

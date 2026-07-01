@@ -14,7 +14,6 @@ metadata:
   namespace: crossplane-system
 spec:
   kernelDomain: desk.gentian.org
-  ldapBaseDn: "dc=swp-ldap,dc=internal"
   masterPasswordSecretRef:
     name: gentian-os-master-password
     namespace: crossplane-system

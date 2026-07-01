@@ -299,40 +299,7 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 	})
 }
 
-// --- LDAP --------------------------------------------------------------------
-
-// LDAPCreds is the set of values written to …/ldap.
-type LDAPCreds struct {
-	Host         string
-	Port         string
-	BaseDN       string
-	BindDN       string
-	BindPassword string
-}
-
-// SeedLDAP derives the bind password from the master.
-func (s *Seeder) SeedLDAP(ctx context.Context, tenant, app string, base LDAPCreds) (LDAPCreds, error) {
-	salt := CategoryPath(tenant, app, "ldap")
-	if base.BindPassword == "" {
-		base.BindPassword = s.gen(salt, "bind-password", 40)
-	}
-	got, err := s.seedAndRead(ctx, salt, map[string]string{
-		"host":          base.Host,
-		"port":          base.Port,
-		"base-dn":       base.BaseDN,
-		"bind-dn":       base.BindDN,
-		"bind-password": base.BindPassword,
-	})
-	if err != nil {
-		return LDAPCreds{}, fmt.Errorf("seed ldap(%s/%s): %w", tenant, app, err)
-	}
-	return LDAPCreds{
-		Host: got["host"], Port: got["port"], BaseDN: got["base-dn"],
-		BindDN: got["bind-dn"], BindPassword: got["bind-password"],
-	}, nil
-}
-
-// --- Tenant admin (Keycloak realm-admin) ------------------------------------
+// --- IMAP --------------------------------------------------------------------
 
 // TenantAdminCreds is the set of values written to …/admin.
 type TenantAdminCreds struct {
@@ -342,9 +309,8 @@ type TenantAdminCreds struct {
 
 // SeedTenantAdmin derives the tenant admin password from the master and
 // persists it write-once under gentian-os/tenants/<tenant>/admin.
-// Username defaults to "admin-<tenant>" to avoid collisions in the shared
-// Nubus LDAP directory. Operators can override it by writing a different
-// value to OpenBao before first reconcile.
+// Username defaults to "admin-<tenant>". Operators can override it by writing
+// a different value to OpenBao before first reconcile.
 func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdminCreds, error) {
 	salt := TenantAdminPath(tenant)
 	want := map[string]string{

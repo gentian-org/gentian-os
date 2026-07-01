@@ -14,7 +14,7 @@ import (
 )
 
 func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
+	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/gentian-oidc-catalog.yaml")
 	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
@@ -28,7 +28,7 @@ func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
 }
 
 func TestBuildOIDCPackScriptJitsi(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
+	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/gentian-oidc-catalog.yaml")
 	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)

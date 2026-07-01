@@ -34,7 +34,7 @@ spec:
               set -e
               echo "Waiting for MariaDB to be ready..."
               until mariadb \
-                --host=opendesk-mariadb-dev \
+                --host=gentian-mariadb-dev \
                 --user=root \
                 --password="${ROOT_PASSWORD}" \
                 --connect-timeout=3 \
@@ -44,7 +44,7 @@ spec:
               done
               echo "MariaDB is ready. Applying global grant..."
               mariadb \
-                --host=opendesk-mariadb-dev \
+                --host=gentian-mariadb-dev \
                 --user=root \
                 --password="${ROOT_PASSWORD}" \
                 -e "GRANT ALL PRIVILEGES ON *.* TO 'openxchange_user'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
@@ -53,7 +53,7 @@ spec:
             - name: ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: opendesk-mariadb-dev
+                  name: gentian-mariadb-dev
                   key: rootPassword
           securityContext:
             allowPrivilegeEscalation: false

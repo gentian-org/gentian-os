@@ -211,7 +211,7 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantApexRedirectRouteName(tenant.Name),
 			Namespace: nsName,
-			Labels:    umcPortalRedirectLabels(tenant.Name, tenantApexRedirectRouteName(tenant.Name)),
+			Labels:    portalRedirectLabels(tenant.Name, tenantApexRedirectRouteName(tenant.Name)),
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{

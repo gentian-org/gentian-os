@@ -82,11 +82,6 @@ spec:
               value: {{ .Values.authzBridge.openfgaToken | quote }}
             {{- end }}
             {{- end }}
-            # LDAP env vars disabled — Keycloak-native identity only.
-            # - name: LDAP_SERVER
-            #   value: {{ .Values.ldap.server | default "" | quote }}
-            # - name: LDAP_BASE
-            #   value: {{ .Values.ldap.base | default "" | quote }}
             - name: CLOUDFLARE_ZONE_ID
               value: {{ .Values.cloudflare.zoneID | default "" | quote }}
             - name: CLOUDFLARE_TUNNEL_CNAME

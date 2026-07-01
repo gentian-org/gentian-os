@@ -16,7 +16,7 @@ import (
 
 func testOpenDeskClient(t *testing.T) client.Client {
 	t.Helper()
-	return NewTestClientWithCatalogFile(t, "testdata/opendesk-catalog.yaml")
+	return NewTestClientWithCatalogFile(t, "testdata/gentian-oidc-catalog.yaml")
 }
 
 func TestManagedByAttributeGroupNames_FromCatalog(t *testing.T) {

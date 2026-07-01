@@ -3,7 +3,7 @@
 
 replicaCount: 1
 
-# stage names kernel Helm releases (nubus-dev, postfix-dev, …).
+# stage names kernel Helm releases (postfix-dev, nextcloud-dev, …).
 stage: dev
 
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
@@ -28,8 +28,8 @@ routingMode: gateway
 tenantDNS01ClusterIssuer: ""
 
 # tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
-# is true the operator skips shared-kernel side effects (mail, office, portal/UMC,
-# Nextcloud group, LDAP base) so tenant lifecycle is validated via the Crossplane
+# is true the operator skips shared-kernel side effects (mail, office, portal
+# redirect, Nextcloud group) so tenant lifecycle is validated via the Crossplane
 # graph alone (P3/P4 e2e).
 # Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
 # if a cutover regresses; leave false for normal production behaviour.
@@ -41,20 +41,11 @@ tenantProvisioning:
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
-# LDAP / identityMode removed — Suze Keycloak is always authoritative (Stage 1).
-# Legacy OpenDesk LDAP settings are no longer plumbed into the operator.
-
 # Stage 1 authz bridge (Keycloak → OpenFGA tuple sync).
 authzBridge:
   enabled: false
   openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
   openfgaToken: ""
-
-# LDAP configuration — disabled (Keycloak-native). Keys retained so values files do not break.
-ldap:
-  server: ""
-  base: ""
-  bindSearchDn: ""
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
 # Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
@@ -63,7 +54,7 @@ infraNamespace: ""
 # openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
 openbaoNamespace: "openbao"
 
-# servicesNamespace hosts platform services (Nubus, Postfix, …).
+# servicesNamespace hosts platform services (Postfix, Nextcloud, …).
 # Set per cluster in gentian-deployments kernel values.
 servicesNamespace: ""
 
@@ -81,7 +72,7 @@ kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
-  # Empty → http://nubus-{stage}-keycloak.<servicesNamespace>.svc.cluster.local:8080
+  # Empty → http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
   smtpHost: ""

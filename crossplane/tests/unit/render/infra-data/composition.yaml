@@ -28,11 +28,11 @@ spec:
             {{- $chartRepo := default "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" $spec.chartRepository }}
 
             {{- $pgSpec := default dict $spec.postgresql }}
-            {{- $pgRelease := default (printf "opendesk-postgresql-%s" $env) $pgSpec.helmReleaseName }}
+            {{- $pgRelease := default (printf "gentian-postgresql-%s" $env) $pgSpec.helmReleaseName }}
             {{- $pgVersion := default "2.1.2" $pgSpec.chartVersion }}
 
             {{- $mdbSpec := default dict $spec.mariadb }}
-            {{- $mdbRelease := default (printf "opendesk-mariadb-%s" $env) $mdbSpec.helmReleaseName }}
+            {{- $mdbRelease := default (printf "gentian-mariadb-%s" $env) $mdbSpec.helmReleaseName }}
             {{- $mdbVersion := default "3.0.3" $mdbSpec.chartVersion }}
 
             {{- $redisSpec := default dict $spec.redis }}

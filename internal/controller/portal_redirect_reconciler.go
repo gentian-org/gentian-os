@@ -30,26 +30,11 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-var helmReleaseGVK = schema.GroupVersionKind{
-	Group:   "helm.crossplane.io",
-	Version: "v1beta1",
-	Kind:    "Release",
-}
-
-const (
-	umcLDAPSecretName          = "umc-ldap-admin"
-	umcDBSecretName            = "umc-db-credentials"
-	umcDBSelfServiceSecretName = "umc-db-selfservice"
-	umcSMTPSecretName          = "umc-smtp"
-	umcOIDCSecretName          = "umc-oidc-client"
-	umcUCRConfigMapName        = "umc-ucr"
-)
-
-// ensureUMC converges tenants onto the shared kernel portal login at
-// portal.<kernel-domain>/login/. Per-tenant UMC stacks are removed; tenant
-// effective domains redirect / to the shared login page.
-func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if err := r.removePerTenantUMCStack(ctx, tenant); err != nil {
+// ensurePortalRedirect converges tenants onto the shared kernel portal login at
+// portal.<kernel-domain>/login/. Legacy per-tenant portal stacks are removed;
+// tenant effective domains redirect / to the shared login page.
+func (r *TenantReconciler) ensurePortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if err := r.removeLegacyPerTenantPortalStack(ctx, tenant); err != nil {
 		return err
 	}
 	if r.KernelDomain == "" {
@@ -62,36 +47,20 @@ func (r *TenantReconciler) ensureUMC(ctx context.Context, tenant *gentianov1alph
 	return r.ensureTenantPortalRedirect(ctx, tenant, effectiveDomain)
 }
 
-// deleteUMC removes any remaining per-tenant UMC resources when the tenant CR
-// is deleted with DeletionPolicy=Delete.
-func (r *TenantReconciler) deleteUMC(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+// deletePortalRedirect removes any remaining per-tenant portal resources when the
+// tenant CR is deleted with DeletionPolicy=Delete.
+func (r *TenantReconciler) deletePortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	return r.removePerTenantUMCStack(ctx, tenant)
-}
-
-func kernelPortalHost(kernelDomain string) string {
-	return "portal." + kernelDomain
-}
-
-func kernelPortalURL(kernelDomain string) string {
-	return fmt.Sprintf("https://%s/login/", kernelPortalHost(kernelDomain))
-}
-
-func umcReleaseName(tenantName string) string {
-	return fmt.Sprintf("umc-%s", tenantName)
-}
-
-func umcGatewayReleaseName(tenantName string) string {
-	return fmt.Sprintf("umc-gateway-%s", tenantName)
+	return r.removeLegacyPerTenantPortalStack(ctx, tenant)
 }
 
 func tenantPortalRedirectName(tenantName string) string {
 	return fmt.Sprintf("tenant-%s-portal-redirect", tenantName)
 }
 
-func legacyUMCResourceNames(tenantName string) []string {
+func legacyPerTenantPortalResourceNames(tenantName string) []string {
 	gentianLogin := fmt.Sprintf("umc-%s-gentian-login", tenantName)
 	return []string{
 		fmt.Sprintf("umc-%s-root-redirect", tenantName),
@@ -101,22 +70,25 @@ func legacyUMCResourceNames(tenantName string) []string {
 	}
 }
 
-func umcPortalRedirectLabels(tenantName, instance string) map[string]string {
+func portalRedirectLabels(tenantName, instance string) map[string]string {
 	return map[string]string{
 		tenantLabel:                  tenantName,
 		managedByLabel:               managedByValue,
-		umcFrontendComponentLabel:    umcFrontendComponentValue,
+		portalRedirectComponentLabel: portalRedirectComponentValue,
 		"app.kubernetes.io/name":     "portal-redirect",
 		"app.kubernetes.io/instance": instance,
 	}
 }
 
-// removePerTenantUMCStack deletes superseded per-tenant UMC Helm releases,
+// removeLegacyPerTenantPortalStack deletes superseded per-tenant portal Helm releases,
 // supporting secrets/configmaps, and legacy login ingresses. Idempotent.
-func (r *TenantReconciler) removePerTenantUMCStack(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+func (r *TenantReconciler) removeLegacyPerTenantPortalStack(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 
-	for _, releaseName := range []string{umcReleaseName(tenant.Name), umcGatewayReleaseName(tenant.Name)} {
+	for _, releaseName := range []string{
+		fmt.Sprintf("umc-%s", tenant.Name),
+		fmt.Sprintf("umc-gateway-%s", tenant.Name),
+	} {
 		rel := &unstructured.Unstructured{}
 		rel.SetGroupVersionKind(helmReleaseGVK)
 		rel.SetName(releaseName)
@@ -125,7 +97,7 @@ func (r *TenantReconciler) removePerTenantUMCStack(ctx context.Context, tenant *
 		}
 	}
 
-	for _, name := range legacyUMCResourceNames(tenant.Name) {
+	for _, name := range legacyPerTenantPortalResourceNames(tenant.Name) {
 		for _, obj := range []client.Object{
 			&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
 			&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}},
@@ -145,18 +117,18 @@ func (r *TenantReconciler) removePerTenantUMCStack(ctx context.Context, tenant *
 	}
 
 	for _, name := range []string{
-		umcLDAPSecretName,
-		umcDBSecretName,
-		umcDBSelfServiceSecretName,
-		umcSMTPSecretName,
-		umcOIDCSecretName,
+		"umc-ldap-admin",
+		"umc-db-credentials",
+		"umc-db-selfservice",
+		"umc-smtp",
+		"umc-oidc-client",
 	} {
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName}}
 		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
 			return err
 		}
 	}
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: umcUCRConfigMapName, Namespace: nsName}}
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "umc-ucr", Namespace: nsName}}
 	if err := r.Delete(ctx, cm); client.IgnoreNotFound(err) != nil {
 		return err
 	}

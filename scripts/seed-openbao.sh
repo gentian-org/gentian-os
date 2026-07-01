@@ -12,7 +12,7 @@ set -euo pipefail
 # Usage:
 #   export BAO_ADDR=http://localhost:8200     # port-forwarded OpenBao
 #   export BAO_TOKEN="<root-or-admin-token>"
-#   ./scripts/seed-openbao.sh <master-password> [registry-user] [registry-password]
+#   ./scripts/seed-openbao.sh <master-password> [smtp-relay-user] [smtp-relay-password]
 #
 # Typical local run (port-forward first):
 #   kubectl port-forward svc/openbao 8200:8200 -n openbao &
@@ -25,10 +25,8 @@ set -euo pipefail
 #   database/mariadb
 #   cache/redis
 #   storage/minio
-#   identity/nubus
 #   identity/keycloak-bootstrap
-#   identity/portal-bootstrap-user
-#   identity/intercom
+#   authz/openfga
 #   apps/nextcloud
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
@@ -36,10 +34,8 @@ set -euo pipefail
 # =============================================================================
 
 MASTER_PASSWORD="${1:-sovereign-workplace}"
-REGISTRY_USER="${2:-}"
-REGISTRY_PASSWORD="${3:-}"
-SMTP_RELAY_USER="${4:-}"
-SMTP_RELAY_PASS="${5:-}"
+SMTP_RELAY_USER="${2:-}"
+SMTP_RELAY_PASS="${3:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -84,11 +80,6 @@ derive_password() {
     echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
-derive_nats_password() {
-    local context="$1"
-    local purpose="$2"
-    echo "n$(derive_password "$context" "$purpose")"
-}
 
 echo ""
 echo "Deriving passwords..."
@@ -117,44 +108,12 @@ MINIO_DOVECOT_PW=$(derive_password "minio" "dovecot_user")
 
 # --- Keycloak ---
 KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
-KC_CLIENT_INTERCOM=$(derive_password "keycloak" "intercom_client_secret")
-
-# --- LDAP ---
-LDAP_ADMIN_PW=$(derive_password "cn=admin" "ldap")
-
-# --- Nubus system ---
-ADMIN_PW=$(derive_password "nubus" "Administrator")
-
-
-# --- NATS ---
-NATS_API_PW=$(derive_nats_password "api" "nats")
-NATS_DISPATCHER_PW=$(derive_nats_password "dispatcher" "nats")
-NATS_PREFILL_PW=$(derive_nats_password "prefill" "nats")
-NATS_UDM_LISTENER_PW=$(derive_nats_password "udmListener" "nats")
-NATS_UDM_TRANSFORMER_PW=$(derive_nats_password "udmTransformer" "nats")
 
 # --- Dovecot ---
 DOVECOT_DOVEADM_PW=$(derive_password "dovecot" "doveadm_password")
 
 # --- SMTP (placeholder — configure real SMTP credentials manually) ---
 SMTP_PW=$(derive_password "smtp" "password")
-
-# --- Intercom ---
-ICS_SESSION_SECRET=$(derive_password "intercom" "secret")
-ICS_SYNAPSE_AS_TOKEN=$(derive_password "intercom" "as_token")
-ICS_PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
-PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
-
-# --- LDAP search users (kernel services only; per-app users created by app init Jobs) ---
-LDAP_SEARCH_KEYCLOAK=$(derive_password "nubus" "ldapsearch_keycloak")
-LDAP_SEARCH_DOVECOT=$(derive_password "nubus" "ldapsearch_dovecot")
-LDAP_SEARCH_POSTFIX=$(derive_password "nubus" "ldapsearch_postfix")
-
-# --- Provisioning consumer API passwords (stable — injected via set_sensitive) ---
-# These are passed to the portal-consumer and selfservice-consumer sub-charts so
-# that Helm never auto-rotates them on upgrade, keeping NATS JetStream subscriptions valid.
-PORTAL_CONSUMER_API_PW=$(derive_password "portal-consumer" "provisioning-api")
-SELFSERVICE_CONSUMER_API_PW=$(derive_password "selfservice-consumer" "provisioning-api")
 
 echo "  All passwords derived."
 
@@ -285,43 +244,6 @@ kv_put_once "storage/minio" "$(cat <<EOF
 EOF
 )"
 
-# --- Nubus ---
-kv_put_once "identity/nubus" "$(cat <<EOF
-{
-  "master_password":            "${MASTER_PASSWORD}",
-  "admin_password":             "${ADMIN_PW}",
-  "ldap_admin_password":        "${LDAP_ADMIN_PW}",
-  "keycloak_admin_password":    "${KC_ADMIN_PW}",
-
-  "smtp_password":              "${SMTP_PW}",
-  "nats_api_password":          "${NATS_API_PW}",
-  "nats_dispatcher_password":   "${NATS_DISPATCHER_PW}",
-  "nats_prefill_password":      "${NATS_PREFILL_PW}",
-  "nats_udm_listener_password": "${NATS_UDM_LISTENER_PW}",
-  "nats_udm_transformer_password": "${NATS_UDM_TRANSFORMER_PW}",
-  "minio_ums_secret_access_key": "${MINIO_UMS_PW}",
-  "pg_selfservice_password":    "${PG_SELFSERVICE_PW}",
-  "pg_authsession_password":    "${PG_AUTHSESSION_PW}",
-  "pg_keycloak_password":       "${PG_KEYCLOAK_PW}",
-  "pg_keycloak_extensions_password": "${PG_KC_EXT_PW}",
-  "pg_guardian_password":       "${PG_GUARDIAN_PW}",
-  "pg_notifications_password":  "${PG_NOTIFICATIONS_PW}",
-  "ldapsearch_keycloak":        "${LDAP_SEARCH_KEYCLOAK}",
-  "ldapsearch_dovecot":         "${LDAP_SEARCH_DOVECOT}",
-  "ldapsearch_postfix":         "${LDAP_SEARCH_POSTFIX}",
-  "portal_shared_secret":             "${PORTAL_SHARED_SECRET}",
-  "portal_consumer_api_password":     "${PORTAL_CONSUMER_API_PW}",
-  "selfservice_consumer_api_password": "${SELFSERVICE_CONSUMER_API_PW}"
-}
-EOF
-)"
-# NOTE: If gentian-os/kernel/identity/nubus already exists (existing cluster), the above
-# kv_put_once was skipped. Add the two new consumer password keys manually:
-#   bao kv patch secret/gentian-os/kernel/identity/nubus \
-#     portal_consumer_api_password=<derive_password output> \
-#     selfservice_consumer_api_password=<derive_password output>
-# Then force-reconcile the affected Terraform CR.
-
 # --- Collabora (kernel office service) ---
 COLLABORA_ADMIN_PW=$(derive_password "collabora" "admin_password")
 kv_put_once "apps/collabora" "$(cat <<EOF
@@ -338,8 +260,6 @@ NC_OIDC_SECRET=$(derive_password "nextcloud" "oidc_client_secret")
 NC_INTEGRATION_PW=$(derive_password "nextcloud" "integration_password")
 NC_METRICS_TOKEN=$(derive_password "nextcloud" "metrics_token")
 NC_MINIO_PW=$(derive_password "nextcloud" "minio_password")
-# Derivation contexts kept identical to original so existing installs stay compatible
-NC_LDAP_PW=$(derive_password "nubus" "ldapsearch_nextcloud")
 NC_DB_PW=$(derive_password "postgres" "nextcloud_user")
 kv_put_once "apps/nextcloud" "$(cat <<EOF
 {
@@ -349,54 +269,28 @@ kv_put_once "apps/nextcloud" "$(cat <<EOF
   "integration_password": "${NC_INTEGRATION_PW}",
   "metrics_token":        "${NC_METRICS_TOKEN}",
   "minio_password":       "${NC_MINIO_PW}",
-  "ldapsearch_password":  "${NC_LDAP_PW}",
   "db_password":          "${NC_DB_PW}"
 }
 EOF
 )"
 
-# --- Intercom ---
-kv_put_once "identity/intercom" "$(cat <<EOF
-{
-  "session_secret":               "${ICS_SESSION_SECRET}",
-  "oidc_client_secret":           "${KC_CLIENT_INTERCOM}",
-  "matrix_as_token":              "${ICS_SYNAPSE_AS_TOKEN}",
-  "portal_shared_secret":         "${ICS_PORTAL_SHARED_SECRET}",
-  "redis_auth_password":          "${REDIS_PW}"
-}
-EOF
-)"
-
-# --- Keycloak Bootstrap ---
+# --- Keycloak Bootstrap (Suze IdP admin) ---
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
-  "admin_password":          "${KC_ADMIN_PW}",
-  "intercom_client_secret":  "${KC_CLIENT_INTERCOM}"
-}
-EOF
-)"
-
-PORTAL_USER_PW=$(derive_password "portal-bootstrap" "user_password")
-kv_put_once "identity/portal-bootstrap-user" "$(cat <<EOF
-{
-  "username": "demo",
-  "password": "${PORTAL_USER_PW}"
+  "admin_password": "${KC_ADMIN_PW}"
 }
 EOF
 )"
 
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
-# oidc_client_secret: written by the keycloak-config Crossplane composition on first run.
-#   If the keycloak-config workspace has already run, this kv_put_once is a no-op because
-#   the secret already exists with oidc_client_secret.  In that case, patch manually:
-#     bao kv patch gentian-os/kernel/mail/dovecot doveadm_password=<value>
+# oidc_client_secret: generated on first seed when absent.
 _DOVECOT_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
   echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"
 elif echo "${_DOVECOT_EXISTING}" | grep -q '"data":{'; then
-  # Secret exists (created by keycloak-config) but missing doveadm_password — patch it
+  # Secret exists but missing doveadm_password — patch it
   echo "  Patching gentian-os/kernel/mail/dovecot (adding doveadm_password)..."
   EXISTING_OIDC=$(echo "${_DOVECOT_EXISTING}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['data']['data']['oidc_client_secret'])" 2>/dev/null || echo "")
   if [ -n "${EXISTING_OIDC}" ]; then
@@ -434,7 +328,7 @@ else
     echo "  To add them later: bao kv put gentian-os/kernel/mail/postfix relay_username=<u> relay_password=<p>"
 fi
 
-# --- Mail transport settings consumed by Nubus rendering ---
+# --- Mail transport settings ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
 if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then

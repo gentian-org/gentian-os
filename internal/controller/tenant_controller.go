@@ -55,10 +55,10 @@ const (
 	tenantLabel     = meta.TenantLabel
 	managedByLabel  = meta.ManagedByLabel
 	managedByValue  = meta.ManagedByValue
-	// umcFrontendComponentLabel marks Ingress objects owned by tenant portal redirect
+	// portalRedirectComponentLabel marks Ingress objects owned by tenant portal redirect
 	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
-	umcFrontendComponentLabel = meta.UMCFrontendComponentLabel
-	umcFrontendComponentValue = meta.UMCFrontendComponentValue
+	portalRedirectComponentLabel = meta.PortalRedirectComponentLabel
+	portalRedirectComponentValue = meta.PortalRedirectComponentValue
 	kernelNamespace           = meta.KernelNamespace
 	// ingressNamespace is the namespace where the nginx ingress controller runs.
 	ingressNamespace        = meta.IngressNamespace
@@ -504,7 +504,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 
-		if err := r.ensureUMC(ctx, tenant); err != nil {
+		if err := r.ensurePortalRedirect(ctx, tenant); err != nil {
 			logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
 		}
 
@@ -681,7 +681,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up portal redirect ingress and any remaining UMC stack artifacts
 	// (DeletionPolicy=Delete only; in-namespace Secrets/ConfigMaps go with the namespace).
-	if err := r.deleteUMC(ctx, tenant); err != nil {
+	if err := r.deletePortalRedirect(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 

@@ -179,6 +179,6 @@ func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effec
 	return fmt.Sprintf("%s.%s", sub, effectiveDomain)
 }
 
-func isUMCFrontendIngress(ing *networkingv1.Ingress) bool {
-	return ing.Labels[umcFrontendComponentLabel] == umcFrontendComponentValue
+func isPortalRedirectIngress(ing *networkingv1.Ingress) bool {
+	return ing.Labels[portalRedirectComponentLabel] == portalRedirectComponentValue
 }

@@ -329,7 +329,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	catalogRaw, err := os.ReadFile(filepath.Join("..", "oidc", "testdata", "opendesk-catalog.yaml"))
+	catalogRaw, err := os.ReadFile(filepath.Join("..", "oidc", "testdata", "gentian-oidc-catalog.yaml"))
 	if err != nil {
 		panic(err)
 	}

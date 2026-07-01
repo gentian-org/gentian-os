@@ -162,7 +162,7 @@ _keycloak_smtp_settings() {
             fi
             KC_SMTP_HOST="postfix-dev.gentian-${env}.svc.cluster.local"
             KC_SMTP_PORT="587"
-            KC_SMTP_USER="opendesk-system@${kernel_domain}"
+            KC_SMTP_USER="gentian-system@${kernel_domain}"
             KC_SMTP_PASSWORD="$(_derive smtp password)"
             KC_SMTP_SSL="false"
             KC_SMTP_STARTTLS="true"

@@ -73,7 +73,7 @@ spec:
                 matchLabels:
                   - key: gentianos.io/oidc-catalog
                     type: Value
-                    value: opendesk
+                    value: gentian
             # Optional portal-bridge SSO helper page shipped with the AppProfile catalogue.
             - kind: ConfigMap
               into: portalBridgeSso

@@ -184,7 +184,7 @@ func (r *TenantReconciler) deleteSupersededTenantIngress(
 	logger := ctrl.LoggerFrom(ctx)
 	for i := range list.Items {
 		ing := &list.Items[i]
-		if isUMCFrontendIngress(ing) {
+		if isPortalRedirectIngress(ing) {
 			continue
 		}
 		if !tenantIngressSupersededByGateway(ing, hosts) {

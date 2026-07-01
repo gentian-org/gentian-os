@@ -1,10 +1,10 @@
-# Test fixture mirroring gentian-apps/profiles/opendesk-oidc-catalog/catalog.yaml
+# Test fixture mirroring gentian-apps/profiles/gentian-oidc-catalog/catalog.yaml
 apiVersion: gentianos.io/v1alpha1
 kind: OIDCPackCatalog
 metadata:
-  name: opendesk
+  name: gentian
   labels:
-    gentianos.io/oidc-catalog: opendesk
+    gentianos.io/oidc-catalog: gentian
 spec:
   extraManagedByAttributeGroups:
     - FileshareAdmin

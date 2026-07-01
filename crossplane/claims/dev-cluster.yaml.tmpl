@@ -1,7 +1,6 @@
 # Cluster XR claim template — used by install.sh via envsubst.
 # Variables substituted at install time:
 #   KERNEL_DOMAIN         (required) — e.g. desk.example.com
-#   LDAP_BASE_DN          (optional) — defaults to dc= decomposition of KERNEL_DOMAIN
 #   LETSENCRYPT_EMAIL     (optional) — defaults to admin@${KERNEL_DOMAIN}
 #   OPENBAO_SERVER        (optional) — defaults to in-cluster address
 #   INGRESS_CLASS_NAME    (optional) — defaults to nginx
@@ -15,7 +14,6 @@ metadata:
   namespace: crossplane-system
 spec:
   kernelDomain: ${KERNEL_DOMAIN}
-  ldapBaseDn: "${LDAP_BASE_DN}"
   masterPasswordSecretRef:
     name: gentian-os-master-password
     namespace: crossplane-system

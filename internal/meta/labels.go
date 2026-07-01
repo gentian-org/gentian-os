@@ -36,9 +36,9 @@ const (
 	// AppInitComponentValue marks bootstrap Jobs (db-init, s3-init) that need OpenBao + kernel egress.
 	AppInitComponentValue = "app-init"
 
-	// UMCFrontendComponent marks portal redirect resources owned by the shared kernel portal.
-	UMCFrontendComponentLabel = ComponentLabel
-	UMCFrontendComponentValue = "umc-frontend"
+	// portalRedirectComponent marks portal redirect resources owned by the shared kernel portal.
+	PortalRedirectComponentLabel = ComponentLabel
+	PortalRedirectComponentValue = "portal-redirect"
 
 	EnvoyGatewayInstallNamespace = "envoy-gateway-system"
 	IngressNamespace             = "ingress"

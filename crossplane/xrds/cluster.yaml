@@ -30,11 +30,6 @@ spec:
                   description: >
                     Cluster-wide platform DNS suffix, e.g. "desk.gentian.org".
                     All kernel services are reachable under this domain.
-                ldapBaseDn:
-                  type: string
-                  description: >
-                    LDAP base DN derived from the kernel domain, e.g. "dc=gentian,dc=org".
-                    Defaults to a dc= decomposition of kernelDomain when omitted.
                 masterPasswordSecretRef:
                   type: object
                   description: >

@@ -168,7 +168,7 @@ data:
   values.yaml: |
     configuration:
       database:
-        host: "opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local"
+        host: "gentian-postgresql-dev.gentian-infra-dev.svc.cluster.local"
       cache:
         host: "redis-dev-master.gentian-infra-dev.svc.cluster.local"
       ldap:

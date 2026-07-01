@@ -18,15 +18,6 @@ spec:
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
-  - 'registry.opencode.de/*'                                                                            # ZenDiS OCI registry (without protocol)
-  - 'registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'                   # Nubus, Intercom
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-keycloak-bootstrap'  # Keycloak bootstrap (not deployed)
-  - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Bitnami mirror on opencode registry
-  - 'oci://registry.opencode.de/*'                                                                      # opencode OCI registry (with protocol)
-  - 'oci://registry.opencode.de/bmi/opendesk/*'                                                         # opencode chart and image paths
-  - 'oci://registry.opencode.de/bmi/opendesk/components/platform-development/*'                        # Platform-development chart path
-  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/*'                         # Univention supplier path
-  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'             # Univention charts mirror
   - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
@@ -100,17 +91,3 @@ spec:
   # Degraded after a reboot is hidden behind orphan warnings).
   orphanedResources:
     warn: false
-    ignore:
-    # Nubus runtime-generated resources (created by init jobs/hooks, no Helm tracking labels)
-    - kind: ConfigMap
-      name: nubus-dev-ldap-server-status
-    - kind: Secret
-      name: nubus-dev-ecdsa-ca-secret
-    - kind: Secret
-      name: nubus-dev-guardian-management-api-postgresql-credentials
-    - kind: Secret
-      name: nubus-dev-portal-consumer-object-storage
-    - kind: Secret
-      name: nubus-dev-saml-tls
-    - kind: Service
-      name: ums-keycloak

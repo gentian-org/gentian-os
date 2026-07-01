@@ -17,7 +17,7 @@ kind: Release
 metadata:
   annotations:
     crossplane.io/composition-resource-name: mariadb-release
-    crossplane.io/external-name: opendesk-mariadb-dev
+    crossplane.io/external-name: gentian-mariadb-dev
   labels:
     crossplane.io/composite: dev-infra-data
   name: dev-infra-data-mariadb
@@ -105,7 +105,7 @@ kind: Release
 metadata:
   annotations:
     crossplane.io/composition-resource-name: postgresql-release
-    crossplane.io/external-name: opendesk-postgresql-dev
+    crossplane.io/external-name: gentian-postgresql-dev
   labels:
     crossplane.io/composite: dev-infra-data
   name: dev-infra-data-postgresql

@@ -29,7 +29,7 @@ data:
       enabled: false
     database:
       vendor: postgres
-      hostname: opendesk-postgresql-dev.gentian-infra-dev.svc.cluster.local
+      hostname: gentian-postgresql-dev.gentian-infra-dev.svc.cluster.local
       port: 5432
       database: keycloak
       username: keycloak_user

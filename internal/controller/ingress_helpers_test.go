@@ -24,19 +24,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestIsUMCFrontendIngress(t *testing.T) {
+func TestIsPortalRedirectIngress(t *testing.T) {
 	umc := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "tenant-demo-portal-redirect",
 			Labels: map[string]string{
-				managedByLabel:            managedByValue,
-				tenantLabel:               "demo",
-				umcFrontendComponentLabel: umcFrontendComponentValue,
+				managedByLabel:               managedByValue,
+				tenantLabel:                  "demo",
+				portalRedirectComponentLabel: portalRedirectComponentValue,
 			},
 		},
 	}
-	if !isUMCFrontendIngress(umc) {
-		t.Fatal("expected umc frontend ingress to be recognized")
+	if !isPortalRedirectIngress(umc) {
+		t.Fatal("expected portal redirect ingress to be recognized")
 	}
 	app := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
@@ -47,8 +47,8 @@ func TestIsUMCFrontendIngress(t *testing.T) {
 			},
 		},
 	}
-	if isUMCFrontendIngress(app) {
-		t.Fatal("expected app ingress not to be treated as umc frontend")
+	if isPortalRedirectIngress(app) {
+		t.Fatal("expected app ingress not to be treated as portal redirect")
 	}
 }
 
