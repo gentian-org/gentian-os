@@ -160,6 +160,24 @@ func shouldAutoCompleteDeleteCleanupJob(jobName string) bool {
 	return !manual
 }
 
+// waitForTenantConditionTrue polls until the tenant has condType=True.
+func waitForTenantConditionTrue(t *testing.T, tenantName, condType string) *gentianov1alpha1.Tenant {
+	t.Helper()
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, tenantReadyTimeout, func() bool {
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, updated); err != nil {
+			return false
+		}
+		for _, c := range updated.Status.Conditions {
+			if c.Type == condType && c.Status == metav1.ConditionTrue {
+				return true
+			}
+		}
+		return false
+	})
+	return updated
+}
+
 // waitForTenantConditionReason polls until the tenant has a status condition
 // with the given type and reason (reconciler gates on conditions, not Job creation order).
 func waitForTenantConditionReason(t *testing.T, tenantName, condType, reason string) {

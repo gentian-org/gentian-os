@@ -147,11 +147,7 @@ func TestStorage_NoStorageApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nostorage"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nostorage", "StorageReady")
 
 	var cond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -162,9 +158,6 @@ func TestStorage_NoStorageApps(t *testing.T) {
 	}
 	if cond == nil {
 		t.Fatal("expected StorageReady condition")
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected StorageReady=True, got %v", cond.Status)
 	}
 	if cond.Reason != "NoStorageRequired" {
 		t.Errorf("expected reason NoStorageRequired, got %q", cond.Reason)

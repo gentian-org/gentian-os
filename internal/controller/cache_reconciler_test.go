@@ -86,11 +86,7 @@ func TestCache_NoCacheApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nocache"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nocache", "CacheReady")
 
 	var cond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -101,9 +97,6 @@ func TestCache_NoCacheApps(t *testing.T) {
 	}
 	if cond == nil {
 		t.Fatal("expected CacheReady condition")
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected CacheReady=True, got %v", cond.Status)
 	}
 	if cond.Reason != "NoCacheRequired" {
 		t.Errorf("expected reason NoCacheRequired, got %q", cond.Reason)

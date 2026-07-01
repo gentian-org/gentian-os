@@ -49,6 +49,10 @@ const (
 // Note: per-tenant Nextcloud groups are provisioned via the manifest bridge
 // (nc-group Job in jobs.json) and applied by tenant-default.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	if err := r.cleanupOrphanedNextcloudGroupJob(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned Nextcloud group Job: %w", err)
+	}
+
 	s3Apps, err := r.collectStorageApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err

@@ -138,11 +138,7 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nodb"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nodb", "DatabaseReady")
 
 	var dbCond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -153,9 +149,6 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	}
 	if dbCond == nil {
 		t.Fatal("expected DatabaseReady condition")
-	}
-	if dbCond.Status != metav1.ConditionTrue {
-		t.Errorf("expected DatabaseReady=True, got %v", dbCond.Status)
 	}
 	if dbCond.Reason != "PortalShellReady" {
 		t.Errorf("expected reason PortalShellReady, got %q", dbCond.Reason)
@@ -359,6 +352,7 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "platform-kernel"}, job) == nil
 	})
+	completePortalShellDatabase(t, "dbready")
 	markJobComplete(t, "pg-role-dbready-pg-app3", "platform-kernel")
 
 	// Step 2: wait for Database CR in platform-kernel then mark it ready.

@@ -66,11 +66,7 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nomaria"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nomaria", "MariaDBReady")
 
 	var cond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -81,9 +77,6 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 	}
 	if cond == nil {
 		t.Fatal("expected MariaDBReady condition")
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected MariaDBReady=True, got %v", cond.Status)
 	}
 	if cond.Reason != "NoMariaDBRequired" {
 		t.Errorf("expected reason NoMariaDBRequired, got %q", cond.Reason)
