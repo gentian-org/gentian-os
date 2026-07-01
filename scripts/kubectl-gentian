@@ -1099,9 +1099,40 @@ wait_for_app_uninstalled() {
   done
 }
 
+# Print Crossplane XTenant / Tenant CrossplaneReady hints when provisioning stalls.
+_tenant_crossplane_diagnostics() {
+  local tenant_name="${1}"
+
+  local cp_status cp_reason cp_message
+  cp_status="$(kubectl --request-timeout=5s get tenant "${tenant_name}" \
+    -o jsonpath='{.status.conditions[?(@.type=="CrossplaneReady")].status}' 2>/dev/null || true)"
+  cp_reason="$(kubectl --request-timeout=5s get tenant "${tenant_name}" \
+    -o jsonpath='{.status.conditions[?(@.type=="CrossplaneReady")].reason}' 2>/dev/null || true)"
+  cp_message="$(kubectl --request-timeout=5s get tenant "${tenant_name}" \
+    -o jsonpath='{.status.conditions[?(@.type=="CrossplaneReady")].message}' 2>/dev/null || true)"
+  if [[ -n "${cp_status}" ]]; then
+    echo "  CrossplaneReady=${cp_status} reason=${cp_reason:-<unset>} message=${cp_message:-<unset>}"
+  fi
+
+  local xtenant_msg
+  xtenant_msg="$(kubectl --request-timeout=5s get xtenant "${tenant_name}" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || true)"
+  if [[ -n "${xtenant_msg}" ]]; then
+    echo "  XTenant Ready: ${xtenant_msg}"
+  fi
+
+  local ns_name="tenant-${tenant_name}"
+  local app
+  for app in $(kubectl --request-timeout=5s get apps -n "${ns_name}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
+    [[ -n "${app}" ]] || continue
+    _app_composite_diagnostics "${ns_name}" "${app}" || true
+  done
+}
+
 wait_for_tenant_ready() {
   local tenant_name="${1}"
-  local timeout_secs="${2:-600}"
+  local timeout_secs="${2:-1800}"
   local start
   start="$(date +%s)"
   local last_phase=""
@@ -1159,6 +1190,9 @@ wait_for_tenant_ready() {
     elapsed=$((now_progress - start))
     if (( elapsed >= next_progress_at )); then
       echo "  tenant '${tenant_name}' still in phase: ${phase} (elapsed: ${elapsed}s)"
+      if [[ "${phase}" == "Provisioning" ]]; then
+        _tenant_crossplane_diagnostics "${tenant_name}" || true
+      fi
       next_progress_at=$((elapsed + 30))
     fi
 
@@ -1178,6 +1212,8 @@ wait_for_tenant_ready() {
     now="$(date +%s)"
     if (( now - start >= timeout_secs )); then
       echo "Timed out waiting for tenant '${tenant_name}' to become Ready." >&2
+      echo "Tenant status diagnostics:" >&2
+      _tenant_crossplane_diagnostics "${tenant_name}" >&2 || true
       return 1
     fi
 
@@ -1659,7 +1695,7 @@ cmd_tenant_deploy() {
   fi
 
   echo "Waiting for tenant reconciliation to complete..."
-  if ! wait_for_tenant_ready "${tenant_name}" 600; then
+  if ! wait_for_tenant_ready "${tenant_name}" 1800; then
     rollback_deploy "${instance}" "${tenant_name}" "${env_name}"
   fi
 
