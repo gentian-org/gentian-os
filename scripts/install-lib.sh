@@ -620,10 +620,11 @@ try_load_creds_from_openbao() {
     _bao_get() {
         # $1 = relative path under secret/data/gentian-os/kernel/
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
+        # Missing paths (404) are normal before bao_bootstrap — must not abort install.
         curl -sf --max-time 5 \
             -H "X-Vault-Token: ${token}" \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
-            | jq -r "$2 // empty" 2>/dev/null
+            | jq -r "$2 // empty" 2>/dev/null || true
     }
 
     local loaded=0 v
@@ -2823,6 +2824,7 @@ init_openbao() {
             info "Stored init credentials (${OPENBAO_INIT_FILE}):"
             [[ -n "$stored_key"   ]] && info "  Recovery/Unseal Key : ${stored_key}"
             [[ -n "$stored_token" ]] && info "  Root Token          : ${stored_token}"
+            [[ -n "$stored_token" ]] && export BAO_TOKEN="$stored_token"
         fi
         return
     fi
@@ -3793,6 +3795,7 @@ main() {
     load_creds_cache
     [[ "${INSTALL_VALIDATE_ONLY}" == "1" ]] && { load_install_state; load_deployments_cluster_settings; try_load_creds_from_openbao; validate_config; }
     load_install_state
+    load_deployments_cluster_settings
     try_load_creds_from_openbao
     prompt_credentials
     prompt_app_repos

@@ -1224,6 +1224,7 @@ main_cp() {
     load_operator_config
     load_creds_cache
     load_install_state
+    load_deployments_cluster_settings
     try_load_creds_from_openbao
 
     # Capture run start so stale-data guards can distinguish resources created
@@ -1236,8 +1237,6 @@ main_cp() {
     INSTALL_START_EPOCH="${INSTALL_START_EPOCH:-$(date -u +%s)}"
     export INSTALL_START_EPOCH
     save_install_state
-
-    load_deployments_cluster_settings
 
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
