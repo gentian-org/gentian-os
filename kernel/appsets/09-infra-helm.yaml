@@ -1,0 +1,71 @@
+---
+# Crossplane provider-helm releases for optional kernel mail (Postfix + Dovecot).
+# Shared PostgreSQL/MariaDB/Redis/MinIO live in InfraData — see 08-infra-data.yaml.
+#
+# Each Application syncs kernel/services/<app>/manifests/<env>/:
+#   configmap.yaml, externalsecret.yaml, release.yaml (and/or deployment.yaml)
+#
+# Deployed namespace: gentian-{env} (e.g. gentian-dev) — see manifests.
+# Service DNS expected by the operator:
+#   postfix-dev.gentian-dev.svc.cluster.local:587
+#   dovecot-dev.gentian-dev.svc.cluster.local:24 (LMTP)
+#
+# NOTE: Charts/images are public placeholders marked UNTESTED in service READMEs.
+# Wire-up with MAIL_SERVICE_MODE=kernel + install.sh step 15b / update.sh --mail.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-infra-helm
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: postfix
+          - app: dovecot
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests/{{.env}}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gentian-{{.env}}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+      ignoreDifferences:
+      - group: external-secrets.io
+        kind: ExternalSecret
+        jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+        - .spec.target.deletionPolicy

@@ -1,0 +1,9 @@
+# UNTESTED — env-specific postfix overrides for gentian-dev.
+replicaCount: 1
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

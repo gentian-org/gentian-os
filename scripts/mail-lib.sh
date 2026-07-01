@@ -41,6 +41,9 @@ _detect_deployed_mail_mode() {
 
 # =============================================================================
 # Build postfix-dev-values YAML for the given mode (external relay vs kernel LMTP).
+#
+# UNTESTED: values target the public bokysan/mail chart (see kernel/services/postfix/).
+# scripts/mail-lib.sh still emits a minimal overlay; full LMTP→Dovecot wiring is TBD.
 # =============================================================================
 _postfix_dev_values_yaml() {
     local mode="$1"

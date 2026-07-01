@@ -66,8 +66,9 @@ and re-running `update.sh`.
 
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
 
-When the extension is enabled, **one** Postfix, **one** Dovecot, and
-**one** Rspamd instance handle all tenant domains. Tenant isolation is
+When the extension is enabled, **one** Postfix and **one** Dovecot instance handle all
+tenant domains (placeholders under `kernel/services/postfix` and
+`kernel/services/dovecot` — **UNTESTED**, public chart/image only). Tenant isolation is
 enforced at the configuration level:
 
 - **Postfix:** `virtual_mailbox_domains` lists all tenant domains;
