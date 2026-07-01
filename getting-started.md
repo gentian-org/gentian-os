@@ -392,7 +392,8 @@ cluster) so ArgoCD does not recreate them on the next install.
 # Safe mode — undeploy tenants, preserve PVC/PV data and OpenBao KV paths.
 ./uninstall.sh
 
-# Force mode — tenant undeploy uses --purge, then deletes data namespaces and bound PVs.
+# Force mode — tenant undeploy uses --purge, deletes data namespaces and bound PVs,
+# and removes Envoy Gateway, Kyverno, and orphaned gentianos.io CRDs/RBAC/catalogue.
 ./uninstall.sh -f
 
 # Keep tenant workloads and Git manifests; only tear down Gentian OS kernel/infra.

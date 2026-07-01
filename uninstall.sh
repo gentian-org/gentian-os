@@ -19,6 +19,8 @@
 #   - All safe-mode steps
 #   - Tenant undeploy uses --purge (destructive tenant data removal)
 #   - Also deletes data namespaces and bound PVs (full teardown)
+#   - Removes Envoy Gateway, Kyverno (Gentian admission), and orphaned Gentian
+#     OS cluster scaffold (gentianos.io CRDs/CRs, operator RBAC, catalogue)
 #
 # Usage:
 #   ./uninstall.sh            # safe teardown
@@ -73,7 +75,8 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "Usage: $0 [-f] [--keep-tenants] [--cluster-infra]"
             echo "  default          : safe uninstall (preserve PVC/PV data)"
-            echo "  -f               : force uninstall (delete namespaces + bound PVs)"
+            echo "  -f               : force uninstall (delete namespaces, bound PVs,"
+            echo "                     Envoy Gateway, Kyverno, gentianos.io CRDs/RBAC)"
             echo "  --keep-tenants    : skip tenant undeploy (preserve tenant CRs, namespaces, Git manifests)"
             echo "  --cluster-infra   : also remove cert-manager/reloader/CNPG"
             exit 0
@@ -1067,6 +1070,145 @@ _delete_pvs_for_namespace() {
     done <<< "${pvs}"
 }
 
+# Strip finalizers and delete all instances of a CRD (cluster- and namespaced-scoped).
+_strip_and_delete_crd_instances() {
+    local crd="$1"
+    while IFS= read -r obj; do
+        [[ -z "${obj}" ]] && continue
+        [[ "${obj}" != */* ]] && continue
+        kubectl patch "${obj}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+        kubectl delete "${obj}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done < <(
+        kubectl get "${crd}" -A -o name 2>/dev/null || true
+        kubectl get "${crd}" -o name 2>/dev/null || true
+    )
+}
+
+# Delete CRDs whose names match an extended-regex pattern (e.g. 'gentianos\.io$').
+_delete_crds_matching() {
+    local pattern="$1"
+    local label="${2:-CRDs matching ${pattern}}"
+    local crds crd
+
+    crds=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep -E "${pattern}" || true)
+    if [[ -z "${crds}" ]]; then
+        info "No ${label}; skipping."
+        return 0
+    fi
+
+    info "Deleting ${label}..."
+    while IFS= read -r crd; do
+        [[ -z "${crd}" ]] && continue
+        _strip_and_delete_crd_instances "${crd}"
+        kubectl patch crd "${crd}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+        kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done <<< "${crds}"
+    success "${label} removal queued."
+}
+
+_delete_envoy_gateway_scaffold() {
+    local ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local gateway_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+
+    info "Removing Gentian Gateway API edge scaffold..."
+
+    for rt in \
+        backendtrafficpolicies.gateway.envoyproxy.io \
+        clienttrafficpolicies.gateway.envoyproxy.io \
+        securitypolicies.gateway.envoyproxy.io \
+        envoyextensionpolicies.gateway.envoyproxy.io \
+        envoypatchpolicies.gateway.envoyproxy.io \
+        backendtlspolicies.gateway.networking.k8s.io; do
+        kubectl get "${rt}" -A -o name 2>/dev/null \
+            | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    done
+
+    kubectl get httproute -A -o name 2>/dev/null \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    kubectl get gateway -A -o name 2>/dev/null \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    kubectl delete gatewayclass "${gateway_class}" --ignore-not-found=true 2>/dev/null || true
+
+    if helm status eg -n "${ns}" >/dev/null 2>&1; then
+        info "Uninstalling Envoy Gateway Helm release (eg) in ${ns}..."
+        helm uninstall eg -n "${ns}" --wait --timeout=3m 2>/dev/null || true
+        success "Envoy Gateway Helm release uninstalled."
+    else
+        info "Envoy Gateway Helm release not found in ${ns}; skipping helm uninstall."
+    fi
+
+    _delete_namespace "${ns}"
+    _delete_crds_matching 'gateway\.envoyproxy\.io$' 'Envoy Gateway extension CRDs'
+    _delete_crds_matching 'gateway\.networking\.k8s\.io$' 'Gateway API CRDs'
+}
+
+_delete_kyverno_scaffold() {
+    local policy
+
+    info "Removing Gentian Kyverno admission scaffold..."
+    for policy in \
+        gentian-disallow-privileged \
+        gentian-disallow-host-namespaces \
+        gentian-require-non-root; do
+        kubectl patch clusterpolicy "${policy}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+        kubectl delete clusterpolicy "${policy}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done
+    success "Gentian Kyverno ClusterPolicies removed."
+
+    if helm status kyverno -n kyverno >/dev/null 2>&1; then
+        info "Uninstalling Kyverno Helm release..."
+        helm uninstall kyverno -n kyverno --wait --timeout=3m 2>/dev/null || true
+        success "Kyverno Helm release uninstalled."
+    else
+        info "Kyverno Helm release not found; skipping helm uninstall."
+    fi
+
+    _delete_namespace "kyverno"
+    _delete_crds_matching 'kyverno\.io$' 'Kyverno CRDs'
+}
+
+_delete_gentianos_api_scaffold() {
+    info "Removing Gentian OS API scaffold (CRs, CRDs, RBAC, webhooks)..."
+
+    kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator \
+        --ignore-not-found=true 2>/dev/null || true
+
+    if helm status gentian-os -n gentian-system >/dev/null 2>&1; then
+        helm uninstall gentian-os -n gentian-system --wait --timeout=3m 2>/dev/null || true
+        success "gentian-os Helm release uninstalled."
+    fi
+
+    _delete_crds_matching 'gentianos\.io$' 'gentianos.io CRDs'
+
+    kubectl delete apiservice v1alpha1.gentianos.io --ignore-not-found=true 2>/dev/null || true
+
+    kubectl delete clusterrolebinding \
+        gentian-os \
+        gentian-job-gc \
+        --ignore-not-found=true 2>/dev/null || true
+    kubectl get clusterrolebinding -o name 2>/dev/null \
+        | grep -E 'gentian-portal' \
+        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+
+    kubectl delete clusterrole \
+        gentian-os \
+        gentian-job-gc \
+        'crossplane:extra-resources:appprofiles.gentianos.io' \
+        --ignore-not-found=true 2>/dev/null || true
+    kubectl get clusterrole -o name 2>/dev/null \
+        | grep -E 'gentian-portal' \
+        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+
+    success "Gentian OS API scaffold removed."
+}
+
 # =============================================================================
 # Step 10 — Purge OpenBao data/secrets (force mode or cluster-infra)
 # =============================================================================
@@ -1191,6 +1333,23 @@ else
 fi
 
 # =============================================================================
+# Step 13 — Force-mode platform scaffold cleanup
+#
+# Orphaned cluster-scoped resources (Envoy Gateway, Kyverno, gentianos.io CRDs,
+# operator RBAC, catalogue CRs) survive namespace teardown.  Remove them in force
+# mode so the next install starts from a clean API surface.
+# =============================================================================
+if [[ "${MODE}" == "force" ]]; then
+    banner "Step 13 — Force-mode platform scaffold cleanup"
+    _delete_envoy_gateway_scaffold
+    _delete_kyverno_scaffold
+    _delete_gentianos_api_scaffold
+else
+    info "Skipping platform scaffold cleanup (only enabled with -f)."
+    info "  Re-run with -f to also remove Envoy Gateway, Kyverno, and gentianos.io CRDs/RBAC."
+fi
+
+# =============================================================================
 # Remove host CLI tools (kubectl-gentian plugin + gtnctl symlink)
 # =============================================================================
 banner "Remove host CLI tools"
@@ -1236,7 +1395,8 @@ if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
 fi
 if [[ "${MODE}" == "safe" ]]; then
     echo "  PVC/PV data is preserved (safe mode)."
-    echo "  Re-run with -f to also remove namespaces and bound PVs."
+    echo "  Re-run with -f to also remove namespaces, bound PVs, Envoy Gateway,"
+    echo "  Kyverno, and orphaned gentianos.io CRDs/RBAC."
 fi
 
 # Clear the persisted run-start epoch so the next install starts with a fresh
