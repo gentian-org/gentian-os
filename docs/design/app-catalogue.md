@@ -13,7 +13,7 @@ The platform exposes four CRDs to humans. Two are authored
 AppProfile (cluster-scoped)
 Tenant (cluster-scoped)
     │
-    ├─► gentian-os operator ─► namespace, identity Jobs, LDAP, DB/MariaDB,
+    ├─► gentian-os operator ─► namespace, identity Jobs, DB/MariaDB,
     │                         storage, cache, mail, ingress/TLS, IntegrationBindings
     │
     └─► operator ensures App claims (namespace-scoped, tenant-{name})
@@ -23,8 +23,10 @@ Tenant (cluster-scoped)
                     └─► helm.crossplane.io Release (tenant app chart)
 ```
 
-Kernel services (Nubus, Nextcloud, …) deploy via ArgoCD from `gentian-os/kernel/`,
-not via tenant `App` claims.
+Kernel services (Suze, MinIO, PostgreSQL, Portal, Gateway API, …) deploy via
+ArgoCD from `gentian-os/kernel/`, not via tenant `App` claims. Catalogue apps
+(Nextcloud, Element, OpenProject, …) install per tenant from `gentian-apps` via
+`AppProfile` + `app-default`.
 
 ## 2. AppProfile — the Catalogue Entry
 
@@ -52,9 +54,8 @@ spec:
   kernelRequirements:
     identity:
       oidc:
-        clientId: opendesk-openproject
+        clientId: openproject
         accessType: CONFIDENTIAL
-      ldap: { sync: true, interval: 1h }
     database:
       engine: postgresql
       databasePerTenant: true
@@ -106,11 +107,6 @@ spec:
     cache:
       hostKey: "cache.host"
       portKey: "cache.port"
-    ldap:
-      hostKey: "ldap.host"
-      baseDnKey: "ldap.baseDn"
-      bindDnKey: "ldap.bindDn"
-      bindPasswordKey: "ldap.bindPassword"
 
   # Escape hatch for non-standard values
   extraValues:
@@ -161,7 +157,6 @@ spec:
   isolation:
     mode: namespace
     keycloakRealm: demo
-    ldapOU: "ou=demo"
     databasePrefix: demo_
     s3Prefix: demo-
 
@@ -190,8 +185,8 @@ spec:
 ```
 
 The deletion policy is configurable per tenant: `Retain` (default)
-revokes access credentials but keeps databases, buckets, mailboxes,
-and LDAP entries — safe for compliance and recovery. `Delete` drops
+revokes access credentials but keeps databases, buckets, and mailboxes —
+safe for compliance and recovery. `Delete` drops
 everything; intended for development.
 
 ## 4. IntegrationBinding — the Cross-App Contract
@@ -261,7 +256,7 @@ sequenceDiagram
     U->>Git: append profile to Tenant.spec.apps
     U->>OP: kubectl apply tenant.yaml
     AC->>OP: sync Tenant CR (Git source of truth)
-    OP->>OP: namespace, identity, LDAP, DB, ingress, …
+    OP->>OP: namespace, identity, DB, ingress, …
     OP->>XP: create/update App claim per profile
     XP->>XP: Composition → ExternalSecret + helm Release
     XP->>OB: read tenant/app secret paths
@@ -298,8 +293,10 @@ gentian-apps/
 │   ├── ox-appsuite.yaml
 │   ├── element.yaml          # includes Jitsi sidecar (spec.sidecars)
 │   ├── xwiki.yaml
+│   ├── nextcloud.yaml        # community nextcloud
+│   ├── od-nextcloud.yaml     # Gentian-packaged Nextcloud profile
 │   # Jitsi is bundled with Element, not a standalone AppProfile
-│   # CryptPad is a kernel service (gentian-os/kernel/services/cryptpad), not a catalogue app
+│   # Collabora, CryptPad, and mail UI install as catalogue profiles when listed in spec.apps
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml

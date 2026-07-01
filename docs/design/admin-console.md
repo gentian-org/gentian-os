@@ -338,10 +338,10 @@ Keycloak **26.6+ experimental SCIM Realm API** is complementary (external IdPs s
 
 ### 6.3 OIDC packs
 
-Per-app tenant-realm OIDC client scopes and role mappings are declared in the
-operator catalogue (`internal/oidc/packs/`). Each pack maps an **entitlement
-group** (`gentian:tenant:<t>:app:<profile>`) to client roles so OIDC tokens
-reflect app access granted in the Admin Console.
+Per-app tenant-realm OIDC client scopes and role mappings are declared in
+**OIDC pack catalogues** in `gentian-apps` (per `AppProfile` / `OIDCPackCatalog`).
+Each pack maps an **entitlement group** (`gentian:tenant:<t>:app:<profile>`) to
+client roles so OIDC tokens reflect app access granted in the Admin Console.
 
 ---
 
@@ -369,7 +369,7 @@ See [roadmap.md § Platform admin least-privilege](../roadmap.md#platform-admin-
 
 ## 8. Implementation phases
 
-Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-console-replaces-umc).
+Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-console).
 
 | Phase | Deliverable | Status |
 |---|---|---|
@@ -393,7 +393,7 @@ Last reviewed against `gentian-os` (`feat/new-security`) and `gentian-ui` (`feat
 
 #### P0 — Suze identity bootstrap (**done**)
 
-`IDENTITY_MODE` removed — Keycloak-native (Suze) is the only path. LDAP provisioning Jobs and reconcile are disabled (legacy helpers retained in source for reference).
+Keycloak-native (Suze) is the only path.
 
 | Item | Status | Notes |
 |---|---|---|
@@ -401,10 +401,9 @@ Last reviewed against `gentian-os` (`feat/new-security`) and `gentian-ui` (`feat
 | Kernel realm + `gentian-portal` client | **Done** | `scripts/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
 | Platform admin bootstrap | **Done** | `administrator@<KERNEL_DOMAIN>` + `gentian:platform:superadmin`; password `MASTER_PASSWORD`-derived; `groups` scope on `gentian-portal` |
 | Tenant realm Jobs | **Done** | `keycloak-realm-*`, `keycloak-gentian-groups-*`, `keycloak-admin-*`, `keycloak-broker-idp-*` (`tenant_identity_manifests.go`) |
-| LDAP disabled | **Done** | `ensureLDAP` no-op; `buildLDAPProvisioningJobs` not called; LDAP env vars commented in operator chart |
 | **`gentian:tenant:<t>:*` group taxonomy** | **Done** | `makeGentianGroupsJob` — `members`, `admins`, `app:<profile>` per tenant apps |
 | Tenant admin in `gentian:tenant:<t>:admins` | **Done** | `keycloak-admin-*` Job joins admin user to admins group (+ `realm-admin` for Keycloak Admin API) |
-| OIDC pack entitlement groups | **Done** | Packs map `gentian:tenant:<t>:app:<profile>` (not LDAP MBA names) |
+| OIDC pack entitlement groups | **Done** | Packs map `gentian:tenant:<t>:app:<profile>` entitlement groups |
 | Kernel broker IdP per tenant | **Done** | `makeBrokerIdentityProviderJob` |
 
 **Deploy note:** rebuild/push `gentian-os` operator and re-run tenant provisioning (or delete/recreate tenant Jobs) on existing clusters to pick up group bootstrap Jobs.
@@ -608,7 +607,7 @@ These stay outside the Admin Console — cluster admin, GitOps, or dedicated too
 |---|---|
 | **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.desk.gentian.org`) and `single` tenancy (`user@desk.gentian.org`). Reuse `Tenant.EffectiveDomain()` logic. |
 | **Authz bridge** | Currently syncs users; group/entitlement sync needed for accurate portal tiles (P6). |
-| **OIDC pack field names** | Catalogue may still use `ldapGroup`; target field is `entitlementGroup` (alias during migration). |
+| **OIDC pack field names** | Catalogue uses `entitlementGroup` to map packs to `gentian:tenant:<t>:app:<profile>` groups. |
 | **Platform vs tenant admin UI** | Single console with scoped menus; BFF enforces tenant boundary on every mutation. |
 
 | **Audit retention** | Default retention and SIEM forwarder config are cluster-level; tenant admins see only their slice. |

@@ -103,7 +103,7 @@ spec:
                     kernelRequirements:
                       description: |-
                         KernelRequirements is a compact human-readable list of kernel services the
-                        app requires (e.g., ["oidc", "postgresql", "s3", "smtp", "ldap"]).
+                        app requires (e.g., ["oidc", "postgresql", "s3", "smtp"]).
                       items:
                         type: string
                       type: array

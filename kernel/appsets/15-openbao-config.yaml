@@ -10,7 +10,7 @@
 #   • crossplane-write policy            → Cluster XR (crossplane/compositions/)
 #   • KV v2 mount + Kubernetes auth backend → bao_bootstrap() in install.sh
 #
-# Wave 15: after infra (wave 10, which deploys OpenBao) and before IAM/nubus
+# Wave 15: after infra (wave 10, which deploys OpenBao) and before Suze IdP
 #          (wave 20+) which depends on ESO ExternalSecrets reading from OpenBao.
 #          The ProviderConfig (crossplane/providers/provider-configs.yaml) and
 #          openbao-crossplane-token Secret are created earlier by install.sh

@@ -423,7 +423,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 // The SMTP password is *copied* from the per-tenant SMTP credentials Secret —
 // it is shared across all apps of a tenant since they authenticate to the
 // same Postfix submission endpoint with one user. IMAP gets only host/port
-// (per-user credentials come from LDAP at runtime).
+// (per-user credentials come from Keycloak/OIDC at runtime).
 //
 // No-op when the Seeder is nil (envtest / staged rollout). In MailModeDisabled
 // the caller never invokes this function.

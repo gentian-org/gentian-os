@@ -87,7 +87,6 @@ spec:
   isolation:
     databasePrefix: ${SHADOW_TENANT}_
     keycloakRealm: ${SHADOW_TENANT}
-    ldapOU: ou=${SHADOW_TENANT}
     s3Prefix: ${SHADOW_TENANT}-
   apps: []
 EOF

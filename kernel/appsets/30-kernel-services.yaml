@@ -1,20 +1,14 @@
 ---
-# Kernel services group: cluster-wide platform services (Layers 110–150).
-# Pattern A — charts with existingSecret support, deployed directly by ArgoCD.
-# Matrix generator: env list × app list  →  one Application per (env, app) pair.
-# To add an environment: add one entry to the env list.
-# To add an application:  add one entry to the app list.
+# Kernel services group: cluster-wide platform services deployed by Argo CD.
+# Matrix generator: env list × app list → one Application per (env, app) pair.
 #
-# Kernel services classification:
-#   Layer 110  Nubus (Keycloak + UCS LDAP)        — Pattern B (provider-helm); see 21-nubus.yaml
-#   Layer 150  Intercom Service                    — Pattern A; managed in 20-iam.yaml
-#
-# User-installable apps (Layer 200+) belong in 40-apps.yaml, not here.
+# User-installable apps are catalogue entries in gentian-apps, synced via
+# gentian-catalogue ApplicationSet — not listed here.
 #
 # Usage pattern:
-#   Layer 1:  $values/values/env/{env}.yaml           (storageClass, imagePullSecrets)
-#   Layer 2:  $values/apps/{app}/values/_base.yaml    (non-secret config, NO env-specific hostnames)
-#   Layer 3:  $values/apps/{app}/values/{env}/values.yaml  (existingSecret refs, sizing)
+#   Layer 1:  $values/values/env/{env}.yaml
+#   Layer 2:  $values/kernel/services/{app}/values/_base.yaml
+#   Layer 3:  $values/kernel/services/{app}/values/{env}/values.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -29,13 +23,9 @@ spec:
   - matrix:
       generators:
       - list:
-          elements: []  # add envs: - env: dev / - env: prod  (once at least one app is uncommented)
+          elements: []
       - list:
-          # Pattern A (existingSecret-friendly) kernel services would be listed here.
-          # Nextcloud (3 sub-charts) is Pattern B and lives in
-          # kernel/services/{nextcloud,nextcloud-management,nextcloud-notifypush}/manifests/<env>
-          # — deployed by AppSet 09-infra-helm.yaml.
-          elements: []  # placeholder: add Pattern A apps here when introduced
+          elements: []
   template:
     metadata:
       name: '{{.app}}-{{.env}}'

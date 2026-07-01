@@ -120,7 +120,7 @@ func normalizeDataURI(value string) string {
 	return dataURIPrefix + strings.TrimPrefix(value, dataURIPrefix)
 }
 
-// LogoBase64 returns the base64 payload without the data URI prefix for LDAP jobs.
+// LogoBase64 returns the base64 payload without the data URI prefix for portal tile jobs.
 func LogoBase64(dataURI string) string {
 	return strings.TrimPrefix(dataURI, dataURIPrefix)
 }

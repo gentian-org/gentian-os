@@ -254,7 +254,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteMariaDB; mark their jobs.
+	// deleteIdentity runs before deleteMariaDB; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", "platform-kernel")
 
 	// A delete Job should be created in the kernel namespace.

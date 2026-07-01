@@ -61,7 +61,7 @@ data:
           user: keycloak_extensions_user
         - name: selfservice
           user: selfservice_user
-        - name: nubus_authsession
+        - name: platform_authsession
           user: authsession_user
         - name: guardianmanagementapi
           user: guardianmanagementapi_user

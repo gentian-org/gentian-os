@@ -18,15 +18,10 @@ import (
 )
 
 const (
-	kernelRouteKeycloakIDP       = "kernel-idp"
-	kernelRouteKernelApex        = "kernel-apex-redirect"
-	kernelRouteCryptpad          = "kernel-cryptpad"
-	kernelRouteCryptpadSandbox   = "kernel-cryptpad-sandbox"
-	kernelRouteNextcloud         = "kernel-nextcloud"
-	kernelRouteCollabora         = "kernel-collabora"
-	kernelRouteIntercom          = "kernel-intercom"
-	kernelRouteArgoCD            = "kernel-argocd"
-	kernelRouteGentianPortal     = "kernel-gentian-portal"
+	kernelRouteKeycloakIDP   = "kernel-idp"
+	kernelRouteKernelApex    = "kernel-apex-redirect"
+	kernelRouteArgoCD        = "kernel-argocd"
+	kernelRouteGentianPortal = "kernel-gentian-portal"
 
 	gentianPortalAPIService = "gentian-portal-gentian-portal-api"
 	gentianPortalWebService = "gentian-portal-gentian-portal-web"
@@ -42,24 +37,12 @@ type kernelHTTPRouteSpec struct {
 	clientPolicy map[string]interface{}
 }
 
-func kernelStage() string {
-	return envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-}
-
 // suzeKeycloakHTTPServiceName is the keycloakx chart HTTP Service for Stage 1 Suze IdP.
 func suzeKeycloakHTTPServiceName() string {
 	if v := envOrDefault("KEYCLOAK_HTTP_SERVICE", ""); v != "" {
 		return v
 	}
 	return "gentian-idp-keycloak-keycloakx-http"
-}
-
-func nextcloudServiceName() string {
-	return fmt.Sprintf("nextcloud-%s-aio", kernelStage())
-}
-
-func intercomServiceName() string {
-	return fmt.Sprintf("intercom-service-%s", kernelStage())
 }
 
 func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Context) error {
@@ -128,11 +111,6 @@ func kernelHTTPRouteSpecs(
 	tenantNames []string,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
-	padHost := fmt.Sprintf("pad.%s", kernelDomain)
-	padSandboxHost := fmt.Sprintf("pad-sandbox.%s", kernelDomain)
-	filesHost := fmt.Sprintf("files.%s", kernelDomain)
-	officeHost := fmt.Sprintf("office.%s", kernelDomain)
-	icsHost := fmt.Sprintf("ics.%s", kernelDomain)
 	portalHost := kernelPortalHost(kernelDomain)
 
 	kcService := suzeKeycloakHTTPServiceName()
@@ -161,52 +139,12 @@ func kernelHTTPRouteSpecs(
 		host:  portalHost,
 		rules: kernelGentianPortalHTTPRouteRules(),
 	})
-	// Legacy Nubus portal HTTPRoutes (kernelLegacyPortalHTTPRouteSpecs) removed — gentian-ui serves portal.
 	specs = append(specs,
 		kernelHTTPRouteSpec{
 			name: kernelRouteKernelApex,
 			host: kernelDomain,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelApexRedirectRule(kernelDomain),
-			},
-		},
-		kernelHTTPRouteSpec{
-			name: kernelRouteCryptpad,
-			host: padHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("cryptpad", 80, kernelCryptpadMainResponseFilters(kernelDomain)),
-			},
-			policy: cryptpadBackendTrafficPolicySpec(),
-		},
-		kernelHTTPRouteSpec{
-			name: kernelRouteCryptpadSandbox,
-			host: padSandboxHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("cryptpad", 80, kernelCryptpadSandboxResponseFilters(kernelDomain)),
-			},
-			policy: cryptpadBackendTrafficPolicySpec(),
-		},
-		kernelHTTPRouteSpec{
-			name: kernelRouteNextcloud,
-			host: filesHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(nextcloudServiceName(), 80, kernelNextcloudResponseFilters(kernelDomain)),
-			},
-		},
-		kernelHTTPRouteSpec{
-			name: kernelRouteCollabora,
-			host: officeHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("collabora", 9980, kernelCollaboraResponseFilters(kernelDomain)),
-			},
-			policy:       collaboraBackendTrafficPolicySpec(),
-			clientPolicy: escapedSlashesKeepUnchangedClientTrafficPolicySpec(),
-		},
-		kernelHTTPRouteSpec{
-			name: kernelRouteIntercom,
-			host: icsHost,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule(intercomServiceName(), 8008, nil),
 			},
 		},
 		kernelHTTPRouteSpec{
@@ -227,174 +165,6 @@ func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
 		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/readyz"),
 		kernelBackendRulePrefixNS(gentianPortalWebService, kernelNamespace, 8080, "/"),
 	}
-}
-
-func kernelPortalServerDataRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	// Mirror portal-server ingress paths (portal.json, navigation.json, api/me).
-	exactPaths := []string{
-		"/univention/portal/portal.json",
-		"/univention/portal/navigation.json",
-		"/univention/selfservice/portal.json",
-		"/univention/selfservice/navigation.json",
-	}
-	rules := make([]gatewayv1.HTTPRouteRule, 0, len(exactPaths)+2)
-	for _, path := range exactPaths {
-		rules = append(rules, kernelBackendRuleExact(serviceName, port, path))
-	}
-	rules = append(rules,
-		kernelBackendRulePrefix(serviceName, port, "/univention/portal/api/v1/me"),
-		kernelBackendRulePrefix(serviceName, port, "/univention/portal-server"),
-	)
-	return rules
-}
-
-func kernelUMCGatewayRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	rules := []gatewayv1.HTTPRouteRule{
-		kernelBackendRuleExact(serviceName, port, "/univention/meta.json"),
-		kernelBackendRuleExact(serviceName, port, "/univention/languages.json"),
-	}
-	// Match Apache ProxyPassMatch in the umc-gateway image:
-	// ^/univention/((auth|saml|oidc|get|set|command|upload|logout|logout-sse)/?.*)$
-	prefixes := []string{
-		"auth", "saml", "oidc", "get", "set", "command", "upload", "logout", "logout-sse", "umc",
-	}
-	for _, segment := range prefixes {
-		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))
-	}
-	return rules
-}
-
-// kernelUMCGatewayShellRules routes the UMC web UI shell and static assets served by
-// umc-gateway Apache (management console, dojo/js, themes). Mirrors the nginx/dev
-// reverse-proxy locations for /univention/{js,management,theme.css,themes,...}.
-func kernelUMCGatewayShellRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	rules := []gatewayv1.HTTPRouteRule{
-		kernelBackendRuleExact(serviceName, port, "/univention/theme.css"),
-	}
-	prefixes := []string{
-		"management", "js", "themes", "login", "server-overview", "self-service", "setup", "i18n",
-		// Portal/selfservice i18n JSON is served by umc-gateway Apache (empty.json fallback).
-		// Without these rules, kernel-portal-rewrite-assets sends them to portal-frontend (404 HTML).
-		"portal/i18n", "selfservice/i18n",
-	}
-	for _, segment := range prefixes {
-		rules = append(rules, kernelBackendRulePrefix(serviceName, port, fmt.Sprintf("/univention/%s", segment)))
-	}
-	return rules
-}
-
-func kernelPortalFrontendRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	return []gatewayv1.HTTPRouteRule{
-		// Legacy nginx extraIngress entry-to-login: bare /univention paths → gentian-login.
-		kernelRedirectRule("/univention", "/login/", 301),
-		kernelRedirectRule("/univention/", "/login/", 301),
-		kernelRedirectRule("/univention/portal", "/univention/portal/", 301),
-		kernelRedirectRule("/univention/selfservice", "/univention/portal/", 301),
-		// Exact only: /univention/login/* Dojo modules must reach umc-gateway (see shell routes).
-		kernelRedirectRule("/univention/login", "/login/", 301),
-		kernelBackendRulePrefix(serviceName, port, "/univention/portal"),
-		kernelBackendRulePrefix(serviceName, port, "/univention/selfservice"),
-		kernelBackendRulePrefix(serviceName, port, "/"),
-	}
-}
-
-// kernelPortalFrontendAssetRewriteRules mirrors nginx rewrite-target=/$2$3 for
-// static asset paths. Split into a separate HTTPRoute to stay within the 16-rule limit.
-func kernelPortalFrontendAssetRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	assetSegments := []string{"css", "fonts", "i18n", "media", "js", "oidc", "custom"}
-	appPrefixes := []string{"portal", "selfservice"}
-	var rules []gatewayv1.HTTPRouteRule
-	for _, app := range appPrefixes {
-		for _, segment := range assetSegments {
-			rules = append(rules, kernelURLRewriteBackendRule(
-				serviceName, port,
-				fmt.Sprintf("/univention/%s/%s", app, segment),
-				fmt.Sprintf("/%s", segment),
-			))
-		}
-	}
-	rules = append(rules, kernelURLRewriteBackendRule(
-		serviceName, port,
-		"/univention/portal/icons",
-		"/icons",
-	))
-	return rules
-}
-
-func kernelPortalFrontendAppRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	appPrefixes := []string{"portal", "selfservice"}
-	var rules []gatewayv1.HTTPRouteRule
-	for _, app := range appPrefixes {
-		rules = append(rules, kernelExactURLRewriteBackendRule(
-			serviceName, port,
-			fmt.Sprintf("/univention/%s/index.html", app),
-			"/index.html",
-		))
-		rules = append(rules, kernelExactURLRewriteBackendRule(
-			serviceName, port,
-			fmt.Sprintf("/univention/%s/sse-worker.js", app),
-			"/sse-worker.js",
-		))
-		rules = append(rules, kernelURLRewriteBackendRule(
-			serviceName, port,
-			fmt.Sprintf("/univention/%s/", app),
-			"/",
-		))
-	}
-	return rules
-}
-
-// kernelPortalFrontendRewriteRules returns all rewrite rules (used in tests).
-func kernelPortalFrontendRewriteRules(serviceName string, port int32) []gatewayv1.HTTPRouteRule {
-	rules := kernelPortalFrontendAssetRewriteRules(serviceName, port)
-	return append(rules, kernelPortalFrontendAppRewriteRules(serviceName, port)...)
-}
-
-func kernelURLRewriteBackendRule(serviceName string, port int32, matchPrefix, replacePrefix string) gatewayv1.HTTPRouteRule {
-	replacement := replacePrefix
-	rule := kernelBackendRulePrefix(serviceName, port, matchPrefix)
-	rule.Filters = []gatewayv1.HTTPRouteFilter{
-		{
-			Type: gatewayv1.HTTPRouteFilterURLRewrite,
-			URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
-				Path: &gatewayv1.HTTPPathModifier{
-					Type:               gatewayv1.PrefixMatchHTTPPathModifier,
-					ReplacePrefixMatch: &replacement,
-				},
-			},
-		},
-	}
-	return rule
-}
-
-func kernelExactURLRewriteBackendRule(serviceName string, port int32, matchPath, replacePath string) gatewayv1.HTTPRouteRule {
-	replacement := replacePath
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	rule := gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(matchPath)},
-		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{
-				BackendRef: gatewayv1.BackendRef{
-					BackendObjectReference: gatewayv1.BackendObjectReference{
-						Name: gatewayv1.ObjectName(serviceName),
-						Port: ptrPortNumber(port),
-					},
-				},
-			},
-		},
-		Filters: []gatewayv1.HTTPRouteFilter{
-			{
-				Type: gatewayv1.HTTPRouteFilterURLRewrite,
-				URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
-					Path: &gatewayv1.HTTPPathModifier{
-						Type:            pathType,
-						ReplaceFullPath: &replacement,
-					},
-				},
-			},
-		},
-	}
-	return rule
 }
 
 func ptrPortNumber(port int32) *gatewayv1.PortNumber {
@@ -623,41 +393,6 @@ func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
 	}
 }
 
-func kernelNextcloudResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
-	portalHost := kernelPortalHost(kernelDomain)
-	modifier := gatewayv1.HTTPHeaderFilter{
-		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
-		Set: []gatewayv1.HTTPHeader{
-			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' https://%s", portalHost)},
-		},
-	}
-	return []gatewayv1.HTTPRouteFilter{
-		{
-			Type:                   gatewayv1.HTTPRouteFilterResponseHeaderModifier,
-			ResponseHeaderModifier: &modifier,
-		},
-	}
-}
-
-func kernelCollaboraResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
-	origins := kernelFilesOrigin(kernelDomain)
-	if portal := kernelPortalOrigin(kernelDomain); portal != "" {
-		origins += " " + portal
-	}
-	modifier := gatewayv1.HTTPHeaderFilter{
-		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
-		Set: []gatewayv1.HTTPHeader{
-			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", origins)},
-		},
-	}
-	return []gatewayv1.HTTPRouteFilter{
-		{
-			Type:                   gatewayv1.HTTPRouteFilterResponseHeaderModifier,
-			ResponseHeaderModifier: &modifier,
-		},
-	}
-}
-
 func keycloakProxyBackendTrafficPolicySpec() map[string]interface{} {
 	return map[string]interface{}{
 		"targetRefs": []interface{}{
@@ -668,39 +403,6 @@ func keycloakProxyBackendTrafficPolicySpec() map[string]interface{} {
 		},
 		"connection": map[string]interface{}{
 			"bufferLimit": "128k",
-		},
-	}
-}
-
-func cryptpadBackendTrafficPolicySpec() map[string]interface{} {
-	return map[string]interface{}{
-		"targetRefs": []interface{}{
-			map[string]interface{}{
-				"group": "gateway.networking.k8s.io",
-				"kind":  "HTTPRoute",
-			},
-		},
-		"timeout": map[string]interface{}{
-			"http": map[string]interface{}{
-				"requestTimeout": "3600s",
-			},
-		},
-	}
-}
-
-func collaboraBackendTrafficPolicySpec() map[string]interface{} {
-	return map[string]interface{}{
-		"targetRefs": []interface{}{
-			map[string]interface{}{
-				"group": "gateway.networking.k8s.io",
-				"kind":  "HTTPRoute",
-			},
-		},
-		// Envoy Gateway v1.2.x CRD supports requestTimeout only (not responseTimeout/httpUpgrade).
-		"timeout": map[string]interface{}{
-			"http": map[string]interface{}{
-				"requestTimeout": "600s",
-			},
 		},
 	}
 }
@@ -747,7 +449,7 @@ func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicy(ctx context.
 	if spec.clientPolicy == nil {
 		return nil
 	}
-	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, kernelCollaboraListenerName, spec.clientPolicy)
+	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, "https-wildcard", spec.clientPolicy)
 }
 
 func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicyNamed(

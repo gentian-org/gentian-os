@@ -1,15 +1,15 @@
-# Gentian Cloud OS — Security Architecture & Nubus Replacement Plan
+# Gentian Cloud OS — Security Architecture
 
 **Status:** Draft v0.2 · Architecture reference (Stage 0 progress tracked against [roadmap.md](../roadmap.md))
-**Scope:** Identity, authorization, and isolation for a fully cloud-based, Kubernetes-native sovereign cloud OS, replacing the Univention Nubus IAM stack.
+**Scope:** Identity, authorization, and isolation for a fully cloud-based, Kubernetes-native sovereign cloud OS.
 
 ---
 
 ## 1. Purpose
 
-Gentian needs an identity and access layer that is (a) simpler and more modern than Nubus, (b) fully open-source and sovereignty-friendly, (c) first-class for **four principal types** — humans, AI agents, applications/workloads, and assets — and (d) designed so that a *compromised principal of any type does the least possible damage*.
+Gentian needs an identity and access layer that is (a) simpler and more modern than traditional directory-centric stacks, (b) fully open-source and sovereignty-friendly, (c) first-class for **four principal types** — humans, AI agents, applications/workloads, and assets — and (d) designed so that a *compromised principal of any type does the least possible damage*.
 
-This document defines the security principles, the concrete Keycloak + OpenFGA architecture, how application permissions are modeled (AppProfile declaration, IntegrationBinding wiring, and the planned AppGrant ReBAC layer), and a staged plan to stand it up and retire Nubus.
+This document defines the security principles, the concrete Keycloak + OpenFGA architecture, how application permissions are modeled (AppProfile declaration, IntegrationBinding wiring, and the planned AppGrant ReBAC layer), and a staged implementation plan.
 
 The guiding idea, borrowed from Android's sandbox model: **least privilege is not a single access-control model — it is the intersection of several independent layers, each enforcing a different concern, so that breaching one layer does not collapse the others.**
 
@@ -97,19 +97,19 @@ The agent reads a document **only if** it is the user's agent (`acting_for`), th
 | **PEP** | App / API gateway (Kong, Envoy, or in-app) calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
 
-### 3.2 Why this replaces the Nubus stack
+### 3.2 Design rationale
 
-Nubus = OpenLDAP + Keycloak + Univention Directory Manager (UDM) + NATS provisioning + Guardian (RBAC) authorization, shipped as an umbrella Helm chart. For a greenfield, cloud-only sovereign OS:
+For a greenfield, cloud-only sovereign OS:
 
-- **Drop OpenLDAP + UDM.** Keycloak owns identities, backed by its own Postgres. Provisioning is event/SCIM-based, not LDAP replication.
-- **Replace Guardian's RBAC with OpenFGA's ReBAC.** One relationship graph models humans, agents, apps, and assets — no role explosion, and (notably) Nubus does not yet wire any component to its own Authorization Service, so there is little to migrate.
-- **Result:** fewer moving parts, no LDAP schema friction, first-class non-human identities, and the layered isolation model of §2 that Nubus does not provide.
+- **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres. Provisioning is event/SCIM-based.
+- **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph models humans, agents, apps, and assets — no role explosion.
+- **Layered isolation** (§2) — MAC backbone, identity, and authorization are independent enforcement planes.
 
 ### 3.3 Reference architecture
 
 ```
                 ┌─────────────────────────────────────────────────────┐
-                │  Gentian shell — portal + Admin Console (replaces UMC) │
+                │  Gentian shell — portal + Admin Console │
                 └───────────────┬─────────────────────────────────────┘
                                 │ (Admin BFF, SCIM bus, Tenant.spec.apps, IntegrationBindings)
    Humans / Agents login        ▼
@@ -235,7 +235,7 @@ spec:
       issuerKey: "oidc.issuer"
       clientIdKey: "oidc.clientId"
       clientSecretKey: "oidc.clientSecret"
-    # … database, s3, smtp, ldap, cache …
+    # … database, s3, smtp, cache …
 ```
 
 **`provides`** entries identify contract names the app implements as a **provider**. **`optionalIntegrations`** entries identify contract names the app can use as a **consumer**, with optional `capabilities` (the requested capability surface, not yet a grant).
@@ -300,9 +300,7 @@ contract:demo/project-management#consumer@app:crm-app
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. **App administrators** use a separate cross-app group (`gentian:tenant:<t>:app-admins`) reconciled into each app's declared `AppProfile.spec.provisioning.privilegedRole` (see [app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) §6h). User/group administration is the [Gentian Admin Console](admin-console.md) (replaces UMC). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
-
-**Legacy cutover clusters** may still run Nubus + LDAP (`IDENTITY_MODE=legacy-ldap`) until migrated.
+**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. **App administrators** use a separate cross-app group (`gentian:tenant:<t>:app-admins`) reconciled into each app's declared `AppProfile.spec.provisioning.privilegedRole` (see [app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) §6h). User/group administration is the [Gentian Admin Console](admin-console.md). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
 
 **Target (Stage 2+):**
 
@@ -350,13 +348,13 @@ An automation platform is a textbook **confused deputy**: a central engine holdi
 
 ---
 
-## 4. Implementation plan — replacing Nubus
+## 4. Implementation plan
 
 A staged path. Each stage is independently useful and leaves a working system.
 
 ### Stage 0 — Foundations (MAC backbone first)
 
-*Rationale:* the isolation backbone must exist before identities and grants, so tenant boundaries and egress limits hold independently of any later authZ config. This is the layer Nubus does not provide.
+*Rationale:* the isolation backbone must exist before identities and grants, so tenant boundaries and egress limits hold independently of any later authZ config.
 
 **Prototype exit criteria (met on `feat/new-security`):** a tenant namespace exists; default-deny egress holds; kernel and contract egress are operator-managed; Kyverno blocks privileged/host-namespace workloads in tenant namespaces.
 
@@ -378,15 +376,15 @@ Stage 0 is **complete for dev/homelab**. Remaining rows are optional upgrades (C
 
 ### Stage 1 — Identity + authorization core
 
-Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so authorization is graph-backed rather than LDAP-group + app-local checks alone.
+Deploy the **Keycloak + OpenFGA** pair and the first **provisioning bridge** so authorization is graph-backed rather than app-local checks alone.
 
 **Naming:** the Crossplane composite for this pair is **Suze** — **S**ecure **U**niversal **Z**ero-trust **E**nvironment (claim kind `Suze`, composite `XSuze`, claim `dev-suze`). It sits alongside **InfraData** for shared databases. Component Helm releases remain `gentian-idp-keycloak` and `gentian-openfga`.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via **Suze** XR (`gentian-idp-keycloak`); OpenDesk Nubus deploy commented out in `install.sh` |
-| Drop **OpenLDAP + UDM**; Keycloak authoritative | **In progress** | `IDENTITY_MODE=keycloak-native` skips LDAP/UDM provisioning; OpenDesk stack deploy commented out in `install.sh` |
-| **Gentian Admin Console** (UMC replacement) | **Planned** → [roadmap § Admin Console](../roadmap.md#gentian-admin-console-replaces-umc) | Design: [admin-console.md](admin-console.md); P0 realm bootstrap → P6 shell tiles |
+| **Keycloak** (realms, OIDC clients, SAML brokering) | **Done (Stage 1 path)** | Standalone Keycloak via **Suze** XR (`gentian-idp-keycloak`) |
+| Keycloak authoritative per tenant | **Done** | Keycloak-native identity; OIDC packs in `gentian-apps` per profile |
+| **Gentian Admin Console** | **In progress** → [roadmap § Admin Console](../roadmap.md#gentian-admin-console) | Design: [admin-console.md](admin-console.md); P0 realm bootstrap → P7 notifications |
 | **Group entitlements** (`gentian:tenant:<t>:app:<profile>`) | **Done** | Portal tiles + OIDC packs; distinct from in-app admin |
 | **App administrators** (`gentian:tenant:<t>:app-admins`) | **Done** | Admin Console assignment; `AppProfile.spec.provisioning.privilegedRole`; operator sync (Nextcloud v1) |
 | **`provider-keycloak` Realm MRs** (drift-safe tenant realms) | **Blocked** → [roadmap § Keycloak](../roadmap.md#keycloak--provider-keycloak-consolidation) | Tenant realms still provisioned via manifest-bridge Jobs |
@@ -431,12 +429,6 @@ Stage 1 **minimum work package is implemented** on `feat/new-security` (`install
 - Add **SPIFFE/SPIRE** workload identity for autonomous in-cluster agents where secret-less mTLS is needed.
 - Turn on consistent reads for security-critical writes; wire the OpenFGA **Watch API** to an immutable audit log.
 
-### Migrating off Nubus specifically
-1. **Identities:** export users/groups from OpenLDAP/UDM; import into Keycloak (its own Postgres store). Decommission OpenLDAP and UDM once Keycloak is authoritative.
-2. **Provisioning:** replace NATS/UDM provisioning with the event/SCIM bridge → OpenFGA.
-3. **Authorization:** there is little to migrate from Guardian (RBAC, and not yet wired into Nubus components); author the equivalent grants directly as ReBAC tuples and (future) `AppGrant` objects atop existing `IntegrationBinding` wiring.
-4. **Run in parallel** during cutover: Keycloak can broker to the legacy IdP while apps are migrated app-by-app behind the AuthZEN PEP.
-
 ---
 
 ## 5. Roadmap — after the rollout
@@ -446,7 +438,7 @@ Section 4 gets the architecture *running*. This section is what turns a running 
 ### The five most important next steps (in priority order)
 
 1. **Policy-as-code testing in CI (do this first).** Treat the OpenFGA model like application code: an assertion suite (`.fga.yaml`) with an emphasis on **negative tests** — "an agent must *not* read a doc unless `acting_for` a reader," "tenant A must *not* reach tenant B" — run as a merge gate on every model change. This converts the derived-ceiling and tenant-isolation invariants from *hopes* into *checked properties*, and it directly addresses the silent-authz-bug weakness. Cheapest, highest-leverage item on the list.
-2. **Supply-chain integrity at admission.** Enforce **Sigstore/cosign signature verification + SLSA provenance + SBOMs** so only signed, provenance-attested images run. For a product assembling many third-party components (openDesk, Odoo, n8n, …) this is the most likely real-world compromise vector — and a genuine sovereignty/GTM differentiator, not just hygiene.
+2. **Supply-chain integrity at admission.** Enforce **Sigstore/cosign signature verification + SLSA provenance + SBOMs** so only signed, provenance-attested images run. For a product assembling many third-party catalogue apps (Nextcloud, Odoo, n8n, …) this is the most likely real-world compromise vector — and a genuine sovereignty/GTM differentiator, not just hygiene.
 3. **Continuous authorization (close the revocation window).** Adopt **Shared Signals / CAEP** so Keycloak pushes revocation and session-change events to resource servers in near-real-time, instead of waiting for token expiry. This matters most for agents, which act fast: it closes the gap between "revoked in Keycloak" and "token still valid" that bridge-lag and TTLs otherwise leave open.
 4. **Detection on the decision logs (assume prevention fails).** Everything in §2–§4 is preventive. Add anomaly detection on OpenFGA decision logs (an agent checking 10× more objects, odd-hours access, a workflow touching resource types it never has) and runtime threat detection (Falco) on the MAC layer. The Watch API audit log should *alert*, not just record — this is what catches the incomplete-mediation breach, which otherwise fails silently.
 5. **Break-glass + operator-side PAM.** Define an emergency-access path for when the IdP itself is down/misconfigured (separate credentials, loud alerting), and constrain *Gentian's own operators* with just-in-time admin elevation, dual-control for sensitive ops, and session recording. The sovereignty pitch is "even we can't quietly access your data" — that claim lives or dies on operator-side controls, so this is essential before real tenants, even if it can lag in the prototype.

@@ -33,7 +33,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 				BackendRefs: []gatewayv1.HTTPBackendRef{{
 					BackendRef: gatewayv1.BackendRef{
 						BackendObjectReference: gatewayv1.BackendObjectReference{
-							Name: "nubus-dev-keycloak-proxy",
+							Name: "gentian-idp-keycloak-keycloakx-http",
 						},
 					},
 				}},

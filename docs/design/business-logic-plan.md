@@ -232,4 +232,4 @@ install targets the same profile CR.
 | Profile authoring | [gentian-apps/app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) |
 | IAM / roles | [iam.md](iam.md) |
 | Commercial roadmap | [roadmap.md](../roadmap.md#commercial-layer) |
-| Kernel rebuild / gentian-pro artefacts | [upstream-cleanup.md](../upstream-cleanup.md) §2 |
+| Kernel rebuild / gentian-pro artefacts | [architecture.md](../architecture.md) §8 |

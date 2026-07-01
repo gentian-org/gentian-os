@@ -47,8 +47,8 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 5 {
-		t.Fatalf("listeners = %d, want 5", len(gw.Spec.Listeners))
+	if len(gw.Spec.Listeners) != 4 {
+		t.Fatalf("listeners = %d, want 4", len(gw.Spec.Listeners))
 	}
 	if gw.Spec.Listeners[0].Name != "https-wildcard" {
 		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
@@ -62,17 +62,11 @@ func TestBuildKernelGateway(t *testing.T) {
 	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
 		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
 	}
-	if gw.Spec.Listeners[2].Name != kernelCollaboraListenerName {
-		t.Fatalf("office listener name = %q", gw.Spec.Listeners[2].Name)
+	if gw.Spec.Listeners[2].Name != "https-tenant-demo-wildcard" {
+		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[2].Name)
 	}
-	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "office.desk.gentian.org" {
-		t.Fatalf("office listener hostname = %v", gw.Spec.Listeners[2].Hostname)
-	}
-	if gw.Spec.Listeners[3].Name != "https-tenant-demo-wildcard" {
-		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[3].Name)
-	}
-	if gw.Spec.Listeners[3].Hostname == nil || string(*gw.Spec.Listeners[3].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[3].Hostname)
+	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "*.demo.desk.gentian.org" {
+		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[2].Hostname)
 	}
 	if gw.Spec.Listeners[0].AllowedRoutes == nil || gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From == nil ||
 		*gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
@@ -384,8 +378,8 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 9 {
-		t.Fatalf("spec count = %d, want 9", len(specs))
+	if len(specs) != 4 {
+		t.Fatalf("spec count = %d, want 4", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -411,130 +405,6 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	ns := portalRoute.Spec.Rules[0].BackendRefs[0].Namespace
 	if ns == nil || string(*ns) != kernelNamespace {
 		t.Fatalf("portal api backend namespace = %v, want %s", ns, kernelNamespace)
-	}
-}
-
-func TestKernelPortalServerDataRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelPortalServerDataRules("nubus-dev-portal-server", 80)
-	var portalJSON *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if rules[i].Matches[0].Path != nil && rules[i].Matches[0].Path.Value != nil &&
-			*rules[i].Matches[0].Path.Value == "/univention/portal/portal.json" {
-			portalJSON = &rules[i]
-			break
-		}
-	}
-	if portalJSON == nil {
-		t.Fatal("missing portal.json route")
-	}
-	if portalJSON.BackendRefs[0].Name != "nubus-dev-portal-server" {
-		t.Fatalf("backend = %v", portalJSON.BackendRefs[0].Name)
-	}
-}
-
-func TestKernelUMCGatewayShellRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelUMCGatewayShellRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 11 {
-		t.Fatalf("rule count = %d, want 11", len(rules))
-	}
-	if len(rules) > 16 {
-		t.Fatal("UMC shell route exceeds HTTPRoute rule limit")
-	}
-	var management *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rules[i].Matches[0].Path.Value == "/univention/management" {
-			management = &rules[i]
-			break
-		}
-	}
-	if management == nil {
-		t.Fatal("missing /univention/management rule")
-	}
-}
-
-func TestKernelUMCGatewayRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelUMCGatewayRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 12 {
-		t.Fatalf("rule count = %d, want 12", len(rules))
-	}
-	var oidc *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rules[i].Matches[0].Path.Value == "/univention/oidc" {
-			oidc = &rules[i]
-			break
-		}
-	}
-	if oidc == nil {
-		t.Fatal("missing /univention/oidc rule")
-	}
-	if oidc.BackendRefs[0].Name != "nubus-dev-umc-gateway" {
-		t.Fatalf("backend = %v", oidc.BackendRefs[0].Name)
-	}
-}
-
-func TestKernelPortalFrontendRewriteRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelPortalFrontendRewriteRules("nubus-dev-portal-frontend", 80)
-	if len(rules) == 0 {
-		t.Fatal("expected rewrite rules")
-	}
-	if len(kernelPortalFrontendAssetRewriteRules("nubus-dev-portal-frontend", 80)) > 16 {
-		t.Fatal("asset rewrite route exceeds HTTPRoute rule limit")
-	}
-	if len(kernelPortalFrontendAppRewriteRules("nubus-dev-portal-frontend", 80)) > 16 {
-		t.Fatal("app rewrite route exceeds HTTPRoute rule limit")
-	}
-	if len(kernelPortalFrontendRules("nubus-dev-portal-frontend", 80)) > 16 {
-		t.Fatal("portal route exceeds HTTPRoute rule limit")
-	}
-	var univentionRedirect *gatewayv1.HTTPRouteRule
-	for _, rule := range kernelPortalFrontendRules("nubus-dev-portal-frontend", 80) {
-		if len(rule.Matches) == 0 || rule.Matches[0].Path == nil || rule.Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rule.Matches[0].Path.Value == "/univention/" && len(rule.Filters) > 0 && rule.Filters[0].RequestRedirect != nil {
-			univentionRedirect = &rule
-			break
-		}
-	}
-	if univentionRedirect == nil {
-		t.Fatal("missing /univention/ redirect rule")
-	}
-	if univentionRedirect.Filters[0].RequestRedirect.Path == nil ||
-		univentionRedirect.Filters[0].RequestRedirect.Path.ReplaceFullPath == nil ||
-		*univentionRedirect.Filters[0].RequestRedirect.Path.ReplaceFullPath != "/login/" {
-		t.Fatalf("/univention/ redirect target = %v", univentionRedirect.Filters[0].RequestRedirect.Path)
-	}
-	var cssRewrite *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if len(rules[i].Matches) == 0 || rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rules[i].Matches[0].Path.Value == "/univention/portal/css" {
-			cssRewrite = &rules[i]
-			break
-		}
-	}
-	if cssRewrite == nil {
-		t.Fatal("missing /univention/portal/css rewrite rule")
-	}
-	if len(cssRewrite.Filters) != 1 || cssRewrite.Filters[0].URLRewrite == nil {
-		t.Fatalf("css rewrite filters = %+v", cssRewrite.Filters)
-	}
-	if cssRewrite.Filters[0].URLRewrite.Path == nil || cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch == nil {
-		t.Fatalf("css rewrite path = %+v", cssRewrite.Filters[0].URLRewrite.Path)
-	}
-	if *cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch != "/css" {
-		t.Fatalf("css replace prefix = %q", *cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch)
 	}
 }
 

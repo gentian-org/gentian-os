@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-func TestExtractKeycloakJSONIDByAttr_LDAPProvider(t *testing.T) {
+func TestExtractKeycloakJSONIDByAttr_UserStorageProvider(t *testing.T) {
 	t.Parallel()
-	json := `[{"id":"f47ac10b-58cc-4372-a567-0e02b2c3d479","name":"ldap","providerId":"ldap","providerType":"org.keycloak.storage.UserStorageProvider","config":{"connectionUrl":["ldap://ldap.example:389"]}}]`
-	got := extractKeycloakJSONIDByAttr(json, "name", "ldap")
+	json := `[{"id":"f47ac10b-58cc-4372-a567-0e02b2c3d479","name":"federation","providerId":"custom-user-storage","providerType":"org.keycloak.storage.UserStorageProvider","config":{"connectionUrl":["https://idp.example/storage"]}}]`
+	got := extractKeycloakJSONIDByAttr(json, "name", "federation")
 	if got != "f47ac10b-58cc-4372-a567-0e02b2c3d479" {
 		t.Fatalf("got id %q", got)
 	}
@@ -20,8 +20,8 @@ func TestExtractKeycloakJSONIDByAttr_LDAPProvider(t *testing.T) {
 
 func TestExtractKeycloakJSONIDByAttr_IDAfterAttribute(t *testing.T) {
 	t.Parallel()
-	json := `[{"name":"ldap","id":"abc-def-123","providerId":"ldap"}]`
-	got := extractKeycloakJSONIDByAttr(json, "name", "ldap")
+	json := `[{"name":"federation","id":"abc-def-123","providerId":"custom-user-storage"}]`
+	got := extractKeycloakJSONIDByAttr(json, "name", "federation")
 	if got != "abc-def-123" {
 		t.Fatalf("got id %q", got)
 	}
@@ -57,7 +57,7 @@ func TestExtractKeycloakJSONIDByAttr_BrokerClient(t *testing.T) {
 
 func TestExtractKeycloakJSONIDByAttr_NotFound(t *testing.T) {
 	t.Parallel()
-	if got := extractKeycloakJSONIDByAttr(`[{"id":"x","name":"other"}]`, "name", "ldap"); got != "" {
+	if got := extractKeycloakJSONIDByAttr(`[{"id":"x","name":"other"}]`, "name", "federation"); got != "" {
 		t.Fatalf("expected empty, got %q", got)
 	}
 }

@@ -8,7 +8,7 @@
 #   - OpenBao paths gentian-os/kernel/database/{postgresql,mariadb}, cache/redis, storage/minio
 #
 # Helm release names:
-#   opendesk-postgresql-dev / opendesk-mariadb-dev — legacy DNS for DB consumers
+#   infra-postgresql-dev / infra-mariadb-dev — legacy Release names for DB consumers
 #   redis-dev / minio-dev — cache and object storage Service DNS
 apiVersion: gentianos.io/v1alpha1
 kind: InfraData

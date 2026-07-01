@@ -30,7 +30,7 @@ const (
 )
 
 // AuthzBridgeReconciler provisions OpenFGA and syncs Keycloak users into ReBAC tuples.
-// Stage 1 greenfield path — no Nubus/LDAP dependency.
+// Stage 1 greenfield path — standalone Keycloak only.
 //
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 type AuthzBridgeReconciler struct {

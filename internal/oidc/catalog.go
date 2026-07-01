@@ -7,7 +7,7 @@ import "fmt"
 // MapperTemplate describes one Keycloak protocol mapper on a client scope.
 type MapperTemplate struct {
 	// KeycloakName overrides the mapper name in Keycloak when it differs from
-	// the catalog template key (e.g. openDesk uses "full name", not "full_name").
+	// the catalog template key (e.g. some catalogs use "full name", not "full_name").
 	KeycloakName   string            `json:"keycloakName,omitempty"`
 	ProtocolMapper string            `json:"protocolMapper"`
 	Config         map[string]string `json:"config"`

@@ -46,7 +46,7 @@ type OIDCPackCatalogSpec struct {
 
 	// ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
 	// provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
-	// openDesk portal admin groups).
+	// portal admin groups).
 	// +optional
 	ExtraManagedByAttributeGroups []string `json:"extraManagedByAttributeGroups,omitempty"`
 }
@@ -67,7 +67,7 @@ type OIDCMapperTemplate struct {
 	Config map[string]string `json:"config,omitempty"`
 }
 
-// OIDCPackSpec is the OpenDesk-style OIDC configuration for one clientId.
+// OIDCPackSpec is the OIDC configuration for one clientId.
 type OIDCPackSpec struct {
 	// ScopeName is the Keycloak client scope created for this pack.
 	// +kubebuilder:validation:Required

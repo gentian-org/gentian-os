@@ -6,8 +6,6 @@ metadata:
   labels:
     gentianos.io/config-type: cluster-config
 data:
-  ldap.baseDn: dc=example,dc=org
-  udm.url: http://udm.example.invalid
   secretMode: derived
   tenant.limitRange.default.cpu: 500m
   tenant.limitRange.default.memory: 512Mi

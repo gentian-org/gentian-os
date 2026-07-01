@@ -16,7 +16,7 @@ import "fmt"
 const Mount = "secret"
 
 // CategoryPath returns the canonical KV v2 logical path (no "data/" prefix) for
-// a kernel-requirement category (oidc, database, s3, cache, smtp, imap, ldap).
+// a kernel-requirement category (oidc, database, s3, cache, smtp, imap).
 //
 // The resulting path is read via ExternalSecret by Crossplane-managed app compositions.
 func CategoryPath(tenant, app, category string) string {

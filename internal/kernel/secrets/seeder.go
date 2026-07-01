@@ -291,7 +291,7 @@ type IMAPCreds struct {
 	Port string
 }
 
-// SeedIMAP writes host/port only; per-user IMAP credentials come from LDAP.
+// SeedIMAP writes host/port only; per-user IMAP credentials come from Keycloak at runtime.
 func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCreds) error {
 	return s.w.PutOnce(ctx, CategoryPath(tenant, app, "imap"), map[string]string{
 		"host": base.Host,

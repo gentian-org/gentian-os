@@ -11,7 +11,7 @@ func TestKernelIngressSupersededByGateway(t *testing.T) {
 	t.Parallel()
 	ing := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "nubus-dev-portal-server",
+			Name:      "gentian-portal-gentian-portal-web",
 			Namespace: servicesNamespace,
 		},
 		Spec: networkingv1.IngressSpec{

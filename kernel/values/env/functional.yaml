@@ -1,34 +1,19 @@
 # =============================================================================
-# Functional Settings Baseline — Gentian openDesk Deployment
+# Functional Settings Baseline — Gentian Deployment
 # =============================================================================
-# This file mirrors the structure of the upstream openDesk functional.yaml:
-#   opendesk/helmfile/environments/default/functional.yaml.gotmpl
+# Single source of truth for behavioral settings. Values here define what we
+# intend. They are manually projected into chart-specific _base.yaml files
+# (marked with "# functional.yaml: <key>") because ArgoCD/Helm has no template
+# layer equivalent to helmfile gotmpl transforms.
 #
-# PURPOSE:
-#   Single source of truth for ALL behavioral settings. The values here define
-#   what we intend. They are manually projected into chart-specific _base.yaml
-#   files (marked with "# functional.yaml: <key>") because ArgoCD/Helm has no
-#   template layer equivalent to helmfile's gotmpl transforms.
-#
-# DRIFT DETECTION:
-#   Run on every upstream openDesk release bump:
-#     diff <(grep -E "^\s+\w+" ../opendesk/helmfile/environments/default/functional.yaml.gotmpl \
-#             | sed 's/:.*//' | sort) \
-#          <(grep -E "^\s+\w+" values/env/functional.yaml \
-#             | sed 's/:.*//' | sort)
-#   New keys upstream → add here + wire into relevant _base.yaml.
-#   Removed keys upstream → remove here + clean up _base.yaml.
-#
-# DEVIATIONS FROM UPSTREAM DEFAULTS (intentional):
-#   admin.portal.deploymentTimestamp.enabled  false   (upstream: true)
+# DEVIATIONS FROM DEFAULTS (intentional):
+#   admin.portal.deploymentTimestamp.enabled  false
 #     GitOps mode — avoids a spurious ArgoCD diff on every deploy.
-#   portal.linkLegalNotice                    ~       (upstream: https://opendesk.eu/impressum)
-#   portal.linkPrivacyStatement               ~       (upstream: https://www.zendis.de/datenschutzerklarung)
-#   portal.linkDocumentation                  ~       (upstream: https://docs.opendesk.eu/)
-#   portal.linkFeedback                       ~       (upstream: https://opendesk.eu/feedback)
+#   portal.linkLegalNotice                    ~
+#   portal.linkPrivacyStatement               ~
+#   portal.linkDocumentation                  ~
+#   portal.linkFeedback                       ~
 #     No external links set for this deployment; enable when public-facing.
-#
-# UPSTREAM SYNC: openDesk main branch, verified 2026-03-14
 # =============================================================================
 ---
 
@@ -98,7 +83,7 @@ chat:
     profile:
       # Allow users to change their own Matrix display name.
       allowUsersToUpdateDisplayname: true
-      # Use LDAP entryUUID for the Matrix ID localpart (immutable identifiers).
+      # Use immutable identifiers for the Matrix ID localpart when enabled.
       useImmutableIdentifierForLocalpart: false
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,10 +101,6 @@ dataProtection:
 # External Services
 # ─────────────────────────────────────────────────────────────────────────────
 externalServices:
-  nubus:
-    udmRestApi:
-      # Expose the UDM REST API externally for e2e test user import.
-      enabled: true
   matrix:
     federation:
       # Enable Matrix federation with other homeservers.
@@ -128,7 +109,7 @@ externalServices:
       domainAllowList: []
 
 # ─────────────────────────────────────────────────────────────────────────────
-# File Store (Nextcloud)
+# File store naming (catalogue apps with WebDAV)
 # ─────────────────────────────────────────────────────────────────────────────
 filestore:
   naming:
@@ -207,12 +188,12 @@ groupware:
     default: 1
   userProfile:
     # Prevent users from manually changing their display name in OX
-    # (it is managed by openDesk IAM).
+    # (it is managed by platform identity).
     editRealName: false
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internationalization
-# Wired into: apps/nubus/values/_base.yaml → templateContext.oxDefaultLanguage
+# Wired into: apps/ox-appsuite/values/_base.yaml → templateContext.oxDefaultLanguage
 # ─────────────────────────────────────────────────────────────────────────────
 internationalization:
   # Default language for OX App Suite (first login) and XWiki content detection.
@@ -230,13 +211,13 @@ migration:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Portal
-# Wired into: apps/nubus/values/_base.yaml → stackDataContext/templateContext
+# Wired into: apps/gentian-portal/values/_base.yaml → stackDataContext/templateContext
 # ─────────────────────────────────────────────────────────────────────────────
 portal:
   # Redirect to login when portal is opened (vs showing tiles and prompting later).
   enforceLogin: true
   # External links shown in the portal menu and footer.
-  # DEVIATION: all set to ~ (upstream points to opendesk.eu and zendis.de)
+  # DEVIATION: all set to ~ (no external footer links configured)
   linkLegalNotice: ~
   linkPrivacyStatement: ~
   linkDocumentation: ~

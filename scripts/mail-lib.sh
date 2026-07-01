@@ -44,10 +44,8 @@ _detect_deployed_mail_mode() {
 # =============================================================================
 _postfix_dev_values_yaml() {
     local mode="$1"
-    local ns ldap_host lmtp_target
+    local ns
     ns="$(_mail_kernel_namespace)"
-    ldap_host="nubus-dev-ldap-server-primary.${ns}.svc.cluster.local"
-    lmtp_target="dovecot-dev.${ns}.svc.cluster.local"
 
     if [[ "${mode}" == "external" ]]; then
         local relay_host="${EXTERNAL_SMTP_HOST:-smtp.gmail.com}"
@@ -55,9 +53,6 @@ _postfix_dev_values_yaml() {
         cat <<YAML
 postfix:
   hostname: "postfix-dev"
-
-  ldap:
-    host: "${ldap_host}"
 
   relayHost:
     enabled: true
@@ -87,32 +82,11 @@ YAML
 postfix:
   hostname: "postfix-dev"
 
-  ldap:
-    host: "${ldap_host}"
-
   relayHost:
     enabled: false
 
   smtpSASLAuthEnable: "no"
   relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-
-  ldapVirtualMailboxDomains:
-    server: "ldap://${ldap_host}:389"
-    searchBase: "cn=domain,cn=virtual,cn=postfix,cn=mail,cn=univention,dc=swp-ldap,dc=internal"
-    queryFilter: "(|(&(objectClass=organizationalUnit)(ou=%d))(&(objectClass=univentionMailDomainname)(cn=%d)))"
-    resultAttribute: "ou"
-    bindDn: "uid=ldapsearch_postfix,cn=users,dc=swp-ldap,dc=internal"
-    bindPw: "placeholder"
-    version: 3
-  ldapTransportMaps:
-    server: "ldap://${ldap_host}:389"
-    searchBase: "dc=swp-ldap,dc=internal"
-    queryFilter: "(&(objectClass=univentionMailDomainname)(cn=%s))"
-    resultAttribute: "cn"
-    resultFormat: "lmtp:${lmtp_target}:24"
-    bindDn: "uid=ldapsearch_postfix,cn=users,dc=swp-ldap,dc=internal"
-    bindPw: "placeholder"
-    version: 3
 
 resources:
   limits:

@@ -3,7 +3,7 @@
 Planned work not yet fully implemented. For the current platform design see
 [architecture.md](architecture.md). **Stage 0** (MAC backbone) and **Stage 1**
 (OpenFGA) progress are tracked in
-[design/new-security-architecture.md §4](design/new-security-architecture.md#4-implementation-plan--replacing-nubus).
+[design/new-security-architecture.md §4](design/new-security-architecture.md#4-implementation-plan).
 
 ---
 
@@ -66,12 +66,11 @@ composite — Keycloak plus OpenFGA. Status tables and gap analysis:
 
 ---
 
-## Gentian Admin Console (replaces UMC)
+## Gentian Admin Console
 
 **Design:** [design/admin-console.md](design/admin-console.md) · **IAM:** [design/iam.md](design/iam.md)
 
-The Univention Management Console (UMC) is **not** part of the Suze path. User/group
-administration, tenant notifications, and member onboarding move to the **Gentian Admin
+User/group administration, tenant notifications, and member onboarding live in the **Gentian Admin
 Console** — shell builtin apps backed by a Gentian BFF (Keycloak Admin API + Gentian
 kernel services).
 
@@ -129,7 +128,7 @@ tenant deletion Jobs, mail/office, portal shell convergence, Keycloak
 browser-security header Jobs.
 
 Set `tenantProvisioning.crossplaneOnly: true` (`TENANT_CROSSPLANE_ONLY=true`) to
-skip shared-kernel side effects (portal shell, Nextcloud group, legacy LDAP base helpers,
+skip shared-kernel side effects (portal shell, app-specific operator hooks,
 browser-security Jobs).
 
 ---
@@ -174,7 +173,7 @@ formal control mapping and evidence collection are not yet in place.
 ## Keycloak / `provider-keycloak` consolidation
 
 **Blocked upstream** — `provider-keycloak` Realm MRs do not yet support
-browser-flow tuning, LDAP federation sync, OIDC pack role mappings, and kernel
+browser-flow tuning, OIDC pack role mappings, and kernel
 IdP brokering.
 
 Today **kernel** OIDC clients are Crossplane MRs (`kernel/services/keycloak-config/`);
@@ -302,7 +301,7 @@ See [design/agentic-ai.md](design/agentic-ai.md).
 | Topic | Where documented |
 |-------|------------------|
 | Tenant identity (manifest bridge) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
-| Admin Console (UMC replacement) | [design/admin-console.md](design/admin-console.md) |
+| Admin Console | [design/admin-console.md](design/admin-console.md) |
 | Gateway / ingress | [design/gateway.md](design/gateway.md) |
 | `RestoreTenant` CR | [design/operations.md](design/operations.md) §2 |
 | Bootstrap install | [getting-started.md](../getting-started.md) |

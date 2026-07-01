@@ -98,7 +98,7 @@ type CatalogueEntry struct {
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod"`
 
 	// KernelRequirements is a compact human-readable list of kernel services the
-	// app requires (e.g., ["oidc", "postgresql", "s3", "smtp", "ldap"]).
+	// app requires (e.g., ["oidc", "postgresql", "s3", "smtp"]).
 	// +optional
 	KernelRequirements []string `json:"kernelRequirements,omitempty"`
 

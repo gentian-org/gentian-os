@@ -51,7 +51,7 @@ spec:
                     type: Value
                     value: kernel-services
             # Reads the gentian-cluster-config ConfigMap (crossplane-system) to supply
-            # cluster-specific LDAP base DN, UDM URL, and secret generation mode to
+            # cluster-specific identity URLs and secret generation mode to
             # app init Jobs emitted by this Composition.
             - kind: ConfigMap
               into: clusterConfig
@@ -530,7 +530,7 @@ spec:
             {{- $podLabels = mergeOverwrite $podLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "podLabels" $podLabels) }}
 
-            {{- /* opendesk/Bitnami charts expect imagePullSecrets as a string list. */}}
+            {{- /* Bitnami charts expect imagePullSecrets as a string list. */}}
             {{- $rawImagePull := dig "imagePullSecrets" list $extraVals }}
             {{- $imagePull := list }}
             {{- range $entry := $rawImagePull }}

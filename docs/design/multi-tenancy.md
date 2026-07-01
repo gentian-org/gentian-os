@@ -45,7 +45,7 @@ Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 | **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.desk.gentian.org` |
 
 **Single-tenancy rules:** exactly one `Tenant` CR named `default`, operator env `TENANCY_MODE=single`. Vanity `spec.domain` still overrides
-in either mode. Legacy LDAP clusters also use `ou=default` under `dc=swp-ldap,dc=internal`.
+in either mode.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
@@ -55,16 +55,14 @@ in either mode. Legacy LDAP clusters also use `ou=default` under `dc=swp-ldap,dc
 **Effective domain** (same for edge routing, mail, OIDC redirect URIs to apps):
 
 - If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
-- Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat OpenDesk-style URLs).
+- Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat URLs).
 - Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
 
 App hostnames are always `{subDomain}.{effectiveDomain}`.
 
-**Portal contact deep links** (video call / chat from the address book): on the Suze path,
-the Gentian shell resolves per-tenant app URLs from `effectiveDomain` and entitlement
-groups — not Nubus portal-server LDAP entries. Legacy clusters (`IDENTITY_MODE=legacy-ldap`)
-still use UDM entries `swp.realtime_videoconference_<tenant>` with `allowedGroups` scoped
-to the tenant LDAP OU.
+**Portal contact deep links** (video call / chat from the address book): the
+Gentian shell resolves per-tenant app URLs from `effectiveDomain` and entitlement
+groups (`gentian:tenant:<t>:app:<profile>`).
 
 The gentian-os operator creates, for every tenant with edge-routed apps:
 
@@ -150,9 +148,7 @@ Every tenant is identified by a pair that must be kept in 1:1 correspondence:
 Keycloak realm <tenant>   ↔   namespace tenant-<tenant>
 ```
 
-On the Suze path, users live in the **tenant realm** (not a shared LDAP OU).
-Legacy clusters (`IDENTITY_MODE=legacy-ldap`) also maintain
-`ou=<tenant>,dc=swp-ldap,dc=internal` — see [iam.md § Legacy](iam.md#5-legacy-nubus--ldap-path).
+On the Suze path, users live in the **tenant realm**.
 
 Breaking realm ↔ namespace correspondence is a configuration error and must never occur.
 
@@ -181,8 +177,7 @@ When the mail extension is enabled:
   Tenant status for DNS configuration.
 - SMTP submission requires SASL authentication against per-tenant
   credentials — no open relay.
-- IMAP authentication uses per-tenant credentials provisioned by the platform
-  (legacy path: LDAP OU bind; Suze path: native auth backend when migrated).
+- IMAP authentication uses per-tenant credentials provisioned by the platform.
 
 See [mail.md](mail.md) for the full mail extension model.
 
@@ -198,18 +193,15 @@ Three roles, three scopes:
 
 ### 8.1 Admin / User Separation of Duties
 
-Following the openDesk model, the **tenant admin and tenant user are strictly
-separate identities**. It is strongly recommended that a single person does not
-use the same account for both day-to-day app usage and tenant administration.
+The **tenant admin and tenant user are strictly separate identities**.
+It is strongly recommended that a single person does not use the same
+account for both day-to-day app usage and tenant administration.
 
-**Portal tile enforcement (Suze path):**
+**Portal tile enforcement:**
 Access to apps is controlled through **Keycloak group entitlements**
-(`gentian:tenant:<t>:app:<profile>`) and OpenFGA `can_launch` checks — not LDAP
-`managed-by-attribute-*` groups or UMC templates. Tenant admins and members are
-**mutually exclusive** roles provisioned via the [Gentian Admin Console](admin-console.md).
-
-Legacy clusters still use UMC `Admin User` / `App User` templates — see
-[iam.md § Legacy](iam.md#5-legacy-nubus--ldap-path).
+(`gentian:tenant:<t>:app:<profile>`) and OpenFGA `can_launch` checks.
+Tenant admins and members are **mutually exclusive** roles provisioned
+via the [Gentian Admin Console](admin-console.md).
 
 **Current operating model:** tenant admins edit Tenant manifests in
 the deployments repo via PR (process-controlled), and manage members/groups in

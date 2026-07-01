@@ -35,7 +35,7 @@ const (
 	// This is the safe default for compliance and accidental-deletion recovery.
 	DeletionPolicyRetain DeletionPolicy = "Retain"
 	// DeletionPolicyDelete removes all tenant resources including databases,
-	// storage buckets, mailboxes, and LDAP entries. Intended for dev/test.
+	// storage buckets, and mailboxes. Intended for dev/test.
 	DeletionPolicyDelete DeletionPolicy = "Delete"
 )
 

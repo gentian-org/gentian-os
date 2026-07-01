@@ -46,7 +46,7 @@ direct analogues for every layer:
 | File descriptor / process handle | **Managed Resource (MR) status** |
 | Kernel scheduler / writeback | **Crossplane reconcile loop** |
 | `init` / `systemd` | **ArgoCD** |
-| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Nextcloud, MinIO, Nubus, …) |
+| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Suze, MinIO, PostgreSQL, Portal, Gateway API, …) |
 
 The CRDs are the syscall API. Crossplane is the kernel that implements
 those syscalls. Providers are the device drivers. Compositions are
@@ -158,7 +158,7 @@ Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
 1. **OpenBao seeding** — credentials before Compositions reconcile  
 2. **Manifest bridge** — operator writes `tenant-{name}-provisioning-jobs` (`jobs.json`, `objects.json`)  
 3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity Jobs are Ready  
-4. **Wait-only ensures** — identity Jobs (Keycloak-native or legacy LDAP per `IDENTITY_MODE`), databases, storage, cache, gateway objects, IntegrationBindings  
+4. **Wait-only ensures** — identity Jobs (Keycloak-native per tenant), databases, storage, cache, gateway objects, IntegrationBindings  
 5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
 6. **Shared-kernel extensions** — portal shell convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
 7. **Status** — per-step conditions; `CrossplaneReady` from `XTenant` Ready; **`Phase=Ready` requires both operator paths and `CrossplaneReady`**
@@ -216,8 +216,7 @@ isolation mode (namespace), resource quotas, mail mode, a deletion
 policy, and **`spec.apps`** — the list of catalogue profiles to install
 for this tenant (e.g. `element` — Jitsi is deployed as an Element sidecar). Creating a `Tenant`
 provisions kernel-layer infrastructure: namespace, RBAC, OpenBao
-policies, DNS/TLS, and the Keycloak tenant realm (plus legacy LDAP OUs when
-`IDENTITY_MODE=legacy-ldap`). The operator then creates one **`App` claim per
+policies, DNS/TLS, and the Keycloak tenant realm. The operator then creates one **`App` claim per
 `spec.apps` entry**; Crossplane deploys the Helm charts. User/group administration
 is via the [Gentian Admin Console](design/admin-console.md) on the Suze path.
 
@@ -269,12 +268,12 @@ that must exist before any tenant app can run, because they back the
 
 | Kernel function | Default-install component | Desktop OS analogue |
 |---|---|---|
-| Identity & SSO | **Suze** (Keycloak + OpenFGA); legacy: Nubus (Keycloak + LDAP) | `/etc/passwd` + PAM |
-| Hierarchical files | **Nextcloud** (WebDAV) | `C:` drive / home directory |
+| Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM |
 | Object storage | **MinIO** (S3) | Page cache, scratch space |
 | Relational data | **CloudNativePG** + **MariaDB Operator** | Per-app SQLite / registry |
 | Cache | **Redis** + **Memcached** | Page cache / `tmpfs` |
-| Mail (extension) | **Postfix + Dovecot + Rspamd** | Built-in mail spool |
+| Edge routing | **Gateway API** (Envoy Gateway) | Network stack |
+| Mail (extension) | **Postfix + Dovecot + Rspamd** (optional) | Built-in mail spool |
 | Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
 | Notifications | **Notification Gateway** | Notification daemon |
 | Secrets keyring | **OpenBao** | Keychain |
@@ -282,10 +281,12 @@ that must exist before any tenant app can run, because they back the
 
 These are not "apps" the user picks à la carte — they are the **kernel
 devices** that must be Ready before a `Tenant` claim can reach Ready.
-Tenants can later swap implementations (Nextcloud → Seafile, MinIO →
-AWS S3) without breaking apps that program against the contract,
-exactly the way a desktop user can replace `C:` with a different
-volume without breaking `CreateFile()`.
+
+**Catalogue apps** (Nextcloud, Collabora, CryptPad, Element, …) install
+per tenant from `gentian-apps` via `AppProfile` + the `app-default`
+Crossplane composition — the same "install from app store" path as any
+other catalogue entry. See [design/kernel.md](design/kernel.md) for the
+kernel vs catalogue split.
 
 The full kernel function list, the default-drive analogy, and the
 "kernel extensions" mechanism (optional shared services like mail) are
@@ -422,7 +423,7 @@ by the same ESO → K8s Secret pipeline:
 
 | Pattern | Mechanism | When to use |
 |---|---|---|
-| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **all current kernel apps**: Nubus, Nextcloud, PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO. |
+| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **kernel services**: PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO, Postfix, Dovecot. |
 | **Pattern B** | ESO syncs OpenBao → K8s Secret; `provider-helm` `spec.valuesFrom` maps individual keys to Helm value paths | Charts that accept secrets as plain values but have no structured `existingSecret` field. |
 
 In both patterns:
@@ -432,17 +433,15 @@ In both patterns:
   in ArgoCD.
 - etcd encryption at rest applies to the K8s Secrets.
 
-**Pattern A example** (Nubus — already supported upstream):
+**Pattern A example** (Keycloak — standalone Suze path):
 ```yaml
-# ExternalSecret (ESO) pulls from OpenBao → creates k8s Secret nubus-credentials
+# ExternalSecret (ESO) pulls from OpenBao → creates k8s Secret keycloak-credentials
 # provider-helm HelmRelease references it:
 spec:
   values:
-    postgresql:
-      auth:
-        existingSecret: nubus-credentials
-        secretKeys:
-          adminPasswordKey: postgresql-admin-password
+    auth:
+      existingSecret: keycloak-credentials
+      passwordSecretKey: admin-password
 ```
 
 **Pattern B example** (hypothetical chart with no existingSecret):
@@ -559,42 +558,17 @@ are in [design/mail.md](design/mail.md).
 
 ---
 
-## 9b. The Office Kernel Extension
+## 9b. Collabora and CryptPad (catalogue apps)
 
-Nextcloud Office (powered by Collabora) is **optional** — not every
-tenant needs collaborative document editing. It is modelled as a
-**kernel extension**: one shared Collabora instance serves all tenants
-via the WOPI protocol. The extension is declared per-tenant with a
-single flag:
+Collaborative document editing (Collabora) and diagram editing (CryptPad)
+are **catalogue apps**, not kernel services. Profiles in `gentian-apps`
+(e.g. `nextcloud`, `od-nextcloud`, Collabora/CryptPad integration packs)
+declare the Helm charts and OIDC packs; Crossplane `app-default` deploys
+them into the tenant namespace when listed in `Tenant.spec.apps`.
 
-```yaml
-office:
-  enabled: true
-```
-
-Collabora is deployed as a kernel service in the platform namespace
-(not in per-tenant namespaces), so the ingress hostname
-`office.<domain>` is unique and shared across all tenants. Nextcloud's
-`wopi_url` points to the shared in-cluster service URL and is
-configured once at the platform level.
-
----
-
-## 9c. The Diagrams Kernel Extension (CryptPad)
-
-Nextcloud diagram editing (diagrams.net via the openincryptpad app) uses a
-**shared CryptPad kernel service**, modelled like Collabora in §9b. One
-instance at `pad.<kernel_domain>` (+ `pad-sandbox.<kernel_domain>` for the
-crypto sandbox origin) serves all tenants; Nextcloud embeds it from
-`files.<kernel_domain>`.
-
-There is **no AppProfile or portal tile** — users open diagrams from Nextcloud
-Files. Configuration matches OpenDesk: `restrictRegistration: true`,
-`availablePadTypes: ["diagram"]`, `enableEmbedding: true`, no OIDC.
-
-The nextcloud-management chart enables the CryptPad app when the kernel service
-is deployed (`feature.apps.cryptpad.enabled: true`). Per-tenant CryptPad
-AppProfiles are not used.
+Nextcloud is the primary file-store app; Collabora and CryptPad integrate
+with it via WOPI/embed contracts declared in their `AppProfile` optional
+integrations. See [design/app-catalogue.md](design/app-catalogue.md).
 
 ---
 

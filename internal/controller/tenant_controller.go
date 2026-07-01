@@ -175,10 +175,8 @@ type TenantReconciler struct {
 	// RoutingMode selects the edge routing stack: ingress (nginx Ingress) or
 	// gateway (Gateway API + Envoy Gateway). Sourced from ROUTING_MODE.
 	RoutingMode string
-	// CrossplaneOnly skips shared-kernel side effects (mail, office, portal/UMC
-	// convergence, Nextcloud group) so tenant lifecycle is driven by the
-	// Crossplane graph alone. Used for P3/P4 e2e and rollback testing via
-	// TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
+	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
+	// so tenant lifecycle is driven by the Crossplane graph alone.
 	CrossplaneOnly bool
 }
 
@@ -500,15 +498,9 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// ── Shared-kernel extensions (skipped when TENANT_CROSSPLANE_ONLY) ─────────
-	var mailResult, officeResult ctrl.Result
+	var mailResult ctrl.Result
 	if !r.CrossplaneOnly {
 		mailResult, err = r.ensureMail(ctx, tenant)
-		if err != nil {
-			_ = r.Status().Update(ctx, tenant)
-			return ctrl.Result{}, err
-		}
-
-		officeResult, err = r.ensureOffice(ctx, tenant)
 		if err != nil {
 			_ = r.Status().Update(ctx, tenant)
 			return ctrl.Result{}, err
@@ -535,10 +527,8 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
 		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
 	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
-	// Note: mailResult, officeResult, and appsResult are intentionally excluded
-	// from the provisioning flag. Apps are converged asynchronously (like mail
-	// and office) and do not block Phase=Ready. AppsReady tracks state
-	// independently and the reconciler requeues until all App claims are Ready.
+	// Note: mailResult and appsResult are intentionally excluded from the
+	// provisioning flag. Apps converge asynchronously and do not block Phase=Ready.
 	// Phase=Ready also requires CrossplaneReady (XTenant composite Ready).
 	if provisioning || !crossplaneReady {
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
@@ -571,23 +561,16 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if mailResult.RequeueAfter > 0 {
 			return mailResult, nil
 		}
-		if officeResult.RequeueAfter > 0 {
-			return officeResult, nil
-		}
 		return appsResult, nil
 	}
 	if !crossplaneReady {
 		logger.Info("tenant operator paths ready; waiting for Crossplane XTenant Ready", "tenant", tenant.Name)
 		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}
-	// Infrastructure is ready. Requeue for mail, office, or apps if still converging.
+	// Infrastructure is ready. Requeue for mail or apps if still converging.
 	if mailResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; mail still converging", "tenant", tenant.Name)
 		return mailResult, nil
-	}
-	if officeResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; office still converging", "tenant", tenant.Name)
-		return officeResult, nil
 	}
 	if appsResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
@@ -692,8 +675,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// Clean up portal redirect ingress and any remaining UMC stack artifacts
-	// (DeletionPolicy=Delete only; in-namespace Secrets/ConfigMaps go with the namespace).
+	// Clean up portal redirect routes.
 	if err := r.deletePortalRedirect(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

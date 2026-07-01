@@ -60,7 +60,7 @@ const tenantReadyTimeout = envtestWaitTimeout
 const jobAppearTimeout = envtestWaitTimeout
 
 // dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
-// manually in reconciler tests (redis/pg/mariadb/s3/nc-group assertions).
+// manually in reconciler tests (redis/pg/mariadb/s3 assertions).
 var dataPlaneManualTestTenants = map[string]struct{}{
 	"cacheready":   {},
 	"storageready": {},
@@ -69,8 +69,6 @@ var dataPlaneManualTestTenants = map[string]struct{}{
 	"rolejob":      {},
 	"dbready":      {},
 	"dbdelete":     {},
-	"nc-always":    {},
-	"nccreate":     {},
 }
 
 // deleteCleanupManualTestTenants lists tenants whose delete-cleanup Jobs must not be
@@ -90,7 +88,6 @@ func provisioningJobTenant(jobName string) (tenant string, ok bool) {
 		"pg-role-",
 		"mariadb-setup-",
 		"s3-bucket-",
-		"nc-group-",
 	} {
 		if strings.HasPrefix(jobName, prefix) {
 			rest := strings.TrimPrefix(jobName, prefix)
@@ -134,7 +131,6 @@ func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
 		"keycloak-realm-disable-",
 		"mariadb-delete-",
 		"s3-delete-",
-		"nc-group-delete-",
 		"redis-acl-delete-",
 	} {
 		if strings.HasPrefix(jobName, prefix) {
@@ -298,21 +294,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// udm-admin Secret is required by the mail reconciler for Dovecot LDAP config.
-	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
-		Data: map[string][]byte{
-			"url":               []byte("http://nubus-dev-ldap-server.gentian-dev.svc.cluster.local/univention/"),
-			"password":          []byte("test-ldap-password"),
-			"ldapBase":          []byte("dc=swp-ldap,dc=internal"),
-			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
-			"ldapsearchDovecot": []byte("test-ldap-password"),
-		},
-	}); err != nil {
-		panic(err)
-	}
-
-	// dovecot-admin Secret provides OIDC + doveadm credentials for the opendesk-dovecot chart.
+	// dovecot-admin Secret provides OIDC + doveadm credentials for shared Dovecot.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
@@ -327,7 +309,7 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"url":      []byte("http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080"),
+			"url":      []byte("http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080"),
 			"username": []byte("kcadmin"),
 			"password": []byte("test-kc-password"),
 		},
@@ -344,11 +326,6 @@ func TestMain(m *testing.M) {
 			"secretKey": []byte("minioadmin"),
 		},
 	}); err != nil {
-		panic(err)
-	}
-
-	// nextcloud-admin Secret gates nc-group provisioning and delete Jobs.
-	if err := testClient.Create(context.Background(), testNextcloudAdminSecret()); err != nil {
 		panic(err)
 	}
 
@@ -761,7 +738,6 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	}
 	// For Delete policy deleteIdentity creates cleanup jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
-	go markJobCompleteWhenReady("nc-group-delete-destroyer", "platform-kernel")
 
 	// Wait for Tenant CR to be gone
 	waitFor(t, tenantReadyTimeout, func() bool {

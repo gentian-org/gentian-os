@@ -72,7 +72,7 @@ treats them as agent-opaque but still useful.
 
 ## 4. Shell AI Assistant
 
-A built-in **shell assistant** (Univention Portal extension) can be
+A built-in **shell assistant** (Gentian Portal extension) can be
 enabled per tenant. When a user asks "show me my open tasks across
 all my apps", the assistant:
 

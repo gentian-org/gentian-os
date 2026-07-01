@@ -2,7 +2,7 @@
 # Keycloak provider-keycloak bootstrap: admin credentials + ProviderConfig.
 #
 # Required for tenant app OIDC Client MRs created by app-default (realm per tenant).
-# The full opendesk client catalogue in keycloak-config/manifests/<env>/ remains
+# The full Keycloak client catalogue in keycloak-config/manifests/<env>/ remains
 # disabled while OpenDesk/Nubus is replaced (see kernel/appsets/disabled/).
 #
 # Wave 16: after Keycloak IDP (09-suze) and before tenant app reconciliation.

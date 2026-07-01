@@ -34,7 +34,7 @@ metadata:
   name: function-sequencer
 spec:
   # Delays composed resources until dependency resources are Ready.
-  # Used by tenant-default to gate App claims on identity/LDAP Jobs.
+  # Used by tenant-default to gate App claims on identity Jobs.
   package: xpkg.upbound.io/crossplane-contrib/function-sequencer:v0.3.0
 ---
 apiVersion: pkg.crossplane.io/v1

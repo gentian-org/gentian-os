@@ -899,7 +899,7 @@ load_deployments_cluster_settings() {
 
 # =============================================================================
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
-# which all kernel UIs — Keycloak, Nubus, Argo CD, Intercom — are served, and
+# which all kernel UIs — Keycloak, Gentian portal, Argo CD, Intercom — are served, and
 # which provides the tenant app zone fallback when Tenant.spec.domain is unset
 # (shape depends on TENANCY_MODE — see docs/design/multi-tenancy.md §3).
 #
@@ -1201,8 +1201,6 @@ check_prereqs() {
 
     success "All pre-flight checks passed."
 }
-
-# resolve_ldap_base_dn removed — Suze Keycloak is authoritative.
 
 # =============================================================================
 # upsert_gentian_cluster_config — cluster-wide ConfigMap for Crossplane / apps

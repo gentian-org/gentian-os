@@ -25,7 +25,7 @@ This document defines:
    without per-app compositions in `gentian-os`.
 
 For secrets, TLS, and OpenBao path layout see [security.md](security.md). For
-roles and LDAP/portal enforcement see [iam.md](iam.md) and
+roles and portal enforcement see [iam.md](iam.md) and
 [multi-tenancy.md](multi-tenancy.md) §8.
 
 ---
@@ -68,7 +68,7 @@ and CRM entitlements, see [business-logic-plan.md](business-logic-plan.md).
 | Scenario | Preconditions | Impact |
 |---|---|---|
 | Malicious or compromised catalogue PR | Merge rights on `gentian-apps` | Bad chart deployed to every tenant that installs the profile |
-| Over-broad `kernelRequirements` | Profile requests DB/LDAP/OIDC/mail without need | Resource exhaustion, larger blast radius, extra attack surface |
+| Over-broad `kernelRequirements` | Profile requests DB/OIDC/mail without need | Resource exhaustion, larger blast radius, extra attack surface |
 | Open sidecar / multi-chart fields | Freeform `chart` + `extraValues` on sidecars | Extra workloads, new ingress hosts, non-approved images |
 | Secret exfiltration via Helm values | Plaintext in `Release.spec.values` | Credential leak to etcd / ArgoCD UI |
 | Cross-tenant access | Bug in composition or namespace wiring | Data leak between tenants |
@@ -138,7 +138,7 @@ metadata:
 | Tier | Who may set | Typical use | Prod tenant install |
 |---|---|---|---|
 | **`platform`** | Platform team only | Element, OX, kernel-adjacent apps; sidecars; `compositionRef` | Allowed |
-| **`certified`** | Reviewed catalogue PR | Standard openDesk / Gentian apps on `app-default` | Allowed (default) |
+| **`certified`** | Reviewed catalogue PR | Standard Gentian catalogue apps on `app-default` | Allowed (default) |
 | **`experimental`** | Dev / lab branches | Bleeding-edge charts, incomplete profiles | **Denied** unless cluster opts in |
 
 ### 4.1 Suggested policy rules
@@ -178,7 +178,7 @@ data:
   jitsi.yaml: |
     chart:
       repository: oci://registry.opencode.de/...
-      name: opendesk-jitsi
+      name: jitsi
       version: "6.1.9"
     stableServiceName: jitsi-web
     stableServicePort: 80
@@ -360,6 +360,6 @@ composition templates branch on presence (`{{- if .sidecars }}`).
 |---|---|
 | AppProfile schema and install flow | [app-catalogue.md](app-catalogue.md) |
 | Secrets, ESO, Release hygiene | [security.md](security.md) |
-| Roles and portal LDAP model | [iam.md](iam.md), [multi-tenancy.md](multi-tenancy.md) |
+| Roles and portal entitlement model | [iam.md](iam.md), [multi-tenancy.md](multi-tenancy.md) |
 | Authoring guide | [gentian-apps/app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) |
 | Convergence and follow-ups | [roadmap.md](../roadmap.md) |

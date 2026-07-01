@@ -239,19 +239,6 @@ spec:
                       The Secret must provide keys: host, port, username, password.
                     type: string
                 type: object
-              office:
-                description: |-
-                  Office configures the Nextcloud Office (Collabora) document editing extension
-                  for this tenant. When enabled, the shared kernel Collabora service provides
-                  WOPI-based document editing inside Nextcloud.
-                properties:
-                  enabled:
-                    default: false
-                    description: |-
-                      Enabled activates the Collabora WOPI document editor for this tenant.
-                      Defaults to false.
-                    type: boolean
-                type: object
               quotas:
                 description: Quotas sets resource limits for this tenant.
                 properties:

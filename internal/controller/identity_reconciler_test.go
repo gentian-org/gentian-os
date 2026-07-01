@@ -153,7 +153,7 @@ func markJobCompleteWhenReady(jobName, namespace string) {
 }
 
 // TestIdentity_NoOIDCApps verifies that a Tenant with no apps still creates
-// the base realm and admin identity Jobs (for UMC), but no client Jobs.
+// the base realm and admin identity Jobs, but no client Jobs.
 func TestIdentity_NoOIDCApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{

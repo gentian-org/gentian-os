@@ -244,7 +244,7 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteAppDeployment; mark their jobs.
+	// deleteIdentity runs before deleteAppDeployment; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-del-tenant", "platform-kernel")
 
 	// App claim should be removed.

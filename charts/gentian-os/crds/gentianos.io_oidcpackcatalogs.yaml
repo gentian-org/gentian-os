@@ -57,7 +57,7 @@ spec:
                 description: |-
                   ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
                   provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
-                  openDesk portal admin groups).
+                  portal admin groups).
                 items:
                   type: string
                 type: array
@@ -89,8 +89,7 @@ spec:
                 type: object
               packs:
                 additionalProperties:
-                  description: OIDCPackSpec is the OpenDesk-style OIDC configuration
-                    for one clientId.
+                  description: OIDCPackSpec is the OIDC configuration for one clientId.
                   properties:
                     clientRole:
                       description: ClientRole is the Keycloak client role mapped from

@@ -71,7 +71,6 @@ func isTenantCleanupJobName(tenantName, jobName string) bool {
 		fmt.Sprintf("keycloak-realm-disable-%s", tenantName),
 		fmt.Sprintf("mariadb-delete-%s-", tenantName),
 		fmt.Sprintf("s3-delete-%s-", tenantName),
-		fmt.Sprintf("nc-group-delete-%s", tenantName),
 		fmt.Sprintf("redis-acl-delete-%s-", tenantName),
 	}
 	for _, prefix := range cleanupPrefixes {

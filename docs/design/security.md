@@ -41,7 +41,7 @@ Git, in CR specs, or in ConfigMaps.
 ```
 gentian-os/
 ├── kernel/                           # seeded once, read-only to apps
-│   ├── identity/                     #   oidc_issuer, ldap_host, admin creds
+│   ├── identity/                     #   oidc_issuer, admin creds
 │   ├── database/                     #   root creds per engine
 │   ├── storage/                      #   S3 admin creds
 │   ├── mail/                         #   MTA/MDA admin creds
@@ -56,7 +56,6 @@ gentian-os/
         │       ├── oidc              #   client_id, client_secret
         │       ├── database          #   user, password, database name
         │       ├── s3                #   access_key, secret_key, bucket
-        │       ├── ldap              #   bind_dn, bind_password, base_dn
         │       ├── smtp              #   user, password
         │       ├── imap              #   host, port, credentials
         │       └── cache             #   host, port, password
@@ -297,7 +296,7 @@ adapter**) need extra configuration on staging clusters:
 | `use_insecure_ssl_client_just_for_testing_do_not_use: true` | Injected into Synapse `additionalConfiguration` when `ACME_STAGING=true` | Synapse-supported dev flag for outbound HTTPS (token/userinfo calls). **Insufficient alone** — also set `discover: false`, explicit https OIDC endpoints, and `user_profile_method: userinfo_endpoint` to skip startup JWKS fetch. **Staging only.** |
 | `app-element` Synapse `additionalConfiguration.oidc_providers` | `discover: false` with public `https://id.<kernel>/realms/<tenant>/…` **authorization_endpoint** (browser) and in-cluster `http://…keycloak…/realms/<tenant>/…` **token/userinfo/jwks** via `KEYCLOAK_INTERNAL_URL` from `gentian-kernel-services`; `user_profile_method: userinfo_endpoint`; public `issuer`/client credentials via Helm `set[]` | Avoids Twisted HTTPS to the Envoy hairpin during OIDC code exchange (login-time failure shows as Element **“Invalid username or password”** even when Synapse starts). Chart-generated `homeserver.oidc` is stripped so only one `oidc_providers` block is emitted. |
 
-**Synapse startup failure (staging):** if `opendesk-synapse` is in
+**Synapse startup failure (staging):** if the Element Synapse chart is in
 `CrashLoopBackOff` with `Error while initialising OIDC provider 'oidc'` and a
 timeout fetching JWKS or `/.well-known/openid-configuration`, the usual cause
 is Twisted HTTPS to `id.<kernel-domain>` on a staging/gateway cluster — not a
