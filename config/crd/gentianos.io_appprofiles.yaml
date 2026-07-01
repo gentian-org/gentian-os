@@ -397,24 +397,6 @@ spec:
                   identity:
                     description: Identity specifies OIDC requirements.
                     properties:
-                      ldap:
-                        description: |-
-                          LDAP is retained for AppProfile catalogue compatibility. Legacy OpenDesk
-                          profiles still declare ldap blocks; the operator no longer provisions LDAP.
-                        properties:
-                          interval:
-                            description: Interval is the sync interval (e.g., "1h").
-                            pattern: ^[0-9]+(s|m|h|d)$
-                            type: string
-                          search:
-                            description: Search documents a per-tenant LDAP search
-                              account in legacy profiles.
-                            type: boolean
-                          sync:
-                            description: Sync documents periodic LDAP sync in legacy
-                              profiles.
-                            type: boolean
-                        type: object
                       oidc:
                         description: |-
                           OIDC describes the OIDC client to register in the tenant's Keycloak realm.
@@ -879,25 +861,6 @@ spec:
                         identity:
                           description: Identity specifies OIDC requirements.
                           properties:
-                            ldap:
-                              description: |-
-                                LDAP is retained for AppProfile catalogue compatibility. Legacy OpenDesk
-                                profiles still declare ldap blocks; the operator no longer provisions LDAP.
-                              properties:
-                                interval:
-                                  description: Interval is the sync interval (e.g.,
-                                    "1h").
-                                  pattern: ^[0-9]+(s|m|h|d)$
-                                  type: string
-                                search:
-                                  description: Search documents a per-tenant LDAP
-                                    search account in legacy profiles.
-                                  type: boolean
-                                sync:
-                                  description: Sync documents periodic LDAP sync in
-                                    legacy profiles.
-                                  type: boolean
-                              type: object
                             oidc:
                               description: |-
                                 OIDC describes the OIDC client to register in the tenant's Keycloak realm.
@@ -1170,29 +1133,6 @@ spec:
                         type: string
                       portKey:
                         description: PortKey is the Helm value key for the IMAP port.
-                        type: string
-                    type: object
-                  ldap:
-                    description: LDAP maps LDAP directory values to Helm keys (legacy
-                      OpenDesk profiles).
-                    properties:
-                      baseDnKey:
-                        description: BaseDNKey is the Helm value key for the LDAP
-                          base DN.
-                        type: string
-                      bindDNKey:
-                        description: BindDNKey is the Helm value key for the LDAP
-                          bind DN.
-                        type: string
-                      bindPasswordKey:
-                        description: BindPasswordKey is the Helm value key for the
-                          LDAP bind password.
-                        type: string
-                      hostKey:
-                        description: HostKey is the Helm value key for the LDAP host.
-                        type: string
-                      portKey:
-                        description: PortKey is the Helm value key for the LDAP port.
                         type: string
                     type: object
                   oidc:
