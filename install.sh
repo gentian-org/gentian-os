@@ -522,8 +522,8 @@ create_crossplane_secrets() {
         "$(jq -nc \
             --arg host "${EXTERNAL_SMTP_HOST:-}" \
             --arg port "${EXTERNAL_SMTP_PORT:-587}" \
-            --arg user "${OD_SMTP_RELAY_USERNAME:-}" \
-            --arg pass "${OD_SMTP_RELAY_PASSWORD:-}" \
+            --arg user "${SMTP_RELAY_USERNAME:-}" \
+            --arg pass "${SMTP_RELAY_PASSWORD:-}" \
             '{relay_host:$host,relay_port:$port,relay_username:$user,relay_password:$pass}')"
 
     # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
@@ -551,7 +551,6 @@ apply_cluster_xr() {
     # Derive defaults for template variables not already set.
     export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
     export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
-    export INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-nginx}"
     export KV_MOUNT="${KV_MOUNT:-secret}"
     export KERNEL_REALM="${KERNEL_REALM:-kernel}"
 
@@ -1065,6 +1064,11 @@ apply_suze_xr() {
     }
 
     ensure_suze_idp_workloads "${xr_name}" 300 || exit 1
+
+    if ! verify_keycloak_installation; then
+        error "Keycloak installation verification failed."
+        exit 1
+    fi
 
     success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
 }

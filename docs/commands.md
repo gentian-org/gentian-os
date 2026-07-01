@@ -392,6 +392,17 @@ within a few minutes (or run `argocd app sync gentian-infra-helm-dev` immediatel
 
 ### Check mail component health
 
+Install and `update.sh --mail` (kernel mode) run automated smoke checks:
+Keycloak master-realm OIDC discovery (Step 14) and Dovecot IMAP/LMTP TCP
+(Step 15b). Re-run anytime:
+
+```bash
+make verify-kernel-services
+```
+
+Set `VERIFY_KERNEL_SERVICES=0` to skip during `./install.sh`. Tune timeouts with
+`KEYCLOAK_VERIFY_TIMEOUT` / `DOVECOT_VERIFY_TIMEOUT` (seconds, default 300).
+
 ```bash
 # Dovecot
 kubectl get release dovecot-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
@@ -412,8 +423,8 @@ kubectl get externalsecret -n gentian-dev dovecot-sensitive-values postfix-sensi
 MAIL_SERVICE_MODE=external
 EXTERNAL_SMTP_HOST=smtp.gmail.com
 EXTERNAL_SMTP_PORT=587
-OD_SMTP_RELAY_USERNAME=<gmail-address>
-OD_SMTP_RELAY_PASSWORD=<app-password>
+SMTP_RELAY_USERNAME=<gmail-address>
+SMTP_RELAY_PASSWORD=<app-password>
 ```
 
 ```bash

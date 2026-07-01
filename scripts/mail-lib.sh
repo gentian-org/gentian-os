@@ -159,4 +159,8 @@ install_stage1_mail() {
     deploy_kernel_mail_services
     _patch_postfix_configmap kernel
     info "Keycloak realm SMTP will target postfix-dev.${KERNEL_NAMESPACE}.svc.cluster.local:587"
+    if ! verify_dovecot_installation; then
+        error "Dovecot installation verification failed."
+        return 1
+    fi
 }

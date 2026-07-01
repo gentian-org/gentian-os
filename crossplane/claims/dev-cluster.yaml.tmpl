@@ -3,7 +3,6 @@
 #   KERNEL_DOMAIN         (required) — e.g. desk.example.com
 #   LETSENCRYPT_EMAIL     (optional) — defaults to admin@${KERNEL_DOMAIN}
 #   OPENBAO_SERVER        (optional) — defaults to in-cluster address
-#   INGRESS_CLASS_NAME    (optional) — defaults to nginx
 #   KV_MOUNT              (optional) — defaults to secret
 #
 # For e2e tests (make e2e-p1), use crossplane/claims/dev-cluster.yaml directly.
@@ -30,5 +29,4 @@ spec:
     serviceAccount: external-secrets
   certManager:
     letsencryptEmail: ${LETSENCRYPT_EMAIL}
-    ingressClassName: ${INGRESS_CLASS_NAME}
   compositeDeletePolicy: Background

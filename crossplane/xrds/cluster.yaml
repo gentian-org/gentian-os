@@ -99,10 +99,6 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
-                    ingressClassName:
-                      type: string
-                      description: IngressClass for HTTP-01 challenges.
-                      default: "public"
             status:
               type: object
               properties:

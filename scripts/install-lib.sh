@@ -11,7 +11,8 @@
 #
 # Environment variables consumed (when invoked via install.sh — see that
 # file for the full list):
-#   MASTER_PASSWORD, SMTP_RELAY_USERNAME/PASSWORD, MAIL_SERVICE_MODE, EXTERNAL_SMTP_HOST,
+#   MASTER_PASSWORD; SMTP_RELAY_USERNAME/PASSWORD when MAIL_SERVICE_MODE=external;
+#   MAIL_SERVICE_MODE, EXTERNAL_SMTP_HOST, …
 #   KERNEL_DOMAIN, NODE_IP, NETWORK_MODE, SKIP_TOOLS, OPENBAO_INIT_FILE,
 #   GENTIAN_APPS_REPO, GENTIAN_APPS_BRANCH, GENTIAN_DEPLOYMENTS_REPO,
 #   GENTIAN_DEPLOYMENTS_BRANCH, GENTIAN_NONINTERACTIVE,
@@ -294,7 +295,6 @@ INPUT_HIERARCHY_VARS=(
     SKIP_TOOLS
     OPENBAO_INIT_FILE
     LETSENCRYPT_EMAIL
-    INGRESS_CLASS_NAME
     ROUTING_MODE
     GENTIAN_APPS_REPO
     GENTIAN_APPS_BRANCH
@@ -493,8 +493,6 @@ validate_config() {
 
     _file_header "${INSTALL_SECRETS_FILE}" "Secrets checks (install.secrets.env)"
     _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "${INSTALL_SECRETS_FILE}"
-    _req_from SMTP_RELAY_USERNAME   "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
-    _req_from SMTP_RELAY_PASSWORD   "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
     _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "${INSTALL_SECRETS_FILE}"
     if [[ -z "${CF_ZONE_NAME:-}" ]]; then
         echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset; set override in ${INSTALL_SECRETS_FILE})"
@@ -509,10 +507,15 @@ validate_config() {
         echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_settings_file})"
         (( errors++ )) || true
     else
-        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}"
+        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when kernel)"
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
         _req_from EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)" "${cluster_settings_file}"
+        _req_from SMTP_RELAY_USERNAME "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
+        _req_from SMTP_RELAY_PASSWORD "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
+    else
+        echo "  [OK]       SMTP_RELAY_USERNAME  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
+        echo "  [OK]       SMTP_RELAY_PASSWORD  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
     fi
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
@@ -541,7 +544,6 @@ validate_config() {
 
     _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
     _opt_from LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address" "${INSTALL_CONFIG_FILE}"
-    _opt_from INGRESS_CLASS_NAME "defaults to 'nginx' if not set" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments" "${INSTALL_CONFIG_FILE}"
@@ -584,11 +586,17 @@ load_operator_config() {
 # (e.g. on the very first run).
 # =============================================================================
 try_load_creds_from_openbao() {
-    # Fast path: if everything is already exported, nothing to do.
-    if [[ -n "${MASTER_PASSWORD:-}" \
-        && -n "${SMTP_RELAY_USERNAME:-}" \
-        && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
-        return
+    # Fast path: if everything required for this mail mode is exported, skip.
+    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    if [[ -n "${MASTER_PASSWORD:-}" ]]; then
+        if [[ "${MAIL_SERVICE_MODE}" == "external" \
+            && -n "${SMTP_RELAY_USERNAME:-}" \
+            && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
+            return
+        fi
+        if [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
+            return
+        fi
     fi
 
     # Need a root token to read secrets. Prefer env, fall back to init file.
@@ -677,17 +685,6 @@ prompt_credentials() {
         export MASTER_PASSWORD
         prompted=1
     fi
-    if [[ -z "${SMTP_RELAY_USERNAME:-}" ]]; then
-        read -rp  "  SMTP_RELAY_USERNAME (e.g. user@gmail.com): " SMTP_RELAY_USERNAME; echo ""
-        export SMTP_RELAY_USERNAME
-        prompted=1
-    fi
-    if [[ -z "${SMTP_RELAY_PASSWORD:-}" ]]; then
-        read -rp "  SMTP_RELAY_PASSWORD (e.g. Gmail App Password): " SMTP_RELAY_PASSWORD; echo ""
-        export SMTP_RELAY_PASSWORD
-        prompted=1
-    fi
-
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
@@ -703,6 +700,16 @@ prompt_credentials() {
         if [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
             read -rp "  EXTERNAL_SMTP_HOST (e.g. smtp.gmail.com): " EXTERNAL_SMTP_HOST; echo ""
             export EXTERNAL_SMTP_HOST
+            prompted=1
+        fi
+        if [[ -z "${SMTP_RELAY_USERNAME:-}" ]]; then
+            read -rp  "  SMTP_RELAY_USERNAME (e.g. user@gmail.com): " SMTP_RELAY_USERNAME; echo ""
+            export SMTP_RELAY_USERNAME
+            prompted=1
+        fi
+        if [[ -z "${SMTP_RELAY_PASSWORD:-}" ]]; then
+            read -rp "  SMTP_RELAY_PASSWORD (e.g. Gmail App Password): " SMTP_RELAY_PASSWORD; echo ""
+            export SMTP_RELAY_PASSWORD
             prompted=1
         fi
         : "${EXTERNAL_SMTP_PORT:=587}"
@@ -1138,20 +1145,30 @@ check_prereqs() {
     fi
 
     # ── Required environment variables ───────────────────────────────────────
-    for var in MASTER_PASSWORD SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD; do
-        if [[ -z "${!var:-}" ]]; then
-            error "$var is not set"
-            missing=$((missing + 1))
-        else
-            success "$var set"
-        fi
-    done
+    if [[ -z "${MASTER_PASSWORD:-}" ]]; then
+        error "MASTER_PASSWORD is not set"
+        missing=$((missing + 1))
+    else
+        success "MASTER_PASSWORD set"
+    fi
 
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
     export MAIL_SERVICE_MODE
-    if [[ "${MAIL_SERVICE_MODE}" == "external" && -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
-        error "EXTERNAL_SMTP_HOST is required when MAIL_SERVICE_MODE=external"
-        missing=$((missing + 1))
+    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+        for var in SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD; do
+            if [[ -z "${!var:-}" ]]; then
+                error "$var is required when MAIL_SERVICE_MODE=external"
+                missing=$((missing + 1))
+            else
+                success "$var set"
+            fi
+        done
+        if [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
+            error "EXTERNAL_SMTP_HOST is required when MAIL_SERVICE_MODE=external"
+            missing=$((missing + 1))
+        fi
+    else
+        info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: SMTP relay credentials not required (Keycloak uses in-cluster Postfix)"
     fi
 
     if [[ "$missing" -gt 0 ]]; then
@@ -1734,8 +1751,9 @@ apply_gentian_cluster_issuers() {
     fi
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${INGRESS_CLASS_NAME:=nginx}"
-    export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN
+    : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=${SERVICES_NS:-gentian-${ENV:-dev}}}"
+    : "${KERNEL_PUBLIC_GATEWAY_NAME:=kernel-public-gateway}"
+    export LETSENCRYPT_EMAIL KERNEL_DOMAIN KERNEL_PUBLIC_GATEWAY_NAMESPACE KERNEL_PUBLIC_GATEWAY_NAME
 
     if ! command -v envsubst &>/dev/null; then
         error "envsubst not found (install gettext-base). Aborting."
@@ -1762,7 +1780,7 @@ apply_gentian_cluster_issuers() {
         info "ACME_ENV=staging: using Let's Encrypt staging (untrusted certs, separate rate limits)."
     fi
 
-    envsubst "\${LETSENCRYPT_EMAIL} \${INGRESS_CLASS_NAME}" \
+    envsubst "\${LETSENCRYPT_EMAIL} \${KERNEL_PUBLIC_GATEWAY_NAMESPACE} \${KERNEL_PUBLIC_GATEWAY_NAME}" \
         < "$(gentian_cluster_issuers_manifest)" \
         | kubectl apply -f -
 }
@@ -2209,9 +2227,8 @@ install_kernel_wildcard() {
     banner "Step 12b — Installing kernel wildcard Certificate"
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${INGRESS_CLASS_NAME:=nginx}"
     DNS01_CLUSTER_ISSUER="$(gentian_dns01_cluster_issuer_name)"
-    export LETSENCRYPT_EMAIL INGRESS_CLASS_NAME KERNEL_DOMAIN DNS01_CLUSTER_ISSUER
+    export LETSENCRYPT_EMAIL KERNEL_DOMAIN DNS01_CLUSTER_ISSUER
 
     # 1) ExternalSecret in cert-manager → materializes cloudflare-api-token
     #    Secret from OpenBao. Requires the ClusterSecretStore "openbao" to
@@ -3811,6 +3828,10 @@ main() {
 # Mail delivery helpers (MAIL_SERVICE_MODE, Postfix ConfigMap patching).
 # shellcheck source=scripts/mail-lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mail-lib.sh"
+
+# Post-install smoke checks (Keycloak OIDC, Dovecot TCP when kernel mail).
+# shellcheck source=scripts/verify-kernel-services.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-kernel-services.sh"
 
 # Allow this file to be sourced as a function library without running main().
 # Set GENTIAN_INSTALL_LIB_ONLY=1 before sourcing (done by install.sh).

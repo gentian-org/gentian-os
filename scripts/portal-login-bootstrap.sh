@@ -146,14 +146,14 @@ _keycloak_smtp_settings() {
 
     case "${mode}" in
         external)
-            if [[ -z "${EXTERNAL_SMTP_HOST:-}" || -z "${OD_SMTP_RELAY_USERNAME:-}" \
-                || -z "${OD_SMTP_RELAY_PASSWORD:-}" ]]; then
+            if [[ -z "${EXTERNAL_SMTP_HOST:-}" || -z "${SMTP_RELAY_USERNAME:-}" \
+                || -z "${SMTP_RELAY_PASSWORD:-}" ]]; then
                 return 1
             fi
             KC_SMTP_HOST="${EXTERNAL_SMTP_HOST}"
             KC_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
-            KC_SMTP_USER="${OD_SMTP_RELAY_USERNAME}"
-            KC_SMTP_PASSWORD="${OD_SMTP_RELAY_PASSWORD}"
+            KC_SMTP_USER="${SMTP_RELAY_USERNAME}"
+            KC_SMTP_PASSWORD="${SMTP_RELAY_PASSWORD}"
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
         kernel)
@@ -247,7 +247,7 @@ configure_keycloak_realm_smtp() {
     fi
 
     if ! _apply_keycloak_smtp_secret "${ns}"; then
-        warn "SMTP credentials incomplete — set EXTERNAL_SMTP_* + OD_SMTP_RELAY_*" \
+        warn "SMTP credentials incomplete — set EXTERNAL_SMTP_* + SMTP_RELAY_*" \
              "(external) or MAIL_SERVICE_MODE=kernel with derived smtp password."
         return 1
     fi

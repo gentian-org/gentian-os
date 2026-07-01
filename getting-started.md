@@ -50,10 +50,15 @@ them or store them in the config files below.
 | Variable | Description |
 |---|---|
 | `MASTER_PASSWORD` | Master secret — kernel and app passwords are derived via HKDF-SHA256 |
-| `OD_PRIVATE_REGISTRY_USERNAME` | `registry.opencode.de` username |
-| `OD_PRIVATE_REGISTRY_PASSWORD` | `registry.opencode.de` token/password |
-| `OD_SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
-| `OD_SMTP_RELAY_PASSWORD` | SMTP relay password (e.g. Gmail App Password) |
+
+When `MAIL_SERVICE_MODE=external` in `cluster-settings.env`, also set in `install.secrets.env`:
+
+| Variable | Description |
+|---|---|
+| `SMTP_RELAY_USERNAME` | SMTP relay username (e.g. Gmail address) |
+| `SMTP_RELAY_PASSWORD` | SMTP relay password (e.g. Gmail App Password) |
+
+When `MAIL_SERVICE_MODE=kernel`, invitation and reset emails use in-cluster Postfix (`postfix-dev.gentian-<stage>.svc.cluster.local`); relay credentials are not required at install time.
 
 **Optional in `install.secrets.env`:**
 
@@ -121,7 +126,7 @@ Configure these files in order before the first install run:
 
 1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you deploy a definition).
 
-1. `install.secrets.env`: secrets only (master password, registry creds, SMTP creds, optional Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN` for in-cluster app installs, optional `CI_BOT_PAT` for GitHub Actions image pin on `gentian-os`).
+1. `install.secrets.env`: secrets only (master password, optional SMTP relay creds when `MAIL_SERVICE_MODE=external`, optional Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN` for in-cluster app installs, optional `CI_BOT_PAT` for GitHub Actions image pin on `gentian-os`).
 
   Cloudflare secrets (installer):
   - `CF_API_TOKEN`: optional secret for kernel wildcard DNS-01 issuance
@@ -191,9 +196,9 @@ resolved values.
 | 13 | Crossplane | Wait for `provider-helm` Healthy |
 | 13b | InfraData | Shared PostgreSQL, MariaDB, Redis, MinIO via InfraData XR |
 | 13c | Admission | Kyverno MAC admission (Stage 0) |
-| 14 | Suze | Gentian IdP: Keycloak + OpenFGA via Suze XR |
+| 14 | Suze | Gentian IdP: Keycloak + OpenFGA via Suze XR; **verifies** master-realm OIDC discovery in-cluster |
 | 15 | Operator | Install gentian-os controller (CRDs + reconcilers in `gentian-system`); optional deployments git credentials Secret for in-cluster app lifecycle |
-| 15b | Mail | External SMTP or kernel Postfix/Dovecot when `MAIL_SERVICE_MODE=kernel` |
+| 15b | Mail | External SMTP or kernel Postfix/Dovecot when `MAIL_SERVICE_MODE=kernel`; **verifies** Dovecot IMAP/LMTP when kernel |
 | 16 | Portal | Gentian portal OIDC login (Stage 1 dogfood) |
 | 17 | AppProfiles | ArgoCD ApplicationSet syncs `gentian-apps/profiles/` → AppProfile CRs |
 | 17b | App catalogue | `kubectl-gentian` plugin + AppCatalogue CRD |
@@ -429,6 +434,10 @@ make e2e-p0
 
 # Full kernel provisioning E2E
 make e2e-p1
+
+# After Stage 1 install: Keycloak OIDC + Dovecot TCP smoke (kernel mail only)
+make e2e-p5-keycloak-dovecot
+# or: make verify-kernel-services
 
 # Tear down
 make e2e-p0-clean

@@ -30,5 +30,4 @@ spec:
     serviceAccount: external-secrets
   certManager:
     letsencryptEmail: admin@desk.gentian.org
-    ingressClassName: public
   compositeDeletePolicy: Background

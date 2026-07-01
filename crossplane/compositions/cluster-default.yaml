@@ -30,7 +30,6 @@ spec:
             {{- $argoNs           := default "argocd" (dig "argocd" "namespace" "" $spec) }}
             {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
-            {{- $ingressClass     := default "public" (dig "certManager" "ingressClassName" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
             {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
             {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
@@ -348,8 +347,12 @@ spec:
                         name: letsencrypt-http01-account-key
                       solvers:
                         - http01:
-                            ingress:
-                              ingressClassName: {{ $ingressClass }}
+                            gatewayHTTPRoute:
+                              parentRefs:
+                                - group: gateway.networking.k8s.io
+                                  kind: Gateway
+                                  name: kernel-public-gateway
+                                  namespace: gentian-dev
               providerConfigRef:
                 name: kubernetes
     - step: automatically-detect-ready-composed-resources

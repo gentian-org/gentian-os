@@ -224,6 +224,8 @@ op_mail() {
         if [[ "${deployed}" == "unknown" ]]; then
             info "postfix-dev-values not yet deployed — will be provisioned by ArgoCD."
         else
+            warn "MAIL_SERVICE_MODE drift (${deployed} → ${mode}) — MAIL_SERVICE_MODE is fixed at install time."
+            warn "  Patching postfix-dev-values for recovery; prefer a clean reinstall when switching mail modes."
             info "Mode drift detected → patching postfix-dev-values..."
             _patch_postfix_configmap "${mode}"
             info ""
@@ -240,8 +242,8 @@ op_mail() {
         "$(jq -nc \
             --arg host "${EXTERNAL_SMTP_HOST:-}" \
             --arg port "${EXTERNAL_SMTP_PORT:-587}" \
-            --arg user "${OD_SMTP_RELAY_USERNAME:-}" \
-            --arg pass "${OD_SMTP_RELAY_PASSWORD:-}" \
+            --arg user "${SMTP_RELAY_USERNAME:-}" \
+            --arg pass "${SMTP_RELAY_PASSWORD:-}" \
             '{relay_host:$host,relay_port:$port,relay_username:$user,relay_password:$pass}')"
 
     # ── 3. Seed mail/dovecot in OpenBao (required for Dovecot ESO to sync) ────
@@ -274,6 +276,7 @@ op_mail() {
     if [[ "${mode}" == "kernel" ]]; then
         deploy_kernel_mail_services
         _patch_postfix_configmap kernel
+        verify_dovecot_installation || warn "Dovecot verification failed after mail reconciliation."
     fi
 
     # ── 6. Configure Keycloak kernel realm SMTP (invite/reset password emails) ─
@@ -303,8 +306,8 @@ op_secrets() {
         "$(jq -nc \
             --arg host "${EXTERNAL_SMTP_HOST:-}" \
             --arg port "${EXTERNAL_SMTP_PORT:-587}" \
-            --arg user "${OD_SMTP_RELAY_USERNAME:-}" \
-            --arg pass "${OD_SMTP_RELAY_PASSWORD:-}" \
+            --arg user "${SMTP_RELAY_USERNAME:-}" \
+            --arg pass "${SMTP_RELAY_PASSWORD:-}" \
             '{relay_host:$host,relay_port:$port,relay_username:$user,relay_password:$pass}')"
 
     info "Re-seeding mail/dovecot..."
