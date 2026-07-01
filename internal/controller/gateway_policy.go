@@ -82,6 +82,35 @@ func buildAppBackendTrafficPolicyObject(
 	return obj
 }
 
+func buildTenantCollaboraClientTrafficPolicyObject(tenant *gentianov1alpha1.Tenant, nsName string) *unstructured.Unstructured {
+	policySpec := map[string]interface{}{
+		"path": map[string]interface{}{
+			"escapedSlashesAction": "KeepUnchanged",
+		},
+		"targetRefs": []interface{}{
+			map[string]interface{}{
+				"group":       gatewayv1.GroupName,
+				"kind":        "Gateway",
+				"name":        tenantGatewayName(tenant.Name),
+				"sectionName": "https-wildcard",
+			},
+		},
+	}
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(clientTrafficPolicyGVK)
+	obj.SetName(tenantCollaboraClientTrafficPolicyName(tenant.Name))
+	obj.SetNamespace(nsName)
+	obj.SetLabels(map[string]string{
+		tenantLabel:           tenant.Name,
+		managedByLabel:        managedByValue,
+		gatewayComponentLabel: gatewayComponentApp,
+		"app.kubernetes.io/name": "collabora",
+	})
+	_ = unstructured.SetNestedField(obj.Object, policySpec, "spec")
+	return obj
+}
+
 func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]string) map[string]interface{} {
 	if len(annotations) == 0 {
 		return nil
@@ -219,11 +248,49 @@ func (r *TenantReconciler) deleteStaleBackendTrafficPoliciesForTenant(
 	return nil
 }
 
+func (r *TenantReconciler) deleteStaleClientTrafficPoliciesForTenant(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	expected map[string]struct{},
+) error {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   clientTrafficPolicyGVK.Group,
+		Version: clientTrafficPolicyGVK.Version,
+		Kind:    clientTrafficPolicyGVK.Kind + "List",
+	})
+	if err := r.List(ctx, list,
+		client.InNamespace(nsName),
+		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
+	); err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil
+		}
+		return fmt.Errorf("list tenant ClientTrafficPolicies for stale cleanup: %w", err)
+	}
+	for i := range list.Items {
+		name := list.Items[i].GetName()
+		if expected != nil {
+			if _, wanted := expected[name]; wanted {
+				continue
+			}
+		}
+		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete stale ClientTrafficPolicy %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (r *TenantReconciler) deleteTenantHTTPRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, nil); err != nil {
 		return err
 	}
 	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, nil); err != nil {
+		return err
+	}
+	if err := r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, nil); err != nil {
 		return err
 	}
 	apex := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: tenantApexRedirectRouteName(tenant.Name), Namespace: nsName}}

@@ -33,6 +33,19 @@ func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
 }
 
+func tenantCollaboraClientTrafficPolicyName(tenantName string) string {
+	return fmt.Sprintf("ctp-%s-collabora", tenantName)
+}
+
+func hasCollaboraIngress(intents []ingressIntent) bool {
+	for _, intent := range intents {
+		if intent.ingress != nil && intent.ingress.SubDomain == collaboraSubDomain {
+			return true
+		}
+	}
+	return false
+}
+
 func tenantApexRedirectRouteName(tenantName string) string {
 	return tenantPortalRedirectName(tenantName)
 }

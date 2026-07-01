@@ -109,6 +109,11 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 	}
+	// Per-tenant Collabora hosts (collabora.<tenant>.<kernel>) attach to the kernel
+	// wildcard listener; WOPI WebSocket paths need KeepUnchanged there too.
+	if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-collabora", "https-wildcard", collaboraClientTrafficPolicySpec()); err != nil {
+		return fmt.Errorf("ensure kernel wildcard Collabora ClientTrafficPolicy: %w", err)
+	}
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
 
@@ -738,10 +743,18 @@ func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicy(ctx context.
 	if spec.clientPolicy == nil {
 		return nil
 	}
-	policySpec := cloneMap(spec.clientPolicy)
-	attachKernelClientTrafficPolicyTarget(policySpec, kernelCollaboraListenerName)
+	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, kernelCollaboraListenerName, spec.clientPolicy)
+}
 
-	name := fmt.Sprintf("ctp-%s", spec.name)
+func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicyNamed(
+	ctx context.Context,
+	policyName, sectionName string,
+	clientPolicy map[string]interface{},
+) error {
+	policySpec := cloneMap(clientPolicy)
+	attachKernelClientTrafficPolicyTarget(policySpec, sectionName)
+
+	name := fmt.Sprintf("ctp-%s", policyName)
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(clientTrafficPolicyGVK)
 	desired.SetName(name)

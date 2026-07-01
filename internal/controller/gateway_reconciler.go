@@ -61,6 +61,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 
 	expectedRoutes := make(map[string]struct{}, len(intents))
 	expectedPolicies := make(map[string]struct{})
+	expectedClientPolicies := make(map[string]struct{})
 	for _, intent := range intents {
 		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress,
 			ingressHost(intent.appProfile, intent.ingress, effectiveDomain), effectiveDomain, r.KernelDomain)
@@ -69,11 +70,17 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 			expectedPolicies[btp.GetName()] = struct{}{}
 		}
 	}
+	if hasCollaboraIngress(intents) {
+		expectedClientPolicies[tenantCollaboraClientTrafficPolicyName(tenant.Name)] = struct{}{}
+	}
 
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, expectedPolicies); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, expectedClientPolicies); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.deleteSupersededTenantIngress(ctx, tenant, nsName, intents, effectiveDomain); err != nil {
