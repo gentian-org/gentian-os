@@ -271,7 +271,7 @@ func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
+	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain, "")
 	if policy.Mode != gatewayFrameAncestorsAppend {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
@@ -280,6 +280,20 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	}
 	if !strings.Contains(policy.Origins, "https://files.desk.gentian.org") {
 		t.Fatalf("sandbox origins must include kernel Files host, got %q", policy.Origins)
+	}
+}
+
+func TestComputeGatewayFrameAncestorsPolicy_Collabora(t *testing.T) {
+	t.Parallel()
+	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", collaboraSubDomain, "cloud")
+	if policy.Mode != gatewayFrameAncestorsReplace {
+		t.Fatalf("mode = %q", policy.Mode)
+	}
+	if !strings.Contains(policy.Origins, "https://cloud.demo.desk.gentian.org") {
+		t.Fatalf("collabora origins must include Nextcloud cloud host, got %q", policy.Origins)
+	}
+	if !strings.Contains(policy.Origins, "https://portal.desk.gentian.org") {
+		t.Fatalf("collabora origins must include portal host, got %q", policy.Origins)
 	}
 }
 

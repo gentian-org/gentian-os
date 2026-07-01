@@ -188,7 +188,7 @@ func kernelHTTPRouteSpecs(
 			name: kernelRouteCollabora,
 			host: officeHost,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRule("collabora", 9980, nil),
+				kernelBackendRule("collabora", 9980, kernelCollaboraResponseFilters(kernelDomain)),
 			},
 			policy:       collaboraBackendTrafficPolicySpec(),
 			clientPolicy: collaboraClientTrafficPolicySpec(),
@@ -620,6 +620,25 @@ func kernelNextcloudResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFi
 		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
 		Set: []gatewayv1.HTTPHeader{
 			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' https://%s", portalHost)},
+		},
+	}
+	return []gatewayv1.HTTPRouteFilter{
+		{
+			Type:                   gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+			ResponseHeaderModifier: &modifier,
+		},
+	}
+}
+
+func kernelCollaboraResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
+	origins := kernelFilesOrigin(kernelDomain)
+	if portal := kernelPortalOrigin(kernelDomain); portal != "" {
+		origins += " " + portal
+	}
+	modifier := gatewayv1.HTTPHeaderFilter{
+		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
+		Set: []gatewayv1.HTTPHeader{
+			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", origins)},
 		},
 	}
 	return []gatewayv1.HTTPRouteFilter{

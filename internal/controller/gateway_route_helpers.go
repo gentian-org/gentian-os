@@ -101,7 +101,11 @@ func buildAppHTTPRoute(
 			},
 		},
 	}
-	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain); len(filters) > 0 {
+	mainIngressSubDomain := ""
+	if profile.Spec.Ingress != nil {
+		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
+	}
+	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain); len(filters) > 0 {
 		rule.Filters = filters
 	}
 
@@ -242,8 +246,8 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 	}
 }
 
-func gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingressSubDomain string) []gatewayv1.HTTPRouteFilter {
-	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain)
+func gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string) []gatewayv1.HTTPRouteFilter {
+	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain)
 	if policy.Origins == "" {
 		return nil
 	}
@@ -279,8 +283,17 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain string) gatewayFrameAncestorsPolicy {
+func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string) gatewayFrameAncestorsPolicy {
 	switch {
+	case ingressSubDomain == collaboraSubDomain && effectiveDomain != "" && mainIngressSubDomain != "":
+		origins := fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain)
+		if kernelDomain != "" {
+			origins += fmt.Sprintf(" https://portal.%s", kernelDomain)
+		}
+		return gatewayFrameAncestorsPolicy{
+			Mode:    gatewayFrameAncestorsReplace,
+			Origins: origins,
+		}
 	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
 		return gatewayFrameAncestorsPolicy{
 			Mode:    gatewayFrameAncestorsAppend,
