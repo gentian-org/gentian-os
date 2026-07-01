@@ -27,7 +27,7 @@ spec:
 
             {{- $fgaSpec := default dict $spec.openfga }}
             {{- $fgaRelease := default "gentian-openfga" $fgaSpec.helmReleaseName }}
-            {{- $fgaVersion := default "0.2.23" $fgaSpec.chartVersion }}
+            {{- $fgaVersion := default "0.3.10" $fgaSpec.chartVersion }}
 
             {{- $kcSpec := default dict $spec.keycloak }}
             {{- $kcRelease := default "gentian-idp-keycloak" $kcSpec.helmReleaseName }}

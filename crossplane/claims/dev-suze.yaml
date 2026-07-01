@@ -16,3 +16,5 @@ spec:
   environment: dev
   idpNamespace: platform-kernel
   compositeDeletePolicy: Background
+  openfga:
+    chartVersion: "0.3.10"

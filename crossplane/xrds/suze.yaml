@@ -44,7 +44,7 @@ spec:
                       default: gentian-openfga
                     chartVersion:
                       type: string
-                      default: "0.2.23"
+                      default: "0.3.10"
                 keycloak:
                   type: object
                   properties:
