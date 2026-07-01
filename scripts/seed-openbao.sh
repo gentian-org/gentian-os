@@ -27,7 +27,6 @@ set -euo pipefail
 #   storage/minio
 #   identity/keycloak-bootstrap
 #   authz/openfga
-#   apps/nextcloud
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
 #   storage/registry              (optional, requires args 2+3)
@@ -111,9 +110,6 @@ KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
 
 # --- Dovecot ---
 DOVECOT_DOVEADM_PW=$(derive_password "dovecot" "doveadm_password")
-
-# --- SMTP (placeholder — configure real SMTP credentials manually) ---
-SMTP_PW=$(derive_password "smtp" "password")
 
 echo "  All passwords derived."
 
@@ -240,36 +236,6 @@ kv_put_once "storage/minio" "$(cat <<EOF
   "ums_password":          "${MINIO_UMS_PW}",
   "migrations_password":   "${MINIO_MIGRATIONS_PW}",
   "dovecot_password":      "${MINIO_DOVECOT_PW}"
-}
-EOF
-)"
-
-# --- Collabora (kernel office service) ---
-COLLABORA_ADMIN_PW=$(derive_password "collabora" "admin_password")
-kv_put_once "apps/collabora" "$(cat <<EOF
-{
-  "admin_password": "${COLLABORA_ADMIN_PW}"
-}
-EOF
-)"
-
-# --- Nextcloud ---
-NC_ADMIN_PW=$(derive_password "nextcloud" "admin_password")
-NC_STATUS_PW=$(derive_password "nextcloud" "status_password")
-NC_OIDC_SECRET=$(derive_password "nextcloud" "oidc_client_secret")
-NC_INTEGRATION_PW=$(derive_password "nextcloud" "integration_password")
-NC_METRICS_TOKEN=$(derive_password "nextcloud" "metrics_token")
-NC_MINIO_PW=$(derive_password "nextcloud" "minio_password")
-NC_DB_PW=$(derive_password "postgres" "nextcloud_user")
-kv_put_once "apps/nextcloud" "$(cat <<EOF
-{
-  "admin_password":       "${NC_ADMIN_PW}",
-  "status_password":      "${NC_STATUS_PW}",
-  "oidc_client_secret":   "${NC_OIDC_SECRET}",
-  "integration_password": "${NC_INTEGRATION_PW}",
-  "metrics_token":        "${NC_METRICS_TOKEN}",
-  "minio_password":       "${NC_MINIO_PW}",
-  "db_password":          "${NC_DB_PW}"
 }
 EOF
 )"
