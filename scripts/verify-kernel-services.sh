@@ -51,12 +51,8 @@ _run_ephemeral_pod() {
     kubectl run "${name}" --restart=Never --image="${image}" \
         --command -- "$@" >/dev/null 2>&1 || return 1
 
-    if ! kubectl wait --for=condition=Ready "pod/${name}" --timeout=120s >/dev/null 2>&1; then
-        warn "  Ephemeral pod ${name} did not become Ready."
-        kubectl logs "${name}" 2>/dev/null || true
-        kubectl delete pod "${name}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
-        return 1
-    fi
+    # One-shot curl/busybox pods often skip Ready and go straight to Succeeded.
+    kubectl wait --for=condition=Ready "pod/${name}" --timeout=30s >/dev/null 2>&1 || true
 
     local deadline=$((SECONDS + 120))
     while (( SECONDS < deadline )); do
@@ -74,6 +70,11 @@ _run_ephemeral_pod() {
         esac
         sleep 2
     done
+
+    if [[ "${exit_code}" -ne 0 && "${phase}" != "Failed" ]]; then
+        warn "  Ephemeral pod ${name} did not complete (phase=${phase:-unknown})."
+        kubectl logs "${name}" 2>/dev/null || true
+    fi
 
     kubectl delete pod "${name}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
     return "${exit_code}"
@@ -107,8 +108,11 @@ verify_keycloak_installation() {
 
     info "Waiting for Keycloak workload in ${ns} (up to ${timeout}s)..."
     if ! kubectl wait pods -n "${ns}" \
+        -l 'app.kubernetes.io/name=keycloakx' \
+        --for=condition=Ready --timeout="${timeout}s" >/dev/null 2>&1 \
+        && ! kubectl wait pods -n "${ns}" \
         -l 'app.kubernetes.io/name=keycloak' \
-        --for=condition=Ready --timeout="${timeout}s" >/dev/null 2>&1; then
+        --for=condition=Ready --timeout=30s >/dev/null 2>&1; then
         # keycloakx chart label may differ on older releases — fall back to service endpoints.
         warn "No Ready pod with app.kubernetes.io/name=keycloak — checking Service endpoints..."
         local kc_svc deadline=$((SECONDS + timeout))
