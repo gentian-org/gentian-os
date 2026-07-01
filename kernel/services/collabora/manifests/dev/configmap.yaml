@@ -1,0 +1,97 @@
+# =============================================================================
+# collabora — plain values ConfigMaps (Pattern B)
+#
+# Two ConfigMaps merged by provider-helm before the sensitive-values Secret:
+#   1. collabora-base-values  — non-secret defaults
+#   2. collabora-dev-values   — env-specific sizing
+#
+# DO NOT put any secret values here. Admin password comes from the
+# collabora-sensitive-values Secret (see externalsecret.yaml).
+#
+# aliasgroups must list the Nextcloud kernel service host so that Collabora
+# accepts WOPI callbacks from it.
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collabora-base-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    fullnameOverride: "collabora"
+
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+
+    collabora:
+      username: "collabora-internal-admin"
+      # Whitelist the Nextcloud kernel service host for WOPI requests.
+      # Nextcloud is a shared kernel service at files.desk.gentian.org.
+      aliasgroups:
+        - host: "https://files.desk.gentian.org"
+      extra_params: >
+        --o:ssl.enable=false
+        --o:ssl.termination=true
+        --o:ssl.ssl_verification=false
+        --o:server_name=office.desk.gentian.org
+        --o:fetch_update_check=0
+        --o:remote_font_config.url=https://files.desk.gentian.org/apps/richdocuments/settings/fonts.json
+        --o:net.connection_timeout_secs=3600
+        --o:net.frame_ancestors=https://*.desk.gentian.org
+        --o:mount_jail_tree=false
+        --o:security.enable_macros_execution=false
+        --o:security.macro_security_level=1
+        --o:logging.disable_server_audit=true
+        --o:logging.anonymize.anonymize_user_data=true
+
+    # Chart-level ingress disabled — ingress.yaml creates the Kubernetes Ingress
+    # resource directly (a single shared endpoint, not per-tenant).
+    ingress:
+      enabled: false
+
+    podAnnotations:
+      # Disable AppArmor for the Collabora container. The default
+      # cri-containerd.apparmor.d profile blocks mount() syscalls used
+      # by coolmount; keeping it unconfined avoids future breakage if
+      # capabilities are ever elevated to enable bind-mount jailing.
+      container.apparmor.security.beta.kubernetes.io/collabora-online: "unconfined"
+
+    podSecurityContext:
+      fsGroup: 1001
+
+    securityContext:
+      allowPrivilegeEscalation: true
+      privileged: false
+      readOnlyRootFilesystem: false
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      seccompProfile:
+        type: "RuntimeDefault"
+      capabilities:
+        drop: ["ALL"]
+        add: ["CHOWN", "FOWNER", "MKNOD", "SYS_ADMIN", "SYS_CHROOT"]
+
+    serviceAccount:
+      create: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collabora-dev-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "500m"
+        memory: "512Mi"

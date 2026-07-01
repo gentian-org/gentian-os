@@ -98,9 +98,6 @@ data:
         - name: migrations
           versioning: Suspended
           withLock: false
-        - name: nextcloud
-          versioning: Suspended
-          withLock: false
         - name: notes
           versioning: Versioned
           withLock: false
@@ -114,14 +111,6 @@ data:
               effect: Allow
               actions: [s3:*]
             - resources: [arn:aws:s3:::migrations/*]
-              effect: Allow
-              actions: [s3:*]
-        - name: nextcloud-bucket-policy
-          statements:
-            - resources: [arn:aws:s3:::nextcloud]
-              effect: Allow
-              actions: [s3:*]
-            - resources: [arn:aws:s3:::nextcloud/*]
               effect: Allow
               actions: [s3:*]
         - name: notes-bucket-policy

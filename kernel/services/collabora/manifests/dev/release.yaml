@@ -1,0 +1,54 @@
+# =============================================================================
+# collabora — provider-helm Release CR (Pattern B)
+#
+# Deploys Collabora Online (WOPI document editing server) as a shared kernel
+# service in the gentian-dev namespace. All tenants with office.enabled=true
+# use this single instance via the cluster-internal URL:
+#   http://collabora.gentian-dev.svc.cluster.local:9980
+#
+# Public ingress: office.desk.gentian.org (see ingress.yaml)
+#
+# Values merge order (last wins):
+#   1. collabora-base-values   ConfigMap  — non-secret defaults
+#   2. collabora-dev-values    ConfigMap  — env-specific sizing + endpoints
+#   3. collabora-sensitive-values Secret  — admin password from OpenBao
+#
+# Wave 12: after Nextcloud notifypush (wave 11), before tenant provisioning.
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: collabora-dev
+  annotations:
+    crossplane.io/external-name: collabora-dev
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  forProvider:
+    chart:
+      name: collabora-online
+      repository: oci://registry.opencode.de/bmi/opendesk/components/supplier/collabora/charts-mirror
+      version: "1.1.45"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: true
+    waitTimeout: "5m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: collabora-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: collabora-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: collabora-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+  providerConfigRef:
+    name: kubernetes

@@ -1,0 +1,12 @@
+# ROUTING_MODE=gateway overlay for nextcloud-notifypush (merged last via optional valuesFrom).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-notifypush-gateway-values
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    ingress:
+      enabled: false

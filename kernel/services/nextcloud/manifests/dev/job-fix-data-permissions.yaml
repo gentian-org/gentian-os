@@ -1,0 +1,50 @@
+# =============================================================================
+# Nextcloud data directory permission fix — ArgoCD PreSync hook
+#
+# The microk8s-hostpath PVC root is owned by root:root (uid 0) but the
+# Nextcloud container runs as uid 101. Nextcloud's checkDataDirectoryPermissions
+# calls chmod($datadir, 0770) to remove world-read, which fails for uid 101
+# when the directory is owned by root → HTTP 503 on every request including
+# the liveness probe → CrashLoopBackOff.
+#
+# This job runs as root before each sync and chowns the PVC root to uid 101
+# so that Nextcloud can chmod it successfully.
+# =============================================================================
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nextcloud-fix-data-permissions
+  namespace: gentian-dev
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              # Chown only the root of the PVC; files inside are already owned
+              # by uid 101 from previous Nextcloud runs.
+              chown 101:101 /data
+              chmod 0770 /data
+              echo "Permissions fixed: $(stat -c '%U:%G %a' /data)"
+          volumeMounts:
+            - name: nextcloud-data-pvc
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: nextcloud-data-pvc
+          persistentVolumeClaim:
+            claimName: nextcloud-data-pvc

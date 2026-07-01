@@ -1,0 +1,47 @@
+# =============================================================================
+# nextcloud-notifypush — provider-helm Release CR (Pattern B migration)
+# Replaces helm_release.nextcloud_notifypush from nextcloud.tf.
+# wait=true — gates on the AIO chart being initialised.
+# =============================================================================
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: nextcloud-notifypush-dev
+  annotations:
+    crossplane.io/external-name: nextcloud-notifypush-dev
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  forProvider:
+    chart:
+      name: opendesk-nextcloud-notifypush
+      repository: oci://registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-nextcloud
+      version: "4.7.2"
+      pullSecretRef:
+        name: registry-credentials-helm
+        namespace: crossplane-system
+    namespace: gentian-dev
+    wait: true
+    waitTimeout: "5m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: nextcloud-notifypush-base-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: nextcloud-notifypush-dev-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: nextcloud-notifypush-sensitive-values
+          namespace: gentian-dev
+          key: sensitive-values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: nextcloud-notifypush-gateway-values
+          namespace: gentian-dev
+          key: values.yaml
+          optional: true
+  providerConfigRef:
+    name: kubernetes
