@@ -44,9 +44,6 @@ func tenantProvisioningConfigMapName(tenantName string) string {
 // that Crossplane applies via tenant-default. The operator seeds
 // credentials and updates this ConfigMap; it does not create those resources directly.
 func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if err := r.cleanupOrphanedNextcloudGroupJob(ctx, tenant); err != nil {
-		return fmt.Errorf("cleanup orphaned Nextcloud group Job: %w", err)
-	}
 	jobs, err := r.buildTenantProvisioningJobs(ctx, tenant)
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)

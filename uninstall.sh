@@ -6,7 +6,7 @@
 #
 # Default (safe) mode:
 #   - Undeploys all tenants (GitOps + in-cluster) unless --keep-tenants
-#   - Removes the Nubus provider-helm Release and associated Secrets/ConfigMaps
+#   - Removes kernel Pattern B Helm Release CRs and associated Secrets/ConfigMaps
 #   - Removes the Cluster XR (waits for Crossplane GC)
 #   - Removes Crossplane resources (XRD, Composition, providers)
 #   - Tenant undeploy removes operator manifest-bridge ConfigMaps (tenant-*-provisioning-jobs)
@@ -376,55 +376,23 @@ else
 fi
 
 # =============================================================================
-# Step 1b — Remove Nubus provider-helm Release and associated Secrets/ConfigMaps
-# Must run before Crossplane providers are removed so the Release GC can run.
+# Step 1b — Remove kernel Pattern B Helm Releases and associated Secrets/ConfigMaps
+# Must run before Crossplane providers are removed so Release GC can run.
 # =============================================================================
-banner "Step 1b — Remove Nubus provider-helm Release"
+banner "Step 1b — Remove kernel Pattern B Helm Releases"
 
-if kubectl get release.helm.crossplane.io/nubus-dev >/dev/null 2>&1; then
-    info "Deleting provider-helm Release nubus-dev..."
-    kubectl delete release.helm.crossplane.io/nubus-dev --timeout=60s || true
-    info "Waiting for Helm GC (nubus-dev uninstall, max 3m)..."
-    local_deadline=$((SECONDS + 180))
-    while kubectl get release.helm.crossplane.io/nubus-dev >/dev/null 2>&1; do
-        if (( SECONDS > local_deadline )); then
-            warn "Release nubus-dev still present after 3m — forcing finalizer removal."
-            kubectl patch release.helm.crossplane.io/nubus-dev \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                2>/dev/null || true
-            break
-        fi
-        sleep 5
-    done
-    success "Release nubus-dev removed."
-else
-    info "Release nubus-dev not found; skipping."
-fi
-
-# ── Pattern B Release CRs (kernel/services/*/manifests/<env>/release.yaml) ───
+# Pattern B Release CRs (kernel/services/*/manifests/<env>/release.yaml)
 # Discovered from manifests (same source as update.sh --reconcile-releases), not a
 # hardcoded app list. Tenant app Helm releases are removed with Tenant/App CRs.
 delete_kernel_helm_releases "${ENV}"
 
 for ns in "${SERVICES_NS}" "${INFRA_NS}"; do
-    info "Removing nubus ConfigMaps / Secrets from ${ns}..."
+    info "Removing kernel ConfigMaps / Secrets from ${ns}..."
     kubectl delete configmap \
-        nubus-base-values \
-        nubus-dev-values \
-        nubus-dev-udm-listener-nats-patch \
-        nubus-dev-ldap-gentian-acl \
         postgresql-base-values \
         postgresql-dev-values \
         mariadb-base-values \
         mariadb-dev-values \
-        nextcloud-base-values \
-        nextcloud-dev-values \
-        nextcloud-management-base-values \
-        nextcloud-management-dev-values \
-        nextcloud-notifypush-base-values \
-        nextcloud-notifypush-dev-values \
-        collabora-base-values \
-        collabora-dev-values \
         cryptpad-base-values \
         cryptpad-dev-values \
         postfix-base-values \
@@ -433,47 +401,25 @@ for ns in "${SERVICES_NS}" "${INFRA_NS}"; do
         dovecot-dev-values \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete externalsecret \
-        nubus-credentials \
-        nubus-sensitive-values \
         portal-object-storage-credentials \
-        keycloak-bootstrap-ldap-credentials \
         postgresql-sensitive-values \
         mariadb-sensitive-values \
-        nextcloud-sensitive-values \
-        nextcloud-management-sensitive-values \
-        nextcloud-notifypush-sensitive-values \
         postfix-sensitive-values \
         dovecot-sensitive-values \
-        collabora-sensitive-values \
-        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
-    kubectl delete secretstore nubus-static \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     # ESO-owned Secrets: delete only if ExternalSecrets are gone
     kubectl delete secret \
-        nubus-credentials \
-        nubus-sensitive-values \
         portal-object-storage-credentials \
-        ums-keycloak-bootstrap-ldap-credentials \
         postgresql-sensitive-values \
         mariadb-sensitive-values \
-        nextcloud-sensitive-values \
-        nextcloud-management-sensitive-values \
-        nextcloud-notifypush-sensitive-values \
         postfix-sensitive-values \
         dovecot-sensitive-values \
-        collabora-sensitive-values \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secret registry-credentials \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
 done
 
-# Operator Secret in platform-kernel (replaces kubernetes_secret.nextcloud_admin)
-kubectl delete externalsecret nextcloud-admin -n platform-kernel \
-    --ignore-not-found=true --timeout=30s 2>/dev/null || true
-kubectl delete secret nextcloud-admin -n platform-kernel \
-    --ignore-not-found=true --timeout=30s 2>/dev/null || true
-
-success "Nubus + Pattern B resources removed."
+success "Kernel Pattern B resources removed."
 
 # =============================================================================
 # Step 1c — Drain all remaining Crossplane managed resources
@@ -759,7 +705,6 @@ for secret in \
     gentian-os-kernel-database-mariadb \
     gentian-os-kernel-cache-redis \
     gentian-os-kernel-storage-minio \
-    gentian-os-kernel-identity-nubus \
     gentian-os-kernel-identity-keycloak-bootstrap \
     gentian-os-kernel-mail-postfix \
     gentian-os-kernel-mail-dovecot \
@@ -1073,7 +1018,7 @@ _delete_namespace() {
 #  (a) NFS directories are actually cleaned up (reclaimPolicy: Delete)
 #  (b) PVC etcd entries are gone before the new install creates StatefulSets
 #      with the same volumeClaimTemplate names — otherwise the new StatefulSets
-#      bind to the surviving old PVCs and inherit old data (e.g. LDAP users).
+#      bind to the surviving old PVCs and inherit stale data.
 # Helm uninstall intentionally preserves StatefulSet volumeClaimTemplate PVCs.
 _drain_pvcs() {
     local ns="$1"

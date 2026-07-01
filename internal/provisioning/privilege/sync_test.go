@@ -8,12 +8,12 @@ import (
 	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
-func TestNextcloudUID_PrefersOpenDeskUsername(t *testing.T) {
+func TestNextcloudUID_PrefersGentianUsername(t *testing.T) {
 	t.Parallel()
 	uid := NextcloudUID(authz.KeycloakUser{
 		Username:   "john-doe@demo.example",
 		Email:      "john-doe@demo.example",
-		Attributes: map[string][]string{"opendesk_username": {"john-doe"}},
+		Attributes: map[string][]string{"gentian_username": {"john-doe"}},
 	})
 	if uid != "john-doe" {
 		t.Fatalf("NextcloudUID() = %q", uid)

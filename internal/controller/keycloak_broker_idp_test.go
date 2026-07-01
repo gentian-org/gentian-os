@@ -20,7 +20,7 @@ func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 		`idp-detect-existing-broker-user`,
 		`first broker login flow ${FLOW_ALIAS} ready`,
 		`oidc-user-attribute-idp-mapper`,
-		`claim.name":"opendesk_username`,
+		`claim.name":"gentian_username`,
 		`user.attribute":"uid"`,
 	} {
 		if !strings.Contains(script, want) {

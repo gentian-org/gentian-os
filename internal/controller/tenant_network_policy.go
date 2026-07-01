@@ -69,6 +69,11 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
+	grants, err := r.loadAppGrantsByConsumer(ctx, nsName)
+	if err != nil {
+		return err
+	}
+
 	profiles := map[string]*gentianov1alpha1.AppProfile{}
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
@@ -87,6 +92,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		Apps:          tenant.Spec.Apps,
 		Profiles:      profiles,
 		Bindings:      bindings,
+		Grants:        grants,
 		Config:        r.tenantNetPolicyConfig(),
 		KubeAPIEndpts: r.loadKubeAPIEndpointSlice(ctx),
 	}
@@ -137,4 +143,20 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		}
 	}
 	return nil
+}
+
+func (r *TenantReconciler) loadAppGrantsByConsumer(ctx context.Context, nsName string) (map[string]*gentianov1alpha1.AppGrant, error) {
+	list := &gentianov1alpha1.AppGrantList{}
+	if err := r.List(ctx, list, client.InNamespace(nsName)); err != nil {
+		return nil, fmt.Errorf("list AppGrants in %s: %w", nsName, err)
+	}
+	out := make(map[string]*gentianov1alpha1.AppGrant, len(list.Items))
+	for i := range list.Items {
+		ag := &list.Items[i]
+		if ag.Spec.App == "" {
+			continue
+		}
+		out[ag.Spec.App] = ag
+	}
+	return out, nil
 }

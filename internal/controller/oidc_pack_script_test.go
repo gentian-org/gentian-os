@@ -13,34 +13,36 @@ import (
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
+const testOIDCCatalogFixture = "../oidc/testdata/minimal-oidc-catalog.yaml"
+
 func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/gentian-oidc-catalog.yaml")
-	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-client")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	if !oidcPacksNeedEntitlementGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
-		t.Fatal("expected opendesk-jitsi pack to require entitlement groups")
+		t.Fatal("expected catalogue-test-client pack to require entitlement groups")
 	}
 	if oidcPacksNeedEntitlementGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
 		t.Fatal("expected custom client without pack to skip entitlement group gate")
 	}
 }
 
-func TestBuildOIDCPackScriptJitsi(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/gentian-oidc-catalog.yaml")
-	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+func TestBuildOIDCPackScript(t *testing.T) {
+	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-client")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	script := buildOIDCPackScript("demo", "opendesk-jitsi", pack, templates,
-		[]string{"https://meet.demo.desk.gentian.org/*"}, "", "gentian:tenant:demo:app:opendesk-jitsi")
+	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
+		[]string{"https://app.demo.desk.gentian.org/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
 	for _, want := range []string{
-		"opendesk-jitsi-scope",
-		"opendesk-jitsi-access-control",
-		"gentian:tenant:demo:app:opendesk-jitsi",
+		"catalogue-test-client-scope",
+		"catalogue-test-client-access-control",
+		"gentian:tenant:demo:app:catalogue-test-client",
 		"PUBLIC_CLIENT=true",
-		"https://meet.demo.desk.gentian.org/*",
+		"https://app.demo.desk.gentian.org/*",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
@@ -52,11 +54,11 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if !strings.Contains(script, "_kj_scope_id_from_list") {
 		t.Fatal("expected dedicated client-scope id lookup helper")
 	}
-	if strings.Contains(script, `\"name\":"opendesk_useruuid"`) {
+	if strings.Contains(script, `\"name\":"gentian_useruuid"`) {
 		t.Fatal("mapper POST JSON must quote name field values")
 	}
-	if !strings.Contains(script, `"name":"opendesk_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
-		t.Fatal("mapper POST body must include opendesk_useruuid name and usermodel protocolMapper")
+	if !strings.Contains(script, `"name":"gentian_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
+		t.Fatal("mapper POST body must include gentian_useruuid name and usermodel protocolMapper")
 	}
 	if !strings.Contains(script, `"consentRequired":false`) {
 		t.Fatal("mapper POST body must set consentRequired false")
@@ -123,9 +125,9 @@ func TestBuildOIDCBrowserFlowScript(t *testing.T) {
 func TestResolveOIDCRedirectURIsFromProfile(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Spec.Domain = "demo.desk.gentian.org"
-	uris := resolveOIDCRedirectURIs(tenant, "jitsi",
-		[]string{"https://meet.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
-	if len(uris) != 1 || uris[0] != "https://meet.demo.desk.gentian.org/*" {
+	uris := resolveOIDCRedirectURIs(tenant, "test-app",
+		[]string{"https://app.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
+	if len(uris) != 1 || uris[0] != "https://app.demo.desk.gentian.org/*" {
 		t.Fatalf("redirects: %v", uris)
 	}
 }

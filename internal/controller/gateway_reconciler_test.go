@@ -271,7 +271,7 @@ func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain, "")
+	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
 	if policy.Mode != gatewayFrameAncestorsAppend {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
@@ -283,17 +283,28 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	}
 }
 
-func TestComputeGatewayFrameAncestorsPolicy_Collabora(t *testing.T) {
+func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", collaboraSubDomain, "cloud")
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
+		},
+	}
+	policy, ok, err := ingressFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "cloud", ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected custom policy")
+	}
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
 	if !strings.Contains(policy.Origins, "https://cloud.demo.desk.gentian.org") {
-		t.Fatalf("collabora origins must include Nextcloud cloud host, got %q", policy.Origins)
+		t.Fatalf("origins = %q", policy.Origins)
 	}
 	if !strings.Contains(policy.Origins, "https://portal.desk.gentian.org") {
-		t.Fatalf("collabora origins must include portal host, got %q", policy.Origins)
+		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
 

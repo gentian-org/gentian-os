@@ -99,13 +99,13 @@ func TestSeederSeedOIDCUpdatesIssuerPreservesSecret(t *testing.T) {
 	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
 
 	ctx := context.Background()
-	first, err := s.SeedOIDC(ctx, "demo", "element",
-		"https://id.example/realms/demo", "opendesk-synapse")
+	first, err := s.SeedOIDC(ctx, "demo", "test-app",
+		"https://id.example/realms/demo", "test-oidc-client")
 	if err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
-	second, err := s.SeedOIDC(ctx, "demo", "element",
-		"https://id.example/auth/realms/demo", "opendesk-synapse")
+	second, err := s.SeedOIDC(ctx, "demo", "test-app",
+		"https://id.example/auth/realms/demo", "test-oidc-client")
 	if err != nil {
 		t.Fatalf("second seed: %v", err)
 	}

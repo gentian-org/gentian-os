@@ -1,15 +1,26 @@
 apiVersion: gentianos.io/v1alpha1
 kind: OIDCPackCatalog
 metadata:
-  name: gentian
+  name: test-oidc-catalog
   labels:
-    gentianos.io/oidc-catalog: gentian
+    gentianos.io/oidc-catalog: test
+    gentianos.io/profile-name: openproject
 spec:
+  mapperTemplates:
+    gentian_useruuid:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: entryUUID
+        claim.name: gentian_useruuid
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
   packs:
-    opendesk-openproject:
-      scopeName: opendesk-openproject-scope
-      clientRole: opendesk-openproject-access-control
-      entitlementGroup: managed-by-attribute-Projectmanagement
+    catalogue-test-client:
+      scopeName: catalogue-test-client-scope
+      clientRole: catalogue-test-client-access-control
+      entitlementGroup: managed-by-attribute-TestApp
       fullScopeAllowed: false
       defaultScopes:
         - profile
@@ -18,4 +29,4 @@ spec:
         - web-origins
         - acr
       mappers:
-        - opendesk_useruuid
+        - gentian_useruuid

@@ -19,9 +19,6 @@ const cryptpadSandboxSubDomain = "pad-sandbox"
 // operator must append frame-ancestors, not replace the upstream header.
 const cryptpadMainSubDomain = "pad"
 
-// collaboraSubDomain is the per-tenant Collabora ingress prefix (Nextcloud Office).
-const collaboraSubDomain = "collabora"
-
 // keycloakOIDCAncestorOrigins builds space-separated https origins for the
 // Keycloak proxy ingress frame-ancestors policy: kernel portal plus, per tenant
 // effective domain, a tenant wildcard and explicit OIDC app ingress hosts

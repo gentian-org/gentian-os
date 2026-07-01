@@ -19,7 +19,7 @@ func NextcloudTenantServiceURL(tenantNamespace string) string {
 
 // NextcloudUID resolves the Nextcloud account id for a Keycloak user.
 func NextcloudUID(user authz.KeycloakUser) string {
-	if vals := user.Attributes["opendesk_username"]; len(vals) > 0 {
+	if vals := user.Attributes["gentian_username"]; len(vals) > 0 {
 		if uid := strings.TrimSpace(vals[0]); uid != "" {
 			return uid
 		}

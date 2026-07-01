@@ -109,10 +109,14 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 	}
-	// Per-tenant Collabora hosts (collabora.<tenant>.<kernel>) attach to the kernel
-	// wildcard listener; WOPI WebSocket paths need KeepUnchanged there too.
-	if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-collabora", "https-wildcard", collaboraClientTrafficPolicySpec()); err != nil {
-		return fmt.Errorf("ensure kernel wildcard Collabora ClientTrafficPolicy: %w", err)
+	needsWildcard, err := clusterNeedsEscapedSlashesKeepUnchanged(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("detect escaped-slashes gateway policy need: %w", err)
+	}
+	if needsWildcard {
+		if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-escaped-slashes", "https-wildcard", escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
+			return fmt.Errorf("ensure kernel wildcard escaped-slashes ClientTrafficPolicy: %w", err)
+		}
 	}
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
@@ -196,7 +200,7 @@ func kernelHTTPRouteSpecs(
 				kernelBackendRule("collabora", 9980, kernelCollaboraResponseFilters(kernelDomain)),
 			},
 			policy:       collaboraBackendTrafficPolicySpec(),
-			clientPolicy: collaboraClientTrafficPolicySpec(),
+			clientPolicy: escapedSlashesKeepUnchangedClientTrafficPolicySpec(),
 		},
 		kernelHTTPRouteSpec{
 			name: kernelRouteIntercom,
@@ -701,10 +705,10 @@ func collaboraBackendTrafficPolicySpec() map[string]interface{} {
 	}
 }
 
-func collaboraClientTrafficPolicySpec() map[string]interface{} {
+func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{} {
 	return map[string]interface{}{
 		"path": map[string]interface{}{
-			// Collabora /cool/... WebSocket URLs embed encoded WOPI paths (%3A, %2F, …).
+			// WOPI/WebSocket URLs may embed encoded paths (%3A, %2F, …).
 			// Envoy default normalization rejects them with path_normalization_failed.
 			"escapedSlashesAction": "KeepUnchanged",
 		},

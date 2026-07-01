@@ -13,7 +13,7 @@ type MapperTemplate struct {
 	Config         map[string]string `json:"config"`
 }
 
-// Pack is the OpenDesk-style OIDC configuration applied per tenant realm.
+// Pack is the OIDC configuration applied per tenant realm for one clientId.
 type Pack struct {
 	ScopeName        string   `json:"scopeName"`
 	ScopeDescription string   `json:"scopeDescription"`

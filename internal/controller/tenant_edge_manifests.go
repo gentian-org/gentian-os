@@ -67,8 +67,8 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 			objects = append(objects, btp)
 		}
 	}
-	if hasCollaboraIngress(intents) {
-		objects = append(objects, buildTenantCollaboraClientTrafficPolicyObject(tenant, nsName))
+	if anyIntentNeedsEscapedSlashesKeepUnchanged(intents) {
+		objects = append(objects, buildTenantEscapedSlashesClientTrafficPolicyObject(tenant, nsName))
 	}
 
 	return objects, nil

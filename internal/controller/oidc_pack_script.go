@@ -10,7 +10,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
-// buildOIDCPackScript provisions OpenDesk-style Keycloak client scope, mappers,
+// buildOIDCPackScript provisions Keycloak client scope, mappers,
 // client role, group role mapping, and default scopes for one OIDC client.
 func buildOIDCPackScript(
 	realmName, clientID string,

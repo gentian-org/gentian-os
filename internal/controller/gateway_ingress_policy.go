@@ -1,0 +1,115 @@
+// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+const (
+	gatewayFrameAncestorsOriginPortal  = "portal"
+	gatewayFrameAncestorsOriginMainApp = "mainApp"
+)
+
+func ingressFrameAncestorsPolicy(
+	kernelDomain, effectiveDomain, mainIngressSubDomain string,
+	ingress *gentianov1alpha1.IngressSpec,
+) (gatewayFrameAncestorsPolicy, bool, error) {
+	spec, err := gentianov1alpha1.IngressGatewayFrameAncestors(ingress)
+	if err != nil {
+		return gatewayFrameAncestorsPolicy{}, false, fmt.Errorf("parse %s: %w", gentianov1alpha1.AnnotationIngressGatewayFrameAncestors, err)
+	}
+	if spec == nil || len(spec.Origins) == 0 {
+		return gatewayFrameAncestorsPolicy{}, false, nil
+	}
+	mode := strings.TrimSpace(spec.Mode)
+	if mode == "" {
+		mode = gatewayFrameAncestorsReplace
+	}
+	var origins []string
+	for _, token := range spec.Origins {
+		switch strings.TrimSpace(token) {
+		case gatewayFrameAncestorsOriginPortal:
+			if kernelDomain != "" {
+				origins = append(origins, fmt.Sprintf("https://portal.%s", kernelDomain))
+			}
+		case gatewayFrameAncestorsOriginMainApp:
+			if effectiveDomain != "" && mainIngressSubDomain != "" {
+				origins = append(origins, fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
+			}
+		default:
+			expanded := strings.ReplaceAll(token, "${TENANT_DOMAIN}", effectiveDomain)
+			if expanded != "" {
+				origins = append(origins, expanded)
+			}
+		}
+	}
+	if len(origins) == 0 {
+		return gatewayFrameAncestorsPolicy{}, false, nil
+	}
+	return gatewayFrameAncestorsPolicy{
+		Mode:    mode,
+		Origins: strings.Join(origins, " "),
+	}, true, nil
+}
+
+func ingressNeedsEscapedSlashesKeepUnchanged(ingress *gentianov1alpha1.IngressSpec) bool {
+	return gentianov1alpha1.IngressGatewayEscapedSlashesAction(ingress) == "KeepUnchanged"
+}
+
+func anyIntentNeedsEscapedSlashesKeepUnchanged(intents []ingressIntent) bool {
+	for _, intent := range intents {
+		if ingressNeedsEscapedSlashesKeepUnchanged(intent.ingress) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
+	var intents []ingressIntent
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := c.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+		if profile.Spec.Ingress != nil {
+			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})
+		}
+		for i := range profile.Spec.AdditionalIngresses {
+			intents = append(intents, ingressIntent{
+				appProfile: additionalIngressProfile(app.Profile, i),
+				profile:    profile,
+				ingress:    &profile.Spec.AdditionalIngresses[i],
+			})
+		}
+	}
+	return intents, nil
+}
+
+func clusterNeedsEscapedSlashesKeepUnchanged(ctx context.Context, c client.Client) (bool, error) {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, tenants); err != nil {
+		return false, err
+	}
+	for i := range tenants.Items {
+		intents, err := collectTenantIngressIntents(ctx, c, &tenants.Items[i])
+		if err != nil {
+			return false, err
+		}
+		if anyIntentNeedsEscapedSlashesKeepUnchanged(intents) {
+			return true, nil
+		}
+	}
+	return false, nil
+}

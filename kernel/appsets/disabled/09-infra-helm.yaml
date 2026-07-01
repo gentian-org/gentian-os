@@ -36,10 +36,6 @@ spec:
           - env: dev
       - list:
           elements:
-          - app: nextcloud-management
-          - app: nextcloud
-          - app: nextcloud-notifypush
-          - app: collabora
           - app: cryptpad
           - app: postfix
           - app: dovecot

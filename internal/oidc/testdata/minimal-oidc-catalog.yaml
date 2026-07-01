@@ -1,0 +1,68 @@
+# Minimal OIDCPackCatalog for gentian-os unit tests only.
+# Real app OIDC packs ship from gentian-apps (profiles/<app>/oidc-catalog.yaml).
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: test-oidc-catalog
+  labels:
+    gentianos.io/oidc-catalog: test
+spec:
+  extraManagedByAttributeGroups:
+    - TestAppAdmin
+  mapperTemplates:
+    gentian_useruuid:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: entryUUID
+        claim.name: gentian_useruuid
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    gentian_username:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: uid
+        claim.name: gentian_username
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+    email:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: email
+        claim.name: email
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+    full_name:
+      keycloakName: "full name"
+      protocolMapper: oidc-full-name-mapper
+      config:
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        introspection.token.claim: "true"
+
+  packs:
+    catalogue-test-client:
+      scopeName: catalogue-test-client-scope
+      scopeDescription: "Minimal OIDC pack for operator unit tests."
+      clientRole: catalogue-test-client-access-control
+      entitlementGroup: managed-by-attribute-TestApp
+      publicClient: true
+      fullScopeAllowed: true
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - gentian_useruuid
+        - gentian_username
+        - full_name
+        - email

@@ -125,11 +125,9 @@ check_deployment_ready() {
   pass "Deployment ${deploy} Available"
 }
 
-# Nubus (Keycloak/LDAP stack), mail, Nextcloud — representative Pattern B services
-check_deployment_ready "nubus-dev-portal-server"
+# Mail and postfix — representative Pattern B services
 check_deployment_ready "postfix-dev"
 check_deployment_ready "dovecot-dev"
-check_deployment_ready "nextcloud-dev-aio"
 
 # LDAP server is a StatefulSet
 if kubectl get statefulset nubus-dev-ldap-server-primary -n "${SERVICES_NS}" >/dev/null 2>&1; then

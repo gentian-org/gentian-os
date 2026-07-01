@@ -16,7 +16,7 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "7"
+const brokerIdentityProviderVersion = "8"
 
 // firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
 // kernel IdP logins to pre-provisioned users by email (no confirm/re-auth).
@@ -84,34 +84,34 @@ fi
 }
 
 const brokerKernelClientUsernameMapperShell = `
-# Kernel broker client must emit opendesk_username in tokens issued
+# Kernel broker client must emit gentian_username in tokens issued
 # during tenant→kernel broker login; otherwise tenant scope mappers see empty uid.
 BROKER_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" || echo "[]")
-if echo "${BROKER_M}" | grep -q '"name":"opendesk_username"'; then
-  echo "broker client opendesk_username mapper already on ${BROKER_CLIENT_ID}"
+if echo "${BROKER_M}" | grep -q '"name":"gentian_username"'; then
+  echo "broker client gentian_username mapper already on ${BROKER_CLIENT_ID}"
 else
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" \
     -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    -d '{"name":"opendesk_username","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"uid","claim.name":"opendesk_username","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true","multivalued":"false"}}'
-  echo "broker client opendesk_username mapper added on ${BROKER_CLIENT_ID}"
+    -d '{"name":"gentian_username","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"uid","claim.name":"gentian_username","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true","multivalued":"false"}}'
+  echo "broker client gentian_username mapper added on ${BROKER_CLIENT_ID}"
 fi
 `
 
 const brokerIdPUsernameImporterShell = `
-# Import opendesk_username from the kernel IdP into the tenant user's uid attribute
-# so opendesk-matrix-scope mappers can emit the claim for Synapse localpart mapping.
+# Import gentian_username from the kernel IdP into the tenant user's uid attribute
+# so gentian-matrix-scope mappers can emit the claim for Synapse localpart mapping.
 IDP_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" || echo "[]")
-if echo "${IDP_M}" | grep -q '"name":"opendesk_username"'; then
-  echo "IdP mapper opendesk_username already in realm ${REALM_NAME}"
+if echo "${IDP_M}" | grep -q '"name":"gentian_username"'; then
+  echo "IdP mapper gentian_username already in realm ${REALM_NAME}"
 else
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" \
     -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    -d '{"name":"opendesk_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","identityProviderAlias":"kernel","config":{"syncMode":"IMPORT","claim":"opendesk_username","user.attribute":"uid"}}'
-  echo "IdP mapper opendesk_username registered in realm ${REALM_NAME}"
+    -d '{"name":"gentian_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","identityProviderAlias":"kernel","config":{"syncMode":"IMPORT","claim":"gentian_username","user.attribute":"uid"}}'
+  echo "IdP mapper gentian_username registered in realm ${REALM_NAME}"
 fi
 `
 

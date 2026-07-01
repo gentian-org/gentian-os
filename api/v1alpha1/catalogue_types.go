@@ -25,6 +25,14 @@ const (
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
 )
 
+// Per-host gateway policy annotations on IngressSpec.annotations (primary or additionalIngresses).
+const (
+	// GatewayFrameAncestors is JSON: {"mode":"replace|append","origins":["portal","mainApp",...]}.
+	AnnotationIngressGatewayFrameAncestors = "gentianos.io/gateway-frame-ancestors"
+	// GatewayEscapedSlashesAction sets Envoy ClientTrafficPolicy path.escapedSlashesAction.
+	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
+)
+
 // ProfileDeploymentRole describes how a catalogue entry is deployed relative to siblings.
 type ProfileDeploymentRole string
 

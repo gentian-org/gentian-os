@@ -20,7 +20,7 @@ func TestCollectOIDCIngressSubdomainsByTenant(t *testing.T) {
 			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "wiki"},
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
-					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "opendesk-xwiki"},
+					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "wiki-oidc-client"},
 				},
 			},
 		},
@@ -34,7 +34,7 @@ func TestCollectOIDCIngressSubdomainsByTenant(t *testing.T) {
 			},
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
-					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "opendesk-synapse"},
+					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "chat-oidc-client"},
 				},
 			},
 		},
@@ -93,7 +93,7 @@ func TestCollectOIDCIngressSubdomainsFromRedirectURI(t *testing.T) {
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
-						ClientID: "opendesk-synapse",
+						ClientID: "chat-oidc-client",
 						RedirectURIs: []string{
 							"https://matrix.${TENANT_DOMAIN}/_synapse/client/oidc/callback",
 						},

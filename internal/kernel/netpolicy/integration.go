@@ -24,9 +24,12 @@ import (
 )
 
 // ContractAllowNetworkPolicy grants consumer→provider traffic for an active
-// IntegrationBinding. Today all capabilities on the binding are permitted; a
-// future AppGrant reconciler (OpenFGA, Stage 2) will intersect this allowlist.
-func ContractAllowNetworkPolicy(tenantName string, binding *gentianov1alpha1.IntegrationBinding) *networkingv1.NetworkPolicy {
+// IntegrationBinding when AppGrant (if present) allows at least one capability.
+func ContractAllowNetworkPolicy(
+	tenantName string,
+	binding *gentianov1alpha1.IntegrationBinding,
+	grant *gentianov1alpha1.AppGrant,
+) *networkingv1.NetworkPolicy {
 	if binding == nil {
 		return nil
 	}
@@ -35,12 +38,21 @@ func ContractAllowNetworkPolicy(tenantName string, binding *gentianov1alpha1.Int
 	if consumer == "" || provider == "" {
 		return nil
 	}
+	effective := EffectiveContractCapabilities(binding, grant)
+	if len(effective) == 0 {
+		return nil
+	}
+
+	labels := policyLabels(tenantName, meta.NetPolicyContract)
+	if capLabel := FormatCapabilityLabel(effective); capLabel != "" {
+		labels["gentianos.io/granted-capabilities"] = capLabel
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      contractPolicyName(binding.Name),
 			Namespace: binding.Namespace,
-			Labels:    policyLabels(tenantName, meta.NetPolicyContract),
+			Labels:    labels,
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{

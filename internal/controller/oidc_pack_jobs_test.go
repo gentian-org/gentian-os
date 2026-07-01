@@ -18,13 +18,13 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	_ = gentianov1alpha1.AddToScheme(scheme)
 
 	element := &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "element"},
+		ObjectMeta: metav1.ObjectMeta{Name: "od-element"},
 		Spec: gentianov1alpha1.AppProfileSpec{
-			CompositionRef: "app-element",
+			CompositionRef: "app-od-element",
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
-						ClientID: "opendesk-synapse",
+						ClientID: "main-oidc-client",
 					},
 				},
 			},
@@ -52,7 +52,7 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
 			Domain: "demo.desk.example.com",
-			Apps:   []gentianov1alpha1.TenantApp{{Profile: "element"}},
+			Apps:   []gentianov1alpha1.TenantApp{{Profile: "od-element"}},
 		},
 	}
 
@@ -61,29 +61,29 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		t.Fatalf("collectOIDCAppConfigs: %v", err)
 	}
 	if len(configs) != 2 {
-		t.Fatalf("expected 2 OIDC configs (element + element-jitsi sidecar), got %d", len(configs))
+		t.Fatalf("expected 2 OIDC configs (od-element + od-element-jitsi sidecar), got %d", len(configs))
 	}
 
 	var sidecarCfg *oidcAppConfig
 	for i := range configs {
-		if configs[i].profileName == "element-jitsi" {
+		if configs[i].profileName == "od-element-jitsi" {
 			sidecarCfg = &configs[i]
 			break
 		}
 	}
 	if sidecarCfg == nil {
-		t.Fatal("expected element-jitsi sidecar OIDC config")
+		t.Fatal("expected od-element-jitsi sidecar OIDC config")
 	}
-	if sidecarCfg.parentProfile != "element" {
-		t.Errorf("parentProfile = %q, want element", sidecarCfg.parentProfile)
+	if sidecarCfg.parentProfile != "od-element" {
+		t.Errorf("parentProfile = %q, want od-element", sidecarCfg.parentProfile)
 	}
 
 	owner, err := r.getOIDCOwnerProfile(context.Background(), *sidecarCfg)
 	if err != nil {
 		t.Fatalf("getOIDCOwnerProfile sidecar: %v", err)
 	}
-	if owner.Name != "element" {
-		t.Errorf("owner profile = %q, want element", owner.Name)
+	if owner.Name != "od-element" {
+		t.Errorf("owner profile = %q, want od-element", owner.Name)
 	}
 	if !crossplaneOwnsOIDCClient(owner, *sidecarCfg) {
 		t.Error("expected Crossplane to own sidecar OIDC when parent has compositionRef")

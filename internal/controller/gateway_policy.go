@@ -34,27 +34,7 @@ var referenceGrantGVK = schema.GroupVersionKind{
 }
 
 func (r *TenantReconciler) collectTenantIngressIntents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
-	var intents []ingressIntent
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.Ingress != nil {
-			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})
-		}
-		for i := range profile.Spec.AdditionalIngresses {
-			intents = append(intents, ingressIntent{
-				appProfile: additionalIngressProfile(app.Profile, i),
-				profile:    profile,
-				ingress:    &profile.Spec.AdditionalIngresses[i],
-			})
-		}
-	}
-	return intents, nil
+	return collectTenantIngressIntents(ctx, r.Client, tenant)
 }
 
 func buildAppBackendTrafficPolicyObject(
@@ -82,30 +62,25 @@ func buildAppBackendTrafficPolicyObject(
 	return obj
 }
 
-func buildTenantCollaboraClientTrafficPolicyObject(tenant *gentianov1alpha1.Tenant, nsName string) *unstructured.Unstructured {
-	policySpec := map[string]interface{}{
-		"path": map[string]interface{}{
-			"escapedSlashesAction": "KeepUnchanged",
-		},
-		"targetRefs": []interface{}{
-			map[string]interface{}{
-				"group":       gatewayv1.GroupName,
-				"kind":        "Gateway",
-				"name":        tenantGatewayName(tenant.Name),
-				"sectionName": "https-wildcard",
-			},
+func buildTenantEscapedSlashesClientTrafficPolicyObject(tenant *gentianov1alpha1.Tenant, nsName string) *unstructured.Unstructured {
+	policySpec := escapedSlashesKeepUnchangedClientTrafficPolicySpec()
+	policySpec["targetRefs"] = []interface{}{
+		map[string]interface{}{
+			"group":       gatewayv1.GroupName,
+			"kind":        "Gateway",
+			"name":        tenantGatewayName(tenant.Name),
+			"sectionName": "https-wildcard",
 		},
 	}
 
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(clientTrafficPolicyGVK)
-	obj.SetName(tenantCollaboraClientTrafficPolicyName(tenant.Name))
+	obj.SetName(tenantEscapedSlashesClientTrafficPolicyName(tenant.Name))
 	obj.SetNamespace(nsName)
 	obj.SetLabels(map[string]string{
 		tenantLabel:           tenant.Name,
 		managedByLabel:        managedByValue,
 		gatewayComponentLabel: gatewayComponentApp,
-		"app.kubernetes.io/name": "collabora",
 	})
 	_ = unstructured.SetNestedField(obj.Object, policySpec, "spec")
 	return obj

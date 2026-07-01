@@ -6,7 +6,7 @@ metadata:
     gentianos.io/profile-name: openproject
 spec:
   displayName: OpenProject
-  compositionRef: app-openproject
+  compositionRef: app-od-openproject
   chart:
     repository: oci://example.invalid/openproject
     name: openproject
@@ -14,7 +14,7 @@ spec:
   kernelRequirements:
     identity:
       oidc:
-        clientId: opendesk-openproject
+        clientId: catalogue-test-client
         name: OpenProject
         accessType: CONFIDENTIAL
         redirectUris:

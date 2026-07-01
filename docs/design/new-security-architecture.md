@@ -205,7 +205,7 @@ spec:
   kernelRequirements:
     identity:
       oidc:
-        clientId: gentian-openproject          # catalogue key → OIDC pack in tenant realm
+        clientId: catalogue-test-client          # must match a pack key in a synced OIDCPackCatalog CR
         accessType: CONFIDENTIAL
     database:
       engine: postgresql

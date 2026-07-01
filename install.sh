@@ -618,7 +618,7 @@ seed_secrets_remaining() {
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
 #   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
 #   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
-#   OpenDesk ApplicationSets live in kernel/appsets/disabled/ on develop.
+#   Optional legacy ApplicationSets live in kernel/appsets/disabled/.
 #
 # Prerequisites:
 #   - ArgoCD must be installed and the 'gentian' AppProject must exist.
@@ -1293,17 +1293,13 @@ main_cp() {
     bootstrap_appprofiles       # Step 17 — AppProfile CRs from gentian-apps repo
     install_app_catalogue       # Step 17b — kubectl-gentian plugin + AppCatalogue CRD
 
-    # ── OpenDesk app stack (commented — uncomment when migrating legacy apps) ─
-    # "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 16b — kernel LDAP SUBTREE
-    # deploy_kernel_mail_services # Step 17b — Postfix + Dovecot (MAIL_SERVICE_MODE=kernel)
-    # apply_kernel_gateway_overlays || true  # Step 17a — gateway value overlays
-    # wait_for_gateway_platform || true    # Step 17d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
-    #
-    # wait_for_setup_iam_job || true
+    # ── Optional kernel mail / gateway (uncomment when MAIL_SERVICE_MODE=kernel) ─
+    # deploy_kernel_mail_services
+    # apply_kernel_gateway_overlays || true
+    # wait_for_gateway_platform || true
     # verify_argocd_apps || true
     # verify_keycloak_iframe_policy || true
     # verify_intercom_ics || true
-    # reconcile_nextcloud_office || true  # Step 18c — Collabora / Nextcloud office
     # configure_github_actions_secrets   # Step 18d — CI_BOT_PAT → gentian-os Actions secrets
 
     success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA), authz bridge, and portal login are live."

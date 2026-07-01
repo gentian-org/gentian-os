@@ -70,8 +70,8 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 			expectedPolicies[btp.GetName()] = struct{}{}
 		}
 	}
-	if hasCollaboraIngress(intents) {
-		expectedClientPolicies[tenantCollaboraClientTrafficPolicyName(tenant.Name)] = struct{}{}
+	if anyIntentNeedsEscapedSlashesKeepUnchanged(intents) {
+		expectedClientPolicies[tenantEscapedSlashesClientTrafficPolicyName(tenant.Name)] = struct{}{}
 	}
 
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {

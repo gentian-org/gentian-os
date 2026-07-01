@@ -33,17 +33,8 @@ func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
 }
 
-func tenantCollaboraClientTrafficPolicyName(tenantName string) string {
-	return fmt.Sprintf("ctp-%s-collabora", tenantName)
-}
-
-func hasCollaboraIngress(intents []ingressIntent) bool {
-	for _, intent := range intents {
-		if intent.ingress != nil && intent.ingress.SubDomain == collaboraSubDomain {
-			return true
-		}
-	}
-	return false
+func tenantEscapedSlashesClientTrafficPolicyName(tenantName string) string {
+	return fmt.Sprintf("ctp-%s-escaped-slashes", tenantName)
 }
 
 func tenantApexRedirectRouteName(tenantName string) string {
@@ -115,10 +106,10 @@ func buildAppHTTPRoute(
 		},
 	}
 	mainIngressSubDomain := ""
-	if profile.Spec.Ingress != nil {
+	if profile != nil && profile.Spec.Ingress != nil {
 		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
 	}
-	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain); len(filters) > 0 {
+	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress); len(filters) > 0 {
 		rule.Filters = filters
 	}
 
@@ -259,8 +250,14 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 	}
 }
 
-func gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string) []gatewayv1.HTTPRouteFilter {
-	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain)
+func gatewayEmbeddingResponseFilters(
+	kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string,
+	ingress *gentianov1alpha1.IngressSpec,
+) []gatewayv1.HTTPRouteFilter {
+	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain)
+	if custom, ok, err := ingressFrameAncestorsPolicy(kernelDomain, effectiveDomain, mainIngressSubDomain, ingress); err == nil && ok {
+		policy = custom
+	}
 	if policy.Origins == "" {
 		return nil
 	}
@@ -296,17 +293,8 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string) gatewayFrameAncestorsPolicy {
+func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain string) gatewayFrameAncestorsPolicy {
 	switch {
-	case ingressSubDomain == collaboraSubDomain && effectiveDomain != "" && mainIngressSubDomain != "":
-		origins := fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain)
-		if kernelDomain != "" {
-			origins += fmt.Sprintf(" https://portal.%s", kernelDomain)
-		}
-		return gatewayFrameAncestorsPolicy{
-			Mode:    gatewayFrameAncestorsReplace,
-			Origins: origins,
-		}
 	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
 		return gatewayFrameAncestorsPolicy{
 			Mode:    gatewayFrameAncestorsAppend,

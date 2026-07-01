@@ -63,17 +63,18 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
-            # OpenDesk OIDC pack catalogue — replaces hardcoded clientId dicts when synced.
+            # OIDC pack catalogue for the installed app profile (profiles/<app>/oidc-catalog.yaml).
             - kind: OIDCPackCatalog
               into: oidcPackCatalog
               apiVersion: gentianos.io/v1alpha1
               type: Selector
               selector:
                 maxMatch: 1
+                minMatch: 0
                 matchLabels:
-                  - key: gentianos.io/oidc-catalog
-                    type: Value
-                    value: gentian
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
             # Optional portal-bridge SSO helper page shipped with the AppProfile catalogue.
             - kind: ConfigMap
               into: portalBridgeSso
@@ -148,7 +149,7 @@ spec:
             {{- $initJobRequestCPU := dig "tenant.initJob.requests.cpu" "100m" $ccData }}
             {{- $initJobRequestMem := dig "tenant.initJob.requests.memory" "128Mi" $ccData }}
 
-            {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog. */}}
+            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR. */}}
             {{- $oidcPackDefaultScopes := dict }}
             {{- $oidcPackFullScopeAllowed := dict }}
             {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}

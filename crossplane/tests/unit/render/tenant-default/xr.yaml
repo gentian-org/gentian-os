@@ -10,6 +10,6 @@ spec:
   kernelDomain: desk.gentian.org
   apps:
     - name: element
-      profile: element
+      profile: od-element
   compositeDeletePolicy: Background
   resourceRefs: []

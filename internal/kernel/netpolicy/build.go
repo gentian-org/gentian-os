@@ -29,6 +29,7 @@ type BuildInput struct {
 	Apps          []gentianov1alpha1.TenantApp
 	Profiles      map[string]*gentianov1alpha1.AppProfile
 	Bindings      []*gentianov1alpha1.IntegrationBinding
+	Grants        map[string]*gentianov1alpha1.AppGrant
 	Config        Config
 	KubeAPIEndpts *discoveryv1.EndpointSlice
 }
@@ -54,7 +55,11 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	}
 
 	for _, binding := range in.Bindings {
-		if np := ContractAllowNetworkPolicy(in.TenantName, binding); np != nil {
+		var grant *gentianov1alpha1.AppGrant
+		if in.Grants != nil {
+			grant = in.Grants[binding.Spec.Consumer.App]
+		}
+		if np := ContractAllowNetworkPolicy(in.TenantName, binding, grant); np != nil {
 			out = append(out, np)
 		}
 	}

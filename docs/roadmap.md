@@ -16,11 +16,11 @@ and Stage 1 gap analysis: [new-security-architecture.md §4](design/new-security
 |------|--------|-------|
 | Per-tenant namespace + default-deny NetworkPolicy | **Done** | `tenant-default` baseline + operator-managed allowlists |
 | Kernel egress from `AppProfile.kernelRequirements` | **Done** | `kernel-access-*` NetworkPolicies |
-| Contract egress from active `IntegrationBinding` | **Done** | `contract-*` NetworkPolicies; all declared capabilities allowed until AppGrant |
+| Contract egress from active `IntegrationBinding` | **Done** | `contract-*` NetworkPolicies intersect binding capabilities with AppGrant |
 | Kyverno baseline admission | **Done** | `kernel/appsets/05-admission.yaml`, `kernel/security/kyverno/policies/` |
 | **Cilium** (FQDN/L7 egress, Hubble) | Planned | Optional upgrade when standard NetworkPolicy is insufficient |
 | **Service mesh + SPIFFE/SPIRE** | Planned | Stage 3 — workload mTLS for autonomous in-cluster agents |
-| AppGrant-governed contract allowlists (OpenFGA) | Planned | Stage 2 — intersect binding capabilities with tenant-approved grants |
+| AppGrant-governed contract allowlists (OpenFGA) | **Done** | Stage 2 — netpolicy ∩ AppGrant; OpenFGA `granted` tuples |
 
 ### Cilium (planned)
 
@@ -87,9 +87,21 @@ kernel services).
 | **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus | Planned |
 | **P9** | OpenFGA `can_launch` for admin modules (shell tile in P1) | Planned |
-| **Stage 2** | Integrations & grants, agents, access requests, federation — [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance) | Planned |
+| **Stage 2** | Integrations & grants, agents, access requests, federation — [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance) | **Partial** — see below |
 
-**Explicitly deferred:** App Store in console until Stage 2; app-side provisioner execution before P8; Stage 2 authorization surfaces in [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance).
+**Stage 2 — authorization (partial):**
+
+| Item | Status |
+|------|--------|
+| AppGrant CRD + OpenFGA tuple sync | **Done** |
+| PlatformSecurityPolicy + MAC waiver flow | **Done** |
+| Admin Console — Platform + Integrations tabs | **Done** |
+| Netpolicy ∩ AppGrant (contract egress) | **Done** |
+| Effective access preview (tenant admin) | **Done** (`gentian-ui`) |
+| AuthZEN PEP in shell BFF | **Done** — `OPENFGA_AUTHZEN_ENABLED` |
+| Agent identities & delegation (RFC 8693) | Deferred |
+| Gateway external auth (Envoy ext-auth → AuthZEN) | Deferred |
+
 
 ### Platform admin least-privilege
 
@@ -177,9 +189,9 @@ realms once upstream supports the required settings.
 
 `IntegrationBinding` CRs are emitted via the manifest bridge; the operator
 reconciles contract wiring and applies **`contract-*` NetworkPolicies** so
-consumers may reach providers only for active bindings. Today every capability
-declared on the binding is allowed; **AppGrant** (OpenFGA, Stage 2) will
-intersect the allowlist with tenant-approved subsets.
+consumers may reach providers only for active bindings. Contract egress is
+intersected with tenant-approved **AppGrant** capabilities; empty grants deny
+contract NetworkPolicies.
 
 A follow-up is full Composition-only wiring: gate on both provider and consumer
 Ready, write OpenBao paths, and surface status without a separate operator loop.

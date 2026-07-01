@@ -340,19 +340,18 @@ the Tenant and external curl to the public hostname.
 
 ### OIDC pack catalogue
 
-OpenDesk-style apps depend on the cluster-scoped `OIDCPackCatalog` CR shipped
-from `gentian-apps` (`profiles/opendesk-oidc-catalog/`). Verify it is synced
+Apps with Path B OIDC depend on the cluster-scoped `OIDCPackCatalog` CR shipped
+from `gentian-apps` (`profiles/<app>/oidc-catalog.yaml`). Verify packs are synced
 before debugging pack Jobs or missing client scopes:
 
 ```bash
-kubectl get oidcpackcatalog opendesk -o yaml
-# expect: metadata.labels.gentianos.io/oidc-catalog: opendesk
+kubectl get oidcpackcatalog -l gentianos.io/profile-name=openproject -o yaml
 ```
 
 List pack keys and confirm a profile's `clientId` is present:
 
 ```bash
-kubectl get oidcpackcatalog opendesk -o jsonpath='{.spec.packs}' | jq 'keys'
+kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.packs}{"\n"}{end}'
 ```
 
 Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do

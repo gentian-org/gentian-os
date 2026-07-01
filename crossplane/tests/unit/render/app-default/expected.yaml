@@ -71,7 +71,7 @@ spec:
   deletionPolicy: Delete
   forProvider:
     accessType: CONFIDENTIAL
-    clientId: opendesk-openproject
+    clientId: catalogue-test-client
     clientSecretSecretRef:
       key: client-secret
       name: render-openproject-fixture-oidc-client-creds
@@ -117,7 +117,7 @@ spec:
     - roles
     - web-origins
     - acr
-    - opendesk-openproject-scope
+    - catalogue-test-client-scope
     realmId: demo
   providerConfigRef:
     name: keycloak

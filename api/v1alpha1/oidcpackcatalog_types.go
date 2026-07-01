@@ -18,8 +18,8 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// OIDCPackCatalog is a cluster-scoped catalogue of OpenDesk-style OIDC packs.
-// Shipped from gentian-apps (e.g. profiles/opendesk-oidc-catalog/) and consumed
+// OIDCPackCatalog is a cluster-scoped catalogue of OIDC packs for tenant apps.
+// Shipped from gentian-apps (profiles/<app>/oidc-catalog.yaml) and consumed
 // by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
 //
 // +kubebuilder:object:root=true

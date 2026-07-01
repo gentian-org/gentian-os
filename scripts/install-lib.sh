@@ -1202,13 +1202,13 @@ check_prereqs() {
     success "All pre-flight checks passed."
 }
 
-# resolve_ldap_base_dn removed — Suze Keycloak is authoritative; no cluster LDAP.
+# resolve_ldap_base_dn removed — Suze Keycloak is authoritative.
 
 # =============================================================================
 # upsert_gentian_cluster_config — cluster-wide ConfigMap for Crossplane / apps
 # =============================================================================
 # Idempotent. Used by install.sh (after Cluster XR Ready) and update.sh
-# (--crossplane / --all) so day-2 runs pick up node.ip and LDAP endpoints.
+# (--crossplane / --all) so day-2 runs pick up node.ip and service endpoints.
 upsert_gentian_cluster_config() {
     if [[ -z "${NODE_IP:-}" ]]; then
         NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
@@ -1893,13 +1893,8 @@ apply_kernel_gateway_overlays() {
         exit 1
     fi
     info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
-    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud/manifests/dev/gateway-values-configmap.yaml" \
-        >/dev/null 2>&1 || true
-    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nextcloud-notifypush/manifests/dev/gateway-values-configmap.yaml" \
-        >/dev/null 2>&1 || true
     apply_intercom_gateway_values || true
-    success "Kernel gateway Helm overlays applied (nextcloud, notifypush, intercom)."
-    info "  Nubus gateway overlay: ConfigMap nubus-gateway-values (created in deploy_nubus)."
+    success "Kernel gateway Helm overlays applied (intercom)."
     info "  Intercom BASE_URL overlay: ConfigMap intercom-gateway-values (KERNEL_DOMAIN)."
     print_gateway_tunnel_hints || true
 }
@@ -2253,8 +2248,7 @@ install_kernel_wildcard() {
     success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
     info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"
 
-    # 4) Propagate wildcard-kernel-tls → wildcard-tls in every kernel app namespace
-    #    that references it (nubus, nextcloud, intercom-service, nextcloud-notifypush).
+    # 4) Propagate wildcard-kernel-tls → wildcard-tls in kernel app namespaces.
     #    The Tenant operator issues per-tenant wildcard certs (tenant-*-wildcard-tls),
     #    but the kernel service namespaces are not managed by the operator.
     #    Wait up to 180 s for the cert to be issued first.
@@ -2270,47 +2264,10 @@ install_kernel_wildcard() {
     local app_ns="gentian-${ENV:-dev}"
     if ! kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
         warn "wildcard-kernel-tls not yet issued (LE rate-limited or still pending)."
-        # Fallback: if the nubus CA Issuer is available in the app namespace,
-        # issue wildcard-tls directly from it so ingresses work immediately.
-        local nubus_issuer="nubus-${ENV:-dev}-ca-issuer"
-        if kubectl get issuer "${nubus_issuer}" -n "${app_ns}" &>/dev/null; then
-            info "Issuing wildcard-tls from nubus CA (${nubus_issuer}) in ${app_ns}..."
-            kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: wildcard-dev-tls
-  namespace: ${app_ns}
-  labels:
-    app.kubernetes.io/managed-by: gentian-install
-    app.kubernetes.io/part-of: gentian-os
-spec:
-  secretName: wildcard-tls
-  issuerRef:
-    name: ${nubus_issuer}
-    kind: Issuer
-  commonName: "*.${KERNEL_DOMAIN}"
-  dnsNames:
-    - "${KERNEL_DOMAIN}"
-    - "*.${KERNEL_DOMAIN}"
-  duration: 8760h
-  renewBefore: 720h
-EOF
-            if kubectl wait certificate "wildcard-dev-tls" -n "${app_ns}" \
-                --for=condition=Ready --timeout=60s; then
-                success "wildcard-tls issued from nubus CA in ${app_ns}."
-            else
-                warn "wildcard-dev-tls not ready in time; ingresses may show TLS warnings."
-            fi
-        else
-            warn "No nubus CA issuer (${nubus_issuer}) found; wildcard-tls unavailable."
-            warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
-        fi
+        warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
         return
     fi
-    # Remove the fallback nubus-CA Certificate CR if present — it was created when
-    # wildcard-kernel-tls was not yet ready, and cert-manager will keep overwriting
-    # wildcard-tls with the nubus-CA cert as long as it exists.
+    # Remove stale fallback Certificate CR if present from a prior install.
     if kubectl get certificate wildcard-dev-tls -n "${app_ns}" &>/dev/null; then
         kubectl delete certificate wildcard-dev-tls -n "${app_ns}"
         success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
@@ -2332,7 +2289,7 @@ print(json.dumps(s))
         success "wildcard-tls propagated to ${_wc_ns}."
     done
 
-    # ACME staging: trust bundle for in-cluster OIDC (openDesk Synapse/Jitsi).
+    # ACME staging: trust bundle for in-cluster OIDC clients.
     if [[ "${ACME_ENV:-production}" == "staging" ]]; then
         local staging_ca_script="${SCRIPT_DIR}/scripts/create-staging-ca-secret.sh"
         if [[ -x "${staging_ca_script}" ]]; then
@@ -3406,8 +3363,7 @@ deploy_kernel_mail_services() {
     local env="${ENV:-dev}"
     local ns="gentian-${env}"
 
-    # Ensure the target namespace exists (it is created by deploy_nubus but
-    # calling this standalone from update.sh requires it to pre-exist).
+    # Ensure the target namespace exists when invoked standalone from update.sh.
     if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
         info "Creating namespace ${ns}..."
         kubectl create namespace "${ns}"
@@ -3490,117 +3446,9 @@ deploy_kernel_mail_services() {
     info "         argocd app sync gentian-infra-helm-${env}"
 }
 
-# =============================================================================
-# _repair_nextcloud_object_home_mounts — fix LDAP user Files 500 errors
-#
-# With primary object storage, oc_mounts points at object::user:<uid> but first-
-# login filecache rows are often created on home::<uid>. The Files app then
-# returns "The root directory of the user's files is missing". Merge home::
-# filecache into the object::user storage and point the mount at the home root.
-# =============================================================================
-_repair_nextcloud_object_home_mounts() {
-    local env="${ENV:-dev}"
-    local infra_ns="gentian-infra-${env}"
-    local pg_pod="gentian-postgresql-${env}-0"
-
-    if ! kubectl get pod -n "${infra_ns}" "${pg_pod}" >/dev/null 2>&1; then
-        info "PostgreSQL pod ${pg_pod} not found — skipping object/home mount repair"
-        return 0
-    fi
-
-    local repaired
-    repaired=$(kubectl exec -n "${infra_ns}" "${pg_pod}" -- psql -U nextcloud_user -d nextcloud -v ON_ERROR_STOP=1 -tA <<'EOSQL'
-SELECT count(*) FROM (
-  SELECT m.user_id,
-         hs.numeric_id AS home_sid,
-         os.numeric_id AS object_sid,
-         hr.fileid AS home_root,
-         (SELECT count(*) FROM oc_filecache WHERE storage = hs.numeric_id) AS home_files,
-         (SELECT count(*) FROM oc_filecache WHERE storage = os.numeric_id) AS object_files
-  FROM oc_mounts m
-  JOIN oc_storages os ON os.id = 'object::user:' || m.user_id
-  JOIN oc_storages hs ON hs.id = 'home::' || m.user_id
-  JOIN oc_filecache hr ON hr.storage = hs.numeric_id AND hr.path = '' AND hr.parent = -1
-  WHERE m.storage_id = os.numeric_id
-    AND (SELECT count(*) FROM oc_filecache WHERE storage = hs.numeric_id)
-        > (SELECT count(*) FROM oc_filecache WHERE storage = os.numeric_id)
-) mismatched;
-EOSQL
-) || repaired=0
-
-    if [[ "${repaired:-0}" == "0" ]]; then
-        info "No object/home filecache mismatches detected"
-        return 0
-    fi
-
-    info "Repairing ${repaired} Nextcloud user(s) with object/home filecache mismatch..."
-    kubectl exec -n "${infra_ns}" "${pg_pod}" -- psql -U nextcloud_user -d nextcloud -v ON_ERROR_STOP=1 <<'EOSQL'
-DO $$
-DECLARE
-  rec RECORD;
-BEGIN
-  FOR rec IN
-    SELECT m.user_id,
-           hs.numeric_id AS home_sid,
-           os.numeric_id AS object_sid,
-           hr.fileid AS home_root
-    FROM oc_mounts m
-    JOIN oc_storages os ON os.id = 'object::user:' || m.user_id
-    JOIN oc_storages hs ON hs.id = 'home::' || m.user_id
-    JOIN oc_filecache hr ON hr.storage = hs.numeric_id AND hr.path = '' AND hr.parent = -1
-    WHERE m.storage_id = os.numeric_id
-      AND (SELECT count(*) FROM oc_filecache WHERE storage = hs.numeric_id)
-          > (SELECT count(*) FROM oc_filecache WHERE storage = os.numeric_id)
-  LOOP
-    DELETE FROM oc_filecache
-      WHERE storage = rec.object_sid AND path = '' AND fileid <> rec.home_root;
-    UPDATE oc_filecache SET storage = rec.object_sid WHERE storage = rec.home_sid;
-    UPDATE oc_mounts
-      SET storage_id = rec.object_sid, root_id = rec.home_root
-      WHERE user_id = rec.user_id;
-    RAISE NOTICE 'repaired user %', rec.user_id;
-  END LOOP;
-END $$;
-EOSQL
-}
-
-# =============================================================================
-# _ensure_nextcloud_portal_embedding_ingress — allow kernel portal to iframe Files
-#
-# Nextcloud is a kernel Helm release (not an AppProfile ingress). The operator
-# does not manage its Ingress; CSP must be set in nextcloud-base-values and
-# patched here so update.sh applies immediately without recreating the Release.
-# =============================================================================
-_ensure_nextcloud_portal_embedding_ingress() {
-    local ns="${1:?}"
-    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be set}"
-    local ingress_name="nextcloud-dev-aio"
-    local snippet
-    snippet=$(printf 'proxy_hide_header X-Frame-Options;\nproxy_hide_header Content-Security-Policy;\nadd_header Content-Security-Policy "frame-ancestors '\''self'\'' https://portal.%s" always;' "${domain}")
-
-    if ! kubectl get ingress "${ingress_name}" -n "${ns}" >/dev/null 2>&1; then
-        info "Ingress ${ingress_name} not found — portal embedding will apply on next Helm sync"
-        return 0
-    fi
-
-    local current
-    current=$(kubectl get ingress "${ingress_name}" -n "${ns}" \
-        -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/configuration-snippet}' 2>/dev/null || true)
-    if [[ "${current}" == "${snippet}" ]]; then
-        info "Nextcloud ingress portal embedding CSP already correct"
-        return 0
-    fi
-
-    info "Patching ${ingress_name} ingress for portal iframe embedding..."
-    kubectl annotate ingress "${ingress_name}" -n "${ns}" \
-        "nginx.ingress.kubernetes.io/configuration-snippet=${snippet}" \
-        --overwrite >/dev/null
-    success "Nextcloud ingress allows portal.${domain} in frame-ancestors"
-}
-
 # _apply_kernel_manifest_dir applies kernel service manifests from manifest_dir.
-# nubus uses kustomize (configMapGenerator); kubectl apply -f dir/ fails on
-# kustomization.yaml with "no matches for kind Kustomization".
+# Services using kustomize (configMapGenerator) must be applied with -k;
+# kubectl apply -f dir/ fails on kustomization.yaml with "no matches for kind Kustomization".
 # mode=all: ConfigMaps, ExternalSecrets, Ingresses, and Release CRs.
 # mode=release: only release.yaml (after all other manifests are current).
 _apply_kernel_manifest_dir() {
@@ -3621,197 +3469,6 @@ _apply_kernel_manifest_dir() {
         kubectl apply -f "${f}" >/dev/null
     done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
         ! -name 'kustomization.yaml' -print0 | sort -z)
-}
-
-# =============================================================================
-# reconcile_nextcloud_office — ensure Collabora / richdocuments is configured
-#
-# nextcloud-management init (wave 9) configures richdocuments before Collabora
-# (wave 12) is reachable, so doc_format and WOPI settings are often incomplete.
-# The Nextcloud AIO postStart hook in nextcloud-base-values keeps them correct
-# across restarts; this function applies the ConfigMap and re-runs the occ steps
-# on the live pod so existing clusters converge without manual kubectl exec.
-#
-# Idempotent — safe to call from install.sh and update.sh --nextcloud-office.
-# =============================================================================
-reconcile_nextcloud_office() {
-    local env="${ENV:-dev}"
-    local ns="gentian-${env}"
-    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be set}"
-    local manifest_dir="${SCRIPT_DIR}/kernel/services/nextcloud/manifests/${env}"
-    local dry_run="${GENTIAN_DRY_RUN:-0}"
-
-    banner "Nextcloud Office reconciliation (Collabora / richdocuments)"
-
-    if [[ ! -d "${manifest_dir}" ]]; then
-        warn "No nextcloud manifests for env=${env} — skipping"
-        return 0
-    fi
-
-    if [[ "${dry_run}" == "1" ]]; then
-        info "[dry-run] Would apply ${manifest_dir}/ ConfigMaps and restart nextcloud-dev-aio"
-    else
-        info "Applying nextcloud manifests (ConfigMaps)..."
-        while IFS= read -r -d '' f; do
-            kubectl apply -f "${f}" >/dev/null
-        done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
-            ! -name 'kustomization.yaml' -print0 | sort -z)
-
-        # Restart the web pod so the postStart lifecycle hook re-runs. Do NOT
-        # delete/recreate the Crossplane Release — that triggers a Helm upgrade
-        # that can break LDAP user file mounts (HTTP 500 on /apps/files/).
-        _ensure_nextcloud_portal_embedding_ingress "${ns}"
-
-        if kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
-            info "Restarting nextcloud-dev-aio to apply lifecycle hook changes..."
-            kubectl rollout restart deployment/nextcloud-dev-aio -n "${ns}" >/dev/null
-        fi
-    fi
-
-    if [[ "${dry_run}" == "1" ]]; then
-        info "[dry-run] Would configure richdocuments on nextcloud-dev-aio pod"
-        return 0
-    fi
-
-    if ! kubectl get deployment nextcloud-dev-aio -n "${ns}" >/dev/null 2>&1; then
-        warn "nextcloud-dev-aio not deployed yet — office config will apply on first pod start"
-        return 0
-    fi
-
-    info "Waiting for nextcloud-dev-aio rollout (up to 5m)..."
-    kubectl rollout status deployment/nextcloud-dev-aio -n "${ns}" --timeout=5m \
-        >/dev/null 2>&1 || warn "nextcloud-dev-aio rollout still in progress"
-
-    _repair_nextcloud_object_home_mounts
-
-    if kubectl get deployment collabora -n "${ns}" >/dev/null 2>&1; then
-        info "Waiting for collabora rollout (up to 3m)..."
-        kubectl rollout status deployment/collabora -n "${ns}" --timeout=3m \
-            >/dev/null 2>&1 || warn "collabora rollout still in progress"
-    fi
-
-    if ! kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
-        php /var/www/html/occ app:list --enabled 2>/dev/null | grep -q '  - richdocuments:'; then
-        warn "richdocuments app not enabled — skipping office config"
-        return 0
-    fi
-
-    local collabora_host="collabora.${ns}.svc.cluster.local:9980"
-    local public_wopi="https://office.${domain}"
-
-    info "Applying richdocuments office settings on live pod..."
-    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
-        php /var/www/html/occ richdocuments:update-empty-templates >/dev/null 2>&1 || true
-    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
-        php /var/www/html/occ config:app:set richdocuments doc_format --value=odf >/dev/null
-    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
-        php /var/www/html/occ config:app:set richdocuments wopi_url \
-        --value="http://${collabora_host}" >/dev/null
-    kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
-        php /var/www/html/occ config:app:set richdocuments public_wopi_url \
-        --value="${public_wopi}" >/dev/null
-
-    if kubectl exec -n "${ns}" deploy/nextcloud-dev-aio -- \
-        php /var/www/html/occ richdocuments:activate-config 2>&1 | grep -q 'Detected WOPI server'; then
-        success "Nextcloud Office configured (doc_format=odf, Collabora WOPI healthy)"
-    else
-        warn "richdocuments:activate-config did not confirm Collabora — check collabora pod and ingress"
-    fi
-}
-
-
-# =============================================================================
-# stack-data-ums job helpers
-#
-# The upstream nubusStackDataUms chart does not set ttlSecondsAfterFinished on
-# its data-loader Job.  A failed retry pod (Error) is left behind even when the
-# Job eventually succeeds — noisy during install verification.
-# =============================================================================
-STACK_DATA_UMS_JOB_TTL_SECONDS="${STACK_DATA_UMS_JOB_TTL_SECONDS:-600}"
-
-_find_stack_data_ums_job() {
-    local release_name="$1" ns="$2"
-    kubectl get jobs -n "${ns}" --no-headers \
-        -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true
-}
-
-apply_stack_data_ums_job_from_helm() {
-    local release_name="$1" ns="$2"
-    local ttl="${STACK_DATA_UMS_JOB_TTL_SECONDS}"
-
-    helm get all "${release_name}" -n "${ns}" 2>/dev/null \
-        | python3 -c "
-import sys, yaml
-
-ttl = int('${ttl}')
-for section in sys.stdin.read().split('---'):
-    if 'stack-data-ums' not in section or 'kind: \"Job\"' not in section:
-        continue
-    doc = yaml.safe_load(section)
-    if not doc or doc.get('kind') != 'Job':
-        continue
-    spec = doc.setdefault('spec', {})
-    spec['ttlSecondsAfterFinished'] = ttl
-    print('---')
-    print(yaml.dump(doc, default_flow_style=False).rstrip())
-    break
-" \
-        | kubectl apply -n "${ns}" -f - 2>/dev/null
-}
-
-finalize_stack_data_ums_job() {
-    local ns="$1" job_name="$2"
-    local ttl="${STACK_DATA_UMS_JOB_TTL_SECONDS}"
-
-    [[ -n "${job_name}" ]] || return 0
-
-    kubectl patch job "${job_name}" -n "${ns}" --type=merge \
-        -p "{\"spec\":{\"ttlSecondsAfterFinished\":${ttl}}}" \
-        2>/dev/null || true
-    kubectl delete pods -n "${ns}" -l "job-name=${job_name}" \
-        --field-selector=status.phase=Failed \
-        --ignore-not-found=true 2>/dev/null || true
-}
-
-# =============================================================================
-# wait_for_setup_iam_job — wait for nubus-dev-setup-iam-templates (ArgoCD hook)
-#
-# The job is deployed by nubus-manifests-dev (wave 21) as a PostSync hook.
-# It must run after stack-data-ums has registered opendesk extended attributes.
-# Returns 0 when the job completed successfully, 1 on timeout or failure.
-# =============================================================================
-wait_for_setup_iam_job() {
-    local ns="gentian-${ENV:-dev}"
-    local job="nubus-${ENV:-dev}-setup-iam-templates"
-    local timeout="${SETUP_IAM_TIMEOUT:-300}"
-    local elapsed=0
-    local interval=10
-
-    banner "Waiting for ${job} (up to ${timeout}s)"
-
-    info "Waiting for job ${job} to appear in ${ns}..."
-    while ! kubectl get "job/${job}" -n "${ns}" >/dev/null 2>&1; do
-        if (( elapsed >= timeout )); then
-            warn "Job ${job} did not appear within ${timeout}s."
-            warn "  Check: kubectl get application nubus-manifests-${ENV:-dev} -n argocd"
-            return 1
-        fi
-        sleep "$interval"
-        elapsed=$((elapsed + interval))
-    done
-
-    info "Waiting for job ${job} to complete..."
-    if kubectl wait "job/${job}" -n "${ns}" \
-            --for=condition=complete --timeout=$((timeout - elapsed))s 2>/dev/null; then
-        success "Job ${job} completed."
-        return 0
-    fi
-
-    warn "Job ${job} did not complete successfully."
-    warn "  kubectl logs -n ${ns} -l job-name=${job} --tail=40"
-    warn "  Recover with: ./update.sh --setup-iam"
-    return 1
 }
 
 # =============================================================================
@@ -3977,32 +3634,32 @@ verify_argocd_apps() {
 # =============================================================================
 # Summary — portal admin credentials for install output
 # =============================================================================
-# Portal login uses Keycloak kernel realm LDAP with mailPrimaryAddress (iam.md §1.2),
-# not the LDAP uid "Administrator".
 resolve_portal_admin_email() {
-    local ns="gentian-${ENV:-dev}"
-    local release="nubus-${ENV:-dev}"
-    local ldap_pod email=""
+    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        echo "administrator@${KERNEL_DOMAIN}"
+    fi
+}
 
-    ldap_pod=$(kubectl get pod -n "${ns}" \
-        -o jsonpath="{.items[?(@.metadata.name==\"${release}-ldap-server-primary-0\")].metadata.name}" \
-        2>/dev/null || true)
-    if [[ -n "${ldap_pod}" ]]; then
-        email=$(kubectl exec -n "${ns}" "${ldap_pod}" -c main -- \
-            ldapsearch -Y EXTERNAL -H ldapi:/// \
-            -b 'uid=Administrator,cn=users,dc=swp-ldap,dc=internal' mailPrimaryAddress 2>/dev/null \
-            | awk -F': ' '/^mailPrimaryAddress:/ {print $2; exit}' || true)
+_resolve_platform_admin_password() {
+    if [[ -z "${MASTER_PASSWORD:-}" ]]; then
+        return 0
     fi
-    if [[ -z "${email}" && -n "${KERNEL_DOMAIN:-}" ]]; then
-        email="administrator@${KERNEL_DOMAIN}"
-    fi
-    echo "${email}"
+    echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
 resolve_portal_admin_password() {
-    local ns="gentian-${ENV:-dev}"
-    kubectl get secret nubus-credentials -n "${ns}" \
-        -o jsonpath='{.data.default-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true
+    _resolve_platform_admin_password
+}
+
+_resolve_keycloak_admin_password() {
+    if declare -F derive_password >/dev/null 2>&1 && [[ -n "${MASTER_PASSWORD:-}" ]]; then
+        derive_password "keycloak" "adminPassword"
+        return 0
+    fi
+    kubectl get secret keycloak-idp-sensitive-values -n platform-kernel \
+        -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null \
+        | base64 -d 2>/dev/null \
+        | awk -F': ' '/KEYCLOAK_ADMIN_PASSWORD/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' || true
 }
 
 # =============================================================================
@@ -4014,16 +3671,15 @@ print_summary() {
     local cluster_admin_pw
     local cluster_admin_user
     local keycloak_admin_pw
-    local nubus_secret_ns
-    nubus_secret_ns="gentian-${ENV:-dev}"
+    local kernel_secret_ns="platform-kernel"
 
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
     cluster_admin_user=$(resolve_portal_admin_email)
     cluster_admin_pw=$(resolve_portal_admin_password)
     [[ -n "${cluster_admin_pw}" ]] || cluster_admin_pw="(not-ready)"
-    keycloak_admin_pw=$(kubectl get secret nubus-credentials -n "${nubus_secret_ns}" \
-                        -o jsonpath='{.data.keycloak-admin-password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
+    keycloak_admin_pw=$(_resolve_keycloak_admin_password)
+    [[ -n "${keycloak_admin_pw}" ]] || keycloak_admin_pw="(not-ready)"
     argocd_url=$(resolve_argocd_url)
     portal_url="https://portal.${KERNEL_DOMAIN}/login/"
     keycloak_url="https://id.${KERNEL_DOMAIN}"
@@ -4034,7 +3690,7 @@ print_summary() {
         echo "  ✔ All Applications Synced + Healthy"
         echo "  ✔ AppCatalogue CRD installed"
         echo "  ✔ gentian-os orchestrator running (Tenant CRD Established)"
-        echo "  ✔ Cluster admin credentials materialized (nubus-credentials)"
+        echo "  ✔ Cluster admin credentials materialized (Keycloak kernel realm)"
         echo ""
 
         echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -4053,7 +3709,9 @@ print_summary() {
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "  Retrieve credentials later:"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.default-admin-password}' | base64 -d"
+        echo "    Portal password is HMAC-derived from MASTER_PASSWORD (portal-bootstrap:administrator_password)"
+        echo "    Keycloak admin: derive_password keycloak adminPassword, or:"
+        echo "    kubectl get secret keycloak-idp-sensitive-values -n ${kernel_secret_ns} -o yaml"
         echo ""
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  List tenants:    kubectl gentian tenants list"
@@ -4089,7 +3747,9 @@ print_summary() {
         fi
         echo ""
         echo "  Retrieve credentials later:"
-        echo "    kubectl get secret nubus-credentials -n ${nubus_secret_ns} -o jsonpath='{.data.default-admin-password}' | base64 -d"
+        echo "    Portal password is HMAC-derived from MASTER_PASSWORD (portal-bootstrap:administrator_password)"
+        echo "    Keycloak admin: derive_password keycloak adminPassword, or:"
+        echo "    kubectl get secret keycloak-idp-sensitive-values -n ${kernel_secret_ns} -o yaml"
         echo ""
         echo "  Re-run verification only:"
         echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"

@@ -8,7 +8,6 @@
 #
 # Usage:
 #   ./update.sh --mail                     # Reconcile mail (ConfigMap, secrets, deployments)
-#   ./update.sh --nextcloud-office           # Reconcile Nextcloud Office (Collabora / richdocuments)
 #   ./update.sh --secrets                  # Re-seed all OpenBao KV secrets
 #   ./update.sh --reconcile-releases       # Re-reconcile any failing Crossplane Release CRs
 #   ./update.sh --reconcile-releases --force  # Force re-reconcile ALL Release CRs
@@ -16,11 +15,6 @@
 #   ./update.sh --mail --dry-run           # Print what would change without applying
 #
 # What it reconciles:
-#   --nextcloud-office:
-#     - Applies nextcloud ConfigMaps (richdocuments postStart hook)
-#     - Re-reconciles the nextcloud-dev Release CR so provider-helm picks up
-#       lifecycle hook changes
-#     - Runs occ on the live pod: doc_format=odf, WOPI URLs, empty templates
 #   --mail:
 #     - Patches postfix-dev-values ConfigMap when MAIL_SERVICE_MODE drifts
 #     - Re-seeds mail OpenBao KV paths (postfix + dovecot)
@@ -37,10 +31,6 @@
 #       recreates it (provider-helm does not watch ConfigMaps, so this is the
 #       only way to force value pick-up after a ConfigMap change)
 #     - With --force: also re-reconciles currently healthy Release CRs
-#
-# Legacy Nubus/LDAP flags (--ldap-acl, --keycloak-sync, --fix-kernel-ldap-scope,
-# --nubus-recover, --setup-iam, --umc-gateway) are accepted but no-op on the
-# Suze (Keycloak-native) path.
 # Prerequisites:
 #   - install.sh must have completed at least once.
 #   - kubectl configured to the target cluster.
@@ -66,21 +56,14 @@ CROSSPLANE_NAMESPACE=crossplane-system
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 DRY_RUN=0
 OP_MAIL=0
-OP_NEXTCLOUD_OFFICE=0
 OP_SECRETS=0
 OP_RECONCILE=0
-OP_NUBUS_RECOVER=0
-OP_LDAP_ACL=0
-OP_KEYCLOAK_SYNC=0
-OP_FIX_KERNEL_LDAP_SCOPE=0
 OP_CROSSPLANE=0
 OP_APPPROFILES=0
 OP_ARGOCD=0
 OP_PORTAL=0
-OP_SETUP_IAM=0
 OP_PLUGIN=0
 OP_ACME_ISSUERS=0
-OP_UMC_GATEWAY=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -93,8 +76,6 @@ Usage: ./update.sh [OPTIONS]
 Options:
   --mail                   Reconcile mail: patch postfix ConfigMap, re-seed
                            credentials, deploy kernel mail services if needed.
-  --nextcloud-office       Reconcile Nextcloud Office: apply richdocuments
-                           settings (doc_format=odf, WOPI URLs, templates).
   --secrets                Re-seed all OpenBao KV secrets and re-apply the
                            Cluster XR.
   --reconcile-releases     Re-reconcile any Crossplane Release CR that is not
@@ -103,10 +84,6 @@ Options:
   --force                  Modifier for --reconcile-releases: also re-reconcile
                            currently healthy Release CRs (forces value pick-up
                            after a ConfigMap change on a working release).
-  --nubus-recover          [legacy, no-op on Suze] Recover a stuck Nubus install.
-  --ldap-acl               [legacy, no-op on Suze] LDAP ACL patch + Keycloak sync.
-  --keycloak-sync          [legacy, no-op on Suze] Kernel-realm LDAP user import.
-  --fix-kernel-ldap-scope  [legacy, no-op on Suze] Kernel LDAP federation patch.
   --crossplane             Re-apply Crossplane XRDs and Compositions from the
                            repository (tenant-default manifest bridge, app-*).
                            Run after Crossplane XRD/Composition changes; included in --all.
@@ -120,8 +97,6 @@ Options:
                            (gentian-portal + BFF), platform admin, Helm upgrade
                            of gentian-portal-web/api (same as install.sh
                            --stage1-portal).
-  --setup-iam              [legacy, no-op on Suze] Re-run nubus setup-iam-templates.
-  --umc-gateway            [legacy, no-op on Suze] UMC gateway upstream patch.
   --plugin                 Reinstall the kubectl-gentian plugin from this
                            repository (idempotent: skips if already up-to-date).
   --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
@@ -136,23 +111,16 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --mail)                OP_MAIL=1 ;;
-        --nextcloud-office)    OP_NEXTCLOUD_OFFICE=1 ;;
         --secrets)             OP_SECRETS=1 ;;
         --reconcile-releases)  OP_RECONCILE=1 ;;
         --force)               FORCE_RECONCILE=1 ;;
-        --nubus-recover)       OP_NUBUS_RECOVER=1 ;;
-        --ldap-acl)            OP_LDAP_ACL=1 ;;
-        --keycloak-sync)       OP_KEYCLOAK_SYNC=1 ;;
-        --fix-kernel-ldap-scope) OP_FIX_KERNEL_LDAP_SCOPE=1 ;;
         --crossplane)          OP_CROSSPLANE=1 ;;
         --appprofiles)         OP_APPPROFILES=1 ;;
         --argocd)              OP_ARGOCD=1 ;;
         --portal)              OP_PORTAL=1 ;;
-        --setup-iam)           OP_SETUP_IAM=1 ;;
-        --umc-gateway)         OP_UMC_GATEWAY=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
         --acme-issuers)        OP_ACME_ISSUERS=1 ;;
-        --all)                 OP_MAIL=1; OP_NEXTCLOUD_OFFICE=1; OP_SECRETS=1; OP_RECONCILE=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_PLUGIN=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_PLUGIN=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -161,9 +129,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_NUBUS_RECOVER}" == "0" && "${OP_LDAP_ACL}" == "0" && "${OP_KEYCLOAK_SYNC}" == "0" && "${OP_FIX_KERNEL_LDAP_SCOPE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_PORTAL}" == "0" && "${OP_SETUP_IAM}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" && "${OP_UMC_GATEWAY}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_PORTAL}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
     OP_MAIL=1
-    OP_NEXTCLOUD_OFFICE=1
     OP_SECRETS=1
     OP_RECONCILE=1
     OP_CROSSPLANE=1
@@ -171,10 +138,6 @@ if [[ "${OP_MAIL}" == "0" && "${OP_NEXTCLOUD_OFFICE}" == "0" && "${OP_SECRETS}" 
     OP_ARGOCD=1
     OP_PLUGIN=1
 fi
-
-_legacy_update_op_disabled() {
-    warn "Legacy Nubus/LDAP operation ignored on Suze path: $1"
-}
 
 # =============================================================================
 # Bootstrap: load config and credentials
@@ -501,314 +464,6 @@ op_reconcile_releases() {
         fi
     fi
 }
-
-# =============================================================================
-# _trigger_keycloak_ldap_sync — trigger a full LDAP sync in Keycloak's
-#                               opendesk realm so all users (including newly
-#                               provisioned tenant admins) are re-imported with
-#                               the correct enabled state.
-#
-# Background: Keycloak's opendesk realm uses LDAP federation with
-# importEnabled=true but no automatic sync period (fullSyncPeriod=-1).  When
-# an LDAP user is first imported on login, a brief race during UDM user
-# creation can set shadowExpire=1, causing the univention-ldap-mapper to mark
-# the account as disabled (isAccountDisabled() returns true only when
-# shadowExpire==1).  A fresh full sync re-reads LDAP with the correct
-# (non-expired) attributes and updates the local Keycloak user record.
-# =============================================================================
-_trigger_keycloak_ldap_sync() {
-    local release_name="nubus-dev"
-    local ns="${KERNEL_NAMESPACE}"
-    local kc_realm="${KERNEL_REALM:-kernel}"
-
-    info "Triggering Keycloak LDAP full sync for realm '${kc_realm}'..."
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would trigger Keycloak LDAP full sync"
-        return 0
-    fi
-
-    # Get Keycloak pod IP (headless service — use pod IP directly).
-    local kc_pod_ip
-    kc_pod_ip=$(kubectl get pod "${release_name}-keycloak-0" -n "${ns}" \
-        -o jsonpath='{.status.podIP}' 2>/dev/null || true)
-    if [[ -z "${kc_pod_ip}" ]]; then
-        warn "Keycloak pod not found in ${ns} — skipping LDAP sync"
-        return 0
-    fi
-
-    # Get Keycloak admin password.
-    local kc_admin_pass
-    kc_admin_pass=$(kubectl get secret "${release_name}-keycloak-credentials" \
-        -n "${ns}" -o jsonpath='{.data.adminPassword}' 2>/dev/null | base64 -d || true)
-    if [[ -z "${kc_admin_pass}" ]]; then
-        warn "Keycloak admin credentials not found — skipping LDAP sync"
-        return 0
-    fi
-
-    # Obtain an admin CLI token.  Username is 'kcadmin' per Nubus chart defaults.
-    local kc_token
-    kc_token=$(curl -sf --max-time 30 \
-        "http://${kc_pod_ip}:8080/realms/master/protocol/openid-connect/token" \
-        -d "grant_type=password&client_id=admin-cli&username=kcadmin&password=${kc_admin_pass}" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
-    if [[ -z "${kc_token}" ]]; then
-        warn "Could not obtain Keycloak admin token — skipping LDAP sync"
-        return 0
-    fi
-
-    # Discover the LDAP federation provider ID in the opendesk realm.
-    local provider_id
-    provider_id=$(curl -sf --max-time 30 \
-        -H "Authorization: Bearer ${kc_token}" \
-        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components?type=org.keycloak.storage.UserStorageProvider" \
-        | python3 -c "
-import sys, json
-for p in json.load(sys.stdin):
-    if p.get('providerId') == 'ldap':
-        print(p['id'])
-        break
-" 2>/dev/null || true)
-    if [[ -z "${provider_id}" ]]; then
-        warn "LDAP provider not found in Keycloak '${kc_realm}' realm — skipping sync"
-        return 0
-    fi
-
-    # Trigger a full user sync (re-imports all LDAP users with fresh attributes).
-    local sync_result
-    sync_result=$(curl -sf --max-time 120 \
-        -X POST \
-        -H "Authorization: Bearer ${kc_token}" \
-        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/user-storage/${provider_id}/sync?action=triggerFullSync" \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status', d))" 2>/dev/null || true)
-    if [[ -n "${sync_result}" ]]; then
-        success "Keycloak LDAP sync complete: ${sync_result}"
-    else
-        warn "Keycloak LDAP sync request sent but no result returned — check Keycloak logs"
-    fi
-}
-
-# =============================================================================
-# op_keycloak_sync — standalone wrapper around _trigger_keycloak_ldap_sync
-# =============================================================================
-op_keycloak_sync() {
-    banner "Keycloak LDAP sync (realm: ${KERNEL_REALM:-kernel})"
-    _trigger_keycloak_ldap_sync
-}
-
-# =============================================================================
-# op_fix_kernel_ldap_scope — patch the kernel realm LDAP User Storage Provider
-#                             for shared-portal authentication (iam.md §1.2).
-#
-# Nubus keycloak-bootstrap seeds ldap-provider with cn=users + ONE_LEVEL scope,
-# which hides tenant humans under ou=<tenant>. The keycloak-config PostSync hook
-# (ldap-federation-patch.yaml) corrects this to SUBTREE + mailPrimaryAddress;
-# install and manual recovery call this function to apply the same settings.
-# =============================================================================
-_fix_kernel_ldap_scope() {
-    local release_name="nubus-dev"
-    local ns="${KERNEL_NAMESPACE}"
-    local kc_realm="${KERNEL_REALM:-kernel}"
-    local ldap_base
-    ldap_base="$(resolve_ldap_base_dn)"
-    if [[ -z "${ldap_base}" ]]; then
-        warn "LDAP base DN unset — skipping kernel LDAP scope fix (set LDAP_BASE_DN in cluster-settings.env)"
-        return 0
-    fi
-    local target_users_dn="${ldap_base}"
-
-    info "Patching kernel realm LDAP federation for portal login (usersDn=${target_users_dn}, SUBTREE, mailPrimaryAddress)..."
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would patch kernel realm LDAP federation usersDn=${target_users_dn} searchScope=2 mailPrimaryAddress"
-        return 0
-    fi
-
-    # Get Keycloak pod IP.
-    local kc_pod_ip
-    kc_pod_ip=$(kubectl get pod "${release_name}-keycloak-0" -n "${ns}" \
-        -o jsonpath='{.status.podIP}' 2>/dev/null || true)
-    if [[ -z "${kc_pod_ip}" ]]; then
-        warn "Keycloak pod not found in ${ns} — skipping kernel LDAP scope fix"
-        return 0
-    fi
-
-    # Get Keycloak admin password from the UMS administrator secret (reliable source).
-    local kc_admin_pass
-    kc_admin_pass=$(kubectl get secret "${release_name}-stack-data-ums-administrator" \
-        -n "${ns}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
-    if [[ -z "${kc_admin_pass}" ]]; then
-        warn "UMS administrator secret not found — skipping kernel LDAP scope fix"
-        return 0
-    fi
-
-    # Obtain an admin CLI token using the Administrator account (matches buildKCLDAPSyncScript).
-    local kc_token
-    kc_token=$(curl -sf --max-time 30 \
-        "http://${kc_pod_ip}:8080/realms/master/protocol/openid-connect/token" \
-        -d "grant_type=password&client_id=admin-cli&username=Administrator&password=${kc_admin_pass}" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
-    if [[ -z "${kc_token}" ]]; then
-        warn "Could not obtain Keycloak admin token — skipping kernel LDAP scope fix"
-        return 0
-    fi
-
-    # Find the LDAP User Storage Provider in the kernel realm.
-    # Retry: keycloak-bootstrap creates the federation component asynchronously
-    # and may still be running when install.sh calls this function. Wait up to
-    # 5 minutes (10 × 30 s) for the provider to appear.
-    local provider_json provider_id _attempt
-    _attempt=0
-    while true; do
-        provider_json=$(curl -sf --max-time 30 \
-            -H "Authorization: Bearer ${kc_token}" \
-            "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components?type=org.keycloak.storage.UserStorageProvider" \
-            | python3 -c "
-import sys, json
-for p in json.load(sys.stdin):
-    if p.get('providerId') == 'ldap':
-        print(json.dumps(p))
-        break
-" 2>/dev/null || true)
-        [[ -n "${provider_json}" ]] && break
-        _attempt=$(( _attempt + 1 ))
-        if (( _attempt >= 10 )); then
-            warn "LDAP provider not found in realm '${kc_realm}' after 5m — skipping"
-            return 0
-        fi
-        info "  LDAP provider not yet in realm '${kc_realm}' (attempt ${_attempt}/10) — keycloak-bootstrap still running; retry in 30s..."
-        sleep 30
-        # Refresh the admin token; it may expire during a long wait.
-        kc_token=$(curl -sf --max-time 30 \
-            "http://${kc_pod_ip}:8080/realms/master/protocol/openid-connect/token" \
-            -d "grant_type=password&client_id=admin-cli&username=Administrator&password=${kc_admin_pass}" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || true)
-        [[ -n "${kc_token}" ]] || { warn "Lost Keycloak admin token during wait — skipping"; return 0; }
-    done
-    provider_id=$(echo "${provider_json}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
-
-    # Skip when all four target fields already match (idempotent).
-    local already_correct
-    already_correct=$(echo "${provider_json}" | python3 -c "
-import sys, json
-p = json.load(sys.stdin)
-cfg = p.get('config', {})
-desired = {
-    'usersDn': ['${target_users_dn}'],
-    'searchScope': ['2'],
-    'usernameLDAPAttribute': ['mailPrimaryAddress'],
-    'customUserSearchFilter': ['(mailPrimaryAddress=*)'],
-}
-print('yes' if all(cfg.get(k) == v for k, v in desired.items()) else 'no')
-" 2>/dev/null || echo "no")
-    if [[ "${already_correct}" == "yes" ]]; then
-        success "Kernel LDAP federation already configured for portal login — nothing to do"
-        return 0
-    fi
-
-    local current_dn current_scope
-    current_dn=$(echo "${provider_json}" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p.get('config',{}).get('usersDn',[''])[0])" 2>/dev/null || true)
-    current_scope=$(echo "${provider_json}" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p.get('config',{}).get('searchScope',[''])[0])" 2>/dev/null || true)
-    info "Current kernel LDAP usersDn=${current_dn} searchScope=${current_scope} → patching SUBTREE + mailPrimaryAddress"
-
-    local patched_json
-    patched_json=$(echo "${provider_json}" | python3 -c "
-import sys, json
-p = json.load(sys.stdin)
-p['config']['usersDn'] = ['${target_users_dn}']
-p['config']['searchScope'] = ['2']
-p['config']['usernameLDAPAttribute'] = ['mailPrimaryAddress']
-p['config']['customUserSearchFilter'] = ['(mailPrimaryAddress=*)']
-print(json.dumps(p))
-")
-
-    local http_status
-    http_status=$(curl -sf --max-time 30 -o /dev/null -w "%{http_code}" \
-        -X PUT \
-        -H "Authorization: Bearer ${kc_token}" \
-        -H "Content-Type: application/json" \
-        "http://${kc_pod_ip}:8080/admin/realms/${kc_realm}/components/${provider_id}" \
-        -d "${patched_json}" 2>/dev/null || echo "ERR")
-    if [[ "${http_status}" == "204" ]]; then
-        success "Kernel LDAP federation patched for shared-portal login (SUBTREE, mailPrimaryAddress)"
-    else
-        warn "Unexpected HTTP ${http_status} when patching kernel LDAP provider — check Keycloak logs"
-        return 1
-    fi
-}
-
-op_fix_kernel_ldap_scope() {
-    banner "Fix kernel realm LDAP scope"
-    _fix_kernel_ldap_scope
-}
-
-# =============================================================================
-# op_ldap_acl_upgrade — refresh the LDAP ACL configmap and restart the LDAP
-#                        primary pod so the latest ACL patches are applied.
-#
-# Background: The 92-gentian-tenant-acl.sh script is mounted from the
-# nubus-dev-ldap-gentian-acl ConfigMap into the LDAP primary container's
-# /entrypoint.d/ and runs at pod startup to patch slapd.conf.  When the
-# script is updated (e.g. to fix mail/domain visibility in patch 10), the
-# ConfigMap must be re-applied and the pod restarted for the new ACL rules
-# to take effect.
-#
-# This function:
-#   1. Re-applies the ConfigMap from the source file (idempotent).
-#   2. Restarts the LDAP primary StatefulSet pod.
-#   3. Waits for the pod to become Ready again.
-#   4. Triggers a Keycloak LDAP full sync so any users imported during the
-#      previous (potentially broken) LDAP ACL state are re-evaluated.
-# =============================================================================
-op_ldap_acl_upgrade() {
-    local release_name="nubus-dev"
-    local ns="${KERNEL_NAMESPACE}"
-    local sts="${release_name}-ldap-server-primary"
-
-    info "Updating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would apply: ${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/92-gentian-tenant-acl.sh"
-        return 0
-    fi
-
-    kubectl create configmap "${release_name}-ldap-gentian-acl" \
-        -n "${ns}" \
-        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/92-gentian-tenant-acl.sh" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    info "Restarting LDAP primary StatefulSet (${sts}) to apply new ACL patches..."
-    kubectl rollout restart statefulset/"${sts}" -n "${ns}"
-
-    info "Waiting for LDAP primary pod to be Ready..."
-    if ! kubectl rollout status statefulset/"${sts}" -n "${ns}" --timeout=120s; then
-        warn "LDAP primary pod did not become Ready within 120s — check: kubectl get pods -n ${ns}"
-        return 1
-    fi
-
-    success "LDAP ACL upgrade complete."
-
-    # ── Restart Dovecot so it reconnects to LDAP with the new ACL rules ──────
-    # Dovecot caches LDAP connections. After the LDAP pod restarts with new
-    # ACL patches, Dovecot must restart to re-establish connections and pick
-    # up the updated ACL state (e.g. newly allowed ldapsearch_dovecot binds).
-    local dovecot_dep="dovecot-dev"
-    if kubectl get deployment/"${dovecot_dep}" -n "${ns}" >/dev/null 2>&1; then
-        info "Restarting Dovecot (${dovecot_dep}) to reconnect to LDAP..."
-        kubectl rollout restart deployment/"${dovecot_dep}" -n "${ns}"
-        if ! kubectl rollout status deployment/"${dovecot_dep}" -n "${ns}" --timeout=120s; then
-            warn "Dovecot did not become Ready within 120s — check: kubectl get pods -n ${ns}"
-        else
-            success "Dovecot restarted."
-        fi
-    else
-        info "Dovecot deployment (${dovecot_dep}) not found in ${ns} — skipping restart."
-    fi
-
-    _trigger_keycloak_ldap_sync
-}
-
-# =============================================================================
-# op_acme_issuers — re-apply ClusterIssuers per ACME_ENV in install.env
 # =============================================================================
 op_acme_issuers() {
     banner "cert-manager ClusterIssuers (ACME_ENV=${ACME_ENV:-production})"
@@ -959,203 +614,6 @@ op_portal() {
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     install_stage1_portal
 }
-
-# =============================================================================
-# op_setup_iam_recover — delete and re-run nubus-dev-setup-iam-templates
-#
-# The job is an ArgoCD PostSync hook on nubus-manifests-dev.  Failures usually
-# mean it ran before stack-data-ums registered opendesk extended attributes, or
-# the Admin User template body referenced opendesk* properties too early.
-# =============================================================================
-op_setup_iam_recover() {
-    banner "setup-iam-templates job recovery"
-
-    local ns="gentian-${ENV:-dev}"
-    local release_name="nubus-${ENV:-dev}"
-    local job="nubus-${ENV:-dev}-setup-iam-templates"
-    local job_manifest="${SCRIPT_DIR}/kernel/services/nubus/manifests/${ENV:-dev}/setup-iam-templates-job.yaml"
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would wait for stack-data-ums, delete ${job}, re-apply job manifest"
-        return 0
-    fi
-
-    # Ensure stack-data-ums has completed (extended attributes must exist).
-    local sdu_job=""
-    sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
-        -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-    if [[ -n "${sdu_job}" ]]; then
-        info "Waiting for ${sdu_job} to be Complete..."
-        kubectl wait "job/${sdu_job}" -n "${ns}" \
-            --for=condition=complete --timeout=600s 2>/dev/null \
-        || warn "${sdu_job} is not Complete — setup-iam may still fail."
-    else
-        warn "No stack-data-ums job found in ${ns}; proceeding anyway."
-    fi
-
-    info "Deleting failed job ${job} (if present)..."
-    kubectl delete job "${job}" -n "${ns}" --ignore-not-found=true --wait=true 2>/dev/null || true
-
-    if [[ ! -f "${job_manifest}" ]]; then
-        error "Job manifest not found: ${job_manifest}"
-        return 1
-    fi
-
-    info "Re-applying ${job_manifest}..."
-    kubectl apply -f "${job_manifest}"
-
-    wait_for_setup_iam_job || return 1
-    success "setup-iam-templates job recovered."
-}
-
-# =============================================================================
-# op_umc_gateway — re-apply UMC gateway Apache upstream patch
-#
-# Crossplane/Helm upgrades reset prepare-config on nubus-dev-umc-gateway. Without
-# the gentian init hook, Apache proxies OIDC to 0.0.0.0:8090 (503). Day-2 drift
-# is also handled by umc-gateway-upstream-reconciler CronJob on nubus-manifests-dev.
-# =============================================================================
-op_umc_gateway() {
-    banner "UMC gateway upstream patch"
-
-    local ns="gentian-${ENV:-dev}"
-    local deploy="nubus-${ENV:-dev}-umc-gateway"
-    local script="${SCRIPT_DIR}/kernel/services/nubus/manifests/${ENV:-dev}/patches/patch-umc-gateway-upstream.sh"
-
-    if [[ ! -f "${script}" ]]; then
-        warn "Patch script not found: ${script} — skipping."
-        return 0
-    fi
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would run ${script} (deploy=${deploy}, ns=${ns})"
-        return 0
-    fi
-
-    GENTIAN_NAMESPACE="${ns}" \
-    GENTIAN_UMC_GATEWAY_DEPLOY="${deploy}" \
-    GENTIAN_UMC_GATEWAY_WAIT_HELM_SEC=0 \
-    GENTIAN_UMC_GATEWAY_RECONCILE=0 \
-        bash "${script}"
-}
-
-# =============================================================================
-# op_nubus_recover — reapply the stack-data-ums job in the correct namespace
-#
-# Background: install.sh's _wait_and_fix_stack_data_ums() calls `helm get
-# manifest | kubectl apply -f -` without an explicit -n flag.  When the
-# kubectl context has a non-gentian-dev default namespace (e.g. argocd), the
-# reapplied job silently lands in the wrong namespace, never creates the
-# cn=stack-data-ums.done LDAP marker, and leaves register-consumers stuck in
-# Init:1/2 (wait-for-data-loader) forever.
-#
-# This function:
-#   1. Checks whether register-consumers has already completed (noop if so).
-#   2. Deletes any existing failed/stuck stack-data-ums job in the target ns.
-#   3. Extracts the job manifest from the Helm release and applies it with an
-#      explicit -n flag so it lands in KERNEL_NAMESPACE regardless of the
-#      kubectl context default namespace.
-#   4. Waits up to 10 minutes for the job to complete.
-# =============================================================================
-op_nubus_recover() {
-    local release_name="nubus-dev"
-    local ns="${KERNEL_NAMESPACE}"
-
-    banner "Nubus: stack-data-ums recovery (ns=${ns})"
-
-    # ── 1. Check if register-consumers is already complete ────────────────────
-    local rc_job
-    rc_job=$(kubectl get jobs -n "${ns}" --no-headers \
-        -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-provisioning-register-consumers-" | tail -1 || true)
-
-    if [[ -z "$rc_job" ]]; then
-        info "No register-consumers job found — nubus may not be installed yet."
-        return 0
-    fi
-
-    local rc_complete
-    rc_complete=$(kubectl get job "${rc_job}" -n "${ns}" \
-        -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' \
-        2>/dev/null || echo "")
-
-    if [[ "${rc_complete}" == "True" ]]; then
-        success "register-consumers already completed — done marker is present, nothing to do."
-        return 0
-    fi
-
-    info "register-consumers job '${rc_job}' is not complete — proceeding with recovery."
-
-    # ── 2. Delete any existing failed/stuck stack-data-ums job ───────────────
-    local sdu_job
-    sdu_job=$(kubectl get jobs -n "${ns}" --no-headers \
-        -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-
-    if [[ -n "$sdu_job" ]]; then
-        local sdu_complete
-        sdu_complete=$(kubectl get job "${sdu_job}" -n "${ns}" \
-            -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' \
-            2>/dev/null || echo "")
-        if [[ "${sdu_complete}" == "True" ]]; then
-            success "stack-data-ums job '${sdu_job}' is already Complete."
-            info "register-consumers may still be catching up — wait a moment and re-run."
-            return 0
-        fi
-        warn "Removing existing non-complete stack-data-ums job '${sdu_job}'..."
-        if [[ "${DRY_RUN}" != "1" ]]; then
-            kubectl delete job "${sdu_job}" -n "${ns}" \
-                --ignore-not-found=true >/dev/null 2>&1 || true
-        else
-            info "  [dry-run] Would: kubectl delete job ${sdu_job} -n ${ns}"
-        fi
-    fi
-
-    # ── 3. Extract and apply the job from the Helm release ───────────────────
-    # NOTE: the stack-data-ums job is a Helm hook so it only appears in
-    # `helm get all`, NOT in `helm get manifest`.
-    info "Applying stack-data-ums job from Helm release into namespace '${ns}'..."
-    if [[ "${DRY_RUN}" == "1" ]]; then
-        info "  [dry-run] Would: helm get all ${release_name} -n ${ns} | python3 ... | kubectl apply -n ${ns} -f -"
-        return 0
-    fi
-
-    apply_stack_data_ums_job_from_helm "${release_name}" "${ns}" >/dev/null || {
-        warn "Failed to apply stack-data-ums job — is the nubus Helm release deployed?"
-        warn "  helm list -n ${ns}"
-        return 1
-    }
-
-    # ── 4. Wait for the job to appear and complete ───────────────────────────
-    info "Waiting for stack-data-ums job to appear in namespace '${ns}' (up to 2m)..."
-    local deadline=$((SECONDS + 120))
-    local new_job=""
-    until [[ -n "$new_job" ]]; do
-        new_job=$(kubectl get jobs -n "${ns}" --no-headers \
-            -o custom-columns=NAME:.metadata.name 2>/dev/null \
-            | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-        if (( SECONDS > deadline )); then
-            warn "stack-data-ums job did not appear within 2m."
-            warn "  Check: kubectl get jobs -n ${ns}"
-            return 1
-        fi
-        [[ -n "$new_job" ]] || sleep 3
-    done
-
-    info "Waiting for stack-data-ums job '${new_job}' to complete (up to 10m)..."
-    if kubectl wait "job/${new_job}" -n "${ns}" \
-            --for=condition=Complete --timeout=600s 2>/dev/null; then
-        success "stack-data-ums job completed — portal stack should recover within a few minutes."
-        finalize_stack_data_ums_job "${ns}" "${new_job}"
-        info "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=portal-consumer"
-    else
-        warn "stack-data-ums job did not complete within 10m."
-        warn "  Check: kubectl logs -n ${ns} -l job-name=${new_job} --tail=40"
-        return 1
-    fi
-}
-
 # =============================================================================
 # main
 # =============================================================================
@@ -1171,23 +629,14 @@ echo ""
 _init
 
 [[ "${OP_MAIL}"            == "1" ]] && op_mail
-if [[ "${OP_NEXTCLOUD_OFFICE}" == "1" ]]; then
-    GENTIAN_DRY_RUN="${DRY_RUN}" reconcile_nextcloud_office
-fi
 [[ "${OP_SECRETS}"         == "1" ]] && op_secrets
 [[ "${OP_CROSSPLANE}"      == "1" ]] && op_crossplane_update
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
 [[ "${OP_ARGOCD}"          == "1" ]] && op_argocd_bootstrap
 [[ "${OP_PORTAL}"          == "1" ]] && op_portal
-[[ "${OP_SETUP_IAM}"       == "1" ]] && _legacy_update_op_disabled --setup-iam
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
-[[ "${OP_LDAP_ACL}"        == "1" ]] && _legacy_update_op_disabled --ldap-acl
-[[ "${OP_NUBUS_RECOVER}"   == "1" ]] && _legacy_update_op_disabled --nubus-recover
-[[ "${OP_KEYCLOAK_SYNC}"        == "1" ]] && _legacy_update_op_disabled --keycloak-sync
-[[ "${OP_FIX_KERNEL_LDAP_SCOPE}" == "1" ]] && _legacy_update_op_disabled --fix-kernel-ldap-scope
-[[ "${OP_PLUGIN}"               == "1" ]] && install_app_catalogue
-[[ "${OP_ACME_ISSUERS}"         == "1" ]] && op_acme_issuers
-[[ "${OP_UMC_GATEWAY}"          == "1" ]] && _legacy_update_op_disabled --umc-gateway
+[[ "${OP_PLUGIN}"          == "1" ]] && install_app_catalogue
+[[ "${OP_ACME_ISSUERS}"    == "1" ]] && op_acme_issuers
 
 echo ""
 success "update.sh completed."

@@ -188,3 +188,33 @@ func ProfileOIDCDefaultRedirectURIs(p *AppProfile) ([]string, error) {
 	}
 	return uris, nil
 }
+
+// GatewayFrameAncestorsSpec is the JSON shape for gentianos.io/gateway-frame-ancestors.
+type GatewayFrameAncestorsSpec struct {
+	Mode    string   `json:"mode"`
+	Origins []string `json:"origins"`
+}
+
+// IngressGatewayFrameAncestors parses gentianos.io/gateway-frame-ancestors on an ingress.
+func IngressGatewayFrameAncestors(ingress *IngressSpec) (*GatewayFrameAncestorsSpec, error) {
+	if ingress == nil || len(ingress.Annotations) == 0 {
+		return nil, nil
+	}
+	raw := strings.TrimSpace(ingress.Annotations[AnnotationIngressGatewayFrameAncestors])
+	if raw == "" {
+		return nil, nil
+	}
+	var spec GatewayFrameAncestorsSpec
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return nil, err
+	}
+	return &spec, nil
+}
+
+// IngressGatewayEscapedSlashesAction returns gentianos.io/gateway-escaped-slashes-action when set.
+func IngressGatewayEscapedSlashesAction(ingress *IngressSpec) string {
+	if ingress == nil || len(ingress.Annotations) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(ingress.Annotations[AnnotationIngressGatewayEscapedSlashesAction])
+}

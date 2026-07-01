@@ -248,22 +248,3 @@ portal:
   welcomeMessage:
     # Show the welcome message tile on first login.
     enabled: true
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Web Office (Collabora / Nextcloud Office)
-# Kernel service — deployed once per cluster in kernel/services/collabora/.
-# Wired into: kernel/services/collabora/manifests/<env>/configmap.yaml
-# and kernel/services/nextcloud-management/manifests/<env>/configmap.yaml
-#             (internalWopiUrl + public_wopi_url).
-# Per-tenant opt-in: Tenant.spec.office.enabled = true.
-# ─────────────────────────────────────────────────────────────────────────────
-weboffice:
-  # Default format for new documents created from the portal or Nextcloud.
-  # ODF → .odt/.ods/.odp | OOXML → .docx/.xlsx/.pptx
-  defaultFormat: "ODF"
-  macros:
-    # Enable macro execution (Basic/Python scripts) in Collabora.
-    enabled: false
-    # 1 = require confirmation before executing macros from untrusted sources.
-    # 0 = execute all macros without confirmation.
-    securityLevel: 1
