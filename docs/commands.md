@@ -367,6 +367,10 @@ relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
 
 On dev, in-cluster SMTP is `postfix-dev.gentian-dev.svc.cluster.local:587`.
 
+**Tunnel clusters:** `MAIL_SERVICE_MODE=kernel` is rejected by `./install.sh --validate` when
+`NETWORK_MODE=tunnel`. Cloudflare tunnel exposes HTTP/HTTPS only — use
+`MAIL_SERVICE_MODE=external` with `EXTERNAL_SMTP_HOST` / `SMTP_RELAY_*` for invitation mail.
+
 ### Enable kernel mail delivery
 
 Kernel mail mode deploys Dovecot alongside Postfix and configures Postfix

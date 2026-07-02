@@ -274,18 +274,29 @@ op_mail() {
     # deploy_kernel_mail_services() is sourced from install.sh; it is idempotent
     # (kubectl apply) so safe to call on every --mail run when mode=kernel.
     if [[ "${mode}" == "kernel" ]]; then
+        if ! mail_network_mode_compatible "${mode}" "${NETWORK_MODE:-tunnel}"; then
+            error "$(mail_network_mode_incompatibility_message)"
+            exit 1
+        fi
         deploy_kernel_mail_services
+        _sync_kernel_postfix_virtual_mailbox_maps
         _patch_postfix_configmap kernel
         _patch_postfix_allowed_sender_domains
+        _patch_postfix_live_relay kernel
         verify_dovecot_installation || warn "Dovecot verification failed after mail reconciliation."
+    elif kubectl get configmap postfix-dev-values -n "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}" >/dev/null 2>&1; then
+        _patch_postfix_configmap external
+        _patch_postfix_allowed_sender_domains
+        _patch_postfix_live_relay external
     fi
 
-    # ── 6. Configure Keycloak kernel realm SMTP (invite/reset password emails) ─
+    # ── 6. Configure Keycloak realm SMTP (invite/reset password emails) ─────────
     if [[ "${DRY_RUN}" != "1" ]] \
         && kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; then
         # shellcheck source=scripts/portal-login-bootstrap.sh
         source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
         configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
+        configure_tenant_realms_smtp || warn "Tenant realm SMTP configuration skipped."
     fi
 }
 

@@ -511,11 +511,21 @@ validate_config() {
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
         _req_from EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)" "${cluster_settings_file}"
+        _opt_from EXTERNAL_SMTP_PORT "External SMTP port (default 587)" "${cluster_settings_file}"
         _req_from SMTP_RELAY_USERNAME "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
         _req_from SMTP_RELAY_PASSWORD "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
     else
         echo "  [OK]       SMTP_RELAY_USERNAME  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
         echo "  [OK]       SMTP_RELAY_PASSWORD  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
+    fi
+
+    NETWORK_MODE="${NETWORK_MODE:-tunnel}"
+    if ! mail_network_mode_compatible "${MAIL_SERVICE_MODE}" "${NETWORK_MODE}"; then
+        echo "  [INVALID]  MAIL_SERVICE_MODE=kernel with NETWORK_MODE=tunnel"
+        echo "             Kernel mail (Postfix/Dovecot) needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
+        (( errors++ )) || true
+    elif [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
+        echo "  [OK]       MAIL_SERVICE_MODE=kernel with NETWORK_MODE=${NETWORK_MODE}"
     fi
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
@@ -1170,6 +1180,11 @@ check_prereqs() {
         fi
     else
         info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: SMTP relay credentials not required (Keycloak uses in-cluster Postfix)"
+    fi
+
+    if ! mail_network_mode_compatible "${MAIL_SERVICE_MODE}" "${NETWORK_MODE:-tunnel}"; then
+        error "$(mail_network_mode_incompatibility_message)"
+        missing=$((missing + 1))
     fi
 
     if [[ "$missing" -gt 0 ]]; then
