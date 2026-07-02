@@ -25,7 +25,7 @@ import (
 )
 
 func TestIsPortalRedirectIngress(t *testing.T) {
-	umc := &networkingv1.Ingress{
+	portalRedirect := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "tenant-demo-portal-redirect",
 			Labels: map[string]string{
@@ -35,7 +35,7 @@ func TestIsPortalRedirectIngress(t *testing.T) {
 			},
 		},
 	}
-	if !isPortalRedirectIngress(umc) {
+	if !isPortalRedirectIngress(portalRedirect) {
 		t.Fatal("expected portal redirect ingress to be recognized")
 	}
 	app := &networkingv1.Ingress{

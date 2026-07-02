@@ -9,7 +9,7 @@
 
 Gentian needs an identity and access layer that is (a) simpler and more modern than traditional directory-centric stacks, (b) fully open-source and sovereignty-friendly, (c) first-class for **four principal types** — humans, AI agents, applications/workloads, and assets — and (d) designed so that a *compromised principal of any type does the least possible damage*.
 
-This document defines the security principles, the concrete Keycloak + OpenFGA architecture, how application permissions are modeled (AppProfile declaration, IntegrationBinding wiring, and the planned AppGrant ReBAC layer), and a staged implementation plan.
+This document defines the security principles, the concrete Keycloak + OpenFGA architecture, how application permissions are modeled (AppProfile declaration, IntegrationBinding wiring, and AppGrant ReBAC layer), and a staged implementation plan.
 
 The guiding idea, borrowed from Android's sandbox model: **least privilege is not a single access-control model — it is the intersection of several independent layers, each enforcing a different concern, so that breaching one layer does not collapse the others.**
 
@@ -92,7 +92,7 @@ The agent reads a document **only if** it is the user's agent (`acting_for`), th
 |---|---|---|
 | **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
-| **Provisioning bridge** | Syncs Keycloak identity/group/role/agent events and SCIM into OpenFGA tuples; reconciles `IntegrationBinding` credentials and (future) `AppGrant` into the graph. | (build) |
+| **Provisioning bridge** | Syncs Keycloak identity/group/role/agent events and SCIM into OpenFGA tuples; reconciles `IntegrationBinding` credentials and `AppGrant` into the graph. | **Done** (periodic sync; event-driven SCIM deferred) |
 | **MAC backbone** | K8s namespaces per tenant, Cilium/NetworkPolicy default-deny egress, service mesh + SPIFFE/SPIRE, admission control (Kyverno / OPA Gatekeeper). | Apache 2.0 / OSS |
 | **PEP** | App / API gateway (Kong, Envoy, or in-app) calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
@@ -155,11 +155,11 @@ For a greenfield, cloud-only sovereign OS:
         └─────────────────────────────────────────────────────────┘
 ```
 
-**Decision flow:** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Identity/role/group/agent events + SCIM flow through the bridge → relationship tuples in OpenFGA; `IntegrationBinding` reconciles cross-app credentials today; (future) `AppGrant` reconciles tenant-approved ReBAC edges. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing token claims as contextual tuples for session context. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log.
+**Decision flow:** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Identity/role/group/agent events + SCIM flow through the bridge → relationship tuples in OpenFGA; `IntegrationBinding` reconciles cross-app credentials; `AppGrant` reconciles tenant-approved ReBAC edges. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing token claims as contextual tuples for session context. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log.
 
 ### 3.4 Application permissions — catalogue contracts and grants
 
-Cross-app and kernel access in Gentian is declared in **`AppProfile`**, wired by **`IntegrationBinding`**, and (once Stage 2 ReBAC is live) constrained by a future **`AppGrant`**. This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
+Cross-app and kernel access in Gentian is declared in **`AppProfile`**, wired by **`IntegrationBinding`**, and constrained by **`AppGrant`** (tenant-approved ReBAC subset). This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
 
 Full CRD field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
 
@@ -181,7 +181,7 @@ Contract **names** (e.g. `file-store`, `project-management`) are shared vocabula
 |---|---|---|---|---|
 | **Declaration** | `AppProfile` | Cluster (one per catalogue entry) | Catalogue maintainer (`gentian-apps/profiles/`) | **Implemented** |
 | **Wiring** | `IntegrationBinding` | Namespace (per tenant, per provider↔consumer pair) | gentian-os operator (auto when peers match) | **Implemented** |
-| **Grant (ReBAC)** | `AppGrant` (planned) | Per tenant install | Tenant admin at install | **Planned** |
+| **Grant (ReBAC)** | `AppGrant` | Per tenant install | Tenant admin at install | **Done** (CRD + OpenFGA tuple sync; install-time UI subset pending) |
 
 Do not conflate them:
 
@@ -270,12 +270,17 @@ status:
 
 This object **provisions credentials and auth method** between two installed apps. It is topology + secret wiring — not user-level ReBAC. Apps receive injected values via Helm/`valueMapping`; they must not implement their own cross-app grant logic (see [app-catalogue.md](app-catalogue.md) §4).
 
-#### 3. Grant — `AppGrant` (tenant-authored, per install) — **planned**
+#### 3. Grant — `AppGrant` (tenant-authored, per install)
 
-Stage 2 adds a tenant-facing grant that is a **subset** of what `AppProfile` declared — decided at install or by tenant admin, never by the app vendor:
+The **`AppGrant`** CRD is implemented (`gentianos.io/v1alpha1`). The operator syncs
+grant tuples to OpenFGA via [`app_grant_reconciler.go`](../../internal/controller/app_grant_reconciler.go).
+Install-time UI for tenant admins to narrow capabilities at install is still evolving;
+until then grants may be authored as YAML in the tenant namespace.
+
+Example:
 
 ```yaml
-# Planned CRD — not yet in gentianos.io/v1alpha1
+apiVersion: gentianos.io/v1alpha1
 kind: AppGrant
 metadata:
   namespace: tenant-demo
@@ -290,7 +295,7 @@ spec:
       scope: [tasks:read]
 ```
 
-**Publishing is an authorization surface too.** A provided contract becomes a **resource object** in the ReBAC graph; a consumption grant becomes a **relationship tuple**. `AppProfile.spec.provides` declares the node; (future) `AppGrant.allowConsumers` creates the edge:
+**Publishing is an authorization surface too.** A provided contract becomes a **resource object** in the ReBAC graph; a consumption grant becomes a **relationship tuple**. `AppProfile.spec.provides` declares the node; `AppGrant.allowConsumers` creates the edge:
 
 ```
 contract:demo/project-management#consumer@app:crm-app
@@ -307,7 +312,7 @@ contract:demo/project-management#consumer@app:crm-app
 ```
 effective access = declared (AppProfile)
                  ∩ wired (IntegrationBinding exists + credentials valid)
-                 ∩ granted (AppGrant subset, future)
+                 ∩ granted (AppGrant subset)
                  ∩ acting-user ceiling (ReBAC)
                  ∩ conditions (ABAC)
 ```
@@ -405,7 +410,7 @@ Stage 1 **minimum work package is implemented** on `feat/new-security` (`install
 3. **Gateway-level AuthZEN** — PEP is wired in `gentian-ui` BFF; Envoy external auth is Stage 2.
 4. **App-template PEP parity** — copy `require_shell_launch()` pattern into `gentian-app-template` for catalogue apps.
 
-**Not required for Stage 1** (correctly deferred): AppGrant CRD (Stage 2), AuthZEN standardization (Stage 2), agent service accounts / Token Exchange (Stage 2), SPIFFE (Stage 3), ITAM (Stage 3), cosign admission (Horizon A).
+**Not required for Stage 1** (correctly deferred): AuthZEN standardization (Stage 2), agent service accounts / Token Exchange (Stage 2), SPIFFE (Stage 3), ITAM (Stage 3), cosign admission (Horizon A).
 
 **Already in place and reused by Stage 1:** Stage 0 MAC (tenant isolation holds regardless of authZ bugs), `IntegrationBinding` credential wiring (Stage 2 will add ReBAC on top), app-template auth/OIDC stubs.
 
@@ -414,14 +419,14 @@ Stage 1 **minimum work package is implemented** on `feat/new-security` (`install
 | Item | Status |
 |------|--------|
 | **`AppProfile` + `IntegrationBinding`** | **Done** (§3.4) |
-| **`AppGrant` CRD** + OpenFGA tuple reconciliation | **Planned** |
+| **`AppGrant` CRD** + OpenFGA tuple reconciliation | **Done** (install-time grant UI still evolving) |
 | **AuthZEN** PEP↔PDP interface | **Planned** |
 | **Agent identities** (Keycloak SA, RFC 8693, OpenFGA Conditions) | **Planned** |
 
-- Extend the provisioning bridge to reconcile binding health and credentials into observability, and introduce the planned **`AppGrant`** CRD so tenant-approved subsets — including publish-side `allowConsumers` — become OpenFGA tuples.
+- Extend the provisioning bridge to reconcile binding health and credentials into observability; **`AppGrant`** tuples are synced today — tighten netpolicy ∩ grant enforcement and install-time authoring next.
 - Standardize the **PEP↔PDP** interface on the OpenID **AuthZEN** Authorization API so gateways/apps aren't coupled to OpenFGA.
 - Make agents first-class: `agent:` object type, Keycloak service accounts, **RFC 8693** Token Exchange with `act`/`may_act`, TTL via OpenFGA **Conditions**, revocation via tuple delete.
-- *Exit criteria:* an app installed into a tenant operates within `AppProfile` declaration ∩ `IntegrationBinding` wiring ∩ (future) `AppGrant` ∩ user-ceiling; an agent acting for a user provably cannot exceed that user; revoking delegation is a single tuple delete.
+- *Exit criteria:* an app installed into a tenant operates within `AppProfile` declaration ∩ `IntegrationBinding` wiring ∩ `AppGrant` ∩ user-ceiling; an agent acting for a user provably cannot exceed that user; revoking delegation is a single tuple delete.
 
 ### Stage 3 — Assets, ITAM, hardening
 - Model devices as resource objects; if inventory warrants, introduce **NetBox/GLPI/Snipe-IT** and feed the graph via the bridge.

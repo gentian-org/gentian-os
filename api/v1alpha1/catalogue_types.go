@@ -26,6 +26,9 @@ const (
 	// KernelEgressNamespaces is a comma-separated list of extra cluster namespaces the
 	// app workload may reach (merged into kernel-access NetworkPolicy egress).
 	AnnotationProfileKernelEgressNamespaces = "gentianos.io/kernel-egress-namespaces"
+	// ExternalEgressPorts is a comma-separated list of TCP ports the app workload may
+	// reach on any external destination (e.g. 443 for Nextcloud App Store bootstrap).
+	AnnotationProfileExternalEgressPorts = "gentianos.io/external-egress-ports"
 )
 
 // Per-host gateway policy annotations on IngressSpec.annotations (primary or additionalIngresses).

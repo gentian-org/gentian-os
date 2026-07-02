@@ -23,8 +23,7 @@ spec:
     logo: data:image/svg+xml;base64,...  # committed after sync
 ```
 
-Resolution order: portal tile `tile` → legacy portal `logo` →
-profile `tile` → legacy profile `logo` → catalogue default `app`.
+Resolution order: portal tile `tile` → profile `tile` → catalogue default `app`.
 
 ## Catalogue
 

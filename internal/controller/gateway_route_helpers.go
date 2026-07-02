@@ -1,4 +1,19 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
@@ -16,7 +31,6 @@ const (
 	gatewayComponentApp      = "app-route"
 	gatewayComponentApex     = "apex-redirect"
 	gatewayComponentKernel   = "kernel-route"
-	umcPortalRedirectGateway = "umc-frontend"
 )
 
 type ingressIntent struct {
@@ -75,16 +89,31 @@ func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	}
 }
 
+// appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.
+func appHTTPRoutesForIntents(
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	intents []ingressIntent,
+	effectiveDomain, kernelDomain string,
+) []*gatewayv1.HTTPRoute {
+	routes := make([]*gatewayv1.HTTPRoute, 0, len(intents))
+	for _, intent := range intents {
+		routes = append(routes, buildAppHTTPRoute(tenant, nsName, intent, effectiveDomain, kernelDomain))
+	}
+	return routes
+}
+
 func buildAppHTTPRoute(
 	tenant *gentianov1alpha1.Tenant,
-	nsName, appProfile string,
-	profile *gentianov1alpha1.AppProfile,
-	ingress *gentianov1alpha1.IngressSpec,
-	host, effectiveDomain, kernelDomain string,
+	nsName string,
+	intent ingressIntent,
+	effectiveDomain, kernelDomain string,
 ) *gatewayv1.HTTPRoute {
+	host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
+	ingress := intent.ingress
 	svcName := ingress.ServiceName
 	if svcName == "" {
-		svcName = appProfile
+		svcName = intent.appProfile
 	}
 	svcPort := ingress.ServicePort
 	if svcPort == 0 {
@@ -106,28 +135,28 @@ func buildAppHTTPRoute(
 		},
 	}
 	mainIngressSubDomain := ""
-	if profile != nil && profile.Spec.Ingress != nil {
-		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
+	if intent.profile != nil && intent.profile.Spec.Ingress != nil {
+		mainIngressSubDomain = intent.profile.Spec.Ingress.SubDomain
 	}
 	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress); len(filters) > 0 {
 		rule.Filters = filters
 	}
 
 	rules := []gatewayv1.HTTPRouteRule{rule}
-	if apiRules := appAPIBackendRules(profile, svcPort); len(apiRules) > 0 {
+	if apiRules := appAPIBackendRules(intent.profile, svcPort); len(apiRules) > 0 {
 		rules = append(apiRules, rules...)
 	}
-	if rootRedirect := appRootRedirectRule(profile, host); rootRedirect != nil {
+	if rootRedirect := appRootRedirectRule(intent.profile, host); rootRedirect != nil {
 		rules = append([]gatewayv1.HTTPRouteRule{*rootRedirect}, rules...)
 	}
 
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      appHTTPRouteName(tenant.Name, appProfile),
+			Name:      appHTTPRouteName(tenant.Name, intent.appProfile),
 			Namespace: nsName,
 			Labels: map[string]string{
 				tenantLabel:           tenant.Name,
-				appLabel:              appProfile,
+				appLabel:              intent.appProfile,
 				managedByLabel:        managedByValue,
 				gatewayComponentLabel: gatewayComponentApp,
 			},

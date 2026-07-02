@@ -609,7 +609,6 @@ seed_secrets_remaining() {
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
 #   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
 #   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
-#   Optional legacy ApplicationSets live in kernel/appsets/disabled/.
 #
 # Prerequisites:
 #   - ArgoCD must be installed and the 'gentian' AppProject must exist.

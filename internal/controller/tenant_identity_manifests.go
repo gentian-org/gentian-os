@@ -274,7 +274,9 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 
 // crossplaneOwnsOIDCClient reports whether the app Composition already emits a
 // provider-keycloak Client MR, so the operator pack/client Job can be skipped.
-// Sidecar OIDC (element-jitsi) is owned by the parent profile's composition.
+// Sidecars: when the parent profile has compositionRef, Crossplane owns Client MRs
+// for sidecar OIDC clients too; the operator still reconciles OIDC pack Jobs when
+// a pack catalog is configured (see collectOIDCAppConfigs).
 func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppConfig) bool {
 	if cfg.pack != nil {
 		return false

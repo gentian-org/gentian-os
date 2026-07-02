@@ -16,18 +16,18 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
-| a-1 | open | High | AppGrant documented as “Planned” but implemented | Update `new-security-architecture.md` to **Done**; align Stage 2 exit criteria with `app_grant_reconciler.go` | `docs/design/new-security-architecture.md` L184, L273, L417 vs `internal/controller/app_grant_reconciler.go`, CRDs | Roadmap marks AppGrant Done; security design doc still says Planned |
-| a-2 | open | High | Composition names in docs don’t match repo | Replace `app-element` / `app-ox` with `app-default` + `spec.compositionRef` in catalogue repos | `docs/architecture.md` L185, `docs/design/app-catalogue.md` L21, `api/v1alpha1/appprofile_types.go` L119 | Docs reference `app-element` / `app-ox`; only `app-default` exists under `crossplane/compositions/` |
-| a-3 | open | High | `kernel/appsets/disabled/` referenced but missing | Remove stale comment or add `kernel/appsets/disabled/` README explaining retired sets | `install.sh` L612, `kernel/appsets/16-keycloak-provider.yaml` L6 | Comment points at a directory that does not exist |
-| a-4 | ignore | Medium | Dual CRD artifact paths | Keep `make manifests` as single write path; add CI check that trees match | `config/crd/` + `charts/gentian-os/crds/` | Synced via `make manifests`; easy to drift if only one tree is edited |
-| a-5 | open | Medium | Copyright header styles differ | Pick one SPDX header style; apply via linter or one-time pass | e.g. `identity_reconciler.go` vs `implicit_base_apps.go` | Mixed Apache boilerplate vs short one-liner |
-| a-6 | open | Medium | Routing ownership split is subtle | Document split in `docs/design/kernel.md`; extract shared `buildAppHTTPRoute` helper used once | `gateway_reconciler.go` L20–23 vs `tenant_edge_manifests.go` L27–29 | Crossplane creates objects; operator owns DNS/cleanup/waits; `buildAppHTTPRoute` in three places |
-| a-7 | open | Medium | Sidecar OIDC ownership comment contradicts behavior | Fix comment or gate sidecar client Jobs behind same `crossplaneOwnsOIDCClient` flag | `tenant_identity_manifests.go` L277 vs `oidc_pack_jobs.go` L63–78 | Comment says sidecar OIDC is composition-owned; operator may still emit client Jobs |
-| a-8 | open | Medium | `export/README.md` stale | Point README at gentian-apps repo; remove nonexistent export path | `export/README.md` L9 | Lists `gentian-apps/` export; directory absent (only `gentian-app-template/`) |
-| a-9 | open | Medium | Admin Console P1 “deploy pending” | Mark Done in roadmap or link to gentian-deployments portal Application | `docs/roadmap.md` L80 | Code marked Done in gentian-ui; deployment status unclear in gentian-os |
-| a-10 | ignore | Low | Legacy field still in API | Keep until tile migration complete; remove in next API revision | `appprofile_types.go` L53–57 (`Logo` deprecated) | Documented; resolution in `internal/tiles/resolver.go` |
-| a-11 | open | Low | `umc_reconciler_test.go` misnamed | Rename to `portal_redirect_reconciler_test.go` | `internal/controller/umc_reconciler_test.go` | Tests `kernelPortalURL` from `portal_redirect_reconciler.go` |
-| a-12 | open | Low | Install step numbering typo | Align banner and error message to same step number | `scripts/install-lib.sh` L2573 vs L2574 | Step 8 banner but error says “Step 7 failed” |
+| a-1 | done | High | AppGrant documented as “Planned” but implemented | Update `new-security-architecture.md` to **Done**; align Stage 2 exit criteria with `app_grant_reconciler.go` | `docs/design/new-security-architecture.md` L184, L273, L417 vs `internal/controller/app_grant_reconciler.go`, CRDs | Roadmap marks AppGrant Done; security design doc still says Planned |
+| a-2 | done | High | Composition names in docs don’t match repo | Replace `app-element` / `app-ox` with `app-default` + `spec.compositionRef` in catalogue repos | `docs/architecture.md` L185, `docs/design/app-catalogue.md` L21, `api/v1alpha1/appprofile_types.go` L119 | Docs reference `app-element` / `app-ox`; only `app-default` exists under `crossplane/compositions/` |
+| a-3 | done | High | `kernel/appsets/disabled/` referenced but missing | Remove stale comment or add `kernel/appsets/disabled/` README explaining retired sets | `install.sh` L612, `kernel/appsets/16-keycloak-provider.yaml` L6 | Comment points at a directory that does not exist |
+| a-4 | done | Medium | Dual CRD artifact paths | Keep `make manifests` as single write path; add CI check that trees match | `config/crd/` + `charts/gentian-os/crds/` | Synced via `make manifests`; `verify-gen` now diffs chart CRDs too |
+| a-5 | done | Medium | Copyright header styles differ | Pick one SPDX header style; apply via linter or one-time pass | e.g. `identity_reconciler.go` vs `implicit_base_apps.go` | Mixed Apache boilerplate vs short one-liner |
+| a-6 | done | Medium | Routing ownership split is subtle | Document split in `docs/design/kernel.md`; extract shared `buildAppHTTPRoute` helper used once | `gateway_reconciler.go` L20–23 vs `tenant_edge_manifests.go` L27–29 | Crossplane creates objects; operator owns DNS/cleanup/waits; `appHTTPRoutesForIntents` + intent-based `buildAppHTTPRoute` |
+| a-7 | done | Medium | Sidecar OIDC ownership comment contradicts behavior | Fix comment or gate sidecar client Jobs behind same `crossplaneOwnsOIDCClient` flag | `tenant_identity_manifests.go` L277 vs `oidc_pack_jobs.go` L63–78 | Comment says sidecar OIDC is composition-owned; operator may still emit client Jobs |
+| a-8 | done | Medium | `export/README.md` stale | Point README at gentian-apps repo; remove nonexistent export path | `export/README.md` L9 | Lists `gentian-apps/` export; directory absent (only `gentian-app-template/`) |
+| a-9 | done | Medium | Admin Console P1 “deploy pending” | Mark Done in roadmap or link to gentian-deployments portal Application | `docs/roadmap.md` L80 | Code marked Done in gentian-ui; deployment status unclear in gentian-os |
+| a-10 | done | Low | Legacy field still in API | Keep until tile migration complete; remove in next API revision | `appprofile_types.go` L53–57 (`Logo` deprecated) | Documented; resolution in `internal/tiles/resolver.go` |
+| a-11 | done | Low | `umc_reconciler_test.go` misnamed | Rename to `portal_redirect_reconciler_test.go` | `internal/controller/umc_reconciler_test.go` | Tests `kernelPortalURL` from `portal_redirect_reconciler.go` |
+| a-12 | done | Low | Install step numbering typo | Align banner and error message to same step number | `scripts/install-lib.sh` L2573 vs L2574 | Step 8 banner but error says “Step 7 failed” |
 
 ---
 
@@ -131,7 +131,7 @@ Last reviewed: 2026-07-02
 | t-4 | open | `AppPrivilegeReconciler` | None | Privilege fingerprinting untested at reconciler level | Table-driven tests for fingerprint + Keycloak role mapping |
 | t-5 | open | `MacWaiverReconciler` (tenant ensure) | None | Logic in `internal/security/mac_waiver_test.go` only | Wire reconciler envtest calling shared waiver helpers |
 | t-6 | open | `AuthzBridgeReconciler` | None | Full-cluster sync untested | Mock Keycloak + OpenFGA; assert incremental sync on tenant change |
-| t-7 | open | `PortalRedirectReconciler` | `umc_reconciler_test.go` (misnamed) | Minimal | Rename test file; add cases for kernel vs tenant portal URLs |
+| t-7 | open | `PortalRedirectReconciler` | `portal_redirect_reconciler_test.go` | Minimal | Add cases for kernel vs tenant portal URLs |
 | t-8 | ignore | Crossplane `app-default` render | `crossplane/tests/unit/render/app-default/` | Exists | No change |
 | t-9 | open | Crossplane `tenant-default` | Uses `od-element` fixture | Pro-specific fixture | Switch to generic app fixture (see e-1) |
 | t-10 | ignore | `app-element` / `app-ox` compositions | No goldens in gentian-os | Custom compositions live in catalogue repos | Test in gentian-pro repo instead |
@@ -176,3 +176,4 @@ Last reviewed: 2026-07-02
 |------|--------|-------------|-------------------|
 | x-1 | done | `install_catalogue_pro_sync` missing closing brace (shellcheck SC1072) | N/A — fixed in `152ab1b` |
 | x-2 | done | `gentian-catalogue-pro` ApplicationSet + Argo CD project allowlist (see e-7) | N/A — deployed; document repo PAT setup in install guide |
+| x-3 | done | Cleanup batch a-1–a-3, a-5, a-7–a-12 (docs, headers, API, tests, install) | See git diff on `develop`; a-4/a-6 answered in chat, not implemented |

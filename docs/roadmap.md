@@ -77,7 +77,7 @@ kernel services).
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
 | **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **Done** — [admin-console.md §8.1](design/admin-console.md#81-p0--p1-status) |
-| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | **Done** (`gentian-ui`, deploy pending) |
+| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | **Done** (`gentian-ui`; deploy via `gentian-deployments` / Argo CD) |
 | **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — [admin-console.md §8.2](design/admin-console.md#82-p2-status) |
 | **P3** | Per-user TOTP enablement | **Done** (`gentian-ui`) — [admin-console.md §8.3](design/admin-console.md#83-p3-status) |
 | **P4** | Security policies — password, session, lockout, MFA realm rules | **Done** (`gentian-ui`) — [admin-console.md §8.4](design/admin-console.md#84-p4-status) |

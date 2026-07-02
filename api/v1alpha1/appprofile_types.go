@@ -50,15 +50,8 @@ type AppProfileSpec struct {
 	// Tile declares the Gentian portal app-menu icon for this profile.
 	// Path 1 (custom): set tile.logo to a data URI or tile.image in git (inlined before publish).
 	// Path 2 (catalogue): set tile.icon to a Gentian catalogue id (e.g. "mail", "chat").
-	// Legacy spec.logo is still honoured when tile is unset.
 	// +optional
 	Tile *TileSpec `json:"tile,omitempty"`
-
-	// Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
-	// The portal reconciler writes the resolved value to pathToLogo on portal entries.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
-	Logo string `json:"logo,omitempty"`
 
 	// BrowserProxy declares HTTP routes the shell backend should transparently
 	// proxy on behalf of browser clients. Each route is exposed at
@@ -116,7 +109,7 @@ type AppProfileSpec struct {
 	// CompositionRef overrides the Crossplane Composition used to deploy this
 	// app. When empty the XRD default (app-default) applies. Set to the name
 	// of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
-	// (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
+	// (e.g. "app-od-element") for profiles that require custom MR graphs in the catalogue repo.
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 
@@ -267,11 +260,6 @@ type PortalTileSpec struct {
 	// Tile overrides the app-level tile for this portal entry.
 	// +optional
 	Tile *TileSpec `json:"tile,omitempty"`
-
-	// Logo is deprecated; prefer tile. Optional per-tile data URI override.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
-	Logo string `json:"logo,omitempty"`
 }
 
 // BrowserProxyRoute declares a single proxy route the shell exposes for this app.

@@ -185,7 +185,10 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	ingress := &gentianov1alpha1.IngressSpec{
 		SubDomain: "chat",
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "element", nil, ingress, "chat.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
+		appProfile: "element",
+		ingress:    ingress,
+	}, "demo.desk.gentian.org", "desk.gentian.org")
 	if route.Name != "httproute-demo-element" {
 		t.Fatalf("name = %q", route.Name)
 	}
@@ -225,7 +228,11 @@ func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 			},
 		},
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "multi-route-app", profile, ingress, "app.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
+		appProfile: "multi-route-app",
+		profile:    profile,
+		ingress:    ingress,
+	}, "demo.desk.gentian.org", "desk.gentian.org")
 	if len(route.Spec.Rules) != 3 {
 		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
 	}

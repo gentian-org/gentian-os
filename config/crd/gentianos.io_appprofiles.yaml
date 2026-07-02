@@ -255,7 +255,7 @@ spec:
                   CompositionRef overrides the Crossplane Composition used to deploy this
                   app. When empty the XRD default (app-default) applies. Set to the name
                   of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
-                  (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
+                  (e.g. "app-od-element") for profiles that require custom MR graphs in the catalogue repo.
                 type: string
               deploymentMethod:
                 default: crossplane
@@ -551,12 +551,6 @@ spec:
                   License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
                   Pro profiles in gentian-pro typically use proprietary.
                 type: string
-              logo:
-                description: |-
-                  Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
-                  The portal reconciler writes the resolved value to pathToLogo on portal entries.
-                pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
-                type: string
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume
                   when available.
@@ -631,11 +625,6 @@ spec:
                         LinkTarget controls how the portal opens the tile.
                         newwindow opens in a new browser tab (default).
                         embedded opens inside the gentian-ui window manager (iframe).
-                      type: string
-                    logo:
-                      description: Logo is deprecated; prefer tile. Optional per-tile
-                        data URI override.
-                      pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
                       type: string
                     name:
                       description: |-
@@ -1041,7 +1030,6 @@ spec:
                   Tile declares the Gentian portal app-menu icon for this profile.
                   Path 1 (custom): set tile.logo to a data URI or tile.image in git (inlined before publish).
                   Path 2 (catalogue): set tile.icon to a Gentian catalogue id (e.g. "mail", "chat").
-                  Legacy spec.logo is still honoured when tile is unset.
                 properties:
                   icon:
                     description: Icon selects a pre-made tile from the Gentian catalogue

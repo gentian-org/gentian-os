@@ -1,4 +1,19 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
@@ -62,10 +77,10 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	expectedRoutes := make(map[string]struct{}, len(intents))
 	expectedPolicies := make(map[string]struct{})
 	expectedClientPolicies := make(map[string]struct{})
-	for _, intent := range intents {
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress,
-			ingressHost(intent.appProfile, intent.ingress, effectiveDomain), effectiveDomain, r.KernelDomain)
+	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
 		expectedRoutes[route.Name] = struct{}{}
+	}
+	for _, intent := range intents {
 		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
 			expectedPolicies[btp.GetName()] = struct{}{}
 		}

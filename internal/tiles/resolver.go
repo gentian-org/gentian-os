@@ -74,24 +74,16 @@ func ResolveIcon(iconID string) (string, error) {
 }
 
 // ResolveLogo picks the portal tile logo using profile and optional per-tile overrides.
-// Priority: tileSpec > profileSpec > legacy fields > default catalogue icon.
+// Priority: portal tile spec > profile tile spec > default catalogue icon.
 func ResolveLogo(
 	profileTile *gentianov1alpha1.TileSpec,
-	profileLegacyLogo string,
 	portalTile *gentianov1alpha1.TileSpec,
-	portalLegacyLogo string,
 ) (string, error) {
 	if uri, ok := resolveTileSpec(portalTile); ok {
 		return uri, nil
 	}
-	if portalLegacyLogo != "" {
-		return normalizeDataURI(portalLegacyLogo), nil
-	}
 	if uri, ok := resolveTileSpec(profileTile); ok {
 		return uri, nil
-	}
-	if profileLegacyLogo != "" {
-		return normalizeDataURI(profileLegacyLogo), nil
 	}
 	return ResolveIcon(defaultIconID)
 }

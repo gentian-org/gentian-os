@@ -6,12 +6,13 @@ seed or update sibling repositories from `gentian-os`.
 | Export | Target repo | Contents |
 |--------|-------------|----------|
 | [gentian-app-template/](gentian-app-template/) | `gentian-org/gentian-app-template` | App scaffold (FastAPI + React + Helm) |
-| [gentian-apps/](gentian-apps/) | `gentian-org/gentian-apps` | App catalogue + App Store implementation |
 
-Each folder has a `MANUAL-INSTALL.md` with `tar` and git-bundle restore steps.
-Tarballs: `gentian-app-template.tar.gz`, `gentian-apps.tar.gz`.
+The OSS catalogue lives in [gentian-apps](https://github.com/gentian-org/gentian-apps);
+OpenDesk profiles live in [gentian-pro](https://github.com/gentian-org/gentian-pro).
 
-Git bundles (exact agent branches):
+Each export folder has a `MANUAL-INSTALL.md` with `tar` and git-bundle restore steps.
+Tarball: `gentian-app-template.tar.gz`.
+
+Git bundle (exact agent branch):
 
 - `gentian-app-template-cursor-app-template-scaffold-6bce.bundle`
-- `gentian-apps-cursor-app-template-and-store-6bce.bundle`

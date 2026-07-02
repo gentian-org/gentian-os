@@ -18,7 +18,7 @@ Tenant (cluster-scoped)
     │
     └─► operator ensures App claims (namespace-scoped, tenant-{name})
             │
-            └─► Crossplane Composition (app-default / app-element / app-ox)
+            └─► Crossplane Composition (app-default or profile compositionRef)
                     ├─► ExternalSecret → sensitive-values Secret
                     └─► helm.crossplane.io Release (tenant app chart)
 ```

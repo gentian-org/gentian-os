@@ -2571,7 +2571,7 @@ bootstrap_transit_app() {
     }
 
     if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
-        error "Step 7 failed: openbao-transit pod never became Ready. Aborting install."
+        error "Step 8 failed: openbao-transit pod never became Ready. Aborting install."
         exit 1
     fi
 }
@@ -2582,7 +2582,7 @@ bootstrap_transit_app() {
 init_openbao_transit() {
     banner "Step 9 — Transit instance init + autounseal Secret"
     if ! bash "${SCRIPT_DIR}/scripts/init-openbao-transit.sh"; then
-        error "Step 8 failed: init-openbao-transit.sh exited non-zero."
+        error "Step 9 failed: init-openbao-transit.sh exited non-zero."
         error "Without the openbao-transit-token Secret, the primary OpenBao"
         error "will be stuck in CreateContainerConfigError. Aborting install."
         exit 1

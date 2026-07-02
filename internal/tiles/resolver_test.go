@@ -35,9 +35,7 @@ func TestResolveLogoPriority(t *testing.T) {
 
 	got, err := ResolveLogo(
 		&gentianov1alpha1.TileSpec{Icon: "erp"},
-		"legacy-profile",
 		&gentianov1alpha1.TileSpec{Icon: "mail"},
-		"legacy-portal",
 	)
 	if err != nil {
 		t.Fatalf("ResolveLogo: %v", err)
@@ -46,7 +44,7 @@ func TestResolveLogoPriority(t *testing.T) {
 		t.Fatalf("portal tile icon should win")
 	}
 
-	got, err = ResolveLogo(&gentianov1alpha1.TileSpec{Icon: "erp"}, "legacy-profile", nil, "")
+	got, err = ResolveLogo(&gentianov1alpha1.TileSpec{Icon: "erp"}, nil)
 	if err != nil {
 		t.Fatalf("ResolveLogo: %v", err)
 	}
@@ -54,11 +52,15 @@ func TestResolveLogoPriority(t *testing.T) {
 		t.Fatalf("profile tile icon expected")
 	}
 
-	got, err = ResolveLogo(nil, "data:image/svg+xml;base64,QUJD", nil, "")
+	got, err = ResolveLogo(nil, nil)
 	if err != nil {
 		t.Fatalf("ResolveLogo: %v", err)
 	}
-	if got != "data:image/svg+xml;base64,QUJD" {
-		t.Fatalf("legacy profile logo expected, got %q", got)
+	defaultIcon, err := ResolveIcon(defaultIconID)
+	if err != nil {
+		t.Fatalf("ResolveIcon: %v", err)
+	}
+	if got != defaultIcon {
+		t.Fatalf("default catalogue icon expected, got %q", got)
 	}
 }
