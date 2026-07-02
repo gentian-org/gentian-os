@@ -23,7 +23,11 @@ _mail_dovecot_host() {
 
 # Tenant mail domains registered by the operator (platform-kernel ConfigMap).
 _postfix_kernel_virtual_domains() {
-    local template='{{range $k,$v := .data}}{{$v}} {{end}}'
+    local template
+    template=$(cat <<'EOF'
+{{range $k,$v := .data}}{{$v}} {{end}}
+EOF
+)
     kubectl get configmap mail-postfix-virtual-domains -n platform-kernel \
         -o go-template="${template}" 2>/dev/null \
         | xargs echo
