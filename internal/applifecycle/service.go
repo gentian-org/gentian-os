@@ -101,7 +101,7 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		}
 	}
 	if file != "" {
-		if err := s.reconcileTenantFile(ctx, file); err != nil {
+		if err := s.reconcileTenantFile(ctx, file, req.Wait); err != nil {
 			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
 		}
 	}
@@ -162,7 +162,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile}, nil
 	}
 	if changed && file != "" {
-		if err := s.reconcileTenantFile(ctx, file); err != nil {
+		if err := s.reconcileTenantFile(ctx, file, false); err != nil {
 			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
 		}
 	}

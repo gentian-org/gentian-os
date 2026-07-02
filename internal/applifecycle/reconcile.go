@@ -36,7 +36,7 @@ var argoApplicationGVK = schema.GroupVersionKind{
 	Kind:    "Application",
 }
 
-func (s *Service) reconcileTenantFile(ctx context.Context, file string) error {
+func (s *Service) reconcileTenantFile(ctx context.Context, file string, waitArgoSync bool) error {
 	instance, stage := instanceStageFromPath(file)
 	if instance != "" && stage != "" {
 		appNS, appName, found, err := s.findArgoTenantApp(ctx, instance, stage)
@@ -44,7 +44,7 @@ func (s *Service) reconcileTenantFile(ctx context.Context, file string) error {
 			return err
 		}
 		if found {
-			return s.triggerArgoSyncPrune(ctx, appNS, appName)
+			return s.triggerArgoSyncPrune(ctx, appNS, appName, waitArgoSync)
 		}
 	}
 	return s.applyTenantFile(ctx, file)
@@ -80,7 +80,7 @@ func (s *Service) findArgoTenantApp(ctx context.Context, instance, stage string)
 	return "", "", false, nil
 }
 
-func (s *Service) triggerArgoSyncPrune(ctx context.Context, ns, name string) error {
+func (s *Service) triggerArgoSyncPrune(ctx context.Context, ns, name string, waitSync bool) error {
 	app := &unstructured.Unstructured{}
 	app.SetGroupVersionKind(argoApplicationGVK)
 	key := types.NamespacedName{Namespace: ns, Name: name}
@@ -101,6 +101,9 @@ func (s *Service) triggerArgoSyncPrune(ctx context.Context, ns, name string) err
 	patch := []byte(`{"operation":{"initiatedBy":{"username":"applifecycle"},"sync":{"prune":true}}}`)
 	if err := s.client.Patch(ctx, app, client.RawPatch(types.MergePatchType, patch)); err != nil {
 		return fmt.Errorf("argocd sync patch: %w", err)
+	}
+	if !waitSync {
+		return nil
 	}
 
 	deadline := time.Now().Add(90 * time.Second)
