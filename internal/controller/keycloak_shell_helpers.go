@@ -125,6 +125,23 @@ echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
 `
 }
 
+// keycloakShellEnsureInviteEmailUserProfile registers gentian.inviteEmail on the realm
+// user profile so Admin API can persist recovery addresses for invite/reset delivery.
+func keycloakShellEnsureInviteEmailUserProfile(realmExpr string) string {
+	return fmt.Sprintf(`
+# Ensure gentian.inviteEmail is a managed user-profile attribute for invite/reset delivery.
+PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
+if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
+  UPDATED=$(echo "${PROFILE}" | jq '.attributes += [{"name":"gentian.inviteEmail","displayName":"Recovery email","validations":{"email":{},"length":{"max":255}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
+  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${UPDATED}"
+  echo "user profile gentian.inviteEmail ensured for realm %s"
+else
+  echo "user profile gentian.inviteEmail already present for realm %s"
+fi
+`, realmExpr, realmExpr, realmExpr, realmExpr)
+}
+
 // extractKeycloakJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
 func extractKeycloakJSONIDByAttr(raw, attr, value string) string {
 	var walk func(any)

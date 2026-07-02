@@ -77,6 +77,9 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if strings.Contains(script, firstBrokerLoginFlowAlias) {
 		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
 	}
+	if !strings.Contains(script, "gentian.inviteEmail") {
+		t.Fatal("expected gentian.inviteEmail user profile block in realm script")
+	}
 
 	path := t.TempDir() + "/realm.sh"
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {

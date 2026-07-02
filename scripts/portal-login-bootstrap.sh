@@ -693,6 +693,16 @@ spec:
                 exit 1
               fi
 
+              PROFILE=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile")
+              if ! echo "\${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
+                UPDATED=\$(echo "\${PROFILE}" | jq '.attributes += [{"name":"gentian.inviteEmail","displayName":"Recovery email","validations":{"email":{},"length":{"max":255}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile" -d "\${UPDATED}"
+                echo "user profile gentian.inviteEmail ensured for realm \${REALM}"
+              else
+                echo "user profile gentian.inviteEmail already present for realm \${REALM}"
+              fi
+
               CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
                 | jq -r '.[0].id // empty')
