@@ -1235,6 +1235,7 @@ main_cp() {
     install_stage1_mail         # Step 15b — MAIL_SERVICE_MODE (external SMTP or Postfix)
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
     install_stage1_portal       # Step 16 — portal OIDC login dogfood
 
     # ── App catalogue + CLI (required for kubectl gentian apps install) ─────
