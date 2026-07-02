@@ -165,7 +165,9 @@ _keycloak_smtp_settings() {
             KC_SMTP_USER="gentian-system@${kernel_domain}"
             KC_SMTP_PASSWORD="$(_derive smtp password)"
             KC_SMTP_SSL="false"
-            KC_SMTP_STARTTLS="true"
+            # In-cluster Postfix advertises STARTTLS with a self-signed cert that Keycloak
+            # does not trust; submission stays on the cluster network without TLS upgrade.
+            KC_SMTP_STARTTLS="false"
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
         *)

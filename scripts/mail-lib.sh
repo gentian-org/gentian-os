@@ -103,6 +103,57 @@ YAML
 }
 
 # =============================================================================
+# Ensure Postfix accepts Keycloak noreply@<KERNEL_DOMAIN> senders.
+# The bokysan/mail chart builds /etc/postfix/allowed_senders from this env.
+# =============================================================================
+_patch_postfix_allowed_sender_domains() {
+    local ns kernel_domain values_yaml
+    ns="$(_mail_kernel_namespace)"
+    kernel_domain="${KERNEL_DOMAIN:-}"
+
+    if [[ -z "${kernel_domain}" ]]; then
+        warn "KERNEL_DOMAIN unset — skipping Postfix ALLOWED_SENDER_DOMAINS patch"
+        return 0
+    fi
+
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        info "  [dry-run] Would patch ConfigMap postfix-base-values (ALLOWED_SENDER_DOMAINS=${kernel_domain})"
+        return
+    fi
+
+    values_yaml=$(kubectl get configmap postfix-base-values -n "${ns}" \
+        -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
+    if [[ -z "${values_yaml}" ]]; then
+        info "postfix-base-values not yet deployed — ALLOWED_SENDER_DOMAINS will be set on first apply"
+        return 0
+    fi
+
+    if echo "${values_yaml}" | grep -q "ALLOWED_SENDER_DOMAINS: \"${kernel_domain}\""; then
+        success "  postfix-base-values ALLOWED_SENDER_DOMAINS already ${kernel_domain}"
+        return 0
+    fi
+
+    values_yaml=$(printf '%s\n' "${values_yaml}" \
+        | sed -E "s/ALLOWED_SENDER_DOMAINS: \"[^\"]*\"/ALLOWED_SENDER_DOMAINS: \"${kernel_domain}\"/")
+    kubectl create configmap postfix-base-values \
+        -n "${ns}" \
+        --from-literal="values.yaml=${values_yaml}" \
+        --dry-run=client -o yaml \
+        | kubectl annotate --local -f - \
+            "argocd.argoproj.io/sync-wave=-1" \
+            --dry-run=client -o yaml \
+        | kubectl apply -f - >/dev/null
+    success "  patched postfix-base-values (ALLOWED_SENDER_DOMAINS=${kernel_domain})"
+
+    if kubectl get configmap postfix-dev -n "${ns}" >/dev/null 2>&1; then
+        kubectl patch configmap postfix-dev -n "${ns}" --type merge \
+            -p "{\"data\":{\"ALLOWED_SENDER_DOMAINS\":\"${kernel_domain}\"}}" >/dev/null
+        kubectl delete pod postfix-dev-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        success "  patched postfix-dev ConfigMap and restarted Postfix pod"
+    fi
+}
+
+# =============================================================================
 # Patch postfix-dev-values ConfigMap to match MAIL_SERVICE_MODE postfix layout.
 # =============================================================================
 _patch_postfix_configmap() {
@@ -158,6 +209,7 @@ install_stage1_mail() {
     info "MAIL_SERVICE_MODE=kernel — deploying in-cluster Postfix + Dovecot."
     deploy_kernel_mail_services
     _patch_postfix_configmap kernel
+    _patch_postfix_allowed_sender_domains
     info "Keycloak realm SMTP will target postfix-dev.${KERNEL_NAMESPACE}.svc.cluster.local:587"
     if ! verify_dovecot_installation; then
         error "Dovecot installation verification failed."

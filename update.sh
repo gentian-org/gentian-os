@@ -276,6 +276,7 @@ op_mail() {
     if [[ "${mode}" == "kernel" ]]; then
         deploy_kernel_mail_services
         _patch_postfix_configmap kernel
+        _patch_postfix_allowed_sender_domains
         verify_dovecot_installation || warn "Dovecot verification failed after mail reconciliation."
     fi
 

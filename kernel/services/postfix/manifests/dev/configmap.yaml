@@ -23,7 +23,7 @@ data:
     config:
       general:
         TZ: "UTC"
-        ALLOWED_SENDER_DOMAINS: "gentian.local"
+        ALLOWED_SENDER_DOMAINS: "desk.gentian.org"
       postfix:
         myhostname: postfix-dev
 ---

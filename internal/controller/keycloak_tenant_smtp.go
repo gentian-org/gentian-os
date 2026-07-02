@@ -16,7 +16,7 @@ import (
 )
 
 const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
-const tenantSMTPVersion = "1"
+const tenantSMTPVersion = "2"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
