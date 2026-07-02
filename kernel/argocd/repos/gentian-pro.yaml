@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Gentian Organization
+# SPDX-License-Identifier: AGPL-3.0-or-later
+---
+# Argo CD credentials for the private gentian-pro catalogue repository.
+# Apply with a PAT that has repo read access to gentian-org/gentian-pro:
+#
+#   kubectl create secret generic repo-gentian-pro -n argocd \
+#     --from-literal=type=git \
+#     --from-literal=url=https://github.com/gentian-org/gentian-pro \
+#     --from-literal=username=git \
+#     --from-literal=password="${GENTIAN_PRO_GIT_TOKEN}" \
+#     --dry-run=client -o yaml | \
+#     kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | \
+#     kubectl apply -f -
+#
+# Or set GENTIAN_PRO_GIT_TOKEN in install.secrets.env and run install.sh (Step 14c).

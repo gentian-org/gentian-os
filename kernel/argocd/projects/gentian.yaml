@@ -16,6 +16,7 @@ spec:
   - 'https://github.com/gentian-org/gentian-os/*'                                                         # Paths under gentian-os repo
   - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
+  - 'https://github.com/gentian-org/gentian-pro'                                                      # Pro / OpenDesk catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
   - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
