@@ -3007,6 +3007,7 @@ install_catalogue_pro_sync() {
     kubectl apply -f "$rendered"
     rm -f "$rendered"
     success "Pro catalogue sync configured."
+}
 
 # Back-compat alias for install.sh / update.sh call sites.
 install_appprofiles_sync() {
