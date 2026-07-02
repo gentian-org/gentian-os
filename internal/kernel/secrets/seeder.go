@@ -239,19 +239,39 @@ type CacheCreds struct {
 	Password string
 }
 
-// SeedCache derives the cache password from the master.
+// SeedCache derives the cache password from the master. Host and port are refreshed
+// on reconcile so infrastructure moves (e.g. shared Redis in gentian-infra-dev) propagate.
 func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCreds) (CacheCreds, error) {
 	salt := CategoryPath(tenant, app, "cache")
-	if base.Password == "" {
-		base.Password = s.gen(salt, "password", 40)
+	existing, _ := s.w.Get(ctx, salt)
+	password := base.Password
+	if password == "" {
+		if existing != nil && existing["password"] != "" {
+			password = existing["password"]
+		} else {
+			password = s.gen(salt, "password", 40)
+		}
 	}
-	got, err := s.seedAndRead(ctx, salt, map[string]string{
+	want := map[string]string{
 		"host":     base.Host,
 		"port":     base.Port,
-		"password": base.Password,
-	})
+		"password": password,
+	}
+	var err error
+	if existing == nil {
+		err = s.w.PutOnce(ctx, salt, want)
+	} else {
+		if existing["password"] != "" {
+			want["password"] = existing["password"]
+		}
+		err = s.w.Put(ctx, salt, want)
+	}
 	if err != nil {
 		return CacheCreds{}, fmt.Errorf("seed cache(%s/%s): %w", tenant, app, err)
+	}
+	got, err := s.w.Get(ctx, salt)
+	if err != nil {
+		return CacheCreds{Host: want["host"], Port: want["port"], Password: want["password"]}, nil //nolint:nilerr
 	}
 	return CacheCreds{Host: got["host"], Port: got["port"], Password: got["password"]}, nil
 }

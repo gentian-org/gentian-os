@@ -437,10 +437,27 @@ func redisSetUserScript(username, keyPrefix string) string {
 		`set -euo pipefail
 USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$USER_PW" "~%s" "+@read" "+@write" "+@connection"
+  ACL SETUSER %s on ">$USER_PW" "~%s*" "+@read" "+@write" "+@connection" "+@script"
 echo "ACL user %s provisioned"`,
 		username, keyPrefix, username,
 	)
+}
+
+// redisCacheEndpoint returns the shared Redis host/port from the kernel redis-admin Secret.
+func (r *TenantReconciler) redisCacheEndpoint(ctx context.Context) (host, port string, err error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: redisAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
+		return "", "", fmt.Errorf("get redis-admin secret: %w", err)
+	}
+	host = string(secret.Data["host"])
+	port = string(secret.Data["port"])
+	if port == "" {
+		port = "6379"
+	}
+	if host == "" {
+		return "", "", fmt.Errorf("redis-admin secret missing host")
+	}
+	return host, port, nil
 }
 
 // redisDelUserScript returns a script that removes the ACL user, ignoring absence.

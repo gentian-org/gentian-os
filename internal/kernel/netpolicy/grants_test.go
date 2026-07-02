@@ -47,6 +47,14 @@ func TestEffectiveContractCapabilities(t *testing.T) {
 	})
 }
 
+func TestFormatCapabilityLabel(t *testing.T) {
+	t.Parallel()
+	got := netpolicy.FormatCapabilityLabel([]string{"webdav:read", "webdav:write"})
+	if got != "webdav_read,webdav_write" {
+		t.Fatalf("expected sanitized label, got %q", got)
+	}
+}
+
 func TestBuildDesired_GrantIntersectionSkipsContractNP(t *testing.T) {
 	t.Parallel()
 	binding := &gentianov1alpha1.IntegrationBinding{}

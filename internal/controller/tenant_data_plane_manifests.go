@@ -124,9 +124,13 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	for _, appName := range redisApps {
 		userPassword := ""
 		if r.Seeder != nil {
+			redisHost, redisPort, hostErr := r.redisCacheEndpoint(ctx)
+			if hostErr != nil {
+				return nil, hostErr
+			}
 			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
-				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "redis-master", kernelNamespace),
-				Port: "6379",
+				Host: redisHost,
+				Port: redisPort,
 			})
 			if seedErr != nil {
 				return nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)

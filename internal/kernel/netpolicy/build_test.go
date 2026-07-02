@@ -77,7 +77,7 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		t.Fatalf("expected baseline + app-init + kernel + app-internal + contract policies, got %d", len(policies))
 	}
 	contractNP := policies[len(policies)-1]
-	if got := contractNP.Labels["gentianos.io/granted-capabilities"]; got != "webdav:read" {
+	if got := contractNP.Labels["gentianos.io/granted-capabilities"]; got != "webdav_read" {
 		t.Fatalf("expected granted-capabilities label, got %q", got)
 	}
 }

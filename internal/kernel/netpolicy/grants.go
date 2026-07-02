@@ -34,11 +34,16 @@ func EffectiveContractCapabilities(
 }
 
 // FormatCapabilityLabel joins capabilities for NetworkPolicy labels (max 63 chars).
+// Capability names use colons (e.g. webdav:read); Kubernetes label values must not.
 func FormatCapabilityLabel(caps []string) string {
 	if len(caps) == 0 {
 		return ""
 	}
-	label := strings.Join(caps, ",")
+	sanitized := make([]string, len(caps))
+	for i, c := range caps {
+		sanitized[i] = strings.NewReplacer(":", "_", "/", "_").Replace(c)
+	}
+	label := strings.Join(sanitized, ",")
 	if len(label) > 63 {
 		label = label[:63]
 	}

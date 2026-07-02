@@ -3228,17 +3228,13 @@ handoff_gentian_os_to_argocd() {
             --arg token "${openfga_token}" \
             '[{"op":"add","path":"/spec/sources/0/helm/parameters","value":[
                 {"name":"authzBridge.enabled","value":"true"},
-                {"name":"authzBridge.openfgaToken","value":$token},
-                {"name":"infraNamespace","value":"platform-kernel"},
-                {"name":"servicesNamespace","value":"platform-kernel"}
+                {"name":"authzBridge.openfgaToken","value":$token}
             ]}]')" 2>/dev/null \
         || kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
             --arg token "${openfga_token}" \
             '[{"op":"replace","path":"/spec/sources/0/helm/parameters","value":[
                 {"name":"authzBridge.enabled","value":"true"},
-                {"name":"authzBridge.openfgaToken","value":$token},
-                {"name":"infraNamespace","value":"platform-kernel"},
-                {"name":"servicesNamespace","value":"platform-kernel"}
+                {"name":"authzBridge.openfgaToken","value":$token}
             ]}]')"
     fi
 
@@ -3283,6 +3279,7 @@ install_stage1_operator() {
     adopt_gentian_os_helm_preflight "$ns"
 
     local operator_tag="${GENTIAN_OS_IMAGE_TAG:-develop}"
+    local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
     info "Using gentian-os operator image ghcr.io/gentian-org/gentian-os:${operator_tag} (CI)."
 
     helm upgrade --install gentian-os "$chart_dir" \
@@ -3296,8 +3293,7 @@ install_stage1_operator() {
         --set authzBridge.enabled=true \
         --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
         --set "authzBridge.openfgaToken=${openfga_token}" \
-        --set infraNamespace="platform-kernel" \
-        --set servicesNamespace="platform-kernel" \
+        --set infraNamespace="${_infra_ns}" \
         --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
         --set "image.tag=${operator_tag}" \
         --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
