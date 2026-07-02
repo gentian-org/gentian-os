@@ -703,6 +703,21 @@ spec:
                 echo "user profile gentian.inviteEmail already present for realm \${REALM}"
               fi
 
+              for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
+                RA=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/required-actions/\${ACTION}" 2>/dev/null || true)
+                if [ -n "\${RA}" ]; then
+                  UPDATED=\$(echo "\${RA}" | jq '.enabled = false')
+                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/required-actions/\${ACTION}" -d "\${UPDATED}" >/dev/null
+                  echo "required action \${ACTION} disabled for realm \${REALM}"
+                fi
+              done
+              PROFILE=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile")
+              RELAXED=\$(echo "\${PROFILE}" | jq '.attributes = [.attributes[] | if .name == "firstName" or .name == "lastName" then del(.required) else . end]')
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile" -d "\${RELAXED}" >/dev/null
+              echo "user profile firstName/lastName optional for realm \${REALM}"
+
               CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
                 | jq -r '.[0].id // empty')

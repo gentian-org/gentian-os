@@ -142,6 +142,27 @@ fi
 `, realmExpr, realmExpr, realmExpr, realmExpr)
 }
 
+// keycloakShellDisableProfilePromptRequiredActions stops post-password profile forms
+// when admin delivery swaps the transient email used for action-token links.
+func keycloakShellDisableProfilePromptRequiredActions(realmExpr string) string {
+	return fmt.Sprintf(`
+for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
+  RA=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" 2>/dev/null || true)
+  if [ -n "${RA}" ]; then
+    UPDATED=$(echo "${RA}" | jq '.enabled = false')
+    curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" -d "${UPDATED}" >/dev/null
+    echo "required action ${ACTION} disabled for realm %s"
+  fi
+done
+PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
+RELAXED=$(echo "${PROFILE}" | jq '.attributes = [.attributes[] | if .name == "firstName" or .name == "lastName" then del(.required) else . end]')
+curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${RELAXED}" >/dev/null
+echo "user profile firstName/lastName optional for realm %s"
+`, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr)
+}
+
 // extractKeycloakJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
 func extractKeycloakJSONIDByAttr(raw, attr, value string) string {
 	var walk func(any)

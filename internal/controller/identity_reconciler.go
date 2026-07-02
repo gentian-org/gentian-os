@@ -571,7 +571,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
 `+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	return keycloakShellJSONIDExtractor() + script + keycloakShellEnsureInviteEmailUserProfile(realmName)
+	return keycloakShellJSONIDExtractor() + script + keycloakShellEnsureInviteEmailUserProfile(realmName) + keycloakShellDisableProfilePromptRequiredActions(realmName)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
