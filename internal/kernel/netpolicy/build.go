@@ -48,7 +48,7 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		if profile == nil {
 			continue
 		}
-		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile.Spec.KernelRequirements, in.Config); np != nil {
+		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config); np != nil {
 			out = append(out, np)
 		}
 		out = append(out, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile))

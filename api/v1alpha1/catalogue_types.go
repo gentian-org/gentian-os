@@ -23,6 +23,9 @@ const (
 	// OIDCDefaultRedirectURIs is a JSON array used when spec.kernelRequirements.identity.oidc.redirectUris is empty.
 	// Supports ${TENANT_DOMAIN} substitution (legacy pack Jobs and operator fallbacks).
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
+	// KernelEgressNamespaces is a comma-separated list of extra cluster namespaces the
+	// app workload may reach (merged into kernel-access NetworkPolicy egress).
+	AnnotationProfileKernelEgressNamespaces = "gentianos.io/kernel-egress-namespaces"
 )
 
 // Per-host gateway policy annotations on IngressSpec.annotations (primary or additionalIngresses).

@@ -26,17 +26,16 @@ import (
 )
 
 // KernelAccessNetworkPolicy grants egress from an app workload to kernel namespaces
-// declared in its AppProfile kernelRequirements.
+// declared in its AppProfile kernelRequirements and optional profile annotations.
 func KernelAccessNetworkPolicy(
 	tenantName, nsName, appName string,
-	kr *gentianov1alpha1.KernelRequirements,
+	profile *gentianov1alpha1.AppProfile,
 	cfg Config,
 ) *networkingv1.NetworkPolicy {
-	if kr == nil {
+	if profile == nil {
 		return nil
 	}
-
-	targets := kernelEgressTargets(kr, cfg)
+	targets := kernelEgressTargets(profile.Spec.KernelRequirements, profile, cfg)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -70,7 +69,7 @@ func kernelPolicyName(appName string) string {
 	return name
 }
 
-func kernelEgressTargets(kr *gentianov1alpha1.KernelRequirements, cfg Config) []string {
+func kernelEgressTargets(kr *gentianov1alpha1.KernelRequirements, profile *gentianov1alpha1.AppProfile, cfg Config) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(ns string) {
@@ -84,21 +83,26 @@ func kernelEgressTargets(kr *gentianov1alpha1.KernelRequirements, cfg Config) []
 		out = append(out, ns)
 	}
 
-	if kr.Identity != nil {
-		add(cfg.ServicesNamespace)
-		add(meta.KernelNamespace)
+	if kr != nil {
+		if kr.Identity != nil {
+			add(cfg.ServicesNamespace)
+			add(meta.KernelNamespace)
+		}
+		if kr.Database != nil {
+			add(cfg.InfraNamespace)
+		}
+		if kr.Cache != nil {
+			add(cfg.InfraNamespace)
+		}
+		if kr.Storage != nil {
+			add(cfg.InfraNamespace)
+		}
+		if kr.Mail != nil {
+			add(cfg.ServicesNamespace)
+		}
 	}
-	if kr.Database != nil {
-		add(cfg.InfraNamespace)
-	}
-	if kr.Cache != nil {
-		add(cfg.InfraNamespace)
-	}
-	if kr.Storage != nil {
-		add(cfg.InfraNamespace)
-	}
-	if kr.Mail != nil {
-		add(cfg.ServicesNamespace)
+	for _, ns := range gentianov1alpha1.ProfileKernelEgressNamespaces(profile) {
+		add(ns)
 	}
 	return out
 }

@@ -218,3 +218,21 @@ func IngressGatewayEscapedSlashesAction(ingress *IngressSpec) string {
 	}
 	return strings.TrimSpace(ingress.Annotations[AnnotationIngressGatewayEscapedSlashesAction])
 }
+
+// ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on an AppProfile.
+func ProfileKernelEgressNamespaces(p *AppProfile) []string {
+	if p == nil || len(p.Annotations) == 0 {
+		return nil
+	}
+	raw := strings.TrimSpace(p.Annotations[AnnotationProfileKernelEgressNamespaces])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if ns := strings.TrimSpace(part); ns != "" {
+			out = append(out, ns)
+		}
+	}
+	return out
+}
