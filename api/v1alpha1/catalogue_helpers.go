@@ -2,7 +2,6 @@ package v1alpha1
 
 import (
 	"encoding/json"
-	"strconv"
 	"strings"
 )
 
@@ -218,30 +217,6 @@ func IngressGatewayEscapedSlashesAction(ingress *IngressSpec) string {
 		return ""
 	}
 	return strings.TrimSpace(ingress.Annotations[AnnotationIngressGatewayEscapedSlashesAction])
-}
-
-// ProfileExternalEgressPorts parses gentianos.io/external-egress-ports on an AppProfile.
-func ProfileExternalEgressPorts(p *AppProfile) []int32 {
-	if p == nil || len(p.Annotations) == 0 {
-		return nil
-	}
-	raw := strings.TrimSpace(p.Annotations[AnnotationProfileExternalEgressPorts])
-	if raw == "" {
-		return nil
-	}
-	var out []int32
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		n, err := strconv.ParseInt(part, 10, 32)
-		if err != nil || n <= 0 || n > 65535 {
-			continue
-		}
-		out = append(out, int32(n))
-	}
-	return out
 }
 
 // ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on an AppProfile.

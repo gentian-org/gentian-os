@@ -30,7 +30,6 @@ const (
 	NetPolicyAppInit     = "app-init-access"
 	NetPolicyAppInternal = "app-internal-access"
 	NetPolicyContract    = "contract-allow"
-	NetPolicyExternal    = "external-access"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"

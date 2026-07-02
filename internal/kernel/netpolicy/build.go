@@ -51,9 +51,6 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config); np != nil {
 			out = append(out, np)
 		}
-		if np := ExternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile); np != nil {
-			out = append(out, np)
-		}
 		out = append(out, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile))
 	}
 
@@ -77,7 +74,6 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	}
 	for _, app := range in.Apps {
 		names[kernelPolicyName(app.Profile)] = struct{}{}
-		names[externalPolicyName(app.Profile)] = struct{}{}
 		names[appInternalPolicyName(app.Profile)] = struct{}{}
 	}
 	for _, binding := range in.Bindings {
