@@ -136,15 +136,6 @@ proxy_hide_header Content-Security-Policy;
 add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
 }
 
-// frameAncestorsIngressSnippetAppend adds a second CSP header without clearing
-// the upstream policy. Use when an app ships its own strict CSP and only needs
-// an additional frame-ancestors directive.
-func frameAncestorsIngressSnippetAppend(ancestorOrigins string) string {
-	return fmt.Sprintf(`proxy_hide_header X-Frame-Options;
-add_header X-Frame-Options "" always;
-add_header Content-Security-Policy "frame-ancestors 'self' %s" always;`, ancestorOrigins)
-}
-
 // stripLegacyPortalEmbeddingSnippet removes per-profile frame-ancestors / X-Frame-Options
 // lines so the operator can inject the canonical kernel-portal CSP.
 func stripLegacyPortalEmbeddingSnippet(snippet string) string {

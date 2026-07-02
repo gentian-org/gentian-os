@@ -639,7 +639,7 @@ spec:
                       type: string
                     name:
                       description: |-
-                        Name is the unique tile identifier, forming the portal entry CN:
+                        Name is the unique tile identifier, forming the portal entry key:
                         {name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
                       minLength: 1
                       pattern: ^[a-z0-9-]+$
