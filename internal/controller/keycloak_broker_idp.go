@@ -40,7 +40,7 @@ const brokerIdentityProviderVersion = "8"
 const firstBrokerLoginFlowAlias = "first-broker-login-gentian"
 
 // brokerFirstLoginFlowJobVersion bumps when the auto-link flow script changes.
-const brokerFirstLoginFlowJobVersion = "2"
+const brokerFirstLoginFlowJobVersion = "3"
 
 func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)

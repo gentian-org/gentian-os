@@ -293,11 +293,11 @@ if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-link kernel IdP to tenant users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Confirm/verify link kernel IdP to tenant users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
   echo "first broker login flow ${FLOW_ALIAS} created"
 fi
 
-for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
+for PROVIDER in idp-detect-existing-broker-user idp-confirm-link idp-email-verification; do
   EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
     | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
@@ -316,11 +316,11 @@ for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
       -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
   fi
 done
-echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmExpr, flowAlias)
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + confirm-link + email-verification)"`, realmExpr, flowAlias)
 }
 
 // buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
-// that links kernel IdP identities to existing tenant users by email without prompting.
+// that links kernel IdP identities to existing tenant users by email with confirmation.
 // See Keycloak docs: "Detect existing user first login flow".
 func buildFirstBrokerLoginFlowScript(realmName string) string {
 	return fmt.Sprintf(`set -eu

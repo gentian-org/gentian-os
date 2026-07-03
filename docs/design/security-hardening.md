@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Hardening
 
-**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-8 fixed on `develop`
+**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-8 fixed on `develop`
 **Scope:** External access, tenant isolation, secrets, admission, and install/bootstrap tooling for `gentian-os`.
 **Method:** Read-only static review of source + manifests (branch `develop`, 2026-07-03). Severity reflects exploitability and blast radius. Items flagged *deploy-dependent* need confirmation against a live cluster.
 **Related:** [security.md](security.md) · [new-security-architecture.md](new-security-architecture.md) · [app-catalogue-security.md](app-catalogue-security.md)
@@ -21,7 +21,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 |---|---|
 | Can an unauthenticated internet attacker reach tenant data by default? | **No** — HTTPS-only edge, tunnel-mode ClusterIP, explicit host allow-list, no wildcard OIDC redirects, PKCE enforced. |
 | Can one tenant workload compromise the whole cluster? | ~~**Yes** — via the OpenBao `app-init` role → master password → all derived credentials~~ → **Fixed** on `develop`: the `app-init` role/policy and tenant-namespace init Jobs are removed; only the operator reaches OpenBao (**[SEC-1](#sec-1)**). |
-| Can one tenant admin become the platform superadmin? | **Yes** — via Keycloak email auto-link brokering (**[SEC-2](#sec-2)**). |
+| Can one tenant admin become the platform superadmin? | ~~**Yes** — via Keycloak email auto-link brokering (**[SEC-2](#sec-2)**)~~ → **Fixed** on `develop`: Keycloak `trustEmail` is set to `false` on the tenant→kernel broker, and the first-broker-login flow requires confirmation and email verification. |
 | Can an outsider log in as superadmin? | **Only if** the default/weak `MASTER_PASSWORD` is used — the admin password is then computable. A `SECRET_MODE=random` remedy exists but is **not wired to the superadmin bootstrap** (**[SEC-3](#sec-3)**). |
 | Are control planes exposed? | **Yes** — OpenBao (plaintext LAN NodePort) and ArgoCD (public route + plaintext NodePort). |
 
@@ -32,7 +32,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | ID | Severity | Finding | Vector |
 |----|----------|---------|--------|
 | [SEC-1](#sec-1) | **Critical** · ✅ Fixed | Any tenant pod can read the OpenBao master password → full platform compromise | Cross-tenant / priv-esc |
-| [SEC-2](#sec-2) | **Critical** | Keycloak email auto-link brokering → tenant admin impersonates platform superadmin | Cross-tenant / priv-esc |
+| [SEC-2](#sec-2) | **Critical** · ✅ Fixed | Keycloak email auto-link brokering → tenant admin impersonates platform superadmin | Cross-tenant / priv-esc |
 | [SEC-3](#sec-3) | **Critical** | Superadmin login is deterministically master-derived; `SECRET_MODE=random` does not cover it (+ weak default master) | Unauthenticated external |
 | [SEC-4](#sec-4) | **High** | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
 | [SEC-5](#sec-5) | **High** | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
@@ -96,7 +96,9 @@ The implemented fix goes further than per-tenant scoping: rather than hardening 
 ---
 
 ### SEC-2
-**Keycloak email auto-link brokering → tenant admin impersonates the platform superadmin**
+**Keycloak email auto-link brokering → tenant admin impersonates the platform superadmin** · **Status: Fixed (`develop`)**
+
+> **Resolution.** Keycloak identity brokering has been hardened: `trustEmail` is set to `false` on the tenant→kernel identity provider configuration in the kernel realm. The first-broker-login flows (`first-broker-login-gentian` and `first-broker-login-kernel-portal`) have been configured to require confirmation (`idp-confirm-link`) and email verification (`idp-email-verification`) instead of performing a silent auto-link (`idp-auto-link`), preventing unauthorized accounts from automatically linking to the platform superadmin. The original analysis is retained below for context.
 
 The shared kernel realm is brokered into every tenant realm with `trustEmail: true` and a silent `idp-auto-link` first-broker-login flow (no confirm-link, no email-verification step). A tenant realm-admin can create a user whose email equals the platform superadmin's, broker into the kernel realm via `kc_idp_hint`, and be **auto-linked** into the privileged account (member of `gentian:platform:superadmin`) — then reach every other tenant.
 

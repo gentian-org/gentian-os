@@ -30,7 +30,7 @@ import (
 )
 
 // kernelTenantBrokerVersion bumps when the kernel→tenant IdP PUT payload changes.
-const kernelTenantBrokerVersion = "2"
+const kernelTenantBrokerVersion = "3"
 
 // kernelPortalBrokerClientID is the OIDC client in each tenant realm used when the
 // shared kernel realm brokers login to that tenant.
@@ -117,7 +117,7 @@ BROKER_SECRET=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
 # 3. Register tenant realm as IdP in the kernel realm.
 IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}")
-IDP_BODY="{\"alias\":\"${TENANT_REALM}\",\"displayName\":\"${TENANT_REALM}\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"%s\",\"config\":{\"issuer\":\"${EXT_BASE}/realms/${TENANT_REALM}\",\"authorizationUrl\":\"${EXT_BASE}/realms/${TENANT_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email groups\",\"hideOnLoginPage\":\"true\"}}"
+IDP_BODY="{\"alias\":\"${TENANT_REALM}\",\"displayName\":\"${TENANT_REALM}\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":false,\"firstBrokerLoginFlowAlias\":\"%s\",\"config\":{\"issuer\":\"${EXT_BASE}/realms/${TENANT_REALM}\",\"authorizationUrl\":\"${EXT_BASE}/realms/${TENANT_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email groups\",\"hideOnLoginPage\":\"true\"}}"
 if [ "${IDP_HTTP}" = "200" ]; then
   HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X PUT \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}" \
