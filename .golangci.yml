@@ -2,6 +2,6 @@ version: "2"
 linters:
   enable:
     - goheader
-linters-settings:
-  goheader:
-    template-path: hack/boilerplate.go.txt
+  settings:
+    goheader:
+      template-path: hack/boilerplate.go.txt
