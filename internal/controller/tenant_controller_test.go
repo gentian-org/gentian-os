@@ -19,6 +19,8 @@ package controller_test
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,6 +206,30 @@ func markJobSucceeded(job *batchv1.Job) {
 	}
 }
 
+// startFakeKeycloak stands in for the Keycloak Admin REST API. envtest has no
+// real Keycloak, but the tenant reconcile now calls the Admin REST API
+// in-process (browser security headers in the SharedKernel stage, app-admin
+// group membership in the AppsAndEdge stage). Without a reachable endpoint the
+// SharedKernel stage requeues forever and tenants never reach Ready. The
+// handler issues admin tokens, accepts realm updates (204), and returns empty
+// arrays for group/member/user list queries.
+func startFakeKeycloak() *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/realms/master/protocol/openid-connect/token", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"test-admin-token","expires_in":300}`)
+	})
+	mux.HandleFunc("/admin/realms/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	return httptest.NewServer(mux)
+}
+
 // TestMain sets up a single envtest environment and controller manager shared
 // across all tests. Each test creates its own Tenant with a unique name.
 func TestMain(m *testing.M) {
@@ -298,11 +324,15 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// keycloak-admin Secret provides the Keycloak URL for OIDC token introspection.
+	// keycloak-admin Secret provides the Keycloak URL for OIDC token introspection
+	// and Admin REST calls. Point it at the in-process fake so reconcile stages
+	// that talk to Keycloak (browser security headers, app-admin membership)
+	// succeed under envtest.
+	fakeKC := startFakeKeycloak()
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"url":      []byte("http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080"),
+			"url":      []byte(fakeKC.URL),
 			"username": []byte("kcadmin"),
 			"password": []byte("test-kc-password"),
 		},
@@ -407,6 +437,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	cancel()
+	fakeKC.Close()
 	_ = env.Stop()
 	os.Exit(code)
 }
