@@ -161,16 +161,16 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain: "chat",
+		SubDomain: "app",
 	}
 	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
-		appProfile: "element",
+		appProfile: "catalogue-test-app",
 		ingress:    ingress,
 	}, "demo.desk.gentian.org", "desk.gentian.org")
-	if route.Name != "httproute-demo-element" {
+	if route.Name != "httproute-demo-catalogue-test-app" {
 		t.Fatalf("name = %q", route.Name)
 	}
-	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "chat.demo.desk.gentian.org" {
+	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.desk.gentian.org" {
 		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
 	}
 	if len(route.Spec.ParentRefs) != 2 {
@@ -250,7 +250,7 @@ func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "chat")
+	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "app")
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
@@ -312,7 +312,7 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	profile := &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileGatewayAPIBackends: `[{"pathPrefix":"/gentian-portal-bridge","serviceName":"openproject-portal-bridge","port":8080}]`,
+				gentianov1alpha1.AnnotationProfileGatewayAPIBackends: `[{"pathPrefix":"/portal-bridge","serviceName":"app-portal-bridge","port":8080}]`,
 			},
 		},
 		Spec: gentianov1alpha1.AppProfileSpec{
@@ -365,11 +365,11 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 			gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
 		},
 	}
-	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "element", ingress)
+	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "catalogue-test-app", ingress)
 	if obj == nil {
 		t.Fatal("expected BackendTrafficPolicy object")
 	}
-	if obj.GetName() != "btp-demo-element" {
+	if obj.GetName() != "btp-demo-catalogue-test-app" {
 		t.Fatalf("name = %q", obj.GetName())
 	}
 	refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "targetRefs")
@@ -377,7 +377,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 		t.Fatalf("targetRefs = %v", refs)
 	}
 	ref, _ := refs[0].(map[string]interface{})
-	if ref["name"] != "httproute-demo-element" {
+	if ref["name"] != "httproute-demo-catalogue-test-app" {
 		t.Fatalf("target route = %v", ref["name"])
 	}
 

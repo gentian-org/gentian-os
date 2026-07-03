@@ -81,14 +81,14 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
-| e-1 | open | Medium | `od-element` in platform unit tests | Use generic `catalogue-test-app` fixture or pull fixture from gentian-pro testdata | `crossplane/tests/unit/render/tenant-default/xr.yaml`, `oidc_pack_jobs_test.go` | Pro/OpenDesk profile as default render fixture; ideally gentian-pro test data |
-| e-2 | open | Medium | Element/Jitsi/OpenProject in comments & tests | Move app-specific notes to gentian-pro profile docs; keep generic CSP comments in os | `gateway_reconciler_test.go` | Documents real app bugs; test hostnames use element/chat subdomains |
-| e-3 | ignore | Medium | Nextcloud in CRD schema text | No change — OpenAPI examples only | `config/crd/gentianos.io_appprofiles.yaml` L522, L702+ | Example strings in OpenAPI descriptions only |
-| e-4 | ignore | Medium | OpenProject comment in composition | No change — inline chart hint | `app-default.yaml` L569 | Comment only: charts using `values.environment` |
-| e-5 | ignore | Medium | OpenDesk registry comments in secrets template | No change — commented optional vars in template | `install.secrets.env` L12–13 (`OD_PRIVATE_REGISTRY_*`) | Commented credentials in local secrets file |
-| e-6 | open | Medium | `scratch.patch` Nubus/LDAP logic | Delete with b-1; any UDM/LDAP init belongs in gentian-pro composition | `scratch.patch` L81–111 | Would embed UDM/LDAP app-init in platform composition |
+| e-1 | done | Medium | `od-element` in platform unit tests | Use generic `catalogue-test-app` fixture or pull fixture from gentian-pro testdata | `crossplane/tests/unit/render/tenant-default/xr.yaml`, `oidc_pack_jobs_test.go` | Generic platform fixture; pro profiles stay in gentian-pro |
+| e-2 | done | Medium | Element/Jitsi/OpenProject in comments & tests | Move app-specific notes to gentian-pro profile docs; keep generic CSP comments in os | `gateway_reconciler_test.go`, `mac_waiver_test.go`, `cache_test.go` | Generic profile/subdomain names in tests |
+| e-3 | done | Medium | Nextcloud in CRD schema text | OpenAPI examples use community Nextcloud (not od-nextcloud) | `appprofile_types.go`, generated CRDs | Examples unchanged where already generic |
+| e-4 | done | Medium | OpenProject comment in composition | Generic chart env comment in app-default | `app-default.yaml` | Removed app-specific OpenProject/jitsi examples |
+| e-5 | done | Medium | OpenDesk registry comments in secrets template | No OD_PRIVATE_REGISTRY vars in template | `install.secrets.env.template` | Already absent; example domain in OPENPROJECT hint |
+| e-6 | done | Medium | `scratch.patch` Nubus/LDAP logic | Delete with b-1; any UDM/LDAP init belongs in gentian-pro composition | `scratch.patch` | Removed in b-1 |
 | e-7 | done | Low | `gentian-catalogue-pro` ApplicationSet | Already implemented | `kernel/bootstrap/catalogue-pro-applicationset.yaml.tmpl` | Correct pattern: pro profiles from gentian-pro |
-| e-8 | ignore | Low | OIDC pack catalog | No change — CR-driven by design | `internal/oidc/` | App-specific mapper templates in cluster CRs, not Go constants |
+| e-8 | done | Low | OIDC pack catalog | Document CR-driven design | `internal/oidc/cluster_catalog.go` | Packs resolved from OIDCPackCatalog CRs |
 
 ---
 
@@ -133,7 +133,7 @@ Last reviewed: 2026-07-02
 | t-6 | open | `AuthzBridgeReconciler` | None | Full-cluster sync untested | Mock Keycloak + OpenFGA; assert incremental sync on tenant change |
 | t-7 | open | `PortalRedirectReconciler` | `portal_redirect_reconciler_test.go` | Minimal | Add cases for kernel vs tenant portal URLs |
 | t-8 | ignore | Crossplane `app-default` render | `crossplane/tests/unit/render/app-default/` | Exists | No change |
-| t-9 | open | Crossplane `tenant-default` | Uses `od-element` fixture | Pro-specific fixture | Switch to generic app fixture (see e-1) |
+| t-9 | done | Crossplane `tenant-default` | Uses `od-element` fixture | Pro-specific fixture | Generic `catalogue-test-app` fixture (see e-1) |
 | t-10 | ignore | `app-element` / `app-ox` compositions | No goldens in gentian-os | Custom compositions live in catalogue repos | Test in gentian-pro repo instead |
 | t-11 | open | `internal/applifecycle` | `gitops_test.go` only | Service/reconcile paths thin | Add tests for install/uninstall gitops commit shape |
 | t-12 | open | `internal/webhook` | `tenant_validator_test.go` | Tenant only; no AppProfile webhook | Implement AppProfile webhook or remove doc claim (see dvc-5) |
@@ -157,7 +157,7 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Action | Suggested Solution |
 |------|--------|--------|-------------------|
-| p-1 | open | Delete `scratch.patch` and `expected-new.yaml` (see b-1, b-3, e-6) | `git rm scratch.patch expected-new.yaml`; single PR |
+| p-1 | done | Delete `scratch.patch` and `expected-new.yaml` (see b-1, b-3, e-6) | Removed in b-1/b-3 |
 | p-2 | open | Reconcile security docs with code (AppGrant, composition names) (see a-1, a-2, dvc-1, dvc-3) | One docs PR updating architecture + security + catalogue guides |
 | p-3 | done | Parameterize Postfix `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` (see d-1) | mail-lib patch + example.domain placeholder in manifests |
 | p-4 | open | Fix OpenFGA sync semantics (deletes, pagination, event-driven) (see f-1, f-2, f-8) | Tuple diff in bridge; paginate Keycloak users |

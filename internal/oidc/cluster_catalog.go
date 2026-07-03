@@ -15,6 +15,9 @@ limitations under the License.
 */
 
 
+// Package oidc resolves OIDC client packs from cluster-scoped OIDCPackCatalog CRs.
+// App-specific mapper templates live in catalogue repos (gentian-apps / gentian-pro),
+// not as hardcoded constants in the operator.
 package oidc
 
 import (

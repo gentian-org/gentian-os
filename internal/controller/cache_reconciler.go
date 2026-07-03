@@ -385,8 +385,7 @@ func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 
 // redisSetUserScript returns an idempotent ACL SETUSER script.
 // ACL SETUSER is safe to re-run — it resets the ACL entry to the given rules.
-// allkeys is required because Nextcloud PHP sessions use Redis keys outside the
-// memcache prefix (demo:app:*) configured in config.php.
+// allkeys is required when session keys are not scoped to a single key prefix (some PHP apps).
 func redisSetUserScript(username, _ string) string {
 	return fmt.Sprintf(
 		`set -euo pipefail

@@ -109,7 +109,7 @@ type AppProfileSpec struct {
 	// CompositionRef overrides the Crossplane Composition used to deploy this
 	// app. When empty the XRD default (app-default) applies. Set to the name
 	// of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
-	// (e.g. "app-od-element") for profiles that require custom MR graphs in the catalogue repo.
+	// (e.g. "app-custom") for profiles that require custom MR graphs in the catalogue repo.
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 
@@ -130,7 +130,7 @@ type AppProfileSpec struct {
 	AdditionalIngresses []IngressSpec `json:"additionalIngresses,omitempty"`
 
 	// Sidecars declares companion services deployed by purpose-built compositions
-	// alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+	// alongside the primary app (for example a video sidecar). Sidecar OIDC
 	// clients and internal secrets use the synthetic app key {profile}-{sidecar}.
 	// +optional
 	Sidecars []AppSidecarSpec `json:"sidecars,omitempty"`
@@ -699,10 +699,10 @@ type IMAPValueMapping struct {
 }
 
 // AppSidecarSpec declares a companion service deployed alongside the primary
-// app by a purpose-built composition (for example Jitsi with Element).
+// app by a purpose-built composition (for example a sidecar with its own ingress).
 type AppSidecarSpec struct {
-	// Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
-	// use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+	// Name identifies the sidecar (e.g. "sidecar-meet"). OpenBao paths and OIDC jobs
+	// use the synthetic app key {parentProfile}-{name} (e.g. "catalogue-test-app-sidecar-meet").
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
@@ -726,7 +726,7 @@ type AppSidecarSpec struct {
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// StableServiceName is the Kubernetes Service name the tenant ingress
-	// reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+	// reconciler routes to (e.g. "sidecar-web"). When set, the composition emits
 	// a stable ClusterIP alias pointing at the sidecar release.
 	// +optional
 	StableServiceName string `json:"stableServiceName,omitempty"`

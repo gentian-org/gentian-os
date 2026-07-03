@@ -9,13 +9,13 @@ import (
 
 func TestApprovedMacWaivers_intersection(t *testing.T) {
 	requests := []gentianov1alpha1.MacWaiverRequest{
-		{Policy: "gentian-require-non-root", Scope: "sidecar-jitsi"},
+		{Policy: "gentian-require-non-root", Scope: "sidecar-meet"},
 		{Policy: "other-policy", Scope: "other-scope"},
 	}
 	allowed := []gentianov1alpha1.AllowedMacWaiver{
-		{Profile: "element", Policy: "gentian-require-non-root", Scope: "sidecar-jitsi"},
+		{Profile: "catalogue-test-app", Policy: "gentian-require-non-root", Scope: "sidecar-meet"},
 	}
-	got := security.ApprovedMacWaivers("element", requests, allowed)
+	got := security.ApprovedMacWaivers("catalogue-test-app", requests, allowed)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 approved waiver, got %d", len(got))
 	}

@@ -249,7 +249,7 @@ spec:
                   CompositionRef overrides the Crossplane Composition used to deploy this
                   app. When empty the XRD default (app-default) applies. Set to the name
                   of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
-                  (e.g. "app-od-element") for profiles that require custom MR graphs in the catalogue repo.
+                  (e.g. "app-custom") for profiles that require custom MR graphs in the catalogue repo.
                 type: string
               deploymentMethod:
                 default: crossplane
@@ -730,12 +730,12 @@ spec:
               sidecars:
                 description: |-
                   Sidecars declares companion services deployed by purpose-built compositions
-                  alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+                  alongside the primary app (for example a video sidecar). Sidecar OIDC
                   clients and internal secrets use the synthetic app key {profile}-{sidecar}.
                 items:
                   description: |-
                     AppSidecarSpec declares a companion service deployed alongside the primary
-                    app by a purpose-built composition (for example Jitsi with Element).
+                    app by a purpose-built composition (for example a sidecar with its own ingress).
                   properties:
                     appSecrets:
                       description: |-
@@ -991,15 +991,15 @@ spec:
                       type: object
                     name:
                       description: |-
-                        Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
-                        use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+                        Name identifies the sidecar (e.g. "sidecar-meet"). OpenBao paths and OIDC jobs
+                        use the synthetic app key {parentProfile}-{name} (e.g. "catalogue-test-app-sidecar-meet").
                       minLength: 1
                       pattern: ^[a-z0-9-]+$
                       type: string
                     stableServiceName:
                       description: |-
                         StableServiceName is the Kubernetes Service name the tenant ingress
-                        reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+                        reconciler routes to (e.g. "sidecar-web"). When set, the composition emits
                         a stable ClusterIP alias pointing at the sidecar release.
                       type: string
                     stableServicePort:

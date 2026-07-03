@@ -566,7 +566,7 @@ spec:
                 (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
                 (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
             }}
-            {{- /* Charts that render env from values.environment (e.g. OpenProject)   */}}
+            {{- /* Charts that render env from values.environment need OIDC/truststore keys merged there too. */}}
             {{- /* ignore top-level extraEnvVars — merge staging CA paths there too. */}}
             {{- $stagingEnvironment := dict
                 "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
@@ -808,7 +808,7 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
-            {{- /* When AppProfile sets spec.ingress.serviceName (e.g. "jitsi-web") */}}
+            {{- /* When AppProfile sets spec.ingress.serviceName (non-default Service) */}}
             {{- /* the chart creates services named <xrName>-release-<component>.   */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}

@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -32,10 +31,10 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 
-	element := &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "od-element"},
+	parent := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-test-app"},
 		Spec: gentianov1alpha1.AppProfileSpec{
-			CompositionRef: "app-od-element",
+			CompositionRef: "app-default",
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
@@ -45,11 +44,11 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 			},
 			Sidecars: []gentianov1alpha1.AppSidecarSpec{
 				{
-					Name: "jitsi",
+					Name: "sidecar-meet",
 					KernelRequirements: &gentianov1alpha1.KernelRequirements{
 						Identity: &gentianov1alpha1.IdentityRequirement{
 							OIDC: &gentianov1alpha1.OIDCClientSpec{
-								ClientID: "meet-sidecar-client",
+								ClientID: "sidecar-oidc-client",
 							},
 						},
 					},
@@ -58,7 +57,7 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(element).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(parent).Build()
 	r := &TenantReconciler{
 		Client:       c,
 		KernelDomain: "desk.example.com",
@@ -67,7 +66,7 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
 			Domain: "demo.desk.example.com",
-			Apps:   []gentianov1alpha1.TenantApp{{Profile: "od-element"}},
+			Apps:   []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
 		},
 	}
 
@@ -76,29 +75,29 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		t.Fatalf("collectOIDCAppConfigs: %v", err)
 	}
 	if len(configs) != 2 {
-		t.Fatalf("expected 2 OIDC configs (od-element + od-element-jitsi sidecar), got %d", len(configs))
+		t.Fatalf("expected 2 OIDC configs (catalogue-test-app + sidecar), got %d", len(configs))
 	}
 
 	var sidecarCfg *oidcAppConfig
 	for i := range configs {
-		if configs[i].profileName == "od-element-jitsi" {
+		if configs[i].profileName == "catalogue-test-app-sidecar-meet" {
 			sidecarCfg = &configs[i]
 			break
 		}
 	}
 	if sidecarCfg == nil {
-		t.Fatal("expected od-element-jitsi sidecar OIDC config")
+		t.Fatal("expected catalogue-test-app-sidecar-meet sidecar OIDC config")
 	}
-	if sidecarCfg.parentProfile != "od-element" {
-		t.Errorf("parentProfile = %q, want od-element", sidecarCfg.parentProfile)
+	if sidecarCfg.parentProfile != "catalogue-test-app" {
+		t.Errorf("parentProfile = %q, want catalogue-test-app", sidecarCfg.parentProfile)
 	}
 
 	owner, err := r.getOIDCOwnerProfile(context.Background(), *sidecarCfg)
 	if err != nil {
 		t.Fatalf("getOIDCOwnerProfile sidecar: %v", err)
 	}
-	if owner.Name != "od-element" {
-		t.Errorf("owner profile = %q, want od-element", owner.Name)
+	if owner.Name != "catalogue-test-app" {
+		t.Errorf("owner profile = %q, want catalogue-test-app", owner.Name)
 	}
 	if !crossplaneOwnsOIDCClient(owner, *sidecarCfg) {
 		t.Error("expected Crossplane to own sidecar OIDC when parent has compositionRef")

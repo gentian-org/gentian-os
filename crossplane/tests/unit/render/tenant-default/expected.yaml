@@ -6,7 +6,7 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-od-element, networkpolicy-app-init'
+    message: 'Unready resources: app-catalogue-test-app, networkpolicy-app-init'
     reason: Creating
     status: "False"
     type: Ready
@@ -15,14 +15,14 @@ apiVersion: gentianos.io/v1alpha1
 kind: App
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: app-od-element
+    crossplane.io/composition-resource-name: app-catalogue-test-app
   labels:
     app.kubernetes.io/managed-by: gentian-os
     crossplane.io/composite: render-fixture
-    gentianos.io/app: od-element
+    gentianos.io/app: catalogue-test-app
     gentianos.io/managed-by: crossplane
     gentianos.io/tenant: render-fixture
-  name: od-element
+  name: catalogue-test-app
   namespace: tenant-render-fixture
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -35,7 +35,7 @@ spec:
   compositionUpdatePolicy: Automatic
   domain: render-fixture.desk.gentian.org
   profileRef:
-    name: od-element
+    name: catalogue-test-app
   tenantNamespace: tenant-render-fixture
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2

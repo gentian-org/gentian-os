@@ -38,8 +38,8 @@ func TestBuildDesired_TenantCachePolicies(t *testing.T) {
 	in := netpolicy.BuildInput{
 		TenantName: "demo",
 		Namespace:  "tenant-demo",
-		Apps:       []gentianov1alpha1.TenantApp{{Profile: "openproject"}},
-		Profiles:   map[string]*gentianov1alpha1.AppProfile{"openproject": profile},
+		Apps:       []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
+		Profiles:   map[string]*gentianov1alpha1.AppProfile{"catalogue-test-app": profile},
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
@@ -48,8 +48,8 @@ func TestBuildDesired_TenantCachePolicies(t *testing.T) {
 		switch np.Name {
 		case "tenant-cache-egress":
 			egress = true
-			if got := np.Spec.PodSelector.MatchExpressions[0].Values[0]; got != "openproject" {
-				t.Fatalf("expected openproject app selector, got %q", got)
+			if got := np.Spec.PodSelector.MatchExpressions[0].Values[0]; got != "catalogue-test-app" {
+				t.Fatalf("expected catalogue-test-app app selector, got %q", got)
 			}
 		case "tenant-cache-ingress":
 			ingress = true
