@@ -31,14 +31,11 @@ func TestBuildDesired_BaselineOnly(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 2 {
-		t.Fatalf("expected baseline + app-init policies, got %d", len(policies))
+	if len(policies) != 1 {
+		t.Fatalf("expected baseline policy only, got %d", len(policies))
 	}
 	if policies[0].Name != "tenant-isolation" {
 		t.Fatalf("expected tenant-isolation, got %q", policies[0].Name)
-	}
-	if policies[1].Name != "app-init-access" {
-		t.Fatalf("expected app-init-access, got %q", policies[1].Name)
 	}
 	if len(policies[0].Spec.Egress) < 1 {
 		t.Fatal("expected DNS egress on baseline")
@@ -73,8 +70,8 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 5 {
-		t.Fatalf("expected baseline + app-init + kernel + app-internal + contract policies, got %d", len(policies))
+	if len(policies) != 4 {
+		t.Fatalf("expected baseline + kernel + app-internal + contract policies, got %d", len(policies))
 	}
 	contractNP := policies[len(policies)-1]
 	if got := contractNP.Labels["gentianos.io/granted-capabilities"]; got != "webdav_read" {

@@ -341,22 +341,6 @@ path "${_kv_mount}/metadata/gentian-os/tenants/*"       { capabilities = ["list"
 POLICY
     success "eso-read policy written."
 
-    # ── 3c. app-init policy ───────────────────────────────────────────────────
-    # App init Jobs (Crossplane Compositions) authenticate via K8s SA JWT and
-    # use this policy to provision per-tenant/app credentials in OpenBao on
-    # first app install (s3, database).
-    bao policy write app-init - <<POLICY
-path "${_kv_mount}/data/gentian-os/kernel/internal/master-password"   { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/kernel/database/cnpg"             { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/kernel/storage/minio"             { capabilities = ["read"] }
-path "${_kv_mount}/metadata/gentian-os/kernel/database/cnpg"         { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/s3"              { capabilities = ["create", "read", "update"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/s3"          { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/database"        { capabilities = ["create", "read", "update"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/database"    { capabilities = ["read"] }
-POLICY
-    success "app-init policy written."
-
     # ── 4. Kubernetes auth roles ──────────────────────────────────────────────
     # crossplane-provider: kept for future dynamic-token use (not used by
     # provider-vault ProviderConfig which reads a static token Secret).
@@ -374,16 +358,6 @@ POLICY
         token_policies=eso-read \
         token_ttl=3600
     success "eso K8s auth role created."
-
-    # app-init: short-lived tokens for Composition init Jobs running in tenant
-    # namespaces. Wildcard namespace binding allows Jobs in any tenant namespace.
-    bao write auth/kubernetes/role/app-init \
-        bound_service_account_names=app-init \
-        bound_service_account_namespaces="*" \
-        token_policies=app-init \
-        token_ttl=300 \
-        token_max_ttl=600
-    success "app-init K8s auth role created."
 
     # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
     # provider-vault v3.x (upjet/Terraform-based) does not support

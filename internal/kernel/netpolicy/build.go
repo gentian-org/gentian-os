@@ -40,9 +40,6 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
 		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts),
 	}
-	if np := AppInitAccessNetworkPolicy(in.TenantName, in.Namespace, in.Config); np != nil {
-		out = append(out, np)
-	}
 
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
@@ -96,7 +93,6 @@ func cacheAppNames(in BuildInput) []string {
 func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	names := map[string]struct{}{
 		baselinePolicyName: {},
-		appInitPolicyName:  {},
 	}
 	for _, app := range in.Apps {
 		names[kernelPolicyName(app.Profile)] = struct{}{}

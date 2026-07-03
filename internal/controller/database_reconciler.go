@@ -73,24 +73,10 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 
 	nsName := tenantNamespaceName(tenant)
 	allDone := true
-	kernelManaged := false
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
 	var pendingJobs []string
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
-		profile, ok := appProfileFromIndex(profileIndex, appName)
-		if !ok {
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: not found", appName)
-		}
-
-		if appUsesCrossplaneDBInit(profile) {
-			continue
-		}
-		kernelManaged = true
 
 		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
@@ -117,14 +103,8 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		return r.requeueForPendingJob(ctx, tenant.Name, pendingJobs...), nil
 	}
 
-	reason := "Provisioned"
-	message := "All PostgreSQL databases and roles are ready"
-	if !kernelManaged {
-		reason = "AppCompositionOwnsDatabase"
-		message = "PostgreSQL is provisioned by app compositions"
-	}
-
-	r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue, reason, message)
+	r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
+		"Provisioned", "All PostgreSQL databases and roles are ready")
 	return ctrl.Result{}, nil
 }
 

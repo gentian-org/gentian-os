@@ -6,7 +6,7 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app, networkpolicy-app-init'
+    message: 'Unready resources: app-catalogue-test-app'
     reason: Creating
     status: "False"
     type: Ready
@@ -227,67 +227,9 @@ spec:
           - namespaceSelector:
               matchLabels:
                 kubernetes.io/metadata.name: envoy-gateway-system
-        podSelector:
-          matchExpressions:
-          - key: gentianos.io/component
-            operator: NotIn
-            values:
-            - app-init
+        podSelector: {}
         policyTypes:
         - Ingress
-        - Egress
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: networkpolicy-app-init
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-networkpolicy-app-init
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: networking.k8s.io/v1
-      kind: NetworkPolicy
-      metadata:
-        labels:
-          app.kubernetes.io/managed-by: gentian-os
-          gentianos.io/netpolicy-type: app-init-access
-          gentianos.io/tenant: render-fixture
-        name: app-init-access
-        namespace: tenant-render-fixture
-      spec:
-        egress:
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: openbao
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-infra-dev
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-dev
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: platform-kernel
-        podSelector:
-          matchLabels:
-            gentianos.io/component: app-init
-        policyTypes:
         - Egress
   providerConfigRef:
     name: kubernetes

@@ -43,13 +43,6 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	for _, appName := range pgApps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		if appUsesCrossplaneDBInit(profile) {
-			continue
-		}
 		dbName := databaseName(tenant, appName)
 		rolePassword := ""
 		if r.Seeder != nil {
@@ -101,21 +94,19 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	for _, appName := range s3Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		if appUsesCrossplaneS3Init(profile) {
-			continue
-		}
+		accessKey, secretKey := "", ""
 		if r.Seeder != nil {
-			if _, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-				Bucket: s3BucketName(tenant, appName),
-			}); seedErr != nil {
+			creds, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
+				Endpoint: r.minioEndpoint(ctx),
+				Bucket:   s3BucketName(tenant, appName),
+				Region:   "us-east-1",
+			})
+			if seedErr != nil {
 				return nil, fmt.Errorf("seed s3 for %s: %w", appName, seedErr)
 			}
+			accessKey, secretKey = creds.AccessKey, creds.SecretKey
 		}
-		jobs = append(jobs, *makeS3BucketJob(tenant, appName))
+		jobs = append(jobs, *makeS3BucketJob(tenant, appName, accessKey, secretKey))
 	}
 
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
@@ -161,13 +152,6 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 		return nil, err
 	}
 	for _, appName := range pgApps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		if appUsesCrossplaneDBInit(profile) {
-			continue
-		}
 		dbName := databaseName(tenant, appName)
 		objects = append(objects, buildDatabaseCR(tenant, nsName, dbName, appName))
 	}

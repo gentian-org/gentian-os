@@ -156,9 +156,13 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	}
 }
 
-// TestDB_CrossplaneAppDefersDatabase verifies Crossplane apps with databasePerTenant
-// do not block tenant Phase=Ready on element-db-init (owned by app-default).
-func TestDB_CrossplaneAppDefersDatabase(t *testing.T) {
+// TestDB_CrossplaneAppProvisionedByOperator verifies that Crossplane apps with
+// databasePerTenant are provisioned by the operator in the kernel namespace,
+// not deferred to composition-owned db-init Jobs. This is the SEC-1 hardening:
+// tenant-namespace init Jobs no longer read kernel credentials from OpenBao, so
+// the operator must own the role/database provisioning for every engine=postgres
+// app regardless of deployment method.
+func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("element")
 	profile.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodCrossplane
@@ -181,17 +185,11 @@ func TestDB_CrossplaneAppDefersDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "cpgdb"}, updated)
-		for i := range updated.Status.Conditions {
-			if updated.Status.Conditions[i].Type == "DatabaseReady" &&
-				updated.Status.Conditions[i].Status == metav1.ConditionTrue &&
-				updated.Status.Conditions[i].Reason == "AppCompositionOwnsDatabase" {
-				return true
-			}
-		}
-		return false
+	// The operator must create its own role Job for the Crossplane app.
+	waitFor(t, jobAppearTimeout, func() bool {
+		job := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-cpgdb-element", Namespace: "platform-kernel"}, job) == nil
 	})
 }
 

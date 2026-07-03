@@ -1200,7 +1200,6 @@ data:
   mail.serviceMode: "${_mail_mode}"
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
-  appInit.image: "${APP_INIT_IMAGE:-ghcr.io/example/gentian-app-init:${APP_INIT_IMAGE_TAG:-develop}}"
   network.infraNamespace: "${_infra_ns}"
   network.servicesNamespace: "${_services_ns}"
   network.openbaoNamespace: "${_openbao_ns}"
