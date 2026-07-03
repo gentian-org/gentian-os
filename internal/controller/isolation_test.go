@@ -84,7 +84,7 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 }
 
 // TestIsolation_NetworkPolicyIngressRules verifies baseline ingress allows edge
-// routing (ingress + Envoy Gateway) only.
+// routing (Envoy Gateway) and platform-kernel portal API access to tenant apps.
 func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -113,7 +113,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	expectedNS := []string{"envoy-gateway-system"}
+	expectedNS := []string{"envoy-gateway-system", "platform-kernel"}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {

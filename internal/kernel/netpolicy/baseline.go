@@ -77,6 +77,7 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		namespaceIngress(meta.EnvoyGatewayInstallNamespace),
+		namespaceIngress(meta.KernelNamespace),
 	}
 
 	return &networkingv1.NetworkPolicy{
