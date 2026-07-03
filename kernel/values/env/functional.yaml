@@ -56,7 +56,7 @@ authentication:
   # All numeric "Lifespan" values are in seconds.
   # Ref.: https://www.keycloak.org/docs/latest/server_admin
   realmSettings:
-    accessTokenLifespan: 300                 # 5 minutes
+    accessTokenLifespan: 43200               # 12 hours
     revokeRefreshToken: false
     ssoSessionIdleTimeout: 14400             # 4 hours
     ssoSessionMaxLifespan: 57600             # 16 hours
