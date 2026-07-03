@@ -394,7 +394,7 @@ verify_argocd_apps() {
         if [[ "$total" -eq 0 ]]; then
             if [[ $elapsed -ge $timeout ]]; then
                 warn "No ArgoCD Applications appeared within ${timeout}s."
-                VERIFY_STATUS="empty"
+                export VERIFY_STATUS="empty"
                 return 1
             fi
             printf "  …no Applications yet (%ds/%ds)\n" "$elapsed" "$timeout"
@@ -421,8 +421,8 @@ verify_argocd_apps() {
 
         if [[ "$synced" -eq "$total" && "$healthy" -eq "$total" ]]; then
             success "All ${total} ArgoCD Applications are Synced and Healthy."
-            VERIFY_STATUS="ok"
-            VERIFY_TOTAL="$total"
+            export VERIFY_STATUS="ok"
+            export VERIFY_TOTAL="$total"
             return 0
         fi
 
@@ -435,9 +435,9 @@ verify_argocd_apps() {
             while IFS= read -r line; do
                 [[ -n "$line" ]] && echo "    $line"
             done <<< "$bad_lines"
-            VERIFY_STATUS="degraded"
-            VERIFY_TOTAL="$total"
-            VERIFY_BAD="$bad_lines"
+            export VERIFY_STATUS="degraded"
+            export VERIFY_TOTAL="$total"
+            export VERIFY_BAD="$bad_lines"
             return 1
         fi
 

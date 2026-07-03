@@ -298,7 +298,7 @@ INPUT_HIERARCHY_VARS=(
 
 # ─── Versions ────────────────────────────────────────────────────────────────
 BAO_VERSION="2.5.1"
-ESO_CHART_VERSION="2.4.1"
+export ESO_CHART_VERSION="2.4.1"
 ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-v1.2.5}"
 ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
 GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
@@ -428,12 +428,11 @@ load_env_file_override() {
 # failure. No cluster actions are taken.
 validate_config() {
     local errors=0 warnings=0
-    local deployments_root cluster stage
+    local deployments_root cluster
     local cluster_settings_file
 
     deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
-    stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
 
     _file_header() {
