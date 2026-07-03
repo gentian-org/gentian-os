@@ -79,8 +79,6 @@ install_catalogue_sync() {
     info "Applying gentian-catalogue ApplicationSet:"
     info "  repo:   ${GENTIAN_APPS_REPO}"
     info "  branch: ${GENTIAN_APPS_BRANCH}"
-    # Legacy flat Application (profiles/*.yaml only) — remove on upgrade.
-    kubectl delete application gentian-appprofiles -n argocd --ignore-not-found=true >/dev/null 2>&1 || true
     kubectl apply -f "$rendered"
     rm -f "$rendered"
     success "Catalogue sync configured. Argo CD will sync profiles/<name>/ bundles."

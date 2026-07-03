@@ -19,6 +19,11 @@
 #       - Crossplane applies identity, data-plane, and edge resources declaratively
 #   ✓ Remaining secrets seeded (registry, DNS/Cloudflare, internal)
 #
+# Upgrade note: this script targets greenfield installs. Legacy version-to-version
+# migration paths (pre-InfraData layouts, flat gentian-appprofiles Application,
+# etc.) were removed in cleanup batch b. Remaining delete/reset hooks heal failed
+# or partial installs only (Suze ghost Helm releases, orphaned Crossplane RBAC).
+#
 # Usage:
 #   ./install.sh
 #   ./install.sh --validate          # validate config only, no cluster changes

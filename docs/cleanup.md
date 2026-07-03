@@ -115,7 +115,7 @@ Last reviewed: 2026-07-02
 | g-2 | open | High | `identity_reconciler.go` shell-script generation | Migrate provisioning to Keycloak Admin REST (`keycloak_client.go`) incrementally | L489+, 842 lines total | Large embedded curl/jq scripts; REST path exists in `keycloak_client.go` |
 | g-3 | open | High | `app-default.yaml` composition | Split into nested templates: `fetch`, `init`, `release`, `policy` | 1,236 lines | Single template: fetch, init Jobs, Helm, netpolicy, secrets |
 | g-4 | open | Medium | `gateway_policy.go` | Split into `gateway_intent.go`, `gateway_stale.go`, `reference_grant.go` | 394 lines | Mixes intent collection, BTP parsing, stale deletion, ReferenceGrants |
-| g-5 | open | Medium | `install.sh` + legacy retirement | Move migrations to `scripts/migrations/` invoked once per version | 1,305 lines with inline migration | Half greenfield install, half upgrade archaeologist |
+| g-5 | done | Medium | `install.sh` + legacy retirement | Move migrations to `scripts/migrations/` invoked once per version | `install.sh`, `catalogue.sh` | Version migrations removed in b-4/x-5; greenfield-only note in install header; dropped gentian-appprofiles upgrade delete |
 | g-6 | open | Medium | Error handling in browser-security / portal redirect | Return `RequeueAfter` on non-blocking errors with metric | `tenant_controller.go` L509–515 | Logged as non-blocking without guaranteed requeue |
 | g-7 | open | Low | Import ordering in some files | Run `goimports` / golangci-lint import grouping | e.g. `database_reconciler.go` L22–23 | stdlib/third-party mix |
 
