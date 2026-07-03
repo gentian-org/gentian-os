@@ -30,11 +30,14 @@ const (
 	NetPolicyAppInit     = "app-init-access"
 	NetPolicyAppInternal = "app-internal-access"
 	NetPolicyContract    = "contract-allow"
+	NetPolicyTenantCache = "tenant-cache-access"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"
 	// AppInitComponentValue marks bootstrap Jobs (db-init, s3-init) that need OpenBao + kernel egress.
 	AppInitComponentValue = "app-init"
+	// TenantCacheComponentValue marks the shared per-tenant Memcached workload.
+	TenantCacheComponentValue = "tenant-cache"
 
 	// portalRedirectComponent marks portal redirect resources owned by the shared kernel portal.
 	PortalRedirectComponentLabel = ComponentLabel

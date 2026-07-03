@@ -273,6 +273,7 @@ func makeMemcachedDeployment(tenant *gentianov1alpha1.Tenant) *appsv1.Deployment
 	podLabels := map[string]string{
 		"app.kubernetes.io/name":     "memcached",
 		"app.kubernetes.io/instance": memcachedDeploymentName,
+		meta.ComponentLabel:          meta.TenantCacheComponentValue,
 	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

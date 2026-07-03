@@ -63,7 +63,32 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 			out = append(out, np)
 		}
 	}
+
+	cacheApps := cacheAppNames(in)
+	if np := TenantCacheEgressNetworkPolicy(in.TenantName, in.Namespace, cacheApps); np != nil {
+		out = append(out, np)
+	}
+	if np := TenantCacheIngressNetworkPolicy(in.TenantName, in.Namespace, cacheApps); np != nil {
+		out = append(out, np)
+	}
 	return out
+}
+
+func cacheAppNames(in BuildInput) []string {
+	var names []string
+	seen := map[string]struct{}{}
+	for _, app := range in.Apps {
+		profile := in.Profiles[app.Profile]
+		if profile == nil || profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Cache == nil {
+			continue
+		}
+		if _, ok := seen[app.Profile]; ok {
+			continue
+		}
+		seen[app.Profile] = struct{}{}
+		names = append(names, app.Profile)
+	}
+	return names
 }
 
 // ManagedPolicyNames returns the set of operator-owned policy names (excluding baseline).
@@ -79,5 +104,7 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	for _, binding := range in.Bindings {
 		names[contractPolicyName(binding.Name)] = struct{}{}
 	}
+	names[tenantCacheEgressPolicyName()] = struct{}{}
+	names[tenantCacheIngressPolicyName()] = struct{}{}
 	return names
 }
