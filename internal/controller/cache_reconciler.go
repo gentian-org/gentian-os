@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
@@ -38,7 +39,6 @@ import (
 
 const (
 	conditionCacheReady     = "CacheReady"
-	redisProvisionerImage   = "redis:7-alpine"
 	redisAdminSecret        = "redis-admin"
 	cacheRequeueAfter       = 2 * time.Second
 	memcachedServiceName    = "memcached"
@@ -46,16 +46,11 @@ const (
 	memcachedPort           = int32(11211)
 )
 
-// Memcached image — configurable via Helm values / env vars so upgrades don't
-// require an operator image rebuild. Uses the official Docker Hub image because
-// Bitnami chart images are not reliably pullable on all clusters.
-var memcachedImage = envOrDefault("MEMCACHED_IMAGE", "memcached:1.6.38-alpine")
-
 // ensureCache provisions per-app Redis ACL users (via redis-cli Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
 // to True once all Jobs complete and Memcached reports ready replicas.
 func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant)
+	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -102,7 +97,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 }
 
 // collectCacheApps inspects AppProfiles and partitions apps by cache engine.
-func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (redisApps, memcachedApps []string, err error) {
+func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) (redisApps, memcachedApps []string, err error) {
 	for _, app := range tenant.Spec.Apps {
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
@@ -116,10 +111,17 @@ func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentian
 		}
 		switch profile.Spec.KernelRequirements.Cache.Engine {
 		case gentianov1alpha1.CacheEngineRedis:
-			redisApps = append(redisApps, app.Profile)
+			redisApps = appendUniqueStrings(redisApps, app.Profile)
 		case gentianov1alpha1.CacheEngineMemcached:
-			memcachedApps = append(memcachedApps, app.Profile)
+			memcachedApps = appendUniqueStrings(memcachedApps, app.Profile)
 		}
+	}
+	if mode == CollectForDelete {
+		fromJobs, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, redisACLJobName(tenant.Name, ""))
+		if err != nil {
+			return nil, nil, err
+		}
+		redisApps = appendUniqueStrings(redisApps, fromJobs...)
 	}
 	return redisApps, memcachedApps, nil
 }
@@ -155,26 +157,13 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	redisApps, memcachedApps, err := r.collectCacheAppsForDelete(ctx, tenant)
+	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForDelete)
 	if err != nil {
 		return err
 	}
 
-	pending := false
-	for _, appName := range redisApps {
-		jobName := redisACLDeleteJobName(tenant.Name, appName)
-		existing := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing); err != nil {
-			if !errors.IsNotFound(err) {
-				return fmt.Errorf("check Redis ACL delete Job %s: %w", jobName, err)
-			}
-			if err := r.Create(ctx, makeRedisACLDeleteJob(tenant, appName)); err != nil && !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("create Redis ACL delete Job %s: %w", jobName, err)
-			}
-			pending = true
-		} else if !jobIsComplete(existing) {
-			pending = true
-		}
+	if err := r.ensureDeleteJobs(ctx, tenant, redisApps, redisACLDeleteJobName, makeRedisACLDeleteJob); err != nil {
+		return err
 	}
 
 	nsName := tenantNamespaceName(tenant)
@@ -196,9 +185,6 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		}
 	}
 
-	if pending {
-		return errDeleteJobPending
-	}
 	return nil
 }
 
@@ -295,7 +281,7 @@ func makeMemcachedDeployment(tenant *gentianov1alpha1.Tenant) *appsv1.Deployment
 					Containers: []corev1.Container{
 						{
 							Name:  "memcached",
-							Image: memcachedImage,
+							Image: kernel.MemcachedImage(),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "memcached",
@@ -358,7 +344,7 @@ func makeMemcachedService(tenant *gentianov1alpha1.Tenant) *corev1.Service {
 func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
-		Image:   redisProvisionerImage,
+		Image:   kernel.RedisProvisionerImage(),
 		Command: []string{"/bin/sh", "-c", script},
 		Env: []corev1.EnvVar{
 			{
@@ -404,7 +390,7 @@ func redisSetUserScript(username, keyPrefix string) string {
 		`set -euo pipefail
 USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$USER_PW" "~%s*" "+@read" "+@write" "+@connection" "+@script"
+  ACL SETUSER %s on ">$USER_PW" "~%s*" "+@read" "+@write" "+@connection" "+eval" "+evalsha"
 echo "ACL user %s provisioned"`,
 		username, keyPrefix, username,
 	)
