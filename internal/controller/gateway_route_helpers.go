@@ -143,7 +143,7 @@ func buildAppHTTPRoute(
 	}
 
 	rules := []gatewayv1.HTTPRouteRule{rule}
-	if apiRules := appAPIBackendRules(intent.profile, svcPort); len(apiRules) > 0 {
+	if apiRules := appAPIBackendRules(intent.profile, svcPort, kernelDomain, effectiveDomain, intent.ingress); len(apiRules) > 0 {
 		rules = append(apiRules, rules...)
 	}
 	if rootRedirect := appRootRedirectRule(intent.profile, host); rootRedirect != nil {
@@ -206,10 +206,23 @@ func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gat
 	}
 }
 
-func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32) []gatewayv1.HTTPRouteRule {
+func appAPIBackendRules(
+	profile *gentianov1alpha1.AppProfile,
+	defaultPort int32,
+	kernelDomain, effectiveDomain string,
+	ingress *gentianov1alpha1.IngressSpec,
+) []gatewayv1.HTTPRouteRule {
 	backends, err := gentianov1alpha1.ProfileGatewayAPIBackends(profile)
 	if err != nil || len(backends) == 0 {
 		return nil
+	}
+	mainIngressSubDomain := ""
+	if profile != nil && profile.Spec.Ingress != nil {
+		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
+	}
+	var filters []gatewayv1.HTTPRouteFilter
+	if ingress != nil {
+		filters = gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress)
 	}
 	var rules []gatewayv1.HTTPRouteRule
 	for _, backend := range backends {
@@ -222,7 +235,7 @@ func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32)
 		}
 		p := gatewayv1.PortNumber(port)
 		prefix := backend.PathPrefix
-		rules = append(rules, gatewayv1.HTTPRouteRule{
+		rule := gatewayv1.HTTPRouteRule{
 			Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
 			BackendRefs: []gatewayv1.HTTPBackendRef{{
 				BackendRef: gatewayv1.BackendRef{
@@ -232,7 +245,11 @@ func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32)
 					},
 				},
 			}},
-		})
+		}
+		if len(filters) > 0 {
+			rule.Filters = filters
+		}
+		rules = append(rules, rule)
 	}
 	return rules
 }

@@ -307,6 +307,35 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 	}
 }
 
+func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
+	t.Parallel()
+	profile := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				gentianov1alpha1.AnnotationProfileGatewayAPIBackends: `[{"pathPrefix":"/gentian-portal-bridge","serviceName":"openproject-portal-bridge","port":8080}]`,
+			},
+		},
+		Spec: gentianov1alpha1.AppProfileSpec{
+			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "projects"},
+		},
+	}
+	ingress := &gentianov1alpha1.IngressSpec{SubDomain: "projects"}
+	rules := appAPIBackendRules(profile, 8080, "desk.gentian.org", "demo.desk.gentian.org", ingress)
+	if len(rules) != 1 {
+		t.Fatalf("rules = %d, want 1", len(rules))
+	}
+	if len(rules[0].Filters) != 1 {
+		t.Fatalf("filters = %+v", rules[0].Filters)
+	}
+	modifier := rules[0].Filters[0].ResponseHeaderModifier
+	if modifier == nil || len(modifier.Set) != 1 {
+		t.Fatalf("modifier = %+v", modifier)
+	}
+	if !strings.Contains(modifier.Set[0].Value, "https://portal.desk.gentian.org") {
+		t.Fatalf("csp = %q", modifier.Set[0].Value)
+	}
+}
+
 func TestBuildTenantReferenceGrantObjects(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
