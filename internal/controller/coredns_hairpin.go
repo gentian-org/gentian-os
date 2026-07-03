@@ -28,6 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 const (
@@ -59,13 +61,17 @@ func kernelMailHairpinHost(kernelDomain string) string {
 }
 
 // patchHairpinCorefile updates the gentian-hairpin block so kernel HTTPS hosts
-// resolve to edgeIP. The mail.<kernelDomain> entry is preserved (Dovecot).
-func patchHairpinCorefile(corefile, edgeIP, kernelDomain string) (string, bool) {
+// and optional tenant app hostnames resolve to edgeIP. The mail.<kernelDomain>
+// entry is preserved (Dovecot).
+func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map[string]struct{}) (string, bool) {
 	if edgeIP == "" || kernelDomain == "" {
 		return corefile, false
 	}
 
 	httpsHosts := kernelHTTPSHairpinHosts(kernelDomain)
+	for host := range tenantHosts {
+		httpsHosts[host] = struct{}{}
+	}
 	mailHost := kernelMailHairpinHost(kernelDomain)
 
 	beginIdx := strings.Index(corefile, hairpinBeginMarker)
@@ -195,8 +201,13 @@ func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string
 	return ip, nil
 }
 
-func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, routingMode string) error {
+func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, routingMode string) error {
 	edgeIP, err := kernelEdgeClusterIP(ctx, c, routingMode)
+	if err != nil {
+		return err
+	}
+
+	tenantHosts, err := collectTenantAppHairpinHosts(ctx, c, kernelDomain, tenancyMode)
 	if err != nil {
 		return err
 	}
@@ -209,7 +220,7 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, ro
 	}
 
 	corefile := cm.Data["Corefile"]
-	patched, changed := patchHairpinCorefile(corefile, edgeIP, kernelDomain)
+	patched, changed := patchHairpinCorefile(corefile, edgeIP, kernelDomain, tenantHosts)
 	if !changed {
 		return nil
 	}
@@ -220,6 +231,35 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, ro
 		return fmt.Errorf("patch CoreDNS ConfigMap: %w", err)
 	}
 	return restartCoreDNSDeployment(ctx, c)
+}
+
+func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDomain, tenancyMode string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	if kernelDomain == "" {
+		return out, nil
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, tenants); err != nil {
+		return nil, fmt.Errorf("list tenants for CoreDNS hairpin: %w", err)
+	}
+	for i := range tenants.Items {
+		tenant := &tenants.Items[i]
+		effectiveDomain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
+		if effectiveDomain == "" {
+			continue
+		}
+		intents, err := collectTenantIngressIntents(ctx, c, tenant)
+		if err != nil {
+			return nil, err
+		}
+		for _, intent := range intents {
+			if intent.ingress == nil {
+				continue
+			}
+			out[ingressHost(intent.appProfile, intent.ingress, effectiveDomain)] = struct{}{}
+		}
+	}
+	return out, nil
 }
 
 func restartCoreDNSDeployment(ctx context.Context, c client.Client) error {

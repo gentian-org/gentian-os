@@ -35,7 +35,7 @@ func TestPatchHairpinCorefile_UpdatesKernelHostsPreservesMail(t *testing.T) {
     }
 }`
 
-	patched, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org")
+	patched, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org", nil)
 	if !changed {
 		t.Fatal("expected hairpin patch to change Corefile")
 	}
@@ -63,7 +63,7 @@ func TestPatchHairpinCorefile_Idempotent(t *testing.T) {
 	b.WriteString("          " + hairpinEndMarker)
 	corefile := b.String()
 
-	_, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org")
+	_, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org", nil)
 	if changed {
 		t.Fatal("expected no change when hairpin already correct for managed hosts")
 	}
@@ -76,11 +76,34 @@ func TestPatchHairpinCorefile_InsertsMissingHosts(t *testing.T) {
           10.152.183.197 portal.desk.gentian.org
           # END gentian-hairpin`
 
-	patched, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org")
+	patched, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org", nil)
 	if !changed {
 		t.Fatal("expected missing kernel hosts to be inserted")
 	}
 	if !strings.Contains(patched, "10.152.183.36 id.desk.gentian.org") {
 		t.Fatalf("expected missing id host to be added, got:\n%s", patched)
+	}
+}
+
+func TestPatchHairpinCorefile_AddsTenantAppHosts(t *testing.T) {
+	t.Parallel()
+
+	corefile := `# BEGIN gentian-hairpin
+          10.152.183.36 portal.desk.gentian.org
+          # END gentian-hairpin`
+
+	tenantHosts := map[string]struct{}{
+		"cloud.demo.desk.gentian.org":     {},
+		"collabora.demo.desk.gentian.org": {},
+	}
+	patched, changed := patchHairpinCorefile(corefile, "10.152.183.36", "desk.gentian.org", tenantHosts)
+	if !changed {
+		t.Fatal("expected tenant app hosts to be inserted")
+	}
+	if !strings.Contains(patched, "10.152.183.36 cloud.demo.desk.gentian.org") {
+		t.Fatalf("expected cloud host in hairpin block, got:\n%s", patched)
+	}
+	if !strings.Contains(patched, "10.152.183.36 collabora.demo.desk.gentian.org") {
+		t.Fatalf("expected collabora host in hairpin block, got:\n%s", patched)
 	}
 }

@@ -111,6 +111,9 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue, "Programmed", message)
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.RoutingMode); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile CoreDNS tenant hairpin: %w", err)
+	}
 	return ctrl.Result{}, nil
 }
 

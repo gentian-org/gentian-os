@@ -72,7 +72,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.RoutingMode); err != nil {
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.RoutingMode); err != nil {
 		logger.Error(err, "reconcile CoreDNS kernel hairpin")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
