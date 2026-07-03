@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
@@ -102,7 +103,7 @@ func TestBuildOIDCPackScript(t *testing.T) {
 func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 	script := buildFirstBrokerLoginFlowScript("demo")
 	if path := os.Getenv("DUMP_FIRST_BROKER_LOGIN_SCRIPT"); path != "" {
-		if err := os.WriteFile(path, []byte(keycloakProvisionerBootstrap+script), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(keycloak.ProvisionerBootstrap+script), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

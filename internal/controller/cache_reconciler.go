@@ -19,8 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,6 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (

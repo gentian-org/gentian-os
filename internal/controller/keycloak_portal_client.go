@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -39,7 +40,7 @@ func tenantPortalPublicClientJobName(tenantName string) string {
 // buildPortalPublicClientScript ensures the public OIDC client used by the portal
 // shell and execute-actions-email invites exists in each tenant realm.
 func buildPortalPublicClientScript(realmExpr string) string {
-	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`
 set -eu
 REALM=%s
 CLIENT_ID=%q
@@ -105,9 +106,9 @@ if [ -n "${GROUPS_SCOPE_ID}" ] && [ "${GROUPS_SCOPE_ID}" != "null" ]; then
   echo "groups scope attached to ${CLIENT_ID} in realm ${REALM}"
 fi
 `, realmExpr, portalPublicClientID,
-		keycloakShellWaitForRealm(realmExpr),
-		keycloakShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalPublicClientID),
-		keycloakShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalPublicClientID))
+		keycloak.ShellWaitForRealm(realmExpr),
+		keycloak.ShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalPublicClientID),
+		keycloak.ShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalPublicClientID))
 }
 
 func makePortalPublicClientJob(tenantName, realmName, portalOrigin string) *batchv1.Job {

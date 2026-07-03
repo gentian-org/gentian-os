@@ -98,7 +98,7 @@ spec:
     #     appSecret; creates a flat Secret with one key per sensitive value)
     #   • helm.crossplane.io/v1beta1 Release pointing at the chart from the
     #     AppProfile, with set[] entries that pull values from the Secret above
-    - step: render-app-resources
+    - step: render-app-core
       functionRef:
         name: function-go-templating
       input:
@@ -133,6 +133,8 @@ spec:
             {{- $vm        := default dict $pSpec.valueMapping }}
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
+
+            {{- $kr := default dict $pSpec.kernelRequirements }}
 
             {{- /* ── Load cluster-config ConfigMap for app init Jobs ────────────── */}}
             {{- /* Provides secretMode and infra endpoints for app init Jobs.       */}}
@@ -876,6 +878,76 @@ spec:
                       protocol: TCP
               providerConfigRef:
                 name: kubernetes
+            {{- end }}
+
+    - step: render-app-init
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr     := .observed.composite.resource }}
+            {{- $spec   := $xr.spec }}
+            {{- $xrName := $xr.metadata.name }}
+            {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
+                 and ExternalSecret name so both resources are discoverable by
+                 app label without needing to know the generated XR name. */}}
+            {{- $app    := $spec.claimRef.name }}
+            {{- $ns     := $spec.tenantNamespace }}
+            {{- /* Derive tenant name from namespace convention "tenant-{name}". */}}
+            {{- $tenant := trimPrefix "tenant-" $ns }}
+            {{- /* Tenant domain — used for substitution in extraValues AND in
+                 Keycloak client redirect URIs. Computed once at top level so
+                 both blocks share the same value. */}}
+            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+
+            {{- /* ── Load AppProfile from pipeline context ────────────────────── */}}
+            {{- $extraRes  := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $profiles  := dig "appProfile" list $extraRes }}
+            {{- if eq (len $profiles) 0 }}
+              {{- fail (printf "AppProfile %q not found in cluster" $spec.profileRef.name) }}
+            {{- end }}
+            {{- $profile   := index $profiles 0 }}
+            {{- $pSpec     := dig "spec" dict $profile }}
+            {{- $vm        := default dict $pSpec.valueMapping }}
+            {{- $appSecrets := default list $pSpec.appSecrets }}
+            {{- $chart     := $pSpec.chart }}
+
+            {{- $kr := default dict $pSpec.kernelRequirements }}
+
+            {{- /* ── Load cluster-config ConfigMap for app init Jobs ────────────── */}}
+            {{- /* Provides secretMode and infra endpoints for app init Jobs.       */}}
+            {{- $ccRes      := dig "clusterConfig" list $extraRes }}
+            {{- $ccCM       := default dict (index $ccRes 0) }}
+            {{- $ccData     := dig "data" dict $ccCM }}
+            {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
+            {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
+            {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
+            {{- $nodeIP        := dig "node.ip"        "" $ccData }}
+            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
+            {{- $initJobLimitCPU := dig "tenant.initJob.limits.cpu" "500m" $ccData }}
+            {{- $initJobLimitMem := dig "tenant.initJob.limits.memory" "512Mi" $ccData }}
+            {{- $initJobRequestCPU := dig "tenant.initJob.requests.cpu" "100m" $ccData }}
+            {{- $initJobRequestMem := dig "tenant.initJob.requests.memory" "128Mi" $ccData }}
+
+            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR. */}}
+            {{- $oidcPackDefaultScopes := dict }}
+            {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
+            {{- if gt (len $catalogRes) 0 }}
+            {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
+            {{- $catPacks := default dict $catSpec.packs }}
+            {{- range $clientId, $pack := $catPacks }}
+            {{- $scopes := default list $pack.defaultScopes }}
+            {{- if $pack.scopeName }}
+            {{- $scopes = append $scopes $pack.scopeName }}
+            {{- end }}
+            {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
+            {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- end }}
             {{- end }}
 
             {{- /* ── Emit S3-init resources (when AppProfile requires storage.s3.bucketPerTenant) */}}

@@ -14,8 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
-package controller
+package keycloak
 
 import (
 	"encoding/json"
@@ -24,13 +23,13 @@ import (
 	"strings"
 )
 
-// keycloakProvisionerBootstrap installs curl and jq before provisioner scripts run.
-const keycloakProvisionerBootstrap = "apk add --no-cache --quiet curl jq >/dev/null 2>&1 || { echo 'ERROR: install curl/jq failed' >&2; exit 1; }; "
+// ProvisionerBootstrap installs curl and jq before provisioner scripts run.
+const ProvisionerBootstrap = "apk add --no-cache --quiet curl jq >/dev/null 2>&1 || { echo 'ERROR: install curl/jq failed' >&2; exit 1; }; "
 
-// keycloakShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
+// ShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
 // field from Keycloak Admin API JSON arrays. jq is preferred; sed/grep fallbacks
 // handle minified arrays and objects with fields between name and id.
-func keycloakShellJSONIDExtractor() string {
+func ShellJSONIDExtractor() string {
 	return `keycloak_json_id_by_attr() {
   _kj_json="$1"
   _kj_attr="$2"
@@ -53,10 +52,10 @@ func keycloakShellJSONIDExtractor() string {
 `
 }
 
-// keycloakShellWaitForRealm polls until the tenant realm exists. Crossplane applies
+// ShellWaitForRealm polls until the tenant realm exists. Crossplane applies
 // all provisioning Jobs from jobs.json at once; dependent Jobs must wait for
 // keycloak-realm-* before calling realm-scoped Admin API endpoints.
-func keycloakShellWaitForRealm(realmExpr string) string {
+func ShellWaitForRealm(realmExpr string) string {
 	return fmt.Sprintf(`
 _wait_realm=0
 while [ ${_wait_realm} -lt 90 ]; do
@@ -73,10 +72,10 @@ fi
 `, realmExpr, realmExpr, realmExpr)
 }
 
-// keycloakShellRequireID emits shell that assigns outVar from the extractor or exits 1.
+// ShellRequireID emits shell that assigns outVar from the extractor or exits 1.
 // jsonVar must be a shell expansion such as ${EXISTING}; it is always double-quoted
 // so JSON arrays/objects are not word-split by the shell.
-func keycloakShellRequireID(outVar, jsonVar, attr, value string) string {
+func ShellRequireID(outVar, jsonVar, attr, value string) string {
 	return fmt.Sprintf(`keycloak_json_id_by_attr "%s" "%s" "%s"
 %s="${_kj_id}"
 if [ -z "${%s}" ]; then
@@ -85,8 +84,8 @@ if [ -z "${%s}" ]; then
 fi`, jsonVar, attr, value, outVar, outVar, attr, value)
 }
 
-// keycloakShellScopeIDFromList defines a helper to extract a client-scope id by name from JSON.
-func keycloakShellScopeIDFromList() string {
+// ShellScopeIDFromList defines a helper to extract a client-scope id by name from JSON.
+func ShellScopeIDFromList() string {
 	return `_kj_scope_id_from_list() {
   _kj_id=$(printf '%s' "$1" | jq -r --arg n "${SCOPE_NAME}" '
     (if type == "array" then .[] elif (.content? | type) == "array" then .content[] else empty end)
@@ -98,9 +97,9 @@ func keycloakShellScopeIDFromList() string {
 `
 }
 
-// keycloakShellLookupClientScopeID resolves SCOPE_UUID for the OIDC pack job (create if missing).
-func keycloakShellLookupClientScopeID() string {
-	return keycloakShellScopeIDFromList() + `
+// ShellLookupClientScopeID resolves SCOPE_UUID for the OIDC pack job (create if missing).
+func ShellLookupClientScopeID() string {
+	return ShellScopeIDFromList() + `
 SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
 _kj_scope_id_from_list "${SCOPE_LIST}"
 SCOPE_UUID="${_kj_id}"
@@ -140,9 +139,9 @@ echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
 `
 }
 
-// keycloakShellEnsureInviteEmailUserProfile registers gentian.inviteEmail on the realm
+// ShellEnsureInviteEmailUserProfile registers gentian.inviteEmail on the realm
 // user profile so Admin API can persist recovery addresses for invite/reset delivery.
-func keycloakShellEnsureInviteEmailUserProfile(realmExpr string) string {
+func ShellEnsureInviteEmailUserProfile(realmExpr string) string {
 	return fmt.Sprintf(`
 # Ensure gentian.inviteEmail is a managed user-profile attribute for invite/reset delivery.
 PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
@@ -157,9 +156,9 @@ fi
 `, realmExpr, realmExpr, realmExpr, realmExpr)
 }
 
-// keycloakShellDisableProfilePromptRequiredActions stops post-password profile forms
+// ShellDisableProfilePromptRequiredActions stops post-password profile forms
 // when admin delivery swaps the transient email used for action-token links.
-func keycloakShellDisableProfilePromptRequiredActions(realmExpr string) string {
+func ShellDisableProfilePromptRequiredActions(realmExpr string) string {
 	return fmt.Sprintf(`
 for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
   RA=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" 2>/dev/null || true)
@@ -178,8 +177,8 @@ echo "user profile firstName/lastName optional for realm %s"
 `, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr)
 }
 
-// extractKeycloakJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
-func extractKeycloakJSONIDByAttr(raw, attr, value string) string {
+// ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
+func ExtractJSONIDByAttr(raw, attr, value string) string {
 	var walk func(any)
 	var found string
 	walk = func(v any) {
@@ -216,7 +215,6 @@ func extractKeycloakJSONIDByAttr(raw, attr, value string) string {
 			}
 		}
 	}
-	// sed/grep fallback (same as shell)
 	needle := `"` + attr + `":"` + value + `"`
 	idRe := regexp.MustCompile(`"id":"([^"]+)"`)
 	inner := strings.TrimSpace(raw)

@@ -20,6 +20,8 @@ package controller
 import (
 	"context"
 	"fmt"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -44,7 +46,7 @@ func tenantDovecotOIDCClientJobName(tenantName string) string {
 // Keycloak realm. Dovecot introspects IMAP XOAUTH2 tokens in the realm that issued
 // them; kernel-only clients cannot validate tenant-realm tokens from OX App Suite.
 func buildDovecotTenantOIDCClientScript() string {
-	return keycloakShellJSONIDExtractor() + `
+	return keycloak.ShellJSONIDExtractor() + `
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${DOVECOT_CLIENT_SECRET:-}" ]; then

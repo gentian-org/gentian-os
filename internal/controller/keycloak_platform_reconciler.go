@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -22,8 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -41,8 +38,8 @@ import (
 const keycloakPlatformReconcileKey = "keycloak-platform"
 
 // KeycloakPlatformReconciler keeps Keycloak iframe policy converged for portal-
-// embedded OIDC apps. It patches the shared id.<kernel> HTTPRoute and ensures
-// browserSecurityHeaders jobs clear X-Frame-Options on all realms.
+// embedded OIDC apps. It patches the shared id.<kernel> HTTPRoute and applies
+// browserSecurityHeaders on all realms via the Admin REST API.
 type KeycloakPlatformReconciler struct {
 	client.Client
 	KernelDomain string
@@ -62,24 +59,19 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	ready, err := r.ensureAllBrowserSecurityHeaderJobs(ctx)
-	if err != nil {
-		logger.Error(err, "Keycloak browser security header jobs failed")
+	if err := r.ensureAllBrowserSecurityHeaders(ctx); err != nil {
+		logger.Error(err, "Keycloak browser security headers failed")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
-	}
-	if !ready {
-		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
 	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Re-check periodically so Crossplane/Helm drift on kernel HTTPRoutes is corrected.
 	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
-func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaderJobs(ctx context.Context) (bool, error) {
+func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context.Context) error {
 	kernelRealm := r.KernelRealm
 	if kernelRealm == "" {
 		kernelRealm = "kernel"
@@ -88,43 +80,26 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaderJobs(ctx cont
 		Client:      r.Client,
 		KernelRealm: kernelRealm,
 	}
-	if err := tr.ensureBrowserSecurityHeadersJob(ctx, kernelBrowserSecurityJobName(), kernelRealm); err != nil {
-		return false, err
-	}
-	kernelJob := &batchv1.Job{}
-	if err := r.Get(ctx, types.NamespacedName{Name: kernelBrowserSecurityJobName(), Namespace: kernelNamespace}, kernelJob); err != nil {
-		return false, err
-	}
-	if !jobIsComplete(kernelJob) {
-		return false, nil
+	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
+		return fmt.Errorf("kernel browser security headers: %w", err)
 	}
 
 	tenantList := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, tenantList); err != nil {
-		return false, fmt.Errorf("list tenants for browser security jobs: %w", err)
+		return fmt.Errorf("list tenants for browser security headers: %w", err)
 	}
 	for i := range tenantList.Items {
 		tenant := &tenantList.Items[i]
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		jobName := tenantBrowserSecurityJobName(tenant.Name)
-		realm := keycloakRealmName(tenant)
-		if err := tr.ensureBrowserSecurityHeadersJob(ctx, jobName, realm); err != nil {
-			return false, err
+		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant)); err != nil {
+			return fmt.Errorf("tenant %s browser security headers: %w", tenant.Name, err)
 		}
-		job := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job); err != nil {
-			if errors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, err
-		}
-		if !jobIsComplete(job) {
-			return false, nil
-		}
+		tr.deleteLegacyBrowserSecurityJobs(ctx, tenantBrowserSecurityJobName(tenant.Name))
 	}
-	return true, nil
+	tr.deleteLegacyBrowserSecurityJobs(ctx, kernelBrowserSecurityJobName())
+	return nil
 }
 
 func (r *KeycloakPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {

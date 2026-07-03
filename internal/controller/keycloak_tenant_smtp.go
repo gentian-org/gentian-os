@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -83,7 +84,7 @@ curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}" \
   -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "${UPDATED}" >/dev/null
 echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
-`, realmExpr, keycloakShellWaitForRealm(realmExpr))
+`, realmExpr, keycloak.ShellWaitForRealm(realmExpr))
 }
 
 func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {

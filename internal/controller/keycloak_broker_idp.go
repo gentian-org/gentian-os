@@ -20,6 +20,8 @@ package controller
 import (
 	"context"
 	"fmt"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -49,7 +51,7 @@ func tenantBrokerIdPJobName(tenantName string) string {
 // so Keycloak does not hairpin through the public id.<kernel> URL during broker
 // code exchange; browser-facing issuer and authorizationUrl stay external.
 func buildBrokerIdentityProviderScript() string {
-	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then

@@ -18,26 +18,22 @@ package controller
 
 import (
 	"context"
-	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 )
 
-// AppCollectionMode selects whether kernel app collectors read the live tenant
-// spec only or also union apps inferred from historical provision Jobs.
-type AppCollectionMode string
+// AppCollectionMode is re-exported from the shared provisioner package.
+type AppCollectionMode = provisioner.AppCollectionMode
 
 const (
-	CollectForProvision AppCollectionMode = "provision"
-	CollectForDelete    AppCollectionMode = "delete"
+	CollectForProvision = provisioner.CollectForProvision
+	CollectForDelete    = provisioner.CollectForDelete
 )
 
 func (r *TenantReconciler) collectKernelApps(
@@ -75,30 +71,21 @@ func (r *TenantReconciler) collectKernelApps(
 }
 
 func matchMariaDBProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Database != nil &&
-		profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
+	return provisioner.MatchMariaDBProfile(profile)
 }
 
 func matchS3Profile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Storage != nil &&
-		profile.Spec.KernelRequirements.Storage.S3 != nil
+	return provisioner.MatchS3Profile(profile)
 }
 
 func matchRedisProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Cache != nil &&
-		profile.Spec.KernelRequirements.Cache.Engine == gentianov1alpha1.CacheEngineRedis
+	return provisioner.MatchRedisProfile(profile)
 }
 
 func matchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Cache != nil &&
-		profile.Spec.KernelRequirements.Cache.Engine == gentianov1alpha1.CacheEngineMemcached
+	return provisioner.MatchMemcachedProfile(profile)
 }
 
-// jobWaitRequirement drives reconcileJobWaitRequirement for MariaDB/S3/Redis paths.
 type jobWaitRequirement struct {
 	conditionType string
 	emptyReason   string
@@ -141,30 +128,10 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 }
 
 func newKernelProvisioningJob(name string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	labels := map[string]string{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	}
-	if appName != "" {
-		labels[appLabel] = appName
-	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: kernelNamespace,
-			Labels:    labels,
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return provisioner.NewKernelProvisioningJob(
+		name, kernelNamespace, tenantLabel, managedByLabel, managedByValue, appLabel,
+		tenant.Name, appName, container,
+	)
 }
 
 func (r *TenantReconciler) ensureDeleteJobs(
@@ -174,26 +141,5 @@ func (r *TenantReconciler) ensureDeleteJobs(
 	jobName func(tenantName, appName string) string,
 	makeJob func(*gentianov1alpha1.Tenant, string) *batchv1.Job,
 ) error {
-	pending := false
-	for _, appName := range apps {
-		name := jobName(tenant.Name, appName)
-		existing := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing); err != nil {
-			if !errors.IsNotFound(err) {
-				return fmt.Errorf("check delete Job %s: %w", name, err)
-			}
-			if err := r.Create(ctx, makeJob(tenant, appName)); err != nil && !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("create delete Job %s: %w", name, err)
-			}
-			pending = true
-			continue
-		}
-		if !jobIsComplete(existing) {
-			pending = true
-		}
-	}
-	if pending {
-		return errDeleteJobPending
-	}
-	return nil
+	return provisioner.EnsureDeleteJobs(ctx, r.Client, kernelNamespace, tenant, apps, jobName, makeJob, jobIsComplete)
 }

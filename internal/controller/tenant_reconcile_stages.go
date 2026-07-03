@@ -292,9 +292,11 @@ func (r *TenantReconciler) reconcileTenantStageSharedKernel(ctx context.Context,
 
 	if err := r.ensurePortalRedirect(ctx, tenant); err != nil {
 		logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
+		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}
 	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
 		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
+		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}
 	return ctrl.Result{}, nil
 }

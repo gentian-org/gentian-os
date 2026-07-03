@@ -68,4 +68,17 @@ func TestAuthzBridgeReconciler_realmsToSync(t *testing.T) {
 			t.Fatalf("realms = %v, want [demo]", realms)
 		}
 	})
+
+	t.Run("missing tenant falls back to kernel realm", func(t *testing.T) {
+		t.Parallel()
+		realms, err := r.realmsToSync(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: "missing"},
+		})
+		if err != nil {
+			t.Fatalf("realmsToSync: %v", err)
+		}
+		if len(realms) != 1 || realms[0] != "kernel" {
+			t.Fatalf("realms = %v, want [kernel]", realms)
+		}
+	})
 }

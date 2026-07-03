@@ -45,6 +45,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -80,7 +81,7 @@ func defaultServicesNamespace() string {
 // created but has not yet completed. reconcileDelete treats this as a signal to
 // requeue rather than a hard error, so the finalizer is only removed once all
 // cleanup Jobs have finished.
-var errDeleteJobPending = fmt.Errorf("cleanup job not yet complete")
+var errDeleteJobPending = provisioner.ErrDeleteJobPending
 
 // deleteProvisioningJobs removes completed provisioning Jobs by name, ignoring
 // not-found and transient errors. Call this after a cleanup Job completes so

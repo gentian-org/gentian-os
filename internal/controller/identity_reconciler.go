@@ -19,8 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
 
@@ -32,7 +30,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/authz"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
@@ -448,7 +450,7 @@ func keycloakContainer(name, script string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
 		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c", keycloakProvisionerBootstrap + script},
+		Command: []string{"/bin/sh", "-c", keycloak.ProvisionerBootstrap + script},
 		Env: []corev1.EnvVar{
 			{
 				Name: "KEYCLOAK_URL",
@@ -511,14 +513,14 @@ if [ "${HTTP}" = "404" ]; then
     -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false,"browserSecurityHeaders":`+keycloakBrowserSecurityHeadersJSON+`}'
+    -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
   echo "realm %s created"
 else
   curl -sf \
     -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true,"browserSecurityHeaders":`+keycloakBrowserSecurityHeadersJSON+`}'
+    -d '{"realm":"%s","enabled":true,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
   echo "realm %s already exists, ensured enabled=true and browserSecurityHeaders (was HTTP ${HTTP})"
 fi
 
@@ -573,7 +575,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
 `+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
 fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	return keycloakShellJSONIDExtractor() + script + keycloakShellEnsureInviteEmailUserProfile(realmName) + keycloakShellDisableProfilePromptRequiredActions(realmName)
+	return keycloak.ShellJSONIDExtractor() + script + keycloak.ShellEnsureInviteEmailUserProfile(realmName) + keycloak.ShellDisableProfilePromptRequiredActions(realmName)
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -623,7 +625,7 @@ func buildAdminScript(realmName string) string {
 	//
 	// All steps are idempotent: users/roles are checked for existence before
 	// POST so re-running the Job is safe.
-	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \

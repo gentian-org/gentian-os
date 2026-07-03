@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/oidc"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // buildOIDCPackScript provisions Keycloak client scope, mappers,
@@ -57,11 +58,11 @@ func buildOIDCPackScript(
 		groupName = pack.EntitlementGroup
 	}
 
-	scopeLookupBlock := keycloakShellLookupClientScopeID()
-	clientUUIDBlock := keycloakShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
-	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${ENTITLEMENT_GROUP}")
+	scopeLookupBlock := keycloak.ShellLookupClientScopeID()
+	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
+	groupIDBlock := keycloak.ShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${ENTITLEMENT_GROUP}")
 
-	return keycloakShellJSONIDExtractor() + keycloakShellScopeIDFromList() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q

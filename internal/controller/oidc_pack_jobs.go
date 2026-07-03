@@ -20,7 +20,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -31,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 

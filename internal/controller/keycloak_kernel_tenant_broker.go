@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // kernelTenantBrokerVersion bumps when the kernel→tenant IdP PUT payload changes.
@@ -64,7 +65,7 @@ _resolve_external_oidc_base() {
 // buildKernelTenantBrokerScript registers the tenant realm as an OIDC Identity
 // Provider in the shared kernel realm so portal login can broker tenant users.
 func buildKernelTenantBrokerScript() string {
-	return keycloakShellJSONIDExtractor() + keycloakShellResolveExternalBase + fmt.Sprintf(`
+	return keycloak.ShellJSONIDExtractor() + keycloakShellResolveExternalBase + fmt.Sprintf(`
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
@@ -149,7 +150,7 @@ else
   echo "IdP mapper groups registered for kernel tenant IdP ${TENANT_REALM}"
 fi
 `, kernelPortalBrokerClientID,
-		keycloakShellWaitForRealm("${TENANT_REALM}"),
+		keycloak.ShellWaitForRealm("${TENANT_REALM}"),
 		brokerResolveIDShell,
 		brokerResolveIDShell,
 		buildEnsureFirstBrokerLoginFlowShellWithAlias("${KERNEL_REALM}", kernelPortalFirstBrokerLoginFlowAlias),

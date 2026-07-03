@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -39,7 +40,7 @@ func tenantPortalBFFClientJobName(tenantName string) string {
 // buildPortalBFFClientScript ensures a confidential ROPC client exists for the
 // Gentian portal BFF (password login without browser redirect to Keycloak).
 func buildPortalBFFClientScript(realmExpr string) string {
-	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`
 set -eu
 REALM=%s
 CLIENT_ID=%q
@@ -86,9 +87,9 @@ if [ -n "${GROUPS_SCOPE_ID}" ] && [ "${GROUPS_SCOPE_ID}" != "null" ]; then
   echo "groups scope attached to ${CLIENT_ID} in realm ${REALM}"
 fi
 `, realmExpr, portalBFFClientID,
-		keycloakShellWaitForRealm(realmExpr),
-		keycloakShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalBFFClientID),
-		keycloakShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalBFFClientID))
+		keycloak.ShellWaitForRealm(realmExpr),
+		keycloak.ShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalBFFClientID),
+		keycloak.ShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalBFFClientID))
 }
 
 func makePortalBFFClientJob(tenantName, realmName string) *batchv1.Job {

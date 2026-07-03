@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -65,7 +66,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 // buildGentianGroupsScript creates Gentian entitlement groups in a tenant realm and
 // ensures the built-in "groups" client scope is available for JWT group claims.
 func buildGentianGroupsScript(realmName string) string {
-	return keycloakShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 REALM=%q
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
@@ -98,5 +99,5 @@ if [ -z "${GROUPS_SCOPE_ID}" ]; then
 else
   echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
 fi
-`, realmName, keycloakShellWaitForRealm("${REALM}"))
+`, realmName, keycloak.ShellWaitForRealm("${REALM}"))
 }

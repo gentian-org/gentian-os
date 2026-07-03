@@ -134,6 +134,42 @@ func (c *KeycloakAdminClient) EnsureRealm(ctx context.Context, realm, displayNam
 	return err
 }
 
+// DefaultBrowserSecurityHeaders disables X-Frame-Options on realms so OIDC broker
+// /endpoint callbacks work inside portal iframes. Ingress sets frame-ancestors.
+var DefaultBrowserSecurityHeaders = map[string]any{
+	"contentSecurityPolicy":           "",
+	"contentSecurityPolicyReportOnly": "",
+	"strictTransportSecurity":         "max-age=31536000; includeSubDomains",
+	"xContentTypeOptions":             "nosniff",
+	"xFrameOptions":                   "",
+	"xRobotsTag":                      "none",
+	"xXSSProtection":                  "1; mode=block",
+	"referrerPolicy":                  "no-referrer",
+}
+
+// BrowserSecurityHeadersJSON is the JSON fragment embedded in realm provisioning shell scripts.
+func BrowserSecurityHeadersJSON() string {
+	b, err := json.Marshal(DefaultBrowserSecurityHeaders)
+	if err != nil {
+		return `{}`
+	}
+	return string(b)
+}
+
+// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders to a realm.
+func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
+	if realm == "" {
+		return nil
+	}
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"browserSecurityHeaders": DefaultBrowserSecurityHeaders}
+	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
+	return err
+}
+
 func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) ([]KeycloakUser, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {

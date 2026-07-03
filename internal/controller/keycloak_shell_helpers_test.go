@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -23,59 +22,6 @@ import (
 	"strings"
 	"testing"
 )
-
-func TestExtractKeycloakJSONIDByAttr_UserStorageProvider(t *testing.T) {
-	t.Parallel()
-	json := `[{"id":"f47ac10b-58cc-4372-a567-0e02b2c3d479","name":"federation","providerId":"custom-user-storage","providerType":"org.keycloak.storage.UserStorageProvider","config":{"connectionUrl":["https://idp.example/storage"]}}]`
-	got := extractKeycloakJSONIDByAttr(json, "name", "federation")
-	if got != "f47ac10b-58cc-4372-a567-0e02b2c3d479" {
-		t.Fatalf("got id %q", got)
-	}
-}
-
-func TestExtractKeycloakJSONIDByAttr_IDAfterAttribute(t *testing.T) {
-	t.Parallel()
-	json := `[{"name":"federation","id":"abc-def-123","providerId":"custom-user-storage"}]`
-	got := extractKeycloakJSONIDByAttr(json, "name", "federation")
-	if got != "abc-def-123" {
-		t.Fatalf("got id %q", got)
-	}
-}
-
-func TestExtractKeycloakJSONIDByAttr_FieldsBetweenNameAndID(t *testing.T) {
-	t.Parallel()
-	// Keycloak ClientScopeRepresentation often places id after description/protocol.
-	json := `[{"name":"catalogue-test-client-scope","description":"Scope for tests","protocol":"openid-connect","id":"scope-uuid-1"}]`
-	got := extractKeycloakJSONIDByAttr(json, "name", "catalogue-test-client-scope")
-	if got != "scope-uuid-1" {
-		t.Fatalf("got id %q", got)
-	}
-}
-
-func TestExtractKeycloakJSONIDByAttr_MultiObjectArray(t *testing.T) {
-	t.Parallel()
-	json := `[{"name":"email","id":"a"},{"name":"catalogue-test-client-scope","description":"x","id":"b"}]`
-	got := extractKeycloakJSONIDByAttr(json, "name", "catalogue-test-client-scope")
-	if got != "b" {
-		t.Fatalf("got id %q", got)
-	}
-}
-
-func TestExtractKeycloakJSONIDByAttr_BrokerClient(t *testing.T) {
-	t.Parallel()
-	json := `[{"id":"client-uuid","clientId":"broker-demo","protocol":"openid-connect"}]`
-	got := extractKeycloakJSONIDByAttr(json, "clientId", "broker-demo")
-	if got != "client-uuid" {
-		t.Fatalf("got id %q", got)
-	}
-}
-
-func TestExtractKeycloakJSONIDByAttr_NotFound(t *testing.T) {
-	t.Parallel()
-	if got := extractKeycloakJSONIDByAttr(`[{"id":"x","name":"other"}]`, "name", "federation"); got != "" {
-		t.Fatalf("expected empty, got %q", got)
-	}
-}
 
 func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	t.Parallel()

@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -33,6 +32,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
