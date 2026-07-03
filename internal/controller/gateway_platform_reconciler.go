@@ -77,7 +77,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
+	return reconcile.Result{}, nil
 }
 
 func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {

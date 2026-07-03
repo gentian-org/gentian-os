@@ -76,7 +76,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	if !realmDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningRealm", "Waiting for Keycloak realm Job to complete")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, realmJobName(tenant.Name)), nil
 	}
 
 	groupsDone, err := r.ensureGentianGroupsJob(ctx, tenant)
@@ -86,7 +86,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	if !groupsDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningGroups", "Waiting for Gentian groups Job to complete")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, gentianGroupsJobName(tenant.Name)), nil
 	}
 
 	// Ensure realm-admin user exists in the realm (Option A tenant admin).
@@ -97,7 +97,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	if !adminDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningAdmin", "Waiting for tenant admin Job to complete")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, adminJobName(tenant.Name)), nil
 	}
 
 	if len(oidcConfigs) > 0 {
@@ -108,7 +108,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !browserDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningBrowserFlow", "Waiting for OIDC browser flow Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, oidcBrowserFlowJobName(tenant.Name)), nil
 		}
 		firstLoginDone, err := r.ensureBrokerFirstLoginFlowJob(ctx, tenant, realmName)
 		if err != nil {
@@ -117,12 +117,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !firstLoginDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningBrokerFirstLogin", "Waiting for broker first-login flow Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, brokerFirstLoginFlowJobName(tenant.Name)), nil
 		}
 	}
 
 	// OIDC packs require Gentian entitlement groups (provisioned above).
 	allDone := true
+	var pendingClientJobs []string
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
 		if err != nil {
@@ -140,12 +141,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		}
 		if !done {
 			allDone = false
+			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
 		}
 	}
 	if !allDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningClients", "Waiting for OIDC client Jobs to complete")
-		return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, pendingClientJobs...), nil
 	}
 
 	if r.KernelRealm != "" {
@@ -156,7 +158,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !brokerIdPDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningBrokerIdP", "Waiting for broker IdP Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, tenantBrokerIdPJobName(tenant.Name)), nil
 		}
 
 		kernelBrokerDone, err := r.ensureKernelTenantBrokerJob(ctx, tenant)
@@ -166,7 +168,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !kernelBrokerDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningKernelTenantBroker", "Waiting for kernel tenant broker Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, tenantKernelBrokerJobName(tenant.Name)), nil
 		}
 
 		portalBFFDone, err := r.ensurePortalBFFClientJob(ctx, tenant)
@@ -176,7 +178,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !portalBFFDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningPortalBFF", "Waiting for portal BFF client Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalBFFClientJobName(tenant.Name)), nil
 		}
 
 		portalClientDone, err := r.ensurePortalPublicClientJob(ctx, tenant)
@@ -186,7 +188,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !portalClientDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningPortalPublicClient", "Waiting for portal public OIDC client Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalPublicClientJobName(tenant.Name)), nil
 		}
 
 		smtpDone, err := r.ensureTenantSMTPJob(ctx, tenant)
@@ -196,7 +198,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !smtpDone {
 			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 				"ProvisioningTenantSMTP", "Waiting for tenant realm SMTP Job to complete")
-			return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+			return r.requeueForPendingJob(ctx, tenant.Name, tenantSMTPJobName(tenant.Name)), nil
 		}
 	}
 

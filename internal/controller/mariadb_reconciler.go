@@ -44,9 +44,9 @@ const (
 func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	return r.reconcileJobWaitRequirement(ctx, tenant, jobWaitRequirement{
 		conditionType: conditionMariaDBReady,
-		requeueAfter:  mariadbRequeueAfter,
 		emptyReason:   "NoMariaDBRequired",
 		readyReason:   "Provisioned",
+		jobNameForApp: mariadbSetupJobName,
 	}, r.collectMariaDBApps, r.ensureMariaDBSetupJob)
 }
 

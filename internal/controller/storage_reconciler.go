@@ -25,7 +25,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -52,22 +51,35 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 		return ctrl.Result{}, nil
 	}
 
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	allDone := true
+	var pendingJobs []string
 	for _, appName := range s3Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", appName, err)
+		profile, ok := appProfileFromIndex(profileIndex, appName)
+		if !ok {
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: not found", appName)
 		}
 		var done bool
 		if appUsesCrossplaneS3Init(profile) {
-			done, err = r.waitForTenantNamespaceJob(ctx, tenant, appCompositionInitJobName(appName, "s3-init"))
+			jobName := appCompositionInitJobName(appName, "s3-init")
+			done, err = r.waitForTenantNamespaceJob(ctx, tenant, jobName)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("wait for s3-init Job for app %s: %w", appName, err)
+			}
+			if !done {
+				pendingJobs = append(pendingJobs, jobName)
 			}
 		} else {
 			done, err = r.ensureS3BucketJob(ctx, tenant, appName)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("ensure S3 bucket Job for app %s: %w", appName, err)
+			}
+			if !done {
+				pendingJobs = append(pendingJobs, s3BucketJobName(tenant.Name, appName))
 			}
 		}
 		if !done {
@@ -78,7 +90,7 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 	if !allDone {
 		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse,
 			"Provisioning", "Waiting for storage resources to be ready")
-		return ctrl.Result{RequeueAfter: storageRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, pendingJobs...), nil
 	}
 
 	r.setCondition(tenant, conditionStorageReady, metav1.ConditionTrue,

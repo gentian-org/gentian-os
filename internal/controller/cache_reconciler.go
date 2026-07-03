@@ -62,6 +62,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 	}
 
 	allDone := true
+	var pendingJobs []string
 
 	// One Redis ACL Job per app.
 	for _, appName := range redisApps {
@@ -71,6 +72,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 		}
 		if !done {
 			allDone = false
+			pendingJobs = append(pendingJobs, redisACLJobName(tenant.Name, appName))
 		}
 	}
 
@@ -88,7 +90,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 	if !allDone {
 		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse,
 			"Provisioning", "Waiting for cache resources to be ready")
-		return ctrl.Result{RequeueAfter: cacheRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, pendingJobs...), nil
 	}
 
 	r.setCondition(tenant, conditionCacheReady, metav1.ConditionTrue,
@@ -98,13 +100,14 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 
 // collectCacheApps inspects AppProfiles and partitions apps by cache engine.
 func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) (redisApps, memcachedApps []string, err error) {
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		if !ok {
+			continue
 		}
 		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Cache == nil {
 			continue

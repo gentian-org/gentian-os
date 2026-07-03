@@ -57,7 +57,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 	if !portalShellDone {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
 			"ProvisioningPortalShell", "Waiting for portal shell PostgreSQL database")
-		return ctrl.Result{RequeueAfter: databaseRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, roleJobName(tenant.Name, portalShellAppName)), nil
 	}
 
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
@@ -74,17 +74,20 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 	nsName := tenantNamespaceName(tenant)
 	allDone := true
 	kernelManaged := false
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	var pendingJobs []string
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", appName, err)
+		profile, ok := appProfileFromIndex(profileIndex, appName)
+		if !ok {
+			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: not found", appName)
 		}
 
 		if appUsesCrossplaneDBInit(profile) {
-			// app-default emits {app}-db-init after the App claim is sequenced (post-identity).
-			// AppsReady tracks composition convergence; do not block tenant Phase=Ready.
 			continue
 		}
 		kernelManaged = true
@@ -95,10 +98,10 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		}
 		if !roleJobDone {
 			allDone = false
+			pendingJobs = append(pendingJobs, roleJobName(tenant.Name, appName))
 			continue
 		}
 
-		// Step 2 — CloudNativePG Database CR (only after role exists)
 		dbReady, err := r.ensureDatabaseCR(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Database CR for app %s: %w", appName, err)
@@ -111,7 +114,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 	if !allDone {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
 			"Provisioning", "Waiting for PostgreSQL databases and roles to be ready")
-		return ctrl.Result{RequeueAfter: databaseRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, pendingJobs...), nil
 	}
 
 	reason := "Provisioned"
@@ -128,14 +131,15 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 // collectPostgresApps returns profile names of apps that require a per-tenant
 // PostgreSQL database.
 func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
 	var pgApps []string
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		if !ok {
+			continue
 		}
 		if profile.Spec.KernelRequirements != nil &&
 			profile.Spec.KernelRequirements.Database != nil &&

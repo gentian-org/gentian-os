@@ -103,6 +103,11 @@ func GrantTuples(tenant string, grant *gentianov1alpha1.AppGrant) []Tuple {
 // GrantTupleKeys returns tuple keys owned by a grant for deletion on update.
 func GrantTupleKeys(tenant string, grant *gentianov1alpha1.AppGrant) []TupleKey {
 	tuples := GrantTuples(tenant, grant)
+	return TupleKeysFromTuples(tuples)
+}
+
+// TupleKeysFromTuples extracts tuple keys from write tuples.
+func TupleKeysFromTuples(tuples []Tuple) []TupleKey {
 	keys := make([]TupleKey, 0, len(tuples))
 	for _, t := range tuples {
 		keys = append(keys, TupleKey{
@@ -112,4 +117,47 @@ func GrantTupleKeys(tenant string, grant *gentianov1alpha1.AppGrant) []TupleKey 
 		})
 	}
 	return keys
+}
+
+// TupleKeysNotIn returns keys present in a but absent from b.
+func TupleKeysNotIn(a, b []TupleKey) []TupleKey {
+	if len(a) == 0 {
+		return nil
+	}
+	seen := tupleKeySet(b)
+	out := make([]TupleKey, 0, len(a))
+	for _, k := range a {
+		if _, ok := seen[tupleKeyID(k)]; !ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// TuplesMatchingKeys returns tuples whose keys appear in keys.
+func TuplesMatchingKeys(all []Tuple, keys []TupleKey) []Tuple {
+	if len(keys) == 0 {
+		return nil
+	}
+	want := tupleKeySet(keys)
+	out := make([]Tuple, 0, len(keys))
+	for _, t := range all {
+		k := TupleKey{User: t.User, Relation: t.Relation, Object: t.Object}
+		if _, ok := want[tupleKeyID(k)]; ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func tupleKeySet(keys []TupleKey) map[string]struct{} {
+	set := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		set[tupleKeyID(k)] = struct{}{}
+	}
+	return set
+}
+
+func tupleKeyID(k TupleKey) string {
+	return k.User + "\x00" + k.Relation + "\x00" + k.Object
 }

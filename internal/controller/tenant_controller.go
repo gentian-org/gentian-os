@@ -316,7 +316,6 @@ func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenan
 
 // Reconcile is the main reconciliation loop for Tenant resources.
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
 	start := time.Now()
 
 	tenant := &gentianov1alpha1.Tenant{}
@@ -342,234 +341,18 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	// Preflight gate: a tenant may only proceed when all requested AppProfiles
-	// exist. Run before implicit base injection so missing profiles surface as
-	// Degraded without hitting ensureImplicitBaseApps Get errors.
-	missingProfiles, err := r.validateTenantPrerequisites(ctx, tenant)
-	if err != nil {
-		reconcileErrors.WithLabelValues("tenant").Inc()
-		return ctrl.Result{}, err
-	}
-	if len(missingProfiles) > 0 {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-			fmt.Sprintf("AppProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
-			"Identity provisioning blocked because one or more requested AppProfiles are missing")
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, nil
-	}
-
-	if res, err := r.ensureImplicitBaseApps(ctx, tenant); res.RequeueAfter > 0 || err != nil {
-		return res, err
-	}
-
-	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint",
-			err.Error())
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, nil
-	}
-
-	nsName := tenantNamespaceName(tenant)
-	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName, "crossplaneOnly", r.CrossplaneOnly)
-
-	// ── Orchestration: validate → seed → patch XR → wait ─────────────────────
-	if err := r.ensureTenantProvisioningManifests(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err := r.ensureTenantXR(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-	if res, err := r.waitForTenantShell(ctx, tenant, nsName); res.RequeueAfter > 0 || err != nil {
-		_ = r.aggregateCrossplaneStatus(ctx, tenant)
-		_ = r.Status().Update(ctx, tenant)
-		return res, err
-	}
-
-	// MAC policies before app Compositions emit db-init/s3-init Jobs (need OpenBao egress).
-	if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Bootstrap side-effects retained until moved into tenant-default.
-	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureStagingCaTrust(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// ── Wait-only ensures: Crossplane owns resource creation via manifest bridge ─
-	identityResult, err := r.ensureIdentity(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 6. Database (CloudNativePG Database CRs + psql role Jobs)
-	databaseResult, err := r.ensureDatabase(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 8. MariaDB (Job-based CREATE DATABASE + CREATE USER + GRANT)
-	mariadbResult, err := r.ensureMariaDB(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 9. Storage (MinIO S3 buckets)
-	storageResult, err := r.ensureStorage(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 10. Cache (Redis ACL users + Memcached Deployment)
-	cacheResult, err := r.ensureCache(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 11. App deployment (ArgoCD Application CRs per app)
-	if _, err := r.ensureMacWaivers(ctx, tenant); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure mac waivers: %w", err)
-	}
-
-	appsResult, err := r.ensureAppDeployment(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	privilegeResult, err := r.ensureAppPrivileges(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 12. Edge routing — Gateway API (Envoy Gateway).
-	if _, err := r.ensureGateway(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 13. Integration bindings (auto-wire provider+consumer pairs within the tenant)
-	if _, err := r.ensureIntegrationBindings(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 14. App grants (tenant-approved integration subsets → OpenFGA)
-	if _, err := r.ensureAppGrants(ctx, tenant); err != nil {
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, fmt.Errorf("ensure app grants: %w", err)
-	}
-
-	// ── Shared-kernel extensions (skipped when TENANT_CROSSPLANE_ONLY) ─────────
-	var mailResult ctrl.Result
-	if !r.CrossplaneOnly {
-		mailResult, err = r.ensureMail(ctx, tenant)
-		if err != nil {
-			_ = r.Status().Update(ctx, tenant)
-			return ctrl.Result{}, err
-		}
-
-		if err := r.ensurePortalRedirect(ctx, tenant); err != nil {
-			logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
-		}
-
-		if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
-			logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
-		}
-	}
-
-	// ── Status aggregation ───────────────────────────────────────────────────
-	if err := r.aggregateCrossplaneStatus(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
-	tenant.Status.Namespace = nsName
-	tenant.Status.AppCount = len(tenant.Spec.Apps)
-	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
-	provisioning := identityResult.RequeueAfter > 0 ||
-		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
-		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
-	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
-	// Note: mailResult and appsResult are intentionally excluded from the
-	// provisioning flag. Apps converge asynchronously and do not block Phase=Ready.
-	// Phase=Ready also requires CrossplaneReady (XTenant composite Ready).
-	if provisioning || !crossplaneReady {
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
-	} else {
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
-		provisioningDuration.WithLabelValues(tenant.Name).Observe(time.Since(start).Seconds())
-	}
-	// Update Prometheus gauges for this tenant.
-	tenantAppsTotal.WithLabelValues(tenant.Name).Set(float64(tenant.Status.AppCount))
-	if err := r.Status().Update(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-	if provisioning {
-		logger.Info("tenant provisioning in progress", "tenant", tenant.Name)
-		if identityResult.RequeueAfter > 0 {
-			return identityResult, nil
-		}
-		if databaseResult.RequeueAfter > 0 {
-			return databaseResult, nil
-		}
-		if mariadbResult.RequeueAfter > 0 {
-			return mariadbResult, nil
-		}
-		if storageResult.RequeueAfter > 0 {
-			return storageResult, nil
-		}
-		if cacheResult.RequeueAfter > 0 {
-			return cacheResult, nil
-		}
-		if mailResult.RequeueAfter > 0 {
-			return mailResult, nil
-		}
-		return appsResult, nil
-	}
-	if !crossplaneReady {
-		logger.Info("tenant operator paths ready; waiting for Crossplane XTenant Ready", "tenant", tenant.Name)
-		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
-	}
-	// Infrastructure is ready. Requeue for mail or apps if still converging.
-	if mailResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; mail still converging", "tenant", tenant.Name)
-		return mailResult, nil
-	}
-	if appsResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
-		return appsResult, nil
-	}
-	if privilegeResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; app privilege sync scheduled", "tenant", tenant.Name)
-		return privilegeResult, nil
-	}
-	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
-	return ctrl.Result{}, nil
+	return r.runTenantReconcileStages(ctx, &tenantReconcileState{
+		tenant: tenant,
+		start:  start,
+	})
 }
 
 // validateTenantPrerequisites checks that all requested AppProfiles exist.
 func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
 	missingMap := map[string]struct{}{}
 
 	for _, app := range tenant.Spec.Apps {
@@ -577,13 +360,8 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 		if err != nil {
 			return nil, err
 		}
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				missingMap[profileName] = struct{}{}
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+		if _, ok := appProfileFromIndex(profileIndex, profileName); !ok {
+			missingMap[profileName] = struct{}{}
 		}
 	}
 

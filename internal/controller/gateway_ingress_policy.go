@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -89,14 +88,15 @@ func anyIntentNeedsEscapedSlashesKeepUnchanged(intents []ingressIntent) bool {
 }
 
 func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
+	profileIndex, err := loadAppProfileIndex(ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	var intents []ingressIntent
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := c.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		if !ok {
+			continue
 		}
 		if profile.Spec.Ingress != nil {
 			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})

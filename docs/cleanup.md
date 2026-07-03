@@ -96,13 +96,13 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
-| f-1 | open | High | AuthzBridge full-cluster sync every 5 min | Reconcile only changed tenant/realm; use resourceVersion diff or watch Keycloak events | `authz_bridge_reconciler.go` L79–97 | Lists all tenants, syncs all realms; no incremental/diff sync |
-| f-2 | open | High | OpenFGA tuple writes without deletes | Pass delete tuple set to `WriteTuples`; reconcile grant diff on AppGrant update | `authz/bridge.go` L64–77, `app_grant_reconciler.go` L66 | `WriteTuples(..., nil)` — stale tuples on revoke/remove |
-| f-3 | open | High | Tenant reconcile serializes many subsystems | Split into sub-reconcilers with explicit `ReconcileStage` and short-circuit conditions | `tenant_controller.go` L333–575 | Single Reconcile runs 10+ ensure* calls sequentially |
-| f-4 | open | Medium | 2s polling loops on provisioning Jobs | Use watch on Job status + exponential backoff cap | `identityRequeueAfter`, `databaseRequeueAfter`, etc. | Chatty at scale |
+| f-1 | done | High | AuthzBridge full-cluster sync every 5 min | Reconcile only changed tenant/realm; use resourceVersion diff or watch Keycloak events | `authz_bridge_reconciler.go` | Event-driven per-realm sync; no idle 5m requeue |
+| f-2 | done | High | OpenFGA tuple writes without deletes | Pass delete tuple set to `WriteTuples`; reconcile grant diff on AppGrant update | `authz/bridge.go`, `app_grant_reconciler.go` | Tuple diff + finalizer cleanup on delete |
+| f-3 | done | High | Tenant reconcile serializes many subsystems | Split into sub-reconcilers with explicit `ReconcileStage` and short-circuit conditions | `tenant_reconcile_stages.go` | Staged pipeline with short-circuit on requeue |
+| f-4 | done | Medium | 2s polling loops on provisioning Jobs | Use watch on Job status + exponential backoff cap | `provisioning_requeue.go`, reconcilers | Job-age exponential backoff (2s–30s) |
 | f-5 | ignore | Medium | Keycloak shell wait loop | No change — required for parallel Crossplane Job apply | `keycloak_shell_helpers.go` L46–57 | 90×2s poll inside Job scripts |
-| f-6 | open | Medium | Per-app AppProfile GET in loops | List AppProfiles once into map keyed by name | `collectTenantIngressIntents`, `ensureAppDeployment`, `collect*Apps` | N+1 API pattern |
-| f-7 | open | Medium | Gateway platform reconciler 5 min idle requeue | Requeue only on Gateway/HTTPRoute spec change | `gateway_platform_reconciler.go` L71 | Reconciles kernel Gateway even when unchanged |
+| f-6 | done | Medium | Per-app AppProfile GET in loops | List AppProfiles once into map keyed by name | `appprofile_index.go`, collectors | AppProfile index per reconcile path |
+| f-7 | done | Medium | Gateway platform reconciler 5 min idle requeue | Requeue only on Gateway/HTTPRoute spec change | `gateway_platform_reconciler.go` | Event-driven; no idle 5m requeue |
 | f-8 | done | Low | Authz bridge Keycloak `ListRealmUsers` max=1000 | Paginate user list (same as d-6) | `keycloak_client.go` | Users, group members, groups |
 
 ---
@@ -160,9 +160,9 @@ Last reviewed: 2026-07-02
 | p-1 | done | Delete `scratch.patch` and `expected-new.yaml` (see b-1, b-3, e-6) | Removed in b-1/b-3 |
 | p-2 | open | Reconcile security docs with code (AppGrant, composition names) (see a-1, a-2, dvc-1, dvc-3) | One docs PR updating architecture + security + catalogue guides |
 | p-3 | done | Parameterize Postfix `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` (see d-1) | mail-lib patch + example.domain placeholder in manifests |
-| p-4 | open | Fix OpenFGA sync semantics (deletes, pagination, event-driven) (see f-1, f-2, f-8) | Tuple diff in bridge; paginate Keycloak users |
+| p-4 | done | Fix OpenFGA sync semantics (deletes, pagination, event-driven) (see f-1, f-2, f-8) | Tuple diff in bridge; paginate Keycloak users |
 | p-5 | open | Extract shared kernel-requirement provisioner (DB/MariaDB/storage/cache) (see c-1) | New `internal/controller/provisioner/` package |
-| p-6 | open | Refactor `tenant_controller.Reconcile` into staged pipeline (see f-3, g-1) | Phased reconcile with typed stages |
+| p-6 | done | Refactor `tenant_controller.Reconcile` into staged pipeline (see f-3, g-1) | Phased reconcile with typed stages |
 | p-7 | open | Update architecture/catalogue docs (`app-default` + `compositionRef`) (see a-2, dvc-3) | Overlap with p-2 |
 | p-8 | open | Add reconciler tests (AppGrant, AuthzBridge, PlatformSecurityPolicy) (see t-2, t-3, t-6) | envtest + mocks per reconciler |
 | p-9 | done | Split `install-lib.sh` into focused modules (see c-3) | `scripts/lib/load.sh` + domain modules; thin `install-lib.sh` shim |

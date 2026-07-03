@@ -84,21 +84,10 @@ func (r *AuthzBridgeReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		return reconcile.Result{RequeueAfter: authzRequeueInterval}, nil
 	}
 
-	realms := []string{r.kernelRealm()}
-	if req.Name != "" {
-		tenant := &gentianov1alpha1.Tenant{}
-		if err := r.Get(ctx, req.NamespacedName, tenant); err == nil && tenant.DeletionTimestamp == nil {
-			realms = appendUniqueStrings(realms, keycloakRealmName(tenant))
-		}
-	}
-	tenantList := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenantList); err == nil {
-		for i := range tenantList.Items {
-			if tenantList.Items[i].DeletionTimestamp != nil {
-				continue
-			}
-			realms = appendUniqueStrings(realms, keycloakRealmName(&tenantList.Items[i]))
-		}
+	realms, err := r.realmsToSync(ctx, req)
+	if err != nil {
+		logger.Error(err, "resolve authz bridge realms")
+		return reconcile.Result{RequeueAfter: authzRequeueInterval}, nil
 	}
 
 	for _, realm := range realms {
@@ -108,8 +97,29 @@ func (r *AuthzBridgeReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		}
 	}
 
-	logger.Info("authz bridge sync complete", "store_id", bridge.StoreID, "realms", len(realms))
-	return reconcile.Result{RequeueAfter: authzRequeueInterval}, nil
+	logger.Info("authz bridge sync complete", "store_id", bridge.StoreID, "realms", realms)
+	return reconcile.Result{}, nil
+}
+
+// realmsToSync returns Keycloak realms to mirror for this reconcile request.
+// keycloak-admin Secret events sync the kernel realm only; Tenant events sync
+// that tenant's realm (event-driven — no periodic full-cluster sweep).
+func (r *AuthzBridgeReconciler) realmsToSync(ctx context.Context, req reconcile.Request) ([]string, error) {
+	if req.Namespace == kernelNamespace && req.Name == keycloakAdminSecret {
+		return []string{r.kernelRealm()}, nil
+	}
+
+	tenant := &gentianov1alpha1.Tenant{}
+	if err := r.Get(ctx, req.NamespacedName, tenant); err != nil {
+		if apierrors.IsNotFound(err) {
+			return []string{r.kernelRealm()}, nil
+		}
+		return nil, err
+	}
+	if tenant.DeletionTimestamp != nil {
+		return []string{keycloakRealmName(tenant)}, nil
+	}
+	return []string{keycloakRealmName(tenant)}, nil
 }
 
 func (r *AuthzBridgeReconciler) SetupWithManager(mgr ctrl.Manager) error {

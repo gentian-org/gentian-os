@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -48,14 +47,15 @@ func (r *TenantReconciler) collectKernelApps(
 	match func(*gentianov1alpha1.AppProfile) bool,
 	setupJobPrefix func(tenantName string) string,
 ) ([]string, error) {
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
 	var apps []string
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		if !ok {
+			continue
 		}
 		if match(profile) {
 			apps = appendUniqueStrings(apps, app.Profile)
@@ -101,9 +101,9 @@ func matchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
 // jobWaitRequirement drives reconcileJobWaitRequirement for MariaDB/S3/Redis paths.
 type jobWaitRequirement struct {
 	conditionType string
-	requeueAfter  time.Duration
 	emptyReason   string
 	readyReason   string
+	jobNameForApp func(tenantName, appName string) string
 }
 
 func (r *TenantReconciler) reconcileJobWaitRequirement(
@@ -134,7 +134,7 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 	}
 	if !allDone {
 		r.setCondition(tenant, req.conditionType, metav1.ConditionFalse, "Provisioning", "Waiting for provisioning Jobs")
-		return ctrl.Result{RequeueAfter: req.requeueAfter}, nil
+		return r.requeueForPendingApps(ctx, tenant.Name, apps, req.jobNameForApp), nil
 	}
 	r.setCondition(tenant, req.conditionType, metav1.ConditionTrue, req.readyReason, "All provisioning Jobs complete")
 	return ctrl.Result{}, nil

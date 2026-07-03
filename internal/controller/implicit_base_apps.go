@@ -76,5 +76,5 @@ func (r *TenantReconciler) ensureImplicitBaseApps(ctx context.Context, tenant *g
 	if err := r.Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, fmt.Errorf("inject implicit base apps: %w", err)
 	}
-	return ctrl.Result{RequeueAfter: identityRequeueAfter}, nil
+	return ctrl.Result{RequeueAfter: provisioningRequeueMin}, nil
 }

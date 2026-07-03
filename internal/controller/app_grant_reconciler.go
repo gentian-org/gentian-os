@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -56,9 +57,18 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	tenantName := grant.Labels[tenantLabel]
-	if tenantName == "" {
-		tenantName = strings.TrimPrefix(req.Namespace, "tenant-")
+	tenantName := grantTenantName(grant, req.Namespace)
+
+	if !grant.DeletionTimestamp.IsZero() {
+		return r.reconcileAppGrantDelete(ctx, grant, tenantName)
+	}
+
+	if !controllerutil.ContainsFinalizer(grant, appGrantFinalizer) {
+		controllerutil.AddFinalizer(grant, appGrantFinalizer)
+		if err := r.Update(ctx, grant); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if !r.Enabled {
@@ -76,25 +86,77 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
 	}
 
-	tuples := authz.GrantTuples(tenantName, grant)
+	prevKeys, err := syncedTupleKeysFromAnnotation(grant.Annotations[syncedTupleKeysAnnotation])
+	if err != nil {
+		setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionFalse, "TupleStateInvalid", err.Error())
+		grant.Status.Phase = gentianov1alpha1.AppGrantPhaseDegraded
+		_ = r.Status().Update(ctx, grant)
+		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
+	}
+
+	writes, deletes, nextKeys := grantTupleSyncPlan(tenantName, grant, prevKeys)
 	fga := authz.NewOpenFGAClient(r.OpenFGAURL, r.OpenFGAToken)
-	if err := fga.WriteTuples(ctx, r.storeID, tuples, nil); err != nil {
+	if err := fga.WriteTuples(ctx, r.storeID, writes, deletes); err != nil {
 		setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionFalse, "TupleSyncFailed", err.Error())
 		grant.Status.Phase = gentianov1alpha1.AppGrantPhaseDegraded
 		_ = r.Status().Update(ctx, grant)
 		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
 	}
 
-	grant.Status.TupleCount = len(tuples)
+	patch := client.MergeFrom(grant.DeepCopy())
+	if grant.Annotations == nil {
+		grant.Annotations = map[string]string{}
+	}
+	encoded, err := encodeSyncedTupleKeys(nextKeys)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	grant.Annotations[syncedTupleKeysAnnotation] = encoded
+	if err := r.Patch(ctx, grant, patch); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	grant.Status.TupleCount = len(nextKeys)
 	grant.Status.Phase = gentianov1alpha1.AppGrantPhaseReady
 	grant.Status.ObservedGeneration = grant.Generation
 	setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionTrue, "Synced",
-		fmt.Sprintf("Synced %d OpenFGA tuples", len(tuples)))
+		fmt.Sprintf("Synced %d OpenFGA tuples (%d writes, %d deletes)", len(nextKeys), len(writes), len(deletes)))
 	if err := r.Status().Update(ctx, grant); err != nil {
 		return ctrl.Result{}, err
 	}
-	logger.Info("app grant synced", "tenant", tenantName, "app", grant.Spec.App, "tuples", len(tuples))
-	return ctrl.Result{RequeueAfter: appGrantRequeue}, nil
+	logger.Info("app grant synced", "tenant", tenantName, "app", grant.Spec.App, "tuples", len(nextKeys), "writes", len(writes), "deletes", len(deletes))
+	return ctrl.Result{}, nil
+}
+
+func grantTenantName(grant *gentianov1alpha1.AppGrant, namespace string) string {
+	tenantName := grant.Labels[tenantLabel]
+	if tenantName == "" {
+		tenantName = strings.TrimPrefix(namespace, "tenant-")
+	}
+	return tenantName
+}
+
+func (r *AppGrantReconciler) reconcileAppGrantDelete(ctx context.Context, grant *gentianov1alpha1.AppGrant, tenantName string) (ctrl.Result, error) {
+	if !r.Enabled {
+		controllerutil.RemoveFinalizer(grant, appGrantFinalizer)
+		return ctrl.Result{}, r.Update(ctx, grant)
+	}
+	if err := r.ensureStore(ctx); err != nil {
+		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
+	}
+	prevKeys, err := syncedTupleKeysFromAnnotation(grant.Annotations[syncedTupleKeysAnnotation])
+	if err != nil {
+		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
+	}
+	if len(prevKeys) == 0 {
+		prevKeys = authz.GrantTupleKeys(tenantName, grant)
+	}
+	fga := authz.NewOpenFGAClient(r.OpenFGAURL, r.OpenFGAToken)
+	if err := fga.WriteTuples(ctx, r.storeID, nil, prevKeys); err != nil {
+		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
+	}
+	controllerutil.RemoveFinalizer(grant, appGrantFinalizer)
+	return ctrl.Result{}, r.Update(ctx, grant)
 }
 
 func (r *AppGrantReconciler) ensureStore(ctx context.Context) error {

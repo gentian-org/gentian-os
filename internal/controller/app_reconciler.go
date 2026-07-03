@@ -57,6 +57,11 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		return ctrl.Result{}, nil
 	}
 
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	allReady := true
 
 	for _, app := range tenant.Spec.Apps {
@@ -64,14 +69,11 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-					fmt.Sprintf("AppProfile %q not found", profileName))
-				return ctrl.Result{}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+		profile, ok := appProfileFromIndex(profileIndex, profileName)
+		if !ok {
+			r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
+				fmt.Sprintf("AppProfile %q not found", profileName))
+			return ctrl.Result{}, nil
 		}
 
 		if err := r.seedAppSecrets(ctx, tenant, profileName, profile); err != nil {
