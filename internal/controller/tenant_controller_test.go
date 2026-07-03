@@ -745,6 +745,48 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	}
 }
 
+// TestTenantReconciler_DataPlaneRedisAndPostgresJobs verifies a tenant with both
+// cache and database profiles triggers kernel Jobs for each data-plane engine.
+func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
+	t.Parallel()
+	pgProfile := newPostgresProfile("combo-pg")
+	redisProfile := newRedisProfile("combo-redis")
+	for _, p := range []*gentianov1alpha1.AppProfile{pgProfile, redisProfile} {
+		if err := testClient.Create(context.Background(), p); err != nil {
+			t.Fatalf("create AppProfile: %v", err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(context.Background(), p) })
+	}
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "combodp"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Combo DP Co",
+			Domain:      "combodp.example.com",
+			AdminEmail:  "admin@combodp.example.com",
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "combo-pg"},
+				{Profile: "combo-redis"},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	pgJob := &batchv1.Job{}
+	waitFor(t, jobAppearTimeout, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-combodp-combo-pg", Namespace: "platform-kernel"}, pgJob) == nil
+	})
+	redisJob := &batchv1.Job{}
+	waitFor(t, jobAppearTimeout, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "platform-kernel"}, redisJob) == nil
+	})
+}
+
 // containsPolicyType checks if the policy type is in the list.
 func containsPolicyType(types []networkingv1.PolicyType, t networkingv1.PolicyType) bool {
 	for _, pt := range types {

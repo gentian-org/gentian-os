@@ -344,7 +344,7 @@ composition templates branch on presence (`{{- if .sidecars }}`).
 | CRD OpenAPI on `AppProfile` | Implemented |
 | Typed `valueMapping` | Implemented |
 | Tenant validating webhook | Implemented (optional via Helm values) |
-| **AppProfile validating webhook** | **Not implemented** |
+| **AppProfile validating webhook** | **Deferred** (roadmap; CRD OpenAPI + gentian-apps CI today) |
 | **`catalogue-tier` label + Kyverno** | **Not implemented** (design in §4) |
 | CI schema validation in `gentian-apps` | Documented; enforce in repo CI |
 | `crossplane render` goldens for `app-default` | Partial (`tenant-default` exists) |

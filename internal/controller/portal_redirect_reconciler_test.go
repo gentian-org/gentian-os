@@ -15,7 +15,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
 package controller
 
-import "testing"
+import (
+	"testing"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 func TestKernelPortalURL(t *testing.T) {
 	got := kernelPortalURL("desk.gentian.org")
@@ -26,7 +31,29 @@ func TestKernelPortalURL(t *testing.T) {
 }
 
 func TestKernelPortalHost(t *testing.T) {
-	if kernelPortalHost("desk.gentian.org") != "portal.desk.gentian.org" {
-		t.Fatal("unexpected portal host")
+	t.Parallel()
+	if got := kernelPortalHost("desk.gentian.org"); got != "portal.desk.gentian.org" {
+		t.Fatalf("kernelPortalHost = %q", got)
+	}
+	if kernelPortalHost("") != "" {
+		t.Fatal("expected empty portal host for empty kernel domain")
+	}
+}
+
+func TestTenantApexRedirectHTTPRoute(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       gentianov1alpha1.TenantSpec{DisplayName: "Demo"},
+	}
+	route := buildTenantApexRedirectHTTPRoute(tenant, "tenant-demo", "demo.desk.gentian.org", "desk.gentian.org")
+	if route.Name != tenantPortalRedirectName("demo") {
+		t.Fatalf("route name = %q", route.Name)
+	}
+	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "demo.desk.gentian.org" {
+		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
+	}
+	if len(route.Spec.Rules) != 1 || len(route.Spec.Rules[0].Filters) == 0 {
+		t.Fatal("expected redirect filter on tenant apex route")
 	}
 }

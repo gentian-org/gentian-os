@@ -15,4 +15,8 @@ limitations under the License.
 */
 
 // Package webhook contains admission webhooks for the Gentian OS operator.
+//
+// Implemented: Tenant validating webhook (optional via Helm values).
+// Deferred: AppProfile validating webhook — tracked on roadmap; catalogue
+// integrity is enforced via CRD OpenAPI and gentian-apps CI today.
 package webhook

@@ -125,18 +125,18 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Component | Test file? | Gap | Suggested Solution |
 |------|--------|-----------|------------|-----|-------------------|
-| t-1 | open | `TenantReconciler` (integration) | `tenant_controller_test.go` | Partial envtest | Extend envtest cases for app install + data-plane Job paths |
-| t-2 | open | `AppGrantReconciler` | None | OpenFGA tuple sync untested | Add envtest with fake OpenFGA or mock client; assert write + delete tuples |
-| t-3 | open | `PlatformSecurityPolicyReconciler` | None | MAC waiver ConfigMap sync untested | Golden test for ConfigMap patch from AppProfile annotations |
-| t-4 | open | `AppPrivilegeReconciler` | None | Privilege fingerprinting untested at reconciler level | Table-driven tests for fingerprint + Keycloak role mapping |
-| t-5 | open | `MacWaiverReconciler` (tenant ensure) | None | Logic in `internal/security/mac_waiver_test.go` only | Wire reconciler envtest calling shared waiver helpers |
-| t-6 | open | `AuthzBridgeReconciler` | None | Full-cluster sync untested | Mock Keycloak + OpenFGA; assert incremental sync on tenant change |
-| t-7 | open | `PortalRedirectReconciler` | `portal_redirect_reconciler_test.go` | Minimal | Add cases for kernel vs tenant portal URLs |
+| t-1 | done | `TenantReconciler` (integration) | `tenant_controller_test.go` | Partial envtest | Extend envtest cases for app install + data-plane Job paths |
+| t-2 | done | `AppGrantReconciler` | `app_grant_reconciler_test.go` | OpenFGA tuple sync untested | httptest OpenFGA; assert write + delete tuples |
+| t-3 | done | `PlatformSecurityPolicyReconciler` | `platform_security_reconciler_test.go` | MAC waiver ConfigMap sync untested | Fake client reconciler + ConfigMap round-trip |
+| t-4 | done | `AppPrivilegeReconciler` | `app_privilege_reconciler_test.go` | Privilege fingerprinting untested at reconciler level | Fingerprint + reconcile-request helper tests |
+| t-5 | done | `MacWaiverReconciler` (tenant ensure) | `mac_waiver_reconciler_test.go` | Logic in `internal/security/mac_waiver_test.go` only | ensureMacWaivers fake-client test |
+| t-6 | done | `AuthzBridgeReconciler` | `authz_bridge_reconciler_test.go` | Full-cluster sync untested | realmsToSync per-event scope tests |
+| t-7 | done | `PortalRedirectReconciler` | `portal_redirect_reconciler_test.go` | Minimal | Kernel vs tenant apex redirect HTTPRoute cases |
 | t-8 | ignore | Crossplane `app-default` render | `crossplane/tests/unit/render/app-default/` | Exists | No change |
 | t-9 | done | Crossplane `tenant-default` | Uses `od-element` fixture | Pro-specific fixture | Generic `catalogue-test-app` fixture (see e-1) |
 | t-10 | ignore | `app-element` / `app-ox` compositions | No goldens in gentian-os | Custom compositions live in catalogue repos | Test in gentian-pro repo instead |
-| t-11 | open | `internal/applifecycle` | `gitops_test.go` only | Service/reconcile paths thin | Add tests for install/uninstall gitops commit shape |
-| t-12 | open | `internal/webhook` | `tenant_validator_test.go` | Tenant only; no AppProfile webhook | Implement AppProfile webhook or remove doc claim (see dvc-5) |
+| t-11 | done | `internal/applifecycle` | `gitops_test.go`, `gitops_install_test.go` | Service/reconcile paths thin | Install/uninstall git commit shape tests |
+| t-12 | done | `internal/webhook` | `tenant_validator_test.go` | Tenant only; no AppProfile webhook | AppProfile webhook deferred; documented in webhook/doc.go |
 
 ---
 
@@ -148,7 +148,7 @@ Last reviewed: 2026-07-02
 | dvc-2 | open | Generic sidecars in `app-default` “not implemented” (`app-catalogue-security.md` L353) | `AppProfile.spec.Sidecars` handled in `oidc_pack_jobs.go` | Mark sidecar OIDC as implemented; document operator vs composition ownership |
 | dvc-3 | open | `app-element` / `app-ox` in architecture | Not in gentian-os compositions; in catalogue repos | Doc pass (same as a-2) |
 | dvc-4 | ignore | Secret rotation via annotations (`roadmap.md` L148) | Not implemented | Keep on roadmap until implemented |
-| dvc-5 | open | AppProfile validating webhook (`app-catalogue-security.md` L347) | Not implemented (Tenant webhook only) | Implement webhook or mark as deferred in security doc |
+| dvc-5 | done | AppProfile validating webhook (`app-catalogue-security.md` L347) | Not implemented (Tenant webhook only) | Marked deferred in security doc and webhook package doc |
 | dvc-6 | ignore | Stage 0 MAC “complete for dev” (`roadmap.md` L12) | Substantial implementation in netpolicy + Kyverno + AppGrant | Clarify “dev-complete” vs production hardening in roadmap |
 
 ---
