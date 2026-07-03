@@ -385,14 +385,16 @@ func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 
 // redisSetUserScript returns an idempotent ACL SETUSER script.
 // ACL SETUSER is safe to re-run — it resets the ACL entry to the given rules.
-func redisSetUserScript(username, keyPrefix string) string {
+// allkeys is required because Nextcloud PHP sessions use Redis keys outside the
+// memcache prefix (demo:app:*) configured in config.php.
+func redisSetUserScript(username, _ string) string {
 	return fmt.Sprintf(
 		`set -euo pipefail
 USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$USER_PW" "~%s*" "+@read" "+@write" "+@connection" "+eval" "+evalsha"
+  ACL SETUSER %s on ">$USER_PW" allkeys "+@read" "+@write" "+@connection" "+eval" "+evalsha"
 echo "ACL user %s provisioned"`,
-		username, keyPrefix, username,
+		username, username,
 	)
 }
 
