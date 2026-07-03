@@ -22,6 +22,8 @@ import (
 )
 
 // AppProfileSpec defines the desired state of AppProfile.
+// +kubebuilder:validation:XValidation:rule="self.deploymentMethod == 'api' || has(self.chart)",message="spec.chart is required unless spec.deploymentMethod is api"
+// +kubebuilder:validation:XValidation:rule="self.deploymentMethod != 'api' || has(self.apiIntegration)",message="spec.apiIntegration is required when spec.deploymentMethod is api"
 type AppProfileSpec struct {
 	// DisplayName is a human-readable name for the application.
 	// +kubebuilder:validation:Required
@@ -91,9 +93,12 @@ type AppProfileSpec struct {
 	// +optional
 	OptionalIntegrations []IntegrationRef `json:"optionalIntegrations,omitempty"`
 
-	// Chart references the upstream Helm chart for this app.
-	// +kubebuilder:validation:Required
-	Chart ChartRef `json:"chart"`
+	// Chart references the upstream Helm chart for this app. Required for
+	// crossplane and argocd deployment methods; omitted for ApiProfiles
+	// (deploymentMethod: api), which run no workload. Enforced by a spec-level
+	// validation rule.
+	// +optional
+	Chart ChartRef `json:"chart,omitempty"`
 
 	// ValueMapping is the schema-based mapping of kernel-provided values to
 	// Helm value keys. Validated at admission time.
@@ -117,10 +122,17 @@ type AppProfileSpec struct {
 
 	// DeploymentMethod controls how the orchestrator deploys this app.
 	// Defaults to crossplane. Use argocd for kernel-layer services managed
-	// directly by the cache or identity reconcilers.
+	// directly by the cache or identity reconcilers. Use api for an ApiProfile
+	// that runs no workload (see spec.apiIntegration).
 	// +optional
 	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
+
+	// APIIntegration configures an ApiProfile (deploymentMethod: api): a
+	// catalogue entry backed by an external service instead of tenant workloads.
+	// Required when deploymentMethod is api; ignored otherwise.
+	// +optional
+	APIIntegration *APIIntegration `json:"apiIntegration,omitempty"`
 
 	// CompositionRef overrides the Crossplane Composition used to deploy this
 	// app. When empty the XRD default (app-default) applies. Set to the name
@@ -553,6 +565,56 @@ type MCPRequirement struct {
 }
 
 // ChartRef references an upstream Helm chart.
+// APIIntegration configures how an ApiProfile (deploymentMethod: api) reaches
+// its backing external service. No workload pods are created; the operator only
+// contributes catalogue and portal metadata.
+type APIIntegration struct {
+	// Runtime selects how the tenant reaches the external service.
+	// redirect sends the browser to baseUrl (default).
+	// proxy routes through a kernel API proxy (reserved for a later phase).
+	// +optional
+	// +kubebuilder:default=redirect
+	// +kubebuilder:validation:Enum=redirect;proxy
+	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
+
+	// BaseURL is the external service origin (e.g. https://corp.gentian.org).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://.+`
+	BaseURL string `json:"baseUrl"`
+
+	// TenantBinding declares how the tenant is identified to the external
+	// service. tenant-domain appends the tenant effective domain as a query
+	// parameter (default). none passes no tenant hint.
+	// +optional
+	// +kubebuilder:default=tenant-domain
+	// +kubebuilder:validation:Enum=tenant-domain;none
+	TenantBinding APIIntegrationTenantBinding `json:"tenantBinding,omitempty"`
+}
+
+// APIIntegrationRuntime selects how an ApiProfile reaches its external service.
+// +kubebuilder:validation:Enum=redirect;proxy
+type APIIntegrationRuntime string
+
+const (
+	// APIIntegrationRuntimeRedirect sends the browser to the external baseUrl.
+	APIIntegrationRuntimeRedirect APIIntegrationRuntime = "redirect"
+	// APIIntegrationRuntimeProxy routes via a kernel API proxy (future phase).
+	APIIntegrationRuntimeProxy APIIntegrationRuntime = "proxy"
+)
+
+// APIIntegrationTenantBinding declares how the tenant is identified to the
+// external service.
+// +kubebuilder:validation:Enum=tenant-domain;none
+type APIIntegrationTenantBinding string
+
+const (
+	// APIIntegrationTenantBindingDomain appends the tenant effective domain.
+	APIIntegrationTenantBindingDomain APIIntegrationTenantBinding = "tenant-domain"
+	// APIIntegrationTenantBindingNone passes no tenant hint.
+	APIIntegrationTenantBindingNone APIIntegrationTenantBinding = "none"
+)
+
 type ChartRef struct {
 	// Repository is the OCI repository URL (e.g., oci://registry.example.com/charts).
 	// +kubebuilder:validation:Required

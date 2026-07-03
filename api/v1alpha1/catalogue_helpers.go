@@ -134,6 +134,19 @@ func ProfileRequiresEntitlement(p *AppProfile) bool {
 	return strings.EqualFold(p.Spec.License, "proprietary")
 }
 
+// ProfileIsAPI reports whether the profile is an ApiProfile (deploymentMethod: api):
+// a catalogue entry backed by an external service that runs no workload pods.
+func ProfileIsAPI(p *AppProfile) bool {
+	return p != nil && p.Spec.DeploymentMethod == DeploymentMethodAPI
+}
+
+// ProfileDeploysWorkload reports whether the orchestrator should create a tenant
+// workload (Crossplane App claim / Helm release) for this profile. ApiProfiles
+// contribute only catalogue and portal metadata and deploy no workload.
+func ProfileDeploysWorkload(p *AppProfile) bool {
+	return !ProfileIsAPI(p)
+}
+
 // EffectiveDeploymentRole reads gentianos.io/deployment-role (default: standalone).
 func EffectiveDeploymentRole(p *AppProfile) ProfileDeploymentRole {
 	if p == nil {

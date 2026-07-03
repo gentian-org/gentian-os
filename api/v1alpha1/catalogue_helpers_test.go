@@ -113,6 +113,32 @@ func TestProfileRequiresEntitlement(t *testing.T) {
 	}
 }
 
+func TestProfileIsAPIAndDeploysWorkload(t *testing.T) {
+	api := &v1alpha1.AppProfile{
+		Spec: v1alpha1.AppProfileSpec{DeploymentMethod: v1alpha1.DeploymentMethodAPI},
+	}
+	if !v1alpha1.ProfileIsAPI(api) {
+		t.Error("deploymentMethod api should be an ApiProfile")
+	}
+	if v1alpha1.ProfileDeploysWorkload(api) {
+		t.Error("ApiProfile should not deploy a workload")
+	}
+
+	for _, m := range []v1alpha1.DeploymentMethod{v1alpha1.DeploymentMethodCrossplane, v1alpha1.DeploymentMethodArgoCD, ""} {
+		p := &v1alpha1.AppProfile{Spec: v1alpha1.AppProfileSpec{DeploymentMethod: m}}
+		if v1alpha1.ProfileIsAPI(p) {
+			t.Errorf("deploymentMethod %q should not be an ApiProfile", m)
+		}
+		if !v1alpha1.ProfileDeploysWorkload(p) {
+			t.Errorf("deploymentMethod %q should deploy a workload", m)
+		}
+	}
+
+	if v1alpha1.ProfileIsAPI(nil) {
+		t.Error("nil profile should not be an ApiProfile")
+	}
+}
+
 func TestProfileCatalogueLabels(t *testing.T) {
 	p := &v1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-app"},

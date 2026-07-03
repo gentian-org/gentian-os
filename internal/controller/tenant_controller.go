@@ -794,6 +794,11 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		entry := map[string]interface{}{"profile": app.Profile}
 		profile := &gentianov1alpha1.AppProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err == nil {
+			// ApiProfiles run no workload; keep them out of the XTenant so the
+			// composition creates no App claim / Helm release for them.
+			if gentianov1alpha1.ProfileIsAPI(profile) {
+				continue
+			}
 			if profile.Spec.CompositionRef != "" {
 				variant := strings.TrimPrefix(profile.Spec.CompositionRef, "app-")
 				if variant != "" {

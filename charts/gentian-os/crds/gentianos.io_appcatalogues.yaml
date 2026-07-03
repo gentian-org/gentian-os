@@ -77,6 +77,7 @@ spec:
                       enum:
                       - argocd
                       - crossplane
+                      - api
                       type: string
                     description:
                       description: Description is the optional human-readable description.

@@ -77,6 +77,11 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, nil
 		}
 
+		// ApiProfiles have no App claim to seed or await; they are always ready.
+		if gentianov1alpha1.ProfileIsAPI(profile) {
+			continue
+		}
+
 		if err := r.seedAppSecrets(ctx, tenant, profileName, profile); err != nil {
 			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", profileName, err)
 		}

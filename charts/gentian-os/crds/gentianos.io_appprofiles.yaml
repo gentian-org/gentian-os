@@ -133,6 +133,48 @@ spec:
                       type: boolean
                   type: object
                 type: array
+              apiIntegration:
+                description: |-
+                  APIIntegration configures an ApiProfile (deploymentMethod: api): a
+                  catalogue entry backed by an external service instead of tenant workloads.
+                  Required when deploymentMethod is api; ignored otherwise.
+                properties:
+                  baseUrl:
+                    description: BaseURL is the external service origin (e.g. https://corp.gentian.org).
+                    minLength: 1
+                    pattern: ^https?://.+
+                    type: string
+                  runtime:
+                    allOf:
+                    - enum:
+                      - redirect
+                      - proxy
+                    - enum:
+                      - redirect
+                      - proxy
+                    default: redirect
+                    description: |-
+                      Runtime selects how the tenant reaches the external service.
+                      redirect sends the browser to baseUrl (default).
+                      proxy routes through a kernel API proxy (reserved for a later phase).
+                    type: string
+                  tenantBinding:
+                    allOf:
+                    - enum:
+                      - tenant-domain
+                      - none
+                    - enum:
+                      - tenant-domain
+                      - none
+                    default: tenant-domain
+                    description: |-
+                      TenantBinding declares how the tenant is identified to the external
+                      service. tenant-domain appends the tenant effective domain as a query
+                      parameter (default). none passes no tenant hint.
+                    type: string
+                required:
+                - baseUrl
+                type: object
               appSecrets:
                 description: |-
                   AppSecrets declares app-internal secrets (admin passwords, session keys,
@@ -225,7 +267,11 @@ spec:
                 pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
                 type: string
               chart:
-                description: Chart references the upstream Helm chart for this app.
+                description: |-
+                  Chart references the upstream Helm chart for this app. Required for
+                  crossplane and argocd deployment methods; omitted for ApiProfiles
+                  (deploymentMethod: api), which run no workload. Enforced by a spec-level
+                  validation rule.
                 properties:
                   name:
                     description: Name is the chart name within the repository.
@@ -256,10 +302,12 @@ spec:
                 description: |-
                   DeploymentMethod controls how the orchestrator deploys this app.
                   Defaults to crossplane. Use argocd for kernel-layer services managed
-                  directly by the cache or identity reconcilers.
+                  directly by the cache or identity reconcilers. Use api for an ApiProfile
+                  that runs no workload (see spec.apiIntegration).
                 enum:
                 - argocd
                 - crossplane
+                - api
                 type: string
               description:
                 description: Description is an optional human-readable description.
@@ -1182,9 +1230,14 @@ spec:
                     type: object
                 type: object
             required:
-            - chart
             - displayName
             type: object
+            x-kubernetes-validations:
+            - message: spec.chart is required unless spec.deploymentMethod is api
+              rule: self.deploymentMethod == 'api' || has(self.chart)
+            - message: spec.apiIntegration is required when spec.deploymentMethod
+                is api
+              rule: self.deploymentMethod != 'api' || has(self.apiIntegration)
         type: object
     served: true
     storage: true

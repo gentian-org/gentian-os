@@ -73,8 +73,8 @@ const (
 	CacheEngineMemcached CacheEngine = "memcached"
 )
 
-// DeploymentMethod determines how the orchestrator delivers the app Helm release.
-// +kubebuilder:validation:Enum=argocd;crossplane
+// DeploymentMethod determines how the orchestrator delivers the app.
+// +kubebuilder:validation:Enum=argocd;crossplane;api
 type DeploymentMethod string
 
 const (
@@ -84,6 +84,10 @@ const (
 	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
 	// App Composition that emits an ExternalSecret and a provider-helm Release.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
+	// DeploymentMethodAPI marks an ApiProfile: a catalogue entry that runs no
+	// workload pods. The orchestrator provisions no Helm release or App claim;
+	// runtime traffic is served by an external service (see spec.apiIntegration).
+	DeploymentMethodAPI DeploymentMethod = "api"
 )
 
 // TenantPhase represents the overall lifecycle phase of a Tenant.
