@@ -66,13 +66,13 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
-| d-1 | open | High | Postfix sender domain hardcoded | Template `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` in install/Helm | `kernel/services/postfix/values/_base.yaml` L15, `kernel/services/postfix/manifests/dev/configmap.yaml` L26 | `ALLOWED_SENDER_DOMAINS: "desk.gentian.org"` — should follow `KERNEL_DOMAIN` |
-| d-2 | open | Medium | CNPG cluster name fixed | Expose via `charts/gentian-os/values.yaml` `database.clusterName` | `database_reconciler.go` L42: `cnpgClusterName = "postgres"` | Host `postgres-rw.platform-kernel.svc.cluster.local` |
-| d-3 | open | Medium | Provisioner images not Helm-configurable | Mirror `MEMCACHED_IMAGE` env vars for postgres/mariadb/redis/alpine init | `identity_reconciler.go`, `database_reconciler.go`, etc. | Unlike `MEMCACHED_IMAGE` env pattern in cache reconciler |
-| d-4 | ignore | Medium | OpenFGA shell app ID | Document as platform constant in `internal/authz/bridge.go` | `internal/authz/bridge.go` L12: `ShellAppObjectID = "gentian-ui"` | Platform constant; OK but not configurable |
-| d-5 | ignore | Medium | Default image tags in composition | Ensure cluster ConfigMap always sets `appInit.image` in install | `app-default.yaml` L146: `ghcr.io/gentian-org/gentian-app-init:develop` | Fallback when cluster ConfigMap omits `appInit.image` |
-| d-6 | open | Medium | Keycloak user list cap | Paginate with `first`/`max` until empty page | `keycloak_client.go` L82: `?max=1000` | Hard limit; no pagination loop |
-| d-7 | ignore | Low | gentian-org GitHub URLs | No change — env-overridable defaults | `install-lib.sh` L746–748, `charts/gentian-os/values.yaml` L204 | Overridable via `GENTIAN_*_REPO` env vars |
+| d-1 | done | High | Postfix sender domain hardcoded | Template `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` in install/Helm | `kernel/services/postfix/*` | Placeholder `example.domain`; patched by mail-lib on install/update |
+| d-2 | done | Medium | CNPG cluster name fixed | Expose via `charts/gentian-os/values.yaml` `database.clusterName` | `database_reconciler.go`, Helm Deployment | `CNPG_CLUSTER_NAME` env var |
+| d-3 | done | Medium | Provisioner images not Helm-configurable | Mirror `MEMCACHED_IMAGE` env vars for postgres/mariadb/redis/alpine init | `internal/kernel/images.go`, Helm `provisioners.*` | Includes Keycloak alpine provisioner |
+| d-4 | done | Medium | OpenFGA shell app ID | Document as platform constant in `internal/authz/bridge.go` | `internal/authz/bridge.go` L12: `ShellAppObjectID = "gentian-ui"` | Platform constant; documented |
+| d-5 | done | Medium | Default image tags in composition | Ensure cluster ConfigMap always sets `appInit.image` in install | `upsert_gentian_cluster_config` | Set on every install/update crossplane path |
+| d-6 | done | Medium | Keycloak user list cap | Paginate with `first`/`max` until empty page | `keycloak_client.go` | Users, group members, and group lookup |
+| d-7 | done | Low | gentian-org GitHub URLs | Defaults use `git.example.domain/*` placeholders | `scripts/lib/common.sh`, `values.yaml` | Override via `GENTIAN_*_REPO` env vars |
 | d-8 | ignore | Low | `desk.gentian.org` in docs/tests | No change — fixture domain | `crossplane/tests/unit/render/*/xr.yaml`, controller tests | Example domain for fixtures |
 
 ---
@@ -103,7 +103,7 @@ Last reviewed: 2026-07-02
 | f-5 | ignore | Medium | Keycloak shell wait loop | No change — required for parallel Crossplane Job apply | `keycloak_shell_helpers.go` L46–57 | 90×2s poll inside Job scripts |
 | f-6 | open | Medium | Per-app AppProfile GET in loops | List AppProfiles once into map keyed by name | `collectTenantIngressIntents`, `ensureAppDeployment`, `collect*Apps` | N+1 API pattern |
 | f-7 | open | Medium | Gateway platform reconciler 5 min idle requeue | Requeue only on Gateway/HTTPRoute spec change | `gateway_platform_reconciler.go` L71 | Reconciles kernel Gateway even when unchanged |
-| f-8 | open | Low | Authz bridge Keycloak `ListRealmUsers` max=1000 | Paginate user list (same as d-6) | `keycloak_client.go` L82 | Breaks silently for large realms |
+| f-8 | done | Low | Authz bridge Keycloak `ListRealmUsers` max=1000 | Paginate user list (same as d-6) | `keycloak_client.go` | Users, group members, groups |
 
 ---
 
@@ -159,7 +159,7 @@ Last reviewed: 2026-07-02
 |------|--------|--------|-------------------|
 | p-1 | open | Delete `scratch.patch` and `expected-new.yaml` (see b-1, b-3, e-6) | `git rm scratch.patch expected-new.yaml`; single PR |
 | p-2 | open | Reconcile security docs with code (AppGrant, composition names) (see a-1, a-2, dvc-1, dvc-3) | One docs PR updating architecture + security + catalogue guides |
-| p-3 | open | Parameterize Postfix `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` (see d-1) | Helm templating in install + `_base.yaml` |
+| p-3 | done | Parameterize Postfix `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` (see d-1) | mail-lib patch + example.domain placeholder in manifests |
 | p-4 | open | Fix OpenFGA sync semantics (deletes, pagination, event-driven) (see f-1, f-2, f-8) | Tuple diff in bridge; paginate Keycloak users |
 | p-5 | open | Extract shared kernel-requirement provisioner (DB/MariaDB/storage/cache) (see c-1) | New `internal/controller/provisioner/` package |
 | p-6 | open | Refactor `tenant_controller.Reconcile` into staged pipeline (see f-3, g-1) | Phased reconcile with typed stages |

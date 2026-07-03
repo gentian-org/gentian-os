@@ -6,7 +6,7 @@ replicaCount: 1
 # stage names kernel Helm releases (postfix-dev, keycloak-dev, …).
 stage: dev
 
-# kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
+# kernelDomain is the cluster-wide platform DNS suffix (e.g. example.domain).
 # Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
 # Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
 kernelDomain: ""
@@ -172,6 +172,10 @@ openbao:
   # (useful for envtest / local dev).
   role: "gentian-os-operator"
 
+# Shared CloudNativePG cluster in platform-kernel (Database CR spec.cluster.name).
+database:
+  clusterName: postgres
+
 # ArgoCD integration
 argocd:
   namespace: "argocd"
@@ -182,6 +186,7 @@ provisioners:
   postgres: "postgres:16-alpine"
   mariadb: "mariadb:11"
   redis: "redis:7-alpine"
+  keycloak: "alpine:3.20"
 
 # Memcached image for tenant cache provisioning (operator-managed Deployment).
 # Changing this takes effect on the next operator redeploy without rebuilding.
@@ -210,7 +215,7 @@ appLifecycle:
   deployments:
     enabled: false
     path: /data/gentian-deployments
-    repo: https://github.com/gentian-org/gentian-deployments
+    repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
     stage: dev
     # Secret with key .git-credentials (https://user:token@host) for git push.

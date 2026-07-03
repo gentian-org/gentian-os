@@ -93,7 +93,7 @@ install_catalogue_sync() {
 # 14c. Install Argo CD ApplicationSet syncing pro catalogue from gentian-pro
 # =============================================================================
 install_catalogue_pro_sync() {
-    local default_pro_repo="https://github.com/gentian-org/gentian-pro"
+    local default_pro_repo="https://git.example.domain/gentian-pro"
     local default_pro_branch="main"
 
     : "${GENTIAN_PRO_REPO:=${default_pro_repo}}"
@@ -159,7 +159,7 @@ release_gentian_os_helm_bootstrap() {
 # Create git credentials Secret for operator app lifecycle (gentian-deployments push)
 # =============================================================================
 _deployments_git_host() {
-    local repo="${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}"
+    local repo="${GENTIAN_DEPLOYMENTS_REPO:-https://git.example.domain/gentian-deployments}"
     if [[ "${repo}" =~ ^https?://([^/]+) ]]; then
         echo "${BASH_REMATCH[1]}"
     elif [[ "${repo}" =~ ^git@([^:]+): ]]; then

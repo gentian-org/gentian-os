@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
@@ -35,9 +36,8 @@ import (
 )
 
 const (
-	conditionIdentityReady   = "IdentityReady"
-	keycloakProvisionerImage = "alpine:3.20"
-	keycloakAdminSecret      = "keycloak-admin"
+	conditionIdentityReady = "IdentityReady"
+	keycloakAdminSecret    = "keycloak-admin"
 	appLabel                 = "gentianos.io/app"
 	identityRequeueAfter     = 2 * time.Second
 )
@@ -445,7 +445,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 func keycloakContainer(name, script string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
-		Image:   keycloakProvisionerImage,
+		Image:   kernel.KeycloakProvisionerImage(),
 		Command: []string{"/bin/sh", "-c", keycloakProvisionerBootstrap + script},
 		Env: []corev1.EnvVar{
 			{

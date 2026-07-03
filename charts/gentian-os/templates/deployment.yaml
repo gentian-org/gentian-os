@@ -120,6 +120,10 @@ spec:
               value: {{ .Values.provisioners.mariadb | quote }}
             - name: REDIS_PROVISIONER_IMAGE
               value: {{ .Values.provisioners.redis | quote }}
+            - name: KEYCLOAK_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.keycloak | quote }}
+            - name: CNPG_CLUSTER_NAME
+              value: {{ .Values.database.clusterName | quote }}
             - name: TENANT_CROSSPLANE_ONLY
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS
@@ -127,7 +131,7 @@ spec:
             - name: GENTIAN_DEPLOYMENTS_PATH
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             - name: GENTIAN_DEPLOYMENTS_STAGE
@@ -270,7 +274,7 @@ spec:
               exit 1
           env:
             - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
           securityContext:
             runAsUser: 65532
             runAsNonRoot: true

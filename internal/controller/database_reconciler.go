@@ -40,10 +40,12 @@ const (
 	cnpgGroup              = "postgresql.cnpg.io"
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
-	cnpgClusterName        = "postgres" // shared CloudNativePG Cluster in platform-kernel
 	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
 )
+
+// cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
+var cnpgClusterName = envOrDefault("CNPG_CLUSTER_NAME", "postgres")
 
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.

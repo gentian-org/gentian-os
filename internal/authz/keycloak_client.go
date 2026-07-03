@@ -30,6 +30,57 @@ import (
 )
 
 const keycloakAdminCLI = "admin-cli"
+const keycloakAdminPageSize = 200
+
+type keycloakUserRecord struct {
+	ID         string              `json:"id"`
+	Username   string              `json:"username"`
+	Enabled    bool                `json:"enabled"`
+	Email      string              `json:"email"`
+	Attributes map[string][]string `json:"attributes"`
+}
+
+type keycloakGroupRecord struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func keycloakUserFromRecord(u keycloakUserRecord) (KeycloakUser, bool) {
+	if !u.Enabled || u.ID == "" {
+		return KeycloakUser{}, false
+	}
+	return KeycloakUser{
+		ID:         u.ID,
+		Username:   u.Username,
+		Enabled:    u.Enabled,
+		Email:      u.Email,
+		Attributes: u.Attributes,
+	}, true
+}
+
+func paginatedAdminPath(basePath string, first, max int) string {
+	sep := "?"
+	if strings.Contains(basePath, "?") {
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%sfirst=%d&max=%d", basePath, sep, first, max)
+}
+
+func (c *KeycloakAdminClient) getAdminJSON(ctx context.Context, token, path string, out any) error {
+	req, err := c.newAdminRequest(ctx, token, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("keycloak GET %s: %s", path, resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
 
 // KeycloakUser is a minimal Keycloak user representation.
 type KeycloakUser struct {
@@ -94,41 +145,21 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 	if err != nil {
 		return nil, err
 	}
-	path := fmt.Sprintf("/admin/realms/%s/users?max=1000", url.PathEscape(realm))
-	req, err := c.newAdminRequest(ctx, token, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("keycloak list users: %s", resp.Status)
-	}
-	var raw []struct {
-		ID         string              `json:"id"`
-		Username   string              `json:"username"`
-		Enabled    bool                `json:"enabled"`
-		Email      string              `json:"email"`
-		Attributes map[string][]string `json:"attributes"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, err
-	}
-	out := make([]KeycloakUser, 0, len(raw))
-	for _, u := range raw {
-		if !u.Enabled || u.ID == "" {
-			continue
+	base := fmt.Sprintf("/admin/realms/%s/users", url.PathEscape(realm))
+	var out []KeycloakUser
+	for first := 0; ; first += keycloakAdminPageSize {
+		var page []keycloakUserRecord
+		if err := c.getAdminJSON(ctx, token, paginatedAdminPath(base, first, keycloakAdminPageSize), &page); err != nil {
+			return nil, fmt.Errorf("keycloak list users: %w", err)
 		}
-		out = append(out, KeycloakUser{
-			ID:         u.ID,
-			Username:   u.Username,
-			Enabled:    u.Enabled,
-			Email:      u.Email,
-			Attributes: u.Attributes,
-		})
+		for _, u := range page {
+			if user, ok := keycloakUserFromRecord(u); ok {
+				out = append(out, user)
+			}
+		}
+		if len(page) < keycloakAdminPageSize {
+			break
+		}
 	}
 	return out, nil
 }
@@ -146,41 +177,21 @@ func (c *KeycloakAdminClient) ListGroupMembers(ctx context.Context, realm, group
 	if err != nil {
 		return nil, err
 	}
-	path := fmt.Sprintf("/admin/realms/%s/groups/%s/members?max=1000", url.PathEscape(realm), url.PathEscape(groupID))
-	req, err := c.newAdminRequest(ctx, token, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("keycloak list group members: %s", resp.Status)
-	}
-	var raw []struct {
-		ID         string              `json:"id"`
-		Username   string              `json:"username"`
-		Enabled    bool                `json:"enabled"`
-		Email      string              `json:"email"`
-		Attributes map[string][]string `json:"attributes"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, err
-	}
-	out := make([]KeycloakUser, 0, len(raw))
-	for _, u := range raw {
-		if !u.Enabled || u.ID == "" {
-			continue
+	base := fmt.Sprintf("/admin/realms/%s/groups/%s/members", url.PathEscape(realm), url.PathEscape(groupID))
+	var out []KeycloakUser
+	for first := 0; ; first += keycloakAdminPageSize {
+		var page []keycloakUserRecord
+		if err := c.getAdminJSON(ctx, token, paginatedAdminPath(base, first, keycloakAdminPageSize), &page); err != nil {
+			return nil, fmt.Errorf("keycloak list group members: %w", err)
 		}
-		out = append(out, KeycloakUser{
-			ID:         u.ID,
-			Username:   u.Username,
-			Enabled:    u.Enabled,
-			Email:      u.Email,
-			Attributes: u.Attributes,
-		})
+		for _, u := range page {
+			if user, ok := keycloakUserFromRecord(u); ok {
+				out = append(out, user)
+			}
+		}
+		if len(page) < keycloakAdminPageSize {
+			break
+		}
 	}
 	return out, nil
 }
@@ -190,29 +201,19 @@ func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName 
 	if err != nil {
 		return "", err
 	}
-	path := fmt.Sprintf("/admin/realms/%s/groups?max=1000", url.PathEscape(realm))
-	req, err := c.newAdminRequest(ctx, token, http.MethodGet, path, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("keycloak list groups: %s", resp.Status)
-	}
-	var raw []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return "", err
-	}
-	for _, g := range raw {
-		if g.Name == groupName && g.ID != "" {
-			return g.ID, nil
+	base := fmt.Sprintf("/admin/realms/%s/groups", url.PathEscape(realm))
+	for first := 0; ; first += keycloakAdminPageSize {
+		var page []keycloakGroupRecord
+		if err := c.getAdminJSON(ctx, token, paginatedAdminPath(base, first, keycloakAdminPageSize), &page); err != nil {
+			return "", fmt.Errorf("keycloak list groups: %w", err)
+		}
+		for _, g := range page {
+			if g.Name == groupName && g.ID != "" {
+				return g.ID, nil
+			}
+		}
+		if len(page) < keycloakAdminPageSize {
+			break
 		}
 	}
 	return "", nil

@@ -530,9 +530,9 @@ validate_config() {
 
     _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
     _opt_from LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address" "${INSTALL_CONFIG_FILE}"
-    _opt_from GENTIAN_APPS_REPO       "defaults to https://github.com/gentian-org/gentian-apps" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_APPS_REPO       "defaults to https://git.example.domain/gentian-apps" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
-    _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://github.com/gentian-org/gentian-deployments" "${INSTALL_CONFIG_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://git.example.domain/gentian-deployments" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push (install.secrets.env)" "${INSTALL_SECRETS_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "${INSTALL_SECRETS_FILE}"
@@ -648,14 +648,14 @@ prompt_credentials() {
 
 # =============================================================================
 # Prompt for the gentian-apps and gentian-deployments repo URLs/branches.
-# Defaults point at the upstream gentian-org repos. Persist results to
-# ~/.gentian/config (bash-sourceable) so the kubectl-gentian plugin can locate
-# the deployments repo when running `kubectl gentian apps install/uninstall`.
+# Defaults use example.domain placeholders — override via GENTIAN_*_REPO env vars.
+# Persist results to ~/.gentian/config (bash-sourceable) so the kubectl-gentian
+# plugin can locate the deployments repo when running `kubectl gentian apps install/uninstall`.
 # =============================================================================
 prompt_app_repos() {
-    local default_apps_repo="https://github.com/gentian-org/gentian-apps"
+    local default_apps_repo="https://git.example.domain/gentian-apps"
     local default_apps_branch="main"
-    local default_deploy_repo="https://github.com/gentian-org/gentian-deployments"
+    local default_deploy_repo="https://git.example.domain/gentian-deployments"
     local default_deploy_branch="main"
     local default_deploy_cluster="default-cluster"
     local default_deploy_stage="${ENV:-dev}"
@@ -719,7 +719,7 @@ prompt_app_repos() {
 
     : "${GENTIAN_APPS_REPO:=${default_apps_repo}}"
     : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
-    : "${GENTIAN_PRO_REPO:=https://github.com/gentian-org/gentian-pro}"
+    : "${GENTIAN_PRO_REPO:=https://git.example.domain/gentian-pro}"
     : "${GENTIAN_PRO_BRANCH:=main}"
     : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
@@ -762,7 +762,7 @@ EOF
         warn "CI_BOT_PAT not set — gentian-ui image builds cannot auto-pin tags in gentian-os."
         warn "  Add to install.secrets.env when needed."
     fi
-    : "${GITHUB_ACTIONS_OS_REPO:=gentian-org/gentian-os}"
+    : "${GITHUB_ACTIONS_OS_REPO:=example/gentian-os}"
     export GITHUB_ACTIONS_OS_REPO
 }
 
@@ -1154,8 +1154,9 @@ upsert_gentian_cluster_config() {
     fi
     export NODE_IP
 
+    local _cnpg_cluster="${CNPG_CLUSTER_NAME:-postgres}"
     local _minio_endpoint="${MINIO_ENDPOINT:-http://minio-${ENV:-dev}.gentian-infra-${ENV:-dev}.svc.cluster.local:9000}"
-    local _cnpg_host="${CNPG_HOST:-postgres-rw.platform-kernel.svc.cluster.local}"
+    local _cnpg_host="${CNPG_HOST:-${_cnpg_cluster}-rw.platform-kernel.svc.cluster.local}"
     local _storage_class="${STORAGE_CLASS:-}"
     local _mail_mode="${MAIL_SERVICE_MODE:-external}"
     local _routing_mode="${ROUTING_MODE:-gateway}"
@@ -1195,11 +1196,12 @@ data:
   mail.smtpHost: "${_smtp_host}"
   minio.endpoint: "${_minio_endpoint}"
   cnpg.host: "${_cnpg_host}"
+  cnpg.clusterName: "${_cnpg_cluster}"
   storageClass: "${_storage_class}"
   mail.serviceMode: "${_mail_mode}"
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
-  appInit.image: "ghcr.io/gentian-org/gentian-app-init:${APP_INIT_IMAGE_TAG:-develop}"
+  appInit.image: "${APP_INIT_IMAGE:-ghcr.io/example/gentian-app-init:${APP_INIT_IMAGE_TAG:-develop}}"
   network.infraNamespace: "${_infra_ns}"
   network.servicesNamespace: "${_services_ns}"
   network.openbaoNamespace: "${_openbao_ns}"
@@ -1687,6 +1689,7 @@ deploy_kernel_mail_services() {
     fi
 
     success "Kernel mail services (postfix + dovecot) manifests applied."
+    _patch_postfix_allowed_sender_domains || true
     info "provider-helm will reconcile the Release CRs within 5 minutes."
     info "Monitor: kubectl get release.helm.crossplane.io | grep -E 'postfix|dovecot'"
     info "         argocd app sync gentian-infra-helm-${env}"

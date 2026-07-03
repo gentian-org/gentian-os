@@ -23,7 +23,10 @@ import (
 )
 
 const (
-	StoreName          = "gentian"
+	StoreName        = "gentian"
+	// ShellAppObjectID is the OpenFGA object id for the Gentian portal shell.
+	// Fixed platform constant — the authorization model and can_launch checks for
+	// the portal UI reference this object; it is not tenant- or env-configurable.
 	ShellAppObjectID   = "gentian-ui"
 	ShellAppObjectType = "shell_app"
 )

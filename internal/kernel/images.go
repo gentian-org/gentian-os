@@ -25,6 +25,7 @@ const (
 	DefaultMariaDBProvisionerImage  = "mariadb:11"
 	DefaultRedisProvisionerImage    = "redis:7-alpine"
 	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
+	DefaultKeycloakProvisionerImage = "alpine:3.20"
 )
 
 func PostgresProvisionerImage() string {
@@ -41,6 +42,10 @@ func RedisProvisionerImage() string {
 
 func MemcachedImage() string {
 	return envOrDefault("MEMCACHED_IMAGE", DefaultMemcachedImage)
+}
+
+func KeycloakProvisionerImage() string {
+	return envOrDefault("KEYCLOAK_PROVISIONER_IMAGE", DefaultKeycloakProvisionerImage)
 }
 
 func envOrDefault(key, fallback string) string {

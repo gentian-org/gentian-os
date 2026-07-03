@@ -12,6 +12,7 @@ service:
 config:
   general:
     TZ: "UTC"
-    ALLOWED_SENDER_DOMAINS: "desk.gentian.org"
+    # Placeholder — patched from KERNEL_DOMAIN by scripts/mail-lib.sh on install/update.
+    ALLOWED_SENDER_DOMAINS: "example.domain"
   postfix:
     myhostname: postfix-dev

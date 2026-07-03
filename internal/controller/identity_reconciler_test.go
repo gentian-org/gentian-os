@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // newOIDCProfile creates a minimal AppProfile that requires OIDC.
@@ -248,8 +249,8 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 		t.Fatal("expected at least one container in realm Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "alpine:3.20" {
-		t.Errorf("unexpected container image %q, want alpine:3.20", container.Image)
+	if container.Image != kernel.DefaultKeycloakProvisionerImage {
+		t.Errorf("unexpected container image %q, want %s", container.Image, kernel.DefaultKeycloakProvisionerImage)
 	}
 	if len(container.Env) < 2 {
 		t.Errorf("expected at least 2 env vars (KEYCLOAK_URL, KEYCLOAK_ADMIN_PASSWORD), got %d", len(container.Env))

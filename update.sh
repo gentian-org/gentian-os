@@ -581,7 +581,7 @@ op_argocd_bootstrap() {
     if [[ -f "${tmpl}" ]]; then
         info "Re-applying gentian-os Application + gentian-tenants ApplicationSet (branch=${gentian_os_branch})..."
         sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
-            -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}|g" \
+            -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO:-https://git.example.domain/gentian-deployments}|g" \
             -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH:-main}|g" \
             -e "s|%CLUSTER%|${cluster}|g" \
             -e "s|%STAGE%|${stage}|g" \
