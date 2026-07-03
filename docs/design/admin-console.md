@@ -529,7 +529,7 @@ Manage the authorization layer between installed apps, not just portal tile visi
 | Capability | Description | CRD / backend |
 |---|---|---|
 | **Integration overview** | Read-only list of active `IntegrationBinding` objects, health, last credential rotation | `IntegrationBinding.status` |
-| **AppGrant editor** | Approve subset of declared contract capabilities (e.g. `webdav:read` without `write`) | Planned `AppGrant` CRD → OpenFGA tuples |
+| **AppGrant editor** | Approve subset of declared contract capabilities (e.g. `webdav:read` without `write`) | **`AppGrant` CRD** → OpenFGA tuples (**Done**; install-time grant UI still evolving) |
 | **Consumer allowlist** | Control which apps may call this app's `provides` contracts | `AppGrant.spec.allowConsumers` |
 | **Effective access preview** | Show `AppProfile ∩ Binding ∩ Grant ∩ user` for a member | OpenFGA `Check` + BFF aggregation |
 

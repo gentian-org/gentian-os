@@ -368,11 +368,11 @@ A staged path. Each stage is independently useful and leaves a working system.
 | Per-tenant **K8s namespaces** | **Done** | `tenant-default` Composition; operator seeds tenant shell |
 | Default-deny **NetworkPolicy** (tenant MAC floor) | **Done** | `tenant-isolation` — DNS + kube-API egress only; ingress from gateway/ingress namespace ([`internal/kernel/netpolicy/baseline.go`](../../internal/kernel/netpolicy/baseline.go)) |
 | **Kernel egress** from `AppProfile.kernelRequirements` | **Done** | `kernel-access-{app}` policies ([`kernel.go`](../../internal/kernel/netpolicy/kernel.go)) |
-| **Contract egress** from active `IntegrationBinding` | **Done** | `contract-{binding}` policies; all declared binding capabilities allowed until AppGrant ([`integration.go`](../../internal/kernel/netpolicy/integration.go)) |
+| **Contract egress** from active `IntegrationBinding` | **Done** | `contract-{binding}` policies intersect binding capabilities with `AppGrant` when present ([`integration.go`](../../internal/kernel/netpolicy/integration.go), [`grants.go`](../../internal/kernel/netpolicy/grants.go)) |
 | **Kyverno admission** (privileged, host namespaces, non-root) | **Done** | `kernel/appsets/05-admission.yaml`, `kernel/security/kyverno/policies/gentian-baseline.yaml`; install Step 13c |
 | **Cilium** (FQDN/L7 egress, Hubble) | **Deferred** → [roadmap § Cilium](../roadmap.md#cilium-planned) | Standard Kubernetes NetworkPolicy is sufficient for Stage 0 prototype |
 | **Service mesh + SPIFFE/SPIRE** | **Deferred** → [roadmap § Service mesh](../roadmap.md#service-mesh--spiffespire-planned) / **Stage 3** below | Edge TLS is Envoy Gateway; workload mTLS is not required yet |
-| **AppGrant-governed contract allowlists** | **Deferred** → **Stage 2** | Bindings allow full declared capability set today |
+| **AppGrant-governed contract allowlists** | **Done** | Netpolicy ∩ grant; OpenFGA `granted` tuples via `AppGrantReconciler` |
 | **Image provenance / cosign / SLSA at admission** | **Deferred** → [roadmap § Horizon A](#horizon-a--harden-immediately-post-rollout) | Not in baseline Kyverno policies yet; see [app-catalogue-security.md](app-catalogue-security.md) |
 | **Required workload labels / tier enforcement** | **Partial** → [roadmap § App catalogue security](../roadmap.md#app-catalogue-security) | Baseline pod security only; `catalogue-tier` webhook and prod Kyverno tier rules not shipped |
 | **Egress drift detection (managed as code)** | **Deferred** → [roadmap § Horizon A](#horizon-a--harden-immediately-post-rollout) | Policies are reconciled by the operator but not continuously audited |

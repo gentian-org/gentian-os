@@ -117,9 +117,15 @@ and policy allow-list:
 | Arbitrary OCI `chart.repository` | Supply-chain / malicious chart | Registry allow-list in admission + CI |
 | `kernelRequirements` without matching chart need | Cost + attack surface | CI policy + optional admission webhook |
 
-**Current state:** `sidecars` exists on the CRD and is consumed only by
-`app-element`. `compositionRef` is set for `element` and `ox-appsuite` only.
-There is **no validating webhook on `AppProfile`** yet (only `Tenant`).
+**Current state:** `spec.sidecars` is on the CRD. The **operator** reconciles
+sidecar OIDC client Jobs (when Crossplane does not own the Client MR), OpenBao
+paths, and purge ([`oidc_pack_jobs.go`](../../internal/controller/oidc_pack_jobs.go),
+[`app_reconciler.go`](../../internal/controller/app_reconciler.go)). **Sidecar
+Helm Releases** are rendered by purpose-built compositions referenced via
+`spec.compositionRef` in catalogue repos (`gentian-apps` / `gentian-pro`), not
+by generic `app-default`. Platform **`sidecarRef`** catalogue (§5.2) remains
+proposed. There is **no validating webhook on `AppProfile`** yet (Tenant
+webhook only; AppProfile webhook deferred — see §9).
 
 ---
 
@@ -194,8 +200,21 @@ spec:
 ```
 
 `app-default` (or a single platform composition) loads `sidecarRef`, merges
-allowed overrides, and emits Releases — same as today’s `app-element` logic but
-data-driven.
+allowed overrides, and emits Releases — the same pattern used by
+**platform-tier** catalogue compositions today (for example Element sidecars in
+`gentian-pro` via `spec.compositionRef`).
+
+### 5.4 Sidecar ownership (operator vs Crossplane)
+
+| Concern | Owner |
+|---|---|
+| Sidecar **Helm Releases** and ingress | Crossplane **`compositionRef`** composition in catalogue repo (not generic `app-default`) |
+| Sidecar **OIDC client** Jobs | **Operator**, unless `crossplaneOwnsOIDCClient` applies (parent has `compositionRef` and no OIDC pack) — see [`tenant_identity_manifests.go`](../../internal/controller/tenant_identity_manifests.go) |
+| Sidecar **OpenBao** paths and purge | **Operator** (`app_reconciler.go`, `applifecycle/purge.go`) |
+| Sidecar **MAC waivers** | `PlatformSecurityPolicy` allowlist (Kyverno + netpolicy) |
+
+Catalogue authors on **`certified`** tier should prefer future **`sidecarRef`**
+(§5.2) over freeform `sidecars[].chart` coordinates.
 
 ### 5.3 Multi-chart primary apps
 
@@ -304,8 +323,10 @@ These limits apply **even if** a malicious profile slips through catalogue revie
 | **Freeform sidecars in profile** | Weak | Avoid |
 
 **Recommendation:** invest in **`app-default` + gated profile fields** (see
-[roadmap.md](../roadmap.md)). Treat `app-element` / `app-ox` as legacy
-**platform-tier** exceptions until migrated.
+[roadmap.md](../roadmap.md)). Complex apps with sidecars or custom MR graphs use
+**`spec.compositionRef`** to a composition shipped in the catalogue repo
+(`gentian-apps/profiles/<name>/composition.yaml` or `gentian-pro`); only
+**`catalogue-tier: platform`** profiles may set non-default `compositionRef`.
 
 Simple apps **must not** pay a runtime penalty: new fields are optional;
 composition templates branch on presence (`{{- if .sidecars }}`).
@@ -349,8 +370,9 @@ composition templates branch on presence (`{{- if .sidecars }}`).
 | CI schema validation in `gentian-apps` | Documented; enforce in repo CI |
 | `crossplane render` goldens for `app-default` | Partial (`tenant-default` exists) |
 | Kyverno plaintext-secret ban on `Release` | Documented; cluster-dependent |
+| `AppProfile.spec.Sidecars` (OIDC, secrets, purge) | **Implemented** (operator; see §5.4) |
+| Sidecar Helm Releases in **`app-default`** | **Not implemented** (use `compositionRef` in catalogue repo) |
 | Platform sidecar catalogue (`sidecarRef`) | **Proposed** (§5) |
-| Generic `sidecars` in `app-default` | **Not implemented** (`app-element` only) |
 
 ---
 

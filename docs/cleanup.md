@@ -144,9 +144,9 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Doc claim | Code reality | Suggested Solution |
 |------|--------|-----------|--------------|-------------------|
-| dvc-1 | open | AppGrant “Planned” (`new-security-architecture.md`) | Implemented — CRD + `app_grant_reconciler.go` | Update doc to **Done** (same as a-1) |
-| dvc-2 | open | Generic sidecars in `app-default` “not implemented” (`app-catalogue-security.md` L353) | `AppProfile.spec.Sidecars` handled in `oidc_pack_jobs.go` | Mark sidecar OIDC as implemented; document operator vs composition ownership |
-| dvc-3 | open | `app-element` / `app-ox` in architecture | Not in gentian-os compositions; in catalogue repos | Doc pass (same as a-2) |
+| dvc-1 | done | AppGrant “Planned” (`new-security-architecture.md`) | Implemented — CRD + `app_grant_reconciler.go` | Doc aligned: AppGrant **Done**; netpolicy ∩ grant; admin-console updated |
+| dvc-2 | done | Generic sidecars in `app-default` “not implemented” (`app-catalogue-security.md` L353) | `AppProfile.spec.Sidecars` handled in `oidc_pack_jobs.go` | §5.4 operator vs composition ownership; §9 status table updated |
+| dvc-3 | done | `app-element` / `app-ox` in architecture | Not in gentian-os compositions; in catalogue repos | `app-default` + `compositionRef`; legacy names removed from security docs |
 | dvc-4 | ignore | Secret rotation via annotations (`roadmap.md` L148) | Not implemented | Keep on roadmap until implemented |
 | dvc-5 | done | AppProfile validating webhook (`app-catalogue-security.md` L347) | Not implemented (Tenant webhook only) | Marked deferred in security doc and webhook package doc |
 | dvc-6 | ignore | Stage 0 MAC “complete for dev” (`roadmap.md` L12) | Substantial implementation in netpolicy + Kyverno + AppGrant | Clarify “dev-complete” vs production hardening in roadmap |
@@ -158,12 +158,12 @@ Last reviewed: 2026-07-02
 | Item | Status | Action | Suggested Solution |
 |------|--------|--------|-------------------|
 | p-1 | done | Delete `scratch.patch` and `expected-new.yaml` (see b-1, b-3, e-6) | Removed in b-1/b-3 |
-| p-2 | open | Reconcile security docs with code (AppGrant, composition names) (see a-1, a-2, dvc-1, dvc-3) | One docs PR updating architecture + security + catalogue guides |
+| p-2 | done | Reconcile security docs with code (AppGrant, composition names) (see a-1, a-2, dvc-1, dvc-3) | Docs PR: architecture + security + catalogue guides |
 | p-3 | done | Parameterize Postfix `ALLOWED_SENDER_DOMAINS` from `KERNEL_DOMAIN` (see d-1) | mail-lib patch + example.domain placeholder in manifests |
 | p-4 | done | Fix OpenFGA sync semantics (deletes, pagination, event-driven) (see f-1, f-2, f-8) | Tuple diff in bridge; paginate Keycloak users |
 | p-5 | open | Extract shared kernel-requirement provisioner (DB/MariaDB/storage/cache) (see c-1) | New `internal/controller/provisioner/` package |
 | p-6 | done | Refactor `tenant_controller.Reconcile` into staged pipeline (see f-3, g-1) | Phased reconcile with typed stages |
-| p-7 | open | Update architecture/catalogue docs (`app-default` + `compositionRef`) (see a-2, dvc-3) | Overlap with p-2 |
+| p-7 | done | Update architecture/catalogue docs (`app-default` + `compositionRef`) (see a-2, dvc-3) | Overlap with p-2 |
 | p-8 | open | Add reconciler tests (AppGrant, AuthzBridge, PlatformSecurityPolicy) (see t-2, t-3, t-6) | envtest + mocks per reconciler |
 | p-9 | done | Split `install-lib.sh` into focused modules (see c-3) | `scripts/lib/load.sh` + domain modules; thin `install-lib.sh` shim |
 | p-10 | open | Deduplicate `app-default` composition for unit render tests (see c-5) | Symlink or read parent composition in render harness |
