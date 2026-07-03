@@ -47,6 +47,7 @@ type tenantReconcileState struct {
 	tenant          *gentianov1alpha1.Tenant
 	nsName          string
 	start           time.Time
+	blocked         bool
 	identityResult  ctrl.Result
 	databaseResult  ctrl.Result
 	mariadbResult   ctrl.Result
@@ -71,7 +72,15 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 	}
 	for _, step := range stages {
 		res, err := step.run(ctx, state)
+		if state.blocked {
+			return ctrl.Result{}, nil
+		}
 		if res.RequeueAfter > 0 || err != nil {
+			if res.RequeueAfter > 0 && err == nil {
+				if updErr := r.persistTenantStageProgress(ctx, state); updErr != nil {
+					return ctrl.Result{}, updErr
+				}
+			}
 			if res.RequeueAfter > 0 {
 				log.FromContext(ctx).Info("tenant reconcile short-circuit", "stage", step.stage, "tenant", state.tenant.Name, "requeueAfter", res.RequeueAfter)
 			}
@@ -79,6 +88,29 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 		}
 	}
 	return r.reconcileTenantStageFinalize(ctx, state)
+}
+
+// persistTenantStageProgress writes in-memory condition and phase updates when a
+// stage short-circuits with RequeueAfter before finalize runs.
+func (r *TenantReconciler) persistTenantStageProgress(ctx context.Context, state *tenantReconcileState) error {
+	tenant := state.tenant
+	if state.nsName != "" {
+		tenant.Status.Namespace = state.nsName
+	}
+	tenant.Status.AppCount = len(tenant.Spec.Apps)
+	provisioning := state.identityResult.RequeueAfter > 0 ||
+		state.databaseResult.RequeueAfter > 0 ||
+		state.mariadbResult.RequeueAfter > 0 ||
+		state.storageResult.RequeueAfter > 0 ||
+		state.cacheResult.RequeueAfter > 0 ||
+		state.mailResult.RequeueAfter > 0 ||
+		state.appsResult.RequeueAfter > 0
+	if provisioning || !tenantHasConditionTrue(tenant, conditionCrossplaneReady) {
+		if tenant.Status.Phase != gentianov1alpha1.TenantPhaseDegraded {
+			tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
+		}
+	}
+	return r.Status().Update(ctx, tenant)
 }
 
 func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, state *tenantReconcileState) (ctrl.Result, error) {
@@ -94,6 +126,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
 			"Identity provisioning blocked because one or more requested AppProfiles are missing")
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
+		state.blocked = true
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, nil
 	}
@@ -105,6 +138,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint", err.Error())
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
+		state.blocked = true
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, nil
 	}

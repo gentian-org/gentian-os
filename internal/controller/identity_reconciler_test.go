@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -44,7 +44,10 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 				Version:    "1.0.0",
 			},
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
-				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: name}},
+				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
+					ClientID:     name,
+					RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
+				}},
 			},
 		},
 	}

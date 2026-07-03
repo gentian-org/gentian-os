@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -114,9 +114,13 @@ func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentian
 		}
 		switch profile.Spec.KernelRequirements.Cache.Engine {
 		case gentianov1alpha1.CacheEngineRedis:
-			redisApps = appendUniqueStrings(redisApps, app.Profile)
+			if matchRedisProfile(profile) {
+				redisApps = appendUniqueStrings(redisApps, app.Profile)
+			}
 		case gentianov1alpha1.CacheEngineMemcached:
-			memcachedApps = appendUniqueStrings(memcachedApps, app.Profile)
+			if matchMemcachedProfile(profile) {
+				memcachedApps = appendUniqueStrings(memcachedApps, app.Profile)
+			}
 		}
 	}
 	if mode == CollectForDelete {

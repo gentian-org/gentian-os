@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -378,6 +379,27 @@ func TestMain(m *testing.M) {
 						}
 					}
 				}
+			}
+		}
+	}()
+
+	// Memcached Deployments are created from tenant data-plane manifests; envtest has
+	// no kubelet to mark them ready, so integration tests would stall in CacheReady.
+	go func() {
+		for {
+			time.Sleep(50 * time.Millisecond)
+			var deps appsv1.DeploymentList
+			if err := testClient.List(context.Background(), &deps); err != nil {
+				continue
+			}
+			for _, dep := range deps.Items {
+				if dep.Name != "memcached" || dep.Status.ReadyReplicas > 0 {
+					continue
+				}
+				if !strings.HasPrefix(dep.Namespace, "tenant-") {
+					continue
+				}
+				patchDeploymentReady(context.Background(), testClient, dep.Namespace, dep.Name)
 			}
 		}
 	}()

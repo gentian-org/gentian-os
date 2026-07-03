@@ -49,13 +49,7 @@ func keycloakUserFromRecord(u keycloakUserRecord) (KeycloakUser, bool) {
 	if !u.Enabled || u.ID == "" {
 		return KeycloakUser{}, false
 	}
-	return KeycloakUser{
-		ID:         u.ID,
-		Username:   u.Username,
-		Enabled:    u.Enabled,
-		Email:      u.Email,
-		Attributes: u.Attributes,
-	}, true
+	return KeycloakUser(u), true
 }
 
 func paginatedAdminPath(basePath string, first, max int) string {

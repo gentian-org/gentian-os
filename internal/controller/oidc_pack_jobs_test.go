@@ -38,7 +38,8 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
-						ClientID: "main-oidc-client",
+						ClientID:     "main-oidc-client",
+						RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
 					},
 				},
 			},
@@ -48,7 +49,8 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 					KernelRequirements: &gentianov1alpha1.KernelRequirements{
 						Identity: &gentianov1alpha1.IdentityRequirement{
 							OIDC: &gentianov1alpha1.OIDCClientSpec{
-								ClientID: "sidecar-oidc-client",
+								ClientID:     "sidecar-oidc-client",
+								RedirectURIs: []string{"https://${TENANT_DOMAIN}/sidecar/oidc/callback"},
 							},
 						},
 					},

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -259,9 +259,9 @@ func TestIsolation_LimitRangeDefaults(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestDeletion_EndToEnd_WithApps creates a Tenant with multiple apps (requiring
-// PostgreSQL, MariaDB, S3, Redis, Memcached), verifies all resources are
-// provisioned, then deletes the Tenant with DeletionPolicy=Delete and verifies
-// cleanup Jobs are created and resources are removed.
+// PostgreSQL, MariaDB, S3, Redis, Memcached), verifies shell resources exist,
+// then deletes the Tenant with DeletionPolicy=Delete and verifies cleanup Jobs
+// and resource removal. Mail provisioning is covered by TestMail_Selfhosted.
 func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -286,7 +286,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 			Domain:         "del-full.example.com",
 			AdminEmail:     "admin@del-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
-			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "del-pgapp"},
 				{Profile: "del-mariaapp"},
@@ -305,26 +304,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	np := &networkingv1.NetworkPolicy{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-del-full"}, np) == nil
-	})
-
-	// Verify mail resources: DKIM secret + Postfix CM entry + SMTP credentials.
-	waitFor(t, jobAppearTimeout, func() bool {
-		cm := &corev1.ConfigMap{}
-		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
-			return false
-		}
-		_, ok := cm.Data["del-full"]
-		return ok
-	})
-
-	dkimSecret := &corev1.Secret{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, dkimSecret) == nil
-	})
-
-	smtpSecret := &corev1.Secret{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{Name: "smtp-credentials-del-full", Namespace: "tenant-del-full"}, smtpSecret) == nil
 	})
 
 	// -- DELETE the tenant ------------------------------------------------
@@ -385,23 +364,9 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		})
 	}
 
-	// DKIM secret should be deleted.
-	err := testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, &corev1.Secret{})
-	if err == nil {
-		t.Error("DKIM secret should be deleted after DeletionPolicy=Delete")
-	}
-
-	// Postfix ConfigMap entry should be removed.
-	postfixCM := &corev1.ConfigMap{}
-	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
-		if _, ok := postfixCM.Data["del-full"]; ok {
-			t.Error("Postfix virtual-domain entry should be removed after deletion")
-		}
-	}
-
 	// Namespace should be terminating or gone.
 	ns := &corev1.Namespace{}
-	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, ns)
+	err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, ns)
 	if err == nil && ns.DeletionTimestamp == nil {
 		t.Error("namespace should be deleted or terminating after Delete policy")
 	}
