@@ -1213,19 +1213,12 @@ check_prereqs() {
             lb_label='app.kubernetes.io/name=gateway-helm'
             lb_ip=$(kubectl get svc -A -l "${lb_label}" \
                 -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-        else
-            lb_ip=$(kubectl get svc -A -l 'app.kubernetes.io/name=ingress-nginx' \
-                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         fi
         if [[ -z "$lb_ip" ]]; then
-            if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-                warn "NETWORK_MODE=static-ip: Envoy Gateway LoadBalancer has no external IP yet."
-            else
-                warn "NETWORK_MODE=static-ip: ingress LoadBalancer has no external IP yet."
-            fi
+            warn "NETWORK_MODE=static-ip: Envoy Gateway LoadBalancer has no external IP yet."
             warn "  Make sure MetalLB (or a cloud LB) is configured with ${NODE_IP} before traffic can reach the cluster."
         else
-            info "Ingress LoadBalancer external IP: ${lb_ip}"
+            info "Gateway LoadBalancer external IP: ${lb_ip}"
         fi
     fi
 
@@ -1997,7 +1990,7 @@ print_gateway_tunnel_hints() {
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
-    info "  in namespace ${envoy_ns}, not the microk8s/nginx ingress controller."
+    info "  in namespace ${envoy_ns}, not a legacy Ingress controller."
     info "  Discover the Service after kernel-public-gateway is Programmed:"
     info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
     info "  Typical origin: https://<envoy-svc>.${envoy_ns}.svc.cluster.local:443"
@@ -2035,7 +2028,7 @@ _reconcile_kernel_https_coredns_hairpin() {
         return 0
     fi
 
-    # Replace legacy ingress/nginx IPs for kernel HTTPS hosts; preserve mail entry.
+    # Replace legacy Ingress edge IPs for kernel HTTPS hosts; preserve mail entry.
     patched=$(echo "${corefile}" | python3 -c '
 import re, sys
 corefile = sys.stdin.read()
@@ -2355,9 +2348,9 @@ install_argocd() {
 }'
     success "ArgoCD Crossplane Keycloak resource-update suppression configured."
 
-    # Configure ArgoCD server to serve plain HTTP so nginx can terminate TLS.
-    # Without this flag ArgoCD redirects HTTP→HTTPS internally and nginx gets
-    # into a redirect loop when doing TLS termination at the ingress.
+    # Configure ArgoCD server to serve plain HTTP behind the Gateway API edge route.
+    # Without this flag ArgoCD redirects HTTP→HTTPS internally and the edge proxy
+    # gets into a redirect loop when terminating TLS at the Gateway.
     #
     # reposerver.repo.cache.expiration: how long the repo-server caches both
     # the branch→SHA resolution and the rendered manifest for a (repo, path,
@@ -2406,39 +2399,7 @@ install_argocd() {
     # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
     # the Ingress is safe to create before the Secret exists.
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
-        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-            info "ROUTING_MODE=gateway: ArgoCD edge route is managed by the operator (kernel-argocd HTTPRoute)."
-        else
-        info "Creating ArgoCD Ingress for argocd.${KERNEL_DOMAIN}..."
-        kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: argocd-server
-  namespace: argocd
-  annotations:
-    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-spec:
-  ingressClassName: public
-  rules:
-  - host: argocd.${KERNEL_DOMAIN}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: argocd-server
-            port:
-              number: 80
-  tls:
-  - hosts:
-    - argocd.${KERNEL_DOMAIN}
-    secretName: wildcard-tls
-EOF
-        success "ArgoCD Ingress created: https://argocd.${KERNEL_DOMAIN}"
-        fi
+        info "ArgoCD edge route is managed by the operator (kernel-argocd HTTPRoute)."
     fi
 
     # Print ArgoCD admin credentials early so the user sees them even if

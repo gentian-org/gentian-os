@@ -22,7 +22,6 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -192,8 +191,4 @@ func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effec
 		sub = appProfile
 	}
 	return fmt.Sprintf("%s.%s", sub, effectiveDomain)
-}
-
-func isPortalRedirectIngress(ing *networkingv1.Ingress) bool {
-	return ing.Labels[portalRedirectComponentLabel] == portalRedirectComponentValue
 }

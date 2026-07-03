@@ -347,14 +347,6 @@ else
     info "XSuze composite not found; skipping."
 fi
 
-# Legacy infra Release CRs (pre–Step 2 Pattern B) — delete if still present.
-for rel in "gentian-postgresql-${ENV}" "gentian-mariadb-${ENV}"; do
-    if kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
-        info "Deleting legacy infra Release ${rel}..."
-        kubectl delete release.helm.crossplane.io/"${rel}" --timeout=120s || true
-    fi
-done
-
 if kubectl get cluster dev-cluster -n crossplane-system >/dev/null 2>&1; then
     info "Deleting Cluster claim dev-cluster..."
     kubectl delete cluster dev-cluster -n crossplane-system --timeout=60s || true

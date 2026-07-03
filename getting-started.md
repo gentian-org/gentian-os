@@ -345,7 +345,7 @@ The orchestrator provisions these in order:
 3. PostgreSQL databases (CloudNativePG `Database` CRs)
 4. MariaDB databases (SQL Jobs)
 5. MinIO S3 buckets
-6. Redis ACL users + Memcached (ArgoCD Application when cache required)
+6. Redis ACL users + Memcached Deployment (when cache required)
 7. App deployment (`App` claims → Crossplane helm Releases)
 8. Ingress + TLS certificate
 9. IntegrationBinding CRs (auto-wired cross-app contracts)

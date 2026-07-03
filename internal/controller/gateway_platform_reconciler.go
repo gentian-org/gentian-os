@@ -20,11 +20,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -68,10 +66,6 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 	}
 	if err := r.reconcileKernelHTTPRoutes(ctx); err != nil {
 		logger.Error(err, "reconcile kernel HTTPRoutes")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
-	}
-	if err := r.deleteSupersededKernelIngress(ctx); err != nil {
-		logger.Error(err, "delete superseded kernel Ingress resources")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.CloudflareDNS, r.KernelDomain, r.TenancyMode); err != nil {
@@ -327,49 +321,4 @@ func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewa
 		return c.Patch(ctx, existing, patch)
 	}
 	return nil
-}
-
-// deleteSupersededKernelIngress removes legacy nginx Ingress objects for kernel
-// hosts once Gateway API routes are in place. Chart-managed Ingress may be
-// recreated until gateway Helm overlays are applied; this keeps the cluster
-// converged on kernel-public-gateway.
-func (r *GatewayPlatformReconciler) deleteSupersededKernelIngress(ctx context.Context) error {
-	list := &networkingv1.IngressList{}
-	if err := r.List(ctx, list, client.InNamespace(servicesNamespace)); err != nil {
-		return fmt.Errorf("list kernel Ingress resources: %w", err)
-	}
-
-	logger := log.FromContext(ctx)
-	var deleted int
-	for i := range list.Items {
-		ing := &list.Items[i]
-		if !kernelIngressSupersededByGateway(ing, r.KernelDomain) {
-			continue
-		}
-		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete superseded kernel Ingress %s: %w", ing.Name, err)
-		}
-		deleted++
-	}
-	if deleted > 0 {
-		logger.Info("deleted legacy kernel Ingress superseded by Gateway API",
-			"namespace", servicesNamespace, "count", deleted)
-	}
-	return nil
-}
-
-func kernelIngressSupersededByGateway(ing *networkingv1.Ingress, kernelDomain string) bool {
-	if ing.GetNamespace() != servicesNamespace || kernelDomain == "" {
-		return false
-	}
-	for _, rule := range ing.Spec.Rules {
-		host := strings.ToLower(rule.Host)
-		if host == "" {
-			continue
-		}
-		if host == kernelDomain || strings.HasSuffix(host, "."+kernelDomain) {
-			return true
-		}
-	}
-	return false
 }

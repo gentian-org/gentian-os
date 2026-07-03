@@ -41,5 +41,4 @@ const (
 	PortalRedirectComponentValue = "portal-redirect"
 
 	EnvoyGatewayInstallNamespace = "envoy-gateway-system"
-	IngressNamespace             = "ingress"
 )

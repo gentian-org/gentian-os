@@ -35,13 +35,13 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
-| b-1 | open | High | `scratch.patch` — dead artifact | Delete file from repo | `scratch.patch` (~470 lines) | Patch for deleted `app-ox`; Nubus/LDAP init; not referenced |
-| b-2 | open | High | `install.secrets.env` with real credentials in workspace | Rotate exposed secrets; keep only `install.secrets.env.template` in docs | `install.secrets.env` L11–31 | Gitignored but present locally; rotate if ever committed |
-| b-3 | open | Medium | `expected-new.yaml` orphan | Delete file or wire into `Makefile` if it replaces `expected.yaml` | `crossplane/tests/unit/render/tenant-default/expected-new.yaml` | Duplicate of `expected.yaml`; not in `Makefile` render tests |
-| b-4 | ignore | Medium | Legacy install migration paths | Retain until min supported version skips them; document sunset in `install.sh` header | `install.sh` L738–979, `uninstall.sh` L350+ | One-time upgrade helpers; accumulate complexity |
-| b-5 | ignore | Medium | Legacy Memcached ArgoCD Application cleanup | Keep until no clusters report legacy Application | `cache_reconciler.go` L226–234, L485+ | `deleteLegacyMemcachedApplication` for pre-Inc-8 installs |
-| b-6 | ignore | Medium | Legacy ingress/nginx paths | Keep for nginx-mode clusters; document removal when nginx path dropped | `ingress_helpers.go` L61, L139+ | Portal embedding + nginx snippet stripping for pre-Gateway clusters |
-| b-7 | ignore | Medium | `resolveOIDCRedirectURIsLegacy` | Keep for regression tests of old pack format | `oidc_pack_jobs.go` L240 | Test-only legacy helper |
+| b-1 | done | High | `scratch.patch` — dead artifact | Delete file from repo | `scratch.patch` (~470 lines) | Patch for deleted `app-ox`; Nubus/LDAP init; not referenced |
+| b-2 | ignore | High | `install.secrets.env` with real credentials in workspace | Rotate exposed secrets; keep only `install.secrets.env.template` in docs | `install.secrets.env` L11–31 | Gitignored but present locally; rotate if ever committed |
+| b-3 | done | Medium | `expected-new.yaml` orphan | Delete file or wire into `Makefile` if it replaces `expected.yaml` | `crossplane/tests/unit/render/tenant-default/expected-new.yaml` | Duplicate of `expected.yaml`; not in `Makefile` render tests |
+| b-4 | done | Medium | Legacy install migration paths | Retain until min supported version skips them; document sunset in `install.sh` header | `install.sh` L738–979, `uninstall.sh` L350+ | Removed InfraData + AuthzIdp legacy Release/claim migration |
+| b-5 | done | Medium | Legacy Memcached ArgoCD Application cleanup | Keep until no clusters report legacy Application | `cache_reconciler.go` L226–234, L485+ | Removed `deleteLegacyMemcachedApplication` + ArgoCD Application watch |
+| b-6 | done | Medium | Legacy ingress/nginx paths | Keep for nginx-mode clusters; document removal when nginx path dropped | `ingress_helpers.go` L61, L139+ | Gateway-only; removed superseded-Ingress auto-cleanup |
+| b-7 | done | Medium | `resolveOIDCRedirectURIsLegacy` | Keep for regression tests of old pack format | `oidc_pack_jobs.go` L240 | Removed implicit redirect fallback; packs must declare URIs |
 | b-8 | ignore | Low | `.install-state.env` in workspace | No change — local installer cache | Root (gitignored) | Installer cache; intentional local state |
 | b-9 | ignore | Low | `install.secrets.env.backup` | No change — user-local backup | Root (gitignored) | Backup of secrets file |
 
@@ -82,7 +82,7 @@ Last reviewed: 2026-07-02
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
 | e-1 | open | Medium | `od-element` in platform unit tests | Use generic `catalogue-test-app` fixture or pull fixture from gentian-pro testdata | `crossplane/tests/unit/render/tenant-default/xr.yaml`, `oidc_pack_jobs_test.go` | Pro/OpenDesk profile as default render fixture; ideally gentian-pro test data |
-| e-2 | open | Medium | Element/Jitsi/OpenProject in comments & tests | Move app-specific notes to gentian-pro profile docs; keep generic CSP/nginx comments in os | `ingress_helpers.go`, `ingress_helpers_test.go`, `gateway_reconciler_test.go` | Documents real app bugs; test hostnames use element/chat subdomains |
+| e-2 | open | Medium | Element/Jitsi/OpenProject in comments & tests | Move app-specific notes to gentian-pro profile docs; keep generic CSP comments in os | `gateway_reconciler_test.go` | Documents real app bugs; test hostnames use element/chat subdomains |
 | e-3 | ignore | Medium | Nextcloud in CRD schema text | No change — OpenAPI examples only | `config/crd/gentianos.io_appprofiles.yaml` L522, L702+ | Example strings in OpenAPI descriptions only |
 | e-4 | ignore | Medium | OpenProject comment in composition | No change — inline chart hint | `app-default.yaml` L569 | Comment only: charts using `values.environment` |
 | e-5 | ignore | Medium | OpenDesk registry comments in secrets template | No change — commented optional vars in template | `install.secrets.env` L12–13 (`OD_PRIVATE_REGISTRY_*`) | Commented credentials in local secrets file |
@@ -177,3 +177,5 @@ Last reviewed: 2026-07-02
 | x-1 | done | `install_catalogue_pro_sync` missing closing brace (shellcheck SC1072) | N/A — fixed in `152ab1b` |
 | x-2 | done | `gentian-catalogue-pro` ApplicationSet + Argo CD project allowlist (see e-7) | N/A — deployed; document repo PAT setup in install guide |
 | x-3 | done | Cleanup batch a-1–a-3, a-5, a-7–a-12 (docs, headers, API, tests, install) | See git diff on `develop`; a-4/a-6 answered in chat, not implemented |
+| x-4 | done | Legacy artifact cleanup b-1/b-3/b-6/b-7 (nginx paths, OIDC fallback, dead files) | See git diff on `develop` |
+| x-5 | done | Remove legacy infra/Memcached/Ingress migration paths (b-4, b-5, ingress cleanup) | Assumes clean clusters; InfraData XR only |

@@ -52,14 +52,3 @@ func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 		t.Fatal("broker IdP script must read HTTP status via curl -w %{http_code}")
 	}
 }
-
-func TestKeycloakProxyIngressBufferAnnotations(t *testing.T) {
-	ann := map[string]string{}
-	ensureKeycloakProxyIngressBuffers(ann)
-	if !keycloakProxyIngressBuffersApplied(ann) {
-		t.Fatal("expected buffer annotations to be applied")
-	}
-	if ann[nginxProxyBufferSizeAnnotation] != "64k" {
-		t.Fatalf("proxy-buffer-size = %q, want 64k", ann[nginxProxyBufferSizeAnnotation])
-	}
-}

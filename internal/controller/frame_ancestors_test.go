@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -22,12 +21,24 @@ import (
 	"testing"
 )
 
-func TestBuildRealmBrowserSecurityHeadersScript(t *testing.T) {
-	script := buildRealmBrowserSecurityHeadersScript("demo")
-	if !strings.Contains(script, `admin/realms/demo`) {
-		t.Fatalf("expected demo realm PUT, got:\n%s", script)
-	}
-	if !strings.Contains(script, `"xFrameOptions":""`) {
-		t.Fatal("expected empty xFrameOptions in browserSecurityHeaders payload")
+func TestKeycloakOIDCAncestorOrigins(t *testing.T) {
+	t.Parallel()
+	origins := keycloakOIDCAncestorOrigins(
+		"desk.gentian.org",
+		[]string{"demo.desk.gentian.org"},
+		map[string][]string{"demo": {"chat", "cloud"}},
+		[]string{"demo"},
+	)
+	for _, want := range []string{
+		"https://portal.desk.gentian.org",
+		"https://id.desk.gentian.org",
+		"https://*.desk.gentian.org",
+		"https://*.demo.desk.gentian.org",
+		"https://chat.demo.desk.gentian.org",
+		"https://cloud.demo.desk.gentian.org",
+	} {
+		if !strings.Contains(origins, want) {
+			t.Fatalf("origins %q missing %q", origins, want)
+		}
 	}
 }

@@ -649,11 +649,11 @@ bootstrap_appprofiles() {
 
 # =============================================================================
 # Step 13: Install provider-helm
-# provider-helm deploys Helm charts into the local cluster. It replaces the
-# legacy Pattern B approach for secrets-hostile charts.
+# provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
+# kernel services, tenant apps via compositions).
 # =============================================================================
 install_provider_helm() {
-    banner "Step 13 — Install provider-helm (Pattern B chart deployments)"
+    banner "Step 13 — Install provider-helm"
 
     # providers.yaml already contains provider-helm; apply idempotently.
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -674,8 +674,7 @@ install_provider_helm() {
 # =============================================================================
 # Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
 #
-# Provisions kernel data stores via Crossplane composition instead of
-# Argo-synced Helm ApplicationSets.
+# Provisions kernel data stores via Crossplane InfraData XR.
 #
 # Prerequisites:
 #   - provider-helm Healthy (Step 13)
@@ -726,28 +725,12 @@ verify_infra_chart_index() {
 apply_infra_data_xr() {
     banner "Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
 
-    local env="${ENV:-dev}"
     local claim="dev-infra-data"
     local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
     local chart_repo
     chart_repo="$(detect_infra_chart_repo)"
 
     verify_infra_chart_index "${chart_repo}"
-
-    # Legacy Pattern B Release CRs shared the Helm release name as the MR name.
-    # Remove them before the InfraData composition creates new MRs with the
-    # same crossplane.io/external-name (gentian-postgresql-{env}, etc.).
-    for rel in "gentian-postgresql-${env}" "gentian-mariadb-${env}" "redis-${env}" "minio-${env}"; do
-        if ! kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
-            continue
-        fi
-        local composite
-        composite=$(kubectl get release.helm.crossplane.io/"${rel}" \
-            -o jsonpath='{.metadata.labels.crossplane\.io/composite}' 2>/dev/null || true)
-        [[ -n "${composite}" ]] && continue
-        warn "Removing legacy infra Release CR ${rel} (superseded by InfraData XR)..."
-        kubectl delete release.helm.crossplane.io/"${rel}" --timeout=180s 2>/dev/null || true
-    done
 
     info "Applying InfraData claim (${claim})..."
     kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-infra-data.yaml"
@@ -822,47 +805,6 @@ install_mac_admission() {
 # =============================================================================
 # Step 14 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
 # =============================================================================
-retire_legacy_authz_idp_xr() {
-    # Legacy AuthzIdp claim (renamed to Suze in develop).
-    if kubectl get crd authzidps.gentianos.io >/dev/null 2>&1 \
-        && kubectl get authzidp dev-authz-idp -n crossplane-system >/dev/null 2>&1; then
-        warn "Retiring legacy AuthzIdp claim (renamed to Suze)..."
-        kubectl delete authzidp dev-authz-idp -n crossplane-system --timeout=180s 2>/dev/null || true
-    fi
-
-    # Orphaned Helm Release MRs from the deleted AuthzIdp composite.
-    local rel
-    while IFS= read -r rel; do
-        [[ -z "${rel}" ]] && continue
-        if kubectl get release.helm.crossplane.io/"${rel}" \
-            -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null | grep -q .; then
-            warn "Clearing finalizer on terminating legacy Release ${rel}..."
-            kubectl patch release.helm.crossplane.io/"${rel}" \
-                -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
-            continue
-        fi
-        warn "Removing orphaned legacy Release ${rel}..."
-        kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
-    done < <(kubectl get release.helm.crossplane.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-        | grep -E 'dev-authz-idp' || true)
-
-    for hr in gentian-openfga gentian-idp-keycloak; do
-        if helm status "${hr}" -n platform-kernel >/dev/null 2>&1; then
-            warn "Uninstalling legacy Helm release ${hr} before Suze reinstall..."
-            helm uninstall "${hr}" -n platform-kernel --wait --timeout=3m 2>/dev/null || true
-        fi
-    done
-
-    local deadline=$((SECONDS + 120))
-    while kubectl get xauthzidp -o name 2>/dev/null | grep -q authz-idp; do
-        if (( SECONDS > deadline )); then
-            warn "Legacy XAuthzIdp still present after 2m — continuing."
-            break
-        fi
-        sleep 5
-    done
-}
-
 wait_for_crd_established() {
     local crd="$1"
     local timeout_sec="${2:-120}"
@@ -974,8 +916,6 @@ apply_suze_xr() {
 
     local claim="dev-suze"
     local timeout_sec="${SUZE_XR_TIMEOUT_SEC:-1200}"
-
-    retire_legacy_authz_idp_xr
 
     info "Waiting for Suze Argo apps + prerequisites in platform-kernel (up to 3m)..."
     local deadline=$((SECONDS + 180))
@@ -1222,7 +1162,7 @@ main_cp() {
     install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
     bootstrap_root_appset       # Step 12d — root app-of-apps (minio, redis, mariadb, IAM…)
 
-    # ── Pattern B chart deployments ─────────────────────────────────────────
+    # ── Crossplane provider-helm + shared infra ───────────────────────────────
     install_provider_helm       # Step 13 — wait for provider-helm Healthy
     apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
     install_mac_admission       # Step 13c — Kyverno admission (Stage 0 MAC)

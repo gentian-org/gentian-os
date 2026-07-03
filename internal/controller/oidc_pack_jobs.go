@@ -233,11 +233,9 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
-	host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
-	if host == "" {
-		host = tenant.Spec.Domain
-	}
-	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}, nil
+	// Sidecar OIDC redirect URIs must be declared on the AppProfile or in the pack spec.
+	return nil, fmt.Errorf("AppProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
+		profileName, gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs)
 }
 
 func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string, kernelDomain, tenancyMode string) []string {
@@ -250,18 +248,6 @@ func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string
 		out = append(out, strings.ReplaceAll(u, "${TENANT_DOMAIN}", host))
 	}
 	return out
-}
-
-// resolveOIDCRedirectURIsLegacy is a package-level helper for tests that do not have an AppProfile.
-func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain, tenancyMode string) []string {
-	if len(uris) > 0 {
-		return substituteTenantDomainInURIs(tenant, uris, kernelDomain, tenancyMode)
-	}
-	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-	if host == "" {
-		host = tenant.Spec.Domain
-	}
-	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}
 }
 
 func (r *TenantReconciler) ensureBrokerFirstLoginFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {

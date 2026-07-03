@@ -114,10 +114,10 @@ func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]strin
 		},
 	}
 	var timeout map[string]interface{}
-	if d := nginxDurationAnnotation(annotations, "nginx.ingress.kubernetes.io/proxy-read-timeout"); d != "" {
+	if d := gatewayDurationAnnotation(annotations, gentianov1alpha1.AnnotationIngressGatewayRequestTimeout); d != "" {
 		timeout = map[string]interface{}{"http": map[string]interface{}{"requestTimeout": d}}
 	}
-	if d := nginxDurationAnnotation(annotations, "nginx.ingress.kubernetes.io/proxy-send-timeout"); d != "" {
+	if d := gatewayDurationAnnotation(annotations, gentianov1alpha1.AnnotationIngressGatewayResponseTimeout); d != "" {
 		if timeout == nil {
 			timeout = map[string]interface{}{}
 		}
@@ -131,7 +131,7 @@ func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]strin
 	if timeout != nil {
 		spec["timeout"] = timeout
 	}
-	if body := annotations[nginxProxyBodySizeAnnotation]; body != "" {
+	if body := annotations[gentianov1alpha1.AnnotationIngressGatewayBufferLimit]; body != "" {
 		spec["connection"] = map[string]interface{}{
 			"bufferLimit": body,
 		}
@@ -142,7 +142,7 @@ func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]strin
 	return spec
 }
 
-func nginxDurationAnnotation(annotations map[string]string, key string) string {
+func gatewayDurationAnnotation(annotations map[string]string, key string) string {
 	raw := strings.TrimSpace(annotations[key])
 	if raw == "" {
 		return ""

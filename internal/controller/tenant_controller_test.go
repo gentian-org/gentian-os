@@ -277,16 +277,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// argocd namespace is required by the cache reconciler for Memcached Application CRs.
-	if err := testClient.Create(context.Background(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "argocd"},
-	}); err != nil {
-		panic(err)
-	}
-
 	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
-	// gentian-infra-dev and ingress are referenced by gateway/isolation tests.
-	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "ingress"} {
+	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"} {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
 		}); err != nil {

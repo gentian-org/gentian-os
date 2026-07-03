@@ -58,18 +58,8 @@ for rel in dev-infra-data-postgresql dev-infra-data-mariadb dev-infra-data-redis
       failed=1
     fi
   else
-    case "${rel}" in
-      *postgresql*) legacy="infra-postgresql-dev" ;;
-      *mariadb*)    legacy="infra-mariadb-dev" ;;
-      *redis*)      legacy="redis-dev" ;;
-      *minio*)      legacy="minio-dev" ;;
-      *)            legacy="" ;;
-    esac
-    if [[ -n "${legacy}" ]] && kubectl get release.helm.crossplane.io/"${legacy}" >/dev/null 2>&1; then
-      pass "Legacy infra Release ${legacy} present (pre–InfraData migration)"
-    else
-      warn "Neither InfraData nor legacy Release found for ${rel}"
-    fi
+    warn "InfraData Release ${rel} not found"
+    failed=1
   fi
 done
 

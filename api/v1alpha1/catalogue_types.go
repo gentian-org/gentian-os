@@ -21,7 +21,7 @@ const (
 	// Shape: [{"pathPrefix":"/api","serviceName":"my-api","port":8080}]
 	AnnotationProfileGatewayAPIBackends = "gentianos.io/gateway-api-backends"
 	// OIDCDefaultRedirectURIs is a JSON array used when spec.kernelRequirements.identity.oidc.redirectUris is empty.
-	// Supports ${TENANT_DOMAIN} substitution (legacy pack Jobs and operator fallbacks).
+	// Supports ${TENANT_DOMAIN} substitution.
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
 	// KernelEgressNamespaces is a comma-separated list of extra cluster namespaces the
 	// app workload may reach (merged into kernel-access NetworkPolicy egress).
@@ -34,6 +34,12 @@ const (
 	AnnotationIngressGatewayFrameAncestors = "gentianos.io/gateway-frame-ancestors"
 	// GatewayEscapedSlashesAction sets Envoy ClientTrafficPolicy path.escapedSlashesAction.
 	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
+	// GatewayRequestTimeout sets BackendTrafficPolicy timeout.http.requestTimeout (e.g. "3600s" or "3600").
+	AnnotationIngressGatewayRequestTimeout = "gentianos.io/gateway-request-timeout"
+	// GatewayResponseTimeout sets BackendTrafficPolicy timeout.http.responseTimeout.
+	AnnotationIngressGatewayResponseTimeout = "gentianos.io/gateway-response-timeout"
+	// GatewayBufferLimit sets BackendTrafficPolicy connection.bufferLimit (e.g. "128m").
+	AnnotationIngressGatewayBufferLimit = "gentianos.io/gateway-buffer-limit"
 )
 
 // ProfileDeploymentRole describes how a catalogue entry is deployed relative to siblings.

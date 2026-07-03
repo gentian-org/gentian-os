@@ -75,10 +75,7 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	}
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
-		namespaceIngress(meta.IngressNamespace),
-	}
-	if cfg.RoutingMode == RoutingModeGateway {
-		ingress = append(ingress, namespaceIngress(meta.EnvoyGatewayInstallNamespace))
+		namespaceIngress(meta.EnvoyGatewayInstallNamespace),
 	}
 
 	return &networkingv1.NetworkPolicy{

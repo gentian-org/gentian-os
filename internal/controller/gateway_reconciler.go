@@ -20,9 +20,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,7 +31,7 @@ import (
 )
 
 // ensureGateway handles operator-only gateway edge work when ROUTING_MODE=gateway:
-// Cloudflare DNS, stale route/policy cleanup, legacy Ingress removal, and readiness waits.
+// Cloudflare DNS, stale route/policy cleanup, and readiness waits.
 // Kubernetes edge objects (Gateway, HTTPRoutes, ReferenceGrants, BackendTrafficPolicy)
 // are owned by Crossplane via the manifest bridge.
 func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -97,9 +95,6 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 	if err := r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, expectedClientPolicies); err != nil {
 		return ctrl.Result{}, err
-	}
-	if err := r.deleteSupersededTenantIngress(ctx, tenant, nsName, intents, effectiveDomain); err != nil {
-		return ctrl.Result{}, fmt.Errorf("delete superseded tenant Ingress: %w", err)
 	}
 
 	message := fmt.Sprintf("Gateway provisioned for %d app(s) on %q (tenant-zone-wildcard)", len(intents), effectiveDomain)
@@ -175,57 +170,4 @@ func gatewayListenersProgrammed(gw *gatewayv1.Gateway) bool {
 		}
 	}
 	return true
-}
-
-// deleteSupersededTenantIngress removes chart- or legacy-managed Ingress objects
-// whose hostnames are now served by operator-managed HTTPRoutes.
-func (r *TenantReconciler) deleteSupersededTenantIngress(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	intents []ingressIntent,
-	effectiveDomain string,
-) error {
-	if len(intents) == 0 || effectiveDomain == "" {
-		return nil
-	}
-
-	hosts := make(map[string]struct{}, len(intents))
-	for _, intent := range intents {
-		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-		if host != "" {
-			hosts[strings.ToLower(host)] = struct{}{}
-		}
-	}
-
-	list := &networkingv1.IngressList{}
-	if err := r.List(ctx, list, client.InNamespace(nsName)); err != nil {
-		return fmt.Errorf("list tenant Ingress resources: %w", err)
-	}
-
-	logger := ctrl.LoggerFrom(ctx)
-	for i := range list.Items {
-		ing := &list.Items[i]
-		if isPortalRedirectIngress(ing) {
-			continue
-		}
-		if !tenantIngressSupersededByGateway(ing, hosts) {
-			continue
-		}
-		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete superseded tenant Ingress %s: %w", ing.Name, err)
-		}
-		logger.Info("deleted legacy tenant Ingress superseded by Gateway API",
-			"ingress", ing.Name, "tenant", tenant.Name)
-	}
-	return nil
-}
-
-func tenantIngressSupersededByGateway(ing *networkingv1.Ingress, hosts map[string]struct{}) bool {
-	for _, rule := range ing.Spec.Rules {
-		if _, ok := hosts[strings.ToLower(rule.Host)]; ok {
-			return true
-		}
-	}
-	return false
 }

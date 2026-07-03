@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -151,27 +150,6 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 	}
 }
 
-func TestTenantIngressSupersededByGateway(t *testing.T) {
-	t.Parallel()
-	hosts := map[string]struct{}{"matrix.demo.desk.gentian.org": {}}
-	ing := &networkingv1.Ingress{
-		Spec: networkingv1.IngressSpec{
-			Rules: []networkingv1.IngressRule{{Host: "matrix.demo.desk.gentian.org"}},
-		},
-	}
-	if !tenantIngressSupersededByGateway(ing, hosts) {
-		t.Fatal("expected matrix host ingress to be superseded")
-	}
-	other := &networkingv1.Ingress{
-		Spec: networkingv1.IngressSpec{
-			Rules: []networkingv1.IngressRule{{Host: "other.demo.desk.gentian.org"}},
-		},
-	}
-	if tenantIngressSupersededByGateway(other, hosts) {
-		t.Fatal("unexpected supersession for unrelated host")
-	}
-}
-
 func TestTenantGatewayName(t *testing.T) {
 	t.Parallel()
 	if got := tenantGatewayName("demo"); got != "tenant-demo-gateway" {
@@ -309,8 +287,8 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 	t.Parallel()
 	spec := backendTrafficPolicySpecFromIngressAnnotations(map[string]string{
-		"nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
-		"nginx.ingress.kubernetes.io/proxy-body-size":    "128m",
+		gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "3600",
+		gentianov1alpha1.AnnotationIngressGatewayBufferLimit:    "128m",
 	})
 	if spec == nil {
 		t.Fatal("expected spec")
@@ -355,7 +333,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	ingress := &gentianov1alpha1.IngressSpec{
 		Annotations: map[string]string{
-			"nginx.ingress.kubernetes.io/proxy-read-timeout": "600",
+			gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
 		},
 	}
 	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "element", ingress)

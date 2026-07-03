@@ -309,16 +309,10 @@ type IngressSpec struct {
 	ServicePort int32 `json:"servicePort,omitempty"`
 
 	// SubDomain is the subdomain prefix prepended to the tenant domain to form the
-	// Ingress host, e.g. "files" yields "files.{tenant-domain}".
+	// HTTPRoute host, e.g. "files" yields "files.{tenant-domain}".
 	// Defaults to the app profile name (chart name) when not set.
 	// +optional
 	SubDomain string `json:"subDomain,omitempty"`
-
-	// IngressClassName is the Kubernetes IngressClass to use.
-	// Defaults to "nginx" when not set.
-	// +optional
-	// +kubebuilder:default=nginx
-	IngressClassName string `json:"ingressClassName,omitempty"`
 
 	// TLSEnabled enables TLS via a cert-manager Certificate CR.
 	// Defaults to true.
@@ -335,8 +329,8 @@ type IngressSpec struct {
 	// +kubebuilder:default=letsencrypt-http01
 	ClusterIssuer string `json:"clusterIssuer,omitempty"`
 
-	// Annotations are merged into the Ingress object metadata.
-	// Use to set ingress class, NGINX configuration snippets, etc.
+	// Annotations are merged into Gateway edge policy for this host (frame-ancestors,
+	// timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
 }

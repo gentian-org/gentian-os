@@ -96,8 +96,8 @@ spec:
                       additionalProperties:
                         type: string
                       description: |-
-                        Annotations are merged into the Ingress object metadata.
-                        Use to set ingress class, NGINX configuration snippets, etc.
+                        Annotations are merged into Gateway edge policy for this host (frame-ancestors,
+                        timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
                       type: object
                     clusterIssuer:
                       default: letsencrypt-http01
@@ -107,12 +107,6 @@ spec:
                         (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
                         Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
                         See docs/design/multi-tenancy.md §3.
-                      type: string
-                    ingressClassName:
-                      default: nginx
-                      description: |-
-                        IngressClassName is the Kubernetes IngressClass to use.
-                        Defaults to "nginx" when not set.
                       type: string
                     serviceName:
                       description: |-
@@ -128,7 +122,7 @@ spec:
                     subDomain:
                       description: |-
                         SubDomain is the subdomain prefix prepended to the tenant domain to form the
-                        Ingress host, e.g. "files" yields "files.{tenant-domain}".
+                        HTTPRoute host, e.g. "files" yields "files.{tenant-domain}".
                         Defaults to the app profile name (chart name) when not set.
                       type: string
                     tlsEnabled:
@@ -310,8 +304,8 @@ spec:
                     additionalProperties:
                       type: string
                     description: |-
-                      Annotations are merged into the Ingress object metadata.
-                      Use to set ingress class, NGINX configuration snippets, etc.
+                      Annotations are merged into Gateway edge policy for this host (frame-ancestors,
+                      timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
                     type: object
                   clusterIssuer:
                     default: letsencrypt-http01
@@ -321,12 +315,6 @@ spec:
                       (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
                       Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
                       See docs/design/multi-tenancy.md §3.
-                    type: string
-                  ingressClassName:
-                    default: nginx
-                    description: |-
-                      IngressClassName is the Kubernetes IngressClass to use.
-                      Defaults to "nginx" when not set.
                     type: string
                   serviceName:
                     description: |-
@@ -342,7 +330,7 @@ spec:
                   subDomain:
                     description: |-
                       SubDomain is the subdomain prefix prepended to the tenant domain to form the
-                      Ingress host, e.g. "files" yields "files.{tenant-domain}".
+                      HTTPRoute host, e.g. "files" yields "files.{tenant-domain}".
                       Defaults to the app profile name (chart name) when not set.
                     type: string
                   tlsEnabled:

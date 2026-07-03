@@ -38,15 +38,14 @@ const (
 	conditionTunnelIngressReady  = "TunnelIngressReady"
 	operatorNamespace            = "gentian-system"
 	operatorConfigMapName        = "gentian-os-config"
+	argocdNamespace              = "argocd"
 )
 
 func normalizeRoutingMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case RoutingModeGateway, "ingress", "nginx", "":
-		return RoutingModeGateway
-	default:
+	if strings.EqualFold(strings.TrimSpace(mode), RoutingModeGateway) || strings.TrimSpace(mode) == "" {
 		return RoutingModeGateway
 	}
+	return RoutingModeGateway
 }
 
 func isGatewayRoutingMode(string) bool {

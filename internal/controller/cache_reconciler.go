@@ -28,8 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -43,10 +41,6 @@ const (
 	redisProvisionerImage   = "redis:7-alpine"
 	redisAdminSecret        = "redis-admin"
 	cacheRequeueAfter       = 2 * time.Second
-	argocdGroup             = "argoproj.io"
-	argocdVersion           = "v1alpha1"
-	argocdApplicationKind   = "Application"
-	argocdNamespace         = "argocd"
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
 	memcachedPort           = int32(11211)
@@ -56,12 +50,6 @@ const (
 // require an operator image rebuild. Uses the official Docker Hub image because
 // Bitnami chart images are not reliably pullable on all clusters.
 var memcachedImage = envOrDefault("MEMCACHED_IMAGE", "memcached:1.6.38-alpine")
-
-var argocdApplicationGVK = schema.GroupVersionKind{
-	Group:   argocdGroup,
-	Version: argocdVersion,
-	Kind:    argocdApplicationKind,
-}
 
 // ensureCache provisions per-app Redis ACL users (via redis-cli Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
@@ -143,10 +131,6 @@ func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentia
 
 // ensureMemcached waits for the Crossplane-provisioned Memcached Deployment.
 func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant, memcachedApps []string) (bool, error) {
-	if err := r.deleteLegacyMemcachedApplication(ctx, tenant.Name); err != nil {
-		return false, err
-	}
-
 	nsName := tenantNamespaceName(tenant)
 	dep := &appsv1.Deployment{}
 	depKey := types.NamespacedName{Name: memcachedDeploymentName, Namespace: nsName}
@@ -164,7 +148,6 @@ func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentiano
 // DeletionPolicy=Delete:
 //   - Creates ACL DELUSER Jobs for per-app Redis users.
 //   - Deletes the Memcached Deployment and Service.
-//   - Removes any legacy ArgoCD Application CR.
 //
 // DeletionPolicy=Retain:
 //   - No-op — Redis keys and Memcached data are preserved for recovery.
@@ -213,25 +196,8 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		}
 	}
 
-	if err := r.deleteLegacyMemcachedApplication(ctx, tenant.Name); err != nil {
-		return err
-	}
-
 	if pending {
 		return errDeleteJobPending
-	}
-	return nil
-}
-
-// deleteLegacyMemcachedApplication removes the pre-Inc-8 ArgoCD Application CR
-// (memcached-{tenant}) if it still exists from the Bitnami chart era.
-func (r *TenantReconciler) deleteLegacyMemcachedApplication(ctx context.Context, tenantName string) error {
-	appCR := &unstructured.Unstructured{}
-	appCR.SetGroupVersionKind(argocdApplicationGVK)
-	appCR.SetName(memcachedApplicationName(tenantName))
-	appCR.SetNamespace(argocdNamespace)
-	if err := r.Delete(ctx, appCR); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete legacy Memcached ArgoCD Application: %w", err)
 	}
 	return nil
 }
@@ -497,11 +463,6 @@ func redisACLUsername(tenantName, appName string) string {
 // not the prefix value stored here.
 func redisKeyPrefix(tenantName, appName string) string {
 	return fmt.Sprintf("%s:%s:", tenantName, appName)
-}
-
-// memcachedApplicationName returns the legacy ArgoCD Application CR name.
-func memcachedApplicationName(tenantName string) string {
-	return fmt.Sprintf("memcached-%s", tenantName)
 }
 
 func redisACLJobName(tenantName, appName string) string {

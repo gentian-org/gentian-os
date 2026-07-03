@@ -38,7 +38,6 @@ const (
 	ManagedByValue               = meta.ManagedByValue
 	KernelNamespace              = meta.KernelNamespace
 	OperatorNamespace            = meta.OperatorNamespace
-	IngressNamespace             = meta.IngressNamespace
 	EnvoyGatewayInstallNamespace = meta.EnvoyGatewayInstallNamespace
 	RoutingModeGateway           = meta.RoutingModeGateway
 )

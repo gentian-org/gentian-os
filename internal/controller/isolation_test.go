@@ -113,7 +113,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	expectedNS := []string{"ingress", "envoy-gateway-system"}
+	expectedNS := []string{"envoy-gateway-system"}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {

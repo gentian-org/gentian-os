@@ -59,9 +59,7 @@ const (
 	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
 	portalRedirectComponentLabel = meta.PortalRedirectComponentLabel
 	portalRedirectComponentValue = meta.PortalRedirectComponentValue
-	kernelNamespace           = meta.KernelNamespace
-	// ingressNamespace is the namespace where the nginx ingress controller runs.
-	ingressNamespace        = meta.IngressNamespace
+	kernelNamespace = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -172,8 +170,7 @@ type TenantReconciler struct {
 	// meet.demo.desk.gentian.org). Nil when CLOUDFLARE_* env vars are unset;
 	// use DNS-only (grey cloud) or passthrough to origin in that case.
 	CloudflareDNS *CloudflareDNSClient
-	// RoutingMode selects the edge routing stack: ingress (nginx Ingress) or
-	// gateway (Gateway API + Envoy Gateway). Sourced from ROUTING_MODE.
+	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
 	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
 	// so tenant lifecycle is driven by the Crossplane graph alone.
@@ -223,11 +220,6 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Kind:    cnpgDatabaseKind,
 	})
 
-	// argocdApp watches ArgoCD Application CRs so that Memcached health transitions
-	// immediately trigger re-reconciliation rather than waiting for the requeue timer.
-	argocdApp := &unstructured.Unstructured{}
-	argocdApp.SetGroupVersionKind(argocdApplicationGVK)
-
 	mapAllTenants := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		tenantList := &gentianov1alpha1.TenantList{}
 		if err := mgr.GetClient().List(ctx, tenantList); err != nil {
@@ -271,14 +263,6 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
 				return hasLabel
-			})),
-		).
-		Watches(
-			argocdApp,
-			handler.EnqueueRequestsFromMapFunc(mapToTenant),
-			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-				_, hasLabel := obj.GetLabels()[tenantLabel]
-				return hasLabel && obj.GetNamespace() == argocdNamespace
 			})),
 		).
 		Watches(
@@ -450,7 +434,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	// 10. Cache (Redis ACL users + Memcached ArgoCD Applications)
+	// 10. Cache (Redis ACL users + Memcached Deployment)
 	cacheResult, err := r.ensureCache(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
