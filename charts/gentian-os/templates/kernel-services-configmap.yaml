@@ -51,4 +51,7 @@ data:
   {{- with $ks.turnCredentials }}
   TURN_CREDENTIALS: {{ . | quote }}
   {{- end }}
+  {{- with $ks.openprojectEnterpriseToken }}
+  OPENPROJECT_ENTERPRISE_TOKEN: {{ . | quote }}
+  {{- end }}
 {{- end }}

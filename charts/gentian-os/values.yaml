@@ -92,6 +92,9 @@ kernelServices:
   turnTLSPort: "5349"
   turnTransport: "udp"
   turnCredentials: ""
+  # OpenProject Enterprise token (host must match projects.<tenant-domain>).
+  # Set via install.secrets.env OPENPROJECT_ENTERPRISE_TOKEN; enables portal OIDC SSO.
+  openprojectEnterpriseToken: ""
 
 image:
   repository: ghcr.io/gentian-org/gentian-os

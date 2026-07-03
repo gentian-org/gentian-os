@@ -3256,6 +3256,7 @@ install_stage1_operator() {
         --set "authzBridge.openfgaToken=${openfga_token}" \
         --set infraNamespace="${_infra_ns}" \
         --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
+        ${OPENPROJECT_ENTERPRISE_TOKEN:+--set "kernelServices.openprojectEnterpriseToken=${OPENPROJECT_ENTERPRISE_TOKEN}"} \
         --set "image.tag=${operator_tag}" \
         --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
         --wait --timeout 5m
