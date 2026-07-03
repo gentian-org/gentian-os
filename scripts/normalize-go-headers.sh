@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Normalize Go file headers to hack/boilerplate.go.txt (Apache-2.0 block).
+# Normalize Go file headers to hack/boilerplate.header.txt (Apache-2.0 block).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BOILERPLATE="${ROOT}/hack/boilerplate.go.txt"
+BOILERPLATE="${ROOT}/hack/boilerplate.header.txt"
 python3 - "$ROOT" "$BOILERPLATE" <<'PY'
 import pathlib
 import re

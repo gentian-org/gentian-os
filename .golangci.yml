@@ -4,4 +4,4 @@ linters:
     - goheader
   settings:
     goheader:
-      template-path: ${config-path}/hack/boilerplate.go.txt
+      template-path: ${config-path}/hack/boilerplate.header.txt
