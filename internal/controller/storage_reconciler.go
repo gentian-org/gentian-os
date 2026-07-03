@@ -24,7 +24,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/meta"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -42,7 +41,7 @@ const (
 // ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
 // KernelRequirements.Storage.S3.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	s3Apps, err := r.collectStorageApps(ctx, tenant)
+	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -87,23 +86,10 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 	return ctrl.Result{}, nil
 }
 
-func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (s3Apps []string, err error) {
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Storage == nil {
-			continue
-		}
-		if profile.Spec.KernelRequirements.Storage.S3 != nil {
-			s3Apps = append(s3Apps, app.Profile)
-		}
-	}
-	return s3Apps, nil
+func (r *TenantReconciler) collectStorageApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) ([]string, error) {
+	return r.collectKernelApps(ctx, tenant, mode, matchS3Profile, func(tenantName string) string {
+		return s3BucketJobName(tenantName, "")
+	})
 }
 
 func (r *TenantReconciler) ensureS3BucketJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
@@ -115,31 +101,11 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 		return nil
 	}
 
-	s3Apps, err := r.collectStorageAppsForDelete(ctx, tenant)
+	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForDelete)
 	if err != nil {
 		return err
 	}
-
-	pending := false
-	for _, appName := range s3Apps {
-		deleteJobName := s3BucketDeleteJobName(tenant.Name, appName)
-		existing := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, existing); errors.IsNotFound(err) {
-			if err := r.Create(ctx, makeS3BucketDeleteJob(tenant, appName)); err != nil {
-				return fmt.Errorf("create S3 delete Job for %s: %w", appName, err)
-			}
-			pending = true
-		} else if err != nil {
-			return err
-		} else if !jobIsComplete(existing) {
-			pending = true
-		}
-	}
-
-	if pending {
-		return errDeleteJobPending
-	}
-	return nil
+	return r.ensureDeleteJobs(ctx, tenant, s3Apps, s3BucketDeleteJobName, makeS3BucketDeleteJob)
 }
 
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {

@@ -43,11 +43,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load helper functions from install-lib.sh without running its main().
-export GENTIAN_INSTALL_LIB_ONLY=1
-# shellcheck source=scripts/install-lib.sh
-source "${SCRIPT_DIR}/scripts/install-lib.sh"
-unset GENTIAN_INSTALL_LIB_ONLY
+# Load helper functions from scripts/lib/load.sh.
+# shellcheck source=scripts/lib/load.sh
+source "${SCRIPT_DIR}/scripts/lib/load.sh"
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 CROSSPLANE_NAMESPACE=crossplane-system
@@ -192,7 +190,7 @@ _kv_secret() {
 }
 
 # _detect_deployed_mail_mode, _postfix_dev_values_yaml, _patch_postfix_configmap,
-# install_stage1_mail — see scripts/mail-lib.sh (sourced via install-lib.sh).
+# install_stage1_mail — see scripts/mail-lib.sh (sourced via scripts/lib/load.sh).
 
 # =============================================================================
 # op_mail — reconcile mail configuration per MAIL_SERVICE_MODE

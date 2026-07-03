@@ -114,6 +114,12 @@ spec:
               value: {{ .Values.openbaoNamespace | quote }}
             - name: MEMCACHED_IMAGE
               value: {{ .Values.memcached.image | quote }}
+            - name: POSTGRES_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.postgres | quote }}
+            - name: MARIADB_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.mariadb | quote }}
+            - name: REDIS_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.redis | quote }}
             - name: TENANT_CROSSPLANE_ONLY
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS

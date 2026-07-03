@@ -13,8 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
 export GENTIAN_INSTALL_LIB_ONLY=1
-# shellcheck source=scripts/install-lib.sh
-source "${REPO_ROOT}/scripts/install-lib.sh"
+# shellcheck source=scripts/lib/load.sh
+source "${REPO_ROOT}/scripts/lib/load.sh"
 unset GENTIAN_INSTALL_LIB_ONLY
 
 load_deployments_cluster_settings 2>/dev/null || true

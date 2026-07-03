@@ -14,8 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
-package controller
+package keycloak
 
 import (
 	"testing"
@@ -24,7 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestCollectGentianTenantGroupNames_IncludesAppAdmins(t *testing.T) {
+func TestCollectTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
@@ -34,7 +33,7 @@ func TestCollectGentianTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 			},
 		},
 	}
-	names := collectGentianTenantGroupNames(tenant, nil)
+	names := CollectTenantGroupNames(tenant, nil)
 	want := []string{
 		"gentian:tenant:demo:members",
 		"gentian:tenant:demo:admins",
@@ -42,7 +41,7 @@ func TestCollectGentianTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 		"gentian:tenant:demo:app:demo-app",
 	}
 	if len(names) != len(want) {
-		t.Fatalf("collectGentianTenantGroupNames() = %v, want %v", names, want)
+		t.Fatalf("CollectTenantGroupNames() = %v, want %v", names, want)
 	}
 	for i, name := range want {
 		if names[i] != name {
@@ -51,9 +50,9 @@ func TestCollectGentianTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 	}
 }
 
-func TestGentianTenantAppAdminsGroup(t *testing.T) {
+func TestTenantAppAdminsGroup(t *testing.T) {
 	t.Parallel()
-	if got := gentianTenantAppAdminsGroup("demo"); got != "gentian:tenant:demo:app-admins" {
-		t.Fatalf("gentianTenantAppAdminsGroup() = %q", got)
+	if got := TenantAppAdminsGroup("demo"); got != "gentian:tenant:demo:app-admins" {
+		t.Fatalf("TenantAppAdminsGroup() = %q", got)
 	}
 }

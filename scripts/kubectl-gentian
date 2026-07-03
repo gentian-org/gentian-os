@@ -2196,7 +2196,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: delete-db
-        image: mariadb:11
+        image: ${MARIADB_PROVISIONER_IMAGE:-mariadb:11}
         command: ["/bin/bash", "-c"]
         args:
         - |
@@ -2315,7 +2315,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: del-acl-user
-        image: redis:7-alpine
+        image: ${REDIS_PROVISIONER_IMAGE:-redis:7-alpine}
         command: ["/bin/sh", "-c"]
         args:
         - |

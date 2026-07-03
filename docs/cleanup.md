@@ -51,14 +51,14 @@ Last reviewed: 2026-07-02
 
 | Item | Status | Sev | Finding | Suggested Solution | Location | Notes |
 |------|--------|-----|---------|-------------------|----------|-------|
-| c-1 | open | High | Data-plane provisioning pattern repeated 4× | Introduce `KernelRequirementProvisioner` interface + shared Job wait/condition helpers | `database_reconciler.go`, `mariadb_reconciler.go`, `storage_reconciler.go`, `cache_reconciler.go` + `tenant_data_plane_manifests.go` | collect → Job wait/create → condition; manifest builder duplicates Job constructors |
-| c-2 | open | High | Keycloak logic split across 15+ files | Consolidate shell builders under `keycloak/` package; add sequence diagram to `docs/design/iam.md` | `identity_reconciler.go`, `keycloak_*.go`, `keycloak_shell_helpers.go` | Shell script builders coexist with REST client paths; hard to trace identity flow |
-| c-3 | open | High | `install-lib.sh` monolith | Split into `scripts/lib/{openbao,argocd,mail,certs,catalogue}.sh`; source from install-lib | ~3,890 lines; sourced by `install.sh`, `update.sh`, `uninstall.sh` | Single library; `update.sh` adds `op_*` handlers on top |
-| c-4 | open | Medium | Gateway route building triplicated | Single `reconcileTenantHTTPRoutes(ctx, tenant, phase)` used by gateway + edge manifests | `gateway_reconciler.go`, `tenant_edge_manifests.go` | Same loop for stale cleanup, manifest emission, readiness waits |
-| c-5 | open | Medium | Crossplane composition copy for tests | Render test reads `crossplane/compositions/app-default.yaml` directly or symlink | `crossplane/compositions/app-default.yaml` vs `crossplane/tests/unit/render/app-default/composition.yaml` | Full ~1,236-line duplicate; can drift |
-| c-6 | open | Medium | Provisioner image constants scattered | Add `internal/kernel/images.go` or Helm values consumed by operator Deployment | Controllers, `kubectl-gentian`, `applifecycle/purge.go` | `postgres:16-alpine`, `mariadb:11`, `redis:7-alpine`, etc.; only Memcached uses env override |
-| c-7 | open | Medium | `collect*Apps` + `collect*AppsForDelete` | Single collector with `mode: provision\|delete` filter | `tenant_cleanup.go` L102+ | Near-duplicate collectors for delete path |
-| c-8 | open | Low | `gentian_groups.go` vs `keycloak_gentian_groups.go` | Rename to consistent `keycloak_*` prefix or merge small helpers | Split naming/helpers vs Job builders | Reasonable separation; naming inconsistent |
+| c-1 | done | High | Data-plane provisioning pattern repeated 4× | Introduce `KernelRequirementProvisioner` interface + shared Job wait/condition helpers | `kernel_requirement.go`, reconcilers | `reconcileJobWaitRequirement`, `ensureDeleteJobs`, `newKernelProvisioningJob` |
+| c-2 | partial | High | Keycloak logic split across 15+ files | Consolidate shell builders under `keycloak/` package; add sequence diagram to `docs/design/iam.md` | `identity_reconciler.go`, `keycloak_*.go`, `keycloak_shell_helpers.go` | Groups in `internal/keycloak/`; §1.9 diagram; shell helpers still in controller |
+| c-3 | done | High | `install-lib.sh` monolith | Split into `scripts/lib/{openbao,argocd,mail,certs,catalogue}.sh`; source from install-lib | `scripts/lib/load.sh` sourced by `install.sh`, `update.sh`, `uninstall.sh` | `install-lib.sh` is thin shim + legacy `main()` |
+| c-4 | done | Medium | Gateway route building triplicated | Single `reconcileTenantHTTPRoutes(ctx, tenant, phase)` used by gateway + edge manifests | `gateway_route_helpers.go` | `appHTTPRoutesForIntents` |
+| c-5 | done | Medium | Crossplane composition copy for tests | Render test reads `crossplane/compositions/app-default.yaml` directly or symlink | `crossplane/tests/unit/render/app-default/composition.yaml` | Symlink to canonical composition |
+| c-6 | done | Medium | Provisioner image constants scattered | Add `internal/kernel/images.go` or Helm values consumed by operator Deployment | Controllers, `kubectl-gentian`, `applifecycle/purge.go` | Helm `provisioners.*` + env vars mirror Memcached pattern |
+| c-7 | done | Medium | `collect*Apps` + `collect*AppsForDelete` | Single collector with `mode: provision\|delete` filter | `kernel_requirement.go`, reconcilers | `AppCollectionMode` + `collectKernelApps` |
+| c-8 | done | Low | `gentian_groups.go` vs `keycloak_gentian_groups.go` | Rename to consistent `keycloak_*` prefix or merge small helpers | `internal/keycloak/groups.go` | Group naming in keycloak package; controller thin wrappers |
 
 ---
 
@@ -165,7 +165,7 @@ Last reviewed: 2026-07-02
 | p-6 | open | Refactor `tenant_controller.Reconcile` into staged pipeline (see f-3, g-1) | Phased reconcile with typed stages |
 | p-7 | open | Update architecture/catalogue docs (`app-default` + `compositionRef`) (see a-2, dvc-3) | Overlap with p-2 |
 | p-8 | open | Add reconciler tests (AppGrant, AuthzBridge, PlatformSecurityPolicy) (see t-2, t-3, t-6) | envtest + mocks per reconciler |
-| p-9 | open | Split `install-lib.sh` into focused modules (see c-3) | Incremental extract; keep install-lib as thin orchestrator |
+| p-9 | done | Split `install-lib.sh` into focused modules (see c-3) | `scripts/lib/load.sh` + domain modules; thin `install-lib.sh` shim |
 | p-10 | open | Deduplicate `app-default` composition for unit render tests (see c-5) | Symlink or read parent composition in render harness |
 
 ---

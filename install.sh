@@ -31,11 +31,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load all helper functions from scripts/install-lib.sh without running its main().
-export GENTIAN_INSTALL_LIB_ONLY=1
-# shellcheck source=scripts/install-lib.sh
-source "${SCRIPT_DIR}/scripts/install-lib.sh"
-unset GENTIAN_INSTALL_LIB_ONLY
+# Load all helper functions from scripts/lib/load.sh.
+# shellcheck source=scripts/lib/load.sh
+source "${SCRIPT_DIR}/scripts/lib/load.sh"
 
 # ─── Crossplane settings ──────────────────────────────────────────────────────
 CROSSPLANE_NAMESPACE=crossplane-system

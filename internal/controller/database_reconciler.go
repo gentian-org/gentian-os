@@ -32,6 +32,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 const (
@@ -40,7 +41,6 @@ const (
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
 	cnpgClusterName        = "postgres" // shared CloudNativePG Cluster in platform-kernel
-	psqlProvisionerImage   = "postgres:16-alpine"
 	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
 )
@@ -250,7 +250,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
-		Image:   psqlProvisionerImage,
+		Image:   kernel.PostgresProvisionerImage(),
 		Command: []string{"/bin/bash", "-c", script},
 		Env: []corev1.EnvVar{
 			{

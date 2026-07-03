@@ -31,8 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/remotecommand"
 
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 const mariadbDeleteScript = "" +
@@ -192,7 +194,7 @@ func (s *Service) runMariaDBDeleteJob(ctx context.Context, tenant *gentianov1alp
 	dbName := databaseName(tenant, app)
 	dbUser := mariadbUserName(tenant.Name, app)
 	job := kernelDeleteJob(s.opts.KernelNamespace, mariadbDeleteJobName(tenant.Name, app), tenant.Name, app,
-		"mariadb:11", "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
+		kernel.MariaDBProvisionerImage(), "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
 			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
 			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
 		))
@@ -217,7 +219,7 @@ redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-au
   ACL DELUSER %s 2>/dev/null || echo "user %s already absent"
 echo done`, user, user)
 	job := kernelDeleteJob(s.opts.KernelNamespace, redisACLDeleteJobName(tenant, app), tenant, app,
-		"redis:7-alpine", "del-acl-user", script, redisAdminEnv())
+		kernel.RedisProvisionerImage(), "del-acl-user", script, redisAdminEnv())
 	return s.runKernelJob(ctx, job)
 }
 

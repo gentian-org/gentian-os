@@ -66,7 +66,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
 	}
 
-	mariaApps, err := r.collectMariaDBApps(ctx, tenant)
+	mariaApps, err := r.collectMariaDBApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		jobs = append(jobs, *makeMariaDBSetupJob(tenant, appName, dbPassword, allowDynamic))
 	}
 
-	s3Apps, err := r.collectStorageApps(ctx, tenant)
+	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		jobs = append(jobs, *makeS3BucketJob(tenant, appName))
 	}
 
-	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant)
+	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 		objects = append(objects, buildDatabaseCR(tenant, nsName, dbName, appName))
 	}
 
-	_, memcachedApps, err := r.collectCacheApps(ctx, tenant)
+	_, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}

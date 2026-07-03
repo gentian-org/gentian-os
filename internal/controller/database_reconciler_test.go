@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // newPostgresProfile creates a minimal AppProfile that requires a PostgreSQL database.
@@ -310,7 +311,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		t.Fatal("expected at least one container in role Job")
 	}
 	container := roleJob.Spec.Template.Spec.Containers[0]
-	if container.Image != "postgres:16-alpine" {
+	if container.Image != kernel.DefaultPostgresProvisionerImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 }

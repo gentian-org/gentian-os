@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/mail-lib.sh — MAIL_SERVICE_MODE install/update helpers
 # =============================================================================
-# Sourced from install-lib.sh (and therefore install.sh / update.sh).
+# Sourced from scripts/lib/load.sh (and therefore install.sh / update.sh).
 #
 # MAIL_SERVICE_MODE:
 #   external — apps (Keycloak, etc.) send mail via EXTERNAL_SMTP_HOST directly

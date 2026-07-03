@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // newMariaDBProfile creates a minimal AppProfile that requires a MariaDB database.
@@ -130,7 +131,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		t.Fatal("expected at least one container in setup Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "mariadb:11" {
+	if container.Image != kernel.DefaultMariaDBProvisionerImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
@@ -268,7 +269,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 		t.Errorf("expected tenant label 'mariadelete', got %q", deleteJob.Labels["gentianos.io/tenant"])
 	}
 	container := deleteJob.Spec.Template.Spec.Containers[0]
-	if container.Image != "mariadb:11" {
+	if container.Image != kernel.DefaultMariaDBProvisionerImage {
 		t.Errorf("unexpected delete Job container image %q", container.Image)
 	}
 }

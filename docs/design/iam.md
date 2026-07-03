@@ -107,8 +107,44 @@ kernel IdP.
 
 User/group changes in Keycloak emit events consumed by a
 **provisioning bus** (CloudEvents + SCIM 2.0 payloads). App-specific
-logic lives in **`gentian-apps` provisioner plugins** referenced from
-`AppProfile`. See [admin-console.md §6](admin-console.md#6-app-entitlements-and-provisioning-bus).
+handlers live in gentian-apps / gentian-pro.
+
+### 1.9 Tenant identity provisioning sequence
+
+When a `Tenant` CR enters the identity phase, the operator emits a
+**sequenced batch of Crossplane Jobs** in `platform-kernel`. Each Job
+runs a Keycloak Admin API shell script (curl + jq) built by
+`internal/controller/keycloak_*.go` and shared helpers in
+`keycloak_shell_helpers.go`. Gentian group naming lives in
+`internal/keycloak/groups.go`.
+
+```mermaid
+sequenceDiagram
+  participant TR as TenantReconciler
+  participant KC as platform-kernel Jobs
+  participant K as Keycloak (Suze)
+
+  TR->>KC: realm Job
+  KC->>K: create tenant realm + SMTP
+  TR->>KC: gentian-groups Job
+  KC->>K: ensure members/admins/app:* groups
+  TR->>KC: admin Job
+  KC->>K: seed tenant admin user
+  opt OIDC packs on AppProfiles
+    TR->>KC: browser + first-broker flows
+    TR->>KC: per-app OIDC client Jobs
+  end
+  TR->>KC: kernel broker + portal clients
+  KC->>K: IdP link + portal/BFF OIDC clients
+  TR->>TR: IdentityReady=True
+```
+
+Job names follow `{purpose}-{tenant}` (e.g. `keycloak-gentian-groups-demo`).
+The reconciler waits for each Job via `waitForProvisioningJob` before
+advancing. Crossplane-owned identity resources skip duplicate operator
+Jobs when `AppProfile` composition owns the client.
+
+See [admin-console.md §6](admin-console.md#6-app-entitlements-and-provisioning-bus).
 
 ---
 

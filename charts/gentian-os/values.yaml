@@ -177,6 +177,12 @@ argocd:
   namespace: "argocd"
   project: "default"
 
+# Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
+provisioners:
+  postgres: "postgres:16-alpine"
+  mariadb: "mariadb:11"
+  redis: "redis:7-alpine"
+
 # Memcached image for tenant cache provisioning (operator-managed Deployment).
 # Changing this takes effect on the next operator redeploy without rebuilding.
 memcached:

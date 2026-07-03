@@ -14,72 +14,38 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
-	"fmt"
-	"strings"
+	kc "github.com/gentian-org/gentian-os/internal/keycloak"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func gentianTenantPrefix(tenant string) string {
-	return "gentian:tenant:" + tenant + ":"
-}
-
-func gentianTenantMembersGroup(tenant string) string {
-	return gentianTenantPrefix(tenant) + "members"
-}
-
-func gentianTenantAdminsGroup(tenant string) string {
-	return gentianTenantPrefix(tenant) + "admins"
+func collectGentianTenantGroupNames(tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) []string {
+	extra := make([]string, 0, len(oidcConfigs))
+	for _, cfg := range oidcConfigs {
+		extra = append(extra, cfg.profileName)
+	}
+	return kc.CollectTenantGroupNames(tenant, extra)
 }
 
 func gentianTenantAppGroup(tenant, profile string) string {
-	return gentianTenantPrefix(tenant) + "app:" + profile
+	return kc.TenantAppGroup(tenant, profile)
 }
 
 func gentianTenantAppAdminsGroup(tenant string) string {
-	return gentianTenantPrefix(tenant) + "app-admins"
+	return kc.TenantAppAdminsGroup(tenant)
 }
 
-func collectGentianTenantGroupNames(tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) []string {
-	seen := map[string]struct{}{
-		gentianTenantMembersGroup(tenant.Name):   {},
-		gentianTenantAdminsGroup(tenant.Name):    {},
-		gentianTenantAppAdminsGroup(tenant.Name): {},
-	}
-	names := []string{
-		gentianTenantMembersGroup(tenant.Name),
-		gentianTenantAdminsGroup(tenant.Name),
-		gentianTenantAppAdminsGroup(tenant.Name),
-	}
-	add := func(group string) {
-		if group == "" {
-			return
-		}
-		if _, ok := seen[group]; ok {
-			return
-		}
-		seen[group] = struct{}{}
-		names = append(names, group)
-	}
-	for _, app := range tenant.Spec.Apps {
-		add(gentianTenantAppGroup(tenant.Name, app.Profile))
-	}
-	for _, cfg := range oidcConfigs {
-		add(gentianTenantAppGroup(tenant.Name, cfg.profileName))
-	}
-	return names
+func gentianTenantAdminsGroup(tenant string) string {
+	return kc.TenantAdminsGroup(tenant)
 }
 
 func gentianGroupsJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-gentian-groups-%s", tenantName)
+	return kc.GroupsJobName(tenantName)
 }
 
-// shellWordList formats values for POSIX sh word-splitting in Job env vars.
-// Do not wrap in shell quotes — literal " characters become part of GROUP_NAME.
 func shellWordList(values []string) string {
-	return strings.Join(values, " ")
+	return kc.ShellWordList(values)
 }

@@ -23,7 +23,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -97,55 +96,6 @@ func (r *TenantReconciler) listTenantAppsFromJobPrefix(ctx context.Context, tena
 		apps = appendUniqueStrings(apps, app)
 	}
 	return apps, nil
-}
-
-func (r *TenantReconciler) collectMariaDBAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	var apps []string
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, err
-		}
-		if profile.Spec.KernelRequirements == nil ||
-			profile.Spec.KernelRequirements.Database == nil ||
-			profile.Spec.KernelRequirements.Database.Engine != gentianov1alpha1.DatabaseEngineMariaDB {
-			continue
-		}
-		apps = appendUniqueStrings(apps, app.Profile)
-	}
-	fromJobs, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, mariadbSetupJobName(tenant.Name, ""))
-	if err != nil {
-		return nil, err
-	}
-	return appendUniqueStrings(apps, fromJobs...), nil
-}
-
-func (r *TenantReconciler) collectStorageAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	apps, err := r.collectStorageApps(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-	fromJobs, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, s3BucketJobName(tenant.Name, ""))
-	if err != nil {
-		return nil, err
-	}
-	return appendUniqueStrings(apps, fromJobs...), nil
-}
-
-func (r *TenantReconciler) collectCacheAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) (redisApps, memcachedApps []string, err error) {
-	redisApps, memcachedApps, err = r.collectCacheApps(ctx, tenant)
-	if err != nil {
-		return nil, nil, err
-	}
-	fromJobs, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, redisACLJobName(tenant.Name, ""))
-	if err != nil {
-		return nil, nil, err
-	}
-	redisApps = appendUniqueStrings(redisApps, fromJobs...)
-	return redisApps, memcachedApps, nil
 }
 
 // deleteTenantLabeledDatabaseCRs removes all CloudNativePG Database CRs owned by

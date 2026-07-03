@@ -34,10 +34,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Shared helpers (composition glob, kernel Release discovery).
-export GENTIAN_INSTALL_LIB_ONLY=1
-# shellcheck source=scripts/install-lib.sh
-source "${SCRIPT_DIR}/scripts/install-lib.sh"
-unset GENTIAN_INSTALL_LIB_ONLY
+# shellcheck source=scripts/lib/load.sh
+source "${SCRIPT_DIR}/scripts/lib/load.sh"
 
 MODE="safe"
 ENV="${ENV:-dev}"
@@ -920,7 +918,7 @@ fi
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
     banner "Step 9 — Remove additional cluster infra"
 
-    # Installed by install_argocd_image_updater() in scripts/install-lib.sh.
+    # Installed by install_argocd_image_updater() in scripts/lib/argocd.sh.
     if helm status argocd-image-updater -n argocd-image-updater >/dev/null 2>&1; then
         helm uninstall argocd-image-updater -n argocd-image-updater 2>/dev/null || true
         success "argocd-image-updater Helm release uninstalled."
