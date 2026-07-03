@@ -1,0 +1,77 @@
+# Promote gentian identity annotations to pod labels.
+#
+# The tenant `kernel-access-<app>` and `app-internal-<app>` NetworkPolicies (built
+# by the operator, internal/kernel/netpolicy) select pods by the LABEL
+# `gentianos.io/app`. The app-default Crossplane composition injects that label via
+# Helm `podLabels`, which works only for charts that honour a `.Values.podLabels`
+# key (Bitnami family). Charts that support neither `podLabels` nor `commonLabels`
+# on their pod template (e.g. the community xwiki-contrib chart) cannot receive the
+# label through Helm values at all — so those AppProfiles publish the identifiers as
+# pod ANNOTATIONS (extraValues.podAnnotations) instead, and this policy copies them
+# onto the corresponding labels at pod admission.
+#
+# The rules are guarded on annotation presence, so pods without the annotations are
+# never modified (zero effect on Bitnami-style apps that already carry the labels).
+#
+# autogen is disabled: the rules must run against the real Pod (whose metadata
+# carries the annotations inherited from the controller's pod template), not the
+# owning StatefulSet/Deployment (whose top-level metadata does not).
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-promote-app-labels
+  annotations:
+    policies.kyverno.io/title: Promote gentian app annotations to labels
+    policies.kyverno.io/category: Platform Integration
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/description: >-
+      Copies the gentianos.io/app and gentianos.io/tenant pod annotations onto the
+      matching pod labels so tenant NetworkPolicies that select on gentianos.io/app
+      match charts that cannot set pod labels via Helm values.
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  background: false
+  rules:
+  - name: promote-app-annotation
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    context:
+    - name: appAnno
+      variable:
+        jmesPath: 'request.object.metadata.annotations."gentianos.io/app"'
+        default: ''
+    preconditions:
+      all:
+      - key: '{{ appAnno }}'
+        operator: NotEquals
+        value: ''
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            gentianos.io/app: '{{ appAnno }}'
+  - name: promote-tenant-annotation
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    context:
+    - name: tenantAnno
+      variable:
+        jmesPath: 'request.object.metadata.annotations."gentianos.io/tenant"'
+        default: ''
+    preconditions:
+      all:
+      - key: '{{ tenantAnno }}'
+        operator: NotEquals
+        value: ''
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            gentianos.io/tenant: '{{ tenantAnno }}'
