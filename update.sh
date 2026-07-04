@@ -169,9 +169,42 @@ _init() {
         fi
     fi
     export VAULT_TOKEN="${BAO_TOKEN}"
+
+    # Retrieve derivation salt from OpenBao
+    local existing_secret
+    existing_secret=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${VAULT_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+    if [[ -n "${existing_secret}" ]]; then
+        local m_val s_val
+        m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
+        s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
+        if [[ -n "${m_val}" ]]; then
+            MASTER_PASSWORD="${m_val}"
+        fi
+        if [[ -n "${s_val}" ]]; then
+            DERIVATION_SALT="${s_val}"
+        fi
+    fi
+    if [[ -z "${DERIVATION_SALT:-}" ]]; then
+        DERIVATION_SALT=$(openssl rand -hex 16)
+    fi
+    export DERIVATION_SALT
 }
 
-_derive() { echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" -binary | sha1sum | awk '{print $1}'; }
+_derive() {
+    local service="$1" key="$2"
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        # Retrieve existing value from the Secret to prevent regeneration drift
+        local existing_val
+        existing_val=$(kubectl get secret "gentian-os-kernel-mail-dovecot" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" -o jsonpath="{.data.data\.json}" 2>/dev/null | base64 -d 2>/dev/null | jq -r ".${key} // empty" 2>/dev/null || true)
+        if [[ -n "${existing_val}" ]]; then
+            echo -n "${existing_val}"
+        else
+            openssl rand -hex 32
+        fi
+    else
+        echo -n "${service}:${key}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}';
+    fi
+}
 
 # =============================================================================
 # Helper: upsert a K8s Secret in crossplane-system with data.json key.

@@ -118,7 +118,16 @@ func (c *KeycloakAdminClient) EnsureRealm(ctx context.Context, realm, displayNam
 		return err
 	}
 	if status == http.StatusOK {
-		body := map[string]any{"enabled": true}
+		body := map[string]any{
+			"enabled":                      true,
+			"bruteForceProtected":          true,
+			"failureFactor":                30,
+			"maxFailureWaitSeconds":        900,
+			"minimumQuickLoginWaitSeconds": 60,
+			"waitIncrementSeconds":         60,
+			"quickLoginCheckMilliSeconds":  1000,
+			"maxDeltaTimeSeconds":          86400,
+		}
 		_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 		return err
 	}
@@ -126,9 +135,16 @@ func (c *KeycloakAdminClient) EnsureRealm(ctx context.Context, realm, displayNam
 		return fmt.Errorf("keycloak get realm %s: unexpected status %d", realm, status)
 	}
 	body := map[string]any{
-		"realm":       realm,
-		"enabled":     true,
-		"displayName": displayName,
+		"realm":                        realm,
+		"enabled":                      true,
+		"displayName":                  displayName,
+		"bruteForceProtected":          true,
+		"failureFactor":                30,
+		"maxFailureWaitSeconds":        900,
+		"minimumQuickLoginWaitSeconds": 60,
+		"waitIncrementSeconds":         60,
+		"quickLoginCheckMilliSeconds":  1000,
+		"maxDeltaTimeSeconds":          86400,
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPost, "/admin/realms", body, http.StatusCreated)
 	return err
