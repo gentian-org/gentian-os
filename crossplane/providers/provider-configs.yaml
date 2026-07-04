@@ -31,7 +31,8 @@ metadata:
   name: openbao
 spec:
   # Address of the OpenBao server reachable from within the cluster.
-  address: http://openbao.openbao.svc.cluster.local:8200
+  address: https://openbao.openbao.svc.cluster.local:8200
+  skip_tls_verify: true
   credentials:
     source: Secret
     secretRef:

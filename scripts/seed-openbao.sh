@@ -46,6 +46,7 @@ EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
 EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
 EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
 SECRET_MODE="${SECRET_MODE:-derived}"
+export VAULT_SKIP_VERIFY=true
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -62,7 +63,7 @@ for cmd in openssl sha1sum curl jq; do
 done
 
 # Try to read existing master-password and salt from OpenBao
-existing_secret=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+existing_secret=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
@@ -152,7 +153,7 @@ kv_put() {
     local full_path="secret/data/gentian-os/kernel/${path}"
     echo "  Writing ${full_path}..."
     local result http_code body
-    result=$(curl -s -w "\n%{http_code}" \
+    result=$(curl -k -s -w "\n%{http_code}" \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         -H "Content-Type: application/json" \
         -X POST \
@@ -182,7 +183,7 @@ kv_put_once() {
     local json_data="$2"
     local check_path="secret/data/gentian-os/kernel/${path}"
     local existing
-    existing=$(curl -sf \
+    existing=$(curl -k -sf \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         "${BAO_ADDR}/v1/${check_path}" 2>/dev/null || true)
     if echo "${existing}" | grep -q '"data":{'; then
@@ -270,7 +271,7 @@ EOF
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
 # oidc_client_secret: generated on first seed when absent.
-_DOVECOT_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
+_DOVECOT_EXISTING=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
   echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"

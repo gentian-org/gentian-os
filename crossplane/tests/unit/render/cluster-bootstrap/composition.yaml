@@ -23,7 +23,7 @@ spec:
             {{- $spec := $xr.spec }}
             {{- $name := $xr.metadata.name }}
 
-            {{- $openbaoServer    := default "http://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
+            {{- $openbaoServer    := default "https://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
             {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
@@ -302,6 +302,13 @@ spec:
                         server: {{ $openbaoServer }}
                         path: {{ $kvMount }}
                         version: v2
+                        {{- if hasPrefix "https://" $openbaoServer }}
+                        caProvider:
+                          type: Secret
+                          name: openbao-tls
+                          namespace: openbao
+                          key: tls.crt
+                        {{- end }}
                         auth:
                           kubernetes:
                             mountPath: {{ $authMount }}

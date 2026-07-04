@@ -551,7 +551,7 @@ apply_cluster_xr() {
 
     # Derive defaults for template variables not already set.
     export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
-    export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
+    export OPENBAO_SERVER="${OPENBAO_SERVER:-https://openbao.openbao.svc.cluster.local:8200}"
     export KV_MOUNT="${KV_MOUNT:-secret}"
     export KERNEL_REALM="${KERNEL_REALM:-kernel}"
 

@@ -20,6 +20,7 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,13 +60,19 @@ func NewKVClient(addr, role, saTokenPath string) *KVClient {
 	if saTokenPath == "" {
 		saTokenPath = defaultSATokenPath
 	}
+	var tr http.RoundTripper
+	if os.Getenv("BAO_SKIP_VERIFY") == "true" || os.Getenv("VAULT_SKIP_VERIFY") == "true" {
+		tr = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
 	return &KVClient{
 		addr:        strings.TrimRight(addr, "/"),
 		mount:       Mount,
 		authPath:    "kubernetes",
 		role:        role,
 		saTokenPath: saTokenPath,
-		http:        &http.Client{Timeout: 10 * time.Second},
+		http:        &http.Client{Timeout: 10 * time.Second, Transport: tr},
 	}
 }
 

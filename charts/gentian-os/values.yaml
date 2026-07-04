@@ -163,7 +163,7 @@ cloudflare:
 
 # OpenBao / Vault integration
 openbao:
-  address: "http://openbao.openbao.svc.cluster.local:8200"
+  address: "https://openbao.openbao.svc.cluster.local:8200"
   authPath: "kubernetes"
   # Kubernetes auth role used by the operator to log in to OpenBao for the
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write

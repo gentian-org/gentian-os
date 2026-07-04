@@ -38,16 +38,17 @@ try_load_creds_from_openbao() {
     local bao_ip
     bao_ip=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
     [[ -n "$bao_ip" ]] || return 0
-    local bao_addr="http://${bao_ip}:8200"
+    local bao_addr="https://${bao_ip}:8200"
+    export VAULT_SKIP_VERIFY=true
 
     # Don't bother if OpenBao is sealed/unreachable.
-    curl -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1 || return 0
+    curl -k -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1 || return 0
 
     _bao_get() {
         # $1 = relative path under secret/data/gentian-os/kernel/
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
         # Missing paths (404) are normal before bao_bootstrap — must not abort install.
-        curl -sf --max-time 5 \
+        curl -k -sf --max-time 5 \
             -H "X-Vault-Token: ${token}" \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
             | jq -r "$2 // empty" 2>/dev/null || true
@@ -163,20 +164,21 @@ init_openbao() {
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    local BAO_HTTP="http://${BAO_SVC_IP}:8200"
+    local BAO_HTTP="https://${BAO_SVC_IP}:8200"
+    export VAULT_SKIP_VERIFY=true
 
     local init_status
-    init_status=$(curl -sf "${BAO_HTTP}/v1/sys/init" | jq -r '.initialized')
+    init_status=$(curl -k -sf "${BAO_HTTP}/v1/sys/init" | jq -r '.initialized')
 
     if [[ "$init_status" == "true" ]]; then
         success "OpenBao already initialized."
         local sealed seal_type
-        sealed=$(curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
-        seal_type=$(curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
+        sealed=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
+        seal_type=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
         if [[ "$sealed" == "true" && "$seal_type" == "transit" ]]; then
             warn "OpenBao sealed — waiting for transit auto-unseal..."
             sleep 15
-            sealed=$(curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
+            sealed=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
             [[ "$sealed" == "true" ]] && { error "Auto-unseal failed."; exit 1; }
             success "Transit auto-unseal completed."
         fi
@@ -194,12 +196,12 @@ init_openbao() {
     fi
 
     local seal_type_before
-    seal_type_before=$(curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
+    seal_type_before=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
 
     if [[ "$seal_type_before" == "transit" ]]; then
         info "Initializing OpenBao with transit seal (recovery_shares=1)..."
         local init_resp
-        init_resp=$(curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
+        init_resp=$(curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
             -d '{"recovery_shares": 1, "recovery_threshold": 1}')
 
@@ -231,7 +233,7 @@ init_openbao() {
 
         info "Waiting for transit auto-unseal (up to 30 s)..."
         i=0
-        until curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -e '.sealed == false' >/dev/null 2>&1; do
+        until curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -e '.sealed == false' >/dev/null 2>&1; do
             sleep 3; i=$((i + 3))
             [[ $i -lt 30 ]] || { error "Auto-unseal timed out."; exit 1; }
         done
@@ -239,7 +241,7 @@ init_openbao() {
     else
         info "Initializing OpenBao (1-of-1 Shamir — transit unavailable)..."
         local init_resp
-        init_resp=$(curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
+        init_resp=$(curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
             -d '{"secret_shares": 1, "secret_threshold": 1}') || {
             error "OpenBao init request failed against ${BAO_HTTP}."
@@ -268,7 +270,7 @@ init_openbao() {
         read -rp "  Saved both values? [yes/no]: " confirmed
         [[ "$confirmed" == "yes" ]] || { error "Aborted."; exit 1; }
 
-        curl -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
+        curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
             -H "Content-Type: application/json" \
             -d "{\"key\": \"${unseal_key}\"}" | jq .
         export BAO_TOKEN="$root_token"
@@ -293,7 +295,8 @@ bao_bootstrap() {
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export VAULT_ADDR="http://${BAO_SVC_IP}:8200"
+    export VAULT_ADDR="https://${BAO_SVC_IP}:8200"
+    export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
@@ -351,7 +354,8 @@ seed_secrets() {
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export BAO_ADDR="http://${BAO_SVC_IP}:8200"
+    export BAO_ADDR="https://${BAO_SVC_IP}:8200"
+    export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         if [[ -f "${OPENBAO_INIT_FILE}" ]]; then

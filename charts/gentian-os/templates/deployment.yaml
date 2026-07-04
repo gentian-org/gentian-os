@@ -62,6 +62,8 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
+            - name: VAULT_SKIP_VERIFY
+              value: "true"
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
             - name: TENANCY_MODE

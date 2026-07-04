@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: openbao-selfsigned
+  namespace: openbao
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-tls
+  namespace: openbao
+spec:
+  dnsNames:
+    - openbao.openbao.svc.cluster.local
+    - openbao.openbao.svc
+    - openbao
+    - localhost
+  issuerRef:
+    kind: Issuer
+    name: openbao-selfsigned
+  secretName: openbao-tls

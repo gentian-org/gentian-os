@@ -390,7 +390,7 @@ install_stage1_operator() {
     helm upgrade --install gentian-os "$chart_dir" \
         --namespace "$ns" \
         "${value_files[@]}" \
-        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200" \
+        --set openbao.address="https://openbao.openbao.svc.cluster.local:8200" \
         --set kernelDomain="${KERNEL_DOMAIN}" \
         --set tenancyMode="${TENANCY_MODE:-multi}" \
         --set routingMode="${ROUTING_MODE:-gateway}" \
@@ -439,7 +439,7 @@ install_orchestrator() {
     _gentian_os_collect_operator_value_files value_files
 
     local helm_sets=(
-        --set openbao.address="http://openbao.openbao.svc.cluster.local:8200"
+        --set openbao.address="https://openbao.openbao.svc.cluster.local:8200"
         --set argocd.namespace="argocd"
         --set kernelDomain="${KERNEL_DOMAIN}"
         --set tenancyMode="${TENANCY_MODE:-multi}"

@@ -127,8 +127,13 @@ spec:
                 serviceAccountRef:
                   name: external-secrets
                   namespace: external-secrets
+            caProvider:
+              key: tls.crt
+              name: openbao-tls
+              namespace: openbao
+              type: Secret
             path: secret
-            server: http://openbao.openbao.svc.cluster.local:8200
+            server: https://openbao.openbao.svc.cluster.local:8200
             version: v2
   providerConfigRef:
     name: kubernetes
