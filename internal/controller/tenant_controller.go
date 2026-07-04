@@ -789,11 +789,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 	}
 
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("load AppProfile index: %w", err)
+	}
+
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		entry := map[string]interface{}{"profile": app.Profile}
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err == nil {
+		profile, exists := appProfileFromIndex(profileIndex, app.Profile)
+		if exists {
 			// ApiProfiles run no workload; keep them out of the XTenant so the
 			// composition creates no App claim / Helm release for them.
 			if gentianov1alpha1.ProfileIsAPI(profile) {
@@ -805,6 +810,8 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 					entry["variant"] = variant
 				}
 			}
+		} else {
+			log.FromContext(ctx).Info("AppProfile not found in index in buildXTenant", "profile", app.Profile)
 		}
 		if app.Config != nil {
 			cfg := map[string]interface{}{}
