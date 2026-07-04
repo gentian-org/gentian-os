@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Hardening
 
-**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-8 fixed on `develop`
+**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-6/SEC-8 fixed on `develop`
 **Scope:** External access, tenant isolation, secrets, admission, and install/bootstrap tooling for `gentian-os`.
 **Method:** Read-only static review of source + manifests (branch `develop`, 2026-07-03). Severity reflects exploitability and blast radius. Items flagged *deploy-dependent* need confirmation against a live cluster.
 **Related:** [security.md](security.md) · [new-security-architecture.md](new-security-architecture.md) · [app-catalogue-security.md](app-catalogue-security.md)
@@ -36,7 +36,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | [SEC-3](#sec-3) | **Critical** · ✅ Fixed | Superadmin login is deterministically master-derived; `SECRET_MODE=random` does not cover it (+ weak default master) | Unauthenticated external |
 | [SEC-4](#sec-4) | **High** · ✅ Fixed | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
 | [SEC-5](#sec-5) | **High** · ✅ Fixed | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
-| [SEC-6](#sec-6) | **High** | Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation | Node escalation |
+| [SEC-6](#sec-6) | **High** · ✅ Fixed | Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation | Node escalation |
 | [SEC-7](#sec-7) | **High** | Operator `ClusterRole` grants cluster-wide secrets + `pods/exec` | Blast radius |
 | [SEC-8](#sec-8) | Medium · ✅ Fixed | `app-init` wildcard OpenBao paths allow cross-tenant secret read/write | Cross-tenant |
 | [SEC-9](#sec-9) | Medium | Keycloak master admin console reachable externally; `hostname-strict=false` | Attack surface |
@@ -174,7 +174,17 @@ ArgoCD runs with `server.insecure` and is reachable both through a public tunnel
 **Proposed fix:** ClusterIP behind the authenticated edge only; remove the public route, the node ports, and `server.insecure`; require SSO + MFA for the ArgoCD UI/API.
 
 ### SEC-6
-**Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation**
+**Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation** · **Status: Fixed (`develop`)**
+
+> **Resolution.** Upgraded Kyverno baseline policies to enforce the standard Kubernetes **"restricted"** Pod Security profile. Specifically:
+> 1. Added `gentian-disallow-host-path` to block `hostPath` volumes.
+> 2. Added `gentian-restrict-capabilities` to drop `ALL` capabilities and restrict adds to `NET_BIND_SERVICE`.
+> 3. Added `gentian-disallow-privilege-escalation` to block privilege escalation (`allowPrivilegeEscalation: false`).
+> 4. Added `gentian-require-seccomp` to require a `seccompProfile` of type `RuntimeDefault` or `Localhost`.
+> 
+> Also resolved a Kubernetes validation issue in the baseline waiver checks where the label key used double slashes (which is illegal in Kubernetes): changed the label prefix from `gentianos.io/mac-waiver/` to `mac-waiver.gentianos.io/` across the operator, Kyverno policies, and workloads.
+
+The original analysis is retained below for context.
 
 The baseline policy (`kernel/security/kyverno/policies/gentian-baseline.yaml`) restricts privileged / host namespaces / run-as-non-root, but does **not** block `hostPath` mounts, `securityContext.capabilities.add`, `allowPrivilegeEscalation`, or require a seccomp profile — leaving practical node-escape paths open.
 
@@ -236,7 +246,7 @@ The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) gran
 3. **Enforce a strong, salted `MASTER_PASSWORD`** — remove the `sovereign-workplace` fallback; fail closed. *(SEC-3)*
 4. ~~**TLS + ClusterIP for OpenBao**~~ — ✅ **Done (`develop`)**: drop the LAN plaintext NodePort, enable TLS, and use ClusterIP. *(SEC-4)*
 5. ~~**Contain ArgoCD**~~ — ✅ **Done (`develop`)**: switched argocd-server to ClusterIP, enabled built-in OIDC authentication via the kernel Keycloak realm, and mapped the platform superadmin group to role:admin. *(SEC-5)*
-6. **Adopt restricted Pod Security in Kyverno** — block `hostPath`, capabilities, privilege escalation; require seccomp. *(SEC-6)*
+6. ~~**Adopt restricted Pod Security in Kyverno**~~ — ✅ **Done (`develop`)**: added policies blocking `hostPath`, dropping capabilities, forcing `allowPrivilegeEscalation: false`, requiring default/localhost seccomp profiles, and corrected the mac-waiver label key format. *(SEC-6)*
 7. **Narrow the operator RBAC** — namespaced/least-privilege grants; drop cluster-wide secrets + `pods/exec`. *(SEC-7)*
 8. **Tighten sessions & credential attacks** — shorter tokens, brute-force protection, drop BFF `fullScopeAllowed`/ROPC. *(SEC-10, SEC-11)*
 9. **Pin the supply chain** — digests + checksums; no mutable refs. *(SEC-18)*
