@@ -127,7 +127,7 @@ spec:
       - resources:
           selector:
             matchLabels:
-              gentianos.io/mac-waiver/gentian-require-non-root: "approved"
+              mac-waiver.gentianos.io/gentian-require-non-root: "approved"
     validate:
       message: Containers must run as non-root or declare runAsNonRoot.
       pattern:
@@ -137,3 +137,220 @@ spec:
           containers:
           - =(securityContext):
               =(runAsNonRoot): "true"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-disallow-host-path
+  annotations:
+    policies.kyverno.io/title: Disallow hostPath volumes
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: host-path
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - kyverno
+          - cert-manager
+          - cnpg-system
+          - crossplane-system
+          - argocd
+          - openbao
+          - stakater-system
+          - envoy-gateway-system
+          - platform-kernel
+          - gentian-system
+      - resources:
+          selector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-disallow-host-path: "approved"
+    validate:
+      message: hostPath volumes are not allowed in tenant workloads.
+      pattern:
+        spec:
+          =(volumes):
+          - X(hostPath): "null"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-restrict-capabilities
+  annotations:
+    policies.kyverno.io/title: Restrict Container Capabilities
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: restrict-capabilities
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - kyverno
+          - cert-manager
+          - cnpg-system
+          - crossplane-system
+          - argocd
+          - openbao
+          - stakater-system
+          - envoy-gateway-system
+          - platform-kernel
+          - gentian-system
+      - resources:
+          selector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-restrict-capabilities: "approved"
+    validate:
+      message: >-
+        Containers must drop ALL capabilities and may only add NET_BIND_SERVICE.
+      pattern:
+        spec:
+          =(ephemeralContainers):
+          - =(securityContext):
+              =(capabilities):
+                drop:
+                - ALL
+                X(add):
+                - NET_BIND_SERVICE
+          containers:
+          - =(securityContext):
+              =(capabilities):
+                drop:
+                - ALL
+                X(add):
+                - NET_BIND_SERVICE
+          =(initContainers):
+          - =(securityContext):
+              =(capabilities):
+                drop:
+                - ALL
+                X(add):
+                - NET_BIND_SERVICE
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-disallow-privilege-escalation
+  annotations:
+    policies.kyverno.io/title: Disallow privilege escalation
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: privilege-escalation
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - kyverno
+          - cert-manager
+          - cnpg-system
+          - crossplane-system
+          - argocd
+          - openbao
+          - stakater-system
+          - envoy-gateway-system
+          - platform-kernel
+          - gentian-system
+      - resources:
+          selector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-disallow-privilege-escalation: "approved"
+    validate:
+      message: Privilege escalation is not allowed in tenant workloads. Containers must set allowPrivilegeEscalation to false.
+      pattern:
+        spec:
+          =(ephemeralContainers):
+          - securityContext:
+              allowPrivilegeEscalation: "false"
+          containers:
+          - securityContext:
+              allowPrivilegeEscalation: "false"
+          =(initContainers):
+          - securityContext:
+              allowPrivilegeEscalation: "false"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: gentian-require-seccomp
+  annotations:
+    policies.kyverno.io/title: Require seccomp profile
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: seccomp
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    exclude:
+      any:
+      - resources:
+          namespaces:
+          - kube-system
+          - kyverno
+          - cert-manager
+          - cnpg-system
+          - crossplane-system
+          - argocd
+          - openbao
+          - stakater-system
+          - envoy-gateway-system
+          - platform-kernel
+          - gentian-system
+      - resources:
+          selector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-require-seccomp: "approved"
+    validate:
+      message: Seccomp profile must be set to RuntimeDefault or Localhost.
+      anyPattern:
+      - spec:
+          securityContext:
+            seccompProfile:
+              type: "RuntimeDefault | Localhost"
+      - spec:
+          containers:
+          - securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"
+          =(initContainers):
+          - securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"
+          =(ephemeralContainers):
+          - securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"

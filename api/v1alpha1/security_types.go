@@ -57,7 +57,7 @@ type AllowedMacWaiver struct {
 
 // MacWaiverLabelKey returns the pod label key for an approved waiver.
 func MacWaiverLabelKey(policy string) string {
-	return "gentianos.io/mac-waiver/" + policy
+	return "mac-waiver.gentianos.io/" + policy
 }
 
 // MacWaiverApprovedValue is the pod label value stamped when a waiver is approved.
