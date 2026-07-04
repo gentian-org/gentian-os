@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Hardening
 
-**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-6/SEC-7/SEC-8 fixed on `develop`
+**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-6/SEC-7/SEC-8/SEC-10/SEC-17 fixed on `develop`
 **Scope:** External access, tenant isolation, secrets, admission, and install/bootstrap tooling for `gentian-os`.
 **Method:** Read-only static review of source + manifests (branch `develop`, 2026-07-03). Severity reflects exploitability and blast radius. Items flagged *deploy-dependent* need confirmation against a live cluster.
 **Related:** [security.md](security.md) · [new-security-architecture.md](new-security-architecture.md) · [app-catalogue-security.md](app-catalogue-security.md)
@@ -40,14 +40,14 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | [SEC-7](#sec-7) | **High** · ✅ Fixed | Operator `ClusterRole` grants cluster-wide secrets + `pods/exec` | Blast radius |
 | [SEC-8](#sec-8) | Medium · ✅ Fixed | `app-init` wildcard OpenBao paths allow cross-tenant secret read/write | Cross-tenant |
 | [SEC-9](#sec-9) | Medium | Keycloak master admin console reachable externally; `hostname-strict=false` | Attack surface |
-| [SEC-10](#sec-10) | Medium | Portal BFF uses ROPC + `fullScopeAllowed`; realms have no brute-force protection | Credential attack |
+| [SEC-10](#sec-10) | Medium · ✅ Fixed | Portal BFF uses ROPC + `fullScopeAllowed`; realms lack brute-force protection | Credential attack |
 | [SEC-11](#sec-11) | Medium | 12h access tokens with `revokeRefreshToken=false` amplify token theft | Session lifetime |
 | [SEC-12](#sec-12) | Medium | Contract egress fails open when a grant is missing; capabilities not network-enforced | Intra-tenant lateral |
 | [SEC-13](#sec-13) | Medium | Every tenant pod gets egress to the whole service CIDR:443 (kube-API) + DNS to the world | Lateral / exfil |
 | [SEC-14](#sec-14) | Medium | Kernel gateway listeners are `From: All` + broad `ReferenceGrants` (hostname hijack) | Cross-tenant (hostname) |
 | [SEC-15](#sec-15) | Medium | MAC non-root waiver is an unverified pod label | Priv-esc (in-container) |
 | [SEC-16](#sec-16) | Medium | App-internal secret seeds are predictable (`sha256` of non-secret identifiers) | Secret prediction |
-| [SEC-17](#sec-17) | Medium | `update.sh` still uses the removed SHA-1 derivation (weaker + mismatched) | Crypto weakness |
+| [SEC-17](#sec-17) | Medium · ✅ Fixed | `update.sh` still uses the removed SHA-1 derivation (weaker + mismatched) | Crypto weakness |
 | [SEC-18](#sec-18) | Medium | Supply chain: unpinned/unverified downloads, mutable-branch charts, remote manifest apply | Supply chain |
 | [SEC-19](#sec-19) | Medium | Secret disclosure: admin pw/root token to logs; master + transit unseal key in k8s Secrets | Disclosure |
 
@@ -214,7 +214,13 @@ The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) gran
 **Keycloak master admin console reachable externally; `hostname-strict=false`.** The admin console is routed at the edge (`internal/controller/kernel_gateway_routes.go`) and the KeycloakX config relaxes hostname strictness. **Fix:** restrict `/admin` to internal networks/VPN, set `hostname-strict=true`, and serve admin on a separate internal hostname.
 
 ### SEC-10
-**Portal BFF uses ROPC + `fullScopeAllowed`; realms lack brute-force protection.** `directAccessGrantsEnabled` + `fullScopeAllowed` on the BFF client (`internal/controller/keycloak_portal_bff_client.go`) plus realms provisioned without `bruteForceProtected` (`internal/controller/identity_reconciler.go`) enable scripted password attacks. **Fix:** disable ROPC where possible, scope the BFF client, and enable realm brute-force protection + account lockout.
+**Portal BFF uses ROPC + `fullScopeAllowed`; realms lack brute-force protection.** · **Status: Fixed (`develop`)**
+
+> **Resolution.** Enabled brute-force detection and user lockout protection on both initial creation and update of Keycloak realms in the operator's Keycloak admin client. Lockout threshold is configured explicitly to 30 failed attempts (`failureFactor: 30`) to allow cluster admins and users ample attempts while protecting against automated brute-force attacks.
+
+The original analysis is retained below for context.
+
+`directAccessGrantsEnabled` + `fullScopeAllowed` on the BFF client (`internal/controller/keycloak_portal_bff_client.go`) plus realms provisioned without `bruteForceProtected` (`internal/controller/identity_reconciler.go`) enable scripted password attacks. **Fix:** disable ROPC where possible, scope the BFF client, and enable realm brute-force protection + account lockout.
 
 ### SEC-11
 **12h access tokens with `revokeRefreshToken=false`.** Long-lived, non-revocable tokens (`kernel/values/env/functional.yaml`) mean any stolen token stays valid for hours. **Fix:** access-token lifespan 5–15 min, enable refresh-token rotation/revocation.
@@ -235,7 +241,13 @@ The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) gran
 **Predictable app-secret seeds.** The composition seeds each app secret as `sha256(xrName:app:secretName)` (`crossplane/compositions/app-default.yaml:299`) — no master derivation, no entropy. **Fix:** derive from the master via HKDF or use `crypto/rand`, matching the Go `Seeder` path.
 
 ### SEC-17
-**`update.sh` uses the removed SHA-1 derivation.** `update.sh:174` still pipes through `sha1sum`, both weaker and **mismatched** with the SHA-256 derivation used elsewhere, so it can derive non-matching credentials. **Fix:** align `update.sh` with the canonical HMAC-SHA256 derivation.
+**`update.sh` uses the removed SHA-1 derivation.** · **Status: Fixed (`develop`)**
+
+> **Resolution.** Aligned `update.sh` credential derivation with `install.sh` by shifting the `_derive` implementation to use SHA-256 HMAC and loading the derivation salt from OpenBao. When `SECRET_MODE=random` is active, `update.sh` safely resolves and reuses existing secret credentials instead of generating a new random value, preventing credential drift during updates.
+
+The original analysis is retained below for context.
+
+`update.sh:174` still pipes through `sha1sum`, both weaker and **mismatched** with the SHA-256 derivation used elsewhere, so it can derive non-matching credentials. **Fix:** align `update.sh` with the canonical HMAC-SHA256 derivation.
 
 ### SEC-18
 **Supply chain: unpinned/unverified downloads.** Binaries, charts, and remote manifests are fetched without digest/checksum pinning and sometimes from mutable branches (`install.sh:66,108,688`, `scripts/install-argocd.sh:38`). **Fix:** pin by version + digest/checksum; vendor or mirror; stop applying from mutable refs.
