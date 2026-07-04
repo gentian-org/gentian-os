@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Hardening
 
-**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-6/SEC-8 fixed on `develop`
+**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-6/SEC-7/SEC-8 fixed on `develop`
 **Scope:** External access, tenant isolation, secrets, admission, and install/bootstrap tooling for `gentian-os`.
 **Method:** Read-only static review of source + manifests (branch `develop`, 2026-07-03). Severity reflects exploitability and blast radius. Items flagged *deploy-dependent* need confirmation against a live cluster.
 **Related:** [security.md](security.md) · [new-security-architecture.md](new-security-architecture.md) · [app-catalogue-security.md](app-catalogue-security.md)
@@ -37,7 +37,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | [SEC-4](#sec-4) | **High** · ✅ Fixed | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
 | [SEC-5](#sec-5) | **High** · ✅ Fixed | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
 | [SEC-6](#sec-6) | **High** · ✅ Fixed | Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation | Node escalation |
-| [SEC-7](#sec-7) | **High** | Operator `ClusterRole` grants cluster-wide secrets + `pods/exec` | Blast radius |
+| [SEC-7](#sec-7) | **High** · ✅ Fixed | Operator `ClusterRole` grants cluster-wide secrets + `pods/exec` | Blast radius |
 | [SEC-8](#sec-8) | Medium · ✅ Fixed | `app-init` wildcard OpenBao paths allow cross-tenant secret read/write | Cross-tenant |
 | [SEC-9](#sec-9) | Medium | Keycloak master admin console reachable externally; `hostname-strict=false` | Attack surface |
 | [SEC-10](#sec-10) | Medium | Portal BFF uses ROPC + `fullScopeAllowed`; realms have no brute-force protection | Credential attack |
@@ -191,7 +191,13 @@ The baseline policy (`kernel/security/kyverno/policies/gentian-baseline.yaml`) r
 **Proposed fix:** adopt the Pod Security **restricted** profile: disallow `hostPath`, drop `ALL` capabilities (allow-list only `NET_BIND_SERVICE` where needed), set `allowPrivilegeEscalation: false`, and require `seccompProfile: RuntimeDefault`.
 
 ### SEC-7
-**Operator `ClusterRole` grants cluster-wide secrets + `pods/exec`**
+**Operator `ClusterRole` grants cluster-wide secrets + `pods/exec`** · **Status: Fixed (`develop`)**
+
+> **Resolution.** Dropped the dangerous cluster-wide `pods/exec` permission from the operator's primary `ClusterRole`. Instead, namespaced `Role` and `RoleBinding` resources were created to restrict container execution permissions (`pods/exec` and `pods` read access) strictly to the namespaces where it is actually needed for app-purging/cleanup:
+> 1. The `openbao` namespace (for purging secrets during app uninstall).
+> 2. The `platform-kernel` namespace (for database purging in CNPG postgres pods).
+
+The original analysis is retained below for context.
 
 The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) grants cluster-wide `secrets` access and `pods/exec`, so a compromise of the operator is effectively cluster-admin.
 
@@ -247,7 +253,7 @@ The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) gran
 4. ~~**TLS + ClusterIP for OpenBao**~~ — ✅ **Done (`develop`)**: drop the LAN plaintext NodePort, enable TLS, and use ClusterIP. *(SEC-4)*
 5. ~~**Contain ArgoCD**~~ — ✅ **Done (`develop`)**: switched argocd-server to ClusterIP, enabled built-in OIDC authentication via the kernel Keycloak realm, and mapped the platform superadmin group to role:admin. *(SEC-5)*
 6. ~~**Adopt restricted Pod Security in Kyverno**~~ — ✅ **Done (`develop`)**: added policies blocking `hostPath`, dropping capabilities, forcing `allowPrivilegeEscalation: false`, requiring default/localhost seccomp profiles, and corrected the mac-waiver label key format. *(SEC-6)*
-7. **Narrow the operator RBAC** — namespaced/least-privilege grants; drop cluster-wide secrets + `pods/exec`. *(SEC-7)*
+7. ~~**Narrow the operator RBAC**~~ — ✅ **Done (`develop`)**: dropped cluster-wide `pods/exec` permission; scoped execution capabilities strictly to the `openbao` and `platform-kernel` namespaces using target namespaced Roles and RoleBindings. *(SEC-7)*
 8. **Tighten sessions & credential attacks** — shorter tokens, brute-force protection, drop BFF `fullScopeAllowed`/ROPC. *(SEC-10, SEC-11)*
 9. **Pin the supply chain** — digests + checksums; no mutable refs. *(SEC-18)*
 10. **Close the remaining medium gaps** — SEC-9, SEC-12–17, SEC-19.
