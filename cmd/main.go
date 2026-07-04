@@ -265,7 +265,7 @@ func buildSeeder() *secrets.Seeder {
 		setupLog.Info("master password not found at expected path; credentials will be random",
 			"path", secrets.MasterPasswordPath)
 	default:
-		deriver = secrets.NewDeriver(master["value"])
+		deriver = secrets.NewDeriver(master["value"], master["salt"])
 	}
 
 	setupLog.Info("secret seeder enabled",

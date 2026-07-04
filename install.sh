@@ -425,8 +425,39 @@ POLICY
 create_crossplane_secrets() {
     banner "Step 11 — Create derived-credential Secrets for Cluster XR"
 
+    # Enforce minimum-entropy on MASTER_PASSWORD
+    if [[ ${#MASTER_PASSWORD} -lt 16 ]]; then
+        error "MASTER_PASSWORD is too weak. It must be at least 16 characters long."
+        exit 1
+    fi
+
+    # Try to read existing master-password and salt from OpenBao
+    local existing_secret
+    existing_secret=$(bao kv get -mount=secret -format=json gentian-os/kernel/internal/master-password 2>/dev/null || true)
+    if [[ -n "${existing_secret}" ]]; then
+        local m_val s_val
+        m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
+        s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
+        if [[ -n "${m_val}" ]]; then
+            MASTER_PASSWORD="${m_val}"
+        fi
+        if [[ -n "${s_val}" ]]; then
+            DERIVATION_SALT="${s_val}"
+        fi
+    fi
+    if [[ -z "${DERIVATION_SALT:-}" ]]; then
+        DERIVATION_SALT=$(openssl rand -hex 16)
+    fi
+    export DERIVATION_SALT
+
     # Same derivation as seed-openbao.sh and crossplane/functions/derive-secrets/derive.py
-    _derive() { echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'; }
+    _derive() {
+        if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+            openssl rand -hex 32
+        else
+            echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}';
+        fi
+    }
     _nats()   { echo "n$(_derive "$1" "$2")"; }
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key
@@ -443,6 +474,7 @@ create_crossplane_secrets() {
     kubectl create secret generic gentian-os-master-password \
         -n "${CROSSPLANE_NAMESPACE}" \
         --from-literal=password="${MASTER_PASSWORD}" \
+        --from-literal=salt="${DERIVATION_SALT}" \
         --dry-run=client -o yaml | kubectl apply -f -
     success "  gentian-os-master-password"
 
@@ -1202,6 +1234,13 @@ run_stage1_portal_only() {
         exit 1
     fi
     [[ -n "${MASTER_PASSWORD:-}" ]] || { error "MASTER_PASSWORD not set — add to install.secrets.env."; exit 1; }
+    [[ ${#MASTER_PASSWORD} -ge 16 ]] || { error "MASTER_PASSWORD is too weak. It must be at least 16 characters long."; exit 1; }
+    # Try to read existing derivation salt from OpenBao
+    local existing_salt
+    existing_salt=$(bao kv get -mount=secret -field=salt gentian-os/kernel/internal/master-password 2>/dev/null || true)
+    if [[ -n "${existing_salt}" ]]; then
+        export DERIVATION_SALT="${existing_salt}"
+    fi
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     install_stage1_portal

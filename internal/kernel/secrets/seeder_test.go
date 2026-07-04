@@ -211,3 +211,14 @@ func TestDeriverKernelPathOmitsTenant(t *testing.T) {
 		t.Fatalf("KernelPath mismatch: %q vs %q", got, want)
 	}
 }
+
+func TestDeriverSaltDiversifiesOutput(t *testing.T) {
+	d1 := secrets.NewDeriver("master-X", "salt-A")
+	d2 := secrets.NewDeriver("master-X", "salt-B")
+	salt := secrets.CategoryPath("acme", "element", "oidc")
+	a := d1.Derive(salt, "client-secret", 40)
+	b := d2.Derive(salt, "client-secret", 40)
+	if a == b {
+		t.Fatalf("per-cluster salt did not diversify output")
+	}
+}

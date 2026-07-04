@@ -6,15 +6,57 @@
 set -euo pipefail
 
 _portal_derive_password() {
-    echo -n "portal-bootstrap:user_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_pw
+        existing_pw=$(bao kv get -mount=secret -field=user_password identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_pw}" ]]; then
+            echo "${existing_pw}"
+        else
+            local new_pw
+            new_pw=$(openssl rand -hex 24)
+            bao kv patch -mount=secret identity/portal-admin user_password="${new_pw}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin user_password="${new_pw}" >/dev/null 2>&1
+            echo "${new_pw}"
+        fi
+    else
+        echo -n "portal-bootstrap:user_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    fi
 }
 
 _platform_admin_derive_password() {
-    echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_pw
+        existing_pw=$(bao kv get -mount=secret -field=admin_password identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_pw}" ]]; then
+            echo "${existing_pw}"
+        else
+            local new_pw
+            new_pw=$(openssl rand -hex 24)
+            bao kv patch -mount=secret identity/portal-admin admin_password="${new_pw}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin admin_password="${new_pw}" >/dev/null 2>&1
+            echo "${new_pw}"
+        fi
+    else
+        echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    fi
 }
 
 _portal_bff_derive_secret() {
-    echo -n "portal-bootstrap:bff_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_sec
+        existing_sec=$(bao kv get -mount=secret -field=bff_client_secret identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_sec}" ]]; then
+            echo "${existing_sec}"
+        else
+            local new_sec
+            new_sec=$(openssl rand -hex 24)
+            bao kv patch -mount=secret identity/portal-admin bff_client_secret="${new_sec}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin bff_client_secret="${new_sec}" >/dev/null 2>&1
+            echo "${new_sec}"
+        fi
+    else
+        echo -n "portal-bootstrap:bff_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    fi
 }
 
 ensure_portal_bff_secret() {

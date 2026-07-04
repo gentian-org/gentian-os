@@ -1806,10 +1806,20 @@ resolve_portal_admin_email() {
 }
 
 _resolve_platform_admin_password() {
-    if [[ -z "${MASTER_PASSWORD:-}" ]]; then
-        return 0
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_pw
+        existing_pw=$(bao kv get -mount=secret -field=admin_password identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_pw}" ]]; then
+            echo "${existing_pw}"
+        else
+            echo "(stored in OpenBao)"
+        fi
+    else
+        if [[ -z "${MASTER_PASSWORD:-}" ]]; then
+            return 0
+        fi
+        echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
     fi
-    echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
 }
 
 resolve_portal_admin_password() {

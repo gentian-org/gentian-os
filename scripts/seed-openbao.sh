@@ -32,7 +32,7 @@ set -euo pipefail
 #   storage/registry              (optional, requires args 2+3)
 # =============================================================================
 
-MASTER_PASSWORD="${1:-sovereign-workplace}"
+MASTER_PASSWORD="${1:-}"
 SMTP_RELAY_USER="${2:-}"
 SMTP_RELAY_PASS="${3:-}"
 REGISTRY_USER="${REGISTRY_USER:-}"
@@ -45,6 +45,7 @@ EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}"
 EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
 EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
 EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
+SECRET_MODE="${SECRET_MODE:-derived}"
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -60,25 +61,56 @@ for cmd in openssl sha1sum curl jq; do
     fi
 done
 
+# Try to read existing master-password and salt from OpenBao
+existing_secret=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
+existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
+
+if [ -n "${existing_master}" ]; then
+    MASTER_PASSWORD="${existing_master}"
+fi
+
+if [ -z "${MASTER_PASSWORD}" ]; then
+    echo "Error: MASTER_PASSWORD is empty. A master password must be provided as the first argument or pre-seeded in OpenBao." >&2
+    exit 1
+fi
+
+validate_master_password_entropy() {
+    local mp="$1"
+    if [ ${#mp} -lt 16 ]; then
+        echo "Error: MASTER_PASSWORD is too weak. It must be at least 16 characters long." >&2
+        exit 1
+    fi
+}
+validate_master_password_entropy "${MASTER_PASSWORD}"
+
+if [ -n "${existing_salt}" ]; then
+    DERIVATION_SALT="${existing_salt}"
+else
+    DERIVATION_SALT="${DERIVATION_SALT:-$(openssl rand -hex 16)}"
+fi
+export DERIVATION_SALT
+
 echo "=========================================="
 echo "Seeding OpenBao Secrets"
 echo "  OpenBao:     ${BAO_ADDR}"
 echo "  Path prefix: secret/gentian-os/kernel/"
+echo "  Mode:        ${SECRET_MODE}"
 echo "=========================================="
 
 # =============================================================================
 # Password derivation
-# Uses HMAC-SHA256 hex output directly. The previous implementation piped
-# through sha1sum, which weakened the construction: an attacker with one known
-# derived credential could run an offline dictionary attack against the master
-# password at SHA-1 speed. The corrected version uses the 64-char HMAC-SHA256
-# hex output directly. NOTE: this change is backward-incompatible — all derived
-# passwords change. It must be applied together with a full cluster re-seed.
+# Uses HMAC-SHA256 hex output directly.
+# Updated to support per-cluster random salting and SECRET_MODE=random.
 # =============================================================================
 derive_password() {
     local context="$1"
     local purpose="$2"
-    echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+    if [ "${SECRET_MODE:-derived}" = "random" ]; then
+        openssl rand -hex 32
+    else
+        echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
+    fi
 }
 
 
@@ -168,7 +200,7 @@ echo "Writing secrets to OpenBao..."
 # into its HKDF-SHA256 deriver to produce per-tenant per-app credentials
 # deterministically. Path matches secrets.MasterPasswordPath in
 # internal/kernel/secrets/paths.go.
-kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" '{value: $v}')"
+kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" --arg s "${DERIVATION_SALT}" '{value: $v, salt: $s}')"
 
 # --- PostgreSQL ---
 # --- CNPG superuser (shared CloudNativePG Cluster in platform-kernel) ------

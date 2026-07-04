@@ -22,7 +22,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | Can an unauthenticated internet attacker reach tenant data by default? | **No** — HTTPS-only edge, tunnel-mode ClusterIP, explicit host allow-list, no wildcard OIDC redirects, PKCE enforced. |
 | Can one tenant workload compromise the whole cluster? | ~~**Yes** — via the OpenBao `app-init` role → master password → all derived credentials~~ → **Fixed** on `develop`: the `app-init` role/policy and tenant-namespace init Jobs are removed; only the operator reaches OpenBao (**[SEC-1](#sec-1)**). |
 | Can one tenant admin become the platform superadmin? | ~~**Yes** — via Keycloak email auto-link brokering (**[SEC-2](#sec-2)**)~~ → **Fixed** on `develop`: Keycloak `trustEmail` is set to `false` on the tenant→kernel broker, and the first-broker-login flow requires confirmation and email verification. |
-| Can an outsider log in as superadmin? | **Only if** the default/weak `MASTER_PASSWORD` is used — the admin password is then computable. A `SECRET_MODE=random` remedy exists but is **not wired to the superadmin bootstrap** (**[SEC-3](#sec-3)**). |
+| Can an outsider log in as superadmin? | ~~**Only if** the default/weak `MASTER_PASSWORD` is used — the admin password is then computable. A `SECRET_MODE=random` remedy exists but is **not wired to the superadmin bootstrap** (**[SEC-3](#sec-3)**)~~ → **Fixed** on `develop`: support for `SECRET_MODE=random` is wired to the superadmin bootstrap, a minimum master password length of 16 characters is enforced, and a per-cluster derivation salt has been added. |
 | Are control planes exposed? | **Yes** — OpenBao (plaintext LAN NodePort) and ArgoCD (public route + plaintext NodePort). |
 
 ---
@@ -33,7 +33,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 |----|----------|---------|--------|
 | [SEC-1](#sec-1) | **Critical** · ✅ Fixed | Any tenant pod can read the OpenBao master password → full platform compromise | Cross-tenant / priv-esc |
 | [SEC-2](#sec-2) | **Critical** · ✅ Fixed | Keycloak email auto-link brokering → tenant admin impersonates platform superadmin | Cross-tenant / priv-esc |
-| [SEC-3](#sec-3) | **Critical** | Superadmin login is deterministically master-derived; `SECRET_MODE=random` does not cover it (+ weak default master) | Unauthenticated external |
+| [SEC-3](#sec-3) | **Critical** · ✅ Fixed | Superadmin login is deterministically master-derived; `SECRET_MODE=random` does not cover it (+ weak default master) | Unauthenticated external |
 | [SEC-4](#sec-4) | **High** | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
 | [SEC-5](#sec-5) | **High** | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
 | [SEC-6](#sec-6) | **High** | Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation | Node escalation |
@@ -138,6 +138,14 @@ With a strong, unique master the derived password is a 64-char HMAC output and i
 - Remove the `sovereign-workplace` fallback; fail closed on empty/weak master in `seed-openbao.sh` itself.
 - Add a per-cluster random salt to the derivation so identical masters do not yield identical credentials across installs.
 - Enforce a minimum-entropy check on `MASTER_PASSWORD` at install time.
+
+**Resolution**
+Fixed on `develop`.
+- Sourced/retrieved existing derivation salt from OpenBao, or generated a new 16-byte random hex salt on first seed, storing it write-once in `secret/gentian-os/kernel/internal/master-password`.
+- Removed `sovereign-workplace` fallback and added a minimum length check (>= 16 chars) to fail early on weak master passwords.
+- Updated derivers (both Go `Deriver` and bash `derive_password` / `_derive` helper) to append `DERIVATION_SALT` to `MASTER_PASSWORD` to avoid identical master correlation across clusters.
+- Configured superadmin bootstrap helper functions to respect `SECRET_MODE=random` by generating random passwords, storing them write-once in OpenBao path `secret/gentian-os/kernel/identity/portal-admin`, and printing the generated password on screen.
+
 
 ---
 
