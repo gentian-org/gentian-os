@@ -35,7 +35,7 @@ rules:
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
-    resources: ["pods", "pods/exec"]
+    resources: ["pods"]
     verbs: ["get", "list", "create"]
   - apiGroups: [""]
     resources: ["services"]
