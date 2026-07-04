@@ -59,6 +59,24 @@ _portal_bff_derive_secret() {
     fi
 }
 
+_argocd_oidc_derive_secret() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_sec
+        existing_sec=$(bao kv get -mount=secret -field=argocd_client_secret identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_sec}" ]]; then
+            echo "${existing_sec}"
+        else
+            local new_sec
+            new_sec=$(openssl rand -hex 24)
+            bao kv patch -mount=secret identity/portal-admin argocd_client_secret="${new_sec}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin argocd_client_secret="${new_sec}" >/dev/null 2>&1
+            echo "${new_sec}"
+        fi
+    else
+        echo -n "portal-bootstrap:argocd_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    fi
+}
+
 ensure_portal_bff_secret() {
     local ns="platform-kernel"
     local secret
@@ -67,6 +85,20 @@ ensure_portal_bff_secret() {
         --from-literal=client_id="gentian-portal-bff" \
         --from-literal=client_secret="${secret}" \
         --dry-run=client -o yaml | kubectl apply -f -
+    echo "${secret}"
+}
+
+ensure_argocd_oidc_secret() {
+    local ns="platform-kernel"
+    local secret
+    secret="$(_argocd_oidc_derive_secret)"
+    kubectl create secret generic gentian-argocd -n "${ns}" \
+        --from-literal=client_id="gentian-argocd" \
+        --from-literal=client_secret="${secret}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    # Also patch the actual argocd-secret in the argocd namespace
+    kubectl patch secret argocd-secret -n argocd --type merge \
+        -p "{\"stringData\":{\"oidc.keycloak.clientSecret\":\"${secret}\"}}"
     echo "${secret}"
 }
 
@@ -621,6 +653,8 @@ run_keycloak_portal_bootstrap_job() {
     info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
 
     ensure_portal_bff_secret >/dev/null
+    local argocd_secret
+    argocd_secret=$(ensure_argocd_oidc_secret)
 
     local -a bootstrap_secret_args=(
         --from-literal=kernel_domain="${kernel_domain}"
@@ -629,6 +663,7 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=email="${email}"
         --from-literal=password="${password}"
         --from-literal=platform_superadmin_group="${platform_superadmin_group}"
+        --from-literal=argocd_client_secret="${argocd_secret}"
     )
     if _keycloak_smtp_settings; then
         bootstrap_secret_args+=(
@@ -880,6 +915,41 @@ spec:
                 echo "gentian-portal-bff default scope: groups"
               fi
 
+              ARGOCD_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-argocd" \\
+                | jq -r '.[0].id // empty')
+              ARGOCD_BODY=\$(jq -n --arg secret "\${ARGOCD_OIDC_CLIENT_SECRET}" --arg portal "https://argocd.\${KERNEL_DOMAIN}" '{
+                clientId: "gentian-argocd",
+                name: "ArgoCD",
+                enabled: true,
+                publicClient: false,
+                standardFlowEnabled: true,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                redirectUris: [(\$portal + "/auth/callback")],
+                rootUrl: \$portal,
+                baseUrl: "/",
+                secret: \$secret
+              }')
+              if [ -n "\${ARGOCD_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ARGOCD_CLIENT_ID}" -d "\${ARGOCD_BODY}"
+                echo "Updated client gentian-argocd"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${ARGOCD_BODY}"
+                ARGOCD_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-argocd" \\
+                  | jq -r '.[0].id')
+                echo "Created client gentian-argocd"
+              fi
+              if [ -n "\${ARGOCD_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                curl -sf -X PUT -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ARGOCD_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                echo "gentian-argocd default scope: groups"
+              fi
+
 ${smtp_shell}
 
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
@@ -934,6 +1004,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: gentian-portal-bff
                   key: client_secret
+            - name: ARGOCD_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: argocd_client_secret
             - name: MAIL_SERVICE_MODE
               valueFrom:
                 secretKeyRef:
@@ -1271,6 +1346,7 @@ install_stage1_portal() {
     fi
 
     run_keycloak_portal_bootstrap_job
+    configure_argocd_oidc
 
     if [[ "${PORTAL_SKIP_IMAGE_BUILD:-true}" != "true" ]]; then
         if build_gentian_portal_images; then

@@ -10,7 +10,7 @@ spec:
     name: gentian-os-master-password
     namespace: crossplane-system
   openbao:
-    server: http://openbao.openbao.svc.cluster.local:8200
+    server: https://openbao.openbao.svc.cluster.local:8200
     kvMount: secret
     authMount: kubernetes
     kubernetesHost: https://kubernetes.default.svc

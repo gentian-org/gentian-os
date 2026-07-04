@@ -9,6 +9,10 @@
 # 5. Install ArgoCD + AppProject
 # =============================================================================
 resolve_argocd_url() {
+    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        echo "https://argocd.${KERNEL_DOMAIN}"
+        return 0
+    fi
     local ingress_host svc_type node_port lb_host lb_ip
 
     _pick_node_ip() {
@@ -218,6 +222,58 @@ install_argocd() {
         warn "ArgoCD initial-admin-secret not yet available; will be shown in final summary."
     fi
 }
+
+# Configure ArgoCD OIDC settings and group mapping.
+configure_argocd_oidc() {
+    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
+    info "Configuring ArgoCD OIDC (Keycloak integration)..."
+
+    # 1. Trust the wildcard-tls CA (self-signed or staging issuer support)
+    local ca_cert
+    ca_cert=$(kubectl get secret wildcard-tls -n argocd -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d || true)
+    if [[ -z "$ca_cert" ]]; then
+        ca_cert=$(kubectl get secret wildcard-tls -n argocd -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || true)
+    fi
+    if [[ -n "$ca_cert" ]]; then
+        info "Registering gateway CA certificate in argocd-tls-certs-cm..."
+        kubectl patch configmap argocd-tls-certs-cm -n argocd --type merge \
+            --patch "{\"data\":{\"id.${kernel_domain}\":$(jq -R -s '.' <<<"${ca_cert}")}}"
+    fi
+
+    # 2. Patch argocd-cm with OIDC settings and external URL
+    local oidc_config
+    oidc_config=$(cat <<EOF
+name: Keycloak
+issuer: https://id.${kernel_domain}/auth/realms/kernel
+clientID: gentian-argocd
+clientSecret: \$oidc.keycloak.clientSecret
+requestedScopes: ["openid", "profile", "email", "groups"]
+EOF
+)
+    kubectl patch configmap argocd-cm -n argocd --type merge -p "
+{
+  \"data\": {
+    \"url\": \"https://argocd.${kernel_domain}\",
+    \"oidc.config\": $(jq -R -s '.' <<<"${oidc_config}")
+  }
+}"
+
+    # 3. Patch argocd-rbac-cm to map group to admin role
+    local policy_csv="g, gentian:platform:superadmin, role:admin"
+    kubectl patch configmap argocd-rbac-cm -n argocd --type merge -p "
+{
+  \"data\": {
+    \"policy.csv\": $(jq -R -s '.' <<<"${policy_csv}"),
+    \"scopes\": \"[groups]\"
+  }
+}"
+
+    # 4. Restart ArgoCD server to pick up new configurations
+    kubectl rollout restart deployment argocd-server -n argocd
+    kubectl rollout status deployment argocd-server -n argocd --timeout=90s 2>/dev/null || true
+    success "ArgoCD OIDC configuration completed."
+}
+
 
 # =============================================================================
 # 6. Create ArgoCD OCI registry secrets

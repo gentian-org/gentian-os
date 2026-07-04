@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Hardening
 
-**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-8 fixed on `develop`
+**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-5/SEC-8 fixed on `develop`
 **Scope:** External access, tenant isolation, secrets, admission, and install/bootstrap tooling for `gentian-os`.
 **Method:** Read-only static review of source + manifests (branch `develop`, 2026-07-03). Severity reflects exploitability and blast radius. Items flagged *deploy-dependent* need confirmation against a live cluster.
 **Related:** [security.md](security.md) · [new-security-architecture.md](new-security-architecture.md) · [app-catalogue-security.md](app-catalogue-security.md)
@@ -35,7 +35,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | [SEC-2](#sec-2) | **Critical** · ✅ Fixed | Keycloak email auto-link brokering → tenant admin impersonates platform superadmin | Cross-tenant / priv-esc |
 | [SEC-3](#sec-3) | **Critical** · ✅ Fixed | Superadmin login is deterministically master-derived; `SECRET_MODE=random` does not cover it (+ weak default master) | Unauthenticated external |
 | [SEC-4](#sec-4) | **High** · ✅ Fixed | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
-| [SEC-5](#sec-5) | **High** | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
+| [SEC-5](#sec-5) | **High** · ✅ Fixed | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
 | [SEC-6](#sec-6) | **High** | Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation | Node escalation |
 | [SEC-7](#sec-7) | **High** | Operator `ClusterRole` grants cluster-wide secrets + `pods/exec` | Blast radius |
 | [SEC-8](#sec-8) | Medium · ✅ Fixed | `app-init` wildcard OpenBao paths allow cross-tenant secret read/write | Cross-tenant |
@@ -163,7 +163,11 @@ Fixed on `develop`.
 **Proposed fix:** enable TLS on the listener, switch the service to ClusterIP, and front any external access with an authenticated proxy. Update in-cluster consumers (`kernel/services/_globals/eso-cluster-secret-store.yaml`, init jobs) to `https://`.
 
 ### SEC-5
-**ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort**
+**ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort** · **Status: Fixed (`develop`)**
+
+> **Resolution.** ArgoCD server service type has been switched from `NodePort` to `ClusterIP`, removing external plaintext ports (30880, 30443). Built-in OIDC SSO has been enabled with the kernel Keycloak realm, configuring the `gentian-argocd` client dynamically during portal bootstrap. Keycloak's `gentian:platform:superadmin` group maps to ArgoCD's `admin` role via `argocd-rbac-cm`, and the Envoy Gateway's wildcard TLS CA certificate is registered in `argocd-tls-certs-cm` to ensure OIDC connection trust.
+
+The original analysis is retained below for context.
 
 ArgoCD runs with `server.insecure` and is reachable both through a public tunnel `HTTPRoute` and plaintext NodePorts (`scripts/install-argocd.sh`, `scripts/lib/argocd.sh`, `internal/controller/kernel_gateway_routes.go`). ArgoCD effectively holds cluster-admin over the whole platform.
 
@@ -231,7 +235,7 @@ The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) gran
 2. **Fix Keycloak brokering** — confirm-link / verified-email flow; stop trusting email across the tenant→kernel edge. *(SEC-2)*
 3. **Enforce a strong, salted `MASTER_PASSWORD`** — remove the `sovereign-workplace` fallback; fail closed. *(SEC-3)*
 4. ~~**TLS + ClusterIP for OpenBao**~~ — ✅ **Done (`develop`)**: drop the LAN plaintext NodePort, enable TLS, and use ClusterIP. *(SEC-4)*
-5. **Contain ArgoCD** — ClusterIP behind authenticated edge; remove public route, node ports, and `server.insecure`. *(SEC-5)*
+5. ~~**Contain ArgoCD**~~ — ✅ **Done (`develop`)**: switched argocd-server to ClusterIP, enabled built-in OIDC authentication via the kernel Keycloak realm, and mapped the platform superadmin group to role:admin. *(SEC-5)*
 6. **Adopt restricted Pod Security in Kyverno** — block `hostPath`, capabilities, privilege escalation; require seccomp. *(SEC-6)*
 7. **Narrow the operator RBAC** — namespaced/least-privilege grants; drop cluster-wide secrets + `pods/exec`. *(SEC-7)*
 8. **Tighten sessions & credential attacks** — shorter tokens, brute-force protection, drop BFF `fullScopeAllowed`/ROPC. *(SEC-10, SEC-11)*

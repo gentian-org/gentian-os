@@ -50,19 +50,17 @@ kubectl wait --for=condition=available --timeout=300s \
 
 kubectl rollout status statefulset/argocd-application-controller -n "${ARGOCD_NAMESPACE}" --timeout=300s
 
-# Expose ArgoCD server via NodePort with static ports
-echo "Configuring ArgoCD server as NodePort (HTTP: 30880, HTTPS: 30443)..."
+# Expose ArgoCD server via ClusterIP
+echo "Configuring ArgoCD server as ClusterIP..."
 kubectl patch svc argocd-server -n "${ARGOCD_NAMESPACE}" -p '{
   "spec": {
-    "type": "NodePort",
+    "type": "ClusterIP",
     "ports": [
-      {"name": "http",  "port": 80,  "targetPort": 8080, "nodePort": 30880},
-      {"name": "https", "port": 443, "targetPort": 8080, "nodePort": 30443}
+      {"name": "http",  "port": 80,  "targetPort": 8080},
+      {"name": "https", "port": 443, "targetPort": 8080}
     ]
   }
 }'
-
-NODEPORT=30443
 
 echo ""
 echo "ArgoCD installed successfully!"
@@ -71,8 +69,9 @@ echo "To access ArgoCD:"
 echo "1. Get the initial admin password:"
 echo "   kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath=\"{.data.password}\" | base64 -d && echo"
 echo ""
-echo "2. Access the UI at:"
-echo "   https://<node-ip>:${NODEPORT}  (HTTP: http://<node-ip>:30880)"
+echo "2. Access the UI via port-forward:"
+echo "   kubectl port-forward -n argocd svc/argocd-server 8080:443"
+echo "   Then open: https://localhost:8080"
 echo "   (Note: You may need to accept the self-signed certificate)"
 echo ""
 echo "3. Login with:"
