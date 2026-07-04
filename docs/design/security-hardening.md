@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Hardening
 
-**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-8 fixed on `develop`
+**Status:** Draft v0.2 · Findings register + remediation plan · SEC-1/SEC-2/SEC-3/SEC-4/SEC-8 fixed on `develop`
 **Scope:** External access, tenant isolation, secrets, admission, and install/bootstrap tooling for `gentian-os`.
 **Method:** Read-only static review of source + manifests (branch `develop`, 2026-07-03). Severity reflects exploitability and blast radius. Items flagged *deploy-dependent* need confirmation against a live cluster.
 **Related:** [security.md](security.md) · [new-security-architecture.md](new-security-architecture.md) · [app-catalogue-security.md](app-catalogue-security.md)
@@ -23,7 +23,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | Can one tenant workload compromise the whole cluster? | ~~**Yes** — via the OpenBao `app-init` role → master password → all derived credentials~~ → **Fixed** on `develop`: the `app-init` role/policy and tenant-namespace init Jobs are removed; only the operator reaches OpenBao (**[SEC-1](#sec-1)**). |
 | Can one tenant admin become the platform superadmin? | ~~**Yes** — via Keycloak email auto-link brokering (**[SEC-2](#sec-2)**)~~ → **Fixed** on `develop`: Keycloak `trustEmail` is set to `false` on the tenant→kernel broker, and the first-broker-login flow requires confirmation and email verification. |
 | Can an outsider log in as superadmin? | ~~**Only if** the default/weak `MASTER_PASSWORD` is used — the admin password is then computable. A `SECRET_MODE=random` remedy exists but is **not wired to the superadmin bootstrap** (**[SEC-3](#sec-3)**)~~ → **Fixed** on `develop`: support for `SECRET_MODE=random` is wired to the superadmin bootstrap, a minimum master password length of 16 characters is enforced, and a per-cluster derivation salt has been added. |
-| Are control planes exposed? | **Yes** — OpenBao (plaintext LAN NodePort) and ArgoCD (public route + plaintext NodePort). |
+| Are control planes exposed? | ~~**Yes** — OpenBao (plaintext LAN NodePort)~~ → **Fixed** on `develop`: OpenBao is now secured with TLS and uses ClusterIP. ArgoCD (public route + plaintext NodePort) is the remaining exposed control plane. |
 
 ---
 
@@ -34,7 +34,7 @@ The short answer: no *fully unauthenticated* internet attacker reaches tenant da
 | [SEC-1](#sec-1) | **Critical** · ✅ Fixed | Any tenant pod can read the OpenBao master password → full platform compromise | Cross-tenant / priv-esc |
 | [SEC-2](#sec-2) | **Critical** · ✅ Fixed | Keycloak email auto-link brokering → tenant admin impersonates platform superadmin | Cross-tenant / priv-esc |
 | [SEC-3](#sec-3) | **Critical** · ✅ Fixed | Superadmin login is deterministically master-derived; `SECRET_MODE=random` does not cover it (+ weak default master) | Unauthenticated external |
-| [SEC-4](#sec-4) | **High** | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
+| [SEC-4](#sec-4) | **High** · ✅ Fixed | OpenBao API/UI served plaintext (`tls_disable=1`) on a LAN-wide NodePort | Network exposure |
 | [SEC-5](#sec-5) | **High** | ArgoCD (GitOps cluster-admin) exposed via public tunnel + plaintext NodePort | Network exposure |
 | [SEC-6](#sec-6) | **High** | Kyverno baseline does not block `hostPath`, added capabilities, or privilege escalation | Node escalation |
 | [SEC-7](#sec-7) | **High** | Operator `ClusterRole` grants cluster-wide secrets + `pods/exec` | Blast radius |
@@ -152,7 +152,11 @@ Fixed on `develop`.
 ## 5. High findings
 
 ### SEC-4
-**OpenBao API/UI served plaintext on a LAN-wide NodePort**
+**OpenBao API/UI served plaintext on a LAN-wide NodePort** · **Status: Fixed (`develop`)**
+
+> **Resolution.** OpenBao TLS has been enabled on the primary tcp listener using a cert-manager self-signed Issuer and Certificate. The service type has been switched from `NodePort` to `ClusterIP` to lock down LAN-wide access. In-cluster consumers (including the operator and the External Secrets Operator `ClusterSecretStore`) have been updated to connect securely via `https://` (using a `caProvider` to trust the self-signed certificate or configured via `VAULT_SKIP_VERIFY=true`).
+> 
+> The original analysis is retained below for context.
 
 `kernel/openbao/values.yaml` sets `tls_disable = 1` on the listener and exposes it via `NodePort 30820`. All traffic — tokens (`X-Vault-Token`), unseal/root tokens, secret payloads — crosses the network in cleartext, reachable by any LAN host.
 
@@ -226,7 +230,7 @@ The operator `ClusterRole` (`charts/gentian-os/templates/clusterrole.yaml`) gran
 1. ~~**Lock down the OpenBao `app-init` role**~~ — ✅ **Done (`develop`)**: removed the `app-init` role/policy and the tenant-namespace `db-init`/`s3-init` Jobs entirely; provisioning now runs in the operator (kernel namespace), so no tenant workload can reach OpenBao. *(SEC-1, SEC-8)*
 2. **Fix Keycloak brokering** — confirm-link / verified-email flow; stop trusting email across the tenant→kernel edge. *(SEC-2)*
 3. **Enforce a strong, salted `MASTER_PASSWORD`** — remove the `sovereign-workplace` fallback; fail closed. *(SEC-3)*
-4. **TLS + ClusterIP for OpenBao** — drop the LAN plaintext NodePort. *(SEC-4)*
+4. ~~**TLS + ClusterIP for OpenBao**~~ — ✅ **Done (`develop`)**: drop the LAN plaintext NodePort, enable TLS, and use ClusterIP. *(SEC-4)*
 5. **Contain ArgoCD** — ClusterIP behind authenticated edge; remove public route, node ports, and `server.insecure`. *(SEC-5)*
 6. **Adopt restricted Pod Security in Kyverno** — block `hostPath`, capabilities, privilege escalation; require seccomp. *(SEC-6)*
 7. **Narrow the operator RBAC** — namespaced/least-privilege grants; drop cluster-wide secrets + `pods/exec`. *(SEC-7)*
