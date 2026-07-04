@@ -69,6 +69,7 @@ func ensureKernelGatewayTunnelIngress(
 	hosts := map[string]struct{}{
 		kernelDomain:                      {},
 		kernelPortalHost(kernelDomain):    {},
+		"corp." + kernelDomain:            {},
 	}
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames) {
 		if spec.host != "" {
