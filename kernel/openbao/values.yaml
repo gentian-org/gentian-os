@@ -75,11 +75,11 @@ server:
       secretName: openbao-transit-token
       secretKey: token
 
-  extraVolumes:
+  volumes:
     - name: tls
-      type: secret
-      secretName: openbao-tls
-  extraVolumeMounts:
+      secret:
+        secretName: openbao-tls
+  volumeMounts:
     - name: tls
       mountPath: /openbao/tls
       readOnly: true
