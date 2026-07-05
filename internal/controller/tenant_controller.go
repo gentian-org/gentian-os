@@ -624,10 +624,13 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 			return fmt.Errorf("failed to extract token ID from grant for %s: %w", profileName, err)
 		}
 
+		log.FromContext(ctx).Info("exchanging install grant", "profile", profileName, "jti", jti)
 		exchangeRes, err := r.exchangeInstallGrant(ctx, jti, jwtToken)
 		if err != nil {
+			log.FromContext(ctx).Error(err, "failed to exchange install grant", "profile", profileName, "jti", jti)
 			return fmt.Errorf("failed to exchange install grant for %s: %w", profileName, err)
 		}
+		log.FromContext(ctx).Info("exchanged install grant successfully", "profile", profileName, "entitlementId", exchangeRes.EntitlementId)
 
 		dockerConfigJSON, err := buildDockerConfigJSON(
 			exchangeRes.RegistryCredential.Host,
@@ -652,9 +655,12 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 				corev1.DockerConfigJsonKey: dockerConfigJSON,
 			},
 		}
+		log.FromContext(ctx).Info("creating registry credentials secret", "secret", secretName, "namespace", nsName)
 		if err := r.Create(ctx, registrySec); err != nil {
+			log.FromContext(ctx).Error(err, "failed to create registry credentials secret", "secret", secretName)
 			return fmt.Errorf("failed to create secret %s: %w", secretName, err)
 		}
+		log.FromContext(ctx).Info("created registry credentials secret successfully", "secret", secretName)
 
 		meteringSecName := "metering-secret-" + profileName
 		meteringSec := &corev1.Secret{
@@ -673,9 +679,12 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 				"product-sku":     profileName,
 			},
 		}
+		log.FromContext(ctx).Info("creating metering secret", "secret", meteringSecName, "namespace", nsName)
 		if err := r.Create(ctx, meteringSec); err != nil {
+			log.FromContext(ctx).Error(err, "failed to create metering secret", "secret", meteringSecName)
 			return fmt.Errorf("failed to create secret %s: %w", meteringSecName, err)
 		}
+		log.FromContext(ctx).Info("created metering secret successfully", "secret", meteringSecName)
 	}
 
 	return nil
