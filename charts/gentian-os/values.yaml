@@ -234,3 +234,11 @@ grafana:
     enabled: false
     # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
     namespace: ""
+
+# Commerce integration configuration
+commerce:
+  enabled: false
+  corpAPIURL: ""
+  operatorToken: ""
+  meteringInterval: ""
+

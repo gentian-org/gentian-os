@@ -108,6 +108,20 @@ spec:
               value: {{ .Values.servicesNamespace | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
+            {{- if .Values.commerce.enabled }}
+            - name: GENTIAN_COMMERCE_ENABLED
+              value: "true"
+            - name: GENTIAN_CORP_API_URL
+              value: {{ .Values.commerce.corpAPIURL | quote }}
+            {{- if .Values.commerce.operatorToken }}
+            - name: GENTIAN_CORP_OPERATOR_TOKEN
+              value: {{ .Values.commerce.operatorToken | quote }}
+            {{- end }}
+            {{- if .Values.commerce.meteringInterval }}
+            - name: METERING_INTERVAL
+              value: {{ .Values.commerce.meteringInterval | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}

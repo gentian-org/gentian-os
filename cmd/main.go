@@ -94,7 +94,7 @@ func main() {
 	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
-	if err := (&controller.TenantReconciler{
+	tenantReconciler := &controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
@@ -105,9 +105,30 @@ func main() {
 		CloudflareDNS:            buildCloudflareDNSClient(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
-	}).SetupWithManager(mgr); err != nil {
+		CommerceEnabled:          controller.EnvBool("GENTIAN_COMMERCE_ENABLED"),
+		CorpAPIURL:               os.Getenv("GENTIAN_CORP_API_URL"),
+		OperatorToken:            os.Getenv("GENTIAN_CORP_OPERATOR_TOKEN"),
+	}
+	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
+	}
+
+	if controller.EnvBool("GENTIAN_COMMERCE_ENABLED") {
+		interval := 1 * time.Hour
+		if os.Getenv("METERING_INTERVAL") != "" {
+			if parsed, err := time.ParseDuration(os.Getenv("METERING_INTERVAL")); err == nil {
+				interval = parsed
+			}
+		}
+		setupLog.Info("starting metering background worker", "interval", interval)
+		if err := mgr.Add(&controller.MeteringWorker{
+			Reconciler: tenantReconciler,
+			Interval:   interval,
+		}); err != nil {
+			setupLog.Error(err, "unable to add metering worker to manager")
+			os.Exit(1)
+		}
 	}
 
 	if err := (&controller.KeycloakPlatformReconciler{

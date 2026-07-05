@@ -165,7 +165,11 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 		return ctrl.Result{}, err
 	}
 	if err := r.ensureRegistryCredentials(ctx, tenant, state.nsName); err != nil {
-		return ctrl.Result{}, err
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EntitlementRequired", err.Error())
+		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
+		state.blocked = true
+		_ = r.Status().Update(ctx, tenant)
+		return ctrl.Result{}, nil
 	}
 	if err := r.ensureStagingCaTrust(ctx, tenant, state.nsName); err != nil {
 		return ctrl.Result{}, err
