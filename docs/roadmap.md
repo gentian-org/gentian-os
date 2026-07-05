@@ -9,7 +9,7 @@ Planned work not yet fully implemented. For the current platform design see
 
 ## Stage 0 — MAC backbone (new security)
 
-Stage 0 is **complete for dev/homelab** on `feat/new-security`. Detailed status tables
+Stage 0 is **complete for dev/homelab** on `develop`. Detailed status tables
 and Stage 1 gap analysis: [new-security-architecture.md §4](design/new-security-architecture.md#stage-0--foundations-mac-backbone-first).
 
 | Item | Status | Notes |
@@ -226,6 +226,67 @@ Implement controls in [design/app-catalogue-security.md](design/app-catalogue-se
 - Platform **sidecar catalogue** (`sidecarRef`) before generic sidecars in
   `app-default`
 - Kyverno tier rules on prod clusters (**baseline policies shipped** in Stage 0)
+
+---
+
+## Security Hardening (Medium Gaps)
+
+These security items represent remaining medium-severity gaps identified during the static security review of the platform.
+
+### 1. SEC-9: Keycloak Master Admin Console Exposure & Hostname Strictness
+* **Issue**: The Keycloak master admin console is currently routed externally at the cluster edge (`internal/controller/kernel_gateway_routes.go`), and Keycloak is configured with `hostname-strict=false`.
+* **Remediation**:
+  1. Restrict external access to `/admin` paths on the gateway, allowing access only from local/VPN networks.
+  2. Set `hostname-strict=true` in Keycloak server configuration.
+  3. Optionally run the admin console on a separate, dedicated internal hostname (e.g., `admin.kernel.local`).
+
+### 2. SEC-11: Access Token Lifespan & Refresh Rotation Tuning
+* **Issue**: Token lifespans default to 12 hours (`accessTokenLifespan: 43200`) with refresh token revocation disabled, leaving a wide exploit window if a session token is stolen.
+* **Note on Constraints**: While the access token lifespan is intentionally kept long (a full work day) to avoid constant user re-login prompts, we should improve security around refresh tokens.
+* **Remediation**:
+  1. Set `revokeRefreshToken: true` in Keycloak to enable refresh token rotation.
+  2. Implement proper token revocation client-side in the shell/BFF on logout.
+
+### 3. SEC-12: Contract Egress Fail-Open on Missing Grants
+* **Issue**: When an `AppGrant` is missing, the contract network policy builder fails open by falling back to the full declared capability set (`internal/kernel/netpolicy/grants.go`). Egress is not enforced tightly at the network layer.
+* **Remediation**:
+  1. Update `grants.go` and `integration.go` to fail closed (deny traffic) when no valid `AppGrant` is resolved.
+  2. Scope network policies strictly to the allowed capability subsets.
+
+### 4. SEC-13: Loose Kube-API (Service CIDR:443) and DNS Egress
+* **Issue**: Default tenant network policies permit egress to the entire service CIDR on port 443 (including the Kubernetes API server) and DNS queries to the public internet (`0.0.0.0/0`).
+* **Remediation**:
+  1. Tightly restrict Kube-API egress to only the specific API server cluster IP(s).
+  2. Restrict DNS egress solely to the cluster's internal CoreDNS service IPs.
+
+### 5. SEC-14: Broad Gateway Route Listeners & ReferenceGrants
+* **Issue**: Gateway API listeners accept routes from any namespace (`From: All`) and define overly broad `ReferenceGrants`, making the platform vulnerable to route hijacking.
+* **Remediation**:
+  1. Restrict listener `allowedRoutes` to specific namespaces using label selectors.
+  2. Tighten `ReferenceGrants` to specify individual target services and namespaces rather than wildcards.
+
+### 6. SEC-15: Unverified Pod Label for MAC Waiver Exclusions
+* **Issue**: The Kyverno MAC baseline waiver logic relies on checking a self-asserted pod label (`mac-waiver.gentianos.io/<policy>: approved`). Any pod can set this label to bypass security validation.
+* **Remediation**:
+  1. Migrate waiver checks to match on cluster-admin-owned objects (e.g., matching namespace and service account configurations derived from `PlatformSecurityPolicy` definitions).
+  2. Eliminate the use of self-asserted pod labels for admission exclusions.
+
+### 7. SEC-16: Predictable App-Internal Secret Seeds
+* **Issue**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`, which lacks sufficient entropy and makes them predictable.
+* **Remediation**:
+  1. Align seed generation with the master password path using HKDF (HMAC-based Key Derivation Function) or cryptographically secure random number generation (`crypto/rand`).
+
+### 8. SEC-18: Unpinned Supply Chain Dependencies
+* **Issue**: Third-party binaries, Helm charts, and remote manifests are retrieved without validating SHA digests or cryptographic checksums. Some are pulled from mutable branches (e.g., `install.sh` and `install-argocd.sh`).
+* **Remediation**:
+  1. Pin all downloads by exact version and digest/checksum.
+  2. Vendor or mirror remote assets into a local registry or repository to prevent supply chain tampering.
+
+### 9. SEC-19: Secret Disclosure in Logs and In-Cluster Storage
+* **Issue**: Root tokens and admin passwords are occasionally echoed to console logs during bootstrap, and the raw master key is persisted in-cluster within standard Kubernetes Secrets.
+* **Remediation**:
+  1. Refactor installation scripts to suppress secret output.
+  2. Avoid storing the raw master key inside the cluster; use external vault unseal keys or a KMS/HSM provider for key wrapping.
 
 ---
 
