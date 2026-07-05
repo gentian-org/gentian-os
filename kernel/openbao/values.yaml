@@ -87,6 +87,3 @@ server:
 # Injector is not needed — ESO handles secret syncing
 injector:
   enabled: false
-
-global:
-  tlsDisable: false

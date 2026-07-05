@@ -19,6 +19,7 @@ data:
       - "--hostname-backchannel-dynamic=true"
       - "--hostname-strict=false"
       - "--proxy-headers=xforwarded"
+      - "--proxy=edge"
       - "--cache=local"
     service:
       type: ClusterIP
