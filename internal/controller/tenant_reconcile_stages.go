@@ -169,7 +169,7 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
 		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, fmt.Errorf("registry credentials error: %w", err)
 	}
 	if err := r.ensureStagingCaTrust(ctx, tenant, state.nsName); err != nil {
 		return ctrl.Result{}, err
