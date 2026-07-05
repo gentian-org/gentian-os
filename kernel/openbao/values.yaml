@@ -77,8 +77,8 @@ server:
 
   extraVolumes:
     - name: tls
-      secret:
-        secretName: openbao-tls
+      type: secret
+      secretName: openbao-tls
   extraVolumeMounts:
     - name: tls
       mountPath: /openbao/tls
