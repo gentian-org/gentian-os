@@ -20,6 +20,8 @@ data:
       - "--hostname-strict=false"
       - "--proxy-headers=xforwarded"
       - "--cache=local"
+    proxy:
+      mode: xforwarded
     service:
       type: ClusterIP
       httpPort: 8080
