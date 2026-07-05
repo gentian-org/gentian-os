@@ -3,7 +3,7 @@
 **Status:** Draft v0.1  
 **Scope:** User and group administration, tenant-scoped notifications, member onboarding, and the identity/provisioning contracts for the Suze (`keycloak-native`) path.
 
-**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [new-security-architecture.md](new-security-architecture.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md).
+**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md).
 
 ---
 
@@ -53,7 +53,7 @@ event stores.
 
 ## 2. Placement in the security model
 
-Tenant isolation is enforced at **two independent layers** (see [new-security-architecture.md §2](new-security-architecture.md#21-core-principle--defense-in-depth-as-an-intersection)):
+Tenant isolation is enforced at **two independent layers** (see [security.md](security.md)):
 
 | Layer | Mechanism | Android analogue |
 |---|---|---|
@@ -78,19 +78,22 @@ Authorization inside the console uses **RBAC groups in Keycloak** (ergonomic) ba
 
 Users are **managed in the tenant realm**. The shared portal login flow uses the **kernel realm**, which **brokers** to the correct tenant realm by email / tenant resolution.
 
-```
-  portal.<kernel>/login
-         │
-         ▼
-  ┌──────────────────┐
-  │  kernel realm    │  gentian-portal client, platform admins
-  │  identity-first  │
-  └────────┬─────────┘
-           │ OIDC broker (per tenant)
-     ┌─────┴─────┬─────────────┐
-     ▼           ▼             ▼
- tenant:demo  tenant:acme   …
- (users live here)
+```mermaid
+flowchart TD
+    Login["portal.&lt;kernel&gt;/login"]
+    
+    KernelRealm["kernel realm<br>identity-first<br>gentian-portal client, platform admins"]
+    
+    Login --> KernelRealm
+    
+    KernelRealm -->|"OIDC broker (per tenant)"| Tenants
+    
+    subgraph Tenants ["(users live here)"]
+        direction LR
+        TenantDemo["tenant:demo"]
+        TenantAcme["tenant:acme"]
+        TenantOthers["…"]
+    end
 ```
 
 Tenant apps (Jitsi, Nextcloud, …) continue to use the **tenant realm** for OIDC. The tenant realm **brokers to the kernel IdP** so a user with an active portal session is not prompted again (`browser-kernel-idp` / `first-broker-login-gentian` flows).
@@ -218,7 +221,7 @@ recorded in the **Audit** module (§4.7).
 
 Maps to the desktop-OS question *“who is logged in right now?”* Disabling a
 member or offboarding must not leave stale portal or app sessions valid until
-token expiry alone ([new-security-architecture.md §5](new-security-architecture.md#the-five-most-important-next-steps-in-priority-order) — continuous authorization / CAEP is Stage 2).
+token expiry alone ([security.md](security.md) — continuous authorization / CAEP is Stage 2).
 
 | Capability | Behaviour |
 |---|---|
@@ -306,20 +309,19 @@ Downstream app provisioning (Nextcloud account, Matrix ID, …) is **deferred** 
 Identity changes in the Admin Console propagate to installed apps through a
 **standards-based event pipeline** (replacing ad-hoc per-app account sync):
 
-```
-Keycloak admin event (user/group CRUD)
-        │
-        ▼
-Gentian Provisioning Controller (gentian-os)
-        │  normalize to SCIM 2.0 User / Group resource or PatchOp
-        ▼
-CloudEvents bus   type: gentian.identity.user.updated.v1
-        │
-        ├──► AppProfile.provisioning.mode: native-scim
-        │         → HTTP POST to app's SCIM endpoint
-        │
-        └──► AppProfile.provisioning.mode: plugin
-                  → gentian-apps provisioner plugin
+```mermaid
+flowchart TD
+    KCEvent["Keycloak admin event<br>(user/group CRUD)"]
+    Controller["Gentian Provisioning Controller<br>(gentian-os)"]
+    Bus["CloudEvents bus<br>type: gentian.identity.user.updated.v1"]
+    ScimMode["AppProfile.provisioning.mode: native-scim<br>→ HTTP POST to app's SCIM endpoint"]
+    PluginMode["AppProfile.provisioning.mode: plugin<br>→ gentian-apps provisioner plugin"]
+    
+    KCEvent --> Controller
+    Controller -->|"normalize to SCIM 2.0 User / Group resource or PatchOp"| Bus
+    
+    Bus --> ScimMode
+    Bus --> PluginMode
 ```
 
 **AppProfile extension (planned):**
@@ -520,7 +522,7 @@ Last reviewed against `gentian-ui` (`develop`).
 
 ## 9. Stage 2 — authorization and governance
 
-Stage 2 in [new-security-architecture.md §4](new-security-architecture.md#stage-2--app-permissions-agents-and-the-pep) adds **ReBAC**, **AppGrant**, and **agent identities** on top of the P0–P9 identity admin baseline. The Admin Console grows new modules — still tenant-scoped unless noted.
+Stage 2 in [security.md](security.md) adds **ReBAC**, **AppGrant**, and **agent identities** on top of the P0–P9 identity admin baseline. The Admin Console grows new modules — still tenant-scoped unless noted.
 
 ### 9.1 Integrations & grants
 
@@ -533,11 +535,11 @@ Manage the authorization layer between installed apps, not just portal tile visi
 | **Consumer allowlist** | Control which apps may call this app's `provides` contracts | `AppGrant.spec.allowConsumers` |
 | **Effective access preview** | Show `AppProfile ∩ Binding ∩ Grant ∩ user` for a member | OpenFGA `Check` + BFF aggregation |
 
-Tenant admins decide grants; they cannot exceed what `AppProfile` declares ([new-security-architecture.md §3.4](new-security-architecture.md#34-application-permissions--catalogue-contracts-and-grants)).
+Tenant admins decide grants; they cannot exceed what `AppProfile` declares ([security.md](security.md)).
 
 ### 9.2 Agents & delegation
 
-Humans are not the only principals ([new-security-architecture.md §3.5](new-security-architecture.md#35-agentic-identity)).
+Humans are not the only principals ([security.md](security.md)).
 
 | Capability | Description |
 |---|---|
@@ -556,7 +558,7 @@ User-owned agents cannot exceed the delegating user's rights (derived-ceiling in
 | **AuthZEN-style grants** | Approved requests become short-lived OpenFGA tuples or Keycloak roles |
 | **Break-glass (platform)** | `gentian:platform:break-glass` workflow with mandatory audit + alerting — platform scope only |
 
-Maps to human-in-the-loop steps in [new-security-architecture.md §3.7](new-security-architecture.md#37-automation-n8n-like-workflows).
+Maps to human-in-the-loop steps in [security.md](security.md).
 
 ### 9.4 Federation & machine identities
 
@@ -621,10 +623,10 @@ These stay outside the Admin Console — cluster admin, GitOps, or dedicated too
 |---|---|
 | OS analogy & kernel install | [architecture.md §2, §5](../architecture.md) |
 | Operational roles | [architecture.md §13](../architecture.md#13-operational-roles) |
-| MAC backbone | [new-security-architecture.md §4 Stage 0](new-security-architecture.md#stage-0--foundations-mac-backbone-first) |
+| MAC backbone | [security.md](security.md) |
 | IAM & group taxonomy | [iam.md](iam.md) |
 | OpenFGA model | `authz/model/v0/model.fga` |
 | Tenant provisioning Jobs | [tenant-identity-composition.md](tenant-identity-composition.md) |
 | App contracts | [app-catalogue.md](app-catalogue.md) |
 | UI shell | `gentian-ui/legacy/design-system/ui_kits/console/` |
-| Stage 2 authorization | [new-security-architecture.md §4 Stage 2](new-security-architecture.md#stage-2--app-permissions-agents-and-the-pep) |
+| Stage 2 authorization | [security.md](security.md) |

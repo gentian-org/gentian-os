@@ -115,23 +115,22 @@ Cluster behaviour (domain, storage, network mode) belongs in
 
 ### 4.2 Promotion diagram
 
-```text
-feature branches
-       │
-       ▼
-   develop  ──CI──►  ghcr.io/.../gentian-os:develop
-       │
-       │  (auto via Image Updater)
-       ▼
-  homelab / dev cluster
-       │
-       │  manual: merge develop → main, tag vX.Y.Z
-       ▼
-   main + tag vX.Y.Z  ──CI──►  ghcr.io/.../gentian-os:vX.Y.Z
-       │
-       │  (semver Image Updater or pinned tag in values-prod.yaml)
-       ▼
-  cloud / prod cluster
+```mermaid
+flowchart TD
+    FeatureBranches["feature branches"]
+    Develop["develop"]
+    ImageDev["ghcr.io/.../gentian-os:develop"]
+    DevCluster["homelab / dev cluster"]
+    Main["main + tag vX.Y.Z"]
+    ImageProd["ghcr.io/.../gentian-os:vX.Y.Z"]
+    ProdCluster["cloud / prod cluster"]
+    
+    FeatureBranches --> Develop
+    Develop -->|"CI"| ImageDev
+    Develop -->|"(auto via Image Updater)"| DevCluster
+    DevCluster -->|"manual: merge develop → main, tag vX.Y.Z"| Main
+    Main -->|"CI"| ImageProd
+    Main -->|"(semver Image Updater or pinned tag in values-prod.yaml)"| ProdCluster
 ```
 
 ### 4.3 Tenant workflow
@@ -181,23 +180,20 @@ cloud cluster require either:
 
 ### 5.2 Promotion diagram
 
-```text
-feature branches
-       │
-       ▼
-   develop  ──CI──►  :develop
-       │
-       ▼
-  homelab / dev                    (newest-build)
-       │
-       │  tag vX.Y.Z-rc.N
-       ▼
-  cloud / staging                  (semver RC policy)
-       │
-       │  smoke + integration tests
-       │  tag vX.Y.Z
-       ▼
-  cloud / prod                     (semver stable only)
+```mermaid
+flowchart TD
+    FeatureBranches["feature branches"]
+    Develop["develop"]
+    ImageDev[":develop"]
+    DevCluster["homelab / dev (newest-build)"]
+    StagingCluster["cloud / staging (semver RC policy)"]
+    ProdCluster["cloud / prod (semver stable only)"]
+    
+    FeatureBranches --> Develop
+    Develop -->|"CI"| ImageDev
+    Develop --> DevCluster
+    DevCluster -->|"tag vX.Y.Z-rc.N"| StagingCluster
+    StagingCluster -->|"smoke + integration tests<br>tag vX.Y.Z"| ProdCluster
 ```
 
 ### 5.3 Config promotion
