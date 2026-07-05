@@ -169,7 +169,7 @@ func getKeycloakToken(ctx context.Context, kcURL, username, password string) (st
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -201,7 +201,7 @@ func getKeycloakGroupID(ctx context.Context, kcURL, realmName, token, groupName 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -235,7 +235,7 @@ func getKeycloakGroupMembersCount(ctx context.Context, kcURL, realmName, token, 
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -296,7 +296,7 @@ func (w *MeteringWorker) submitReport(ctx context.Context, tenantDomain, product
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(resp.Body)
