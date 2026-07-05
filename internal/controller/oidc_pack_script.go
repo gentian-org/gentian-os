@@ -239,33 +239,34 @@ if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-redirect to kernel IdP\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Check cookie first, then auto-redirect to kernel IdP\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+  
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-    -d "{\"provider\":\"identity-provider-redirector\",\"requirement\":\"REQUIRED\"}"
+    -d "{\"provider\":\"auth-cookie\"}"
+    
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
+    -d "{\"provider\":\"identity-provider-redirector\"}"
   echo "browser flow ${FLOW_ALIAS} created"
 fi
 
-EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-  | jq -r 'map(select(.providerId == "identity-provider-redirector"))[0].id // empty')
-if [ -z "${EXEC_ID}" ]; then
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-    -d "{\"provider\":\"identity-provider-redirector\",\"requirement\":\"REQUIRED\"}"
-  EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    | jq -r 'map(select(.providerId == "identity-provider-redirector"))[0].id // empty')
-fi
-if [ -n "${EXEC_ID}" ]; then
+EXECS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions")
+printf '%%s' "${EXECS}" | jq -c '.[]' | while read -r EXEC; do
+  EID=$(printf '%%s' "${EXEC}" | jq -r '.id')
+  PROVIDER=$(printf '%%s' "${EXEC}" | jq -r '.providerId')
+  
   curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/executions/${EXEC_ID}/config" \
-    -d "{\"alias\":\"autoredirect-kernel\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null 2>&1 || true
-  echo "identity-provider-redirector execution ${EXEC_ID} set to REQUIRED (defaultProvider=kernel)"
-fi
+    -d "{\"id\":\"${EID}\",\"requirement\":\"ALTERNATIVE\"}"
+    
+  if [ "${PROVIDER}" = "identity-provider-redirector" ]; then
+    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/executions/${EID}/config" \
+      -d "{\"alias\":\"autoredirect-kernel\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null 2>&1 || true
+    echo "identity-provider-redirector execution ${EID} configured with defaultProvider=kernel"
+  fi
+done
 
 curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}" \
