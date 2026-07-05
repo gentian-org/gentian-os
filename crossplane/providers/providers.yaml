@@ -60,6 +60,10 @@ metadata:
 spec:
   # upbound/provider-vault wraps the OpenBao-compatible Vault API.
   package: xpkg.upbound.io/upbound/provider-vault:v3.0.7
+  runtimeConfigRef:
+    apiVersion: pkg.crossplane.io/v1beta1
+    kind: DeploymentRuntimeConfig
+    name: vault-config
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -77,3 +81,26 @@ spec:
   # crossplane-contrib/provider-keycloak: Upjet bridge over mrparkers/keycloak TF provider.
   # Manages Keycloak OIDC clients, protocol mappers, and client scopes via GitOps.
   package: xpkg.upbound.io/crossplane-contrib/provider-keycloak:v2.19.0
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: vault-config
+spec:
+  deploymentTemplate:
+    spec:
+      selector:
+        matchLabels:
+          pkg.crossplane.io/provider: provider-vault
+          pkg.crossplane.io/revision: provider-vault-7fe7f487ba59
+      template:
+        metadata:
+          labels:
+            pkg.crossplane.io/provider: provider-vault
+            pkg.crossplane.io/revision: provider-vault-7fe7f487ba59
+        spec:
+          containers:
+            - name: package-runtime
+              env:
+                - name: VAULT_SKIP_VERIFY
+                  value: "true"
