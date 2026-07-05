@@ -613,6 +613,7 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 		}
 
 		annoKey := "gentianos.io/install-grant-" + profileName
+		log.FromContext(ctx).Info("checking registry credentials for proprietary app", "profile", profileName, "annoKey", annoKey, "annotations", tenant.Annotations)
 		jwtToken := tenant.Annotations[annoKey]
 		if jwtToken == "" {
 			return fmt.Errorf("app %s has a proprietary license; please purchase a subscription and provide the install grant JWT annotation %s", profileName, annoKey)
