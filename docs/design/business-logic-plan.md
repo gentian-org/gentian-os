@@ -2,7 +2,7 @@
 
 **Status:** Design plan  
 **Companion to:** [app-catalogue.md](app-catalogue.md),
-[app-profile-versioning.md](app-profile-versioning.md),
+[app-profiles.md](app-profiles.md),
 [architecture.md](../architecture.md), [roadmap.md](../roadmap.md)
 
 Gentian OS and **`gentian-apps`** are the **Community** (open source) catalogue.
@@ -90,7 +90,7 @@ spec:
 **AppCatalogue controller** apply entitlement rules for `license: proprietary`
 (`ProfileRequiresEntitlement()` in [`catalogue_helpers.go`](../../api/v1alpha1/catalogue_helpers.go)).
 
-Details: [app-profile-versioning.md](app-profile-versioning.md).
+Details: [app-profiles.md](app-profiles.md).
 
 ---
 
@@ -227,7 +227,7 @@ install targets the same profile CR.
 
 | Topic | Document |
 |---|---|
-| Profile fields & versioning | [app-profile-versioning.md](app-profile-versioning.md) |
+| Profile fields & versioning | [app-profiles.md](app-profiles.md) |
 | Catalogue & install flow | [app-catalogue.md](app-catalogue.md) |
 | Profile authoring | [gentian-apps/app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) |
 | IAM / roles | [iam.md](iam.md) |

@@ -5,7 +5,7 @@ This document describes identity, roles, and access control in Gentian OS.
 **Companion docs:**
 - [admin-console.md](admin-console.md) — Gentian Admin Console
 - [multi-tenancy.md](multi-tenancy.md) — namespace, network, and data isolation
-- [new-security-architecture.md](new-security-architecture.md) — Suze, OpenFGA, MAC layers
+- [security.md](security.md) — Suze, OpenFGA, MAC layers
 
 ---
 
@@ -164,7 +164,7 @@ Full design: [admin-console.md](admin-console.md).
 
 IAM does **not** replace the MAC backbone:
 
-- **MAC** — `tenant-{name}` namespace, NetworkPolicy, Kyverno ([new-security-architecture.md](new-security-architecture.md))
+- **MAC** — `tenant-{name}` namespace, NetworkPolicy, Kyverno ([security.md](security.md))
 - **Identity** — per-tenant Keycloak realm
 - **Authorization** — OpenFGA (ReBAC) + group claims (RBAC veneer)
 

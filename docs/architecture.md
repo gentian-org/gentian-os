@@ -733,7 +733,7 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Kernel functions, default install, OS analogy details | [design/kernel.md](design/kernel.md) |
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
 | AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
-| Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue-security.md](design/app-catalogue-security.md) |
+| Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue.md](design/app-catalogue.md) |
 | Commercial model & Odoo integration | [design/business-logic-plan.md](design/business-logic-plan.md) |
 | OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
