@@ -1,369 +1,274 @@
-# Gentian OS — Roadmap
+# Gentian Cloud OS — Product & Security Roadmap
 
-Planned work not yet fully implemented. For the current platform design see
-[architecture.md](architecture.md). **Stage 0** (MAC backbone) and **Stage 1**
-(OpenFGA) progress are tracked in
-[design/new-security-architecture.md §4](design/new-security-architecture.md#4-implementation-plan).
+This document outlines the planned backlog of work for the Gentian Cloud OS. The items are structured hierarchically to allow development teams to easily ingest them into their backlogs. 
 
----
-
-## Stage 0 — MAC backbone (new security)
-
-Stage 0 is **complete for dev/homelab** on `develop`. Detailed status tables
-and Stage 1 gap analysis: [new-security-architecture.md §4](design/new-security-architecture.md#stage-0--foundations-mac-backbone-first).
-
-| Item | Status | Notes |
-|------|--------|-------|
-| Per-tenant namespace + default-deny NetworkPolicy | **Done** | `tenant-default` baseline + operator-managed allowlists |
-| Kernel egress from `AppProfile.kernelRequirements` | **Done** | `kernel-access-*` NetworkPolicies |
-| Contract egress from active `IntegrationBinding` | **Done** | `contract-*` NetworkPolicies intersect binding capabilities with AppGrant |
-| Kyverno baseline admission | **Done** | `kernel/appsets/05-admission.yaml`, `kernel/security/kyverno/policies/` |
-| **Cilium** (FQDN/L7 egress, Hubble) | Planned | Optional upgrade when standard NetworkPolicy is insufficient |
-| **Service mesh + SPIFFE/SPIRE** | Planned | Stage 3 — workload mTLS for autonomous in-cluster agents |
-| AppGrant-governed contract allowlists (OpenFGA) | **Done** | Stage 2 — netpolicy ∩ AppGrant; OpenFGA `granted` tuples |
-
-### Cilium (planned)
-
-Replace or augment the CNI with [Cilium](https://cilium.io/) when Gentian needs FQDN-based egress allowlists, L7 HTTP policy, or Hubble flow visibility. Not required for Stage 0 on clusters where the stock CNI enforces Kubernetes NetworkPolicy.
-
-```
-[ ] Evaluate Cilium as optional CNI profile in install / gentian-deployments
-[ ] Migrate tenant contract allowlists to CiliumNetworkPolicy where FQDN rules are needed
-[ ] Enable Hubble UI / metrics for MAC audit trails
-```
-
-### Service mesh + SPIFFE/SPIRE (planned)
-
-Deploy a service mesh (Istio or Linkerd) and [SPIFFE/SPIRE](https://spiffe.io/) when autonomous in-cluster agents need secret-less mTLS — not for edge TLS (Envoy Gateway covers that). See [new-security-architecture.md](design/new-security-architecture.md) §3.5 and Stage 3.
-
-```
-[ ] SPIRE server + agent deployment model
-[ ] Mesh control plane integrated with Gentian install
-[ ] Map gentianos.io/app / tenant labels to SPIFFE ID templates
-[ ] Wire mesh policy to IntegrationBinding / future AppGrant tuples
-```
-
-### MAC hardening: mediated data plane (planned)
-
-Horizon A goal from [new-security-architecture.md](design/new-security-architecture.md): apps and Gentian-native services reach data only through **contract-mediated APIs** that pass the PEP — no standing off-PEP SQL credentials in workload pods. Depends on **AppGrant/AuthZEN** (Stage 2) and **SPIFFE/mesh** (Stage 3).
-
-```
-[ ] Gentian-native stores (portal shell, audit, notifications) — tenant-scoped DB today; add store sidecar / proxy next
-[ ] Postgres proxy pilot on one catalogue app (e.g. app-store)
-[ ] Service/port-scoped kernel egress (Cilium FQDN) replacing coarse infra-namespace allowlists
-[ ] Catalogue-wide: apps connect via localhost proxy; operator holds DATABASE_URL
-```
-
-Per-tenant **`{tenant}_shell`** databases (settings, audit, notifications) are **Done** — same CNPG pattern as catalogue apps; portal API resolves `portal-shell-{tenant}` Secrets.
+For the current baseline design of the system, refer to [architecture.md](architecture.md).
 
 ---
 
-## Stage 1 — Identity + authorization (Suze)
+## 1. Security & Hardening
 
-**Suze** (**S**ecure **U**niversal **Z**ero-trust **E**nvironment) is the Gentian IdP Crossplane
-composite — Keycloak plus OpenFGA. Status tables and gap analysis:
-[design/new-security-architecture.md §4](design/new-security-architecture.md#stage-1--identity--authorization-core).
+### Network Egress Hardening & Service API Boundaries
+* **Target Domain**: Platform Security & Networking
+* **Context**: Default network policy configurations permit tenant workloads to access the entire service CIDR on port 443 (including the Kubernetes API server) and perform DNS lookups to the open internet. Furthermore, the network policy builder currently fails open (falls back to full capability sets) when an explicit AppGrant is missing.
+* **Proposed Solution**: Upgrade the network layer to restrict tenant pod egress. Gate DNS queries to cluster CoreDNS IP addresses and restrict kube-API access to the active API server endpoint. Rebuild the policy logic to fail closed (deny egress) on missing AppGrants. Cilium will be evaluated to enforce FQDN/L7 egress filtering.
+* **Backlog Items**:
+  - `[ ]` Tightly restrict kube-API server egress (CIDR 443) on tenant namespaces to API server endpoint IPs.
+  - `[ ]` Restrict external DNS egress to CoreDNS cluster IP addresses only.
+  - `[ ]` Modify the network policy builder in `grants.go` and `integration.go` to fail closed (deny egress) when an AppGrant is missing.
+  - `[ ]` Evaluate Cilium network policy configuration to enforce domain-scoped (FQDN) egress allow-lists.
 
----
+### Workload Identity & Service Mesh Integration
+* **Target Domain**: Platform Security & Service Mesh
+* **Context**: Autonomous in-cluster agents and apps need a zero-trust communication channel. Standard edge gateways handle ingress TLS, but inside the cluster, workloads require dynamic, secret-less authentication and mTLS.
+* **Proposed Solution**: Integrate SPIFFE/SPIRE to provide automated cryptographic identity issuance to pods. Couple SPIFFE ID generation with the platform operator's tenant namespace logic and enforce zero-trust traffic policies using a service mesh (e.g., Istio or Linkerd).
+* **Backlog Items**:
+  - `[ ]` Design the deployment model for SPIRE server and agent daemonsets.
+  - `[ ]` Map `gentianos.io/app` and tenant labels to SPIFFE ID templates.
+  - `[ ]` Wire service mesh traffic policy rules to platform integration bindings.
+  - `[ ]` Enforce mutual TLS (mTLS) across all platform control plane and tenant communications.
 
-## Gentian Admin Console
+### Contract-Mediated Data Plane Access
+* **Target Domain**: Platform Security & Storage
+* **Context**: Tenant workloads currently connect directly to underlying database and storage engines using standing credentials. This exposes credentials directly in the workload pods.
+* **Proposed Solution**: Harden access by routing database and S3 requests through credential-less local sidecars or proxies that query a Policy Decision Point (PEP) to authenticate and validate access permissions on a per-query basis.
+* **Backlog Items**:
+  - `[ ]` Develop and configure a database proxy sidecar for PostgreSQL CNPG clusters.
+  - `[ ]` Refactor catalogue apps to connect to database resources via localhost proxy paths.
+  - `[ ]` Move database credential storage out of tenant namespaces into the operator's private domain.
 
-**Design:** [design/admin-console.md](design/admin-console.md) · **IAM:** [design/iam.md](design/iam.md)
+### Waiver Exclusion Verification Hardening
+* **Target Domain**: Platform Security & Admission Control
+* **Context**: The Kyverno baseline policy waiver exclusions currently key off a pod label (`mac-waiver.gentianos.io/<policy>: approved`). Because pods can assert this label themselves, this control is weak.
+* **Proposed Solution**: Migrate waiver validation logic from self-asserted pod labels to platform-owned, cluster-admin-managed objects. Map exclusions using service accounts and namespaces derived directly from `PlatformSecurityPolicy` definitions.
+* **Backlog Items**:
+  - `[ ]` Refactor Kyverno exclusion rules in `gentian-baseline.yaml` to evaluate namespace and service account configurations.
+  - `[ ]` Deprecate waiver checks relying on self-asserted pod labels.
+  - `[ ]` Validate the updated PSP waiver checks against live workload deployments.
 
-User/group administration, tenant notifications, and member onboarding live in the **Gentian Admin
-Console** — shell builtin apps backed by a Gentian BFF (Keycloak Admin API + Gentian
-kernel services).
+### Gateway Routing & Listener Security
+* **Target Domain**: Platform Security & Gateways
+* **Context**: Gateway API listeners currently accept routing configurations from any namespace (`From: All`) and utilize broad `ReferenceGrants`, creating a risk of route hijacking.
+* **Proposed Solution**: Secure the ingress edge by scoping listener `allowedRoutes` to specific namespace label selectors. Narrow down target namespaces in `ReferenceGrants` to prevent wildcard access.
+* **Backlog Items**:
+  - `[ ]` Update `gateway_platform_reconciler.go` to enforce route namespace selectors on gateway listeners.
+  - `[ ]` Replace wildcard namespaces in `ReferenceGrants` templates with specific named targets.
+  - `[ ]` Verify that tenant routing configs cannot hijack administrative paths.
 
-| Phase | Deliverable | Status |
-|-------|-------------|--------|
-| **P0** | Suze bootstrap: kernel + tenant realm Jobs; group taxonomy; platform + tenant admin users | **Done** — [admin-console.md §8.1](design/admin-console.md#81-p0--p1-status) |
-| **P1** | Admin Console BFF: Members + Groups (Keycloak Admin API, tenant-scoped) | **Done** (`gentian-ui`; deploy via `gentian-deployments` / Argo CD) |
-| **P2** | Invite + password reset (`inviteEmail`, Gentian email theme) | **Done** (`gentian-ui`) — [admin-console.md §8.2](design/admin-console.md#82-p2-status) |
-| **P3** | Per-user TOTP enablement | **Done** (`gentian-ui`) — [admin-console.md §8.3](design/admin-console.md#83-p3-status) |
-| **P4** | Security policies — password, session, lockout, MFA realm rules | **Done** (`gentian-ui`) — [admin-console.md §8.4](design/admin-console.md#84-p4-status) |
-| **P5** | Sessions — list/revoke; auto-revoke on member disable | **Done** (`gentian-ui`) |
-| **P6** | Audit — sign-in + admin-action log, CSV/JSON export | **Done** (`gentian-ui`) |
-| **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) |
-| **P8** | Provisioning controller + CloudEvents/SCIM bus | Planned |
-| **P9** | OpenFGA `can_launch` for admin modules (shell tile in P1) | Planned |
-| **Stage 2** | Integrations & grants, agents, access requests, federation — [admin-console.md §9](design/admin-console.md#9-stage-2--authorization-and-governance) | **Partial** — see below |
+### Keycloak Administrative Panel Isolation & Hostname Enforcement
+* **Target Domain**: Platform Security & Identity
+* **Context**: The Keycloak master admin console is exposed externally at the cluster gateway edge, and the server runs with `hostname-strict=false`.
+* **Proposed Solution**: Tightly lock down the `/admin` URL paths at the gateway layer, and configure Keycloak with strict hostname verification. Run administrative services on a private internal DNS zone.
+* **Backlog Items**:
+  - `[ ]` Restrict external edge access to `/admin` endpoints on the gateway configuration.
+  - `[ ]` Set `hostname-strict=true` in Keycloak server configuration templates.
+  - `[ ]` Run the Keycloak admin console on a dedicated internal-only hostname (e.g., `admin.kernel.local`).
 
-**Stage 2 — authorization (partial):**
+### Keycloak Refresh Token Rotation & Revocation
+* **Target Domain**: Platform Security & Identity
+* **Context**: User access tokens are configured with long lifespans to prevent frequent login prompts. To balance usability with security, the refresh tokens must support rotation and explicit revocation to limit token theft risks.
+* **Proposed Solution**: Enable refresh token rotation and revocation within the Keycloak realm defaults, and implement logout-triggered token revocation inside the portal BFF.
+* **Backlog Items**:
+  - `[ ]` Enable refresh token rotation (`revokeRefreshToken: true`) in default realm settings.
+  - `[ ]` Implement active token revocation API calls in the portal shell BFF on user logout.
 
-| Item | Status |
-|------|--------|
-| AppGrant CRD + OpenFGA tuple sync | **Done** |
-| PlatformSecurityPolicy + MAC waiver flow | **Done** |
-| Admin Console — Platform + Integrations tabs | **Done** |
-| Netpolicy ∩ AppGrant (contract egress) | **Done** |
-| Effective access preview (tenant admin) | **Done** (`gentian-ui`) |
-| AuthZEN PEP in shell BFF | **Done** — `OPENFGA_AUTHZEN_ENABLED` |
-| Agent identities & delegation (RFC 8693) | Deferred |
-| Gateway external auth (Envoy ext-auth → AuthZEN) | Deferred |
+### Cryptographic Entropy for App Secret Seeds
+* **Target Domain**: Platform Security & Secrets Management
+* **Context**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`, which lacks sufficient entropy.
+* **Proposed Solution**: Transition the secret generation mechanism to use HKDF-SHA256 (HMAC-based Key Derivation Function) or cryptographically secure random number generation (`crypto/rand`).
+* **Backlog Items**:
+  - `[ ]` Replace deterministic SHA-256 hash formatting with an HKDF-based key derivation function in Crossplane compositions.
+  - `[ ]` Standardize all secret generation templates to consume keys from secure random generators.
 
+### Secure Dependency & Supply Chain Verification
+* **Target Domain**: Platform Security & Build Pipeline
+* **Context**: Third-party binaries, Helm charts, and remote manifests are retrieved during installation without validating cryptographic digests or pinned versions.
+* **Proposed Solution**: Establish a secure supply chain by pinning all dependencies to exact versions and SHA-256 digests. Move remote manifests to a verified local repository or mirror.
+* **Backlog Items**:
+  - `[ ]` Audit and replace all remote mutable git/branch references with specific tags and commits in `install.sh` and `update.sh`.
+  - `[ ]` Pin all Helm chart dependencies to specific versions and SHA digests in ArgoCD files.
+  - `[ ]` Implement local mirror targets for all third-party charts.
 
-### Platform admin least-privilege
+### In-Cluster Secret Disclosure Prevention
+* **Target Domain**: Platform Security & Secrets Management
+* **Context**: Administrative credentials and OpenBao root tokens are echoed to standard console logs during bootstrap, and the raw master key is persisted in plain text within cluster secrets.
+* **Proposed Solution**: Sanitise installation scripts to prevent secrets from leaking into log aggregators. Leverage a KMS (Key Management Service) or HSM (Hardware Security Module) provider to securely wrap key material rather than storing the raw master key in-cluster.
+* **Backlog Items**:
+  - `[ ]` Refactor bootstrap helper scripts (`openbao.sh`, `install.sh`) to suppress secret logging.
+  - `[ ]` Integrate external KMS providers (e.g., AWS KMS, HashiCorp Vault Transit) to wrap the cluster master key.
+  - `[ ]` Remove the plain-text storage of unseal keys and master secrets from cluster-accessible namespaces.
 
-Bootstrap uses `gentian:platform:superadmin` with cross-tenant visibility for operational
-convenience. Target state flips via cluster config `platformAdminMode: constrained` — platform
-admins see tenant metadata and break-glass only, not routine cross-tenant member access.
+### Automated Annotation-Driven Secret Rotation
+* **Target Domain**: Platform Security & Secrets Management
+* **Context**: There is currently no operator mechanism to handle credential rotation dynamically. Rotation must be done manually by modifying vault paths and restarting workloads.
+* **Proposed Solution**: Extend the operator to watch for a rotation annotation on the `Tenant` CR (e.g., `gentian-os.io/rotate-credentials=all`). The controller will regenerate values in OpenBao and rely on ExternalSecrets (ESO) and Reloader to perform zero-downtime rolling updates.
+* **Backlog Items**:
+  - `[ ]` Implement the rotation annotation watcher inside the operator `Tenant` controller.
+  - `[ ]` Implement the rotation engine that triggers secret regeneration in OpenBao.
+  - `[ ]` Configure Reloader annotations on tenant apps to restart pods automatically upon secret changes.
 
-```
-[ ] BFF tenant-scope enforcement on every Admin Console route
-[ ] Separate Keycloak groups: superadmin, operator, break-glass
-[ ] OpenFGA relations platform#admin vs tenant#admin
-[ ] Audit log on admin mutations (Keycloak admin events + BFF)
-[ ] platformAdminMode: constrained cluster setting + docs
-```
+### SOC 2 Auditing & Compliance Instrumentation
+* **Target Domain**: Compliance & Audit
+* **Context**: Platform audit logs, access reviews, and change management logs are not structured or aggregated to meet compliance framework requirements.
+* **Proposed Solution**: Instrument audit log aggregation across the BFF, Keycloak administrative console events, and gateway access logs. Automate backup verification testing and establish formal audit trail storage.
+* **Backlog Items**:
+  - `[ ]` Setup a centralized audit log ingestion store.
+  - `[ ]` Standardize logging format for administrative mutations across Keycloak and portal BFF.
+  - `[ ]` Build automation to verify and test backup restores periodically.
 
----
+### App Catalogue Validating Webhook
+* **Target Domain**: Platform Security & Software Supply
+* **Context**: Developers can deploy unverified app profiles, bypass registry constraints, or inject unauthorized sidecars into compositions.
+* **Proposed Solution**: Implement an Admission Webhook for `AppProfile` resources that validates the image registry, verifies the `compositionRef`, and gates sidecar configuration.
+* **Backlog Items**:
+  - `[ ]` Implement an Admission Webhook targeting `AppProfile` CRD requests.
+  - `[ ]` Add validation checks for allowed registries and image digests.
+  - `[ ]` Reject profiles specifying unauthorized sidecars or privileged configurations.
 
-Today Crossplane owns tenant infrastructure lifecycle via Compositions and the
-manifest bridge (`tenant-{name}-provisioning-jobs`: `jobs.json`, `objects.json`).
-The operator seeds OpenBao credentials, writes the ConfigMap, patches `XTenant`,
-and waits on composed resources.
+### Agent Identities & Token Delegation (RFC 8693)
+* **Target Domain**: Identity & Authorization
+* **Context**: In-cluster autonomous agents need to perform actions on behalf of users. Currently, they lack a secure delegation model.
+* **Proposed Solution**: Implement OAuth 2.0 Token Exchange (RFC 8693) in the Keycloak composite configuration to allow agents to obtain down-scoped, user-delegated access tokens.
+* **Backlog Items**:
+  - `[ ]` Configure token exchange policies within the Keycloak composite.
+  - `[ ]` Implement down-scoped client scopes for agent authorization.
+  - `[ ]` Wire the portal shell to delegate token exchange requests for registered agents.
 
-**Still operator-owned by design:** Cloudflare DNS and stale gateway cleanup,
-tenant deletion Jobs, mail/office, portal shell convergence, Keycloak
-browser-security header Jobs.
-
-Set `tenantProvisioning.crossplaneOnly: true` (`TENANT_CROSSPLANE_ONLY=true`) to
-skip shared-kernel side effects (portal shell, app-specific operator hooks,
-browser-security Jobs).
-
----
-
-## Mail & office
-
-Kernel-facing mail (Postfix/Dovecot virtual domains, tenant mail secrets) and
-Collabora/office integration remain **operator-owned** today. Moving them into
-kernel or tenant Compositions is a separate workstream.
-
-See [design/mail.md](design/mail.md) and operator `ensureMail` / `ensureOffice`.
-
----
-
-## Secret rotation
-
-Tenant and app credential rotation via annotations is **not implemented** in the
-operator yet. Today, rotation is manual: update OpenBao paths and restart
-workloads, or reconcile provisioning Jobs where applicable.
-
-Planned interface:
-
-```bash
-kubectl annotate tenant demo gentian-os.io/rotate-credentials=<app-name>
-kubectl annotate tenant demo gentian-os.io/rotate-credentials=all
-```
-
-When implemented, a reconciler will write new credentials to OpenBao and let ESO
-+ Reloader propagate the change. See [design/security.md](design/security.md).
-
----
-
-## SOC 2 hardening
-
-SOC 2–oriented controls (audit logging, access reviews, backup verification
-automation, change management evidence) are platform hardening work.
-Operational backup targets are in [design/operations.md](design/operations.md);
-formal control mapping and evidence collection are not yet in place.
-
----
-
-## Keycloak / `provider-keycloak` consolidation
-
-**Blocked upstream** — `provider-keycloak` Realm MRs do not yet support
-browser-flow tuning, OIDC pack role mappings, and kernel
-IdP brokering.
-
-Today **kernel** OIDC clients are Crossplane MRs (`kernel/services/keycloak-config/`);
-**per-tenant** realms and many app clients are manifest-bridge Jobs (Crossplane
-Object MRs); some app clients use Composition Client MRs when `compositionRef`
-is set. Target end state: drift-safe **`provider-keycloak` Realm MRs** for tenant
-realms once upstream supports the required settings.
-
----
-
-## IntegrationBindings
-
-`IntegrationBinding` CRs are emitted via the manifest bridge; the operator
-reconciles contract wiring and applies **`contract-*` NetworkPolicies** so
-consumers may reach providers only for active bindings. Contract egress is
-intersected with tenant-approved **AppGrant** capabilities; empty grants deny
-contract NetworkPolicies.
-
-A follow-up is full Composition-only wiring: gate on both provider and consumer
-Ready, write OpenBao paths, and surface status without a separate operator loop.
-
-See [design/app-catalogue.md](design/app-catalogue.md).
+### Gateway External Authentication (AuthZEN PEP)
+* **Target Domain**: Gateway Security
+* **Context**: External traffic routing relies on individual app authentication instead of a unified gateway policy enforcement point.
+* **Proposed Solution**: Configure Envoy Gateway's `ext-auth` filters to query the AuthZEN PEP server, allowing access decisions to be made at the network edge before hitting application pods.
+* **Backlog Items**:
+  - `[ ]` Configure Envoy Gateway HTTPRoute filters to leverage external authentication.
+  - `[ ]` Build a lightweight AuthZEN PEP helper that translates Gateway metadata to authz queries.
 
 ---
 
-## Broadcast contracts
+## 2. Platform, Infrastructure & Lifecycle
 
-The current `IntegrationBinding` model is **point-to-point**. A possible
-addition is a **broadcast bus** (NATS with per-tenant subject namespaces and
-CloudEvents schemas) for pub/sub between apps. Most existing apps do not natively
-produce or consume broker events; the agentic AI layer may cover overlapping
-needs via MCP-driven orchestration.
+### Keycloak Provider & Crossplane Consolidation
+* **Target Domain**: Platform Infrastructure
+* **Context**: Keycloak realms and OIDC clients are currently managed through a mix of Crossplane resources and manifest-bridge bootstrap Jobs. This splits configuration state and makes it harder to manage drift.
+* **Proposed Solution**: Consolidate client and realm management to use drift-safe `provider-keycloak` Managed Resources (MRs) once upstream provider versions support browser-flow tuning and broker integration.
+* **Backlog Items**:
+  - `[ ]` Replace bootstrap Jobs with native `provider-keycloak` Client/Realm MRs.
+  - `[ ]` Port OIDC client default scopes and custom browser flow configurations into Crossplane templates.
 
----
+### Composition-Only IntegrationBinding Egress
+* **Target Domain**: Platform Infrastructure
+* **Context**: The operator handles part of the `IntegrationBinding` logic (like network policies) programmatically, creating a hybrid lifecycle.
+* **Proposed Solution**: Transition integration binding entirely to Crossplane Compositions. Gate deployment on the readiness of both consumer and provider, write connection credentials directly, and remove programmatic operator reconciliation loops.
+* **Backlog Items**:
+  - `[ ]` Refactor `IntegrationBinding` logic to resolve exclusively within Crossplane compositions.
+  - `[ ]` Remove the programmatically generated integration binding reconciliation code from the Go controller.
 
-## App catalogue delivery
+### Event-Driven Messaging Bus (NATS & CloudEvents)
+* **Target Domain**: Platform Infrastructure
+* **Context**: Applications and services currently communicate via point-to-point APIs. There is no messaging backbone for pub/sub operations.
+* **Proposed Solution**: Deploy NATS JetStream as the cluster-wide messaging bus. Enforce per-tenant subject namespaces and mandate CloudEvents schemas for all asynchronous message payloads.
+* **Backlog Items**:
+  - `[ ]` Deploy NATS operator and configure JetStream.
+  - `[ ]` Implement namespace-scoped subject isolation policies in NATS.
+  - `[ ]` Integrate CloudEvents validation layers for inter-app communications.
 
-Deliver the app catalogue via an OCI artefact + `Cluster` XR instead of a
-separate ArgoCD Application (`gentian-appprofiles`).
+### OCI-Based App Catalogue Delivery
+* **Target Domain**: Software Supply
+* **Context**: The app catalogue is delivered as an ArgoCD Application, which requires pulling raw YAML from Git repositories.
+* **Proposed Solution**: Package and publish the `AppProfile` resources as OCI artifacts. Refactor the deployment logic to pull the catalogue directly from the registry using a custom controller or Crossplane `Cluster` XR.
+* **Backlog Items**:
+  - `[ ]` Build a packaging pipeline to compile `AppProfile` resources into OCI artifacts.
+  - `[ ]` Refactor the App Catalogue setup to pull files directly from the registry.
 
----
+### Commercial App Entitlements & Licensing
+* **Target Domain**: Platform Billing & Business Logic
+* **Context**: Pro apps can currently be listed by all cluster tenants, even if they have not been purchased or licensed.
+* **Proposed Solution**: Extend the `AppCatalogue` and `Tenant` controllers to verify customer entitlements against CRM data, and reject installation requests for proprietary profiles unless valid licenses are found.
+* **Backlog Items**:
+  - `[ ]` Sync licensing/entitlement metadata to cluster ConfigMaps or CRs.
+  - `[ ]` Extend the `Tenant` validating webhook to reject Pro app installations if a tenant lacks an active entitlement.
+  - `[ ]` Restrict Pro images from being pulled unless namespace-scoped pull secrets are provisioned.
 
-## App catalogue security
+### Office & Mail Composition Refactoring
+* **Target Domain**: Platform Infrastructure
+* **Context**: Posfix/Dovecot and Collabora integrations are deployed and managed by the operator via hardcoded installation scripts.
+* **Proposed Solution**: Package the Mail and Office workloads into standard Crossplane Compositions and Helm Charts, removing the installation burden from the operator.
+* **Backlog Items**:
+  - `[ ]` Create Crossplane compositions for Dovecot/Postfix.
+  - `[ ]` Package Collabora/Office settings into standard Helm deployment templates.
+  - `[ ]` Remove hardcoded mail/office functions from the Go operator.
 
-Implement controls in [design/app-catalogue-security.md](design/app-catalogue-security.md):
-
-- `AppProfile` validating webhook (`catalogue-tier`, registry allow-list,
-  `compositionRef` / sidecar gates)
-- CI policy in `gentian-apps` (schema, render goldens, registry/digest checks)
-- Platform **sidecar catalogue** (`sidecarRef`) before generic sidecars in
-  `app-default`
-- Kyverno tier rules on prod clusters (**baseline policies shipped** in Stage 0)
-
----
-
-## Security Hardening (Medium Gaps)
-
-These security items represent remaining medium-severity gaps identified during the static security review of the platform.
-
-### 1. SEC-9: Keycloak Master Admin Console Exposure & Hostname Strictness
-* **Issue**: The Keycloak master admin console is currently routed externally at the cluster edge (`internal/controller/kernel_gateway_routes.go`), and Keycloak is configured with `hostname-strict=false`.
-* **Remediation**:
-  1. Restrict external access to `/admin` paths on the gateway, allowing access only from local/VPN networks.
-  2. Set `hostname-strict=true` in Keycloak server configuration.
-  3. Optionally run the admin console on a separate, dedicated internal hostname (e.g., `admin.kernel.local`).
-
-### 2. SEC-11: Access Token Lifespan & Refresh Rotation Tuning
-* **Issue**: Token lifespans default to 12 hours (`accessTokenLifespan: 43200`) with refresh token revocation disabled, leaving a wide exploit window if a session token is stolen.
-* **Note on Constraints**: While the access token lifespan is intentionally kept long (a full work day) to avoid constant user re-login prompts, we should improve security around refresh tokens.
-* **Remediation**:
-  1. Set `revokeRefreshToken: true` in Keycloak to enable refresh token rotation.
-  2. Implement proper token revocation client-side in the shell/BFF on logout.
-
-### 3. SEC-12: Contract Egress Fail-Open on Missing Grants
-* **Issue**: When an `AppGrant` is missing, the contract network policy builder fails open by falling back to the full declared capability set (`internal/kernel/netpolicy/grants.go`). Egress is not enforced tightly at the network layer.
-* **Remediation**:
-  1. Update `grants.go` and `integration.go` to fail closed (deny traffic) when no valid `AppGrant` is resolved.
-  2. Scope network policies strictly to the allowed capability subsets.
-
-### 4. SEC-13: Loose Kube-API (Service CIDR:443) and DNS Egress
-* **Issue**: Default tenant network policies permit egress to the entire service CIDR on port 443 (including the Kubernetes API server) and DNS queries to the public internet (`0.0.0.0/0`).
-* **Remediation**:
-  1. Tightly restrict Kube-API egress to only the specific API server cluster IP(s).
-  2. Restrict DNS egress solely to the cluster's internal CoreDNS service IPs.
-
-### 5. SEC-14: Broad Gateway Route Listeners & ReferenceGrants
-* **Issue**: Gateway API listeners accept routes from any namespace (`From: All`) and define overly broad `ReferenceGrants`, making the platform vulnerable to route hijacking.
-* **Remediation**:
-  1. Restrict listener `allowedRoutes` to specific namespaces using label selectors.
-  2. Tighten `ReferenceGrants` to specify individual target services and namespaces rather than wildcards.
-
-### 6. SEC-15: Unverified Pod Label for MAC Waiver Exclusions
-* **Issue**: The Kyverno MAC baseline waiver logic relies on checking a self-asserted pod label (`mac-waiver.gentianos.io/<policy>: approved`). Any pod can set this label to bypass security validation.
-* **Remediation**:
-  1. Migrate waiver checks to match on cluster-admin-owned objects (e.g., matching namespace and service account configurations derived from `PlatformSecurityPolicy` definitions).
-  2. Eliminate the use of self-asserted pod labels for admission exclusions.
-
-### 7. SEC-16: Predictable App-Internal Secret Seeds
-* **Issue**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`, which lacks sufficient entropy and makes them predictable.
-* **Remediation**:
-  1. Align seed generation with the master password path using HKDF (HMAC-based Key Derivation Function) or cryptographically secure random number generation (`crypto/rand`).
-
-### 8. SEC-18: Unpinned Supply Chain Dependencies
-* **Issue**: Third-party binaries, Helm charts, and remote manifests are retrieved without validating SHA digests or cryptographic checksums. Some are pulled from mutable branches (e.g., `install.sh` and `install-argocd.sh`).
-* **Remediation**:
-  1. Pin all downloads by exact version and digest/checksum.
-  2. Vendor or mirror remote assets into a local registry or repository to prevent supply chain tampering.
-
-### 9. SEC-19: Secret Disclosure in Logs and In-Cluster Storage
-* **Issue**: Root tokens and admin passwords are occasionally echoed to console logs during bootstrap, and the raw master key is persisted in-cluster within standard Kubernetes Secrets.
-* **Remediation**:
-  1. Refactor installation scripts to suppress secret output.
-  2. Avoid storing the raw master key inside the cluster; use external vault unseal keys or a KMS/HSM provider for key wrapping.
+### Per-App HTTP-01 Certificate Issuance
+* **Target Domain**: Ingress & Networking
+* **Context**: The gateway uses wildcard certificates generated via DNS-01 verification. Individual tenant apps cannot easily request HTTP-01 verified certificates.
+* **Proposed Solution**: Extend the `AppProfile` spec to support HTTP-01 challenge definitions and dynamically provision Cert-Manager certs on demand.
+* **Backlog Items**:
+  - `[ ]` Add HTTP-01 challenge fields to the `AppProfile` API specification.
+  - `[ ]` Update the ingress reconciler to map HTTP-01 challenge routes to Cert-Manager pods.
 
 ---
 
-## Commercial layer
+## 3. User Management & Shell UI
 
-Implementation plan:
-[design/business-logic-plan.md](design/business-logic-plan.md).
+### SCIM & Provisioning Bus Integration
+* **Target Domain**: User Provisioning & Identity
+* **Context**: User provisioning changes are updated directly in Keycloak but do not propagate to catalogue apps.
+* **Proposed Solution**: Build a SCIM (System for Cross-domain Identity Management) listener that translates user/group events to CloudEvents, allowing tenant apps to sync their directories.
+* **Backlog Items**:
+  - `[ ]` Build a SCIM-compliant endpoint inside Keycloak or the operator.
+  - `[ ]` Emit user and group changes as CloudEvents onto the NATS messaging bus.
 
-| Tier | Git repo | Licence | Access |
-|---|---|---|---|
-| **Community** | **`gentian-org/gentian-apps`** (public) | OSS SPDX on `AppProfile` | Open catalogue + install |
-| **Pro** | **`gentian-org/gentian-pro`** (private) | `license: proprietary` | **Controller entitlement** after CRM payment |
+### Fine-Grained OpenFGA launch Authorization
+* **Target Domain**: UI/UX & Access Control
+* **Context**: Shell portal tiles are currently shown to users regardless of whether they have permission to access the application.
+* **Proposed Solution**: Gate portal tile rendering by querying OpenFGA `can_launch` relations before rendering the main shell interface.
+* **Backlog Items**:
+  - `[ ]` Implement `can_launch` relation rules inside the OpenFGA authorization store.
+  - `[ ]` Refactor the portal UI frontend to filter tiles based on OpenFGA responses.
 
-Catalogue metadata on **`AppProfile`**: [app-profile-versioning.md](design/app-profile-versioning.md).
+### Constrained Platform Admin Mode
+* **Target Domain**: UI/UX & Platform Access
+* **Context**: Platform admins have complete administrative visibility over all tenant data.
+* **Proposed Solution**: Configure a `platformAdminMode: constrained` mode where platform admins can only see system metadata and system logs, but cannot read tenant data or manage member records.
+* **Backlog Items**:
+  - `[ ]` Enforce tenant-scope path checks on the Admin Console BFF routes.
+  - `[ ]` Split Keycloak administrative groups into operational roles (e.g., system-operator vs tenant-admin).
+  - `[ ]` Deny cross-tenant administrative actions unless a break-glass role is explicitly active.
 
-### Near-term delivery
-
-- **`gentian-apps`** — community profiles and charts; publish public packages to
-  `ghcr.io/gentian-org`.
-- **`gentian-pro`** — commercial profiles, charts, and mirrored images in one private
-  repo; publish **private** GHCR packages under the same `gentian-org` org.
-- **CRM (Odoo)** — customers, orders, invoices; webhooks drive fulfillment.
-- **Controller** — `ProfileRequiresEntitlement()` (implemented); extend **AppCatalogue**
-  and **Tenant** reconcilers to list/install Pro apps only when entitled (other tenants
-  on the same cluster must not receive Pro releases).
-
-### Future: separate GitHub / GHCR org
-
-When commercial volume or compliance requires hard isolation, split supply chain to
-**`gentian-org-pro`** (Git) and **`ghcr.io/gentian-org-pro`** (registry). Not
-introduced until the Community/Pro + entitlement model is working on a single org.
-
-```
-[ ] Entitlement CR or cluster ConfigMap synced from CRM fulfillment
-[ ] Tenant webhook: reject spec.apps[] for proprietary profiles without entitlement
-[ ] AppCatalogue: hide or mark unavailable Pro profiles until entitled
-[ ] gentian-pro ArgoCD Application (private repo) — sync profiles/charts to cluster
-[ ] Optional: namespace-scoped imagePullSecret on Pro app install
-[ ] Future: migrate Pro packages to ghcr.io/gentian-org-pro + gentian-org-pro Git org
-```
+### Shell Browser Egress Proxy
+* **Target Domain**: UI/UX & Shell
+* **Context**: Embedded iframe applications make direct cross-origin API calls from the browser, exposing tokens to the user's browser context.
+* **Proposed Solution**: Build a reverse proxy within the shell BFF that maps paths (e.g., `/api/apps/{name}/...`) and handles bearer tokens server-side.
+* **Backlog Items**:
+  - `[ ]` Build reverse-proxy routing within the shell BFF.
+  - `[ ]` Implement server-side bearer token injection for outgoing app requests.
 
 ---
 
-## Per-app HTTP-01 issuers
+## 4. Agentic AI Layer
 
-Support per-app HTTP-01 issuers on `AppProfile` ([architecture.md](architecture.md)
-§6.1). The operator uses DNS-01 wildcard certificates today.
+### MCP Registry & Read-Scope Tooling
+* **Target Domain**: AI Agents
+* **Context**: There is no platform-wide mechanism for LLMs or agents to query app APIs.
+* **Proposed Solution**: Build an MCP (Model Context Protocol) server registry, add `mcp:` definitions to the `AppProfile` specification, and deliver 2-3 reference integrations (Nextcloud, OpenProject, Element) exposing read-scope API tools.
+* **Backlog Items**:
+  - `[ ]` Define the `mcp:` block schema in the `AppProfile` CRD.
+  - `[ ]` Build a central MCP registry server within the platform kernel.
+  - `[ ]` Implement read-only MCP connectors for Nextcloud, OpenProject, and Element.
 
----
+### Interactive Portal Assistant & Cross-App Aggregation
+* **Target Domain**: AI Agents & Portal
+* **Context**: Users cannot interact with their system or perform cross-application query aggregations from a single chat window.
+* **Proposed Solution**: Deploy a chat assistant inside the portal shell. Leverage OIDC token exchange to securely verify user identity and aggregate data across multiple tenant databases.
+* **Backlog Items**:
+  - `[ ]` Build the interactive portal chat UI component in the shell.
+  - `[ ]` Configure OIDC token exchange client mappings for the chat assistant.
+  - `[ ]` Build query routers to aggregate data from multiple tenant applications.
 
-## Gentian shell browser proxy
-
-Cross-origin API calls the Gentian shell makes on behalf of embedded apps may use
-proxy paths under `/api/apps/{name}/…` with forwarded bearer tokens. See
-[gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md).
-
----
-
-## Agentic / MCP layer
-
-| Milestone | Capability |
-|-----------|------------|
-| **v1** | MCP registry + per-app `mcp:` block in AppProfile + 2–3 reference apps (Nextcloud, OpenProject, Element) exposing read-scope capabilities |
-| **v2** | Shell AI assistant (Portal extension) using OIDC token exchange + cross-app aggregation queries |
-| **v3** | Workflow agents (scheduled + event-driven), AppProfile generator, tenant provisioning assistant |
-
-See [design/agentic-ai.md](design/agentic-ai.md).
-
----
-
-## Operations
-
-| Topic | Where documented |
-|-------|------------------|
-| Tenant identity (manifest bridge) | [design/tenant-identity-composition.md](design/tenant-identity-composition.md) |
-| Admin Console | [design/admin-console.md](design/admin-console.md) |
-| Gateway / ingress | [design/gateway.md](design/gateway.md) |
-| `RestoreTenant` CR | [design/operations.md](design/operations.md) §2 |
-| Bootstrap install | [getting-started.md](../getting-started.md) |
-| Deployment environments | [deployment.md](deployment.md) |
+### Automated Workflow Agents & Code Generation
+* **Target Domain**: AI Agents
+* **Context**: Deployment configurations and AppProfiles must be created manually.
+* **Proposed Solution**: Build event-driven agents that run workflows based on schedule or system triggers, and implement an AI assistant to auto-generate verified AppProfiles.
+* **Backlog Items**:
+  - `[ ]` Deploy an event listener that executes workflow scripts on NATS message triggers.
+  - `[ ]` Implement the AppProfile code generation tool.
+  - `[ ]` Integrate the agentic engine with the tenant provisioning API.
