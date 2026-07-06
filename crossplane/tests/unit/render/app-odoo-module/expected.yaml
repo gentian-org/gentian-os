@@ -1,0 +1,149 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-odoo-module-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: odoo-cb-crm-install-job'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: odoo-cb-crm-install-job
+  labels:
+    crossplane.io/composite: render-odoo-module-fixture
+  name: render-odoo-module-fixture-install-job
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-odoo-module-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/app: odoo-cb-crm
+          gentianos.io/tenant: demo
+        name: odoo-install-crm
+        namespace: tenant-demo
+      spec:
+        backoffLimit: 10
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: gentian-os
+              gentianos.io/app: odoo-cb-crm
+              gentianos.io/component: odoo-install
+              gentianos.io/tenant: demo
+          spec:
+            containers:
+            - command:
+              - /bin/sh
+              - -ec
+              - |
+                python3 /opt/odoo/src/odoo/odoo-bin \
+                  -d "${DB_NAME}" \
+                  --db_host="${DB_HOST}" \
+                  --db_port="${DB_PORT}" \
+                  --db_user="${DB_USER}" \
+                  --db_password="${DB_PASSWORD}" \
+                  --config=/etc/odoo/odoo.conf \
+                  -i "crm" \
+                  --without-demo=all \
+                  --stop-after-init
+              env:
+              - name: DB_HOST
+                valueFrom:
+                  secretKeyRef:
+                    key: db-host
+                    name: odoo-cb-sensitive-values
+              - name: DB_PORT
+                valueFrom:
+                  secretKeyRef:
+                    key: db-port
+                    name: odoo-cb-sensitive-values
+              - name: DB_USER
+                valueFrom:
+                  secretKeyRef:
+                    key: db-user
+                    name: odoo-cb-sensitive-values
+              - name: DB_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    key: db-password
+                    name: odoo-cb-sensitive-values
+              - name: DB_NAME
+                valueFrom:
+                  secretKeyRef:
+                    key: db-name
+                    name: odoo-cb-sensitive-values
+              image: ghcr.io/gentian-org/ocb:latest
+              name: odoo-install
+              volumeMounts:
+              - mountPath: /etc/odoo
+                name: odoo-config
+              - mountPath: /opt/odoo/data
+                name: odoo-data
+              - mountPath: /opt/odoo/custom-addons
+                name: extra-addons
+            initContainers:
+            - command:
+              - sh
+              - -c
+              - |
+                until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER"; do
+                  echo "waiting for postgres..."
+                  sleep 2
+                done
+                until nc -z odoo 8069; do
+                  echo "waiting for base odoo service..."
+                  sleep 2
+                done
+              env:
+              - name: DB_HOST
+                valueFrom:
+                  secretKeyRef:
+                    key: db-host
+                    name: odoo-cb-sensitive-values
+              - name: DB_PORT
+                valueFrom:
+                  secretKeyRef:
+                    key: db-port
+                    name: odoo-cb-sensitive-values
+              - name: DB_USER
+                valueFrom:
+                  secretKeyRef:
+                    key: db-user
+                    name: odoo-cb-sensitive-values
+              image: postgres:16-alpine
+              name: wait-for-base
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                  - ALL
+            restartPolicy: OnFailure
+            volumes:
+            - configMap:
+                name: odoo-config
+              name: odoo-config
+            - name: odoo-data
+              persistentVolumeClaim:
+                claimName: odoo-data
+            - emptyDir: {}
+              name: extra-addons
+        ttlSecondsAfterFinished: 600
+  providerConfigRef:
+    name: kubernetes
