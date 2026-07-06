@@ -95,19 +95,31 @@ SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" \
 keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "groups"
 GROUPS_SCOPE_ID="${_kj_id}"
 if [ -z "${GROUPS_SCOPE_ID}" ]; then
-  echo "WARNING: groups client scope missing in realm ${REALM}" >&2
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
+    -d "{\"name\":\"groups\",\"protocol\":\"openid-connect\",\"attributes\":{\"include.in.token.scope\":\"true\",\"display.on.consent.screen\":\"true\"}}"
+  SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+  keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "groups"
+  GROUPS_SCOPE_ID="${_kj_id}"
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
+    -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","consentRequired":false,"config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups"}}'
+  curl -sf -X PUT -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/default-default-client-scopes/${GROUPS_SCOPE_ID}"
+  echo "groups client scope created and configured"
+fi
+
+echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
+MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
+if echo "${MAPPERS}" | grep -Fq "\"name\":\"gentianOdooGroupRoles\""; then
+  echo "mapper gentianOdooGroupRoles already exists on groups client scope"
 else
-  echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
-  MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
-  if echo "${MAPPERS}" | grep -Fq "\"name\":\"gentianOdooGroupRoles\""; then
-    echo "mapper gentianOdooGroupRoles already exists on groups client scope"
-  else
-    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
-      -d '{"name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
-    echo "mapper gentianOdooGroupRoles added to groups client scope"
-  fi
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
+    -d '{"name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
+  echo "mapper gentianOdooGroupRoles added to groups client scope"
 fi
 `, realmName, keycloak.ShellWaitForRealm("${REALM}"))
 }

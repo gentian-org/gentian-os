@@ -43,8 +43,7 @@ func ShellJSONIDExtractor() string {
     if [ "${_kj_id}" = "null" ]; then
       _kj_id=""
     fi
-  fi
-  if [ -z "${_kj_id}" ]; then
+  else
     _kj_flat=$(printf '%s' "${_kj_json}" | tr -d '\n\r')
     _kj_id=$(printf '%s' "${_kj_flat}" | sed 's/},[[:space:]]*{/}\n{/g' | grep -F "\"${_kj_attr}\":\"${_kj_val}\"" | head -1 | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
   fi
