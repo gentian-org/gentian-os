@@ -21,7 +21,7 @@ web:
   image:
     repository: ghcr.io/gentian-org/gentian-portal-web
     tag: develop
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
 gateway:
   enabled: true
