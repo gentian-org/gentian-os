@@ -1,0 +1,97 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: odoo-cb-base
+  labels:
+    gentianos.io/profile-name: odoo-cb-base
+  annotations:
+    gentianos.io/platform-app: "true"
+    gentianos.io/deployment-role: base
+spec:
+  displayName: "Odoo Community Backport"
+  description: "Odoo Community ERP runtime — required base for Odoo module apps."
+  family: odoo
+  catalogueVersion: "1.0.0"
+  edition: full
+  trustTier: platform
+  license: LGPL-3.0
+  tile:
+    icon: erp
+  compositionRef: app-odoo
+
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: odoo-cb
+        name: Odoo
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://erp.${TENANT_DOMAIN}/auth_oauth/signin"
+    database:
+      engine: postgresql
+      databasePerTenant: true
+    mail:
+      smtp:
+        auth: plain
+        port: 587
+
+  optionalIntegrations:
+    - contract: file-store
+      provider: nextcloud
+      capabilities: [webdav:read, webdav:write]
+    - contract: central-navigation
+      provider: portal
+      capabilities: [navigation:register]
+
+  provides:
+    - name: erp-core
+      protocol: http-json
+
+  portalTiles:
+    - name: odoo-admin
+      displayName:
+        en_US: "Odoo Settings"
+        de_DE: "Odoo Einstellungen"
+      linkSuffix: "/web"
+      linkTarget: newwindow
+      allowedGroup: "Tenant Admins"
+
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: odoo
+    version: "0.1.0"
+
+  deploymentMethod: crossplane
+
+  valueMapping:
+    oidc:
+      issuerKey: "oidc.issuer"
+      clientIdKey: "oidc.clientId"
+      clientSecretKey: "oidc.clientSecret"
+    database:
+      hostKey: "database.host"
+      portKey: "database.port"
+      nameKey: "database.name"
+      userKey: "database.user"
+      passwordKey: "database.password"
+    smtp:
+      passwordKey: "smtp.password"
+
+  appSecrets:
+    - name: admin_password
+      valuePath: "odoo.adminPassword"
+
+  extraValues:
+    fullnameOverride: odoo
+    tenantId: "${TENANT_ID}"
+    ingress:
+      enabled: false
+    gentian:
+      initModules: "base,web,gentian_os"
+      modulesPath: /opt/odoo/custom-addons
+
+  ingress:
+    subDomain: erp
+    serviceName: odoo
+    servicePort: 8069
+    tlsEnabled: true

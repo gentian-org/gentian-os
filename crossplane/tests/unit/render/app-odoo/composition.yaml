@@ -1,0 +1,627 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: app-odoo
+  labels:
+    gentianos.io/composition: app
+    gentianos.io/profile: odoo
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XApp
+  mode: Pipeline
+  pipeline:
+
+    # ── Step 1: Fetch the AppProfile + kernel service ConfigMap ──────────────
+    - step: fetch-extra-resources
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: AppProfile
+              into: appProfile
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 1
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+            - kind: ConfigMap
+              into: kernelServices
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: kernel-services
+            - kind: ConfigMap
+              into: clusterConfig
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: cluster-config
+            - kind: OIDCPackCatalog
+              into: oidcPackCatalog
+              apiVersion: gentianos.io/v1alpha1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+
+    # ── Step 2: Render composed resources ─────────────────────────────────────
+    - step: render-app-core
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr     := .observed.composite.resource }}
+            {{- $spec   := $xr.spec }}
+            {{- $xrName := $xr.metadata.name }}
+            {{- $app    := $spec.claimRef.name }}
+            {{- $ns     := $spec.tenantNamespace }}
+            {{- $tenant := trimPrefix "tenant-" $ns }}
+            {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
+
+            {{- /* ── Load AppProfile from pipeline context ────────────────────── */}}
+            {{- $extraRes  := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $profiles  := dig "appProfile" list $extraRes }}
+            {{- if eq (len $profiles) 0 }}
+              {{- fail (printf "AppProfile %q not found in cluster" $spec.profileRef.name) }}
+            {{- end }}
+            {{- $profile   := index $profiles 0 }}
+            {{- $pSpec     := dig "spec" dict $profile }}
+            {{- $vm        := default dict $pSpec.valueMapping }}
+            {{- $appSecrets := default list $pSpec.appSecrets }}
+            {{- $chart     := $pSpec.chart }}
+            {{- $role      := default "standalone" (dig "metadata" "annotations" "gentianos.io/deployment-role" "" $profile) }}
+
+            {{- $kr := default dict $pSpec.kernelRequirements }}
+
+            {{- /* ── Load cluster-config ConfigMap ──────────────────────────────── */}}
+            {{- $ccRes      := dig "clusterConfig" list $extraRes }}
+            {{- $ccCM       := default dict (index $ccRes 0) }}
+            {{- $ccData     := dig "data" dict $ccCM }}
+            {{- $nodeIP        := dig "node.ip"        "" $ccData }}
+
+            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR. */}}
+            {{- $oidcPackDefaultScopes := dict }}
+            {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
+            {{- if gt (len $catalogRes) 0 }}
+            {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
+            {{- $catPacks := default dict $catSpec.packs }}
+            {{- range $clientId, $pack := $catPacks }}
+            {{- $scopes := default list $pack.defaultScopes }}
+            {{- if $pack.scopeName }}
+            {{- $scopes = append $scopes $pack.scopeName }}
+            {{- end }}
+            {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
+            {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if eq $role "base" }}
+
+            {{- /* ── Build ExternalSecret data[] entries ───────────────────────── */}}
+            {{- $esData := list }}
+
+            {{- /* OIDC */}}
+            {{- if $vm.oidc }}
+            {{- $oidcPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $app }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-issuer"        "remoteRef" (dict "key" $oidcPath "property" "issuer")) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-id"     "remoteRef" (dict "key" $oidcPath "property" "client-id")) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $csPath := default $oidcPath $vm.oidc.clientSecretOpenbaoPath }}
+            {{- $csProp := default "client-secret" $vm.oidc.clientSecretOpenbaoProperty }}
+            {{- $esData = append $esData (dict "secretKey" "oidc-client-secret" "remoteRef" (dict "key" $csPath "property" $csProp)) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Database */}}
+            {{- if $vm.database }}
+            {{- $dbPath := printf "gentian-os/tenants/%s/apps/%s/database" $tenant $app }}
+            {{- if $vm.database.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-host"     "remoteRef" (dict "key" $dbPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.database.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-port"     "remoteRef" (dict "key" $dbPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.database.nameKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-name"     "remoteRef" (dict "key" $dbPath "property" "name")) }}
+            {{- end }}
+            {{- if $vm.database.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-user"     "remoteRef" (dict "key" $dbPath "property" "user")) }}
+            {{- end }}
+            {{- if $vm.database.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "db-password" "remoteRef" (dict "key" $dbPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* SMTP */}}
+            {{- if $vm.smtp }}
+            {{- $smtpPath := printf "gentian-os/tenants/%s/apps/%s/smtp" $tenant $app }}
+            {{- if $vm.smtp.hostKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-host"     "remoteRef" (dict "key" $smtpPath "property" "host")) }}
+            {{- end }}
+            {{- if $vm.smtp.portKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-port"     "remoteRef" (dict "key" $smtpPath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.smtp.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-user"     "remoteRef" (dict "key" $smtpPath "property" "user")) }}
+            {{- end }}
+            {{- if $vm.smtp.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" "smtp-password" "remoteRef" (dict "key" $smtpPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* App-internal secrets (AppProfile.spec.appSecrets) */}}
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
+            {{- $esData = append $esData (dict "secretKey" (printf "internal-%s" $s.name)
+                "remoteRef" (dict "key" $internalPath "property" "value")) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Emit OpenBao KV seeders for each app-internal secret ──────── */}}
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $safeName := $s.name | replace "_" "-" }}
+            {{- $seedName := printf "%s-%s-seed" $xrName $safeName }}
+            {{- $kvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
+            {{- $seedVal  := sha256sum (printf "%s:%s:%s" $xrName $app $s.name) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-seed-secret
+              name: {{ $seedName }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $seedName }}
+                    namespace: crossplane-system
+                  type: Opaque
+                  stringData:
+                    data.json: '{"value":"{{ $seedVal }}"}'
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-kv
+              name: {{ $seedName }}-kv
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: secret
+                name: {{ $kvPath }}
+                dataJsonSecretRef:
+                  name: {{ $seedName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Build Release set[] entries ────────────────────────────────── */}}
+            {{- $secretName := printf "%s-sensitive-values" $app }}
+            {{- $relSet := list }}
+
+            {{- if $vm.oidc }}
+            {{- if $vm.oidc.issuerKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.issuerKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-issuer"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientIdKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientIdKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-id"))) }}
+            {{- end }}
+            {{- if $vm.oidc.clientSecretKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.oidc.clientSecretKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "oidc-client-secret"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.database }}
+            {{- if $vm.database.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-host"))) }}
+            {{- end }}
+            {{- if $vm.database.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-port"))) }}
+            {{- end }}
+            {{- if $vm.database.nameKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.nameKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-name"))) }}
+            {{- end }}
+            {{- if $vm.database.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-user"))) }}
+            {{- end }}
+            {{- if $vm.database.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.database.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "db-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- if $vm.smtp }}
+            {{- if $vm.smtp.hostKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.hostKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-host"))) }}
+            {{- end }}
+            {{- if $vm.smtp.portKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.portKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-port"))) }}
+            {{- end }}
+            {{- if $vm.smtp.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-user"))) }}
+            {{- end }}
+            {{- if $vm.smtp.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.smtp.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "smtp-password"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* App-internal secrets */}}
+            {{- range $s := $appSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $relSet = append $relSet (dict "name" $s.valuePath
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Render inline non-sensitive values ───────────────────────── */}}
+            {{- $extraVals := dict }}
+            {{- $ksRes := dig "kernelServices" list $extraRes }}
+            {{- $ksCM  := default dict (index $ksRes 0) }}
+            {{- $ksCMData := dig "data" dict $ksCM }}
+            {{- if $pSpec.extraValues }}
+            {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
+            {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
+            {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
+            {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
+            {{- $smtpHost     := "" }}
+            {{- $ccSmtpHost := dig "mail.smtpHost" "" $ccData }}
+            {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
+            {{- if not $smtpHost }}
+            {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
+            {{- end }}
+            {{- $raw := $pSpec.extraValues | toJson }}
+            {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
+            {{- if $kernelDomain }}{{ $raw = $raw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
+            {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
+            {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
+            {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
+            {{- if $nodeIP      }}{{ $raw = $raw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
+            {{- $extraVals = $raw | fromJson }}
+            {{- end }}
+            {{- if and $spec.config $spec.config.extraValues }}
+            {{- $extraVals = mergeOverwrite $extraVals $spec.config.extraValues }}
+            {{- end }}
+            {{- if and $spec.config $spec.config.replicas }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
+            {{- end }}
+            {{- $podLabels := default dict (dig "podLabels" dict $extraVals) }}
+            {{- $podLabels = mergeOverwrite $podLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "podLabels" $podLabels) }}
+
+            {{- $rawImagePull := dig "imagePullSecrets" list $extraVals }}
+            {{- $imagePull := list }}
+            {{- range $entry := $rawImagePull }}
+            {{- if kindIs "string" $entry }}
+            {{- $imagePull = append $imagePull $entry }}
+            {{- else if kindIs "map" $entry }}
+            {{- $pullName := dig "name" "" $entry }}
+            {{- if $pullName }}{{- $imagePull = append $imagePull $pullName }}{{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if eq (len $imagePull) 0 }}
+            {{- $imagePull = list "registry-credentials" }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "imagePullSecrets" $imagePull
+                "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull))
+            ) }}
+
+            {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
+            {{- if $acmeStaging }}
+            {{- $krStaging := default dict $pSpec.kernelRequirements }}
+            {{- $identityStaging := default dict $krStaging.identity }}
+            {{- $oidcStaging := default dict $identityStaging.oidc }}
+            {{- $stagingVol := dict
+                "name" "gentian-staging-ca"
+                "secret" (dict "secretName" "gentian-staging-ca-tls")
+            }}
+            {{- $stagingMounts := list
+                (dict "name" "gentian-staging-ca" "mountPath" "/opt/gentian-staging-ca" "readOnly" true)
+            }}
+            {{- $stagingEnv := list
+                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
+            }}
+            {{- $stagingEnvironment := dict
+                "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
+                "SSL_CERT_FILE" "/opt/gentian-staging-ca/ca.crt"
+                "DENO_CERT" "/opt/gentian-staging-ca/ca.crt"
+            }}
+            {{- $existingEnvironment := default dict (dig "environment" dict $extraVals) }}
+            {{- $stagingJavaOpts := list
+                "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
+                "-Djavax.net.ssl.trustStoreType=JKS"
+                "-Djavax.net.ssl.trustStorePassword=changeit"
+            }}
+            {{- $existingJavaOpts := default list (dig "javaOpts" list $extraVals) }}
+            {{- $needsJavaTrust := or (gt (len $existingJavaOpts) 0) $oidcStaging.clientId }}
+            {{- if $needsJavaTrust }}
+            {{- range $opt := $stagingJavaOpts }}
+            {{- if not (has $opt $existingJavaOpts) }}
+            {{- $existingJavaOpts = append $existingJavaOpts $opt }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "extraEnvVars" (concat (default list (dig "extraEnvVars" list $extraVals)) $stagingEnv)
+                "environment" (mergeOverwrite $existingEnvironment $stagingEnvironment)
+                "extraVolumes" (concat (default list (dig "extraVolumes" list $extraVals)) (list $stagingVol))
+                "extraVolumeMounts" (concat (default list (dig "extraVolumeMounts" list $extraVals)) $stagingMounts)
+            ) }}
+            {{- if $needsJavaTrust }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "javaOpts" $existingJavaOpts) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Emit Keycloak Client CR ──────────────────────────────────── */}}
+            {{- $kr       := default dict $pSpec.kernelRequirements }}
+            {{- $identity := default dict $kr.identity }}
+            {{- $oidcCl   := default dict $identity.oidc }}
+            {{- if $oidcCl.clientId }}
+            {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
+            {{- $redirects  := list }}
+            {{- range $uri := (default list $oidcCl.redirectUris) }}
+            {{- $redirects = append $redirects ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- $postLogout := list }}
+            {{- range $uri := (default list $oidcCl.postLogoutRedirectUris) }}
+            {{- $postLogout = append $postLogout ($uri | replace "${TENANT_DOMAIN}" $domain) }}
+            {{- end }}
+            {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
+            {{- $oidcCredsPath := printf "gentian-os/tenants/%s/apps/%s/oidc" $tenant $app }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-oidc-client-creds-es
+              name: {{ $xrName }}-oidc-client-creds-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $xrName }}-oidc-client-creds
+                    namespace: crossplane-system
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $xrName }}-oidc-client-creds
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: {{ $oidcCredsPath }}
+                          property: client-secret
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-client
+              name: {{ $tenant }}-{{ $app }}-keycloak-client
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                clientId: {{ $oidcCl.clientId | quote }}
+                name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
+                realmId: {{ $tenant }}
+                accessType: {{ default "PUBLIC" $oidcCl.accessType | quote }}
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: {{ default false $oidcCl.directAccessGrantsEnabled }}
+                serviceAccountsEnabled: false
+                {{- if hasKey $oidcPackFullScopeAllowed $oidcPackKey }}
+                fullScopeAllowed: {{ index $oidcPackFullScopeAllowed $oidcPackKey }}
+                {{- end }}
+                {{- if $redirects }}
+                validRedirectUris:
+                  {{ toYaml $redirects | nindent 18 }}
+                {{- end }}
+                webOrigins:
+                  - "+"
+                {{- if $postLogout }}
+                validPostLogoutRedirectUris:
+                  {{ toYaml $postLogout | nindent 18 }}
+                {{- end }}
+                {{- if and $oidcCl.backchannelLogoutUrl (ne $oidcCl.backchannelLogoutUrl "") }}
+                backchannelLogoutUrl: {{ $oidcCl.backchannelLogoutUrl | replace "${TENANT_DOMAIN}" $domain | quote }}
+                backchannelLogoutSessionRequired: true
+                {{- end }}
+                {{- if eq (default "PUBLIC" $oidcCl.accessType) "CONFIDENTIAL" }}
+                clientSecretSecretRef:
+                  name: {{ $xrName }}-oidc-client-creds
+                  namespace: crossplane-system
+                  key: client-secret
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- if hasKey $oidcPackDefaultScopes $oidcPackKey }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-default-scopes
+              name: {{ $tenant }}-{{ $app }}-keycloak-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                defaultScopes:
+                  {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+
+            {{- /* ── Emit ExternalSecret ── */}}
+            {{- if gt (len $esData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-externalsecret
+              name: {{ $xrName }}-es
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $secretName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $secretName }}
+                      creationPolicy: Owner
+                      deletionPolicy: Retain
+                    data:
+                      {{ toYaml $esData | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- $extraVals = $extraVals | toJson | fromJson }}
+
+            {{- /* ── Emit Helm Release ────────────────────────────────────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-release
+              name: {{ $xrName }}-release
+            spec:
+              rollbackLimit: 3
+              forProvider:
+                chart:
+                  repository: {{ $chart.repository }}
+                  name: {{ $chart.name }}
+                  version: {{ $chart.version | quote }}
+                namespace: {{ $ns }}
+                wait: false
+                skipCRDs: true
+                {{- if gt (len $extraVals) 0 }}
+                values:
+                  {{ toYaml $extraVals | nindent 18 }}
+                {{- end }}
+                {{- if gt (len $relSet) 0 }}
+                set:
+                  {{ toYaml $relSet | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
+            {{- $ingressSpec    := default dict $pSpec.ingress }}
+            {{- $stableSvcName  := dig "serviceName" "" $ingressSpec }}
+            {{- $fullnameOverride := dig "fullnameOverride" "" $extraVals }}
+            {{- if and $stableSvcName (ne $stableSvcName $fullnameOverride) }}
+            {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
+            {{- $svcPort   := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-stable-svc
+              name: {{ $xrName }}-stable-svc
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: {{ $stableSvcName }}
+                    namespace: {{ $ns }}
+                  spec:
+                    selector:
+                      app.kubernetes.io/instance: {{ $xrName }}-release
+                      app.kubernetes.io/component: {{ $component }}
+                    ports:
+                    - name: http
+                      port: {{ $svcPort }}
+                      targetPort: {{ $svcPort }}
+                      protocol: TCP
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- end }}
+
+    # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready
