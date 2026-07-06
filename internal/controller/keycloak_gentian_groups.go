@@ -98,6 +98,16 @@ if [ -z "${GROUPS_SCOPE_ID}" ]; then
   echo "WARNING: groups client scope missing in realm ${REALM}" >&2
 else
   echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
+  MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
+  if echo "${MAPPERS}" | grep -Fq "\"name\":\"gentianOdooGroupRoles\""; then
+    echo "mapper gentianOdooGroupRoles already exists on groups client scope"
+  else
+    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
+      -d '{"name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
+    echo "mapper gentianOdooGroupRoles added to groups client scope"
+  fi
 fi
 `, realmName, keycloak.ShellWaitForRealm("${REALM}"))
 }
