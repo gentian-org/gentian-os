@@ -187,7 +187,8 @@ func (c *OpenFGAClient) WriteTuples(ctx context.Context, storeID string, tuples 
 	reqMap := map[string]any{}
 	if len(writes) > 0 {
 		reqMap["writes"] = map[string]any{
-			"tuple_keys": writes,
+			"tuple_keys":   writes,
+			"on_duplicate": "ignore",
 		}
 	}
 	if len(deletes) > 0 {
@@ -210,7 +211,12 @@ func (c *OpenFGAClient) WriteTuples(ctx context.Context, storeID string, tuples 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return c.readAPIError(resp)
+		apiErr := c.readAPIError(resp)
+		// If we only requested deletes and the error is due to a tuple not existing, we can ignore it.
+		if len(writes) == 0 && strings.Contains(apiErr.Error(), "the tuple to be deleted did not exist") {
+			return nil
+		}
+		return apiErr
 	}
 	return nil
 }

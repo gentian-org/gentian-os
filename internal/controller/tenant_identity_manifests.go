@@ -29,7 +29,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 const (
@@ -168,8 +170,11 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		return nil, err
 	}
 
-	groupNames := collectGentianTenantGroupNames(tenant, oidcConfigs)
-	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupNames))
+	groupsJSON, err := r.collectGentianGroupsJSON(ctx, tenant, oidcConfigs)
+	if err != nil {
+		return nil, err
+	}
+	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupsJSON))
 
 	adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
 	if err != nil {
@@ -293,4 +298,97 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 		return false
 	}
 	return true
+}
+
+func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) (string, error) {
+	type groupSpec struct {
+		Name       string            `json:"name"`
+		Attributes map[string][]string `json:"attributes"`
+	}
+
+	var specs []groupSpec
+	seen := make(map[string]bool)
+
+	addGroup := func(name string, attrs map[string][]string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		if attrs == nil {
+			attrs = make(map[string][]string)
+		}
+		specs = append(specs, groupSpec{
+			Name:       name,
+			Attributes: attrs,
+		})
+	}
+
+	// 1. Add tenant default groups
+	addGroup(keycloak.TenantMembersGroup(tenant.Name), nil)
+	addGroup(keycloak.TenantAdminsGroup(tenant.Name), nil)
+	addGroup(keycloak.TenantAppAdminsGroup(tenant.Name), nil)
+
+	// Helper to extract attributes from AppProfile name
+	resolveProfileAttrs := func(profileName string) (map[string][]string, error) {
+		profile := &gentianov1alpha1.AppProfile{}
+		err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return nil, nil // If profile is not found (e.g. in tests), skip attributes
+			}
+			return nil, err
+		}
+		var attrs map[string][]string
+		if profile.Annotations != nil {
+			if val, ok := profile.Annotations["gentianos.io/keycloak-group-attributes"]; ok {
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(val), &parsed); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal keycloak-group-attributes for %s: %w", profileName, err)
+				}
+				attrs = make(map[string][]string)
+				for k, v := range parsed {
+					if list, ok := v.([]any); ok {
+						var strList []string
+						for _, item := range list {
+							strList = append(strList, fmt.Sprint(item))
+						}
+						attrs[k] = strList
+					} else if valStr, ok := v.(string); ok {
+						attrs[k] = []string{valStr}
+					} else {
+						attrs[k] = []string{fmt.Sprint(v)}
+					}
+				}
+			}
+		}
+		return attrs, nil
+	}
+
+	// 2. Add groups for all tenant apps
+	for _, app := range tenant.Spec.Apps {
+		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		if err != nil {
+			return "", err
+		}
+		attrs, err := resolveProfileAttrs(profileName)
+		if err != nil {
+			return "", err
+		}
+		addGroup(keycloak.TenantAppGroup(tenant.Name, profileName), attrs)
+	}
+
+	// 3. Add groups for any additional profiles (OIDC configs)
+	for _, cfg := range oidcConfigs {
+		attrs, err := resolveProfileAttrs(cfg.profileName)
+		if err != nil {
+			return "", err
+		}
+		addGroup(keycloak.TenantAppGroup(tenant.Name, cfg.profileName), attrs)
+	}
+
+	data, err := json.Marshal(specs)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal groups JSON: %w", err)
+	}
+	return string(data), nil
 }

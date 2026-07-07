@@ -34,12 +34,12 @@ func (r *TenantReconciler) ensureGentianGroupsJob(ctx context.Context, tenant *g
 	return r.waitForProvisioningJob(ctx, tenant.Name, gentianGroupsJobName(tenant.Name))
 }
 
-func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, groupNames []string) *batchv1.Job {
+func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, groupsJSON string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	backoff := meta.ProvisioningJobBackoffLimit
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
-		corev1.EnvVar{Name: "GENTIAN_GROUP_NAMES", Value: shellWordList(groupNames)},
+		corev1.EnvVar{Name: "GENTIAN_GROUPS_JSON", Value: groupsJSON},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -76,17 +76,25 @@ TOKEN=$(curl -sf \
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 %s
 
-for GROUP_NAME in ${GENTIAN_GROUP_NAMES}; do
+echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
+  GROUP_NAME=$(echo "${group}" | jq -r '.name')
+  GROUP_ATTRS=$(echo "${group}" | jq -c '.attributes')
+
   GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?max=1000")
   keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${GROUP_NAME}"
+  
   if [ -n "${_kj_id}" ]; then
-    echo "group ${GROUP_NAME} already exists"
+    echo "group ${GROUP_NAME} already exists (id=${_kj_id}), updating attributes"
+    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
+      -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${GROUP_ATTRS}}"
     continue
   fi
+
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/groups" \
-    -d "{\"name\":\"${GROUP_NAME}\"}"
+    -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${GROUP_ATTRS}}"
   echo "group ${GROUP_NAME} created"
 done
 
