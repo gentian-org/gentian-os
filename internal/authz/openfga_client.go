@@ -180,13 +180,22 @@ func (c *OpenFGAClient) WriteTuples(ctx context.Context, storeID string, tuples 
 	for _, t := range tuples {
 		writes = append(writes, TupleKey{User: t.User, Relation: t.Relation, Object: t.Object})
 	}
-	if deletes == nil {
-		deletes = []TupleKey{}
+	if len(writes) == 0 && len(deletes) == 0 {
+		return nil
 	}
-	payload, err := json.Marshal(map[string]any{
-		"writes":  writes,
-		"deletes": deletes,
-	})
+	// OpenFGA Write API requires wrapping writes/deletes inside a nested "tuple_keys" object.
+	reqMap := map[string]any{}
+	if len(writes) > 0 {
+		reqMap["writes"] = map[string]any{
+			"tuple_keys": writes,
+		}
+	}
+	if len(deletes) > 0 {
+		reqMap["deletes"] = map[string]any{
+			"tuple_keys": deletes,
+		}
+	}
+	payload, err := json.Marshal(reqMap)
 	if err != nil {
 		return err
 	}
