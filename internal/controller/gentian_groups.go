@@ -18,17 +18,7 @@ package controller
 
 import (
 	kc "github.com/gentian-org/gentian-os/internal/keycloak"
-
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
-
-func collectGentianTenantGroupNames(tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) []string {
-	extra := make([]string, 0, len(oidcConfigs))
-	for _, cfg := range oidcConfigs {
-		extra = append(extra, cfg.profileName)
-	}
-	return kc.CollectTenantGroupNames(tenant, extra)
-}
 
 func gentianTenantAppGroup(tenant, profile string) string {
 	return kc.TenantAppGroup(tenant, profile)
@@ -46,6 +36,3 @@ func gentianGroupsJobName(tenantName string) string {
 	return kc.GroupsJobName(tenantName)
 }
 
-func shellWordList(values []string) string {
-	return kc.ShellWordList(values)
-}

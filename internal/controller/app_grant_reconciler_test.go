@@ -48,13 +48,17 @@ func (c *openFGAWriteCapture) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	body, _ := io.ReadAll(r.Body)
 	var payload struct {
-		Writes  []authz.TupleKey `json:"writes"`
-		Deletes []authz.TupleKey `json:"deletes"`
+		Writes struct {
+			TupleKeys []authz.TupleKey `json:"tuple_keys"`
+		} `json:"writes"`
+		Deletes struct {
+			TupleKeys []authz.TupleKey `json:"tuple_keys"`
+		} `json:"deletes"`
 	}
 	_ = json.Unmarshal(body, &payload)
 	c.mu.Lock()
-	c.writes += len(payload.Writes)
-	c.deletes += len(payload.Deletes)
+	c.writes += len(payload.Writes.TupleKeys)
+	c.deletes += len(payload.Deletes.TupleKeys)
 	c.mu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }
