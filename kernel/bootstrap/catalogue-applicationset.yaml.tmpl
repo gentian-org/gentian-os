@@ -24,6 +24,8 @@ spec:
       revision: %BRANCH%
       directories:
       - path: profiles/*
+      - path: profiles/odoo-cb-base
+        exclude: true
   template:
     metadata:
       name: 'catalogue-{{ .path.basename }}'
