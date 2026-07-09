@@ -19,6 +19,9 @@ package controller
 
 import (
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -133,6 +136,83 @@ func buildAppHTTPRoute(
 				},
 			},
 		},
+	}
+
+	if intent.profile != nil && gentianov1alpha1.ProfileIsAPI(intent.profile) && intent.profile.Spec.APIIntegration != nil {
+		api := intent.profile.Spec.APIIntegration
+		if api.Runtime == gentianov1alpha1.APIIntegrationRuntimeRedirect {
+			u, err := url.Parse(api.BaseURL)
+			if err == nil {
+				scheme := u.Scheme
+				if scheme == "" {
+					scheme = "https"
+				}
+				hostname := gatewayv1.PreciseHostname(u.Hostname())
+
+				var portVal gatewayv1.PortNumber
+				if u.Port() != "" {
+					p, _ := strconv.Atoi(u.Port())
+					portVal = gatewayv1.PortNumber(p)
+				} else if scheme == "https" {
+					portVal = 443
+				} else {
+					portVal = 80
+				}
+
+				pathType := gatewayv1.FullPathHTTPPathModifier
+				targetPath := u.Path
+				if targetPath == "" {
+					targetPath = "/"
+				}
+				if api.TenantBinding == gentianov1alpha1.APIIntegrationTenantBindingDomain {
+					sep := "?"
+					if strings.Contains(targetPath, "?") || u.RawQuery != "" {
+						sep = "&"
+					}
+					rawQuery := u.RawQuery
+					if rawQuery != "" {
+						targetPath += sep + rawQuery + "&tenantDomain=" + effectiveDomain
+					} else {
+						targetPath += sep + "tenantDomain=" + effectiveDomain
+					}
+				} else if u.RawQuery != "" {
+					targetPath += "?" + u.RawQuery
+				}
+
+				statusCode := 302
+				rule = gatewayv1.HTTPRouteRule{
+					Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+					Filters: []gatewayv1.HTTPRouteFilter{{
+						Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+						RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+							Scheme:     &scheme,
+							Hostname:   &hostname,
+							Port:       &portVal,
+							StatusCode: &statusCode,
+							Path: &gatewayv1.HTTPPathModifier{
+								Type:            pathType,
+								ReplaceFullPath: &targetPath,
+							},
+						},
+					}},
+				}
+			}
+		} else if api.Runtime == gentianov1alpha1.APIIntegrationRuntimePortalProxy {
+			portVal := gatewayv1.PortNumber(8000)
+			rule = gatewayv1.HTTPRouteRule{
+				Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+				BackendRefs: []gatewayv1.HTTPBackendRef{
+					{
+						BackendRef: gatewayv1.BackendRef{
+							BackendObjectReference: gatewayv1.BackendObjectReference{
+								Name: gatewayv1.ObjectName("gentian-portal-gentian-portal-api"),
+								Port: &portVal,
+							},
+						},
+					},
+				},
+			}
+		}
 	}
 	mainIngressSubDomain := ""
 	if intent.profile != nil && intent.profile.Spec.Ingress != nil {

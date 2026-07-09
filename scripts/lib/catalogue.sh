@@ -84,34 +84,6 @@ install_catalogue_sync() {
     success "Catalogue sync configured. Argo CD will sync profiles/<name>/ bundles."
     info "After sync, list available app profiles with:"
     info "  kubectl gentian apps list"
-    install_catalogue_pro_sync
-}
-
-# =============================================================================
-# 14c. Install Argo CD ApplicationSet syncing pro catalogue from gentian-pro
-# =============================================================================
-install_catalogue_pro_sync() {
-    local default_pro_repo="https://git.example.domain/gentian-pro"
-    local default_pro_branch="main"
-
-    : "${GENTIAN_PRO_REPO:=${default_pro_repo}}"
-    : "${GENTIAN_PRO_BRANCH:=${default_pro_branch}}"
-
-    banner "Step 14c — Argo CD pro catalogue sync (gentian-pro profile bundles)"
-
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-pro-applicationset.yaml.tmpl"
-    local rendered
-    rendered="$(mktemp)"
-    sed -e "s|%REPO_URL%|${GENTIAN_PRO_REPO}|g" \
-        -e "s|%BRANCH%|${GENTIAN_PRO_BRANCH}|g" \
-        "$tmpl" >"$rendered"
-
-    info "Applying gentian-catalogue-pro ApplicationSet:"
-    info "  repo:   ${GENTIAN_PRO_REPO}"
-    info "  branch: ${GENTIAN_PRO_BRANCH}"
-    kubectl apply -f "$rendered"
-    rm -f "$rendered"
-    success "Pro catalogue sync configured."
 }
 
 # Back-compat alias for install.sh / update.sh call sites.

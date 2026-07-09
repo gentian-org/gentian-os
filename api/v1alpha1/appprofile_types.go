@@ -61,6 +61,14 @@ type AppProfileSpec struct {
 	// +optional
 	License string `json:"license,omitempty"`
 
+	// Categories lists the classification categories for this application.
+	// +optional
+	Categories []string `json:"categories,omitempty"`
+
+	// Keywords lists search keywords for this application.
+	// +optional
+	Keywords []string `json:"keywords,omitempty"`
+
 	// Description is an optional human-readable description.
 	// +optional
 	Description string `json:"description,omitempty"`
@@ -572,9 +580,10 @@ type APIIntegration struct {
 	// Runtime selects how the tenant reaches the external service.
 	// redirect sends the browser to baseUrl (default).
 	// proxy routes through a kernel API proxy (reserved for a later phase).
+	// portal-proxy reverse-proxies requests through the portal BFF same-origin.
 	// +optional
 	// +kubebuilder:default=redirect
-	// +kubebuilder:validation:Enum=redirect;proxy
+	// +kubebuilder:validation:Enum=redirect;proxy;portal-proxy
 	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
 
 	// BaseURL is the external service origin (e.g. https://corp.gentian.org).
@@ -593,7 +602,7 @@ type APIIntegration struct {
 }
 
 // APIIntegrationRuntime selects how an ApiProfile reaches its external service.
-// +kubebuilder:validation:Enum=redirect;proxy
+// +kubebuilder:validation:Enum=redirect;proxy;portal-proxy
 type APIIntegrationRuntime string
 
 const (
@@ -601,6 +610,8 @@ const (
 	APIIntegrationRuntimeRedirect APIIntegrationRuntime = "redirect"
 	// APIIntegrationRuntimeProxy routes via a kernel API proxy (future phase).
 	APIIntegrationRuntimeProxy APIIntegrationRuntime = "proxy"
+	// APIIntegrationRuntimePortalProxy routes via the portal BFF proxy.
+	APIIntegrationRuntimePortalProxy APIIntegrationRuntime = "portal-proxy"
 )
 
 // APIIntegrationTenantBinding declares how the tenant is identified to the

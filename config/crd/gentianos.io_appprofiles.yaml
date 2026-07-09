@@ -149,14 +149,17 @@ spec:
                     - enum:
                       - redirect
                       - proxy
+                      - portal-proxy
                     - enum:
                       - redirect
                       - proxy
+                      - portal-proxy
                     default: redirect
                     description: |-
                       Runtime selects how the tenant reaches the external service.
                       redirect sends the browser to baseUrl (default).
                       proxy routes through a kernel API proxy (reserved for a later phase).
+                      portal-proxy reverse-proxies requests through the portal BFF same-origin.
                     type: string
                   tenantBinding:
                     allOf:
@@ -266,6 +269,12 @@ spec:
                   Distinct from spec.chart.version (upstream Helm chart pin).
                 pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
                 type: string
+              categories:
+                description: Categories lists the classification categories for this
+                  application.
+                items:
+                  type: string
+                type: array
               chart:
                 description: |-
                   Chart references the upstream Helm chart for this app. Required for
@@ -582,6 +591,11 @@ spec:
                         type: object
                     type: object
                 type: object
+              keywords:
+                description: Keywords lists search keywords for this application.
+                items:
+                  type: string
+                type: array
               license:
                 description: |-
                   License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).

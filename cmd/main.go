@@ -203,6 +203,10 @@ func main() {
 			TenancyMode:  os.Getenv("TENANCY_MODE"),
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		}).SetupWithManager(mgr)
+
+		(&webhook.AppProfileValidator{
+			Client: mgr.GetClient(),
+		}).SetupWithManager(mgr)
 	}
 
 	if os.Getenv("APP_LIFECYCLE_ENABLED") != "false" {
