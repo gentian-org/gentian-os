@@ -164,7 +164,12 @@ func keycloakGatewayFramePolicyApplied(ctx context.Context, c client.Client, ker
 			continue
 		}
 		for _, sub := range subs {
-			origin := fmt.Sprintf("https://%s.%s", sub, effective)
+			var origin string
+			if sub == "@" {
+				origin = fmt.Sprintf("https://%s", effective)
+			} else {
+				origin = fmt.Sprintf("https://%s.%s", sub, effective)
+			}
 			if !strings.Contains(csp, origin) {
 				return false
 			}

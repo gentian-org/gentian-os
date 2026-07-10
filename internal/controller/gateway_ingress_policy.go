@@ -56,7 +56,11 @@ func ingressFrameAncestorsPolicy(
 			}
 		case gatewayFrameAncestorsOriginMainApp:
 			if effectiveDomain != "" && mainIngressSubDomain != "" {
-				origins = append(origins, fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
+				if mainIngressSubDomain == "@" {
+					origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+				} else {
+					origins = append(origins, fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
+				}
 			}
 		default:
 			expanded := strings.ReplaceAll(token, "${TENANT_DOMAIN}", effectiveDomain)

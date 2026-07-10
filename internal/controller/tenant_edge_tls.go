@@ -187,6 +187,9 @@ func additionalIngressProfile(appProfile string, index int) string {
 
 func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effectiveDomain string) string {
 	sub := ingress.SubDomain
+	if sub == "@" {
+		return effectiveDomain
+	}
 	if sub == "" {
 		sub = appProfile
 	}
