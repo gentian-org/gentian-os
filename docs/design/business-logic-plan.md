@@ -5,18 +5,11 @@
 [app-profiles.md](app-profiles.md),
 [architecture.md](../architecture.md), [roadmap.md](../roadmap.md)
 
-Gentian OS and **`gentian-apps`** are the **Community** (open source) catalogue.
-**Pro** (commercial) **`AppProfile`s**, charts, and images live in private
-**`gentian-org/gentian-pro`**. **Commerce** (customers, orders, invoices) is handled
-by a **CRM/ERP** (e.g. **Odoo**).
+Gentian OS AppProfiles are stored in the public catalog repository **`gentian-apps`**. This includes both open-source and proprietary Pro apps, ensuring all products are discoverable. Commercial management is orchestrated by **Odoo GCI** and the central portal.
 
-**Access to Pro apps is enforced in the Gentian controller (entitlement),** not by
-handing each customer a permanent registry password. The CRM records who paid; the
-operator allows install only for entitled tenants.
+Access to Pro apps is enforced by **gentian-os operator** during install validation (install-grant JWT exchange), not by hiding the metadata. The Odoo registry records who paid; the operator allows installs only for entitled tenants.
 
-The **app store** lists **`AppProfile`** entries from the cluster (`AppCatalogue`).
-Pro profiles appear in the store only when entitled; install proceeds only after
-entitlement is confirmed.
+The **app store** indexes all `AppProfile` entries from the cluster. Pro apps are visible to all tenant admins, displaying a **Buy** button that directs them to checkout. Confirming purchase switches the action button to **Install**.
 
 ---
 
@@ -24,12 +17,11 @@ entitlement is confirmed.
 
 ```text
 gentian-os/                 # Platform (operator, CRDs, AppCatalogue controller)
-gentian-apps/               # Community (public)
-├── profiles/               # OSS AppProfile CRs
+gentian-apps/               # Community & Pro AppProfile metadata (public)
+├── profiles/               # All AppProfile CRs (Community, API, and Pro profiles)
 └── charts/                 # Free charts → public ghcr.io/gentian-org packages
 
-gentian-pro/                # Pro (private) — gentian-org/gentian-pro
-├── profiles/               # Commercial AppProfile CRs (license: proprietary)
+gentian-pro/                # Pro workloads (private) — gentian-org/gentian-pro
 ├── charts/                 # Commercial Helm charts
 └── mirror/                 # Commercial container images (optional layout)
 
@@ -38,16 +30,9 @@ gentian-deployments/        # Tenant desired state (spec.apps[].profile)
 
 | Repo | Tier | Contents | Sync |
 |---|---|---|---|
-| **`gentian-apps`** | Community | OSS `AppProfile` YAML + free charts | ArgoCD → all clusters |
-| **`gentian-pro`** | Pro | Commercial profiles + charts/images | ArgoCD to entitled clusters/tenants |
-| **CRM (Odoo)** | — | Customers, products, orders, invoices | API / webhooks → fulfillment → **entitlement** |
-
-Community vs Pro is expressed by **repo**, **`license`** on the profile, and
-**controller entitlement** (see §2–§3).
-
-**Future:** separate GitHub/GHCR org (`gentian-org-pro` / `ghcr.io/gentian-org-pro`)
-for hard registry isolation — see [roadmap.md](../roadmap.md#commercial-layer). Not
-required for the first Pro launch.
+| **`gentian-apps`** | Public | All `AppProfile` metadata + free charts | ArgoCD → all clusters |
+| **`gentian-pro`** | Private | Commercial Helm charts + mirrored images | Registry auth (install-grants) |
+| **CRM (Odoo GCI)** | — | Customers, subscriptions, invoices | JSON-RPC API ← `gentian-corp` portal |
 
 ---
 
@@ -74,7 +59,7 @@ spec:
   license: Apache-2.0
 ```
 
-Example — Pro (`gentian-pro`):
+Example — Pro (public profile metadata):
 
 ```yaml
 spec:
@@ -85,10 +70,8 @@ spec:
   license: proprietary
 ```
 
-**Install path:** `Tenant.spec.apps[].profile` → operator (entitlement check) → Crossplane → Helm.  
-**Store path:** `AppCatalogue.status.apps[]` indexes synced profiles; UI/CLI and
-**AppCatalogue controller** apply entitlement rules for `license: proprietary`
-(`ProfileRequiresEntitlement()` in [`catalogue_helpers.go`](../../api/v1alpha1/catalogue_helpers.go)).
+**Install path:** `Tenant.spec.apps[].profile` → operator (install-grant JWT validation & exchange) → Crossplane → Helm.  
+**Store path:** `AppCatalogue.status.apps[]` indexes all synced profiles (Community & Pro) in the unified store view.
 
 Details: [app-profiles.md](app-profiles.md).
 
@@ -97,50 +80,43 @@ Details: [app-profiles.md](app-profiles.md).
 ## 3. End-to-end flow
 
 ```mermaid
-flowchart LR
-    subgraph community ["Community"]
+flowchart TD
+    subgraph community ["Public Catalog"]
         GA["gentian-apps"]
     end
-    subgraph pro ["Pro"]
-        GP["gentian-pro"]
+    subgraph pro ["Private Registry"]
+        GP["gentian-pro Registry"]
     end
-    subgraph crm ["CRM / ERP (Odoo)"]
+    subgraph crm ["Odoo GCI & Portal"]
         CUST["Customer"]
-        PROD["Product / price"]
         SO["Sales order"]
-        INV["Invoice"]
         ENT["Entitlement"]
     end
-    subgraph cluster ["Cluster"]
+    subgraph cluster ["Tenant Cluster"]
         AP["AppProfile"]
+        STORE["app-store UI"]
+        OP["gentian-os Operator"]
         TEN["Tenant"]
-        CAT["AppCatalogue"]
-        OP["Operator"]
     end
 
-    GA --> AP
-    GP --> AP
-    AP --> CAT
-    CUST --> SO
-    PROD --> SO
-    SO --> ENT
-    SO --> INV
-    ENT --> OP
-    OP -->|gate| TEN
-    TEN -->|profile name| AP
+    GA -->|Sync metadata| AP
+    AP -->|Render unified catalog| STORE
+    CUST -->|Checkout| SO
+    SO -->|Create entitlement| ENT
+    STORE -->|Install action| OP
+    OP -->|Request grant JWT| ENT
+    OP -->|Exchange grant JWT| GP
+    GP -->|Pull workload binary| OP
+    OP -->|Deploy pod| TEN
 ```
 
-1. **Browse:** store reads `AppCatalogue` — Community profiles always; Pro profiles when entitled.
-2. **Order:** customer buys in Odoo (or portal → Odoo).
-3. **Entitlement:** CRM records which **customer/tenant** may use which **profile**.
-4. **Fulfill:** fulfillment writes entitlement to cluster; **operator** allows
-   `Tenant.spec.apps` update and Pro catalogue visibility; Crossplane installs only
-   in that tenant namespace.
-5. **Invoice:** Odoo generates recurring **invoices** from subscription lines.
+1. **Browse:** The app-store reads the unified `AppCatalogue` index. All community and Pro profiles are visible.
+2. **Order:** The tenant admin clicks **Buy** on a Pro app, initiating the checkout session.
+3. **Entitlement:** Odoo records the partner's active subscription status.
+4. **Fulfill:** The operator fetches the single-use install-grant JWT, exchanges it with the portal gateway for OCI registry secrets, and proceeds to deploy the `App` claim in the tenant namespace.
+5. **Invoice:** Odoo generates recurring monthly invoices based on reported usage metrics.
 
-**Multi-tenant cluster:** Tenant B never receives a Pro Helm release or store listing
-without its own entitlement row — even if Pro charts are pullable from a shared
-private GHCR package.
+**Multi-tenant cluster:** Tenant B can browse Pro profiles but cannot install them. The operator blocks deployment and denies OCI registry pull keys until a valid entitlement is verified.
 
 ---
 
@@ -202,26 +178,30 @@ Use a **fulfillment service** (or n8n / Odoo automation) between Odoo and the cl
 | Subscription cancelled | Remove entitlement + `profile:` from tenant; prune Pro app |
 | Entitlement expiry | Same as cancel; optional grace period in CRM only |
 
-Odoo holds **commercial truth**; the **controller** enforces entitlement; the cluster
-holds **desired infra state** per tenant.
+Odoo holds **commercial truth**; the **gentian-os operator** enforces entitlement; the cluster holds **desired infra state** per tenant.
+
+### 4.4 Fulfillment integration
+
+Fulfillment is handled via the FastAPI service gateway between customer operator instances and Odoo:
+
+| Trigger | Action |
+|---|---|
+| SO confirmed + paid (Community app) | Dynamic catalog listing allows immediate install. |
+| SO confirmed + paid (Pro app) | Write entitlement record in Odoo; FastAPI portal enables install-grants for that `tenant_domain` + `productSku`. |
+| Subscription cancelled / past due | Terminate/suspend entitlement record in Odoo; revoke grant keys after the contractual grace period. |
 
 ---
 
 ## 5. Store behaviour
 
-| Source | Tier | Typical `license` | Store listing | Install |
+| Catalog Source | Tier | License | Store Listing | Install Action |
 |---|---|---|---|---|
-| **`gentian-apps`** | Community | OSS SPDX (e.g. `Apache-2.0`) | Visible to all | GitOps / CLI |
-| **`gentian-pro`** | Pro | `proprietary` | When entitled | After CRM + controller entitlement |
+| **`gentian-apps`** | Community / Free | Open Source (e.g. `Apache-2.0`) | Visible to all | **Install** (immediate pull and release) |
+| **`gentian-apps`** | API Service | Open Source / API | Visible to all | **Activate** (portal-proxy configurations / no workload pods) |
+| **`gentian-apps`** | Pro / Paid Workload | `proprietary` | Visible to all | **Buy** (redirects to Checkout) or **Install** (if entitled) |
 
-**Pricing** lives on Odoo **`product.product`** (`list_price`, currency, recurring plan).
-Map each sellable profile (or support plan) to a product. Community profiles may use a €0
-product for tracking.
+**Pricing** lives on Odoo **`product.product`** (`list_price`, currency, recurring plan). Each sellable profile maps to a CRM product. Community profiles may use a €0 product for tracking.
 
-**Support plans** (same `AppProfile`, paid support) use a separate Odoo service product;
-install targets the same profile CR.
-
----
 
 ## 6. Related documents
 
