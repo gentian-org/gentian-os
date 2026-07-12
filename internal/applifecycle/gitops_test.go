@@ -49,6 +49,9 @@ func TestGitOps_tenantFile_prefersActiveTenantsPath(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	gitScript := filepath.Join(root, "git")
+	os.WriteFile(gitScript, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
 
 	g := NewGitOps(root, "", cluster, stage)
 	got, err := g.tenantFile(tenant)
