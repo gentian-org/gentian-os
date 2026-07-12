@@ -20,6 +20,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -56,6 +57,38 @@ func AppInternalAccessNetworkPolicy(tenantName, nsName, appName string) *network
 
 func appInternalPolicyName(appName string) string {
 	name := appInternalPolicyPrefix + appName
+	if len(name) > 63 {
+		name = name[:63]
+	}
+	return name
+}
+
+const appEgressPolicyPrefix = "app-egress-"
+
+// AppEgressNetworkPolicy allows pods carrying gentianos.io/app=<profile>
+// to egress based on the egress rules defined in the AppProfile SecuritySpec.
+func AppEgressNetworkPolicy(tenantName, nsName, appName string, profile *gentianov1alpha1.AppProfile) *networkingv1.NetworkPolicy {
+	name := appEgressPolicyName(appName)
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: nsName,
+			Labels:    policyLabels(tenantName, meta.NetPolicyAppEgress),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{meta.AppLabel: appName},
+			},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeEgress,
+			},
+			Egress: profile.Spec.Security.Egress,
+		},
+	}
+}
+
+func appEgressPolicyName(appName string) string {
+	name := appEgressPolicyPrefix + appName
 	if len(name) > 63 {
 		name = name[:63]
 	}

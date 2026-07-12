@@ -17,6 +17,10 @@ limitations under the License.
 
 package v1alpha1
 
+import (
+	networkingv1 "k8s.io/api/networking/v1"
+)
+
 // SecuritySpec declares platform security requests for an AppProfile catalogue entry.
 // Cluster administrators approve subsets via PlatformSecurityPolicy; the operator
 // intersects requests with the allowlist before compositions apply MAC labels.
@@ -25,6 +29,10 @@ type SecuritySpec struct {
 	// cannot satisfy baseline pod security (for example s6-based init as root).
 	// +optional
 	MacWaivers []MacWaiverRequest `json:"macWaivers,omitempty"`
+
+	// Egress lists specific outbound network rules required by the application.
+	// +optional
+	Egress []networkingv1.NetworkPolicyEgressRule `json:"egress,omitempty"`
 }
 
 // MacWaiverRequest identifies a MAC policy exception scope requested by the profile.

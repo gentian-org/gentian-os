@@ -29,6 +29,7 @@ const (
 	NetPolicyBaseline  = "baseline"
 	NetPolicyKernel    = "kernel-access"
 	NetPolicyAppInternal = "app-internal-access"
+	NetPolicyAppEgress   = "app-egress"
 	NetPolicyContract    = "contract-allow"
 	NetPolicyTenantCache = "tenant-cache-access"
 
