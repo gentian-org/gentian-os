@@ -386,3 +386,11 @@ func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (Con
 	}
 	return ContractCreds{Password: got["password"]}, nil
 }
+
+func (s *Seeder) Read(ctx context.Context, logicalPath string) (map[string]string, error) {
+	return s.w.Get(ctx, logicalPath)
+}
+
+func (s *Seeder) Write(ctx context.Context, logicalPath string, data map[string]string) error {
+	return s.w.Put(ctx, logicalPath, data)
+}

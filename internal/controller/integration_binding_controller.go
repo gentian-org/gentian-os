@@ -92,7 +92,7 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 				// Ignore missing, it should be seeded by TenantReconciler
 			}
 			if data == nil {
-				data = make(map[string]interface{})
+				data = make(map[string]string)
 			}
 			needsUpdate := false
 			if data["endpoint"] != endpoint {

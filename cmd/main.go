@@ -200,7 +200,7 @@ func main() {
 	if err := (&controller.IntegrationBindingReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Seeder: seeder,
+		Seeder: buildSeeder(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IntegrationBinding")
 		os.Exit(1)
