@@ -41,7 +41,7 @@ func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
 	}
 	cidr := os.Getenv("KUBE_APISERVER_CIDR")
 	if cidr == "" {
-		cidr = "10.96.0.0/12"
+		cidr = "10.0.0.0/8"
 	}
 	return netpolicy.Config{
 		InfraNamespace:    infraNS,
