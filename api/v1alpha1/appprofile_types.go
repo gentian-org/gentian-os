@@ -670,6 +670,24 @@ type ValueMapping struct {
 	// IMAP maps mail access values to Helm keys.
 	// +optional
 	IMAP *IMAPValueMapping `json:"imap,omitempty"`
+
+	// Integrations maps optional integration credentials to Helm keys,
+	// keyed by the contract name.
+	// +optional
+	Integrations map[string]IntegrationValueMapping `json:"integrations,omitempty"`
+}
+
+// IntegrationValueMapping maps integration credentials to Helm chart keys.
+type IntegrationValueMapping struct {
+	// EndpointKey is the Helm value key for the integration's service endpoint URL.
+	// +optional
+	EndpointKey string `json:"endpointKey,omitempty"`
+	// UserKey is the Helm value key for the integration username.
+	// +optional
+	UserKey string `json:"userKey,omitempty"`
+	// PasswordKey is the Helm value key for the integration password.
+	// +optional
+	PasswordKey string `json:"passwordKey,omitempty"`
 }
 
 // OIDCValueMapping maps OIDC provider values to Helm chart keys.

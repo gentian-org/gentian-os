@@ -37,6 +37,12 @@ func InternalPath(tenant, app, name string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, app, name)
 }
 
+// ContractPath returns the canonical KV v2 logical path for a contract integration
+// secret shared between provider and consumer.
+func ContractPath(tenant, contract string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s/contracts/%s", tenant, contract)
+}
+
 // KernelPath returns the canonical KV v2 logical path for a kernel-level
 // secret that is shared across all tenants (e.g. the master password, SMTP
 // relay credentials, OCI registry pull secrets). Kernel paths intentionally

@@ -183,6 +183,11 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 		return nil, err
 	}
 	for _, ib := range bindings {
+		if r.Seeder != nil {
+			if _, err := r.Seeder.SeedContract(ctx, tenant.Name, ib.Spec.Contract); err != nil {
+				return nil, fmt.Errorf("seed contract %s: %w", ib.Spec.Contract, err)
+			}
+		}
 		objects = append(objects, ib)
 	}
 

@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 const (
@@ -186,6 +187,10 @@ func buildIntegrationBinding(
 				Namespace: nsName,
 			},
 			Capabilities: integration.Capabilities,
+			Auth: &gentianov1alpha1.BindingAuth{
+				Method:    "api-key",
+				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
+			},
 		},
 	}
 }

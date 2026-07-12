@@ -267,6 +267,22 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Integrations */}}
+            {{- if $vm.integrations }}
+            {{- range $contract, $mapping := $vm.integrations }}
+            {{- $contractPath := printf "gentian-os/tenants/%s/contracts/%s" $tenant $contract }}
+            {{- if $mapping.endpointKey }}
+            {{- $esData = append $esData (dict "secretKey" (printf "integration-%s-endpoint" $contract) "remoteRef" (dict "key" $contractPath "property" "endpoint")) }}
+            {{- end }}
+            {{- if $mapping.userKey }}
+            {{- $esData = append $esData (dict "secretKey" (printf "integration-%s-user" $contract) "remoteRef" (dict "key" $contractPath "property" "user")) }}
+            {{- end }}
+            {{- if $mapping.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" (printf "integration-%s-password" $contract) "remoteRef" (dict "key" $contractPath "property" "password")) }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* App-internal secrets (AppProfile.spec.appSecrets) */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
@@ -451,6 +467,24 @@ spec:
             {{- if $vm.imap.portKey }}
             {{- $relSet = append $relSet (dict "name" $vm.imap.portKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "imap-port"))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Integrations */}}
+            {{- if $vm.integrations }}
+            {{- range $contract, $mapping := $vm.integrations }}
+            {{- if $mapping.endpointKey }}
+            {{- $relSet = append $relSet (dict "name" $mapping.endpointKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "integration-%s-endpoint" $contract)))) }}
+            {{- end }}
+            {{- if $mapping.userKey }}
+            {{- $relSet = append $relSet (dict "name" $mapping.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "integration-%s-user" $contract)))) }}
+            {{- end }}
+            {{- if $mapping.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $mapping.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "integration-%s-password" $contract)))) }}
+            {{- end }}
             {{- end }}
             {{- end }}
 

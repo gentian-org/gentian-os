@@ -367,3 +367,22 @@ func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (s
 	}
 	return got["value"], nil
 }
+
+// --- Contracts ---------------------------------------------------------------
+
+// ContractCreds represents the credentials shared between an integration provider and consumer.
+type ContractCreds struct {
+	Password string
+}
+
+// SeedContract writes a unique password into OpenBao for an integration contract.
+func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
+	salt := ContractPath(tenant, contract)
+	got, err := s.seedAndRead(ctx, salt, map[string]string{
+		"password": s.gen(salt, "password", 40),
+	})
+	if err != nil {
+		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
+	}
+	return ContractCreds{Password: got["password"]}, nil
+}

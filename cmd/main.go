@@ -197,6 +197,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.IntegrationBindingReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Seeder: seeder,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "IntegrationBinding")
+		os.Exit(1)
+	}
+
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),

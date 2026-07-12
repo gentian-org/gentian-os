@@ -37,6 +37,6 @@ func DefaultConfig() Config {
 		ServicesNamespace: "gentian-dev",
 		OpenbaoNamespace:  "openbao",
 		RoutingMode:       RoutingModeGateway,
-		KubeAPIServerCIDR: "10.96.0.0/12",
+		KubeAPIServerCIDR: "10.0.0.0/8",
 	}
 }
