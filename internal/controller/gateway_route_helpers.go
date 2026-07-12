@@ -140,7 +140,8 @@ func buildAppHTTPRoute(
 
 	if intent.profile != nil && gentianov1alpha1.ProfileIsAPI(intent.profile) && intent.profile.Spec.APIIntegration != nil {
 		api := intent.profile.Spec.APIIntegration
-		if api.Runtime == gentianov1alpha1.APIIntegrationRuntimeRedirect {
+		switch api.Runtime {
+		case gentianov1alpha1.APIIntegrationRuntimeRedirect:
 			u, err := url.Parse(api.BaseURL)
 			if err == nil {
 				scheme := u.Scheme
@@ -197,7 +198,7 @@ func buildAppHTTPRoute(
 					}},
 				}
 			}
-		} else if api.Runtime == gentianov1alpha1.APIIntegrationRuntimePortalProxy {
+		case gentianov1alpha1.APIIntegrationRuntimePortalProxy:
 			portVal := gatewayv1.PortNumber(8000)
 			rule = gatewayv1.HTTPRouteRule{
 				Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},

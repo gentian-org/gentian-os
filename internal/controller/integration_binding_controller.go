@@ -62,13 +62,7 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 
 		tenantDomain := tenant.Spec.Domain
-		if tenantDomain == "" {
-			// This logic relies on Tenant controller's effective domain calculation.
-			// Ideally we fetch from Tenant status if it existed, but we fallback:
-			// (Assuming KERNEL_DOMAIN is handled by the provider app themselves, 
-			// we'll just construct what we can. For Nextcloud it's typically cloud.DOMAIN).
-			// If we need the real domain, we need KERNEL_DOMAIN. Let's just update the Seeder.SeedContract to accept extra data? No.
-		}
+		_ = tenantDomain // Use if needed later
 
 		// For Nextcloud, we just set the endpoint based on the contract
 		endpoint := ""
