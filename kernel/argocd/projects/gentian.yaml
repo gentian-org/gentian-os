@@ -19,6 +19,7 @@ spec:
   - 'https://github.com/gentian-org/gentian-pro'                                                      # Pro / OpenDesk catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
+  - 'https://github.com/gentian-org/gentian-corp'                                                       # Gentian commercial frontpage portal
   - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
