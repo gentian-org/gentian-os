@@ -23,7 +23,7 @@ import (
 )
 
 func TestGitOps_tenantFile_prefersActiveTenantsPath(t *testing.T) {
-	t.Parallel()
+
 	root := t.TempDir()
 	cluster := "test"
 	stage := "dev"

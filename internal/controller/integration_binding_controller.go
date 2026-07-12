@@ -87,10 +87,7 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 		if endpoint != "" {
 			path := secrets.ContractPath(ib.Namespace, ib.Spec.Contract)
-			data, err := r.Seeder.Read(ctx, path)
-			if err != nil {
-				// Ignore missing, it should be seeded by TenantReconciler
-			}
+			data, _ := r.Seeder.Read(ctx, path)
 			if data == nil {
 				data = make(map[string]string)
 			}
