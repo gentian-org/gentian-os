@@ -50,6 +50,12 @@ func (g *GitOps) ensureRepo() error {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(g.path, ".git")); err == nil {
+		cmd := exec.Command("git", "-C", g.path, "pull", "--rebase", "--autostash")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("git pull: %w", err)
+		}
 		return nil
 	}
 	if g.repo == "" {
