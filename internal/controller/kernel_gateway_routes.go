@@ -115,6 +115,13 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-escaped-slashes", "https-wildcard", escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
 			return fmt.Errorf("ensure kernel wildcard escaped-slashes ClientTrafficPolicy: %w", err)
 		}
+		for _, tenantName := range tenantNames {
+			name := fmt.Sprintf("tenant-%s-wildcard-escaped-slashes", tenantName)
+			sectionName := fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
+			if err := r.ensureKernelClientTrafficPolicyNamed(ctx, name, sectionName, escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
+				return fmt.Errorf("ensure kernel tenant wildcard escaped-slashes ClientTrafficPolicy: %w", err)
+			}
+		}
 	}
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
