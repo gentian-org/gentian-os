@@ -420,11 +420,19 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, _, _ string) gatewayFrameAncestorsPolicy {
+func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
+	var origins []string
 	if kernelDomain != "" {
+		origins = append(origins, fmt.Sprintf("https://portal.%s", kernelDomain))
+	}
+	if effectiveDomain != "" && effectiveDomain != kernelDomain {
+		origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
+	}
+	if len(origins) > 0 {
 		return gatewayFrameAncestorsPolicy{
 			Mode:    gatewayFrameAncestorsReplace,
-			Origins: fmt.Sprintf("https://portal.%s", kernelDomain),
+			Origins: strings.Join(origins, " "),
 		}
 	}
 	return gatewayFrameAncestorsPolicy{}
