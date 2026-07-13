@@ -270,7 +270,7 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if policy.Origins != "https://portal.desk.gentian.org" {
+	if policy.Origins != "https://portal.desk.gentian.org https://demo.desk.gentian.org https://*.demo.desk.gentian.org" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
