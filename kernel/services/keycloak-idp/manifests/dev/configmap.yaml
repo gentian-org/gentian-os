@@ -60,8 +60,8 @@ data:
   values.yaml: |
     resources:
       requests:
-        cpu: 100m
-        memory: 512Mi
+        cpu: 200m
+        memory: 768Mi
       limits:
         cpu: "2"
-        memory: 1Gi
+        memory: 1.5Gi
