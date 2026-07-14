@@ -573,10 +573,24 @@ spec:
             {{- if eq (len $imagePull) 0 }}
             {{- $imagePull = list "registry-credentials" }}
             {{- end }}
+            {{- $profileMeta := default dict (dig "metadata" dict $profile) }}
+            {{- $profileAnnos := default dict (dig "annotations" dict $profileMeta) }}
+            {{- $standardPull := eq (dig "gentianos.io/standard-image-pull-secrets" "false" $profileAnnos) "true" }}
+            {{- if $standardPull }}
+            {{- $imagePullMaps := list }}
+            {{- range $item := $imagePull }}
+            {{- $imagePullMaps = append $imagePullMaps (dict "name" $item) }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "imagePullSecrets" $imagePullMaps
+                "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePullMaps))
+            ) }}
+            {{- else }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
                 "imagePullSecrets" $imagePull
                 "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull))
             ) }}
+            {{- end }}
 
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
             {{- if $acmeStaging }}
