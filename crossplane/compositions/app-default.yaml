@@ -637,6 +637,12 @@ spec:
                 "extraVolumes" (concat (default list (dig "extraVolumes" list $extraVals)) (list $stagingVol))
                 "extraVolumeMounts" (concat (default list (dig "extraVolumeMounts" list $extraVals)) $stagingMounts)
             ) }}
+            {{- if eq $app "open-webui" }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "volumes" (concat (default list (dig "volumes" list $extraVals)) (list $stagingVol))
+                "volumeMounts" (dict "container" (concat (default list (dig "volumeMounts" "container" list $extraVals)) $stagingMounts))
+            ) }}
+            {{- end }}
             {{- if $needsJavaTrust }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "javaOpts" $existingJavaOpts) }}
             {{- end }}
