@@ -164,6 +164,15 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 	nsName := tenantNamespaceName(tenant)
 	secretName := fmt.Sprintf("llm-credentials-%s", appName)
 
+	stringData := map[string]string{
+		"OPENAI_API_BASE":     "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
+		"OPENAI_API_BASE_URL": "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
+		"OPENAI_API_KEY":      fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
+	}
+	if appName == "open-webui" {
+		stringData["WEBUI_SECRET_KEY"] = fmt.Sprintf("sk-webui-%s-%s-session-signing-key", tenant.Name, appName)
+	}
+
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -174,12 +183,8 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 				appLabel:       appName,
 			},
 		},
-		Type: corev1.SecretTypeOpaque,
-		StringData: map[string]string{
-			"OPENAI_API_BASE":     "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
-			"OPENAI_API_BASE_URL": "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
-			"OPENAI_API_KEY":      fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
-		},
+		Type:       corev1.SecretTypeOpaque,
+		StringData: stringData,
 	}
 
 	existing := &corev1.Secret{}
