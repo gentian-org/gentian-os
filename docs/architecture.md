@@ -279,6 +279,7 @@ that must exist before any tenant app can run, because they back the
 | Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
 | Notifications | **Notification Gateway** | Notification daemon |
 | Secrets keyring | **OpenBao** | Keychain |
+| AI Inference & Gateway (planned) | **vLLM + LocalAI + LiteLLM** | Co-processor / AI acceleration API |
 | Pod restart on secret rotation | **Stakater Reloader** | (no equivalent) |
 
 These are not "apps" the user picks à la carte — they are the **kernel
@@ -679,7 +680,12 @@ The Gentian Portal may host an AI assistant that uses three kernel services —
 identity, an MCP (Model Context Protocol) registry, and OIDC token exchange —
 to discover what apps are installed and act across them on behalf of the user.
 
-See [design/agentic-ai.md](design/agentic-ai.md) and [roadmap.md](roadmap.md).
+### Kernel vs. Tenant Land Split for LLM Serving
+To support resource-heavy LLM capabilities, Gentian OS uses a split-layer architectural model:
+* **Kernel Space:** Computational backends (e.g., GPU pools running **vLLM** and CPU fallbacks running **LocalAI**), model weight storage volumes (PVCs), the edge API Gateway (upgraded to **Envoy AI Gateway** with OpenFGA/Keycloak checks), and the centralized **LiteLLM** routing proxy live in the kernel to allow efficient hardware resource sharing and centralized security controls.
+* **Tenant Land:** Downstream applications (e.g., Nextcloud, OpenProject) consume the LLM API via injected credentials and virtual keys, keeping their user traffic isolated. Optional tenant-level proxies can also run in tenant space for custom routing and client-side budgeting.
+
+See [design/agentic-ai.md](design/agentic-ai.md), [design/llms.md](design/llms.md) and [roadmap.md](roadmap.md).
 
 ---
 
@@ -741,5 +747,6 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
+| LLM serving architecture & Stage 1 plan | [design/llms.md](design/llms.md) |
 | AppProfile authoring (upstream charts) | [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) |
 | Custom Gentian-native apps | [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) |

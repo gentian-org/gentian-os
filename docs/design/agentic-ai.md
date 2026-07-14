@@ -20,20 +20,23 @@ This is the agentic-era equivalent of what desktop OSes did for
 clipboard, file pickers, and inter-process messaging — a shared
 contract apps participate in, owned by the OS.
 
-## 2. Contracts vs MCP
+## 2. Contracts, MCP and Automation Hooks
 
-The platform already has two layers of inter-app contracts. MCP is
-the third:
+The platform has four layers of inter-app contracts, each serving a
+different consumer but sharing the same `AppProfile` declaration
+surface:
 
-| Layer | Purpose | Consumer |
-|---|---|---|
-| **Kernel requirements** (`AppProfile.spec.kernel`) | Identity, storage, mail, DB | Provisioned by the platform |
-| **App contracts** (`AppProfile.spec.contracts`) | App-to-app integration (e.g., OpenProject ↔ NextCloud) | Other apps |
-| **MCP capabilities** (`AppProfile.spec.mcp`) | Agent-readable operations (`searchTasks`, `createIssue`) | AI agents, shell assistant, cross-app workflows |
+| Layer | Purpose | Consumer | Interaction model |
+|---|---|---|---|
+| **Kernel requirements** (`spec.kernelRequirements`) | Identity, storage, mail, DB | Provisioned by the platform | Platform → app |
+| **App contracts** (`spec.provides` / `optionalIntegrations`) | App-to-app integration (e.g., OpenProject ↔ Nextcloud) | Other apps | Machine-to-machine, stable APIs |
+| **MCP capabilities** (`spec.mcp`) | Agent-readable operations (`searchTasks`, `createIssue`) | AI agents, shell assistant | Agent-initiated, pull (request/response) |
+| **Automation hooks** (`spec.automationHooks`) | Event-driven workflow triggers and actions | Workflow engines (ActivePieces, future n8n, …) | Event-driven, push (webhooks / CloudEvents) |
 
-A single `AppProfile` declares all three. Contracts are
+A single `AppProfile` declares all four. Contracts are
 machine-to-machine via stable APIs; MCP is agent-to-machine via a
-discoverable, semantic interface.
+discoverable, semantic interface; automation hooks bridge the
+event-driven workflow world into the same contract system.
 
 ## 3. MCP as a Kernel Requirement
 
@@ -88,26 +91,194 @@ no privileges the user doesn't have. Cross-tenant queries are
 structurally impossible because the registry, OIDC issuer, and
 network policies are all tenant-scoped.
 
-## 5. Cross-App Agent Orchestration
+## 5. Automation Hooks (`spec.automationHooks`)
 
-MCP enables genuine workflow automation across apps without
-point-to-point integrations. Examples:
+MCP (§3) is pull-based: an AI agent decides when to call an app.
+Workflow automation engines need the inverse — **push-based event
+delivery** ("when X happens, trigger Y"). The `automationHooks`
+block on `AppProfile` bridges this gap without coupling to any
+specific workflow engine.
+
+### 5.1 Why a separate block (not MCP)
+
+MCP and workflow automation serve genuinely different roles:
+
+| | MCP (`spec.mcp`) | Automation Hooks (`spec.automationHooks`) |
+|---|---|---|
+| **Consumer** | AI agents / LLMs | Workflow engines (ActivePieces, …) |
+| **Interaction** | Agent-initiated, pull (request/response) | Event-driven, push (webhooks / CloudEvents) |
+| **Triggers** | Agent decides when to call | App fires when something happens |
+| **Execution** | Stateless tool call | Stateful multi-step flow (branching, retries, schedules) |
+| **Protocol** | MCP (JSON-RPC over stdio/SSE) | HTTP webhooks, CloudEvents over NATS (future) |
+
+The **metadata** overlaps: both describe "what can this app do?" with
+names, descriptions, scopes, and endpoints. The **consumption
+protocols** differ. `automationHooks` lives alongside `mcp` on the
+same `AppProfile`; a future unification merges them into a single
+`spec.capabilities` block with per-capability delivery modes (§5.6).
+
+### 5.2 Schema
+
+Apps declare two kinds of automation surface:
+
+```yaml
+spec:
+  automationHooks:
+    events:                              # things the app can emit
+      - name: task.created
+        description: "Fired when a new work package is created"
+        deliveryMode: webhook            # webhook | cloudevents-nats (future)
+        registrationEndpoint: /api/v3/webhooks
+      - name: task.statusChanged
+        description: "Fired when a task status changes"
+        deliveryMode: webhook
+        registrationEndpoint: /api/v3/webhooks
+    actions:                             # things the app can be told to do
+      - name: createTask
+        description: "Create a new work package"
+        endpoint: /api/v3/work_packages
+        method: POST
+        scope: write
+      - name: listProjects
+        description: "List all projects"
+        endpoint: /api/v3/projects
+        method: GET
+        scope: read
+```
+
+### 5.3 Shared metadata with MCP
+
+`automationHooks.actions` and `mcp.capabilities` use the **same field
+names** so one can be derived from the other:
+
+| Field | MCP capability | Automation action | Automation event |
+|---|---|---|---|
+| `name` | ✓ | ✓ | ✓ |
+| `description` | ✓ | ✓ | ✓ |
+| `scope` | ✓ (`read`/`write`/`admin`) | ✓ | — |
+| `endpoint` | — (MCP server path) | ✓ (REST path) | — |
+| `method` | — (MCP JSON-RPC) | ✓ (`GET`/`POST`/…) | — |
+| `deliveryMode` | — | — | ✓ (`webhook`/`cloudevents-nats`) |
+| `registrationEndpoint` | — | — | ✓ |
+
+Profile authors who declare both `mcp` and `automationHooks` should
+use the same `name` for overlapping capabilities (e.g.
+`createTask` appears in both). Tooling can validate consistency.
+
+### 5.4 IntegrationBinding flow
+
+When a **workflow engine** (e.g. ActivePieces) and an app that
+declares `automationHooks` are both installed for the same tenant,
+the operator generates an `IntegrationBinding` via the existing
+contract system:
+
+```mermaid
+sequenceDiagram
+    participant OP as gentian-os operator
+    participant OB as OpenBao
+    participant AP as ActivePieces
+    participant App as OpenProject
+
+    Note over OP: Tenant has both activepieces + openproject installed
+    OP->>OP: Match: activepieces consumes 'automation',<br/>openproject provides automationHooks
+    OP->>OP: Create IntegrationBinding<br/>(activepieces ↔ openproject, contract: automation)
+    OP->>OB: Provision OIDC token-exchange<br/>client credentials
+    OP->>AP: POST /api/v1/connections<br/>(pre-configured "OpenProject" connection<br/>with internal service URL + token-exchange creds)
+    OP->>App: POST /api/v3/webhooks<br/>(register AP webhook URL for declared events)
+    Note over AP: User sees OpenProject triggers/actions<br/>ready to use — no manual setup
+```
+
+The workflow engine's `AppProfile` declares the consumer side:
+
+```yaml
+# profiles/activepieces/profile.yaml
+spec:
+  optionalIntegrations:
+    - contract: automation
+      capabilities:
+        - webhook:subscribe      # can register webhook URLs with apps
+        - action:invoke          # can call app REST actions
+```
+
+**Key properties:**
+
+- **No app-specific hardcoding in gentian-os.** The operator
+  processes `automationHooks` identically for any app that declares
+  them — the same generic `IntegrationBinding` reconciler handles
+  OpenProject, Nextcloud, XWiki, or any future app.
+- **Secrets never in Git.** Token-exchange credentials flow through
+  OpenBao → ESO → the workflow engine's connection store.
+- **Tenant isolation.** Bindings, connections, and webhook
+  registrations are namespace-scoped. A workflow engine can only
+  reach apps in its own tenant.
+- **Internal service URLs.** The operator wires connections to
+  `http://{service}.tenant-{t}.svc.cluster.local:{port}` (§2 of
+  [app-profile-guide.md](../../gentian-apps/app-profile-guide.md)),
+  not public hostnames.
+
+### 5.5 Cross-app workflow examples
+
+With `automationHooks` and a workflow engine, tenant users build
+workflows that span apps without bespoke integration code:
 
 - **"Invoice arrived in OX Mail → create task in OpenProject →
-  notify finance channel in Element."** Three apps, three MCP
-  capabilities (`getAttachment`, `createTask`, `sendMessage`),
-  composed by an agent — no shared schema, no custom integration code.
-- **"Customer signed contract in NextCloud Sign → provision their
-  account in OpenProject + invite them to a Jitsi room."** A
-  workflow agent registered with the MCP registry watches for
-  signing events and triggers downstream capabilities.
+  notify finance channel in Element."** Three apps, three automation
+  hooks (`mail.received` event, `createTask` action, `sendMessage`
+  action), composed visually in the workflow editor.
+- **"Customer signed contract in Nextcloud Sign → provision their
+  account in OpenProject + invite them to a Jitsi room."** The
+  `document.signed` event triggers downstream actions — all
+  pre-wired by `IntegrationBinding`.
 - **"Daily summary: open issues, calendar conflicts, pending docs
-  needing review."** A scheduled agent walks read-scope capabilities
-  and produces a digest in the user's preferred channel.
+  needing review."** A scheduled flow walks `read`-scope actions
+  across installed apps and publishes a digest.
 
-These workflows are tenant-defined (lives in the tenant's own
-namespace, uses the tenant's identity, scoped to that tenant's apps)
+These workflows are tenant-defined (live in the tenant's own
+namespace, use the tenant's identity, scoped to that tenant's apps)
 — the platform provides the substrate, not the workflows.
+
+### 5.6 Future unification with MCP
+
+The long-term target is a single `spec.capabilities` block:
+
+```yaml
+# Future (not implemented yet)
+spec:
+  capabilities:
+    - name: createTask
+      description: "Create a new work package"
+      scope: write
+      endpoint: /api/v3/work_packages
+      method: POST
+      deliveryModes:
+        - mcp          # available to AI agents
+        - action        # available to workflow engines
+    - name: task.created
+      description: "Fired when a new work package is created"
+      deliveryModes:
+        - webhook       # push to workflow engines
+        - cloudevents   # push to NATS subscribers
+      registrationEndpoint: /api/v3/webhooks
+```
+
+This collapses `mcp.capabilities` and `automationHooks` into one
+declaration with multiple delivery modes per capability. The
+operator provisions each mode independently (MCP registry
+registration, webhook subscription, NATS subject binding). The
+consumer (AI agent or workflow engine) sees only the modes it
+understands.
+
+**Migration path:** `spec.mcp` and `spec.automationHooks` remain
+supported as aliases. A future CRD version introduces
+`spec.capabilities`; a conversion webhook merges the two blocks
+automatically.
+
+The unification depends on:
+
+- MCP registry deployment ([roadmap.md](../roadmap.md) §4.1)
+- NATS / CloudEvents infrastructure ([roadmap.md](../roadmap.md) §2.3)
+- At least two apps declaring both `mcp` and `automationHooks` to
+  validate the shared schema in practice
 
 ## 6. AI-Assisted Platform Operations
 
@@ -120,14 +291,14 @@ The same MCP fabric powers operator-side automation:
   follow [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md)
   and [gentian-apps/apps/_template/docs/AGENTS.md](../../gentian-apps/apps/_template/docs/AGENTS.md).
 - **Tenant provisioning assistant:** "spin up a new tenant for ACME
-  Corp with NextCloud, OpenProject, Element, mail mode external,
+  Corp with Nextcloud, OpenProject, Element, mail mode external,
   isolation namespace" — produces the Tenant CR for review.
 - **Health monitoring agent:** continuously walks
   `kubectl get tenants,integrationbindings,applications` outputs,
   correlates with metrics (see [operations.md](operations.md)), and
   raises summaries in the operator chat — "tenant `beta-inc` has
   binding `nextcloud↔openproject` degraded for 12m; root cause:
-  NextCloud OIDC client secret rotation didn't roll OpenProject pods
+  Nextcloud OIDC client secret rotation didn't roll OpenProject pods
   (Reloader annotation missing)".
 - **Migration planner:** for kernel version upgrades, an agent walks
   the diff between two kernel versions and predicts which tenants
@@ -137,25 +308,40 @@ These are agents that the **platform team** runs against the
 cluster's read-scope MCP surface. They are bound by the same OIDC
 identity and RBAC model as any human operator.
 
-## 7. Planned capabilities
+## 7. Planned Capabilities
 
 MCP registry, shell AI assistant, workflow agents, and AppProfile generator
 milestones are tracked in [roadmap.md](../roadmap.md).
 
+Automation hooks milestones:
+
+| Phase | Scope | Depends on |
+|---|---|---|
+| **Phase 1** | ActivePieces AppProfile (PostgreSQL, Redis, SAML SSO, portal tile). Manual connection config in the AP UI. | SAML identity path on `kernelRequirements` |
+| **Phase 2** | `automationHooks` schema on `AppProfile` CRD. Existing apps (OpenProject, Nextcloud, XWiki) declare hooks. Operator generates `IntegrationBinding` when a workflow engine is co-installed. | Generic operator work (not app-specific) |
+| **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. Ship `@gentian/activepieces-piece`. | OIDC token exchange ([roadmap.md](../roadmap.md) §1.14) |
+| **Phase 4** | CloudEvents / NATS delivery mode. Workflow engine subscribes via NATS instead of webhook registration. | NATS deployment ([roadmap.md](../roadmap.md) §2.3) |
+| **Phase 5** | Unified `spec.capabilities` block. MCP + automationHooks merge with per-capability `deliveryModes`. | MCP registry ([roadmap.md](../roadmap.md) §4.1) + Phase 4 |
+
 ## 8. Security Model
 
-- **No agent has privileges the calling user lacks.** OIDC token
-  exchange enforces this end-to-end.
+- **No agent or workflow has privileges the calling user lacks.**
+  OIDC token exchange enforces this end-to-end — both for MCP
+  calls and automation hook invocations.
 - **Capability scopes** (`read` / `write` / `admin`) are declared
   per capability and enforced by the app, with the platform validating
   the declaration matches the underlying API surface.
-- **Audit log:** every MCP call is logged with (user, app,
-  capability, agent identity, tenant) — the same audit pipeline that
-  records human API calls.
-- **Tenant isolation:** the MCP registry is per-tenant; agents
-  cannot discover or call MCP endpoints in other tenants.
+- **Audit log:** every MCP call and automation action is logged with
+  (user, app, capability, agent/flow identity, tenant) — the same
+  audit pipeline that records human API calls.
+- **Tenant isolation:** the MCP registry and automation bindings are
+  per-tenant; agents and workflow engines cannot discover or call
+  endpoints in other tenants.
 - **Rate limits** apply per (user, capability) — an out-of-control
-  agent cannot DoS an app for other users.
+  agent or runaway flow cannot DoS an app for other users.
+- **Webhook URLs** are scoped to the tenant's workflow engine
+  service; the operator registers them via the app's declared
+  `registrationEndpoint`, not a user-supplied URL.
 
 ## 9. What This Is Not
 
@@ -164,5 +350,9 @@ milestones are tracked in [roadmap.md](../roadmap.md).
 - Not a competitor to MCP server implementations. Apps still bring
   their own MCP servers; the platform provides the registry,
   identity, and tenant-scoping.
-- Not magic: apps that don't expose MCP remain opaque to agents.
-  The value scales with catalogue adoption.
+- Not a workflow engine. The platform declares the hooks; workflow
+  engines (ActivePieces, n8n, …) execute the flows. The platform
+  is the substrate, not the orchestrator.
+- Not magic: apps that don't expose MCP or `automationHooks` remain
+  opaque to agents and workflow engines. The value scales with
+  catalogue adoption.

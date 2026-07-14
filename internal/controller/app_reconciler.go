@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -86,6 +87,10 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", profileName, err)
 		}
 
+		if err := r.injectLLMCredentials(ctx, tenant, profileName); err != nil {
+			return ctrl.Result{}, fmt.Errorf("inject llm credentials for %s: %w", profileName, err)
+		}
+
 		ready, err := r.waitForAppClaimReady(ctx, tenant, profileName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("wait for App claim %s: %w", profileName, err)
@@ -147,6 +152,48 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 		return false, err
 	}
 	return appClaimIsReady(obj), nil
+}
+
+// injectLLMCredentials creates a secret inside the tenant namespace containing the OpenAI API
+// endpoints and virtual key configured by the platform.
+func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) error {
+	if os.Getenv("LLM_SUPPORT") != "true" {
+		return nil
+	}
+
+	nsName := tenantNamespaceName(tenant)
+	secretName := fmt.Sprintf("llm-credentials-%s", appName)
+
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+				appLabel:       appName,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"OPENAI_API_BASE": "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
+			"OPENAI_API_KEY":  fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
+		},
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Labels = desired.Labels
+	existing.StringData = desired.StringData
+	return r.Patch(ctx, existing, patch)
 }
 
 // deleteAppDeployment is a no-op under C1: App claims are owned by the XTenant

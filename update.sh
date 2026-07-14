@@ -62,6 +62,7 @@ OP_ARGOCD=0
 OP_PORTAL=0
 OP_PLUGIN=0
 OP_ACME_ISSUERS=0
+OP_LLM=0
 FORCE_RECONCILE=0
 
 # =============================================================================
@@ -99,6 +100,8 @@ Options:
                            repository (idempotent: skips if already up-to-date).
   --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
                            (ACME_ENV=production or staging). Not included in --all.
+  --llm                    Reconcile LLM serving stack: deploy/update vLLM, LocalAI,
+                           LiteLLM, and check GPU configuration.
   --all                    Run Suze-path update operations (default when no options).
   --dry-run                Print what would change without applying.
   -h, --help               Show this help.
@@ -118,7 +121,8 @@ while [[ $# -gt 0 ]]; do
         --portal)              OP_PORTAL=1 ;;
         --plugin)              OP_PLUGIN=1 ;;
         --acme-issuers)        OP_ACME_ISSUERS=1 ;;
-        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_PLUGIN=1 ;;
+        --llm)                 OP_LLM=1 ;;
+        --all)                 OP_MAIL=1; OP_SECRETS=1; OP_RECONCILE=1; OP_CROSSPLANE=1; OP_APPPROFILES=1; OP_ARGOCD=1; OP_PLUGIN=1; OP_LLM=1 ;;
         --dry-run)             DRY_RUN=1 ;;
         -h|--help)             _usage ;;
         *) echo "Unknown option: $1" >&2; _usage ;;
@@ -127,7 +131,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: reconcile everything when no specific operation is requested.
-if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_PORTAL}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" ]]; then
+if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" && "${OP_CROSSPLANE}" == "0" && "${OP_APPPROFILES}" == "0" && "${OP_ARGOCD}" == "0" && "${OP_PORTAL}" == "0" && "${OP_PLUGIN}" == "0" && "${OP_ACME_ISSUERS}" == "0" && "${OP_LLM}" == "0" ]]; then
     OP_MAIL=1
     OP_SECRETS=1
     OP_RECONCILE=1
@@ -135,6 +139,7 @@ if [[ "${OP_MAIL}" == "0" && "${OP_SECRETS}" == "0" && "${OP_RECONCILE}" == "0" 
     OP_APPPROFILES=1
     OP_ARGOCD=1
     OP_PLUGIN=1
+    OP_LLM=1
 fi
 
 # =============================================================================
@@ -639,6 +644,36 @@ op_argocd_bootstrap() {
 }
 
 # =============================================================================
+# op_llm_serving — reconcile LLM serving stack
+# =============================================================================
+op_llm_serving() {
+    LLM_SUPPORT="${LLM_SUPPORT:-false}"
+    if [[ "${LLM_SUPPORT}" != "true" ]]; then
+        info "LLM serving support disabled; skipping reconciliation."
+        return 0
+    fi
+
+    banner "LLM Serving Reconciliation (GPU_ACCELERATION=${GPU_ACCELERATION:-false})"
+    local env="${ENV:-dev}"
+    local ns="platform-kernel"
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        info "[dry-run] would apply LLM serving manifests from ${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
+        return 0
+    fi
+
+    info "Applying LLM serving manifests..."
+    kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
+
+    info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
+    kubectl wait externalsecret/llm-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
+
+    success "LLM serving stack reconciled."
+}
+
+# =============================================================================
 # op_portal — reconcile Gentian portal login (Keycloak + gentian-portal ArgoCD)
 # =============================================================================
 op_portal() {
@@ -678,6 +713,7 @@ _init
 [[ "${OP_APPPROFILES}"     == "1" ]] && op_appprofiles_bootstrap
 [[ "${OP_ARGOCD}"          == "1" ]] && op_argocd_bootstrap
 [[ "${OP_PORTAL}"          == "1" ]] && op_portal
+[[ "${OP_LLM}"             == "1" ]] && op_llm_serving
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_PLUGIN}"          == "1" ]] && install_app_catalogue
 [[ "${OP_ACME_ISSUERS}"    == "1" ]] && op_acme_issuers

@@ -540,6 +540,50 @@ validate_config() {
     _opt_from ARGOCD_TOKEN "ArgoCD API token for pin-workflow sync (optional)" "${INSTALL_SECRETS_FILE}"
     _opt_from GITHUB_ACTIONS_OS_REPO "GitHub repo for Actions secrets upload (install.env)" "${INSTALL_CONFIG_FILE}"
 
+    LLM_SUPPORT="${LLM_SUPPORT:-false}"
+    if [[ "${LLM_SUPPORT}" != "true" && "${LLM_SUPPORT}" != "false" ]]; then
+        echo "  [INVALID]  LLM_SUPPORT=${LLM_SUPPORT}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+        (( errors++ )) || true
+    else
+        echo "  [OK]       LLM_SUPPORT=${LLM_SUPPORT}"
+    fi
+
+    GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
+    if [[ "${GPU_ACCELERATION}" != "true" && "${GPU_ACCELERATION}" != "false" ]]; then
+        echo "  [INVALID]  GPU_ACCELERATION=${GPU_ACCELERATION}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+        (( errors++ )) || true
+    else
+        echo "  [OK]       GPU_ACCELERATION=${GPU_ACCELERATION}"
+    fi
+
+    if [[ "${GPU_ACCELERATION}" == "true" ]]; then
+        if [[ "${LLM_SUPPORT}" != "true" ]]; then
+            echo "  [INVALID]  GPU_ACCELERATION=true requires LLM_SUPPORT=true (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+            (( errors++ )) || true
+        fi
+
+        # Verify that the cluster actually has GPU resources available
+        if kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+            local gpus
+            gpus=$(kubectl get nodes -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}' 2>/dev/null || true)
+            local total_gpus=0
+            for gpu in ${gpus}; do
+                if [[ "${gpu}" =~ ^[0-9]+$ ]]; then
+                    total_gpus=$((total_gpus + gpu))
+                fi
+            done
+            if (( total_gpus > 0 )); then
+                echo "  [OK]       GPU_ACCELERATION checks: cluster has ${total_gpus} allocatable GPU(s)"
+            else
+                echo "  [INVALID]  GPU_ACCELERATION=true but no nodes in the cluster report allocatable 'nvidia.com/gpu' resources."
+                (( errors++ )) || true
+            fi
+        else
+            echo "  [WARN]     GPU_ACCELERATION=true: cluster is unreachable, skipping cluster GPU resource check"
+            (( warnings++ )) || true
+        fi
+    fi
+
     echo ""
     if (( errors > 0 )); then
         echo -e "${RED}Result: ${errors} error(s), ${warnings} warning(s) — config is NOT ready.${NC}"

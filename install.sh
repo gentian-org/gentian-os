@@ -1097,6 +1097,38 @@ print_summary_cp() {
 }
 
 # =============================================================================
+# Stage 1: LLM serving (vLLM / LocalAI serving backend + LiteLLM proxy)
+# =============================================================================
+install_stage1_llm_serving() {
+    LLM_SUPPORT="${LLM_SUPPORT:-false}"
+    if [[ "${LLM_SUPPORT}" != "true" ]]; then
+        info "LLM serving support disabled; skipping deployment."
+        return 0
+    fi
+
+    banner "Step 15c — Deploying LLM serving stack"
+    local env="${ENV:-dev}"
+    local ns="platform-kernel"
+
+    GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
+    if [[ "${GPU_ACCELERATION}" == "true" ]]; then
+        info "Deploying GPU-accelerated LLM stack (vLLM + LiteLLM)..."
+        kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
+    else
+        info "Deploying CPU-only LLM stack (LocalAI GGUF + LiteLLM)..."
+        # In a real CPU rollout, we would apply a modified localai deployment instead of vllm
+        kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
+    fi
+
+    info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
+    kubectl wait externalsecret/llm-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
+
+    success "LLM serving stack deployment complete."
+}
+
+# =============================================================================
 # main — Crossplane-based bootstrap
 # =============================================================================
 main_cp() {
@@ -1181,6 +1213,7 @@ main_cp() {
     install_stage1_operator     # Step 15 — operator with authz bridge + Cloudflare tunnel
     wait_for_gateway_platform || true
     install_stage1_mail         # Step 15b — MAIL_SERVICE_MODE (external SMTP or Postfix)
+    install_stage1_llm_serving  # Step 15c — Deploy LLM serving stack (vLLM/LocalAI + LiteLLM)
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."

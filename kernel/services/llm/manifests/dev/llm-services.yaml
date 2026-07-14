@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-inference
+  namespace: platform-kernel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-inference
+  template:
+    metadata:
+      labels:
+        app: vllm-inference
+    spec:
+      containers:
+      - name: vllm-server
+        image: vllm/vllm-openai:latest
+        args:
+        - "--model"
+        - "Qwen/Qwen2.5-7B-Instruct"
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+        env:
+        - name: VLLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: vllm_api_key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-inference
+  namespace: platform-kernel
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: vllm-inference
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  namespace: platform-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      containers:
+      - name: litellm
+        image: ghcr.io/berriai/litellm:latest
+        ports:
+        - containerPort: 4000
+          name: http
+        env:
+        - name: LITELLM_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_master_key
+        - name: DATABASE_URL
+          value: "postgresql://litellm:$(DB_PASSWORD)@litellm-db-rw.platform-kernel.svc.cluster.local:5432/litellm"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_db_password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-proxy
+  namespace: platform-kernel
+spec:
+  ports:
+  - port: 4000
+    targetPort: 4000
+  selector:
+    app: litellm-proxy
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: litellm-db
+  namespace: platform-kernel
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-llm
+  namespace: platform-kernel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-llm
+  template:
+    metadata:
+      labels:
+        app: redis-llm
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-llm
+  namespace: platform-kernel
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis-llm
