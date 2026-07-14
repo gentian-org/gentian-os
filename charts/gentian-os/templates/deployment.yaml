@@ -108,6 +108,8 @@ spec:
               value: {{ .Values.servicesNamespace | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
+            - name: LLM_SUPPORT
+              value: {{ .Values.llmSupport | default false | quote }}
             {{- if .Values.commerce.enabled }}
             - name: GENTIAN_COMMERCE_ENABLED
               value: "true"

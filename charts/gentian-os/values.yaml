@@ -241,3 +241,6 @@ commerce:
   corpAPIURL: ""
   operatorToken: ""
   meteringInterval: ""
+
+# LLM serving support configuration
+llmSupport: false
