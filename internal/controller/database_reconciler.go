@@ -289,9 +289,9 @@ func buildRoleScript(dbName, roleName string) string {
 	// unset, a random password is generated locally and discarded after Job
 	// completion (legacy behaviour — apps without seeded OpenBao cannot
 	// connect, but backends that only need the database to exist still work).
-	searchPath := fmt.Sprintf("\"%s\", public", dbName)
+	searchPath := fmt.Sprintf("\\\"%s\\\", public", dbName)
 	if strings.Contains(roleName, "activepieces") {
-		searchPath = fmt.Sprintf("public, \"%s\"", dbName)
+		searchPath = fmt.Sprintf("public, \\\"%s\\\"", dbName)
 	}
 
 	return fmt.Sprintf(`set -euo pipefail
