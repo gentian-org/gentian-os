@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -288,6 +289,11 @@ func buildRoleScript(dbName, roleName string) string {
 	// unset, a random password is generated locally and discarded after Job
 	// completion (legacy behaviour — apps without seeded OpenBao cannot
 	// connect, but backends that only need the database to exist still work).
+	searchPath := fmt.Sprintf("\"%s\", public", dbName)
+	if strings.Contains(roleName, "activepieces") {
+		searchPath = fmt.Sprintf("public, \"%s\"", dbName)
+	}
+
 	return fmt.Sprintf(`set -euo pipefail
 if [ -z "${ROLE_PW:-}" ]; then
   ROLE_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
@@ -310,9 +316,9 @@ psql -c "GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";" postgres
 # matching the database name (e.g. demo_xwiki), not public.
 psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZATION \"%s\";"
 psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
-psql -c "ALTER ROLE \"%s\" SET search_path TO \"%s\", public;" postgres
+psql -c "ALTER ROLE \"%s\" SET search_path TO %s;" postgres
 echo "schema %s ensured"
-echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, dbName, dbName)
+echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
 }
 
 // --- Status helpers ----------------------------------------------------------
