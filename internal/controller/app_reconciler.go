@@ -176,8 +176,9 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 		},
 		Type: corev1.SecretTypeOpaque,
 		StringData: map[string]string{
-			"OPENAI_API_BASE": "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
-			"OPENAI_API_KEY":  fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
+			"OPENAI_API_BASE":     "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
+			"OPENAI_API_BASE_URL": "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
+			"OPENAI_API_KEY":      fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
 		},
 	}
 
