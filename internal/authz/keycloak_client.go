@@ -315,6 +315,7 @@ func (c *KeycloakAdminClient) doAdmin(ctx context.Context, token, method, path s
 		if err != nil {
 			return 0, err
 		}
+		fmt.Printf("DEBUG: doAdmin method=%s path=%s payload=%s\n", method, path, string(payload))
 	}
 	req, err := c.newAdminRequest(ctx, token, method, path, payload)
 	if err != nil {
