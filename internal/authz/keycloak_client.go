@@ -325,7 +325,10 @@ func (c *KeycloakAdminClient) doAdmin(ctx context.Context, token, method, path s
 		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return resp.StatusCode, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
 	return resp.StatusCode, nil
 }
 
