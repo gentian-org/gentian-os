@@ -170,6 +170,11 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		return nil, err
 	}
 
+	samlConfigs, err := r.collectSAMLAppConfigs(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+
 	groupsJSON, err := r.collectGentianGroupsJSON(ctx, tenant, oidcConfigs)
 	if err != nil {
 		return nil, err
@@ -203,6 +208,10 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 			return nil, err
 		}
 		jobs = append(jobs, *job)
+	}
+
+	for _, cfg := range samlConfigs {
+		jobs = append(jobs, *makeSAMLClientJob(tenant, realmName, cfg.profileName, cfg.entityID, cfg.acsURL))
 	}
 
 	if r.KernelRealm != "" && r.KernelDomain != "" {

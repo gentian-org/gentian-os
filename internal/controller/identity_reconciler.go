@@ -53,7 +53,7 @@ type realmBrokerParams struct {
 	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.desk.gentian.org"
 }
 
-// ensureIdentity provisions a Keycloak realm and OIDC clients for the tenant.
+// ensureIdentity provisions a Keycloak realm and OIDC/SAML clients for the tenant.
 // It waits for Crossplane-owned Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -64,8 +64,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return ctrl.Result{}, err
 	}
 
-	if err := r.cleanupOrphanedOIDCClientJobs(ctx, tenant, oidcConfigs); err != nil {
-		return ctrl.Result{}, fmt.Errorf("cleanup orphaned OIDC client Jobs: %w", err)
+	samlConfigs, err := r.collectSAMLAppConfigs(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.cleanupOrphanedClientJobs(ctx, tenant, oidcConfigs, samlConfigs); err != nil {
+		return ctrl.Result{}, fmt.Errorf("cleanup orphaned client Jobs: %w", err)
 	}
 
 	// We must always provision the tenant Keycloak realm for app OIDC and the
@@ -146,9 +151,21 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
 		}
 	}
+
+	for _, cfg := range samlConfigs {
+		done, err := r.ensureSAMLClientJob(ctx, tenant, realmName, cfg)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak SAML Job for app %s: %w", cfg.profileName, err)
+		}
+		if !done {
+			allDone = false
+			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
+		}
+	}
+
 	if !allDone {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-			"ProvisioningClients", "Waiting for OIDC client Jobs to complete")
+			"ProvisioningClients", "Waiting for OIDC/SAML client Jobs to complete")
 		return r.requeueForPendingJob(ctx, tenant.Name, pendingClientJobs...), nil
 	}
 
@@ -222,6 +239,11 @@ func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov
 // ensureClientJob waits for the Crossplane-owned OIDC client Job for one app.
 func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, appName))
+}
+
+// ensureSAMLClientJob waits for the Keycloak SAML client Job for one app.
+func (r *TenantReconciler) ensureSAMLClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg samlAppConfig) (bool, error) {
+	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
 // deleteIdentity handles identity cleanup on tenant deletion.
@@ -336,6 +358,31 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 			Value: clientSecret,
 		})
 	}
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      clientJobName(tenant.Name, appName),
+			Namespace: kernelNamespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+				appLabel:       appName,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers:    []corev1.Container{container},
+				},
+			},
+		},
+	}
+}
+
+func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, entityID, acsURL string) *batchv1.Job {
+	ttl := meta.ProvisioningJobTTLSeconds
+	container := keycloakContainer("provision-saml-client", buildSAMLClientScript(realmName, entityID, acsURL))
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clientJobName(tenant.Name, appName),
@@ -613,6 +660,35 @@ else
     -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"serviceAccountsEnabled\":true,\"publicClient\":false${SECRET_FIELD}}"
   echo "client %s created in realm %s"
 fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI, clientID, realmName, clientID, redirectURI, clientID, realmName)
+}
+
+func buildSAMLClientScript(realmName, entityID, acsURL string) string {
+	return fmt.Sprintf(`set -eu
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+EXISTING=$(curl -sf \
+  -H "Authorization: Bearer ${TOKEN}" \
+  "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s")
+if echo "${EXISTING}" | grep -q '"id"'; then
+  CID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  echo "SAML client %s already exists (id=${CID}) in realm %s"
+  curl -sf \
+    -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+  echo "SAML client %s updated"
+else
+  curl -sf \
+    -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+  echo "SAML client %s created in realm %s"
+fi`, realmName, entityID, entityID, realmName, realmName, entityID, acsURL, entityID, realmName, entityID, acsURL, entityID, realmName)
 }
 
 func buildAdminScript(realmName string) string {

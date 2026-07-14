@@ -501,6 +501,24 @@ spec:
                         required:
                         - clientId
                         type: object
+                      saml:
+                        description: SAML describes the SAML client to register in
+                          the tenant's Keycloak realm.
+                        properties:
+                          acsUrl:
+                            description: ACSURL is the SAML Assertion Consumer Service
+                              URL for the auth callback.
+                            minLength: 1
+                            type: string
+                          entityId:
+                            description: EntityID is the SAML Service Provider Entity
+                              ID registered in Keycloak.
+                            minLength: 1
+                            type: string
+                        required:
+                        - acsUrl
+                        - entityId
+                        type: object
                     type: object
                   mail:
                     description: Mail specifies SMTP and/or IMAP requirements.
@@ -1149,6 +1167,24 @@ spec:
                                   type: array
                               required:
                               - clientId
+                              type: object
+                            saml:
+                              description: SAML describes the SAML client to register
+                                in the tenant's Keycloak realm.
+                              properties:
+                                acsUrl:
+                                  description: ACSURL is the SAML Assertion Consumer
+                                    Service URL for the auth callback.
+                                  minLength: 1
+                                  type: string
+                                entityId:
+                                  description: EntityID is the SAML Service Provider
+                                    Entity ID registered in Keycloak.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - acsUrl
+                              - entityId
                               type: object
                           type: object
                         mail:

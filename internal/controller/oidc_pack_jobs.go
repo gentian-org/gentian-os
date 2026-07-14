@@ -96,19 +96,22 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 	return configs, nil
 }
 
-// cleanupOrphanedOIDCClientJobs deletes Keycloak OIDC client provisioning Jobs for
+// cleanupOrphanedClientJobs deletes Keycloak OIDC/SAML client provisioning Jobs for
 // apps no longer listed in tenant.Spec.Apps. Unlike App claims, client Jobs are not
 // removed automatically on app uninstall.
-func (r *TenantReconciler) cleanupOrphanedOIDCClientJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, desired []oidcAppConfig) error {
-	desiredApps := make(map[string]struct{}, len(desired))
-	for _, cfg := range desired {
+func (r *TenantReconciler) cleanupOrphanedClientJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig, samlConfigs []samlAppConfig) error {
+	desiredApps := make(map[string]struct{}, len(oidcConfigs)+len(samlConfigs))
+	for _, cfg := range oidcConfigs {
+		desiredApps[cfg.profileName] = struct{}{}
+	}
+	for _, cfg := range samlConfigs {
 		desiredApps[cfg.profileName] = struct{}{}
 	}
 
 	prefix := clientJobName(tenant.Name, "")
 	jobList := &batchv1.JobList{}
 	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
-		return fmt.Errorf("list OIDC client Jobs for tenant %s: %w", tenant.Name, err)
+		return fmt.Errorf("list OIDC/SAML client Jobs for tenant %s: %w", tenant.Name, err)
 	}
 	for i := range jobList.Items {
 		job := &jobList.Items[i]
@@ -124,7 +127,7 @@ func (r *TenantReconciler) cleanupOrphanedOIDCClientJobs(ctx context.Context, te
 		}
 		prop := metav1.DeletePropagationBackground
 		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete orphaned OIDC client Job %s: %w", job.Name, err)
+			return fmt.Errorf("delete orphaned OIDC/SAML client Job %s: %w", job.Name, err)
 		}
 	}
 	return nil
@@ -371,4 +374,41 @@ func makeOIDCBrowserFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *
 
 func oidcBrowserFlowJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-oidc-browser-%s", tenantName)
+}
+
+// samlAppConfig holds resolved SAML settings for one tenant app profile.
+type samlAppConfig struct {
+	profileName string
+	entityID    string
+	acsURL      string
+}
+
+func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]samlAppConfig, error) {
+	var configs []samlAppConfig
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+		if profile.Spec.KernelRequirements != nil &&
+			profile.Spec.KernelRequirements.Identity != nil &&
+			profile.Spec.KernelRequirements.Identity.SAML != nil {
+			samlSpec := profile.Spec.KernelRequirements.Identity.SAML
+			host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
+			if host == "" {
+				host = tenant.Spec.Domain
+			}
+			acsURL := strings.ReplaceAll(samlSpec.ACSURL, "${TENANT_DOMAIN}", host)
+
+			configs = append(configs, samlAppConfig{
+				profileName: app.Profile,
+				entityID:    samlSpec.EntityID,
+				acsURL:      acsURL,
+			})
+		}
+	}
+	return configs, nil
 }

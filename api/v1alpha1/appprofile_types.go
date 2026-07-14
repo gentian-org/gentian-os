@@ -400,7 +400,7 @@ type KernelRequirements struct {
 	MCP *MCPRequirement `json:"mcp,omitempty"`
 }
 
-// IdentityRequirement specifies OIDC needs.
+// IdentityRequirement specifies OIDC or SAML needs.
 type IdentityRequirement struct {
 	// OIDC describes the OIDC client to register in the tenant's Keycloak realm.
 	// When set, the composition emits a Client CR so every newly deployed tenant
@@ -409,6 +409,23 @@ type IdentityRequirement struct {
 	// (e.g. kernel-realm clients managed via keycloak-config).
 	// +optional
 	OIDC *OIDCClientSpec `json:"oidc,omitempty"`
+
+	// SAML describes the SAML client to register in the tenant's Keycloak realm.
+	// +optional
+	SAML *SAMLClientSpec `json:"saml,omitempty"`
+}
+
+// SAMLClientSpec describes a SAML client to be registered in the tenant's Keycloak realm.
+type SAMLClientSpec struct {
+	// EntityID is the SAML Service Provider Entity ID registered in Keycloak.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	EntityID string `json:"entityId"`
+
+	// ACSURL is the SAML Assertion Consumer Service URL for the auth callback.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ACSURL string `json:"acsUrl"`
 }
 
 // OIDCClientSpec describes an OIDC client to be registered in the tenant's
