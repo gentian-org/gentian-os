@@ -39,6 +39,9 @@ type InstallRequest struct {
 	// Wait blocks until the App claim is Ready. HTTP clients should leave this false
 	// to avoid gateway timeouts during long provisioning.
 	Wait bool
+	// Provision, when true, adds all existing tenant users to the app's Keycloak group
+	// after the installation step, granting them immediate access.
+	Provision bool
 }
 
 // UninstallRequest removes an app profile from a tenant.

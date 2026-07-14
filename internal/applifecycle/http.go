@@ -82,11 +82,13 @@ func (h *HTTPServer) handleInstall(w http.ResponseWriter, r *http.Request) {
 		actor = "app-lifecycle-api"
 	}
 	wait := r.URL.Query().Get("wait") == "true" || r.URL.Query().Get("wait") == "1"
+	provision := r.URL.Query().Get("provision") == "true" || r.URL.Query().Get("provision") == "1"
 	result, err := h.Service.Install(r.Context(), InstallRequest{
-		Tenant:  tenant,
-		Profile: profile,
-		Actor:   actor,
-		Wait:    wait,
+		Tenant:    tenant,
+		Profile:   profile,
+		Actor:     actor,
+		Wait:      wait,
+		Provision: provision,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)

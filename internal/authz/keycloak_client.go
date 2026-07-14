@@ -357,3 +357,55 @@ func (c *KeycloakAdminClient) newAdminRequest(ctx context.Context, token, method
 	req.Header.Set("Authorization", "Bearer "+token)
 	return req, nil
 }
+
+func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName string, attributes map[string][]string) (string, error) {
+	id, err := c.findGroupID(ctx, realm, groupName)
+	if err != nil {
+		return "", err
+	}
+	if id != "" {
+		return id, nil
+	}
+
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	body := map[string]any{
+		"name": groupName,
+	}
+	if len(attributes) > 0 {
+		body["attributes"] = attributes
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+
+	path := fmt.Sprintf("/admin/realms/%s/groups", url.PathEscape(realm))
+	status, err := c.doAdminExpect(ctx, token, http.MethodPost, path, payload, http.StatusCreated, http.StatusConflict)
+	if err != nil {
+		return "", err
+	}
+
+	if status == http.StatusCreated {
+		// Attempt to resolve ID from Location header or find it
+		// For simplicity, find it again
+		return c.findGroupID(ctx, realm, groupName)
+	}
+
+	return c.findGroupID(ctx, realm, groupName)
+}
+
+func (c *KeycloakAdminClient) AddUserToGroup(ctx context.Context, realm, userID, groupID string) error {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/users/%s/groups/%s", url.PathEscape(realm), url.PathEscape(userID), url.PathEscape(groupID))
+	_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, nil, http.StatusNoContent, http.StatusOK)
+	return err
+}
+
