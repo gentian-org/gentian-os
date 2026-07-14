@@ -173,7 +173,7 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 	}
 	if appName == "open-webui" {
 		h := sha256.New()
-		h.Write([]byte(fmt.Sprintf("%s-%s-secret-salt-value", tenant.Name, appName)))
+		_, _ = fmt.Fprintf(h, "%s-%s-secret-salt-value", tenant.Name, appName)
 		stringData["WEBUI_SECRET_KEY"] = base64.URLEncoding.EncodeToString(h.Sum(nil))
 	}
 
