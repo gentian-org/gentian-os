@@ -126,7 +126,7 @@ func (g *GitOps) Install(tenant, profile, actor string) (status, file string, ch
 		return "", file, false, err
 	}
 	text := string(content)
-	profileLine := regexp.MustCompile(`(?m)^\s+profile:\s+` + regexp.QuoteMeta(profile) + `\s*$`)
+	profileLine := regexp.MustCompile(`(?m)^\s*-\s*profile:\s*` + regexp.QuoteMeta(profile) + `\s*$`)
 	if profileLine.MatchString(text) {
 		return "already_installed", file, false, nil
 	}
