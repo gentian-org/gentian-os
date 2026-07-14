@@ -364,6 +364,25 @@ func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName 
 		return "", err
 	}
 	if id != "" {
+		if len(attributes) > 0 {
+			token, err := c.adminToken(ctx)
+			if err != nil {
+				return "", err
+			}
+			body := map[string]any{
+				"name":       groupName,
+				"attributes": attributes,
+			}
+			payload, err := json.Marshal(body)
+			if err != nil {
+				return "", err
+			}
+			path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
+			_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, payload, http.StatusNoContent, http.StatusOK)
+			if err != nil {
+				return "", err
+			}
+		}
 		return id, nil
 	}
 
