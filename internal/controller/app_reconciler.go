@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"time"
@@ -170,7 +172,9 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 		"OPENAI_API_KEY":      fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
 	}
 	if appName == "open-webui" {
-		stringData["WEBUI_SECRET_KEY"] = fmt.Sprintf("sk-webui-%s-%s-session-signing-key", tenant.Name, appName)
+		h := sha256.New()
+		h.Write([]byte(fmt.Sprintf("%s-%s-secret-salt-value", tenant.Name, appName)))
+		stringData["WEBUI_SECRET_KEY"] = base64.URLEncoding.EncodeToString(h.Sum(nil))
 	}
 
 	desired := &corev1.Secret{
