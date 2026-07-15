@@ -281,7 +281,8 @@ bootstrap_openbao_for_crossplane() {
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export VAULT_ADDR="http://${BAO_SVC_IP}:8200"
+    export VAULT_ADDR="https://${BAO_SVC_IP}:8200"
+    export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
@@ -382,7 +383,7 @@ POLICY
             | jq -r '.token // empty' 2>/dev/null || true)
         if [[ -n "${existing_token}" ]]; then
             local http_code
-            http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            http_code=$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 5 \
                 -H "X-Vault-Token: ${existing_token}" \
                 "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
             if [[ "${http_code}" == "200" ]]; then
