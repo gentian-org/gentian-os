@@ -371,12 +371,19 @@ else
 fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---
+KERNEL_REALM="${KERNEL_REALM:-kernel}"
 LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
 LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 LITELLM_MASTER_KEY=$(derive_password "llm" "litellm_master_key")
 LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
 LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
+# Admin console SSO (platform-admin only; see docs/design/llms.md and the
+# litellm-dashboard Keycloak client provisioned by portal-login-bootstrap.sh).
+LITELLM_PROXY_BASE_URL="https://llm.${KERNEL_DOMAIN}"
+LITELLM_SSO_AUTH_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/auth"
+LITELLM_SSO_TOKEN_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/token"
+LITELLM_SSO_USERINFO_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo"
 
 kv_put "llm" "$(cat <<EOF
 {
@@ -385,7 +392,11 @@ kv_put "llm" "$(cat <<EOF
   "litellm_db_password": "${LITELLM_DB_PW}",
   "litellm_redis_password": "${LITELLM_REDIS_PW}",
   "litellm_ui_username": "${LITELLM_UI_USERNAME}",
-  "litellm_ui_password": "${LITELLM_UI_PASSWORD}"
+  "litellm_ui_password": "${LITELLM_UI_PASSWORD}",
+  "litellm_proxy_base_url": "${LITELLM_PROXY_BASE_URL}",
+  "litellm_sso_authorization_endpoint": "${LITELLM_SSO_AUTH_ENDPOINT}",
+  "litellm_sso_token_endpoint": "${LITELLM_SSO_TOKEN_ENDPOINT}",
+  "litellm_sso_userinfo_endpoint": "${LITELLM_SSO_USERINFO_ENDPOINT}"
 }
 EOF
 )"

@@ -36,6 +36,10 @@ unset _gentian_lib
 # shellcheck source=scripts/mail-lib.sh
 source "${__GENTIAN_SCRIPTS_DIR}/mail-lib.sh"
 
+# LiteLLM Team reconciliation (one Team per Tenant CR).
+# shellcheck source=scripts/llm-lib.sh
+source "${__GENTIAN_SCRIPTS_DIR}/llm-lib.sh"
+
 # Post-install smoke checks (Keycloak OIDC, Dovecot TCP when kernel mail).
 # shellcheck source=scripts/verify-kernel-services.sh
 source "${__GENTIAN_SCRIPTS_DIR}/verify-kernel-services.sh"

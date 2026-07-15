@@ -150,6 +150,44 @@ spec:
             secretKeyRef:
               name: llm-sensitive-values
               key: litellm_ui_password
+        # Admin console SSO — platform-admin only (see docs/design/llms.md).
+        # Free for <=5 users on LiteLLM OSS (v1.76.0+); the litellm-dashboard
+        # Keycloak client only exists in the kernel realm, so tenant users
+        # cannot authenticate here.
+        - name: PROXY_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_proxy_base_url
+        - name: GENERIC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: litellm-dashboard-sso
+              key: client_id
+        - name: GENERIC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: litellm-dashboard-sso
+              key: client_secret
+        - name: GENERIC_AUTHORIZATION_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_sso_authorization_endpoint
+        - name: GENERIC_TOKEN_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_sso_token_endpoint
+        - name: GENERIC_USERINFO_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_sso_userinfo_endpoint
+        - name: GENERIC_SCOPE
+          value: "openid profile email"
+        - name: GENERIC_USER_ROLE_ATTRIBUTE
+          value: "litellm_role"
 ---
 apiVersion: v1
 kind: Service

@@ -435,6 +435,40 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 }
 
+func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
+	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
+	for _, spec := range specs {
+		if spec.name == kernelRouteLiteLLM {
+			t.Fatalf("kernel-llm route present without LLM_SUPPORT=true")
+		}
+	}
+}
+
+func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
+	t.Setenv("LLM_SUPPORT", "true")
+	specs := kernelHTTPRouteSpecs("desk.gentian.org", nil, nil, nil)
+	if len(specs) != 5 {
+		t.Fatalf("spec count = %d, want 5 with LLM_SUPPORT=true", len(specs))
+	}
+	llmRoute := buildKernelHTTPRoute(specs[len(specs)-1])
+	if llmRoute.Name != kernelRouteLiteLLM {
+		t.Fatalf("llm route name = %q, want %q", llmRoute.Name, kernelRouteLiteLLM)
+	}
+	if string(llmRoute.Spec.Hostnames[0]) != "llm.desk.gentian.org" {
+		t.Fatalf("llm host = %v", llmRoute.Spec.Hostnames[0])
+	}
+	backend := llmRoute.Spec.Rules[0].BackendRefs[0]
+	if string(backend.Name) != litellmProxyServiceName {
+		t.Fatalf("llm backend service = %q, want %q", backend.Name, litellmProxyServiceName)
+	}
+	if backend.Namespace == nil || string(*backend.Namespace) != kernelNamespace {
+		t.Fatalf("llm backend namespace = %v, want %s", backend.Namespace, kernelNamespace)
+	}
+	if got := *backend.Port; got != gatewayv1.PortNumber(litellmProxyPort) {
+		t.Fatalf("llm backend port = %d, want %d", got, litellmProxyPort)
+	}
+}
+
 func TestKernelApexRedirectRule(t *testing.T) {
 	t.Parallel()
 	rule := kernelApexRedirectRule("desk.gentian.org")

@@ -689,6 +689,8 @@ op_llm_serving() {
         -n "${ns}" --for=condition=Ready --timeout=60s \
     || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
+    ensure_litellm_teams || warn "LiteLLM team sync failed."
+
     success "LLM serving stack reconciled."
 }
 

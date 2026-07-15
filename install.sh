@@ -1127,6 +1127,8 @@ install_stage1_llm_serving() {
         -n "${ns}" --for=condition=Ready --timeout=60s \
     || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
+    ensure_litellm_teams || warn "LiteLLM team sync failed — retry with ./update.sh --llm."
+
     success "LLM serving stack deployment complete."
 }
 

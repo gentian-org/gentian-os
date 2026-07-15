@@ -20,6 +20,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -37,11 +38,14 @@ const (
 	kernelRouteKernelApex    = "kernel-apex-redirect"
 	kernelRouteArgoCD        = "kernel-argocd"
 	kernelRouteGentianPortal = "kernel-gentian-portal"
+	kernelRouteLiteLLM       = "kernel-llm"
 
 	gentianPortalAPIService = "gentian-portal-gentian-portal-api"
 	gentianPortalWebService = "gentian-portal-gentian-portal-web"
 
 	argocdServerServiceName = "argocd-server"
+	litellmProxyServiceName = "litellm-proxy"
+	litellmProxyPort        = int32(4000)
 )
 
 type kernelHTTPRouteSpec struct {
@@ -177,6 +181,18 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 	)
+	// LiteLLM admin console — platform-level only (LLM_SUPPORT=true). Tenants
+	// do not get their own route; app-catalogue "litellm" tiles stay unused
+	// until per-tenant access is designed (see docs/design/llms.md).
+	if os.Getenv("LLM_SUPPORT") == "true" {
+		specs = append(specs, kernelHTTPRouteSpec{
+			name: kernelRouteLiteLLM,
+			host: fmt.Sprintf("llm.%s", kernelDomain),
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRulePrefixNS(litellmProxyServiceName, kernelNamespace, litellmProxyPort, "/"),
+			},
+		})
+	}
 	return specs
 }
 

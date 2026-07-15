@@ -77,6 +77,24 @@ _argocd_oidc_derive_secret() {
     fi
 }
 
+_litellm_sso_derive_secret() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_sec
+        existing_sec=$(bao kv get -mount=secret -field=litellm_sso_client_secret identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_sec}" ]]; then
+            echo "${existing_sec}"
+        else
+            local new_sec
+            new_sec=$(openssl rand -hex 24)
+            bao kv patch -mount=secret identity/portal-admin litellm_sso_client_secret="${new_sec}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin litellm_sso_client_secret="${new_sec}" >/dev/null 2>&1
+            echo "${new_sec}"
+        fi
+    else
+        echo -n "portal-bootstrap:litellm_sso_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    fi
+}
+
 ensure_portal_bff_secret() {
     local ns="platform-kernel"
     local secret
@@ -99,6 +117,17 @@ ensure_argocd_oidc_secret() {
     # Also patch the actual argocd-secret in the argocd namespace
     kubectl patch secret argocd-secret -n argocd --type merge \
         -p "{\"stringData\":{\"oidc.keycloak.clientSecret\":\"${secret}\"}}"
+    echo "${secret}"
+}
+
+ensure_litellm_sso_secret() {
+    local ns="platform-kernel"
+    local secret
+    secret="$(_litellm_sso_derive_secret)"
+    kubectl create secret generic litellm-dashboard-sso -n "${ns}" \
+        --from-literal=client_id="litellm-dashboard" \
+        --from-literal=client_secret="${secret}" \
+        --dry-run=client -o yaml | kubectl apply -f -
     echo "${secret}"
 }
 
@@ -656,6 +685,12 @@ run_keycloak_portal_bootstrap_job() {
     local argocd_secret
     argocd_secret=$(ensure_argocd_oidc_secret)
 
+    local llm_support="${LLM_SUPPORT:-false}"
+    local litellm_sso_secret=""
+    if [[ "${llm_support}" == "true" ]]; then
+        litellm_sso_secret=$(ensure_litellm_sso_secret)
+    fi
+
     local -a bootstrap_secret_args=(
         --from-literal=kernel_domain="${kernel_domain}"
         --from-literal=kernel_realm="${kernel_realm}"
@@ -664,6 +699,8 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=password="${password}"
         --from-literal=platform_superadmin_group="${platform_superadmin_group}"
         --from-literal=argocd_client_secret="${argocd_secret}"
+        --from-literal=llm_support="${llm_support}"
+        --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
     if _keycloak_smtp_settings; then
         bootstrap_secret_args+=(
@@ -950,6 +987,69 @@ spec:
                 echo "gentian-argocd default scope: groups"
               fi
 
+              if [ "\${LLM_SUPPORT}" = "true" ]; then
+                # Only kernel-realm users can ever reach this client (tenant users
+                # live in separate per-tenant realms), so a flat hardcoded
+                # litellm_role=proxy_admin claim is safe for now — LLM admin
+                # stays a platform-admin-only capability until per-tenant access
+                # is designed (see docs/design/llms.md).
+                LITELLM_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=litellm-dashboard" \\
+                  | jq -r '.[0].id // empty')
+                LITELLM_BODY=\$(jq -n --arg secret "\${LITELLM_SSO_CLIENT_SECRET}" --arg base "https://llm.\${KERNEL_DOMAIN}" '{
+                  clientId: "litellm-dashboard",
+                  name: "LiteLLM Admin Console",
+                  enabled: true,
+                  publicClient: false,
+                  standardFlowEnabled: true,
+                  directAccessGrantsEnabled: false,
+                  serviceAccountsEnabled: false,
+                  protocol: "openid-connect",
+                  redirectUris: [(\$base + "/sso/callback")],
+                  rootUrl: \$base,
+                  baseUrl: "/",
+                  secret: \$secret
+                }')
+                if [ -n "\${LITELLM_CLIENT_ID}" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}" -d "\${LITELLM_BODY}"
+                  echo "Updated client litellm-dashboard"
+                else
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${LITELLM_BODY}"
+                  LITELLM_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=litellm-dashboard" \\
+                    | jq -r '.[0].id')
+                  echo "Created client litellm-dashboard"
+                fi
+                if [ -n "\${LITELLM_CLIENT_ID}" ]; then
+                  MAPPER_ID=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models" \\
+                    | jq -r '.[] | select(.name=="litellm-role") | .id' | head -1)
+                  MAPPER_BODY='{
+                    "name": "litellm-role",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-hardcoded-claim-mapper",
+                    "config": {
+                      "claim.name": "litellm_role",
+                      "claim.value": "proxy_admin",
+                      "jsonType.label": "String",
+                      "id.token.claim": "true",
+                      "access.token.claim": "true",
+                      "userinfo.token.claim": "true"
+                    }
+                  }'
+                  if [ -n "\${MAPPER_ID}" ] && [ "\${MAPPER_ID}" != "null" ]; then
+                    curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models/\${MAPPER_ID}" -d "\${MAPPER_BODY}" >/dev/null
+                  else
+                    curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models" -d "\${MAPPER_BODY}" >/dev/null
+                  fi
+                  echo "litellm-dashboard role mapper: litellm_role=proxy_admin"
+                fi
+              fi
+
 ${smtp_shell}
 
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
@@ -1009,6 +1109,16 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: argocd_client_secret
+            - name: LLM_SUPPORT
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: llm_support
+            - name: LITELLM_SSO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: litellm_sso_client_secret
             - name: MAIL_SERVICE_MODE
               valueFrom:
                 secretKeyRef:
