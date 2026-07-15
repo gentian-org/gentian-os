@@ -1059,6 +1059,42 @@ prompt_kernel_secrets() {
 }
 
 # =============================================================================
+# cleanup_orphaned_kyverno_webhooks — self-heal for a specific, cluster-breaking
+# leftover state. Kyverno's MutatingWebhookConfiguration/ValidatingWebhookConfiguration
+# objects are cluster-scoped and survive a `kubectl delete namespace kyverno`
+# (or any teardown that doesn't go through Kyverno's own Helm uninstall hooks,
+# e.g. a manual/partial teardown outside install.sh/uninstall.sh). Kyverno's
+# webhooks fail-closed by default, so an orphaned one with no backing service
+# blocks ALL matching resource creation cluster-wide — including Crossplane's
+# own pods, before Kyverno is ever reinstalled later in the sequence.
+#
+# Safe to call unconditionally: only acts when the kyverno namespace is
+# absent (i.e. Kyverno is not actually running) but its webhook
+# registrations remain. A healthy, running Kyverno is left untouched.
+# =============================================================================
+cleanup_orphaned_kyverno_webhooks() {
+    kubectl get namespace kyverno >/dev/null 2>&1 && return 0
+
+    local hooks
+    hooks=$(kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep '^kyverno-' || true)
+    [[ -z "${hooks}" ]] && return 0
+
+    warn "Orphaned Kyverno webhook configuration(s) found with no kyverno namespace behind them:"
+    warn "  $(printf '%s' "${hooks}" | tr '\n' ' ')"
+    warn "  These fail closed by default and block ALL matching resource creation"
+    warn "  cluster-wide (e.g. Crossplane's own pods). Removing them now —"
+    warn "  Kyverno recreates them cleanly when reinstalled."
+    while IFS= read -r hook; do
+        [[ -z "${hook}" ]] && continue
+        kubectl delete mutatingwebhookconfiguration "${hook}" --ignore-not-found=true 2>/dev/null || true
+        kubectl delete validatingwebhookconfiguration "${hook}" --ignore-not-found=true 2>/dev/null || true
+    done <<< "${hooks}"
+    success "Orphaned Kyverno webhook configuration(s) removed."
+}
+
+# =============================================================================
 # 0. Pre-flight checks
 # =============================================================================
 check_prereqs() {
@@ -1087,6 +1123,7 @@ check_prereqs() {
         missing=$((missing + 1))
     else
         success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
+        cleanup_orphaned_kyverno_webhooks
     fi
 
     # ── MicroK8s kubelet max-pods ─────────────────────────────────────────────

@@ -119,18 +119,26 @@ if [[ "${MODE}" == "force" ]]; then
     [[ "${confirm}" == "yes" ]] || { info "Aborted."; exit 0; }
 fi
 
+# Orphaned Kyverno webhook configs (cluster-scoped; survive a namespace
+# deletion that bypasses Kyverno's own Helm uninstall hooks) fail closed and
+# block ALL resource creation cluster-wide. Clean them up unconditionally,
+# regardless of safe/force mode — this isn't data, just broken admission
+# config, so there's no reason to gate it behind -f. See scripts/lib/common.sh.
+cleanup_orphaned_kyverno_webhooks
+
 _git_tenant_instances() {
     local tenants_root="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants"
-    local stage="${GENTIAN_DEPLOYMENTS_STAGE}"
     local tenant_dir instance
 
     [[ -d "${tenants_root}" ]] || return 0
 
+    # No <stage> segment here — a cluster has exactly one stage for its
+    # whole lifetime (docs/deployment.md §1), so tenants/<instance>/tenant.yaml
+    # is flat, not tenants/<instance>/<stage>/tenant.yaml.
     for tenant_dir in "${tenants_root}"/*; do
         [[ -d "${tenant_dir}" ]] || continue
         instance="$(basename "${tenant_dir}")"
-        [[ "${instance}" == "components" ]] && continue
-        [[ -f "${tenant_dir}/${stage}/tenant.yaml" ]] && echo "${instance}"
+        [[ -f "${tenant_dir}/tenant.yaml" ]] && echo "${instance}"
     done
 }
 
@@ -209,7 +217,7 @@ else
             done
         else
             warn "kubectl-gentian plugin not found; skipping GitOps undeploy."
-            warn "Remove clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants/*/${GENTIAN_DEPLOYMENTS_STAGE}/ manually to prevent ArgoCD from re-creating tenants on the next install."
+            warn "Remove clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants/* manually to prevent ArgoCD from re-creating tenants on the next install."
         fi
     fi
 
@@ -1160,6 +1168,16 @@ _delete_kyverno_scaffold() {
 
     _delete_namespace "kyverno"
     _delete_crds_matching 'kyverno\.io$' 'Kyverno CRDs'
+
+    # Belt-and-suspenders: helm uninstall normally removes Kyverno's webhook
+    # configs as chart-managed resources, but not if the Helm release was
+    # already broken/missing above (helm uninstall never ran). These are
+    # cluster-scoped and fail closed, so leaving them behind blocks the next
+    # install — explicitly sweep them regardless of how the helm step went.
+    kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration -o name 2>/dev/null \
+        | grep 'kyverno-' \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    success "Kyverno webhook configurations removed."
 }
 
 _delete_gentianos_api_scaffold() {
