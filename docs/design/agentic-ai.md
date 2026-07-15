@@ -356,3 +356,101 @@ Automation hooks milestones:
 - Not magic: apps that don't expose MCP or `automationHooks` remain
   opaque to agents and workflow engines. The value scales with
   catalogue adoption.
+
+## 10. LLM Serving: Admin Console & vLLM Operations
+
+The LLM serving stack (Stage 1 of [llms.md](llms.md)) has its own
+platform-admin console, separate from the tenant-facing MCP/agent
+surface described above (§4). This section is operational notes for
+the cluster admin, not an architecture doc — see
+[llms.md](llms.md) for the design and
+[llm-integration-research.md](../research/llm-integration-research.md)
+for backend sizing/quantization research.
+
+### 10.1 LiteLLM admin console
+
+`LLM_SUPPORT=true` provisions `https://llm.<KERNEL_DOMAIN>` (kernel-level
+`HTTPRoute`, see `kernel_gateway_routes.go`), fronting the shared
+`litellm-proxy` Deployment. Login is Keycloak OIDC SSO via a
+`litellm-dashboard` client that only exists in the **kernel realm** —
+tenant users (separate per-tenant realms) structurally cannot reach it,
+which is what keeps LLM administration platform-admin-only for now.
+LiteLLM's native SSO is free for ≤5 users on OSS (v1.76.0+); the
+JWT/OIDC/SCIM/`enforce_rbac` features that require an Enterprise license
+are a different feature (`enable_jwt_auth`, for authenticating
+*inference API calls*, not the admin UI) and are intentionally unused —
+see the licensing caveat in
+[llm-integration-research.md](../research/llm-integration-research.md).
+
+**Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by
+`ensure_litellm_teams()` (`scripts/llm-lib.sh`), run as part of
+`install_stage1_llm_serving` and `update.sh --llm`. Re-run
+`./update.sh --llm` after adding a tenant to sync its Team.
+
+**Re-enabling tenant-level access:** the app-catalogue `litellm` tile
+(reverse-proxied through `gentian-portal-api` at
+`llm-admin.<tenant>.<domain>`) is disabled in `gentian-deployments`
+tenant manifests. Re-add `- profile: litellm` to a tenant's `apps:` list
+once per-tenant LLM access (auth model, budgets, model allowlists) is
+designed.
+
+### 10.2 Configuring vLLM
+
+**Chat UIs (Open WebUI included) cannot install or reconfigure vLLM —
+this isolation is structural, not a permission we grant/deny.** Open
+WebUI (and any tenant app) only ever talks to vLLM indirectly, through
+the shared LiteLLM endpoint with a scoped virtual key the operator
+injects (`injectLLMCredentials`, `app_reconciler.go`) — it calls
+`/v1/chat/completions`, nothing that touches how vLLM itself is
+deployed or configured. Open WebUI's own "Admin Settings" panel lets
+its local admin manage *that instance's* connections/model list/users,
+but that's configuring the client, not the server — it has no path to
+vLLM's CLI flags, GPU allocation, or Deployment spec. Reconfiguring
+vLLM always requires `kubectl`/GitOps access to the cluster, which only
+the platform admin has. So: keep Open WebUI open to every tenant user
+as today, and use the CLI/GitOps flow below for actual vLLM
+configuration — no separate access-control mechanism is needed.
+
+vLLM has no live reconfiguration API for core serving parameters
+(model, quantization, parallelism, context length) — these are set via
+CLI flags to `vllm serve <model> [flags]` at container startup and
+require a redeploy (new pod) to change. The one runtime exception is
+LoRA adapters, which can be hot-loaded/unloaded via `POST
+/v1/load_lora_adapter` and `/v1/unload_lora_adapter` — vLLM's own docs
+flag this as **dev-only**, not for production use.
+
+Cheat-sheet of the flags that matter most in production (full sizing
+guide in
+[llm-integration-research.md](../research/llm-integration-research.md#model-sizing-guide)):
+
+| Flag | Purpose |
+| --- | --- |
+| `--gpu-memory-utilization` | Fraction of GPU memory vLLM may claim (start ~0.90, tune up) |
+| `--max-model-len` | Caps context length → directly controls KV-cache memory reserved |
+| `--tensor-parallel-size` | Shard a model across N GPUs (must match GPU count allocated) |
+| `--quantization awq` / `--dtype fp8` | AWQ: ~2x throughput, <2% accuracy loss. FP8: one-flag win on H100/Blackwell, no quantization step |
+| `--enable-prefix-caching` | Reuse KV-cache across requests sharing a prompt prefix |
+| `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
+
+**In gentian-os today:** `kernel/services/llm/manifests/<env>/llm-services.yaml`
+runs a **mock** OpenAI-compatible server (`vllm-inference` Deployment),
+not real vLLM — a stand-in for Stage 1 Task 1 of
+[llms.md](llms.md#4-stage-1-rollout-plan-single-gpu-authenticated-endpoint),
+which is not yet implemented (needs the NVIDIA GPU Operator, a GPU node
+pool, and a model-weights PVC). To configure the real thing: replace
+`vllm-inference`'s `command`/`args` with `vllm serve <model> <flags>` on
+a GPU-scheduled pod, wire the model weights PVC, and re-run
+`./update.sh --llm`. There is no separate "vLLM CLI" for the admin to
+run against a live cluster — configuration changes are GitOps (edit the
+manifest, `update.sh --llm`), and *operational* checks against a running
+instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
+(Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front
+of it (`litellm --health`, or any OpenAI SDK pointed at
+`https://llm.<KERNEL_DOMAIN>/v1` with a virtual key).
+
+**Further reading:**
+
+- [vLLM docs — OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/)
+- [vLLM docs — engine args reference](https://docs.vllm.ai/en/latest/serving/engine_args.html)
+- [LiteLLM docs — Admin UI SSO](https://docs.litellm.ai/docs/proxy/admin_ui_sso)
+- [LiteLLM docs — Team budgets](https://docs.litellm.ai/docs/proxy/team_budgets)

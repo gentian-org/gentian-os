@@ -186,6 +186,10 @@ spec:
               key: litellm_sso_userinfo_endpoint
         - name: GENERIC_SCOPE
           value: "openid profile email"
+        - name: GENERIC_USER_ID_ATTRIBUTE
+          value: "email"
+        - name: GENERIC_USER_EMAIL_ATTRIBUTE
+          value: "email"
         - name: GENERIC_USER_ROLE_ATTRIBUTE
           value: "litellm_role"
 ---
