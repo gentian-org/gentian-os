@@ -398,7 +398,7 @@ func redisSetUserScript(username, _ string) string {
 		`set -euo pipefail
 USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$USER_PW" allkeys allchannels "+@read" "+@write" "+@connection" "+eval" "+evalsha" "+@pubsub" "+info"
+  ACL SETUSER %s on ">$USER_PW" allkeys allchannels "+@read" "+@write" "+@connection" "+eval" "+evalsha" "+@pubsub" "+info" "+@transaction"
 echo "ACL user %s provisioned"`,
 		username, username,
 	)
