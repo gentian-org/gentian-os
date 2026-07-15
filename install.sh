@@ -877,8 +877,61 @@ apply_infra_data_xr() {
     local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
     local chart_repo
     chart_repo="$(detect_infra_chart_repo)"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local infra_ns="${INFRA_NAMESPACE:-gentian-infra-${stage}}"
 
     verify_infra_chart_index "${chart_repo}"
+
+    # Wait for the gentian-infra-data AppSet (kernel/appsets/08-infra-data.yaml,
+    # sync wave 8) to sync every ConfigMap/Secret the InfraData composition's
+    # Release CRs require via valuesFrom (all optional: false — see
+    # crossplane/compositions/infra-data.yaml). provider-helm does not watch
+    # ConfigMaps: a Release created before its ConfigMap exists fails once and
+    # never retries on its own (needs a manual delete+recreate, e.g.
+    # update.sh --reconcile-releases). Waiting here avoids hitting that race
+    # at all instead of recovering from it after the fact.
+    info "Waiting for gentian-infra-data AppSet prerequisites in ${infra_ns} (up to 3m)..."
+    local deadline=$((SECONDS + 180))
+    local apps=(
+        "infra-postgresql-${stage}" "infra-mariadb-${stage}"
+        "infra-redis-${stage}" "infra-minio-${stage}"
+    )
+    local configmaps=(
+        postgresql-base-values "postgresql-${stage}-values"
+        mariadb-base-values "mariadb-${stage}-values"
+        redis-env-values redis-base-values "redis-${stage}-values"
+        minio-env-values minio-base-values "minio-${stage}-values"
+    )
+    local secrets=(postgresql-sensitive-values mariadb-sensitive-values)
+    local app configmap secret ready
+    while :; do
+        ready=1
+        for app in "${apps[@]}"; do
+            kubectl get application "${app}" -n argocd \
+                -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
+                || { ready=0; break; }
+        done
+        if [[ "${ready}" == "1" ]]; then
+            for configmap in "${configmaps[@]}"; do
+                kubectl get configmap "${configmap}" -n "${infra_ns}" >/dev/null 2>&1 \
+                    || { ready=0; break; }
+            done
+        fi
+        if [[ "${ready}" == "1" ]]; then
+            for secret in "${secrets[@]}"; do
+                kubectl get secret "${secret}" -n "${infra_ns}" >/dev/null 2>&1 \
+                    || { ready=0; break; }
+            done
+        fi
+        [[ "${ready}" == "1" ]] && break
+        if (( SECONDS > deadline )); then
+            warn "InfraData prerequisites not ready after 3m — refresh gentian-appsets and retry."
+            warn "  kubectl get applications -n argocd | grep -E 'infra-(postgresql|mariadb|redis|minio)'"
+            warn "  kubectl get configmap,secret -n ${infra_ns}"
+            break
+        fi
+        sleep 5
+    done
 
     info "Applying InfraData claim (${claim})..."
     kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/infra-data.yaml"

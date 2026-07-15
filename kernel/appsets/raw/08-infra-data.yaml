@@ -7,7 +7,7 @@
 #
 # MariaDB is provisioned for tenant catalogue apps via the operator.
 #
-# Sync wave 8: before InfraData claim (install.sh Step 13b).
+# Sync wave 8: before InfraData claim (install.sh Step 11b).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
