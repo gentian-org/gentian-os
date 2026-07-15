@@ -1,0 +1,4 @@
+# stage selects which literal the "env: dev" generator element in each
+# raw/*.yaml ApplicationSet gets rewritten to. Set via --set stage=<value>
+# (root-applicationset.yaml.tmpl passes it from ${GENTIAN_DEPLOYMENTS_STAGE}).
+stage: dev

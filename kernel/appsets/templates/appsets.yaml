@@ -1,0 +1,12 @@
+{{- /*
+  Pass raw/*.yaml through verbatim (via .Files.Get, which never re-evaluates
+  their content as a Helm template — critical, since those files use their
+  own Go-template syntax ({{.app}}, {{.env}}) that ArgoCD's ApplicationSet
+  controller evaluates at its own sync time, not at Helm render time).
+  The only thing this chart does is swap the literal "env: dev" generator
+  element for the actual stage.
+*/ -}}
+{{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
+---
+{{ $.Files.Get $path | replace "env: dev" (printf "env: %s" $.Values.stage) }}
+{{- end }}

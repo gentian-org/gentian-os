@@ -1,0 +1,10 @@
+apiVersion: v2
+name: gentian-appsets
+description: >-
+  Wraps kernel/appsets/raw/*.yaml (ArgoCD ApplicationSets) to parameterize
+  their stage generator element (env: dev/staging/prod) without disturbing
+  the Go-template ({{.app}}, {{.env}}) syntax those ApplicationSets use
+  internally at their own sync time — see raw/*.yaml, which are passed
+  through as opaque text via .Files.Get, never re-templated by Helm.
+type: application
+version: 0.1.0
