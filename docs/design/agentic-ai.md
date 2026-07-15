@@ -432,16 +432,49 @@ guide in
 | `--enable-prefix-caching` | Reuse KV-cache across requests sharing a prompt prefix |
 | `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
 
-**In gentian-os today:** `kernel/services/llm/manifests/<env>/llm-services.yaml`
-runs a **mock** OpenAI-compatible server (`vllm-inference` Deployment),
-not real vLLM — a stand-in for Stage 1 Task 1 of
-[llms.md](llms.md#4-stage-1-rollout-plan-single-gpu-authenticated-endpoint),
-which is not yet implemented (needs the NVIDIA GPU Operator, a GPU node
-pool, and a model-weights PVC). To configure the real thing: replace
-`vllm-inference`'s `command`/`args` with `vllm serve <model> <flags>` on
-a GPU-scheduled pod, wire the model weights PVC, and re-run
-`./update.sh --llm`. There is no separate "vLLM CLI" for the admin to
-run against a live cluster — configuration changes are GitOps (edit the
+**In gentian-os today:** `kernel/services/llm/manifests/<env>/` has two
+interchangeable `vllm-inference` backends, selected by `GPU_ACCELERATION`
+in `install.env`/cluster-settings — `vllm-mock.yaml` (a fake
+OpenAI-compatible server, `GPU_ACCELERATION=false`, the default) and
+`vllm-gpu.yaml` (real vLLM, `GPU_ACCELERATION=true`). Both files declare
+a Deployment/Service both named `vllm-inference`, so switching between
+them is just re-running `./update.sh --llm` with the flag flipped — no
+orphaned resources. `vllm-gpu.yaml` requests one `nvidia.com/gpu` (a
+time-sliced share, see §10.1's sibling note on `gpu-sharing.yaml`), a
+60Gi PVC for the HuggingFace cache, and defaults to
+`Qwen/Qwen2.5-7B-Instruct` (no HF license gate, ~14GB FP16 — comfortable
+on a 24GB card with 3 time-sliced neighbors).
+
+**To deploy your first model** (GPU_ACCELERATION already validated
+against real cluster GPU resources by `validate_config`, see
+`scripts/lib/common.sh`):
+
+1. Set `GPU_ACCELERATION=true` (and `LLM_SUPPORT=true`) in `install.env`
+   or the cluster's `cluster-settings.env`.
+2. Optional — pick a different model: edit `VLLM_MODEL_ID` in
+   `vllm-gpu.yaml` (any HuggingFace OpenAI-served model id). For a
+   **gated** model (e.g. Llama), first accept its license on
+   HuggingFace, then create the token Secret it reads via
+   `HUGGING_FACE_HUB_TOKEN`:
+   `kubectl create secret generic vllm-hf-token -n platform-kernel --from-literal=token=<hf_...>`
+   (ungated models like Qwen need none of this).
+3. `./update.sh --llm` — applies the manifests; first startup pulls
+   weights into the PVC, which can take several minutes
+   (`startupProbe` allows up to ~20 min before giving up).
+4. Watch it come up: `kubectl get pods -n platform-kernel -w | grep vllm-inference`,
+   then `kubectl logs -n platform-kernel deploy/vllm-inference -f` for
+   download/load progress.
+5. Confirm it's serving: from inside the cluster (or port-forward)
+   `curl http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1/models`.
+6. Register it with LiteLLM so it's usable through
+   `https://llm.<KERNEL_DOMAIN>`: Admin Console → **Models** → **Add
+   Model**, LiteLLM Model Name = your choice, Provider = OpenAI-compatible,
+   API Base = `http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1`
+   (no key needed, cluster-internal). Same thing via API:
+   `curl -X POST https://llm.<KERNEL_DOMAIN>/model/new -H "Authorization: Bearer <master-or-admin-key>" -H 'Content-Type: application/json' -d '{"model_name":"qwen2.5-7b","litellm_params":{"model":"openai/Qwen/Qwen2.5-7B-Instruct","api_base":"http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1"}}'`.
+
+There is no separate "vLLM CLI" for the admin to run against a live
+cluster beyond this — configuration changes are GitOps (edit the
 manifest, `update.sh --llm`), and *operational* checks against a running
 instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
 (Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front

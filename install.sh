@@ -1119,14 +1119,16 @@ install_stage1_llm_serving() {
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     ensure_litellm_sso_secret >/dev/null
 
+    local manifests_dir="${SCRIPT_DIR}/kernel/services/llm/manifests/${env}"
+    kubectl apply -f "${manifests_dir}/llm-services.yaml" -f "${manifests_dir}/externalsecret.yaml" -f "${manifests_dir}/gpu-sharing.yaml"
+
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
-        info "Deploying GPU-accelerated LLM stack (vLLM + LiteLLM)..."
-        kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
+        info "Deploying GPU vLLM inference backend..."
+        kubectl apply -f "${manifests_dir}/vllm-gpu.yaml"
     else
-        info "Deploying CPU-only LLM stack (LocalAI GGUF + LiteLLM)..."
-        # In a real CPU rollout, we would apply a modified localai deployment instead of vllm
-        kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
+        info "Deploying mock inference backend (GPU_ACCELERATION=false) — see vllm-gpu.yaml to serve a real model."
+        kubectl apply -f "${manifests_dir}/vllm-mock.yaml"
     fi
 
     info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
