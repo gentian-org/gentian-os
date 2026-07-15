@@ -662,6 +662,21 @@ op_llm_serving() {
         return 0
     fi
 
+    info "Seeding LLM secrets to OpenBao..."
+    CF_API_TOKEN="${CF_API_TOKEN:-}" \
+    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}" \
+    EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}" \
+    EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}" \
+    EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}" \
+    EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}" \
+    BAO_TOKEN="${BAO_TOKEN}" \
+    BAO_ADDR="${VAULT_ADDR}" \
+    VAULT_SKIP_VERIFY=true \
+    bash "${SCRIPT_DIR}/scripts/seed-openbao.sh" \
+        "$MASTER_PASSWORD" \
+        "${SMTP_RELAY_USERNAME:-}" \
+        "${SMTP_RELAY_PASSWORD:-}"
+
     info "Applying LLM serving manifests..."
     kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
 
