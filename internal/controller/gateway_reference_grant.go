@@ -62,6 +62,11 @@ func tenantKernelGatewayReferenceGrantIntents(tenant *gentianov1alpha1.Tenant) [
 						"kind":  "Gateway",
 						"name":  KernelPublicGatewayName,
 					},
+					map[string]interface{}{
+						"group": "",
+						"kind":  "Service",
+						"name":  "gentian-portal-gentian-portal-api",
+					},
 				},
 			},
 		},

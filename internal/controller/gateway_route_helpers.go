@@ -206,8 +206,9 @@ func buildAppHTTPRoute(
 					{
 						BackendRef: gatewayv1.BackendRef{
 							BackendObjectReference: gatewayv1.BackendObjectReference{
-								Name: gatewayv1.ObjectName("gentian-portal-gentian-portal-api"),
-								Port: &portVal,
+								Name:      gatewayv1.ObjectName("gentian-portal-gentian-portal-api"),
+								Namespace: (*gatewayv1.Namespace)(&servicesNamespace),
+								Port:      &portVal,
 							},
 						},
 					},
