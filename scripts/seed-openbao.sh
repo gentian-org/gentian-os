@@ -370,7 +370,7 @@ fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---
 LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
-LITELLM_UI_PASSWORD="${MASTER_PASSWORD}"
+LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 LITELLM_MASTER_KEY=$(derive_password "llm" "litellm_master_key")
 LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
