@@ -121,12 +121,17 @@ fi
 echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
 MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
-if echo "${MAPPERS}" | grep -Fq "\"name\":\"gentianOdooGroupRoles\""; then
-  echo "mapper gentianOdooGroupRoles already exists on groups client scope"
+keycloak_json_id_by_attr "${MAPPERS}" "name" "gentianOdooGroupRoles"
+MAPPER_ID="${_kj_id}"
+if [ -n "${MAPPER_ID}" ]; then
+  curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models/${MAPPER_ID}" \
+    -d '{"id":"'"${MAPPER_ID}"'","name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","aggregate.attrs":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
+  echo "mapper gentianOdooGroupRoles updated with aggregation"
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
-    -d '{"name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
+    -d '{"name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","aggregate.attrs":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
   echo "mapper gentianOdooGroupRoles added to groups client scope"
 fi
 `, realmName, keycloak.ShellWaitForRealm("${REALM}"))
