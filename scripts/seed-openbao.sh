@@ -368,6 +368,26 @@ else
     echo "  To add it later: bao kv put gentian-os/kernel/dns/cloudflare api-token=<token>"
 fi
 
+# --- LLM serving (LiteLLM / vLLM credentials) ---
+LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
+LITELLM_UI_PASSWORD="${MASTER_PASSWORD}"
+VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
+LITELLM_MASTER_KEY=$(derive_password "llm" "litellm_master_key")
+LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
+LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
+
+kv_put "llm" "$(cat <<EOF
+{
+  "vllm_api_key": "${VLLM_API_KEY}",
+  "litellm_master_key": "${LITELLM_MASTER_KEY}",
+  "litellm_db_password": "${LITELLM_DB_PW}",
+  "litellm_redis_password": "${LITELLM_REDIS_PW}",
+  "litellm_ui_username": "${LITELLM_UI_USERNAME}",
+  "litellm_ui_password": "${LITELLM_UI_PASSWORD}"
+}
+EOF
+)"
+
 echo ""
 echo "=========================================="
 echo "✅ All secrets seeded into OpenBao!"
