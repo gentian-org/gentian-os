@@ -10,9 +10,9 @@
 #   kubectl gentian apps list [--namespace <ns>]
 #   kubectl gentian apps install <app> --tenant <tenant>
 #   kubectl gentian apps uninstall <app> --tenant <tenant>
-#   kubectl gentian tenants list [--env <env>]
-#   kubectl gentian tenants deploy <instance> [--env <env>]
-#   kubectl gentian tenants undeploy <instance> [--env <env>] [--purge|-f]
+#   kubectl gentian tenants list
+#   kubectl gentian tenants deploy <instance>
+#   kubectl gentian tenants undeploy <instance> [--purge|-f]
 #
 # Required environment variables (or ~/.gentian/config):
 #   GENTIAN_DEPLOYMENTS_PATH   local path to a gentian-deployments checkout
@@ -70,27 +70,26 @@ Usage:
       persistent state (Postgres/MariaDB, S3, Redis ACL, OpenBao secrets,
       kernel provisioning Jobs) so reinstall starts from a clean slate.
 
-    kubectl gentian tenants list [--env <stage>]
+    kubectl gentian tenants list
       List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
-      ACTIVE=yes when deployed under tenants/<name>/<stage>/ (GitOps sync path).
-      ACTIVE=no when defined only under definitions/<name>/<stage>/.
+      ACTIVE=yes when deployed under tenants/<name>/ (GitOps sync path).
+      ACTIVE=no when defined only under definitions/<name>/.
       LIVE=yes when the Tenant CR exists on the cluster.
 
-    kubectl gentian tenants deploy <instance> [--env <stage>]
-      Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/<stage>/.
-      If not yet deployed, copies the definition from definitions/<instance>/<stage>/.
+    kubectl gentian tenants deploy <instance>
+      Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/.
+      If not yet deployed, copies the definition from definitions/<instance>/.
 
-    kubectl gentian tenants undeploy <instance> [--env <stage>] [--purge|-f]
-      Undeploy a tenant instance by removing it from <env>/tenants/kustomization.yaml.
-      With --purge / -f, set deletionPolicy=Delete before undeploying, which
-      permanently deletes tenant data (Keycloak realm, databases, storage,
+    kubectl gentian tenants undeploy <instance> [--purge|-f]
+      Undeploy a tenant instance by removing clusters/<cluster>/tenants/<instance>/
+      from git. With --purge / -f, set deletionPolicy=Delete before undeploying,
+      which permanently deletes tenant data (Keycloak realm, databases, storage,
       mail secrets, and other orchestrator-owned artifacts).
 
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
   GENTIAN_DEPLOYMENTS_CLUSTER  cluster selector (default: default-cluster)
-  GENTIAN_DEPLOYMENTS_STAGE    stage selector (default: dev)
 
 Examples:
   kubectl gentian apps list
@@ -469,7 +468,7 @@ purge_tenant_cluster_artifacts() {
 argocd_tenants_app_for_instance() {
   local instance="${1}"
   local env_name="${2:-${DEPLOYMENTS_STAGE}}"
-  local want_path="clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name}"
+  local want_path="clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
 
   kubectl get application.argoproj.io -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{.spec.source.path}{"\n"}{end}' \
@@ -486,14 +485,14 @@ argocd_trigger_sync_prune() {
   app_ns_name="$(argocd_tenants_app_for_instance "${instance}" "${env_name}")"
 
   if [[ -z "${app_ns_name}" ]]; then
-    echo "No ArgoCD app found for 'clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name}'; skipping ArgoCD sync." >&2
+    echo "No ArgoCD app found for 'clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}'; skipping ArgoCD sync." >&2
     return 0
   fi
 
   local argocd_ns="${app_ns_name%%/*}"
   local argocd_app="${app_ns_name##*/}"
 
-  echo "Refreshing ArgoCD app '${argocd_app}' (clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name})..."
+  echo "Refreshing ArgoCD app '${argocd_app}' (clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance})..."
   kubectl annotate "application.argoproj.io/${argocd_app}" -n "${argocd_ns}" \
     "argocd.argoproj.io/refresh=hard" --overwrite &>/dev/null || true
 
@@ -637,41 +636,36 @@ tenant_definitions_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions"
 }
 
-tenant_definition_stage_dir() {
+tenant_definition_dir() {
   local instance="${1}"
-  local env_name="${2:-}"
-  local stage
-  stage="$(tenant_stage_name "${env_name}")"
-  echo "$(tenant_definitions_root)/${instance}/${stage}"
+  echo "$(tenant_definitions_root)/${instance}"
 }
 
 write_tenant_stage_kustomization() {
-  local stage_dir="${1}"
-  cat > "${stage_dir}/kustomization.yaml" <<'EOF'
+  local instance_dir="${1}"
+  cat > "${instance_dir}/kustomization.yaml" <<'EOF'
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - tenant.yaml
 components:
-- ../../components/tenant-defaults
+- ../../definitions/components/tenant-defaults
 EOF
 }
 
 scaffold_tenant_from_definition() {
   local instance="${1}"
   local env_name="${2:-dev}"
-  local stage
   local definition_dir
   local target_dir
 
-  stage="$(tenant_stage_name "${env_name}")"
-  definition_dir="$(tenant_definition_stage_dir "${instance}" "${env_name}")"
+  definition_dir="$(tenant_definition_dir "${instance}")"
   target_dir="$(tenant_stage_dir "${instance}" "${env_name}")"
 
   if [[ ! -d "${definition_dir}" ]]; then
     echo "ERROR: tenant '${instance}' is not defined at ${definition_dir}." >&2
-    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/${instance}/${stage}/tenant.yaml" >&2
-    echo "Or an active deploy path: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${stage}/" >&2
+    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/${instance}/tenant.yaml" >&2
+    echo "Or an active deploy path: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/" >&2
     exit 1
   fi
 
@@ -689,7 +683,7 @@ scaffold_tenant_from_definition() {
     git add "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
   )
   git_commit_push "feat(${instance}): deploy tenant definition for ${env_name}"
-  echo "Activated tenant '${instance}' from definitions/${instance}/${stage}/."
+  echo "Activated tenant '${instance}' from definitions/${instance}/."
 }
 
 ensure_tenant_instance_dir() {
@@ -704,12 +698,14 @@ ensure_tenant_instance_dir() {
   tenant_instance_dir "${instance}" "${env_name}"
 }
 
+# env_name is accepted (not just ignored outright) so every call site below
+# keeps working unchanged, but it no longer affects the path: a cluster has
+# exactly one stage for its whole lifetime (docs/deployment.md §1), so
+# encoding it a second time under this cluster's own tenants/ tree would be
+# redundant — see docs/deployment.md §3.1 / gentian-deployments/README.md.
 tenant_stage_dir() {
   local instance="${1}"
-  local env_name="${2:-}"
-  local stage
-  stage="$(tenant_stage_name "${env_name}")"
-  echo "$(tenant_tenants_root)/${instance}/${stage}"
+  echo "$(tenant_tenants_root)/${instance}"
 }
 
 tenant_instance_dir() {
@@ -719,7 +715,7 @@ tenant_instance_dir() {
   dir="$(tenant_stage_dir "${instance}" "${env_name}")"
   if [[ ! -d "${dir}" ]]; then
     echo "ERROR: tenant instance '${instance}' not found at ${dir}." >&2
-    echo "Expected layout: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/$(tenant_stage_name "${env_name}")/" >&2
+    echo "Expected layout: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/" >&2
     exit 1
   fi
   echo "${dir}"
@@ -1515,7 +1511,7 @@ argocd_refresh_await_prune() {
   fi
 
   if [[ -z "$(argocd_tenants_app_for_instance "${instance}" "${env_name}")" ]]; then
-    echo "No ArgoCD app found for 'clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/${env_name}'; deleting tenant CR directly..."
+    echo "No ArgoCD app found for 'clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}'; deleting tenant CR directly..."
     kubectl delete tenant "${tenant_name}" --ignore-not-found=true
     wait_with_message \
       "Waiting for tenant '${tenant_name}' to be removed after direct delete (timeout: 120s)..." \
@@ -1581,13 +1577,11 @@ apply_tenant_instance() {
 }
 
 tenant_collect_instance_names() {
-  local env_name="${1:-dev}"
-  local tenants_root definitions_root stage
+  local tenants_root definitions_root
   local tenant_dir instance
 
   tenants_root="$(tenant_tenants_root)"
   definitions_root="$(tenant_definitions_root)"
-  stage="$(tenant_stage_name "${env_name}")"
 
   declare -A instances=()
 
@@ -1595,7 +1589,7 @@ tenant_collect_instance_names() {
     [[ -d "${tenant_dir}" ]] || continue
     instance="$(basename "${tenant_dir}")"
     [[ "${instance}" == "components" ]] && continue
-    [[ -f "${tenant_dir}/${stage}/tenant.yaml" ]] || continue
+    [[ -f "${tenant_dir}/tenant.yaml" ]] || continue
     instances["${instance}"]=1
   done
 
@@ -1607,15 +1601,13 @@ tenant_collect_instance_names() {
 }
 
 cmd_tenant_list() {
-  local env_name="${1:-dev}"
-  local tenants_root definitions_root stage
+  local tenants_root definitions_root
 
   ensure_repo
-  ensure_env_layout "${env_name}"
+  ensure_env_layout
 
   tenants_root="$(tenant_tenants_root)"
   definitions_root="$(tenant_definitions_root)"
-  stage="$(tenant_stage_name "${env_name}")"
 
   local found=0
   printf "%-24s %-10s %-8s %-18s\n" "INSTANCE" "ACTIVE" "LIVE" "TENANT_NAME"
@@ -1628,12 +1620,12 @@ cmd_tenant_list() {
 
     local active live tenant_file tenant_name
 
-    tenant_file="${tenants_root}/${instance_name}/${stage}/tenant.yaml"
+    tenant_file="${tenants_root}/${instance_name}/tenant.yaml"
     if [[ -f "${tenant_file}" ]]; then
       active="yes"
     else
       active="no"
-      tenant_file="${definitions_root}/${instance_name}/${stage}/tenant.yaml"
+      tenant_file="${definitions_root}/${instance_name}/tenant.yaml"
     fi
 
     tenant_name="$(tenant_instance_name_from_patch "${tenant_file}")"
@@ -1648,10 +1640,10 @@ cmd_tenant_list() {
     fi
 
     printf "%-24s %-10s %-8s %-18s\n" "${instance_name}" "${active}" "${live}" "${tenant_name}"
-  done < <(tenant_collect_instance_names "${env_name}")
+  done < <(tenant_collect_instance_names)
 
   if [[ "${found}" -eq 0 ]]; then
-    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/*/${stage} or tenants/*/${stage}."
+    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/* or tenants/*."
   fi
 }
 

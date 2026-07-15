@@ -88,7 +88,9 @@ When `MAIL_SERVICE_MODE=kernel`, invitation and reset emails use in-cluster Post
 | `GENTIAN_NONINTERACTIVE` | unset | Set to `1` in CI to skip prompts |
 | `ROUTING_MODE` | `gateway` | Gateway API + Envoy Gateway edge routing (required) |
 
-Configure `routingMode` in `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml` for the operator (preferred for cluster behavior).
+Configure `routingMode` in `gentian-deployments/clusters/<cluster>/kernel/values.yaml`
+(cluster overlay) or `profiles/<stage>.yaml` (tier-wide) for the operator
+(preferred for cluster behavior).
 
 ### Config files
 
@@ -117,14 +119,14 @@ Configure these files in order before the first install run:
 
 1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`: cluster runtime behavior and endpoints (`KERNEL_DOMAIN`, `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`, `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`: `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`, `EXTERNAL_SMTP_STARTTLS`). **This overrides `.install-state.env`** when both are present.
 
-1. `gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`: operator Helm values (`kernelDomain`, `tenancyMode`, `routingMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, `appLifecycle.deployments`, namespace defaults and policy defaults).
+1. `gentian-deployments/clusters/<cluster>/kernel/values.yaml` (plus `profiles/<stage>.yaml` for tier-wide settings): operator Helm values (`kernelDomain`, `tenancyMode`, `routingMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, `appLifecycle.deployments`, namespace defaults and policy defaults).
 
   App lifecycle (GitOps install/uninstall from App Store or operator HTTP API):
   - `appLifecycle.deployments.enabled: true`
   - `appLifecycle.deployments.cluster` / `stage` — must match this cluster's deployments layout
   - `appLifecycle.deployments.gitCredentialsSecret: gentian-deployments-git-credentials` — created by `install.sh` when `GENTIAN_DEPLOYMENTS_GIT_TOKEN` is set
 
-1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<stage>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you deploy a definition).
+1. `gentian-deployments/clusters/<cluster>/tenants/<tenant>/tenant.yaml`: tenant inventory and `spec.apps` (empty until you deploy a definition).
 
 1. `install.secrets.env`: secrets only (master password, optional SMTP relay creds when `MAIL_SERVICE_MODE=external`, optional Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN` for in-cluster app installs, optional `CI_BOT_PAT` for GitHub Actions image pin on `gentian-os`).
 
@@ -132,7 +134,7 @@ Configure these files in order before the first install run:
   - `CF_API_TOKEN`: optional secret for kernel wildcard DNS-01 issuance
   - `CF_ZONE_NAME`: optional override for installer token verification (compound public suffixes)
 
-  Cloudflare specifics in `values-<stage>.yaml`:
+  Cloudflare specifics in `clusters/<cluster>/kernel/values.yaml`:
   - `cloudflare.zoneID`: required for operator DNS mutations when Cloudflare adapter is enabled.
   - `cloudflare.tunnelCNAME`: required for proxied wildcard CNAME behavior.
   - `cloudflare.apiTokenSecretRef.*`: secret reference metadata only (safe for Git).
@@ -300,7 +302,7 @@ kubectl gentian apps list
 Install completes with **no tenants** deployed. Tenant definitions (such as
 `demo`) live under
 [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments)
-at `clusters/<cluster>/definitions/<tenant>/<stage>/`.
+at `clusters/<cluster>/definitions/<tenant>/`.
 
 **Catalogue** (cluster-wide): `gentian-apps/profiles/` → ArgoCD app
 **`gentian-appprofiles`** (install step 17). **Tenant apps** (per org):

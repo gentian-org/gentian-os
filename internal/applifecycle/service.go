@@ -76,7 +76,7 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		client:    c,
 		clientset: cs,
 		opts:      opts,
-		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster, opts.DeploymentsStage),
+		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster),
 	}, nil
 }
 

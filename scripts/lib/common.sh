@@ -1975,7 +1975,7 @@ print_summary() {
         echo "  Monitor sync:    kubectl get applications -n argocd"
         echo "  List tenants:    kubectl gentian tenants list"
         echo "  Provision tenant: kubectl gentian tenants deploy demo"
-        echo "                    (activates clusters/<cluster>/definitions/<tenant>/<stage>/ on first run)"
+        echo "                    (activates clusters/<cluster>/definitions/<tenant>/ on first run)"
         echo "  Undeploy tenant: kubectl gentian tenants undeploy demo"
         echo "  List apps:       kubectl gentian apps list"
         echo "  Install apps:    kubectl gentian apps install <profile> --tenant <tenant>"

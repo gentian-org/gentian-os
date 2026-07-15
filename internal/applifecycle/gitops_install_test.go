@@ -26,7 +26,7 @@ import (
 
 func TestGitOps_Install_commitShape(t *testing.T) {
 	root, remote := initGitOpsFixture(t)
-	g := NewGitOps(root, remote, "demo-cluster", "dev")
+	g := NewGitOps(root, remote, "demo-cluster")
 
 	tenantYAML := `apiVersion: gentianos.io/v1alpha1
 kind: Tenant
@@ -37,7 +37,7 @@ spec:
   apps:
   - profile: nextcloud
 `
-	tenantDir := filepath.Join(root, "clusters", "demo-cluster", "tenants", "demo", "dev")
+	tenantDir := filepath.Join(root, "clusters", "demo-cluster", "tenants", "demo")
 	if err := os.MkdirAll(tenantDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ spec:
 
 func TestGitOps_Uninstall_commitShape(t *testing.T) {
 	root, remote := initGitOpsFixture(t)
-	g := NewGitOps(root, remote, "demo-cluster", "dev")
+	g := NewGitOps(root, remote, "demo-cluster")
 
 	tenantYAML := `apiVersion: gentianos.io/v1alpha1
 kind: Tenant
@@ -85,7 +85,7 @@ spec:
   - profile: nextcloud
   - profile: element
 `
-	tenantDir := filepath.Join(root, "clusters", "demo-cluster", "tenants", "demo", "dev")
+	tenantDir := filepath.Join(root, "clusters", "demo-cluster", "tenants", "demo")
 	if err := os.MkdirAll(tenantDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

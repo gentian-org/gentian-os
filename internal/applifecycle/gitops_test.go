@@ -26,10 +26,9 @@ func TestGitOps_tenantFile_prefersActiveTenantsPath(t *testing.T) {
 
 	root := t.TempDir()
 	cluster := "test"
-	stage := "dev"
 	tenant := "demo"
 
-	defPath := filepath.Join(root, "clusters", "other", "definitions", tenant, "prod")
+	defPath := filepath.Join(root, "clusters", "other", "definitions", tenant)
 	if err := os.MkdirAll(defPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +37,7 @@ func TestGitOps_tenantFile_prefersActiveTenantsPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	activePath := filepath.Join(root, "clusters", cluster, "tenants", tenant, stage)
+	activePath := filepath.Join(root, "clusters", cluster, "tenants", tenant)
 	if err := os.MkdirAll(activePath, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +54,7 @@ func TestGitOps_tenantFile_prefersActiveTenantsPath(t *testing.T) {
 	}
 	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
 
-	g := NewGitOps(root, "", cluster, stage)
+	g := NewGitOps(root, "", cluster)
 	got, err := g.tenantFile(tenant)
 	if err != nil {
 		t.Fatalf("tenantFile: %v", err)

@@ -21,7 +21,7 @@ re-run `./install.sh`.
 
 Gentian OS uses **Gateway API + Envoy Gateway** as the only edge stack. Set
 `ROUTING_MODE=gateway` in `install.env` and `routingMode: gateway` in
-`gentian-deployments/clusters/<cluster>/kernel/values-<stage>.yaml`.
+`gentian-deployments/clusters/<cluster>/kernel/values.yaml`.
 
 See [design/gateway.md](design/gateway.md) for Gateway API topology (`gentian-envoy` GatewayClass, kernel and tenant Gateways).
 

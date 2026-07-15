@@ -27,7 +27,6 @@ type Options struct {
 	DeploymentsPath     string
 	DeploymentsRepo     string
 	DeploymentsCluster  string
-	DeploymentsStage    string
 	WaitTimeout         time.Duration
 }
 

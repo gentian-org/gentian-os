@@ -42,13 +42,17 @@ kubectl get tenants
 ## 3. Provision a Tenant
 
 Each cluster maintains tenant **definitions** under
-`clusters/<cluster>/definitions/<tenant>/<stage>/`. Fresh installs leave
-`clusters/<cluster>/tenants/` empty until a definition is deployed.
+`clusters/<cluster>/definitions/<tenant>/`. Fresh installs leave
+`clusters/<cluster>/tenants/` empty until a definition is deployed. There's
+no `<stage>` segment in either path — a cluster has exactly one stage for
+its whole lifetime, so `clusters/<cluster>/...` already scopes everything
+under it to that one stage (see
+[deployment.md](deployment.md) §1).
 
 | Path | State |
 |------|--------|
-| `definitions/<tenant>/<stage>/` | Defined only (`ACTIVE=no` in list) |
-| `tenants/<tenant>/<stage>/` | Deployed to GitOps (`ACTIVE=yes`) |
+| `definitions/<tenant>/` | Defined only (`ACTIVE=no` in list) |
+| `tenants/<tenant>/` | Deployed to GitOps (`ACTIVE=yes`) |
 
 List all tenant definitions and deployment status:
 
@@ -83,24 +87,22 @@ After successful deploy, the CLI prints tenant-admin login guidance, including:
 - OpenBao fallback command for the tenant-admin password
 - realm admin console URL
 
-Render and apply the active tenant set for dev manually (optional):
+Render and apply the active tenant set manually (optional):
 
 ```bash
-kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
+kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo
 ```
 
-To target another environment, use `--env`:
-
-```bash
-kubectl gentian tenants list --env staging
-kubectl gentian tenants deploy demo --env staging
-```
+There's no `--env`/`--stage` flag to target another stage — `GENTIAN_DEPLOYMENTS_CLUSTER`
+already selects a cluster that's pinned to exactly one stage. To promote a
+tenant to a different stage, promote it to a *different cluster*'s
+`definitions/` tree instead (see [deployment.md](deployment.md) §6.3).
 
 The deploy command writes/updates tenant manifests under
-`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
+`gentian-deployments/clusters/<cluster>/tenants/<tenant>/`, commits/pushes,
 and ArgoCD ApplicationSet discovers the directory automatically.
 
-Equivalent Git change: add/remove tenant directories for the selected stage.
+Equivalent Git change: add/remove the tenant's directory under `tenants/`.
 
 Check tenant reconciliation:
 
@@ -253,9 +255,11 @@ kubectl get pods -n tenant-demo | grep xwiki
 kubectl logs -n tenant-demo -l app.kubernetes.io/instance=xwiki --tail=50
 ```
 
-Tenant stage (`dev`, `staging`, `prod`) is selected via `install.env` /
-`GENTIAN_DEPLOYMENTS_ENV` — app commands do not take `--env`; they target the
-active tenant file for that stage.
+A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
+`GENTIAN_DEPLOYMENTS_STAGE` in `install.env` (see
+[deployment.md](deployment.md) §1) — `apps`/`tenants` commands don't take a
+`--env`/`--stage` flag; they always target the one cluster selected by
+`GENTIAN_DEPLOYMENTS_CLUSTER`.
 
 ## 7. Retrieve Admin Credentials
 

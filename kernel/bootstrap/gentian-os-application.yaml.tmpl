@@ -162,11 +162,16 @@ spec:
 # Bootstrap ApplicationSet: manages Tenant CRs via ArgoCD.
 #
 # Kept separate from `gentian-os` so that long-running tenant provisioning
-# never blocks operator image rollouts. This generator scans all tenant
-# definitions for the selected stage:
+# never blocks operator image rollouts. This generator scans all activated
+# tenants on this cluster:
 #
-#   clusters/%CLUSTER%/tenants/<tenant>/%STAGE%
+#   clusters/%CLUSTER%/tenants/<tenant>
 #
+# No further stage nesting here — a cluster has exactly one stage for its
+# whole lifetime (docs/deployment.md §1), so re-encoding it under a cluster's
+# own tenants/ tree would be redundant. Stage only matters when *choosing*
+# a tenant definition to activate (definitions/<tenant>/), not once it's
+# live on a cluster that's already pinned to one stage.
 # Each tenant directory must contain a kustomization.yaml and tenant.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -183,7 +188,7 @@ spec:
       repoURL: %DEPLOYMENTS_REPO%
       revision: %DEPLOYMENTS_BRANCH%
       directories:
-      - path: clusters/%CLUSTER%/tenants/*/%STAGE%
+      - path: clusters/%CLUSTER%/tenants/*
   template:
     metadata:
       name: '{{ .path.path | replace "/" "-" }}'

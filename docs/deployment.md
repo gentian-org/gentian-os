@@ -89,9 +89,13 @@ gentian-deployments/
           cluster.yaml             # Layer 4 — kernelDomain, the single source
           infra-data.yaml
           suze.yaml
-        gentian-corp.yaml           # optional add-on (example) — hand-added, not every cluster runs it
-      definitions/<tenant>/<stage>/   # tenant catalogue (inactive)
-      tenants/<tenant>/<stage>/       # activated tenants (ArgoCD sync target)
+        addons/
+          gentian-corp/
+            application.yaml        # optional add-on (example) — hand-added, not every cluster runs it
+      definitions/
+        components/tenant-defaults/  # cluster-wide defaults applied to every tenant at activation
+        <tenant>/tenant.yaml         # tenant catalogue (inactive) — stage-agnostic, see below
+      tenants/<tenant>/              # activated tenants (ArgoCD sync target)
 ```
 
 Note what's conspicuously **not** in `kernel/`: an `app-of-apps.yaml`,
@@ -108,13 +112,22 @@ as `.tmpl` files in `gentian-os` itself
 `install_stage1_operator()`/`install_stage1_portal()` — never committed to
 `gentian-deployments` at all. See §3.1.
 
-There's also no `-<stage>` suffix on any file inside a single cluster's
-`kernel/` directory — the directory already scopes it to one cluster with
-one stage, so repeating the stage in every filename (`values-dev.yaml`) is
-redundant. It only appears where it's a real selector with no directory
-doing that job already: `profiles/<stage>.yaml` and the per-tenant
-`<stage>/` directories under `definitions/`/`tenants/` (a tenant *can* have
-different definitions per stage, so the suffix there is load-bearing).
+There's also no `-<stage>` suffix, or `<stage>/` subdirectory, anywhere
+inside a single cluster's tree — `clusters/<cluster>/` already scopes
+everything under it to that cluster's one, permanent stage (previous
+paragraph), so re-encoding the stage a second time underneath it, whether
+as a filename suffix (`values-dev.yaml`) or a directory level
+(`tenants/<tenant>/dev/`), is always redundant: there is no cluster whose
+own tree could ever contain a second stage to disambiguate against. This is
+why `definitions/<tenant>/tenant.yaml` and `tenants/<tenant>/tenant.yaml`
+are flat, not nested under a `<stage>/` directory — an earlier revision of
+this design nested them, reasoning that "a tenant *can* have different
+definitions per stage," but that's not actually true once a cluster is
+pinned to one stage for life: every definition or activated instance under
+`clusters/test/...` is implicitly a `dev` one, so a `dev/` subdirectory
+there disambiguates nothing. The suffix only earns its place where a
+directory *isn't* already doing that job: `profiles/<stage>.yaml` sits
+above any single cluster, so it's the one place stage is a real selector.
 
 ---
 
@@ -174,7 +187,9 @@ from `.tmpl` files that ship in `gentian-os` itself:
   layered per §1 — `$deploy/profiles/_base.yaml` →
   `$deploy/profiles/<stage>.yaml` → `$deploy/clusters/<cluster>/kernel/values.yaml`),
   the `gentian-tenants` `ApplicationSet` (git-directory generator over
-  `clusters/<cluster>/tenants/*/<stage>`), and the `ImageUpdater` CR.
+  `clusters/<cluster>/tenants/*` — no stage segment, since a cluster's own
+  tenants/ tree is already implicitly that cluster's one stage), and the
+  `ImageUpdater` CR.
 - `kernel/bootstrap/gentian-portal-application.yaml.tmpl` — rendered and
   applied by `apply_gentian_portal_argocd_application()`
   (`scripts/portal-login-bootstrap.sh`, called from
@@ -215,8 +230,18 @@ those two is intentionally *not* committed anywhere in
 | --- | --- | --- | --- |
 | **Kernel instance data** — genuinely unique per cluster | Crossplane Claims (`kernelDomain`), the cluster's `values.yaml` overlay | `clusters/<cluster>/kernel/{claims/*.yaml,values.yaml}` | Yes — `scaffold_cluster_deployment()` generates these (§3A) |
 | **Kernel bootstrap Applications** — near-identical across every cluster | `gentian-os` Application, `gentian-tenants` ApplicationSet, `gentian-portal` Application, `ImageUpdater` CR | Nowhere in `gentian-deployments` — they live as `.tmpl` files in `gentian-os`'s own `kernel/bootstrap/`, rendered with `%CLUSTER%`/`%STAGE%` and `kubectl apply`'d directly by `install.sh` (§3B) | No — not per-cluster data at all, just the same template rendered with different placeholders |
-| **Optional cluster add-ons** — most clusters don't run this | `gentian-corp` (a private, org-specific app — not part of the generic gentian-os offering) | `clusters/<cluster>/kernel/gentian-corp.yaml`, hand-added | No — not every cluster wants it, so nothing generates it for you |
-| **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/<tenant>/<stage>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
+| **Optional cluster add-ons** — most clusters don't run this | `gentian-corp` (a private, org-specific app — not part of the generic gentian-os offering) | `clusters/<cluster>/kernel/addons/gentian-corp/application.yaml`, hand-added | No — not every cluster wants it, so nothing generates it for you |
+| **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/<tenant>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
+
+`gentian-corp` is also the concrete example of a rule that applies to any
+add-on: the *manifests* it deploys don't have to live in
+`gentian-deployments` at all — they can live in the add-on's own repo (here,
+`gentian-corp/deploy/gentian-corp.yaml`), with the `Application` in
+`gentian-deployments` reduced to a repo pointer plus an inline Kustomize
+patch for the one or two values that repo can't know on its own
+(`kernelDomain`, in this case). Same logic as the kernel bootstrap
+Applications above, one level down: don't commit a copy of something that
+already has a canonical home elsewhere.
 
 The middle two rows are the ones easy to blur, since they used to be the
 same thing: earlier revisions of this design committed a
@@ -334,14 +359,16 @@ flowchart TD
 ### 5.3 Tenant workflow
 
 1. Edit tenant definition:
-   `clusters/<cluster>/definitions/<tenant>/<stage>/tenant.yaml`
+   `clusters/<cluster>/definitions/<tenant>/tenant.yaml`
 2. Activate on cluster: `kubectl gentian tenants deploy <tenant>`
-3. Commit the generated copy under `clusters/<cluster>/tenants/<tenant>/<stage>/`
+3. Commit the generated copy under `clusters/<cluster>/tenants/<tenant>/`
 4. ArgoCD `gentian-tenants` ApplicationSet syncs the Tenant CR
 
 This is a Day-2 change to a live cluster — PR review applies here (unlike
 bootstrap, §3). For production tenants, promote tested YAML from the dev
-cluster path to the prod cluster path via a pull request on `main`.
+cluster's path to the prod cluster's path (a different `clusters/<cluster>/`
+tree entirely — see §1 on why there's no `<stage>/` subdirectory to promote
+*within* one cluster's tree) via a pull request on `main`.
 
 ### 5.4 First production release checklist
 
@@ -414,11 +441,14 @@ a Day-2 change; PR review applies.
 
 **Tenants (gentian-deployments):**
 
-1. Maintain definitions per stage:
-   `definitions/<tenant>/dev/`, `.../staging/`, `.../prod/`.
-2. Test on dev; open a PR copying/adapting tenant YAML from
-   `tenants/<tenant>/dev/` to `tenants/<tenant>/staging/`, then to
-   `tenants/<tenant>/prod/`.
+Stage isn't a dimension *within* a tenant definition here — it's which
+cluster's tree the definition lives in (§1). So promoting a tenant across
+stages means promoting it across clusters:
+
+1. Test on dev: `clusters/<dev-cluster>/definitions/<tenant>/tenant.yaml`.
+2. Open a PR copying/adapting that YAML to
+   `clusters/<staging-cluster>/definitions/<tenant>/tenant.yaml`, then to
+   `clusters/<prod-cluster>/definitions/<tenant>/tenant.yaml`.
 3. Deploy on each cluster: `kubectl gentian tenants deploy <tenant>`.
 
 **Apps (gentian-apps):**
@@ -445,7 +475,7 @@ and that the staging cluster's own `clusters/<cluster>/kernel/`:
 | --- | --- | --- |
 | `gentian-deployments/profiles/` | Yes | Stage-tier policy, shared across clusters of that tier |
 | `gentian-deployments/clusters/<cluster>/kernel/claims/` | Yes | Crossplane Claims — `kernelDomain` and other cluster identity |
-| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay `values.yaml`, `cluster-settings.env`, optional add-ons (e.g. `gentian-corp.yaml`) — **not** bootstrap Applications, see §3.1 |
+| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay `values.yaml`, `cluster-settings.env`, optional add-ons (e.g. `addons/gentian-corp/application.yaml`) — **not** bootstrap Applications, see §3.1 |
 | `gentian-deployments/clusters/<cluster>/definitions/` | Yes | Tenant definitions (inactive) |
 | `gentian-deployments/clusters/<cluster>/tenants/` | Yes | Activated tenant manifests |
 | `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `KERNEL_DOMAIN`, `ACME_ENV`, repo URLs |

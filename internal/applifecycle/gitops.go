@@ -30,12 +30,11 @@ type GitOps struct {
 	path    string
 	repo    string
 	cluster string
-	stage   string
 }
 
 // NewGitOps returns a GitOps helper. Path must be a local git checkout.
-func NewGitOps(path, repo, cluster, stage string) *GitOps {
-	return &GitOps{path: path, repo: repo, cluster: cluster, stage: stage}
+func NewGitOps(path, repo, cluster string) *GitOps {
+	return &GitOps{path: path, repo: repo, cluster: cluster}
 }
 
 func (g *GitOps) requirePath() error {
@@ -75,13 +74,12 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 	if cluster == "" {
 		cluster = "default-cluster"
 	}
-	stage := g.stage
-	if stage == "" {
-		stage = "dev"
-	}
 
-	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/<stage>/).
-	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, stage, "tenant.yaml")
+	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/).
+	// No stage segment: a cluster has exactly one stage for its whole lifetime
+	// (docs/deployment.md §1), so encoding it again under this cluster's own
+	// tenants/ tree would be redundant.
+	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, "tenant.yaml")
 	if _, err := os.Stat(preferred); err == nil {
 		return preferred, nil
 	}
@@ -110,7 +108,7 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 		return "", err
 	}
 	if len(found) == 0 {
-		return "", fmt.Errorf("tenant file for %q not found under clusters/%s/tenants (stage %q)", tenant, cluster, stage)
+		return "", fmt.Errorf("tenant file for %q not found under clusters/%s/tenants", tenant, cluster)
 	}
 	return found[0], nil
 }
