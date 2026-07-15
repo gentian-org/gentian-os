@@ -673,7 +673,7 @@ EXISTING=$(curl -sf \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s")
 if echo "${EXISTING}" | grep -q '"id"'; then
-  CID=$(echo "${EXISTING}" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  CID=$(echo "${EXISTING}" | jq -r '.[0].id')
   echo "SAML client %s already exists (id=${CID}) in realm %s"
   curl -sf \
     -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
