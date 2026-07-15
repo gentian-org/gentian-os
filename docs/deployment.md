@@ -109,7 +109,7 @@ as `.tmpl` files in `gentian-os` itself
 (`kernel/bootstrap/gentian-os-application.yaml.tmpl`,
 `gentian-portal-application.yaml.tmpl`), `sed`-rendered with `%CLUSTER%`/
 `%STAGE%` and applied directly to the cluster by
-`install_stage1_operator()`/`install_stage1_portal()` — never committed to
+`install_gentian_os_operator()`/`install_portal_login()` — never committed to
 `gentian-deployments` at all. See §3.1.
 
 There's also no `-<stage>` suffix, or `<stage>/` subdirectory, anywhere
@@ -182,7 +182,7 @@ from `.tmpl` files that ship in `gentian-os` itself:
 
 - `kernel/bootstrap/gentian-os-application.yaml.tmpl` — rendered and
   applied by `handoff_gentian_os_to_argocd()` (`scripts/lib/catalogue.sh`,
-  called from `install_stage1_operator()`, install.sh Step 13). Produces
+  called from `install_gentian_os_operator()`, install.sh Step 13). Produces
   three objects: the `gentian-os` Application (operator Helm chart, values
   layered per §1 — `$deploy/profiles/_base.yaml` →
   `$deploy/profiles/<stage>.yaml` → `$deploy/clusters/<cluster>/kernel/values.yaml`),
@@ -193,7 +193,7 @@ from `.tmpl` files that ship in `gentian-os` itself:
 - `kernel/bootstrap/gentian-portal-application.yaml.tmpl` — rendered and
   applied by `apply_gentian_portal_argocd_application()`
   (`scripts/portal-login-bootstrap.sh`, called from
-  `install_stage1_portal()`, install.sh Step 14). Produces the
+  `install_portal_login()`, install.sh Step 14). Produces the
   `gentian-portal` Application, values layered the same way.
 
 Both templates use `sed` placeholder substitution (`%CLUSTER%`, `%STAGE%`,

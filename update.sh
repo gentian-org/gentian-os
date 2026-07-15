@@ -95,7 +95,7 @@ Options:
   --portal                 Reconcile Gentian portal login: Keycloak clients
                            (gentian-portal + BFF), platform admin, Helm upgrade
                            of gentian-portal-web/api (same as install.sh
-                           --stage1-portal).
+                           --portal-only).
   --plugin                 Reinstall the kubectl-gentian plugin from this
                            repository (idempotent: skips if already up-to-date).
   --acme-issuers           Re-apply cert-manager ClusterIssuers from install.env
@@ -233,7 +233,7 @@ _kv_secret() {
 }
 
 # _detect_deployed_mail_mode, _postfix_dev_values_yaml, _patch_postfix_configmap,
-# install_stage1_mail — see scripts/mail-lib.sh (sourced via scripts/lib/load.sh).
+# install_kernel_mail — see scripts/mail-lib.sh (sourced via scripts/lib/load.sh).
 
 # =============================================================================
 # op_mail — reconcile mail configuration per MAIL_SERVICE_MODE
@@ -725,13 +725,13 @@ op_portal() {
     }
 
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would run install_stage1_portal (Keycloak bootstrap + gentian-portal ArgoCD)"
+        info "[dry-run] would run install_portal_login (Keycloak bootstrap + gentian-portal ArgoCD)"
         return 0
     fi
 
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
-    install_stage1_portal
+    install_portal_login
 }
 # =============================================================================
 # main

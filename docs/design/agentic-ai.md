@@ -384,7 +384,7 @@ see the licensing caveat in
 
 **Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by
 `ensure_litellm_teams()` (`scripts/llm-lib.sh`), run as part of
-`install_stage1_llm_serving` and `update.sh --llm`. Re-run
+`install_llm_serving` and `update.sh --llm`. Re-run
 `./update.sh --llm` after adding a tenant to sync its Team.
 
 **Re-enabling tenant-level access:** the app-catalogue `litellm` tile

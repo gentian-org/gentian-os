@@ -565,7 +565,7 @@ create_crossplane_secrets() {
 # The gentian-os/gentian-portal Applications and the ImageUpdater CR are
 # NOT scaffolded here — they're rendered directly from
 # kernel/bootstrap/{gentian-os,gentian-portal}-application.yaml.tmpl by
-# install_stage1_operator()/install_stage1_portal() (catalogue.sh /
+# install_gentian_os_operator()/install_portal_login() (catalogue.sh /
 # portal-login-bootstrap.sh) and applied straight to the cluster, never
 # committed to gentian-deployments. Their content never varies except by
 # %CLUSTER%/%STAGE%, so there's nothing cluster-specific worth persisting
@@ -1237,7 +1237,7 @@ print_summary_cp() {
 # =============================================================================
 # Stage 1: LLM serving (vLLM / LocalAI serving backend + LiteLLM proxy)
 # =============================================================================
-install_stage1_llm_serving() {
+install_llm_serving() {
     LLM_SUPPORT="${LLM_SUPPORT:-false}"
     if [[ "${LLM_SUPPORT}" != "true" ]]; then
         info "LLM serving support disabled; skipping deployment."
@@ -1361,14 +1361,14 @@ main_cp() {
 
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
     apply_suze_xr               # Step 12  — Gentian IdP (Keycloak + OpenFGA) via Suze XR
-    install_stage1_operator     # Step 13  — operator with authz bridge + Cloudflare tunnel
+    install_gentian_os_operator # Step 13  — operator with authz bridge + Cloudflare tunnel
     wait_for_gateway_platform || true
-    install_stage1_mail         # Step 13b — MAIL_SERVICE_MODE (external SMTP or Postfix)
-    install_stage1_llm_serving  # Step 13c — Deploy LLM serving stack (vLLM/LocalAI + LiteLLM)
+    install_kernel_mail         # Step 13b — MAIL_SERVICE_MODE (external SMTP or Postfix)
+    install_llm_serving         # Step 13c — Deploy LLM serving stack (vLLM/LocalAI + LiteLLM)
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
-    install_stage1_portal       # Step 14 — portal OIDC login dogfood
+    install_portal_login        # Step 14 — portal OIDC login dogfood
 
     # ── App catalogue + CLI (required for kubectl gentian apps install) ─────
     bootstrap_appprofiles       # Step 15 — AppProfile CRs from gentian-apps repo
@@ -1388,7 +1388,7 @@ main_cp() {
     print_summary_cp
 }
 
-run_stage1_operator_only() {
+run_operator_only() {
     load_operator_config
     load_creds_cache
     load_install_state
@@ -1401,11 +1401,11 @@ run_stage1_operator_only() {
         exit 1
     fi
     info "Using KERNEL_DOMAIN=${KERNEL_DOMAIN}"
-    install_stage1_operator
+    install_gentian_os_operator
     wait_for_gateway_platform || true
 }
 
-run_stage1_portal_only() {
+run_portal_only() {
     load_operator_config
     load_creds_cache
     load_install_state
@@ -1427,16 +1427,16 @@ run_stage1_portal_only() {
     fi
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
-    install_stage1_portal
+    install_portal_login
 }
 
 case "${1:-}" in
-    --stage1-operator)
-        run_stage1_operator_only
+    --operator-only)
+        run_operator_only
         exit 0
         ;;
-    --stage1-portal)
-        run_stage1_portal_only
+    --portal-only)
+        run_portal_only
         exit 0
         ;;
 esac

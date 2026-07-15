@@ -1,6 +1,6 @@
 #!/bin/bash
 # LiteLLM Teams reconciliation — one Team per Gentian Tenant CR.
-# Sourced from scripts/lib/load.sh; called from install_stage1_llm_serving
+# Sourced from scripts/lib/load.sh; called from install_llm_serving
 # (install.sh Step 13c) and op_llm_serving (update.sh --llm).
 
 # Keycloak Admin API calls run in-cluster (Job) because litellm-proxy is a

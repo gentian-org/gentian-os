@@ -3,7 +3,7 @@
 # scripts/verify-kernel-services.sh — post-install smoke checks for kernel IdP/mail
 # =============================================================================
 # Sourced from scripts/lib/load.sh. Used by install.sh after Suze (Keycloak) and
-# install_stage1_mail (Dovecot when MAIL_SERVICE_MODE=kernel).
+# install_kernel_mail (Dovecot when MAIL_SERVICE_MODE=kernel).
 #
 # Set VERIFY_KERNEL_SERVICES=0 to skip (e.g. air-gapped partial installs).
 # =============================================================================

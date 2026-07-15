@@ -320,7 +320,7 @@ handoff_gentian_os_to_argocd() {
     info "Monitor tenants:   kubectl get applicationset gentian-tenants -n argocd"
 }
 
-install_stage1_operator() {
+install_gentian_os_operator() {
     banner "Step 13 — gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"

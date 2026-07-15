@@ -18,7 +18,7 @@
 # The ImageUpdater CR is inlined below (its content never varies by cluster
 # or stage — no reason to make it a separate cross-repo file reference).
 #
-# Placeholders filled in by handoff_gentian_os_to_argocd() / install_stage1_operator()
+# Placeholders filled in by handoff_gentian_os_to_argocd() / install_gentian_os_operator()
 # in scripts/lib/catalogue.sh:
 #   %GENTIAN_OS_BRANCH%   — branch/tag of this repo (e.g. develop, main, v1.2.3)
 #   %DEPLOYMENTS_REPO%    — gentian-deployments repo URL
@@ -27,7 +27,7 @@
 #   %STAGE%               — stage name (dev / staging / prod)
 #
 # Apply:
-#   Rendered and applied automatically by install.sh Step 15.
+#   Rendered and applied automatically by install.sh Step 13.
 #   For day-2 re-apply (e.g. to fix a missing Application):
 #     source install.env && source install.secrets.env
 #     sed -e "s|%GENTIAN_OS_BRANCH%|develop|g" \
@@ -71,7 +71,7 @@ spec:
     # Direct Helm bootstrap + ArgoCD SSA leave kube-defaulted Deployment
     # fields on the live object that the Helm chart omits (same pattern as
     # gentian-portal ApplicationSet). Without these, gentian-os stays OutOfSync
-    # while Healthy and install Step 16 times out every run.
+    # while Healthy and install Step 14 times out every run.
     jqPathExpressions:
     - .spec.progressDeadlineSeconds
     - .spec.revisionHistoryLimit

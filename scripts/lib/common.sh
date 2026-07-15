@@ -1685,7 +1685,7 @@ _wait_prewarm_pod() {
 # Deploy kernel mail services (Postfix + Dovecot)
 #
 # Called when MAIL_SERVICE_MODE=kernel — a conditional sub-step of Step 13b
-# (install_stage1_mail), not a standalone pipeline step, since most installs
+# (install_kernel_mail), not a standalone pipeline step, since most installs
 # use the default external-SMTP mode and never reach this. Applies the
 # provider-helm Release CRs, ConfigMaps, and ExternalSecrets for postfix and
 # dovecot from:
