@@ -163,7 +163,7 @@ _init() {
     local bao_ip
     bao_ip=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
     [[ -n "$bao_ip" ]] || { echo "ERROR: OpenBao service not found. Is the cluster running?" >&2; exit 1; }
-    export VAULT_ADDR="http://${bao_ip}:8200"
+    export VAULT_ADDR="https://${bao_ip}:8200"
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         local init_file="${OPENBAO_INIT_FILE:-${SCRIPT_DIR}/openbao-init.json}"
@@ -177,7 +177,7 @@ _init() {
 
     # Retrieve derivation salt from OpenBao
     local existing_secret
-    existing_secret=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${VAULT_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+    existing_secret=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${VAULT_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
     if [[ -n "${existing_secret}" ]]; then
         local m_val s_val
         m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
