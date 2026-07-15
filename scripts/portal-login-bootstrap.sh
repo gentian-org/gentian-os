@@ -1342,19 +1342,14 @@ release_gentian_portal_helm_bootstrap() {
 }
 
 apply_gentian_portal_argocd_application() {
-    local gentian_os_branch gentian_ui_branch portal_tag rendered tmpl deployments_app
+    local gentian_os_branch gentian_ui_branch portal_tag rendered tmpl
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-test}"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
     gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"
     portal_tag="${PORTAL_IMAGE_TAG:-develop}"
     tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-portal-application.yaml.tmpl"
     rendered="$(mktemp)"
-    deployments_app="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER:-test}/kernel/gentian-portal-${GENTIAN_DEPLOYMENTS_STAGE:-dev}.yaml"
-
-    if [[ -f "${deployments_app}" ]]; then
-        info "Applying gentian-portal ArgoCD Application from ${deployments_app}..."
-        kubectl apply -f "${deployments_app}"
-        return 0
-    fi
 
     if [[ ! -f "${tmpl}" ]]; then
         error "gentian-portal Application template not found at ${tmpl}"
@@ -1364,8 +1359,12 @@ apply_gentian_portal_argocd_application() {
     sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
         -e "s|%GENTIAN_UI_BRANCH%|${gentian_ui_branch}|g" \
         -e "s|%PORTAL_IMAGE_TAG%|${portal_tag}|g" \
+        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
+        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
+        -e "s|%CLUSTER%|${cluster}|g" \
+        -e "s|%STAGE%|${stage}|g" \
         "${tmpl}" >"${rendered}"
-    info "Registering gentian-portal ArgoCD Application (os=${gentian_os_branch}, ui=${gentian_ui_branch}, tag=${portal_tag})..."
+    info "Registering gentian-portal ArgoCD Application (os=${gentian_os_branch}, ui=${gentian_ui_branch}, tag=${portal_tag}, cluster=${cluster}, stage=${stage})..."
     kubectl apply -f "${rendered}"
     rm -f "${rendered}"
 }

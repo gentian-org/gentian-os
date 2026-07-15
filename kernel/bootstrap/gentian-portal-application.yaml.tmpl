@@ -8,9 +8,13 @@
 # and patches api/web image tags on this Application (write-back: argocd).
 #
 # Placeholders filled by portal-login-bootstrap.sh:
-#   %GENTIAN_OS_BRANCH%  — gentian-os branch for Helm values ref
-#   %GENTIAN_UI_BRANCH%  — gentian-ui branch for chart source
-#   %PORTAL_IMAGE_TAG%   — floating image tag (e.g. develop)
+#   %GENTIAN_OS_BRANCH%   — gentian-os branch for Helm values ref
+#   %GENTIAN_UI_BRANCH%   — gentian-ui branch for chart source
+#   %PORTAL_IMAGE_TAG%    — floating image tag (e.g. develop)
+#   %DEPLOYMENTS_REPO%    — gentian-deployments repo URL
+#   %DEPLOYMENTS_BRANCH%  — gentian-deployments branch
+#   %CLUSTER%             — cluster identifier in deployments repo
+#   %STAGE%               — stage name (dev / staging / prod)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -74,13 +78,19 @@ spec:
   - repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: %GENTIAN_OS_BRANCH%
     ref: values
+  - repoURL: %DEPLOYMENTS_REPO%
+    targetRevision: %DEPLOYMENTS_BRANCH%
+    ref: deploy
   - repoURL: https://github.com/gentian-org/gentian-ui
     targetRevision: %GENTIAN_UI_BRANCH%
     path: chart
     helm:
       releaseName: gentian-portal
       valueFiles:
-      - $values/kernel/services/gentian-portal-web/values/dev.yaml
+      - $values/kernel/services/gentian-portal-web/values/_base.yaml
+      # kernelDomain + api.env.BACKEND_CORS_ORIGINS — cluster-specific
+      # (see docs/deployment.md §1).
+      - $deploy/clusters/%CLUSTER%/kernel/values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel

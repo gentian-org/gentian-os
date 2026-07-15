@@ -76,33 +76,45 @@ Directory layout:
 ```text
 gentian-deployments/
   profiles/
-    dev.yaml                      # Layer 2 — shared by every dev-tier cluster
+    _base.yaml                    # Layer 2a — shared across every stage, this deployment
+    dev.yaml                      # Layer 2b — shared by every dev-tier cluster
     staging.yaml
     prod.yaml
   clusters/
     <cluster>/
       kernel/
-        environment.yaml          # { stage: dev }  — read live by ApplicationSet generators
+        cluster-settings.env       # hand-maintained: network mode, storage class, mail, etc.
         values.yaml                # Layer 3 — cluster-unique deltas only
         claims/
           cluster.yaml             # Layer 4 — kernelDomain, the single source
           infra-data.yaml
           suze.yaml
-        cluster-application.yaml   # syncs claims/ (plain Application, no PR-gated generator needed)
-        app-of-apps.yaml           # root Application — no stage suffix, the directory is the identity
-        image-updater.yaml
+        gentian-corp.yaml           # optional add-on (example) — hand-added, not every cluster runs it
       definitions/<tenant>/<stage>/   # tenant catalogue (inactive)
       tenants/<tenant>/<stage>/       # activated tenants (ArgoCD sync target)
 ```
 
-Note there's no `-<stage>` suffix on any file inside a single cluster's
+Note what's conspicuously **not** in `kernel/`: an `app-of-apps.yaml`,
+`gentian-portal.yaml`, or `image-updater.yaml`. These bootstrap ArgoCD
+`Application`/`ImageUpdater` objects are near-100%-identical across every
+cluster — the only things that ever vary are `%CLUSTER%`/`%STAGE%`
+substitutions into a couple of `$deploy/...` paths. Committing a full copy
+per cluster would be the exact per-cluster-duplication problem this whole
+model exists to avoid, just one layer up from the Claims. Instead they live
+as `.tmpl` files in `gentian-os` itself
+(`kernel/bootstrap/gentian-os-application.yaml.tmpl`,
+`gentian-portal-application.yaml.tmpl`), `sed`-rendered with `%CLUSTER%`/
+`%STAGE%` and applied directly to the cluster by
+`install_stage1_operator()`/`install_stage1_portal()` — never committed to
+`gentian-deployments` at all. See §3.1.
+
+There's also no `-<stage>` suffix on any file inside a single cluster's
 `kernel/` directory — the directory already scopes it to one cluster with
-one stage, so repeating the stage in every filename (`values-dev.yaml`,
-`app-of-apps-dev.yaml`, `image-updater-dev.yaml`) is redundant. It only
-appears where it's a real selector with no directory doing that job
-already: `profiles/<stage>.yaml` and the per-tenant `<stage>/` directories
-under `definitions/`/`tenants/` (a tenant *can* have different definitions
-per stage, so the suffix there is load-bearing).
+one stage, so repeating the stage in every filename (`values-dev.yaml`) is
+redundant. It only appears where it's a real selector with no directory
+doing that job already: `profiles/<stage>.yaml` and the per-tenant
+`<stage>/` directories under `definitions/`/`tenants/` (a tenant *can* have
+different definitions per stage, so the suffix there is load-bearing).
 
 ---
 
@@ -131,9 +143,8 @@ safety rules:
 `GENTIAN_DEPLOYMENTS_STAGE`, and `KERNEL_DOMAIN` in `install.env`:
 
 1. For each of `claims/cluster.yaml`, `claims/infra-data.yaml`,
-   `claims/suze.yaml`, `values.yaml`, `image-updater.yaml`,
-   `gentian-portal.yaml`, `app-of-apps.yaml`: generate it **only if it
-   doesn't already exist**. Per-file, not directory-level — a cluster whose
+   `claims/suze.yaml`, `values.yaml`: generate it **only if it doesn't
+   already exist**. Per-file, not directory-level — a cluster whose
    `cluster-settings.env` already exists but is missing the rest still
    converges correctly, and re-running `install.sh` never overwrites a file
    a human has since hand-edited.
@@ -147,14 +158,41 @@ seconds earlier — a review step here would just be re-approving your own
 input. PR review is the right gate for **changes to a live cluster**
 (§8 Day-2 operations) — that's a materially different risk.
 
-**B. Bootstrapping this cluster's control plane.** Install Crossplane and
-ArgoCD, point ArgoCD at `gentian-deployments/clusters/<cluster>/kernel/app-of-apps.yaml`.
-This is the one unavoidable imperative step in the whole design — GitOps
-needs an agent already running to pull from git, and something has to
-install that agent the first time. Every GitOps system has this same day-0
-seam; it isn't specific to this design.
+Note what `scaffold_cluster_deployment()` deliberately does **not**
+generate: the `gentian-os`/`gentian-portal` ArgoCD `Application` objects or
+the `ImageUpdater` CR. Those come from step B below instead — see §3.1 for
+why.
 
-From here, ArgoCD reconciles everything: the Claims (§1 Layer 4), the
+**B. Bootstrapping this cluster's control plane.** Install Crossplane and
+ArgoCD, then render and `kubectl apply` the bootstrap Applications directly
+from `.tmpl` files that ship in `gentian-os` itself:
+
+- `kernel/bootstrap/gentian-os-application.yaml.tmpl` — rendered and
+  applied by `handoff_gentian_os_to_argocd()` (`scripts/lib/catalogue.sh`,
+  called from `install_stage1_operator()`, install.sh Step 15). Produces
+  three objects: the `gentian-os` Application (operator Helm chart, values
+  layered per §1 — `$deploy/profiles/_base.yaml` →
+  `$deploy/profiles/<stage>.yaml` → `$deploy/clusters/<cluster>/kernel/values.yaml`),
+  the `gentian-tenants` `ApplicationSet` (git-directory generator over
+  `clusters/<cluster>/tenants/*/<stage>`), and the `ImageUpdater` CR.
+- `kernel/bootstrap/gentian-portal-application.yaml.tmpl` — rendered and
+  applied by `apply_gentian_portal_argocd_application()`
+  (`scripts/portal-login-bootstrap.sh`, called from
+  `install_stage1_portal()`, install.sh Step 16). Produces the
+  `gentian-portal` Application, values layered the same way.
+
+Both templates use `sed` placeholder substitution (`%CLUSTER%`, `%STAGE%`,
+`%DEPLOYMENTS_REPO%`, `%DEPLOYMENTS_BRANCH%`, branch/tag vars), not
+`envsubst`, and neither their rendered output nor any per-cluster variant of
+them is ever committed to `gentian-deployments` — see §3.1.
+
+Installing Crossplane/ArgoCD and applying these first Applications is the
+one unavoidable imperative step in the whole design — GitOps needs an agent
+already running to pull from git, and something has to install that agent
+the first time. Every GitOps system has this same day-0 seam; it isn't
+specific to this design.
+
+From here, ArgoCD reconciles everything else: the Claims (§1 Layer 4), the
 layered Helm values (§1 Layers 1-3) for kernel services and the portal, and
 the kernel `ApplicationSet`s (`kernel/appsets/` — a small Helm chart in
 `gentian-os` whose only templated value is `stage`, passed in by
@@ -163,33 +201,54 @@ the kernel `ApplicationSet`s (`kernel/appsets/` — a small Helm chart in
 generator: ArgoCD in this design is per-cluster/self-managing, not
 hub-and-spoke, so there's no "other clusters" for a generator to read).
 `install.sh` isn't run again for this cluster except to re-bootstrap it
-from scratch.
+from scratch, or to day-2 re-apply a bootstrap Application by hand (see the
+comment block at the top of each `.tmpl` file).
 
 ### 3.1 What belongs in a cluster's `kernel/` — and what doesn't
 
 Three different kinds of things can end up looking like they belong in
-`clusters/<cluster>/kernel/`. Only one of them actually does:
+`clusters/<cluster>/kernel/`. Only two of them actually do — and one of
+those two is intentionally *not* committed anywhere in
+`gentian-deployments`:
 
 | Kind | Example | Where it goes | Scaffolded? |
 | --- | --- | --- | --- |
-| **Kernel infrastructure** — every cluster needs it | `gentian-os` operator, Gentian Portal, Image Updater, Crossplane Claims | `clusters/<cluster>/kernel/*.yaml` | Yes — `scaffold_cluster_deployment()` generates these (§3A) |
-| **Optional cluster add-ons** — most clusters don't run this | `gentian-corp` (a private, org-specific app — not part of the generic gentian-os offering) | Same directory, but hand-added | No — not every cluster wants it, so nothing generates it for you |
+| **Kernel instance data** — genuinely unique per cluster | Crossplane Claims (`kernelDomain`), the cluster's `values.yaml` overlay | `clusters/<cluster>/kernel/{claims/*.yaml,values.yaml}` | Yes — `scaffold_cluster_deployment()` generates these (§3A) |
+| **Kernel bootstrap Applications** — near-identical across every cluster | `gentian-os` Application, `gentian-tenants` ApplicationSet, `gentian-portal` Application, `ImageUpdater` CR | Nowhere in `gentian-deployments` — they live as `.tmpl` files in `gentian-os`'s own `kernel/bootstrap/`, rendered with `%CLUSTER%`/`%STAGE%` and `kubectl apply`'d directly by `install.sh` (§3B) | No — not per-cluster data at all, just the same template rendered with different placeholders |
+| **Optional cluster add-ons** — most clusters don't run this | `gentian-corp` (a private, org-specific app — not part of the generic gentian-os offering) | `clusters/<cluster>/kernel/gentian-corp.yaml`, hand-added | No — not every cluster wants it, so nothing generates it for you |
 | **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/<tenant>/<stage>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
 
-The first two both live as ArgoCD `Application` manifests in the same
-directory and look superficially similar (see `gentian-corp.yaml` next to
-`gentian-portal.yaml`), which is exactly what makes the distinction easy to
-blur. The test that actually matters: **would every gentian-os deployer
-want this running?** If yes, it's kernel infrastructure — it belongs in the
-scaffold list, so it can never silently go missing (that's precisely what
-happened to `platformSecurityPolicy.allowedMacWaivers` on the deleted
-`pck-kulxwmm` cluster — see §1). If no — it's specific to what *this*
-deployment happens to run — it's an optional add-on: still fine to commit
-to `gentian-deployments` since it's still deployment-instance data, just
-not something `install.sh` should auto-create for every cluster.
+The middle two rows are the ones easy to blur, since they used to be the
+same thing: earlier revisions of this design committed a
+`gentian-portal.yaml`/`app-of-apps.yaml`/`image-updater.yaml` per cluster,
+generated once at scaffold time. That turned out to be the wrong DRY
+tradeoff — those files were ~100% identical across clusters, so "generate
+once, then drift silently" was strictly worse than "render fresh from one
+template every bootstrap." The `.tmpl` mechanism in `gentian-os` is the
+fix: change the Application definition once, in `gentian-os`, and every
+cluster picks it up on its next `install.sh`/day-2 re-apply — no
+per-cluster file to remember to update.
 
-Tenant apps are a different category entirely, not a variant of the first
-two: they're not ArgoCD `Application` objects hand-maintained per cluster
+The test for whether something is kernel *instance data* (scaffolded into
+`gentian-deployments`) versus a kernel *bootstrap Application* (rendered
+from a `gentian-os` `.tmpl`, never committed): **does this cluster need its
+own copy of the data, or just its own copy of the values referenced by an
+otherwise-identical template?** `kernelDomain` is real per-cluster data —
+it goes in `claims/cluster.yaml`. The `gentian-os` Application object that
+*references* `kernelDomain` via `$deploy/clusters/<cluster>/kernel/values.yaml`
+is not itself per-cluster data — it's the same object shape everywhere, so
+it stays a template.
+
+Add-ons are a separate axis from that same-vs-different question: **would
+every gentian-os deployer want this running?** If yes, it's kernel
+infrastructure (either instance data or a bootstrap template, per the test
+above). If no — it's specific to what *this* deployment happens to run —
+it's an optional add-on: still fine to commit to `gentian-deployments`
+since it's still deployment-instance data, just not something `install.sh`
+should auto-create for every cluster.
+
+Tenant apps are a different category entirely, not a variant of the other
+three: they're not ArgoCD `Application` objects hand-maintained per cluster
 at all. They go through the `gentian-apps` AppProfile catalogue and the
 `Tenant` CR (`kubectl gentian apps install <profile> --tenant <name>`),
 reconciled by the operator/Crossplane — namespaced per tenant, activated
@@ -386,7 +445,7 @@ and that the staging cluster's own `clusters/<cluster>/kernel/`:
 | --- | --- | --- |
 | `gentian-deployments/profiles/` | Yes | Stage-tier policy, shared across clusters of that tier |
 | `gentian-deployments/clusters/<cluster>/kernel/claims/` | Yes | Crossplane Claims — `kernelDomain` and other cluster identity |
-| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay values, `environment.yaml`, bootstrap Applications |
+| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay `values.yaml`, `cluster-settings.env`, optional add-ons (e.g. `gentian-corp.yaml`) — **not** bootstrap Applications, see §3.1 |
 | `gentian-deployments/clusters/<cluster>/definitions/` | Yes | Tenant definitions (inactive) |
 | `gentian-deployments/clusters/<cluster>/tenants/` | Yes | Activated tenant manifests |
 | `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `KERNEL_DOMAIN`, `ACME_ENV`, repo URLs |

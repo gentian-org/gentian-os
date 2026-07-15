@@ -544,14 +544,23 @@ create_crossplane_secrets() {
 
 # =============================================================================
 # scaffold_cluster_deployment — Day-0 only. If this cluster's kernel/
-# directory in gentian-deployments is missing any of its mechanically
-# derivable files, generate them from KERNEL_DOMAIN/GENTIAN_DEPLOYMENTS_STAGE
-# and commit + push directly to main (no PR — this is scaffolding a
-# not-yet-running cluster, not changing a live one; see docs/deployment.md
-# §3). Per-file checks, not a directory-level one: never overwrites a file
-# that already exists, so this is a no-op on every subsequent run, and it
-# converges correctly even when cluster-settings.env already exists but the
-# mechanical files don't.
+# directory in gentian-deployments is missing claims/{cluster,infra-data,
+# suze}.yaml or values.yaml, generate them from KERNEL_DOMAIN/
+# GENTIAN_DEPLOYMENTS_STAGE and commit + push directly to main (no PR —
+# this is scaffolding a not-yet-running cluster, not changing a live one;
+# see docs/deployment.md §3). Per-file checks, not a directory-level one:
+# never overwrites a file that already exists, so this is a no-op on every
+# subsequent run, and it converges correctly even when cluster-settings.env
+# already exists but the mechanical files don't.
+#
+# The gentian-os/gentian-portal Applications and the ImageUpdater CR are
+# NOT scaffolded here — they're rendered directly from
+# kernel/bootstrap/{gentian-os,gentian-portal}-application.yaml.tmpl by
+# install_stage1_operator()/install_stage1_portal() (catalogue.sh /
+# portal-login-bootstrap.sh) and applied straight to the cluster, never
+# committed to gentian-deployments. Their content never varies except by
+# %CLUSTER%/%STAGE%, so there's nothing cluster-specific worth persisting
+# as a file — see docs/deployment.md §3.1.
 # =============================================================================
 scaffold_cluster_deployment() {
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel"
@@ -643,265 +652,6 @@ api:
     BACKEND_CORS_ORIGINS: https://portal.${domain}
 EOF
         info "Scaffolded ${kernel_dir}/values.yaml"
-        generated=1
-    fi
-
-    if [[ ! -f "${kernel_dir}/image-updater.yaml" ]]; then
-        cat > "${kernel_dir}/image-updater.yaml" <<'EOF'
----
-# Argo CD Image Updater (CRD mode) — identical across stages, so this file
-# has no per-cluster templating; scaffolded once for convenience.
-#
-# NOTE: must live in the argocd namespace because the controller is configured
-# with watch.namespaces=argocd (IMAGE_UPDATER_WATCH_NAMESPACES). The controller
-# then also looks for Applications in that same namespace, which is where ArgoCD
-# keeps its Application resources.
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
-metadata:
-  name: gentian-os
-  namespace: argocd
-spec:
-  writeBackConfig:
-    method: argocd
-  applicationRefs:
-    - namePattern: "gentian-os"
-      useAnnotations: true
-    - namePattern: "gentian-portal"
-      useAnnotations: true
-    - namePattern: "gentian-corp"
-      useAnnotations: true
-EOF
-        info "Scaffolded ${kernel_dir}/image-updater.yaml"
-        generated=1
-    fi
-
-    if [[ ! -f "${kernel_dir}/gentian-portal.yaml" ]]; then
-        cat > "${kernel_dir}/gentian-portal.yaml" <<EOF
----
-# Gentian portal shell — ArgoCD Application (${cluster}, stage=${stage}).
-#
-# Secrets (gentian-portal-secrets, gentian-portal-bff) and Keycloak clients
-# are bootstrapped by gentian-os install.sh Step 16 before this syncs.
-#
-# Apply with the rest of kernel GitOps:
-#   kubectl apply -f clusters/${cluster}/kernel/gentian-portal.yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: gentian-portal
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
-    # develop/newest-build is the safe scaffold default — see the same note
-    # on the gentian-os Application above.
-    argocd-image-updater.argoproj.io/image-list: >-
-      api=ghcr.io/gentian-org/gentian-portal-api:develop,
-      web=ghcr.io/gentian-org/gentian-portal-web:develop
-    argocd-image-updater.argoproj.io/api.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/web.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/api.helm.image-name: api.image.repository
-    argocd-image-updater.argoproj.io/api.helm.image-tag: api.image.tag
-    argocd-image-updater.argoproj.io/web.helm.image-name: web.image.repository
-    argocd-image-updater.argoproj.io/web.helm.image-tag: web.image.tag
-    argocd-image-updater.argoproj.io/write-back-method: argocd
-  finalizers:
-  - resources-finalizer.argocd.argoproj.io
-spec:
-  project: gentian
-  ignoreDifferences:
-  - group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    namespace: platform-kernel
-    jqPathExpressions:
-    - .status
-    - .metadata.annotations
-    - .spec.parentRefs[].group
-    - .spec.parentRefs[].kind
-    - .spec.rules[].backendRefs[].group
-    - .spec.rules[].backendRefs[].kind
-    - .spec.rules[].backendRefs[].weight
-  - group: apps
-    kind: Deployment
-    namespace: platform-kernel
-    jqPathExpressions:
-    - .metadata.annotations
-    - .spec.progressDeadlineSeconds
-    - .spec.revisionHistoryLimit
-    - .spec.strategy
-    - .spec.template.metadata.creationTimestamp
-    - .spec.template.spec.dnsPolicy
-    - .spec.template.spec.restartPolicy
-    - .spec.template.spec.schedulerName
-    - .spec.template.spec.terminationGracePeriodSeconds
-    - .spec.template.spec.containers[].imagePullPolicy
-    - .spec.template.spec.containers[].resources
-    - .spec.template.spec.containers[].terminationMessagePath
-    - .spec.template.spec.containers[].terminationMessagePolicy
-    - .spec.template.spec.containers[].livenessProbe.failureThreshold
-    - .spec.template.spec.containers[].livenessProbe.successThreshold
-    - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
-    - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
-    - .spec.template.spec.containers[].readinessProbe.failureThreshold
-    - .spec.template.spec.containers[].readinessProbe.successThreshold
-    - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
-    - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
-    - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
-  sources:
-  - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
-    ref: values
-  - repoURL: https://github.com/gentian-org/gentian-deployments
-    targetRevision: main
-    ref: deploy
-  - repoURL: https://github.com/gentian-org/gentian-ui
-    targetRevision: develop
-    path: chart
-    helm:
-      releaseName: gentian-portal
-      valueFiles:
-      - \$values/kernel/services/gentian-portal-web/values/_base.yaml
-      - \$deploy/clusters/${cluster}/kernel/values.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: platform-kernel
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    retry:
-      limit: 10
-      backoff:
-        duration: 15s
-        factor: 2
-        maxDuration: 2m
-    syncOptions:
-    - CreateNamespace=false
-    - ServerSideApply=true
-EOF
-        info "Scaffolded ${kernel_dir}/gentian-portal.yaml"
-        generated=1
-    fi
-
-    if [[ ! -f "${kernel_dir}/app-of-apps.yaml" ]]; then
-        cat > "${kernel_dir}/app-of-apps.yaml" <<EOF
----
-# app-of-apps.yaml — Gentian OS ArgoCD Applications (${cluster}, stage=${stage})
-#
-# Two separate Applications so Tenant provisioning state never blocks
-# operator image rollouts (gentian-os wave 0, gentian-tenants wave 2).
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: gentian-os
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
-    # develop/newest-build is the safe scaffold default for any new cluster
-    # (matches image.tag: "develop" below). For a real prod cluster, switch
-    # to a semver update-strategy and a pinned tag — see the "First
-    # production release checklist" in docs/deployment.md.
-    argocd-image-updater.argoproj.io/image-list: gentianos=ghcr.io/gentian-org/gentian-os:develop
-    argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
-    argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
-    argocd-image-updater.argoproj.io/write-back-method: argocd
-  finalizers:
-  - resources-finalizer.argocd.argoproj.io
-spec:
-  project: gentian
-  ignoreDifferences:
-  - group: admissionregistration.k8s.io
-    kind: ValidatingWebhookConfiguration
-    name: gentian-os-tenant-validator
-    jsonPointers:
-    - /webhooks/0/clientConfig/caBundle
-  - group: apps
-    kind: Deployment
-    name: gentian-os
-    namespace: gentian-system
-    jsonPointers:
-    - /metadata/annotations
-    - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
-  - group: apiextensions.k8s.io
-    kind: CustomResourceDefinition
-    jsonPointers:
-    - /spec/conversion
-  - group: external-secrets.io
-    kind: ExternalSecret
-    jqPathExpressions:
-    - .spec.data[].remoteRef.conversionStrategy
-    - .spec.data[].remoteRef.decodingStrategy
-    - .spec.data[].remoteRef.metadataPolicy
-    - .spec.data[].remoteRef.nullBytePolicy
-    - .spec.target.deletionPolicy
-  sources:
-  - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
-    path: charts/gentian-os
-    helm:
-      valueFiles:
-      - \$deploy/profiles/_base.yaml
-      - \$deploy/profiles/${stage}.yaml
-      - \$deploy/clusters/${cluster}/kernel/values.yaml
-  - repoURL: https://github.com/gentian-org/gentian-deployments
-    targetRevision: main
-    ref: deploy
-  - repoURL: https://github.com/gentian-org/gentian-deployments
-    targetRevision: main
-    path: clusters/${cluster}/kernel
-    directory:
-      include: "image-updater.yaml"
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: gentian-system
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
-    - ServerSideApply=true
----
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: gentian-tenants
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "2"
-spec:
-  goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
-  generators:
-  - git:
-      repoURL: https://github.com/gentian-org/gentian-deployments
-      revision: main
-      directories:
-      - path: clusters/${cluster}/tenants/*/${stage}
-  template:
-    metadata:
-      name: '{{ .path.path | replace "/" "-" }}'
-      finalizers:
-      - resources-finalizer.argocd.argoproj.io
-    spec:
-      project: gentian
-      source:
-        repoURL: https://github.com/gentian-org/gentian-deployments
-        targetRevision: main
-        path: '{{ .path.path }}'
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: gentian-system
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-        syncOptions:
-        - CreateNamespace=true
-        - ServerSideApply=true
-EOF
-        info "Scaffolded ${kernel_dir}/app-of-apps.yaml"
         generated=1
     fi
 

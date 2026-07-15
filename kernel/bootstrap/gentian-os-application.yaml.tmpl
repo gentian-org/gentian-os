@@ -10,9 +10,13 @@
 #
 # Sources:
 #   Source 1: gentian-os Helm chart — operator Deployment, CRDs, RBAC, etc.
+#             Values layer per docs/deployment.md §1: chart defaults ->
+#             profiles/_base.yaml -> profiles/%STAGE%.yaml ->
+#             clusters/%CLUSTER%/kernel/values.yaml (kernelDomain etc.).
 #   Source 2: gentian-deployments ref only — provides the $deploy variable
 #             for Source 1's layered valueFiles; renders no manifests.
-#   Source 3: gentian-deployments clusters/%CLUSTER%/kernel — stage-specific ImageUpdater CR.
+# The ImageUpdater CR is inlined below (its content never varies by cluster
+# or stage — no reason to make it a separate cross-repo file reference).
 #
 # Placeholders filled in by handoff_gentian_os_to_argocd() / install_stage1_operator()
 # in scripts/lib/catalogue.sh (install_orchestrator / handoff_gentian_os_to_argocd):
@@ -125,9 +129,11 @@ spec:
     - .metadata.finalizers
   sources:
   # Source 1: gentian-os Helm chart (operator)
-  # Values are layered from the deployments repo:
-  #   - $deploy/clusters/%CLUSTER%/kernel/values-base.yaml
-  #   - $deploy/clusters/%CLUSTER%/kernel/values-%STAGE%.yaml
+  # Values are layered per docs/deployment.md §1 (chart defaults are
+  # already applied by Helm itself, so only Layers 2-3 need listing here):
+  #   - $deploy/profiles/_base.yaml       (shared across every stage)
+  #   - $deploy/profiles/%STAGE%.yaml     (stage-tier policy)
+  #   - $deploy/clusters/%CLUSTER%/kernel/values.yaml  (cluster deltas, incl. kernelDomain)
   # image.tag is further overridden in-cluster by
   # argocd-image-updater via the Application's Helm parameters.
   - repoURL: https://github.com/gentian-org/gentian-os
@@ -135,19 +141,13 @@ spec:
     path: charts/gentian-os
     helm:
       valueFiles:
-      - $deploy/clusters/%CLUSTER%/kernel/values-base.yaml
-      - $deploy/clusters/%CLUSTER%/kernel/values-%STAGE%.yaml
+      - $deploy/profiles/_base.yaml
+      - $deploy/profiles/%STAGE%.yaml
+      - $deploy/clusters/%CLUSTER%/kernel/values.yaml
   # Source 2: deployments ref only (provides $deploy variable, no manifests)
   - repoURL: %DEPLOYMENTS_REPO%
     targetRevision: %DEPLOYMENTS_BRANCH%
     ref: deploy
-  # Source 3: Cluster kernel config (stage-specific ImageUpdater CR)
-  # Deploying this CR activates automatic image updates.
-  - repoURL: %DEPLOYMENTS_REPO%
-    targetRevision: %DEPLOYMENTS_BRANCH%
-    path: clusters/%CLUSTER%/kernel
-    directory:
-      include: "image-updater-%STAGE%.yaml"
   destination:
     server: https://kubernetes.default.svc
     namespace: gentian-system
@@ -205,3 +205,22 @@ spec:
         syncOptions:
         - CreateNamespace=true
         - ServerSideApply=true
+---
+# ImageUpdater CR — identical for every cluster/stage, no placeholders
+# needed. Must live in the argocd namespace (controller is configured with
+# watch.namespaces=argocd) alongside the Applications it watches.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gentian-os
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: "gentian-os"
+      useAnnotations: true
+    - namePattern: "gentian-portal"
+      useAnnotations: true
+    - namePattern: "gentian-corp"
+      useAnnotations: true
