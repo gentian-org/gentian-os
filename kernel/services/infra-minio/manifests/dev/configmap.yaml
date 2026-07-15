@@ -57,6 +57,15 @@ data:
       pullPolicy: IfNotPresent
     volumePermissions:
       enabled: true
+      # Chart default (runAsUser: 0 only) leaves allowPrivilegeEscalation/
+      # seccompProfile unset on this init container, which the cluster's
+      # Kyverno MAC policies (gentian-disallow-privilege-escalation,
+      # gentian-require-seccomp) reject outright — the init container never
+      # gets created and the Release times out waiting for the pod.
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
       image:
         registry: docker.io
         repository: bitnamilegacy/os-shell
