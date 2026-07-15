@@ -99,9 +99,18 @@ Copy the templates before first use:
 ```bash
 cp install.env.template install.env
 cp install.secrets.env.template install.secrets.env
+cp cluster-settings.env.template \
+  ${GENTIAN_DEPLOYMENTS_PATH}/clusters/<cluster>/kernel/cluster-settings.env
 ```
 
-Both files are loaded automatically by `install.sh` if present. Override paths with:
+`install.env`/`install.secrets.env` are loaded automatically by `install.sh`
+if present, from this repo. `cluster-settings.env` is different: it's
+per-cluster instance data, so it lives and gets committed in
+`gentian-deployments`, not here — the template in this repo is just a
+starting point to copy from (see "Files to configure before install.sh"
+below).
+
+Override the first two files' paths with:
 
 ```bash
 ./install.sh --config-file /path/to/install.env --secrets-file /path/to/install.secrets.env
@@ -117,7 +126,15 @@ Or disable file loading entirely:
 
 Configure these files in order before the first install run:
 
-1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`: cluster runtime behavior and endpoints (`KERNEL_DOMAIN`, `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`, `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`: `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`, `EXTERNAL_SMTP_STARTTLS`). **This overrides `.install-state.env`** when both are present.
+1. `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` (copy from
+   [`cluster-settings.env.template`](cluster-settings.env.template)): cluster
+   runtime behavior and endpoints (`TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`,
+   `ROUTING_MODE`, `MAIL_SERVICE_MODE`, `SECRET_MODE`, `MINIO_ENDPOINT`,
+   `CNPG_HOST`, `STORAGE_CLASS`; and when `MAIL_SERVICE_MODE=external`:
+   `EXTERNAL_SMTP_HOST`, `EXTERNAL_SMTP_PORT`, `EXTERNAL_SMTP_SSL`,
+   `EXTERNAL_SMTP_STARTTLS`). **Not** `KERNEL_DOMAIN` — that's the Crossplane
+   Claim, see "Cluster claim" below. **This overrides `.install-state.env`**
+   when both are present.
 
 1. `gentian-deployments/clusters/<cluster>/kernel/values.yaml` (plus `profiles/<stage>.yaml` for tier-wide settings): operator Helm values (`kernelDomain`, `tenancyMode`, `routingMode`, `tenantDNS01ClusterIssuer`, `cloudflare.*`, `kernelServices.*`, `appLifecycle.deployments`, namespace defaults and policy defaults).
 
