@@ -1475,10 +1475,10 @@ install_tools() {
 }
 
 # =============================================================================
-# 2. Create namespaces (idempotent)
+# 1. Create namespaces (idempotent)
 # =============================================================================
 create_namespaces() {
-    banner "Step 2 — Creating namespaces"
+    banner "Step 1 — Creating namespaces"
 
     local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
@@ -1499,7 +1499,7 @@ create_namespaces() {
 }
 
 # =============================================================================
-# 2b. Pre-warm cluster (distro-agnostic PLEG/CRI-race mitigation)
+# 1b. Pre-warm cluster (distro-agnostic PLEG/CRI-race mitigation)
 # =============================================================================
 # On a freshly-bootstrapped cluster, the very first workload pod often races
 # against kubelet's Pod Lifecycle Event Generator (PLEG) and containerd's
@@ -1522,7 +1522,7 @@ prewarm_cluster() {
         return
     fi
 
-    banner "Step 2b — Pre-warming cluster (PLEG/CRI race mitigation)"
+    banner "Step 1b — Pre-warming cluster (PLEG/CRI race mitigation)"
 
     # We pre-warm TWO things, in order, because they are independent races:
     #
@@ -1707,10 +1707,13 @@ _wait_prewarm_pod() {
 
 
 # =============================================================================
-# Step 15b — Deploy kernel mail services (Postfix + Dovecot)
+# Deploy kernel mail services (Postfix + Dovecot)
 #
-# Called when MAIL_SERVICE_MODE=kernel. Applies the provider-helm Release CRs,
-# ConfigMaps, and ExternalSecrets for postfix and dovecot from:
+# Called when MAIL_SERVICE_MODE=kernel — a conditional sub-step of Step 13b
+# (install_stage1_mail), not a standalone pipeline step, since most installs
+# use the default external-SMTP mode and never reach this. Applies the
+# provider-helm Release CRs, ConfigMaps, and ExternalSecrets for postfix and
+# dovecot from:
 #   kernel/services/postfix/manifests/${ENV:-dev}/
 #   kernel/services/dovecot/manifests/${ENV:-dev}/
 #
@@ -1720,7 +1723,7 @@ _wait_prewarm_pod() {
 #   release.yaml          — Crossplane provider-helm Release CR
 #
 # Prerequisites:
-#   - provider-helm must be Healthy (Step 13).
+#   - provider-helm must be Healthy (Step 11).
 #   - OpenBao KV paths must be seeded (gentian-os-kernel-mail-postfix and
 #     gentian-os-kernel-mail-dovecot Secrets must exist in crossplane-system).
 #   - ESO ClusterSecretStore openbao must be ready.
@@ -1733,7 +1736,7 @@ deploy_kernel_mail_services() {
     local mode="${MAIL_SERVICE_MODE:-external}"
     [[ "${mode}" != "kernel" ]] && return 0
 
-    banner "Step 15b — Deploy kernel mail services (MAIL_SERVICE_MODE=kernel)"
+    banner "Deploy kernel mail services (MAIL_SERVICE_MODE=kernel)"
 
     local env="${ENV:-dev}"
     local ns="gentian-${env}"
@@ -1848,13 +1851,15 @@ _apply_kernel_manifest_dir() {
 }
 
 # =============================================================================
-# 16a. Verify Keycloak iframe policy (portal-embedded OIDC)
+# Verify Keycloak iframe policy (portal-embedded OIDC)
 # =============================================================================
 # Waits for the gentian-os KeycloakPlatformReconciler to patch id.<kernel>
 # HTTPRoute (ROUTING_MODE=gateway) and for browser-security Jobs to clear
-# X-Frame-Options on Keycloak realms.
+# X-Frame-Options on Keycloak realms. Diagnostic/verification utility, not a
+# pipeline step — currently only reachable via the commented-out block at
+# the end of main_cp() (uncomment to enable).
 verify_keycloak_iframe_policy() {
-    banner "Step 16a — Verifying Keycloak iframe policy"
+    banner "Verify — Keycloak iframe policy"
 
     local kernel_domain="${KERNEL_DOMAIN:-}"
     if [[ -z "$kernel_domain" ]]; then
@@ -1923,11 +1928,6 @@ verify_keycloak_iframe_policy() {
     return 0
 }
 
-# =============================================================================
-# 16. Verify ArgoCD Applications
-# =============================================================================
-# healthy when every Application is Synced+Healthy. Returns 0 on healthy,
-# 1 if some apps are still degraded/out-of-sync after the timeout.
 resolve_portal_admin_email() {
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
         echo "administrator@${KERNEL_DOMAIN}"

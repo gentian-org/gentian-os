@@ -141,7 +141,7 @@ _ensure_crossplane_package_crds() {
 # (mirrors the logic of crossplane/tests/e2e/scripts/p0-crossplane-install.sh)
 # =============================================================================
 install_crossplane() {
-    banner "Crossplane 0 — Install Crossplane core"
+    banner "Step 0 — Install Crossplane core"
 
     if kubectl get deployment crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
         success "Crossplane deployment already present in ${CROSSPLANE_NAMESPACE}; skipping."
@@ -187,7 +187,7 @@ install_crossplane() {
 # (mirrors crossplane/tests/e2e/scripts/p1-kernel-dev.sh steps 1-3)
 # =============================================================================
 install_crossplane_providers() {
-    banner "Crossplane 0b/0c — Providers, XRD, Composition"
+    banner "Step 0b — Crossplane providers, XRD, Composition"
 
     info "Applying providers (function-go-templating, provider-kubernetes, provider-vault)..."
     _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -277,7 +277,7 @@ install_crossplane_providers() {
     # AuthBackendConfig, AuthBackendRole, SecretV2, and Object (K8s) resources.
 # =============================================================================
 bootstrap_openbao_for_crossplane() {
-    banner "Step 10 — Bootstrap OpenBao auth for Crossplane"
+    banner "Step 8 — Bootstrap OpenBao auth for Crossplane"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
@@ -432,7 +432,7 @@ POLICY
 # --dry-run=client | kubectl apply ensures idempotency.
 # =============================================================================
 create_crossplane_secrets() {
-    banner "Step 11 — Create derived-credential Secrets for Cluster XR"
+    banner "Step 9 — Create derived-credential Secrets for Cluster XR"
 
     # Enforce minimum-entropy on MASTER_PASSWORD
     if [[ ${#MASTER_PASSWORD} -lt 16 ]]; then
@@ -684,7 +684,7 @@ EOF
 # ensures existing paths seeded by prior install runs are never overwritten.
 # =============================================================================
 apply_cluster_xr() {
-    banner "Step 12 — Apply Cluster XR (kernel structural provisioning)"
+    banner "Step 10 — Apply Cluster XR (kernel structural provisioning)"
 
     local claims_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims"
     [[ -f "${claims_dir}/cluster.yaml" ]] || {
@@ -747,7 +747,7 @@ seed_secrets_remaining() {
 }
 
 # =============================================================================
-# Step 12d — Apply root ArgoCD ApplicationSet
+# Step 10d — Apply root ArgoCD ApplicationSet
 #
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
@@ -761,7 +761,7 @@ seed_secrets_remaining() {
 #   - seed_secrets_remaining must have run so ESO can sync the globals secrets.
 # =============================================================================
 bootstrap_root_appset() {
-    banner "Step 12d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
+    banner "Step 10d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
 
     export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
@@ -788,19 +788,19 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Step 15c: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
+# Step 15: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
 # =============================================================================
 bootstrap_appprofiles() {
     install_catalogue_sync
 }
 
 # =============================================================================
-# Step 13: Install provider-helm
+# Step 11: Install provider-helm
 # provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
 # kernel services, tenant apps via compositions).
 # =============================================================================
 install_provider_helm() {
-    banner "Step 13 — Install provider-helm"
+    banner "Step 11 — Install provider-helm"
 
     # providers.yaml already contains provider-helm; apply idempotently.
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -819,12 +819,12 @@ install_provider_helm() {
 }
 
 # =============================================================================
-# Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
+# Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
 #
 # Provisions kernel data stores via Crossplane InfraData XR.
 #
 # Prerequisites:
-#   - provider-helm Healthy (Step 13)
+#   - provider-helm Healthy (Step 11)
 #   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
 #   - charts/infra/packages published on GitHub for the target git branch
 #     (run ./scripts/publish-infra-charts.sh and push before install when adding charts)
@@ -870,7 +870,7 @@ verify_infra_chart_index() {
 }
 
 apply_infra_data_xr() {
-    banner "Step 13b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
+    banner "Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
 
     local claim="dev-infra-data"
     local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
@@ -917,13 +917,13 @@ apply_infra_data_xr() {
 }
 
 # =============================================================================
-# Step 13c — Kyverno admission controller (Stage 0 MAC)
+# Step 11c — Kyverno admission controller (Stage 0 MAC)
 #
 # Deployed by Argo CD via kernel/appsets/05-admission.yaml (sync wave 5–6).
 # This step waits for the controller so later workloads are admitted under policy.
 # =============================================================================
 install_mac_admission() {
-    banner "Step 13c — Kyverno admission controller (Stage 0 MAC)"
+    banner "Step 11c — Kyverno admission controller (Stage 0 MAC)"
 
     info "Kyverno is synced by gentian-appsets (kernel/appsets/05-admission.yaml)."
     info "Waiting for kyverno-admission-controller (up to 5m)..."
@@ -950,7 +950,7 @@ install_mac_admission() {
 }
 
 # =============================================================================
-# Step 14 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
+# Step 12 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
 # =============================================================================
 wait_for_crd_established() {
     local crd="$1"
@@ -1027,7 +1027,7 @@ ensure_suze_idp_workloads() {
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     fi
     [[ -n "${xr_name}" ]] || {
-        error "Suze composite not found — run Step 14 first."
+        error "Suze composite not found — run Step 12 first."
         return 1
     }
 
@@ -1059,7 +1059,7 @@ ensure_suze_idp_workloads() {
 }
 
 apply_suze_xr() {
-    banner "Step 14 — Apply Suze XR (Secure Universal Zero-trust Environment)"
+    banner "Step 12 — Apply Suze XR (Secure Universal Zero-trust Environment)"
 
     local claim="dev-suze"
     local timeout_sec="${SUZE_XR_TIMEOUT_SEC:-1200}"
@@ -1244,12 +1244,12 @@ install_stage1_llm_serving() {
         return 0
     fi
 
-    banner "Step 15c — Deploying LLM serving stack"
+    banner "Step 13c — Deploying LLM serving stack"
     local env="${ENV:-dev}"
     local ns="platform-kernel"
 
     # litellm-services.yaml references the litellm-dashboard-sso Secret
-    # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even though Step 16
+    # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even though Step 14
     # (portal bootstrap) runs after this step.
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
@@ -1325,54 +1325,54 @@ main_cp() {
     scaffold_cluster_deployment  # new cluster only — no-op if already scaffolded
 
     # ── Crossplane core + providers ──────────────────────────────────────────
-    install_crossplane          # Step 0   — Crossplane controller
-    install_crossplane_providers  # Step 0b/0c — providers, XRD, Composition
+    install_crossplane          # Step 0  — Crossplane controller
+    install_crossplane_providers  # Step 0b — providers, XRD, Composition
 
     # ── Cluster infrastructure ───────────────────────────────────────────────
     create_namespaces           # Step 1
-    prewarm_cluster             # Step 2
-    install_cert_manager        # Step 3
-    install_kernel_cert_resources  # Step 3b — ClusterIssuers
-    install_envoy_gateway       # Step 3c — Envoy Gateway (ROUTING_MODE=gateway)
-    install_eso                 # Step 4
+    prewarm_cluster             # Step 1b
+    install_cert_manager        # Step 2
+    install_kernel_cert_resources  # Step 2b — ClusterIssuers
+    install_envoy_gateway       # Step 2c — Envoy Gateway (ROUTING_MODE=gateway)
+    install_eso                 # Step 3
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────
-    install_argocd              # Step 5
-    install_argocd_image_updater  # Step 5c
-    bootstrap_transit_app       # Step 6  — transit seal ArgoCD app
-    init_openbao_transit        # Step 7  — transit init + auto-unseal Secret
-    bootstrap_argocd_apps       # Step 8  — openbao, reloader, cnpg, globals
-    init_openbao                # Step 9  — primary OpenBao init (BAO_TOKEN set here)
+    install_argocd              # Step 4
+    install_argocd_image_updater  # Step 4b
+    bootstrap_transit_app       # Step 5  — transit seal ArgoCD app
+    init_openbao_transit        # Step 5b — transit init + auto-unseal Secret
+    bootstrap_argocd_apps       # Step 6  — openbao, reloader, cnpg, globals
+    init_openbao                # Step 7  — primary OpenBao init (BAO_TOKEN set here)
 
     # ── Crossplane kernel provisioning ───────────────────────────────────────
-    bootstrap_openbao_for_crossplane  # Step 10 — K8s auth + crossplane-write policy
-    create_crossplane_secrets         # Step 11 — derived-credential K8s Secrets
-    apply_cluster_xr                  # Step 12 — Cluster XR → all kernel MRs
-    seed_secrets_remaining            # Step 12b — remaining paths (registry, DNS, etc.)
+    bootstrap_openbao_for_crossplane  # Step 8  — K8s auth + crossplane-write policy
+    create_crossplane_secrets         # Step 9  — derived-credential K8s Secrets
+    apply_cluster_xr                  # Step 10 — Cluster XR → all kernel MRs
+    seed_secrets_remaining            # Step 10b — remaining paths (registry, DNS, etc.)
 
     # ── Optional TLS wildcard ─────────────────────────────────────────────────
-    install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
-    bootstrap_root_appset       # Step 12d — root app-of-apps (minio, redis, mariadb, IAM…)
+    install_kernel_wildcard     # Step 10c (optional) — wildcard cert (requires CF_API_TOKEN)
+    bootstrap_root_appset       # Step 10d — root app-of-apps (minio, redis, mariadb, IAM…)
 
     # ── Crossplane provider-helm + shared infra ───────────────────────────────
-    install_provider_helm       # Step 13 — wait for provider-helm Healthy
-    apply_infra_data_xr         # Step 13b — shared PostgreSQL + MariaDB via InfraData XR
-    install_mac_admission       # Step 13c — Kyverno admission (Stage 0 MAC)
+    install_provider_helm       # Step 11  — wait for provider-helm Healthy
+    apply_infra_data_xr         # Step 11b — shared PostgreSQL + MariaDB via InfraData XR
+    install_mac_admission       # Step 11c — Kyverno admission (Stage 0 MAC)
 
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
-    apply_suze_xr               # Step 14 — Gentian IdP (Keycloak + OpenFGA) via Suze XR
-    install_stage1_operator     # Step 15 — operator with authz bridge + Cloudflare tunnel
+    apply_suze_xr               # Step 12  — Gentian IdP (Keycloak + OpenFGA) via Suze XR
+    install_stage1_operator     # Step 13  — operator with authz bridge + Cloudflare tunnel
     wait_for_gateway_platform || true
-    install_stage1_mail         # Step 15b — MAIL_SERVICE_MODE (external SMTP or Postfix)
-    install_stage1_llm_serving  # Step 15c — Deploy LLM serving stack (vLLM/LocalAI + LiteLLM)
+    install_stage1_mail         # Step 13b — MAIL_SERVICE_MODE (external SMTP or Postfix)
+    install_stage1_llm_serving  # Step 13c — Deploy LLM serving stack (vLLM/LocalAI + LiteLLM)
     # shellcheck source=scripts/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
     configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
-    install_stage1_portal       # Step 16 — portal OIDC login dogfood
+    install_stage1_portal       # Step 14 — portal OIDC login dogfood
 
     # ── App catalogue + CLI (required for kubectl gentian apps install) ─────
-    bootstrap_appprofiles       # Step 17 — AppProfile CRs from gentian-apps repo
-    install_app_catalogue       # Step 17b — kubectl-gentian plugin + AppCatalogue CRD
+    bootstrap_appprofiles       # Step 15 — AppProfile CRs from gentian-apps repo
+    install_app_catalogue       # Step 16 — kubectl-gentian plugin + AppCatalogue CRD
 
     # ── Optional kernel mail / gateway (uncomment when MAIL_SERVICE_MODE=kernel) ─
     # deploy_kernel_mail_services
@@ -1380,7 +1380,7 @@ main_cp() {
     # wait_for_gateway_platform || true
     # verify_argocd_apps || true
     # verify_keycloak_iframe_policy || true
-    # configure_github_actions_secrets   # Step 18d — CI_BOT_PAT → gentian-os Actions secrets
+    # configure_github_actions_secrets   # CI_BOT_PAT → gentian-os Actions secrets
 
     success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA), authz bridge, and portal login are live."
     unset INSTALL_START_EPOCH

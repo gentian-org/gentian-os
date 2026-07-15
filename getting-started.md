@@ -33,7 +33,7 @@ You need a running, reachable cluster. Both `install.sh` and
 **Requirements:**
 - Kubernetes 1.26+
 - Default StorageClass available (configure per cluster in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`)
-- Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 3c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/FAQ.md](docs/FAQ.md))
+- Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 2c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/FAQ.md](docs/FAQ.md))
 - DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
 
 > `install.sh` provisions cert-manager, CloudNativePG, and Stakater Reloader
@@ -241,8 +241,8 @@ skip already-completed steps.
 
 ### Save OpenBao keys when prompted
 
-During **Step 7** (transit instance init) the script shows the transit Shamir
-unseal key. During **Step 9** (primary OpenBao init) it shows the primary
+During **Step 5b** (transit instance init) the script shows the transit Shamir
+unseal key. During **Step 7** (primary OpenBao init) it shows the primary
 recovery key and root token.
 
 **Save all values to your password manager immediately** — they are displayed
@@ -294,7 +294,7 @@ patches the `gentian-portal` Application so the cluster rolls out automatically
 
 The `gentian-portal` Argo CD Application lives in
 `gentian-deployments/clusters/<cluster>/kernel/gentian-portal-<stage>.yaml`
-and is applied by `install.sh` Step 16 after Keycloak bootstrap.
+and is applied by `install.sh` Step 14 after Keycloak bootstrap.
 
 **Optional:** `CI_BOT_PAT` in `install.secrets.env` is still used for other
 automation; portal image rollouts do not require image-pin workflows.

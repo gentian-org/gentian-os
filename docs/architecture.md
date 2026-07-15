@@ -642,7 +642,7 @@ The Gentian portal shell uses the same Image Updater pattern as the operator:
    Deployments — typically within 30–60 seconds of the CI push.
 
 Keycloak clients and `gentian-portal-secrets` are still created by
-`install.sh` Step 16 (`portal-login-bootstrap.sh`); Argo CD owns only the
+`install.sh` Step 14 (`portal-login-bootstrap.sh`); Argo CD owns only the
 Helm release.
 
 For cluster-to-environment mapping, promotion workflows (with and without a
@@ -651,7 +651,7 @@ staging tier), and `gentian-deployments` layout, see
 
 ### 11.2 Install-time bootstrap
 
-`install.sh Step 15` uses a **two-step** approach to avoid a
+`install.sh Step 13` uses a **two-step** approach to avoid a
 chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
 established yet):
 

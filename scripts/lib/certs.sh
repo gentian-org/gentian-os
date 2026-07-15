@@ -6,7 +6,7 @@
 # =============================================================================
 
 # =============================================================================
-# 3. Install cert-manager via Helm
+# 2. Install cert-manager via Helm
 # =============================================================================
 install_cert_manager() {
     if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
@@ -14,7 +14,7 @@ install_cert_manager() {
         return
     fi
 
-    banner "Step 3 — Installing cert-manager"
+    banner "Step 2 — Installing cert-manager"
 
     if helm status cert-manager -n cert-manager &>/dev/null; then
         # Existing Helm release may have been created by a previous install.sh run.
@@ -142,7 +142,7 @@ apply_gentian_cluster_issuers() {
 }
 
 # =============================================================================
-# 3b. Install kernel cert-manager ClusterIssuers (always — both HTTP-01 and
+# 2b. Install kernel cert-manager ClusterIssuers (always — both HTTP-01 and
 # DNS-01-Cloudflare). The wildcard Certificate + cloudflare-api-token
 # ExternalSecret are applied later by `install_kernel_wildcard` (after the
 # OpenBao seeding step has populated the token). See docs/design/multi-tenancy.md §3.
@@ -157,7 +157,7 @@ install_kernel_cert_resources() {
         return
     fi
 
-    banner "Step 3b — Installing kernel cert-manager ClusterIssuers"
+    banner "Step 2b — Installing kernel cert-manager ClusterIssuers"
 
     if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
         local detected_ns=""
@@ -193,7 +193,7 @@ install_kernel_cert_resources() {
 }
 
 # =============================================================================
-# 3c. Install Envoy Gateway (Gateway API edge stack)
+# 2c. Install Envoy Gateway (Gateway API edge stack)
 # =============================================================================
 install_envoy_gateway() {
     if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
@@ -208,7 +208,7 @@ install_envoy_gateway() {
         exit 1
     fi
 
-    banner "Step 3c — Installing Envoy Gateway and Gateway API CRDs"
+    banner "Step 2c — Installing Envoy Gateway and Gateway API CRDs"
 
     local ns="${ENVOY_GATEWAY_NAMESPACE}"
     local chart_version="${ENVOY_GATEWAY_CHART_VERSION}"
@@ -438,7 +438,7 @@ install_kernel_wildcard() {
         return
     fi
 
-    banner "Step 12b — Installing kernel wildcard Certificate"
+    banner "Step 10c — Installing kernel wildcard Certificate"
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
     DNS01_CLUSTER_ISSUER="$(gentian_dns01_cluster_issuer_name)"
@@ -527,7 +527,3 @@ print(json.dumps(s))
         fi
     fi
 }
-
-# =============================================================================
-# 4. Install External Secrets Operator via Helm
-# =============================================================================

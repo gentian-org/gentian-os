@@ -401,8 +401,8 @@ within a few minutes (or run `argocd app sync gentian-infra-helm-dev` immediatel
 ### Check mail component health
 
 Install and `update.sh --mail` (kernel mode) run automated smoke checks:
-Keycloak master-realm OIDC discovery (Step 14) and Dovecot IMAP/LMTP TCP
-(Step 15b). Re-run anytime:
+Keycloak master-realm OIDC discovery (Step 12) and Dovecot IMAP/LMTP TCP
+(Step 13b). Re-run anytime:
 
 ```bash
 make verify-kernel-services

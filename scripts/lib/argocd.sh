@@ -6,7 +6,7 @@
 # =============================================================================
 
 # =============================================================================
-# 5. Install ArgoCD + AppProject
+# 4. Install ArgoCD + AppProject
 # =============================================================================
 resolve_argocd_url() {
     if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
@@ -81,7 +81,7 @@ resolve_argocd_url() {
 }
 
 install_argocd() {
-    banner "Step 5 — Installing ArgoCD"
+    banner "Step 4 — Installing ArgoCD"
 
     if kubectl get deployment argocd-server -n argocd &>/dev/null; then
         success "ArgoCD already installed."
@@ -283,10 +283,10 @@ setup_argocd_repos() {
 }
 
 # =============================================================================
-# 7. Install ArgoCD Image Updater controller
+# 4b. Install ArgoCD Image Updater controller
 # =============================================================================
 install_argocd_image_updater() {
-    banner "Step 7 — ArgoCD Image Updater"
+    banner "Step 4b — ArgoCD Image Updater"
 
     info "Adding Argo Helm repo..."
     helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
@@ -359,10 +359,10 @@ _wait_for_argocd_application_workload() {
     return 1
 }
 # =============================================================================
-# 10. Apply remaining ArgoCD bootstrap Applications
+# 6. Apply remaining ArgoCD bootstrap Applications
 # =============================================================================
 bootstrap_argocd_apps() {
-    banner "Step 10 — ArgoCD bootstrap Applications"
+    banner "Step 6 — ArgoCD bootstrap Applications"
 
     # Register public OCI chart repos used by bootstrap Applications.
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
@@ -382,7 +382,7 @@ bootstrap_argocd_apps() {
     done
 
     wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300 || {
-        error "Step 9 failed: openbao pod never became Ready. Aborting install."
+        error "Step 6 failed: openbao pod never became Ready. Aborting install."
         exit 1
     }
 
@@ -423,7 +423,7 @@ bootstrap_root_appset() {
     success "Root ApplicationSet applied."
 }
 verify_argocd_apps() {
-    banner "Step 16 — Verifying ArgoCD Applications"
+    banner "Verify — ArgoCD Applications"
 
     # Restart the application-controller once to clear any stale resource
     # health cached during the OpenBao seal-migration window (when ESO

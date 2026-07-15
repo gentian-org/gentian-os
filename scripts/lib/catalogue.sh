@@ -6,10 +6,10 @@
 # =============================================================================
 
 # =============================================================================
-# 14. AppCatalogue CRD + kubectl-gentian plugin
+# 16. AppCatalogue CRD + kubectl-gentian plugin
 # =============================================================================
 install_app_catalogue() {
-    banner "Step 14 — AppCatalogue CRD + kubectl-gentian plugin"
+    banner "Step 16 — AppCatalogue CRD + kubectl-gentian plugin"
 
     kubectl apply -f "${SCRIPT_DIR}/config/crd/gentianos.io_appcatalogues.yaml"
     success "AppCatalogue CRD applied."
@@ -61,13 +61,13 @@ install_app_catalogue() {
 }
 
 # =============================================================================
-# 14b. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
+# 15. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
 # =============================================================================
 # Renders kernel/bootstrap/catalogue-applicationset.yaml.tmpl. Once synced, each
 # profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
 # applies AppProfile, optional composition.yaml, and optional cluster assets.
 install_catalogue_sync() {
-    banner "Step 14b — Argo CD catalogue sync (gentian-apps profile bundles)"
+    banner "Step 15 — Argo CD catalogue sync (gentian-apps profile bundles)"
 
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-applicationset.yaml.tmpl"
     local rendered
@@ -270,7 +270,7 @@ wait_for_operator_cloudflare_token() {
     done
     warn "Secret ${secret_name} did not materialize within 120s."
     warn "  kubectl describe externalsecret ${secret_name} -n ${ns}"
-    warn "  Ensure CF_API_TOKEN was seeded (Step 12b) and OpenBao path gentian-os/kernel/dns/cloudflare exists."
+    warn "  Ensure CF_API_TOKEN was seeded (Step 10c) and OpenBao path gentian-os/kernel/dns/cloudflare exists."
     return 1
 }
 
@@ -326,7 +326,7 @@ handoff_gentian_os_to_argocd() {
 }
 
 install_stage1_operator() {
-    banner "Step 15 — gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
+    banner "Step 13 — gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local crd_dir="${chart_dir}/crds"

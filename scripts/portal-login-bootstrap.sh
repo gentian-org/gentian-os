@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2034
 # Portal login bootstrap — Keycloak OIDC client, kernel user, gentian-portal ArgoCD app.
-# Sourced from install.sh Step 16 (Stage 1 login dogfood).
+# Sourced from install.sh Step 14 (Stage 1 login dogfood).
 
 set -euo pipefail
 
@@ -1438,7 +1438,7 @@ install_gentian_portal_chart() {
 }
 
 install_stage1_portal() {
-    banner "Step 16 — Gentian portal login (OIDC + shell)"
+    banner "Step 14 — Gentian portal login (OIDC + shell)"
 
     if ! kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; then
         warn "keycloak-admin Secret missing — run Steps 14–15 first."

@@ -288,11 +288,11 @@ _patch_postfix_configmap() {
 }
 
 # =============================================================================
-# Step 15b — Stage 1 mail delivery (external SMTP or in-cluster Postfix).
+# Step 13b — Stage 1 mail delivery (external SMTP or in-cluster Postfix).
 # =============================================================================
 install_stage1_mail() {
     local mode="${MAIL_SERVICE_MODE:-external}"
-    banner "Step 15b — Mail delivery (MAIL_SERVICE_MODE=${mode})"
+    banner "Step 13b — Mail delivery (MAIL_SERVICE_MODE=${mode})"
 
     case "${mode}" in
         external|kernel) ;;
@@ -323,7 +323,7 @@ install_stage1_mail() {
             _patch_postfix_allowed_sender_domains
             _patch_postfix_live_relay external
         fi
-        info "Keycloak realm SMTP will be configured during portal bootstrap (Step 16)."
+        info "Keycloak realm SMTP will be configured during portal bootstrap (Step 14)."
         return 0
     fi
 

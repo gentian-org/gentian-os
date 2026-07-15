@@ -73,7 +73,7 @@ try_load_creds_from_openbao() {
     fi
 }
 install_eso() {
-    banner "Step 4 — Installing External Secrets Operator"
+    banner "Step 3 — Installing External Secrets Operator"
 
     if helm status external-secrets -n external-secrets &>/dev/null; then
         success "ESO already installed. Skipping."
@@ -90,10 +90,10 @@ install_eso() {
     success "ESO installed."
 }
 # =============================================================================
-# 8. Deploy OpenBao transit seal instance
+# 5. Deploy OpenBao transit seal instance
 # =============================================================================
 bootstrap_transit_app() {
-    banner "Step 8 — OpenBao transit seal instance"
+    banner "Step 5 — OpenBao transit seal instance"
 
     # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
     # invoked reactively by wait_for_running_pod's 2nd-tier escalation
@@ -114,23 +114,23 @@ bootstrap_transit_app() {
         openbao-transit openbao statefulset \
         "app.kubernetes.io/instance=openbao-transit" 300 \
     || {
-        error "Step 8 failed: Argo CD did not deploy openbao-transit StatefulSet."
+        error "Step 5 failed: Argo CD did not deploy openbao-transit StatefulSet."
         exit 1
     }
 
     if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
-        error "Step 8 failed: openbao-transit pod never became Ready. Aborting install."
+        error "Step 5 failed: openbao-transit pod never became Ready. Aborting install."
         exit 1
     fi
 }
 
 # =============================================================================
-# 9. Init the transit instance
+# 5b. Init the transit instance
 # =============================================================================
 init_openbao_transit() {
-    banner "Step 9 — Transit instance init + autounseal Secret"
+    banner "Step 5b — Transit instance init + autounseal Secret"
     if ! bash "${SCRIPT_DIR}/scripts/init-openbao-transit.sh"; then
-        error "Step 9 failed: init-openbao-transit.sh exited non-zero."
+        error "Step 5b failed: init-openbao-transit.sh exited non-zero."
         error "Without the openbao-transit-token Secret, the primary OpenBao"
         error "will be stuck in CreateContainerConfigError. Aborting install."
         exit 1
@@ -143,16 +143,16 @@ init_openbao_transit() {
     kubectl get secret -n openbao openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
     kubectl get secret -n openbao openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
     if (( ${#missing[@]} > 0 )); then
-        error "Step 8 reported success but required Secrets are missing: ${missing[*]}"
+        error "Step 5 reported success but required Secrets are missing: ${missing[*]}"
         error "Re-run init-openbao-transit.sh manually and re-run install.sh."
         exit 1
     fi
 }
 # =============================================================================
-# 10. Initialize primary OpenBao (transit auto-unseal)
+# 7. Initialize primary OpenBao (transit auto-unseal)
 # =============================================================================
 init_openbao() {
-    banner "Step 10 — OpenBao init"
+    banner "Step 7 — OpenBao init"
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
@@ -347,10 +347,10 @@ POLICY
 }
 
 # =============================================================================
-# 12. Seed kernel secrets
+# 10b. Seed kernel secrets
 # =============================================================================
 seed_secrets() {
-    banner "Step 12 — Seeding kernel secrets"
+    banner "Step 10b — Seeding kernel secrets"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')

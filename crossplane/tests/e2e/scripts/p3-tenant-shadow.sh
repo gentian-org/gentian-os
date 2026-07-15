@@ -66,7 +66,7 @@ kubectl get composition tenant-default >/dev/null 2>&1 \
   || fail "Composition tenant-default missing — run install.sh or update.sh --crossplane"
 
 kubectl get deployment -A -l app.kubernetes.io/name=gentian-os --no-headers 2>/dev/null | grep -q . \
-  || fail "gentian-os operator Deployment not found — run install.sh Step 15"
+  || fail "gentian-os operator Deployment not found — run install.sh Step 13"
 
 if kubectl get tenant "${SHADOW_TENANT}" >/dev/null 2>&1; then
     fail "Tenant ${SHADOW_TENANT} already exists — delete it or set SHADOW_TENANT to another name"
