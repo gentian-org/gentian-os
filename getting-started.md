@@ -163,11 +163,13 @@ The chosen values are persisted to `~/.gentian/config` (mode 0600), which the
 
 ### Cluster claim
 
-For templated installs, define `KERNEL_DOMAIN` in
-`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`
-before `install.sh` runs. The installer renders
-`crossplane/claims/dev-cluster.yaml` from `dev-cluster.yaml.tmpl` using those
-resolved values.
+For a new cluster, define `KERNEL_DOMAIN` and `GENTIAN_DEPLOYMENTS_STAGE` in
+`install.env` before running `install.sh`. On first run, the installer
+scaffolds `gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml`
+(and `infra-data.yaml`, `suze.yaml`) from those values and commits them —
+that Claim, not anything in `gentian-os`, is the single source of truth for
+the cluster's domain from then on. See
+[docs/deployment.md](docs/deployment.md) §1/§3.
 
 ---
 
@@ -594,7 +596,7 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 - [Roadmap](docs/roadmap.md) — planned features (rotation, SOC 2 hardening)
 - [scripts/seed-openbao.sh](scripts/seed-openbao.sh) — bootstrap seed paths (operator uses HKDF-SHA256 at runtime)
 - [gentian-ui CI setup](../gentian-ui/docs/ci-setup.md) — portal image build and ArgoCD rollout
-- [crossplane/claims/dev-cluster.yaml](crossplane/claims/dev-cluster.yaml) — the Cluster XR claim
+- [crossplane/xrds/cluster.yaml](crossplane/xrds/cluster.yaml) — Cluster XR schema (only `kernelDomain` required — see `gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml` for the actual per-cluster Claim)
 - [crossplane/compositions/cluster-default.yaml](crossplane/compositions/cluster-default.yaml) — Composition that provisions all kernel MRs
 - [`gentian-apps`](https://github.com/gentian-org/gentian-apps) — AppProfile catalogue (`profiles/`) and first-party app source (`apps/`). See [custom-app-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/custom-app-guide.md) to build apps.
 - [`gentian-deployments`](https://github.com/gentian-org/gentian-deployments) — per-environment Tenant and IntegrationBinding CRs
