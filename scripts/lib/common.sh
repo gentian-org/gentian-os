@@ -1059,7 +1059,7 @@ check_prereqs() {
     local missing=0
 
     # ── CLI tools ─────────────────────────────────────────────────────────────
-    local base_tools=(kubectl helm jq openssl curl bao)
+    local base_tools=(kubectl helm jq yq openssl curl bao)
     # Crossplane-based installer also needs the crossplane CLI and python3.
     local extra_tools=()
     [[ "${CROSSPLANE_MODE:-0}" == "1" ]] && extra_tools=(crossplane python3)
@@ -1181,6 +1181,46 @@ check_prereqs() {
     fi
 
     success "All pre-flight checks passed."
+}
+
+# =============================================================================
+# yq_get — read a YAML field, tolerant of either yq flavor (mikefarah/yq's
+# "eval" subcommand, or kislyuk/yq's jq-style filter) since both are seen in
+# the wild as `yq`. Echoes the value and returns 0, or returns 1 (nothing
+# echoed) if the field is absent/null or the file doesn't exist.
+# =============================================================================
+yq_get() {
+    local filter="$1" file="$2"
+    [[ -f "${file}" ]] || return 1
+    local out
+    if out=$(yq eval "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+        echo "${out}"
+        return 0
+    fi
+    if out=$(yq -r "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+        echo "${out}"
+        return 0
+    fi
+    return 1
+}
+
+# =============================================================================
+# resolve_kernel_domain_from_claim — an already-bootstrapped cluster's
+# KERNEL_DOMAIN lives solely in its Crossplane Cluster claim
+# (gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml), not in
+# cluster-settings.env. Read it from there. No-op (KERNEL_DOMAIN stays unset)
+# for a brand-new cluster that has no claim file yet — install.sh's
+# prompt_kernel_domain/scaffold_cluster_deployment handle that case.
+# =============================================================================
+resolve_kernel_domain_from_claim() {
+    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/cluster.yaml"
+    [[ -n "${KERNEL_DOMAIN:-}" ]] && return 0
+
+    local domain
+    if domain=$(yq_get '.spec.kernelDomain' "${claim_file}"); then
+        export KERNEL_DOMAIN="${domain}"
+        info "KERNEL_DOMAIN=${KERNEL_DOMAIN} (read from ${claim_file})"
+    fi
 }
 
 # =============================================================================

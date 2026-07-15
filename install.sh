@@ -543,6 +543,265 @@ create_crossplane_secrets() {
 }
 
 # =============================================================================
+# scaffold_cluster_deployment — Day-0 only. If this cluster's kernel/
+# directory in gentian-deployments is missing any of its mechanically
+# derivable files, generate them from KERNEL_DOMAIN/GENTIAN_DEPLOYMENTS_STAGE
+# and commit + push directly to main (no PR — this is scaffolding a
+# not-yet-running cluster, not changing a live one; see docs/deployment.md
+# §3). Per-file checks, not a directory-level one: never overwrites a file
+# that already exists, so this is a no-op on every subsequent run, and it
+# converges correctly even when cluster-settings.env already exists but the
+# mechanical files don't.
+# =============================================================================
+scaffold_cluster_deployment() {
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
+    local generated=0
+
+    if [[ ! -f "${kernel_dir}/profiles/${stage}.yaml" && ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
+        warn "gentian-deployments/profiles/${stage}.yaml does not exist yet."
+        warn "  Stage-tier policy (logLevel, ACME issuer, etc.) has no home for '${stage}' —"
+        warn "  add it (see profiles/dev.yaml for the existing example) before continuing."
+    fi
+
+    mkdir -p "${kernel_dir}/claims"
+
+    if [[ ! -f "${kernel_dir}/claims/cluster.yaml" ]]; then
+        cat > "${kernel_dir}/claims/cluster.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: dev-cluster
+  namespace: crossplane-system
+spec:
+  kernelDomain: ${domain}
+EOF
+        info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
+        cat > "${kernel_dir}/claims/infra-data.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: InfraData
+metadata:
+  name: dev-infra-data
+  namespace: crossplane-system
+spec:
+  environment: ${stage}
+  compositeDeletePolicy: Background
+EOF
+        info "Scaffolded ${kernel_dir}/claims/infra-data.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/claims/suze.yaml" ]]; then
+        cat > "${kernel_dir}/claims/suze.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Suze
+metadata:
+  name: dev-suze
+  namespace: crossplane-system
+spec:
+  environment: ${stage}
+  idpNamespace: platform-kernel
+  compositeDeletePolicy: Background
+  openfga:
+    chartVersion: "0.3.10"
+EOF
+        info "Scaffolded ${kernel_dir}/claims/suze.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/values.yaml" ]]; then
+        cat > "${kernel_dir}/values.yaml" <<EOF
+# Cluster overlay — only what's unique to THIS cluster. Tier-wide policy
+# lives in gentian-deployments/profiles/${stage}.yaml (Layer 2); chart
+# defaults live in gentian-os/charts/gentian-os/values.yaml (Layer 1).
+# Also read directly by the gentian-portal Application for kernelDomain
+# (portal chart is separate from the operator chart but shares this file).
+kernelDomain: ${domain}
+stage: ${stage}
+
+image:
+  tag: "develop"
+
+# Uncomment and fill in for Cloudflare edge-DNS/tunnel mode:
+# cloudflare:
+#   zoneID: ""
+#   tunnelCNAME: ""
+
+api:
+  env:
+    BACKEND_CORS_ORIGINS: https://portal.${domain}
+EOF
+        info "Scaffolded ${kernel_dir}/values.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/image-updater.yaml" ]]; then
+        cat > "${kernel_dir}/image-updater.yaml" <<'EOF'
+---
+# Argo CD Image Updater (CRD mode) — identical across stages, so this file
+# has no per-cluster templating; scaffolded once for convenience.
+#
+# NOTE: must live in the argocd namespace because the controller is configured
+# with watch.namespaces=argocd (IMAGE_UPDATER_WATCH_NAMESPACES). The controller
+# then also looks for Applications in that same namespace, which is where ArgoCD
+# keeps its Application resources.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gentian-os
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: "gentian-os"
+      useAnnotations: true
+    - namePattern: "gentian-portal"
+      useAnnotations: true
+    - namePattern: "gentian-corp"
+      useAnnotations: true
+EOF
+        info "Scaffolded ${kernel_dir}/image-updater.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/app-of-apps.yaml" ]]; then
+        cat > "${kernel_dir}/app-of-apps.yaml" <<EOF
+---
+# app-of-apps.yaml — Gentian OS ArgoCD Applications (${cluster}, stage=${stage})
+#
+# Two separate Applications so Tenant provisioning state never blocks
+# operator image rollouts (gentian-os wave 0, gentian-tenants wave 2).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-os
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd-image-updater.argoproj.io/image-list: gentianos=ghcr.io/gentian-org/gentian-os:${stage}
+    argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    name: gentian-os-tenant-validator
+    jsonPointers:
+    - /webhooks/0/clientConfig/caBundle
+  - group: apps
+    kind: Deployment
+    name: gentian-os
+    namespace: gentian-system
+    jsonPointers:
+    - /metadata/annotations
+    - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+  - group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+    jsonPointers:
+    - /spec/conversion
+  - group: external-secrets.io
+    kind: ExternalSecret
+    jqPathExpressions:
+    - .spec.data[].remoteRef.conversionStrategy
+    - .spec.data[].remoteRef.decodingStrategy
+    - .spec.data[].remoteRef.metadataPolicy
+    - .spec.data[].remoteRef.nullBytePolicy
+    - .spec.target.deletionPolicy
+  sources:
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: charts/gentian-os
+    helm:
+      valueFiles:
+      - \$deploy/profiles/${stage}.yaml
+      - \$deploy/clusters/${cluster}/kernel/values.yaml
+  - repoURL: https://github.com/gentian-org/gentian-deployments
+    targetRevision: main
+    ref: deploy
+  - repoURL: https://github.com/gentian-org/gentian-deployments
+    targetRevision: main
+    path: clusters/${cluster}/kernel
+    directory:
+      include: "image-updater.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gentian-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: https://github.com/gentian-org/gentian-deployments
+      revision: main
+      directories:
+      - path: clusters/${cluster}/tenants/*/${stage}
+  template:
+    metadata:
+      name: '{{ .path.path | replace "/" "-" }}'
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-deployments
+        targetRevision: main
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gentian-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
+EOF
+        info "Scaffolded ${kernel_dir}/app-of-apps.yaml"
+        generated=1
+    fi
+
+    if (( generated )); then
+        (
+            cd "${GENTIAN_DEPLOYMENTS_PATH}"
+            git add "clusters/${cluster}/kernel"
+            git commit -m "Scaffold clusters/${cluster}/kernel (stage=${stage}, kernelDomain=${domain})"
+            git push origin "$(git rev-parse --abbrev-ref HEAD)"
+        )
+        success "Scaffolded and pushed clusters/${cluster}/kernel to gentian-deployments."
+    else
+        info "clusters/${cluster}/kernel already fully scaffolded — nothing to do."
+    fi
+}
+
+# =============================================================================
 # Crossplane step 12 — Apply Cluster claim and wait for Ready.
 # The Cluster XR creates all 19 kernel MRs via provider-vault and
 # provider-kubernetes. managementPolicies: [Observe,Create] on KV seeds
@@ -551,15 +810,14 @@ create_crossplane_secrets() {
 apply_cluster_xr() {
     banner "Step 12 — Apply Cluster XR (kernel structural provisioning)"
 
-    # Derive defaults for template variables not already set.
-    export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
-    export OPENBAO_SERVER="${OPENBAO_SERVER:-https://openbao.openbao.svc.cluster.local:8200}"
-    export KV_MOUNT="${KV_MOUNT:-secret}"
-    export KERNEL_REALM="${KERNEL_REALM:-kernel}"
+    local claims_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims"
+    [[ -f "${claims_dir}/cluster.yaml" ]] || {
+        error "No Cluster claim at ${claims_dir}/cluster.yaml — run install.sh's cluster scaffolding step first."
+        exit 1
+    }
 
-    info "Applying Cluster claim (kernelDomain=${KERNEL_DOMAIN})..."
-    envsubst < "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml.tmpl" \
-        | kubectl apply -f -
+    info "Applying Cluster claim from ${claims_dir}/cluster.yaml..."
+    kubectl apply -f "${claims_dir}/cluster.yaml"
 
     # Crossplane generates a unique name for the XCluster composite (e.g.
     # dev-cluster-k4d2m). Read it from the Claim's resourceRef once populated.
@@ -629,7 +887,9 @@ seed_secrets_remaining() {
 bootstrap_root_appset() {
     banner "Step 12d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
 
-    kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml"
+    export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
+        | kubectl apply -f -
     success "gentian-appsets Application applied."
 
     info "Waiting for gentian-appsets Application to be Synced (up to 2m)..."
@@ -744,7 +1004,7 @@ apply_infra_data_xr() {
     verify_infra_chart_index "${chart_repo}"
 
     info "Applying InfraData claim (${claim})..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-infra-data.yaml"
+    kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/infra-data.yaml"
 
     info "Setting chartRepository to ${chart_repo}..."
     kubectl patch infradata "${claim}" -n crossplane-system --type=merge \
@@ -948,7 +1208,7 @@ apply_suze_xr() {
     kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
     wait_for_crd_established "xsuze.gentianos.io" 120
     kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/suze.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-suze.yaml"
+    kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/suze.yaml"
 
     info "Waiting for Suze claim to bind (up to 60s)..."
     local xr_name=""
@@ -1180,11 +1440,13 @@ main_cp() {
 
     prompt_app_repos
     prompt_credentials
+    resolve_kernel_domain_from_claim  # already-bootstrapped cluster: read from its Claim, skip the prompt below
     prompt_kernel_domain
     prompt_network_mode
     prompt_kernel_secrets
     CROSSPLANE_MODE=1 check_prereqs
     _ensure_bao
+    scaffold_cluster_deployment  # new cluster only — no-op if already scaffolded
 
     # ── Crossplane core + providers ──────────────────────────────────────────
     install_crossplane          # Step 0   — Crossplane controller

@@ -153,6 +153,7 @@ _init() {
     load_env_file "$cfg"  "install.env"
     [[ -f "$sec" ]] && load_env_file "$sec" "install.secrets.env"
     load_deployments_cluster_settings
+    resolve_kernel_domain_from_claim  # KERNEL_DOMAIN lives in the Cluster claim, not cluster-settings.env
 
     KERNEL_NAMESPACE="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
     export KERNEL_NAMESPACE
@@ -369,12 +370,13 @@ op_secrets() {
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
+    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/cluster.yaml"
     if [[ "${DRY_RUN}" != "1" ]]; then
         info "Re-applying Cluster XR to propagate new KV seeds to OpenBao..."
-        kubectl apply -f "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml"
+        kubectl apply -f "${claim_file}"
         success "Cluster XR re-applied. The Cluster XR will reconcile new KV seeds."
     else
-        info "  [dry-run] Would re-apply crossplane/claims/dev-cluster.yaml"
+        info "  [dry-run] Would re-apply ${claim_file}"
     fi
 }
 
