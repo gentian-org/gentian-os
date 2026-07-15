@@ -190,7 +190,11 @@ _init() {
         fi
     fi
     if [[ -z "${DERIVATION_SALT:-}" ]]; then
-        DERIVATION_SALT=$(openssl rand -hex 16)
+        if [[ -n "${existing_secret:-}" ]]; then
+            DERIVATION_SALT=""
+        else
+            DERIVATION_SALT=$(openssl rand -hex 16)
+        fi
     fi
     export DERIVATION_SALT
 }

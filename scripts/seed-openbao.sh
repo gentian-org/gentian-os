@@ -87,6 +87,8 @@ validate_master_password_entropy "${MASTER_PASSWORD}"
 
 if [ -n "${existing_salt}" ]; then
     DERIVATION_SALT="${existing_salt}"
+elif [ -n "${existing_master}" ]; then
+    DERIVATION_SALT=""
 else
     DERIVATION_SALT="${DERIVATION_SALT:-$(openssl rand -hex 16)}"
 fi
