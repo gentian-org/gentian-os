@@ -3,7 +3,7 @@
 # scripts/lib/load.sh — Gentian install library loader
 # =============================================================================
 # Source this file from install.sh, update.sh, and uninstall.sh to load all
-# install helper functions without running the legacy install-lib main().
+# install helper functions without running any of their main flows.
 #
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   # shellcheck source=scripts/lib/load.sh

@@ -47,7 +47,7 @@ try_load_creds_from_openbao() {
     _bao_get() {
         # $1 = relative path under secret/data/gentian-os/kernel/
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
-        # Missing paths (404) are normal before bao_bootstrap — must not abort install.
+        # Missing paths (404) are normal before OpenBao is bootstrapped — must not abort install.
         curl -k -sf --max-time 5 \
             -H "X-Vault-Token: ${token}" \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
@@ -276,74 +276,6 @@ init_openbao() {
         export BAO_TOKEN="$root_token"
         success "OpenBao initialized and unsealed (Shamir)."
     fi
-}
-
-# =============================================================================
-# 11. Bootstrap OpenBao via bao CLI (KV engine, K8s auth, policies, roles)
-#
-# Creates the minimal permanent resources that the rest of the install needs:
-#   • KV v2 mount at secret/
-#   • Kubernetes auth backend + config
-#   • eso-read policy + eso role  (ESO ClusterSecretStore authentication)
-#
-# The operator-write policy and gentian-os-operator role are NOT created here;
-# they are managed as provider-vault Crossplane MRs in
-# kernel/services/openbao-config/manifests/{env}/ (wave 15).
-# =============================================================================
-bao_bootstrap() {
-    banner "Step 11 — OpenBao bootstrap (bao CLI)"
-
-    local BAO_SVC_IP
-    BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export VAULT_ADDR="https://${BAO_SVC_IP}:8200"
-    export VAULT_SKIP_VERIFY=true
-
-    if [[ -z "${BAO_TOKEN:-}" ]]; then
-        if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
-            BAO_TOKEN=$(jq -r '.root_token' "${OPENBAO_INIT_FILE}")
-        else
-            read -rp "  Enter OpenBao root token: " BAO_TOKEN; echo ""
-        fi
-    fi
-    export VAULT_TOKEN="$BAO_TOKEN"
-
-    # ── 1. KV v2 mount at 'secret/' ──────────────────────────────────────────
-    if bao secrets list -format=json 2>/dev/null | jq -e '."secret/"' >/dev/null 2>&1; then
-        success "KV v2 mount at 'secret/' already present."
-    else
-        bao secrets enable -path=secret kv-v2
-        success "KV v2 mount at 'secret/' enabled."
-    fi
-
-    # ── 2. Kubernetes auth backend ────────────────────────────────────────────
-    if bao auth list -format=json 2>/dev/null | jq -e '."kubernetes/"' >/dev/null 2>&1; then
-        success "Kubernetes auth backend already present."
-    else
-        bao auth enable -path=kubernetes kubernetes
-        success "Kubernetes auth backend enabled."
-    fi
-    bao write auth/kubernetes/config \
-        kubernetes_host="https://kubernetes.default.svc"
-    success "Kubernetes auth backend configured."
-
-    # ── 3. eso-read policy ────────────────────────────────────────────────────
-    bao policy write eso-read - <<'POLICY'
-path "secret/data/gentian-os/kernel/*"          { capabilities = ["read"] }
-path "secret/metadata/gentian-os/kernel/*"      { capabilities = ["list"] }
-path "secret/data/gentian-os/tenants/+/apps/*" { capabilities = ["read"] }
-path "secret/metadata/gentian-os/tenants/*"     { capabilities = ["list"] }
-POLICY
-    success "eso-read policy written."
-
-    # ── 4. eso Kubernetes auth role ───────────────────────────────────────────
-    bao write auth/kubernetes/role/eso \
-        bound_service_account_names=external-secrets \
-        bound_service_account_namespaces=external-secrets \
-        token_policies=eso-read \
-        token_ttl=3600
-    success "eso K8s auth role created."
-
-    success "OpenBao bootstrap complete."
 }
 
 # =============================================================================

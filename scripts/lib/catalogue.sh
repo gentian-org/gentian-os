@@ -86,11 +86,6 @@ install_catalogue_sync() {
     info "  kubectl gentian apps list"
 }
 
-# Back-compat alias for install.sh / update.sh call sites.
-install_appprofiles_sync() {
-    install_catalogue_sync
-}
-
 # =============================================================================
 # 15. Install gentian-os orchestrator (Helm chart + ArgoCD Application)
 # =============================================================================
@@ -384,89 +379,4 @@ install_stage1_operator() {
     success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED and Cloudflare tunnel wiring."
     info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"
     info "Operator Cloudflare:    kubectl logs -n gentian-system deploy/gentian-os | grep -i cloudflare"
-}
-
-install_orchestrator() {
-    banner "Step 15 — gentian-os orchestrator (CRDs + operator + ArgoCD handoff)"
-
-    local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
-    local crd_dir="${chart_dir}/crds"
-    local ns="gentian-system"
-    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
-    local required_crds=(
-        tenants.gentianos.io
-        appprofiles.gentianos.io
-        integrationbindings.gentianos.io
-        appcatalogues.gentianos.io
-    )
-
-    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
-        kubectl create namespace "$ns"
-    fi
-
-    create_deployments_git_credentials "$ns"
-
-    local value_files=()
-    _gentian_os_collect_operator_value_files value_files
-
-    local helm_sets=(
-        --set openbao.address="https://openbao.openbao.svc.cluster.local:8200"
-        --set argocd.namespace="argocd"
-        --set kernelDomain="${KERNEL_DOMAIN}"
-        --set tenancyMode="${TENANCY_MODE:-multi}"
-        --set routingMode="${ROUTING_MODE:-gateway}"
-    )
-    if [[ -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
-        helm_sets+=(
-            --set appLifecycle.deployments.enabled=true
-            --set "appLifecycle.deployments.repo=${GENTIAN_DEPLOYMENTS_REPO}"
-            --set "appLifecycle.deployments.cluster=${cluster}"
-            --set "appLifecycle.deployments.stage=${stage}"
-            --set appLifecycle.deployments.gitCredentialsSecret=gentian-deployments-git-credentials
-        )
-    elif [[ "${GENTIAN_DEPLOYMENTS_LIFECYCLE_ENABLED:-0}" == "1" ]]; then
-        helm_sets+=(
-            --set appLifecycle.deployments.enabled=true
-            --set "appLifecycle.deployments.repo=${GENTIAN_DEPLOYMENTS_REPO}"
-            --set "appLifecycle.deployments.cluster=${cluster}"
-            --set "appLifecycle.deployments.stage=${stage}"
-        )
-        warn "App lifecycle enabled without GENTIAN_DEPLOYMENTS_GIT_TOKEN — git push from App Store will fail until configured."
-    fi
-
-    # ── Direct Helm bootstrap ───────────────────────────────────────────────────
-    info "Applying orchestrator CRDs (hard requirement for subsequent steps)..."
-    if [[ ! -d "$crd_dir" ]]; then
-        error "CRD directory not found: ${crd_dir}"
-        exit 1
-    fi
-    kubectl apply -f "$crd_dir"
-
-    adopt_gentian_os_helm_preflight "$ns"
-
-    info "Bootstrapping gentian-os Helm release in namespace '${ns}'..."
-    info "(ArgoCD will take ownership of this release in the handoff step below.)"
-    helm upgrade --install gentian-os "$chart_dir" \
-        --namespace "$ns" \
-        "${value_files[@]}" \
-        "${helm_sets[@]}" \
-        --wait --timeout 5m
-
-    info "Waiting for orchestrator CRDs to be Established..."
-    for crd in "${required_crds[@]}"; do
-        kubectl wait --for=condition=Established "crd/${crd}" --timeout=60s >/dev/null || {
-            error "Required CRD ${crd} was not established."
-            error "Orchestrator install is incomplete; aborting."
-            exit 1
-        }
-    done
-    success "Helm bootstrap complete: CRDs Established, operator running."
-
-    wait_for_operator_cloudflare_token "$ns" || true
-    handoff_gentian_os_to_argocd
-
-    info "Monitor updater:   kubectl get imageupdater gentian-os -n argocd"
-    info "Provision tenants: kubectl gentian tenants list"
-    info "                   kubectl gentian tenants deploy demo   # activate definition from definitions/"
 }

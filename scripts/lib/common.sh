@@ -217,9 +217,9 @@ wait_for_running_pod() {
 # (sourced near the top of this file) so they can be reused by uninstall.sh.
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
-# When sourced as a library (GENTIAN_INSTALL_LIB_ONLY=1), SCRIPT_DIR is
-# already set by the outer install.sh to the repo root.  Do not overwrite it.
-# The ":-" default only applies when SCRIPT_DIR is unset or empty.
+# SCRIPT_DIR is already set by the outer install.sh/update.sh/uninstall.sh to
+# the repo root before this file is sourced. Do not overwrite it. The ":-"
+# default only applies when SCRIPT_DIR is unset or empty.
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # ─── Runtime defaults ─────────────────────────────────────────────────────────
@@ -297,7 +297,6 @@ INPUT_HIERARCHY_VARS=(
 )
 
 # ─── Versions ────────────────────────────────────────────────────────────────
-BAO_VERSION="2.5.1"
 export ESO_CHART_VERSION="2.4.1"
 ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-v1.2.5}"
 ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
@@ -1451,30 +1450,6 @@ delete_kernel_helm_releases() {
 }
 
 # =============================================================================
-# 1. Install CLI tools
-# =============================================================================
-install_tools() {
-    if [[ "${SKIP_TOOLS:-0}" == "1" ]]; then
-        warn "SKIP_TOOLS=1 — skipping CLI tool installation."
-        return
-    fi
-
-    banner "Step 1 — Installing CLI tools"
-
-    if command -v bao &>/dev/null && bao version 2>/dev/null | grep -q "$BAO_VERSION"; then
-        success "bao $BAO_VERSION already installed."
-    else
-        info "Installing OpenBao CLI v${BAO_VERSION}..."
-        local arch; arch=$(uname -m); [[ "$arch" == "x86_64" ]] && arch="amd64"
-        local pkg="openbao_${BAO_VERSION}_linux_${arch}.deb"
-        curl -fsSL "https://github.com/openbao/openbao/releases/download/v${BAO_VERSION}/${pkg}" -o "/tmp/${pkg}"
-        sudo dpkg -i "/tmp/${pkg}"
-        rm -f "/tmp/${pkg}"
-        success "bao $BAO_VERSION installed."
-    fi
-}
-
-# =============================================================================
 # 1. Create namespaces (idempotent)
 # =============================================================================
 create_namespaces() {
@@ -1926,138 +1901,4 @@ verify_keycloak_iframe_policy() {
 
     info "No browser-security jobs yet (no Tenant CRs?) — HTTPRoute CSP is ready."
     return 0
-}
-
-resolve_portal_admin_email() {
-    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
-        echo "administrator@${KERNEL_DOMAIN}"
-    fi
-}
-
-_resolve_platform_admin_password() {
-    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_pw
-        existing_pw=$(bao kv get -mount=secret -field=admin_password identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_pw}" ]]; then
-            echo "${existing_pw}"
-        else
-            echo "(stored in OpenBao)"
-        fi
-    else
-        if [[ -z "${MASTER_PASSWORD:-}" ]]; then
-            return 0
-        fi
-        echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
-    fi
-}
-
-resolve_portal_admin_password() {
-    _resolve_platform_admin_password
-}
-
-_resolve_keycloak_admin_password() {
-    if declare -F derive_password >/dev/null 2>&1 && [[ -n "${MASTER_PASSWORD:-}" ]]; then
-        derive_password "keycloak" "adminPassword"
-        return 0
-    fi
-    kubectl get secret keycloak-idp-sensitive-values -n platform-kernel \
-        -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null \
-        | base64 -d 2>/dev/null \
-        | awk -F': ' '/KEYCLOAK_ADMIN_PASSWORD/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' || true
-}
-
-# =============================================================================
-# Summary
-# =============================================================================
-print_summary() {
-    local argocd_pw
-    local argocd_url
-    local cluster_admin_pw
-    local cluster_admin_user
-    local keycloak_admin_pw
-    local kernel_secret_ns="platform-kernel"
-
-    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
-                    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "(not-ready)")
-    cluster_admin_user=$(resolve_portal_admin_email)
-    cluster_admin_pw=$(resolve_portal_admin_password)
-    [[ -n "${cluster_admin_pw}" ]] || cluster_admin_pw="(not-ready)"
-    keycloak_admin_pw=$(_resolve_keycloak_admin_password)
-    [[ -n "${keycloak_admin_pw}" ]] || keycloak_admin_pw="(not-ready)"
-    argocd_url=$(resolve_argocd_url)
-    portal_url="https://portal.${KERNEL_DOMAIN}/login/"
-    keycloak_url="https://id.${KERNEL_DOMAIN}"
-
-    echo ""
-    if [[ "${VERIFY_STATUS:-unknown}" == "ok" ]]; then
-        echo "  ✔ ArgoCD reachable"
-        echo "  ✔ All Applications Synced + Healthy"
-        echo "  ✔ AppCatalogue CRD installed"
-        echo "  ✔ gentian-os orchestrator running (Tenant CRD Established)"
-        echo "  ✔ Cluster admin credentials materialized (Keycloak kernel realm)"
-        echo ""
-
-        echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${GREEN}║  ✅  Gentian OS bootstrap complete — all systems healthy! ║${NC}"
-        echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${GREEN}║  Portal URL   : ${portal_url}${NC}"
-        echo -e "${GREEN}║  Portal login : ${cluster_admin_user:-administrator@${KERNEL_DOMAIN}} / ${cluster_admin_pw}${NC}"
-        echo -e "${GREEN}║  Keycloak URL : ${keycloak_url}${NC}"
-        echo -e "${GREEN}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
-        echo -e "${GREEN}║  ArgoCD URL   : ${argocd_url}${NC}"
-        echo -e "${GREEN}║  ArgoCD login : admin / ${argocd_pw}${NC}"
-        echo -e "${GREEN}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
-        echo -e "${GREEN}║  Routing mode : ${ROUTING_MODE:-gateway}${NC}"
-        echo -e "${GREEN}║  Applications : ${VERIFY_TOTAL:-?} Synced + Healthy${NC}"
-        echo -e "${GREEN}║  Tenants      : none (provision when ready)              ║${NC}"
-        echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo "  Retrieve credentials later:"
-        echo "    Portal password is HMAC-derived from MASTER_PASSWORD (portal-bootstrap:administrator_password)"
-        echo "    Keycloak admin: derive_password keycloak adminPassword, or:"
-        echo "    kubectl get secret keycloak-idp-sensitive-values -n ${kernel_secret_ns} -o yaml"
-        echo ""
-        echo "  Monitor sync:    kubectl get applications -n argocd"
-        echo "  List tenants:    kubectl gentian tenants list"
-        echo "  Provision tenant: kubectl gentian tenants deploy demo"
-        echo "                    (activates clusters/<cluster>/definitions/<tenant>/ on first run)"
-        echo "  Undeploy tenant: kubectl gentian tenants undeploy demo"
-        echo "  List apps:       kubectl gentian apps list"
-        echo "  Install apps:    kubectl gentian apps install <profile> --tenant <tenant>"
-        echo ""
-        echo -e "${GREEN}🎉  Gentian OS successfully installed. Welcome aboard!${NC}"
-    else
-        echo -e "${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${YELLOW}║  ⚠  Gentian OS bootstrap finished with degraded Apps     ║${NC}"
-        echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${YELLOW}║  Portal URL   : ${portal_url}${NC}"
-        echo -e "${YELLOW}║  Portal login : ${cluster_admin_user:-administrator@${KERNEL_DOMAIN}} / ${cluster_admin_pw}${NC}"
-        echo -e "${YELLOW}║  Keycloak URL : ${keycloak_url}${NC}"
-        echo -e "${YELLOW}║  Keycloak login (master realm) : admin / ${keycloak_admin_pw}${NC}"
-        echo -e "${YELLOW}║  ArgoCD URL   : ${argocd_url}${NC}"
-        echo -e "${YELLOW}║  ArgoCD login : admin / ${argocd_pw}${NC}"
-        echo -e "${YELLOW}║  Network mode : ${NETWORK_MODE:-tunnel}${NC}"
-        echo -e "${YELLOW}║  Status       : ${VERIFY_STATUS:-unknown} (${VERIFY_TOTAL:-0} apps)${NC}"
-        echo -e "${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo "  Inspect failing Applications:"
-        if [[ -n "${VERIFY_BAD:-}" ]]; then
-            while IFS= read -r line; do
-                [[ -n "$line" ]] && echo "    $line"
-            done <<< "${VERIFY_BAD}"
-        else
-            echo "    kubectl get applications -n argocd"
-            echo "    kubectl describe application -n argocd <name>"
-        fi
-        echo ""
-        echo "  Retrieve credentials later:"
-        echo "    Portal password is HMAC-derived from MASTER_PASSWORD (portal-bootstrap:administrator_password)"
-        echo "    Keycloak admin: derive_password keycloak adminPassword, or:"
-        echo "    kubectl get secret keycloak-idp-sensitive-values -n ${kernel_secret_ns} -o yaml"
-        echo ""
-        echo "  Re-run verification only:"
-        echo "    VERIFY_TIMEOUT=600 ./install.sh --verify-only   # (or just wait + re-check)"
-        echo "  List apps once synced:"
-        echo "    kubectl gentian apps list"
-    fi
 }

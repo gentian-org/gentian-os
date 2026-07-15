@@ -208,8 +208,8 @@ install_argocd() {
     fi
 
     # Print ArgoCD admin credentials early so the user sees them even if
-    # the install is interrupted before print_summary runs (verify step
-    # can take up to 10 minutes).
+    # the install is interrupted before the final summary runs (verify
+    # step can take up to 10 minutes).
     local argocd_pw argocd_url
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
                     -o jsonpath='{.data.password}' 2>/dev/null \
@@ -274,13 +274,6 @@ EOF
     success "ArgoCD OIDC configuration completed."
 }
 
-
-# =============================================================================
-# 6. Create ArgoCD OCI registry secrets
-# =============================================================================
-setup_argocd_repos() {
-    info "Skipping OCI registry secrets (paid app charts are managed outside gentian-os)."
-}
 
 # =============================================================================
 # 4b. Install ArgoCD Image Updater controller
@@ -413,14 +406,6 @@ bootstrap_argocd_apps() {
     else
         warn "Cluster infra disabled: skipped reloader/CNPG bootstrap apps."
     fi
-}
-# =============================================================================
-# 13. Apply root ApplicationSet
-# =============================================================================
-bootstrap_root_appset() {
-    banner "Step 13 — Applying root ApplicationSet"
-    bash "${SCRIPT_DIR}/scripts/bootstrap.sh"
-    success "Root ApplicationSet applied."
 }
 verify_argocd_apps() {
     banner "Verify — ArgoCD Applications"
