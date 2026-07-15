@@ -443,9 +443,11 @@ create_crossplane_secrets() {
         fi
         if [[ -n "${s_val}" ]]; then
             DERIVATION_SALT="${s_val}"
+        elif [[ -n "${m_val}" ]]; then
+            DERIVATION_SALT=""
         fi
     fi
-    if [[ -z "${DERIVATION_SALT:-}" ]]; then
+    if [[ -z "${DERIVATION_SALT:-}" && -z "${existing_secret}" ]]; then
         DERIVATION_SALT=$(openssl rand -hex 16)
     fi
     export DERIVATION_SALT
