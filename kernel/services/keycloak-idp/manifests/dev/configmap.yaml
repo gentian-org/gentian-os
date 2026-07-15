@@ -15,7 +15,7 @@ data:
     args:
       - "start"
       - "--http-enabled=true"
-      - "--hostname=https://id.desk.gentian.org/auth"
+      - "--hostname=https://id.$(KERNEL_DOMAIN)/auth"
       - "--hostname-backchannel-dynamic=true"
       - "--hostname-strict=false"
       - "--proxy-headers=xforwarded"
@@ -36,6 +36,11 @@ data:
       database: keycloak
       username: keycloak_user
     extraEnv: |
+      - name: KERNEL_DOMAIN
+        valueFrom:
+          configMapKeyRef:
+            name: gentian-kernel-services
+            key: KERNEL_DOMAIN
       - name: KC_HEALTH_ENABLED
         value: "true"
       - name: KC_METRICS_ENABLED
@@ -43,7 +48,7 @@ data:
       - name: KC_CACHE
         value: "local"
       - name: KC_HOSTNAME
-        value: "https://id.desk.gentian.org/auth"
+        value: "https://id.$(KERNEL_DOMAIN)/auth"
       - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
         value: "true"
       - name: KC_HOSTNAME_STRICT

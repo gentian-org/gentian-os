@@ -1,7 +1,10 @@
 # Gentian shell (React + FastAPI) — Stage 1 portal values for ArgoCD.
 # Chart source: gentian-ui/chart
+#
+# kernelDomain and api.env.BACKEND_CORS_ORIGINS are cluster-specific and
+# come from clusters/<cluster>/kernel/values.yaml in gentian-deployments,
+# layered on top of this file (see gentian-portal.yaml's valueFiles).
 
-kernelDomain: desk.gentian.org
 kernelRealm: kernel
 
 auth:
@@ -15,7 +18,6 @@ api:
   env:
     ENVIRONMENT: development
     TENANCY_MODE: multi
-    BACKEND_CORS_ORIGINS: https://portal.desk.gentian.org
 
 web:
   image:
