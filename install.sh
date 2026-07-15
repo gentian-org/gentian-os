@@ -1112,6 +1112,13 @@ install_stage1_llm_serving() {
     local env="${ENV:-dev}"
     local ns="platform-kernel"
 
+    # litellm-services.yaml references the litellm-dashboard-sso Secret
+    # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even though Step 16
+    # (portal bootstrap) runs after this step.
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    ensure_litellm_sso_secret >/dev/null
+
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
         info "Deploying GPU-accelerated LLM stack (vLLM + LiteLLM)..."

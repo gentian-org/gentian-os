@@ -681,6 +681,13 @@ op_llm_serving() {
         "${SMTP_RELAY_USERNAME:-}" \
         "${SMTP_RELAY_PASSWORD:-}"
 
+    # litellm-services.yaml references the litellm-dashboard-sso Secret
+    # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even if `--portal` hasn't
+    # been run yet, so `update.sh --llm` alone always converges.
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    ensure_litellm_sso_secret >/dev/null
+
     info "Applying LLM serving manifests..."
     kubectl apply -f "${SCRIPT_DIR}/kernel/services/llm/manifests/${env}/"
 
