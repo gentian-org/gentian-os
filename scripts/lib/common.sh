@@ -503,11 +503,19 @@ validate_config() {
         echo "  [OK]       MAIL_SERVICE_MODE=kernel with NETWORK_MODE=${NETWORK_MODE}"
     fi
 
+    # KERNEL_DOMAIN has exactly one authored copy — the cluster's Crossplane
+    # Claim (claims/cluster.yaml) — not cluster-settings.env. Resolve it the
+    # same way the real install/update flow does before judging it missing.
+    resolve_kernel_domain_from_claim
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
-        echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix (e.g. platform.example.com; set in ${cluster_settings_file})"
-        (( errors++ )) || true
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix; not resolvable from claims/cluster.yaml (cluster not bootstrapped yet) and GENTIAN_NONINTERACTIVE=1 (export KERNEL_DOMAIN or set it in ${INSTALL_CONFIG_FILE})"
+            (( errors++ )) || true
+        else
+            echo "  [PENDING]  KERNEL_DOMAIN  — not yet bootstrapped; no claims/cluster.yaml for this cluster yet. Will be prompted for interactively during install (see gentian-os/docs/deployment.md §1)."
+        fi
     elif [[ ! "${KERNEL_DOMAIN}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
-        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$ (set in ${cluster_settings_file})"
+        echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$"
         (( errors++ )) || true
     else
         echo "  [OK]       KERNEL_DOMAIN=${KERNEL_DOMAIN}"
