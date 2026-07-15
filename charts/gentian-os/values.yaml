@@ -40,9 +40,11 @@ tenantProvisioning:
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
-# Stage 1 authz bridge (Keycloak → OpenFGA tuple sync).
+# Stage 1 authz bridge (Keycloak → OpenFGA tuple sync). OpenFGA is a
+# standard, always-deployed kernel component (see openfgaURL below), so
+# this defaults on; a deployer without Suze/OpenFGA can still disable it.
 authzBridge:
-  enabled: false
+  enabled: true
   openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
   openfgaToken: ""
 
@@ -65,8 +67,11 @@ infraNamespace: ""
 openbaoNamespace: "openbao"
 
 # servicesNamespace hosts platform services (Postfix, Nextcloud, …).
-# Set per cluster in gentian-deployments kernel values.
-servicesNamespace: ""
+# "platform-kernel" is this platform's fixed naming convention, not a
+# per-stage or per-cluster choice — override in a cluster's own
+# gentian-deployments values.yaml only if a specific cluster truly needs
+# something different.
+servicesNamespace: "platform-kernel"
 
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
@@ -98,7 +103,10 @@ kernelServices:
 
 image:
   repository: ghcr.io/gentian-org/gentian-os
-  pullPolicy: Always
+  # Image Updater mutates image.tag on every new build, so a fresh tag
+  # always triggers a pull regardless of pullPolicy — IfNotPresent avoids
+  # re-pulling the same tag on unrelated pod restarts.
+  pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   # Ignored when image.digest is set.
   tag: ""
@@ -179,7 +187,7 @@ database:
 # ArgoCD integration
 argocd:
   namespace: "argocd"
-  project: "default"
+  project: "gentianos-tenants"
 
 # Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
 provisioners:
@@ -202,8 +210,10 @@ defaults:
 # Metrics and observability
 metrics:
   serviceMonitor:
-    # Deploy a Prometheus ServiceMonitor for the operator metrics endpoint
-    enabled: true
+    # Deploy a Prometheus ServiceMonitor for the operator metrics endpoint.
+    # Off by default — no current cluster runs Prometheus yet; flip to true
+    # in a cluster's own values.yaml once one does.
+    enabled: false
     interval: "30s"
     scrapeTimeout: "10s"
     # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)

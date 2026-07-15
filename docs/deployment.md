@@ -23,17 +23,33 @@ Four layers, each holding only what the layer below it can't know:
 
 | Layer | Lives in | Scope | Holds |
 | --- | --- | --- | --- |
-| 1. Chart defaults | `gentian-os/charts/gentian-os/values.yaml` | every cluster, every deployer | sane defaults for every key |
-| 2. Stage profile | `gentian-deployments/profiles/<stage>.yaml` | every cluster of that stage tier | tier policy: log level, ACME issuer, metrics, tenancy mode |
+| 1. Chart defaults | `gentian-os/charts/gentian-os/values.yaml` | every cluster, every deployer | sane defaults for every key — including things that turned out to be universal across every current profile (see below) |
+| 2a. Cross-stage shared | `gentian-deployments/profiles/_base.yaml` | every cluster, this deployment | same across all stages, but too app/catalogue-specific for the chart (e.g. Kyverno MAC waivers for specific tenant apps) |
+| 2b. Stage profile | `gentian-deployments/profiles/<stage>.yaml` | every cluster of that stage tier | *genuine* stage deltas only: log level, ACME issuer |
 | 3. Cluster overlay | `gentian-deployments/clusters/<cluster>/kernel/values.yaml` | one cluster | genuine deltas only: image tag pin, Cloudflare zone, LDAP endpoint |
 | 4. Cluster identity | `gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml` | one cluster | `kernelDomain` — the single source of truth |
 
-ArgoCD merges Helm values in that order (1 → 2 → 3). Layer 4 isn't a Helm
-value at all — it's the Crossplane `Cluster` Claim, a plain Kubernetes
+ArgoCD merges Helm values in that order (1 → 2a → 2b → 3). Layer 4 isn't a
+Helm value at all — it's the Crossplane `Cluster` Claim, a plain Kubernetes
 object. Its schema (`crossplane/xrds/cluster.yaml`) requires only
 `kernelDomain`; every other field (OpenBao address, ArgoCD/ESO namespaces,
 `certManager.letsencryptEmail`) has a schema or Composition default, so the
 Claim itself stays a handful of lines.
+
+**Layer 2 splits in two because "shared across stages" and "universal
+across every deployer" are different claims.** A value that's identical in
+every stage profile *of this deployment* isn't necessarily something every
+gentian-os installer wants — `platformSecurityPolicy.allowedMacWaivers`
+names specific catalogue apps (`element`, `nextcloud-office`, ...), which
+depends on which apps this deployment's tenants use, not on the chart
+itself. Promoting it to a chart default would just relocate the "OS
+shouldn't know about apps" problem instead of fixing it. Anything that
+*is* the same regardless of deployer (e.g. `authzBridge.enabled`,
+`servicesNamespace`) belongs in the chart, not in `_base.yaml` — when in
+doubt: would a different organization deploying gentian-os from scratch
+want this value too? If yes, chart default. If it's the same across your
+stages but tied to your app catalogue, `_base.yaml`. If it varies by
+stage, `profiles/<stage>.yaml`.
 
 **`kernelDomain` has exactly one authored copy** (Layer 4, the Claim).
 Everything else that needs it *reads* from there rather than declaring it

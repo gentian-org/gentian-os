@@ -560,10 +560,15 @@ scaffold_cluster_deployment() {
     local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
     local generated=0
 
-    if [[ ! -f "${kernel_dir}/profiles/${stage}.yaml" && ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
+    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
         warn "gentian-deployments/profiles/${stage}.yaml does not exist yet."
         warn "  Stage-tier policy (logLevel, ACME issuer, etc.) has no home for '${stage}' —"
         warn "  add it (see profiles/dev.yaml for the existing example) before continuing."
+    fi
+    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/_base.yaml" ]]; then
+        warn "gentian-deployments/profiles/_base.yaml does not exist yet."
+        warn "  Cross-stage shared policy (platformSecurityPolicy, etc.) has no home —"
+        warn "  add it before continuing (see profiles/_base.yaml in an existing cluster's repo)."
     fi
 
     mkdir -p "${kernel_dir}/claims"
@@ -725,6 +730,7 @@ spec:
     path: charts/gentian-os
     helm:
       valueFiles:
+      - \$deploy/profiles/_base.yaml
       - \$deploy/profiles/${stage}.yaml
       - \$deploy/clusters/${cluster}/kernel/values.yaml
   - repoURL: https://github.com/gentian-org/gentian-deployments
