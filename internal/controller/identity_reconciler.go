@@ -679,14 +679,14 @@ if echo "${EXISTING}" | grep -q '"id"'; then
     -X PUT "${KEYCLOAK_URL}/admin/realms/%s/clients/${CID}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\"}}"
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\"},\"protocolMappers\":[{\"name\":\"email\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"email\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"email\",\"user.attribute\":\"email\"}},{\"name\":\"firstName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"firstName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"firstName\",\"user.attribute\":\"firstName\"}},{\"name\":\"lastName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"lastName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"lastName\",\"user.attribute\":\"lastName\"}}]}"
   echo "SAML client %s updated"
 else
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms/%s/clients" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\"}}"
+    -d "{\"clientId\":\"%s\",\"redirectUris\":[\"%s\"],\"protocol\":\"saml\",\"standardFlowEnabled\":true,\"publicClient\":false,\"attributes\":{\"saml.client.signature\":\"false\"},\"protocolMappers\":[{\"name\":\"email\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"email\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"email\",\"user.attribute\":\"email\"}},{\"name\":\"firstName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"firstName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"firstName\",\"user.attribute\":\"firstName\"}},{\"name\":\"lastName\",\"protocol\":\"saml\",\"protocolMapper\":\"saml-user-property-mapper\",\"consentRequired\":false,\"config\":{\"attribute.name\":\"lastName\",\"attribute.nameformat\":\"Basic\",\"friendly.name\":\"lastName\",\"user.attribute\":\"lastName\"}}]}"
   echo "SAML client %s created in realm %s"
 fi`, realmName, entityID, entityID, realmName, realmName, entityID, acsURL, entityID, realmName, entityID, acsURL, entityID, realmName)
 }
