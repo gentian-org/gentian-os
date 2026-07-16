@@ -85,15 +85,36 @@ spec:
             {{- end }}
             {{- end }}
             - name: CLOUDFLARE_ZONE_ID
-              value: {{ .Values.cloudflare.zoneID | default "" | quote }}
+              {{- if .Values.cloudflare.zoneID }}
+              value: {{ .Values.cloudflare.zoneID | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "zone-id"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
             - name: CLOUDFLARE_TUNNEL_CNAME
-              value: {{ .Values.cloudflare.tunnelCNAME | default "" | quote }}
+              {{- if .Values.cloudflare.tunnelCNAME }}
+              value: {{ .Values.cloudflare.tunnelCNAME | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "tunnel-cname"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
             {{- if .Values.cloudflare.apiTokenSecretRef.name }}
             - name: CLOUDFLARE_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
                   key: {{ .Values.cloudflare.apiTokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             {{- if .Values.cloudflare.tunnelAPITokenSecretRef.name }}
             - name: CLOUDFLARE_TUNNEL_API_TOKEN

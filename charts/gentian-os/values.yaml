@@ -152,12 +152,12 @@ cloudflare:
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
   apiTokenSecretRef:
     # Name of the Secret containing the API token. Leave empty to disable.
-    name: ""
+    name: "cloudflare-api-token-gentian-system"
     # Key inside the Secret (default: api-token).
     key: "api-token"
     # If set, an ExternalSecret is created to sync the token from OpenBao at this KV path.
     # e.g. "gentian-os/kernel/dns/cloudflare"
-    openbaoPath: ""
+    openbaoPath: "gentian-os/kernel/dns/cloudflare"
   # Cloudflare zone ID for the kernel domain.
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com

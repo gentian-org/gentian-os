@@ -298,10 +298,42 @@ seed_secrets() {
     fi
     export BAO_TOKEN
 
+    # Automatically query Cloudflare zone ID and tunnel CNAME to seed into OpenBao
+    local zone_id=""
+    local tunnel_cname=""
+    if [[ -n "${CF_API_TOKEN:-}" && -n "${KERNEL_DOMAIN:-}" ]]; then
+        info "Resolving Cloudflare Zone ID for domain ${KERNEL_DOMAIN}..."
+        zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${KERNEL_DOMAIN}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+        if [[ -z "${zone_id}" && "${KERNEL_DOMAIN}" == *.*.* ]]; then
+            local apex_domain
+            apex_domain=$(echo "${KERNEL_DOMAIN}" | awk -F. '{print $(NF-1)"."$NF}')
+            zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${apex_domain}" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+        fi
+        if [[ -n "${zone_id}" ]]; then
+            info "Resolved Cloudflare Zone ID: ${zone_id}"
+        else
+            warn "Could not resolve Cloudflare Zone ID for ${KERNEL_DOMAIN}"
+        fi
+
+        info "Resolving in-cluster Cloudflare Tunnel ID..."
+        local tunnel_id
+        tunnel_id=$(kubectl get secret tunnel-credentials -n default -o jsonpath='{.data}' 2>/dev/null | jq -r 'keys[0] // empty' | sed 's/\.json$//')
+        if [[ -n "${tunnel_id}" ]]; then
+            tunnel_cname="${tunnel_id}.cfargotunnel.com"
+            info "Resolved Cloudflare Tunnel CNAME: ${tunnel_cname}"
+        else
+            warn "Could not resolve Cloudflare Tunnel ID from tunnel-credentials secret"
+        fi
+    fi
+
     # CF_API_TOKEN is forwarded via env var (not positional) so the
     # seed-openbao.sh contract stays backward-compatible. Seed-openbao
     # writes it to secret/gentian-os/kernel/dns/cloudflare when present.
     CF_API_TOKEN="${CF_API_TOKEN:-}" \
+    CF_ZONE_ID="${zone_id}" \
+    CF_TUNNEL_CNAME="${tunnel_cname}" \
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}" \
     EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}" \
     EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}" \

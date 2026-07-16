@@ -361,9 +361,11 @@ fi
 # kernel wildcard Certificate is enabled (see docs/design/multi-tenancy.md §3).
 # Sourced from CF_API_TOKEN env var to keep the positional-arg contract stable.
 if [ -n "${CF_API_TOKEN:-}" ]; then
-    kv_put_once "dns/cloudflare" "$(jq -n \
+    kv_put "dns/cloudflare" "$(jq -n \
         --arg api_token "${CF_API_TOKEN}" \
-        '{"api-token": $api_token}')"
+        --arg zone_id "${CF_ZONE_ID:-}" \
+        --arg tunnel_cname "${CF_TUNNEL_CNAME:-}" \
+        '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
 else
     echo ""
     echo "  Skipping Cloudflare API token (CF_API_TOKEN not set)."
