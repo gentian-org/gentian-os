@@ -14,6 +14,8 @@ ignore: |
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml
   kernel/services/openfga/manifests/dev/externalsecret.yaml
+  kernel/appsets/templates/
+
 
 rules:
   indentation:
