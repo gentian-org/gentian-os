@@ -5,8 +5,7 @@
 
 # Renders kernel/services/llm/manifests/${env}/vllm-gpu.yaml.tmpl with
 # cluster instance data (cluster-settings.env — never gentian-os defaults)
-# and applies it. Echoes the rendered manifest's path so callers can clean
-# it up; caller is responsible for `rm -f` after apply.
+# and applies it.
 render_and_apply_vllm_gpu_manifest() {
     local manifests_dir="$1"
 
@@ -26,6 +25,23 @@ render_and_apply_vllm_gpu_manifest() {
         -e "s|%VLLM_MODEL_CACHE_SIZE%|${cache_size}|g" \
         -e "s|%VLLM_IMAGE_TAG%|${image_tag}|g" \
         "${manifests_dir}/vllm-gpu.yaml.tmpl" >"${rendered}"
+    kubectl apply -f "${rendered}"
+    rm -f "${rendered}"
+}
+
+# Renders kernel/services/llm/manifests/${env}/gpu-sharing.yaml.tmpl with
+# cluster instance data (cluster-settings.env — never gentian-os defaults)
+# and applies it. How many virtual slices to carve each physical GPU into
+# is specific to this cluster's hardware.
+render_and_apply_gpu_sharing_manifest() {
+    local manifests_dir="$1"
+
+    local replicas="${GPU_TIME_SLICE_REPLICAS:-4}"
+
+    local rendered
+    rendered="$(mktemp)"
+    sed -e "s|%GPU_TIME_SLICE_REPLICAS%|${replicas}|g" \
+        "${manifests_dir}/gpu-sharing.yaml.tmpl" >"${rendered}"
     kubectl apply -f "${rendered}"
     rm -f "${rendered}"
 }

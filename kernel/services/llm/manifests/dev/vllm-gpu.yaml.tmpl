@@ -57,7 +57,7 @@ spec:
         # vllm-hf-token Secret first — see agentic-ai.md §10.2).
         - name: VLLM_MODEL_ID
           value: "%VLLM_MODEL_ID%"
-        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml) —
+        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml.tmpl) —
         # stay well under 1.0 so this pod doesn't starve/OOM its neighbors.
         - name: VLLM_GPU_MEMORY_UTILIZATION
           value: "%VLLM_GPU_MEMORY_UTILIZATION%"

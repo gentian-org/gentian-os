@@ -704,7 +704,8 @@ op_llm_serving() {
 
     info "Applying LLM serving manifests..."
     local manifests_dir="${SCRIPT_DIR}/kernel/services/llm/manifests/${env}"
-    kubectl apply -f "${manifests_dir}/llm-services.yaml" -f "${manifests_dir}/externalsecret.yaml" -f "${manifests_dir}/gpu-sharing.yaml"
+    kubectl apply -f "${manifests_dir}/llm-services.yaml" -f "${manifests_dir}/externalsecret.yaml"
+    render_and_apply_gpu_sharing_manifest "${manifests_dir}"
 
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then

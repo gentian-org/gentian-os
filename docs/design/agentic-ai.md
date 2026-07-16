@@ -440,7 +440,7 @@ OpenAI-compatible server, `GPU_ACCELERATION=false`, the default) and
 a Deployment/Service both named `vllm-inference`, so switching between
 them is just re-running `./update.sh --llm` with the flag flipped — no
 orphaned resources. `vllm-gpu.yaml.tmpl` requests one `nvidia.com/gpu` (a
-time-sliced share, see §10.1's sibling note on `gpu-sharing.yaml`).
+time-sliced share, see §10.1's sibling note on `gpu-sharing.yaml.tmpl`).
 
 Which model to serve is cluster instance data, not a gentian-os
 default — `render_and_apply_vllm_gpu_manifest()` (`scripts/llm-lib.sh`)
