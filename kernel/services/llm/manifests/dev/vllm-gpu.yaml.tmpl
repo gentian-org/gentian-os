@@ -64,11 +64,16 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
+            TOOL_CALL_ARGS=""
+            if [ -n "${VLLM_TOOL_CALL_PARSER}" ]; then
+              TOOL_CALL_ARGS="--enable-auto-tool-choice --tool-call-parser ${VLLM_TOOL_CALL_PARSER}"
+            fi
             exec vllm serve "${VLLM_MODEL_ID}" \
               --host 0.0.0.0 --port 8000 \
               --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
               --max-model-len "${VLLM_MAX_MODEL_LEN}" \
-              --enable-prefix-caching
+              --enable-prefix-caching \
+              ${TOOL_CALL_ARGS}
         env:
         # Which model to swap in is cluster instance data (cluster-settings.env),
         # not a gentian-os default — see the header comment above. Gated models
@@ -85,6 +90,14 @@ spec:
           value: "%VLLM_GPU_MEMORY_UTILIZATION%"
         - name: VLLM_MAX_MODEL_LEN
           value: "%VLLM_MAX_MODEL_LEN%"
+        # Empty (default) disables tool calling entirely -- matches vLLM's
+        # own default and today's behaviour for every existing instance.
+        # The correct value is model-family-specific (e.g. "hermes" for
+        # Qwen2/Qwen2.5/Hermes-family models, "mistral" for Mistral,
+        # "llama3_json" for Llama 3) -- see vLLM's tool-calling docs for
+        # the model you're actually serving before setting this.
+        - name: VLLM_TOOL_CALL_PARSER
+          value: "%VLLM_TOOL_CALL_PARSER%"
         - name: HUGGING_FACE_HUB_TOKEN
           valueFrom:
             secretKeyRef:

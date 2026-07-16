@@ -50,14 +50,16 @@ render_and_apply_vllm_gpu_manifest() {
         local max_len_var="VLLM_${instance_upper}_MAX_MODEL_LEN"
         local cache_var="VLLM_${instance_upper}_MODEL_CACHE_SIZE"
         local tag_var="VLLM_${instance_upper}_IMAGE_TAG"
+        local tool_parser_var="VLLM_${instance_upper}_TOOL_CALL_PARSER"
 
         local model_id="${!model_id_var:-Qwen/Qwen2.5-7B-Instruct}"
         local gpu_mem_util="${!gpu_mem_var:-0.85}"
         local max_model_len="${!max_len_var:-8192}"
         local cache_size="${!cache_var:-60Gi}"
         local image_tag="${!tag_var:-latest}"
+        local tool_call_parser="${!tool_parser_var:-}"
 
-        info "Serving vLLM instance '${instance}': ${model_id} (gpu-memory-utilization=${gpu_mem_util}, max-model-len=${max_model_len}, image tag=${image_tag})"
+        info "Serving vLLM instance '${instance}': ${model_id} (gpu-memory-utilization=${gpu_mem_util}, max-model-len=${max_model_len}, image tag=${image_tag}, tool-call-parser=${tool_call_parser:-none})"
 
         local rendered
         rendered="$(mktemp)"
@@ -67,6 +69,7 @@ render_and_apply_vllm_gpu_manifest() {
             -e "s|%VLLM_MAX_MODEL_LEN%|${max_model_len}|g" \
             -e "s|%VLLM_MODEL_CACHE_SIZE%|${cache_size}|g" \
             -e "s|%VLLM_IMAGE_TAG%|${image_tag}|g" \
+            -e "s|%VLLM_TOOL_CALL_PARSER%|${tool_call_parser}|g" \
             "${manifests_dir}/vllm-gpu.yaml.tmpl" >"${rendered}"
         kubectl apply -f "${rendered}"
         rm -f "${rendered}"

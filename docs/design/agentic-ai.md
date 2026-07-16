@@ -431,6 +431,7 @@ guide in
 | `--quantization awq` / `--dtype fp8` | AWQ: ~2x throughput, <2% accuracy loss. FP8: one-flag win on H100/Blackwell, no quantization step |
 | `--enable-prefix-caching` | Reuse KV-cache across requests sharing a prompt prefix |
 | `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
+| `--enable-auto-tool-choice` / `--tool-call-parser <parser>` | Required for `tool_choice="auto"` (Open WebUI's native tool support, agentic clients) — omitted by default, so tool-calling requests 400 clearly instead of silently misparsing. `<parser>` is model-family-specific (`hermes` for Qwen2/Qwen2.5/Hermes-family, `mistral` for Mistral, `llama3_json` for Llama 3) — set via `VLLM_<ID>_TOOL_CALL_PARSER` |
 
 **In gentian-os today:** `kernel/services/llm/manifests/<env>/` has two
 kinds of backend, selected by `GPU_ACCELERATION` in
@@ -456,9 +457,10 @@ the cluster's `cluster-settings.env` in `gentian-deployments`, and for
 each one renders the `.tmpl` from that instance's own
 `VLLM_<ID>_MODEL_ID`/`VLLM_<ID>_GPU_MEMORY_UTILIZATION`/
 `VLLM_<ID>_MAX_MODEL_LEN`/`VLLM_<ID>_MODEL_CACHE_SIZE`/
-`VLLM_<ID>_IMAGE_TAG` (falling back to `Qwen/Qwen2.5-7B-Instruct` /
-`0.85` / `8192` / `60Gi` / `latest` per-instance if unset —
-`Qwen/Qwen2.5-7B-Instruct` has no HF license gate, ~14GB FP16). Any
+`VLLM_<ID>_IMAGE_TAG`/`VLLM_<ID>_TOOL_CALL_PARSER` (falling back to
+`Qwen/Qwen2.5-7B-Instruct` / `0.85` / `8192` / `60Gi` / `latest` / unset
+(tool calling disabled) per-instance if unset — `Qwen/Qwen2.5-7B-Instruct`
+has no HF license gate, ~14GB FP16). Any
 instance previously deployed but no longer in `VLLM_INSTANCES` gets its
 Deployment+Service removed automatically (PVC kept — see the function's
 own comment for why); its corresponding LiteLLM registration is removed
