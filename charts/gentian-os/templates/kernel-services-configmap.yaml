@@ -17,20 +17,30 @@
 {{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
 {{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.gentian-%s.svc.cluster.local" $stage $stage) -}}
 {{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- /*
+  Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
+  restriction, not something a namespace field on the ref can work around.
+  Kernel SERVICES (keycloak-idp, etc.) that need KERNEL_DOMAIN/TENANCY_MODE
+  live in platform-kernel, not this release's own namespace (gentian-system),
+  so this ConfigMap is mirrored into both — same name, same data, so any
+  existing platform-kernel configMapKeyRef to "gentian-kernel-services"
+  just works without a separate reference convention to maintain.
+*/ -}}
+{{- range $ns := list .Release.Namespace "platform-kernel" | uniq }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gentian-kernel-services
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $ns }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     gentianos.io/config-type: kernel-services
 data:
-  {{- with .Values.kernelDomain }}
+  {{- with $.Values.kernelDomain }}
   KERNEL_DOMAIN: {{ . | quote }}
   {{- end }}
-  TENANCY_MODE: {{ .Values.tenancyMode | default "multi" | quote }}
-  {{- $issuer := .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
+  TENANCY_MODE: {{ $.Values.tenancyMode | default "multi" | quote }}
+  {{- $issuer := $.Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
   ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
   KEYCLOAK_INTERNAL_URL: {{ $keycloakInternal | quote }}
   {{- with $smtpHost }}
@@ -66,4 +76,5 @@ data:
   {{- with $ks.openprojectEnterpriseToken }}
   OPENPROJECT_ENTERPRISE_TOKEN: {{ . | quote }}
   {{- end }}
+{{- end }}
 {{- end }}
