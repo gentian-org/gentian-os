@@ -141,6 +141,41 @@ apply_gentian_cluster_issuers() {
         | kubectl apply -f -
 }
 
+# Force cert-manager to re-evaluate the DNS-01-Cloudflare ClusterIssuer's
+# readiness. A plain `kubectl apply` (apply_gentian_cluster_issuers above)
+# is a no-op whenever the manifest content hasn't changed — no
+# resourceVersion bump, no reconcile, nothing — and cert-manager does not
+# automatically re-check a ClusterIssuer just because a Secret it depends
+# on (cloudflare-api-token) appears later. Confirmed live: repeatedly
+# re-applying an unchanged ClusterIssuer left its Ready condition's
+# lastTransitionTime exactly where it was, hours later. An annotation
+# update, unlike an unchanged apply, does genuinely change the object and
+# does trigger the controller's watch-based reconcile.
+#
+# Call this only once cloudflare-api-token is known to exist (right after
+# install_kernel_wildcard creates it, or any time as a day-2 fix via
+# update.sh --acme-issuers) — calling it before the Secret exists just
+# re-confirms NotReady and wastes the wait.
+force_reconcile_dns01_cluster_issuer() {
+    local issuer
+    issuer="$(gentian_dns01_cluster_issuer_name)"
+    info "Forcing ${issuer} to re-reconcile..."
+    kubectl annotate clusterissuer "${issuer}" \
+        "gentian.io/force-reconcile=$(date +%s)" --overwrite >/dev/null
+    local i
+    for i in {1..30}; do
+        if kubectl get clusterissuer "${issuer}" \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            success "${issuer} is Ready."
+            return 0
+        fi
+        sleep 2
+    done
+    warn "${issuer} still not Ready after 60s:"
+    warn "  kubectl describe clusterissuer ${issuer}"
+    return 1
+}
+
 # =============================================================================
 # 2b. Install kernel cert-manager ClusterIssuers (always — both HTTP-01 and
 # DNS-01-Cloudflare). The wildcard Certificate + cloudflare-api-token
@@ -472,17 +507,11 @@ install_kernel_wildcard() {
 
     # install_kernel_cert_resources (Step 2b) applies the DNS-01-Cloudflare
     # ClusterIssuer long before this Secret exists (it's only created just
-    # above). cert-manager evaluates a ClusterIssuer's readiness once, at
-    # apply time, and does not automatically re-check it just because a
-    # Secret it depends on shows up later — so without this, the issuer
-    # stays permanently stuck on its very first "secret not found" result
-    # and every Certificate issuance through it fails from then on, even
-    # once the Secret is long since present. Re-applying is a no-op change
-    # to the object but does trigger cert-manager to re-evaluate it now
-    # that the Secret genuinely exists (same idempotent call used by
-    # update.sh --acme-issuers to recover from this after the fact).
-    info "Re-applying ClusterIssuers now that cloudflare-api-token exists..."
+    # above), which leaves it permanently stuck NotReady — see
+    # force_reconcile_dns01_cluster_issuer for why and how this fixes it.
     apply_gentian_cluster_issuers
+    force_reconcile_dns01_cluster_issuer \
+        || warn "Continuing — wildcard Certificate will issue once the issuer recovers."
 
     # 3) Apply the wildcard Certificate (with domain name templating).
     envsubst "\${KERNEL_DOMAIN} \${DNS01_CLUSTER_ISSUER}" \

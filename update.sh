@@ -532,6 +532,18 @@ op_acme_issuers() {
 
     apply_gentian_cluster_issuers
     success "ClusterIssuers applied (ACME_ENV=${ACME_ENV:-production})."
+
+    # A plain apply is a no-op if the ClusterIssuer's content didn't change
+    # (the common case when re-running this specifically to recover a
+    # stuck issuer) — force a real reconcile so it actually re-checks
+    # cloudflare-api-token instead of staying on whatever it decided the
+    # first time. See force_reconcile_dns01_cluster_issuer in certs.sh.
+    if kubectl get secret cloudflare-api-token -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" >/dev/null 2>&1; then
+        force_reconcile_dns01_cluster_issuer || true
+    else
+        info "cloudflare-api-token not present yet — skipping force-reconcile (nothing to re-check)."
+    fi
+
     info "Tenant operator issuer: set tenantDNS01ClusterIssuer in Helm values to match."
     info "  production: letsencrypt-dns01-cloudflare"
     info "  staging:    letsencrypt-staging-dns01-cloudflare"
