@@ -310,7 +310,7 @@ spec:
 
               ACTUAL=\$(printf '%s' "\${INFO}" | jq -c \\
                 'if (.data | type) == "array" then
-                   [.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference\\.platform-kernel\\.svc\\.cluster\\.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base}]
+                   [.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference.platform-kernel.svc.cluster.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base}]
                  else [] end')
 
               printf '%s' "\${ACTUAL}" | jq -c --argjson desired "\${DESIRED}" \\
