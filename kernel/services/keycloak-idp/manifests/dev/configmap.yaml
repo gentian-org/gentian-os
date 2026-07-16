@@ -42,6 +42,15 @@ data:
     # (that's exactly what broke KERNEL_DOMAIN/KC_HOSTNAME here before —
     # sensitive-values.yaml is merged last, so its extraEnv always won).
     # KEYCLOAK_ADMIN_PASSWORD is pulled in via secretKeyRef instead.
+    #
+    # Do NOT add KC_CACHE or KC_HEALTH_ENABLED here — the keycloakx chart
+    # already emits both natively (KC_CACHE from the --cache=local arg
+    # above; KC_HEALTH_ENABLED from the chart's own default health-check
+    # behavior), and a duplicate `name:` in the same env list breaks the
+    # strategic-merge-patch Helm computes on upgrade ("The order in patch
+    # list ... doesn't match $setElementOrder list") — silently succeeds
+    # on the very first install (no prior state to patch against) but
+    # fails every upgrade after, so the failure mode is easy to miss.
     extraEnv: |
       - name: KERNEL_DOMAIN
         valueFrom:
@@ -55,12 +64,8 @@ data:
           secretKeyRef:
             name: keycloak-idp-sensitive-values
             key: admin-password
-      - name: KC_HEALTH_ENABLED
-        value: "true"
       - name: KC_METRICS_ENABLED
         value: "false"
-      - name: KC_CACHE
-        value: "local"
       - name: KC_HOSTNAME
         value: "https://id.$(KERNEL_DOMAIN)/auth"
       - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
