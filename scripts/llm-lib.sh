@@ -301,10 +301,17 @@ spec:
               BASE="http://litellm-proxy.${ns}.svc.cluster.local:4000"
               AUTH="Authorization: Bearer \${LITELLM_MASTER_KEY}"
               DESIRED='${desired_json}'
-              INFO=\$(curl -sf -H "\${AUTH}" "\${BASE}/model/info")
+              # No -f: LiteLLM's /model/info returns HTTP 500 (not an empty
+              # list) when zero models are registered yet — a real state on
+              # a fresh proxy, not a fatal error. jq below treats anything
+              # whose .data isn't an array (that 500's body is
+              # {"detail":{"error":...}}) as an empty model list.
+              INFO=\$(curl -s -H "\${AUTH}" "\${BASE}/model/info")
 
               ACTUAL=\$(printf '%s' "\${INFO}" | jq -c \\
-                '[.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference\\.platform-kernel\\.svc\\.cluster\\.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base}]')
+                'if (.data | type) == "array" then
+                   [.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference\\.platform-kernel\\.svc\\.cluster\\.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base}]
+                 else [] end')
 
               printf '%s' "\${ACTUAL}" | jq -c --argjson desired "\${DESIRED}" \\
                 '.[] | select(.api_base as \$b | ([\$desired[].api_base] | index(\$b)) == null)' | \\
