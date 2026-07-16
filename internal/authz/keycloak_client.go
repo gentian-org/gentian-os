@@ -172,7 +172,7 @@ func BrowserSecurityHeadersJSON() string {
 	return string(b)
 }
 
-// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders to a realm.
+// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders and functional session timeouts (12 hours) to a realm.
 func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
 	if realm == "" {
 		return nil
@@ -181,7 +181,12 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"browserSecurityHeaders": DefaultBrowserSecurityHeaders}
+	body := map[string]any{
+		"browserSecurityHeaders": DefaultBrowserSecurityHeaders,
+		"accessTokenLifespan":    43200, // 12 hours
+		"ssoSessionIdleTimeout":  43200, // 12 hours
+		"ssoSessionMaxLifespan":  43200, // 12 hours
+	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err
 }
