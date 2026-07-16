@@ -652,14 +652,13 @@ stage: ${stage}
 image:
   tag: "develop"
 
-# Uncomment and fill in for Cloudflare edge-DNS/tunnel mode:
-# cloudflare:
-#   zoneID: ""
-#   tunnelCNAME: ""
-
 api:
   env:
     BACKEND_CORS_ORIGINS: https://portal.${domain}
+
+appLifecycle:
+  deployments:
+    repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
 EOF
         info "Scaffolded ${kernel_dir}/values.yaml"
         generated=1

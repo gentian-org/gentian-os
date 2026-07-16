@@ -318,8 +318,15 @@ seed_secrets() {
         fi
 
         info "Resolving in-cluster Cloudflare Tunnel ID..."
-        local tunnel_id
-        tunnel_id=$(kubectl get secret tunnel-credentials -n default -o jsonpath='{.data}' 2>/dev/null | jq -r 'keys[0] // empty' | sed 's/\.json$//')
+        local tunnel_id=""
+        local token_val
+        token_val=$(kubectl get secret cf-tunnel -n default -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null | base64 -d 2>/dev/null || true)
+        if [[ -n "${token_val}" ]]; then
+            tunnel_id=$(echo "${token_val}" | jq -r '.t // empty')
+        fi
+        if [[ -z "${tunnel_id}" ]]; then
+            tunnel_id=$(kubectl get secret tunnel-credentials -n default -o jsonpath='{.data}' 2>/dev/null | jq -r 'keys[0] // empty' | sed 's/\.json$//')
+        fi
         if [[ -n "${tunnel_id}" ]]; then
             tunnel_cname="${tunnel_id}.cfargotunnel.com"
             info "Resolved Cloudflare Tunnel CNAME: ${tunnel_cname}"

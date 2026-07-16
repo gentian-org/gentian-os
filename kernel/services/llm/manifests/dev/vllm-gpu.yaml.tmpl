@@ -1,41 +1,55 @@
-# Real vLLM inference backend (GPU_ACCELERATION=true). Replaces vllm-mock.yaml.
+# One of possibly several real vLLM inference backends (GPU_ACCELERATION=true).
+# Replaces vllm-mock.yaml. One gentian-os cluster can run multiple named vLLM
+# instances (e.g. a small always-on chat model plus a larger on-demand one) —
+# each instance gets its own PVC/Deployment/Service, named vllm-%VLLM_INSTANCE%-*
+# so they don't collide, and its own entry in LiteLLM (one shared LiteLLM
+# proxy in front of however many vLLM instances exist — see llm-services.yaml).
 #
-# Rendered from this .tmpl by render_vllm_gpu_manifest() (scripts/llm-lib.sh)
-# via VLLM_MODEL_ID/VLLM_GPU_MEMORY_UTILIZATION/VLLM_MAX_MODEL_LEN/
-# VLLM_MODEL_CACHE_SIZE/VLLM_IMAGE_TAG — cluster-specific instance data, not
-# gentian-os defaults. To change the served model: set VLLM_MODEL_ID (and
-# friends) in gentian-deployments' clusters/<cluster>/kernel/cluster-settings.env,
-# then run `./update.sh --llm`. See docs/design/agentic-ai.md §10.2 for the
-# full CLI-flag cheat-sheet and how to add a model to LiteLLM afterwards.
+# Rendered from this .tmpl once per entry in VLLM_INSTANCES by
+# render_and_apply_vllm_gpu_manifest() (scripts/llm-lib.sh), substituting
+# %VLLM_INSTANCE%/%VLLM_MODEL_ID%/%VLLM_GPU_MEMORY_UTILIZATION%/
+# %VLLM_MAX_MODEL_LEN%/%VLLM_MODEL_CACHE_SIZE%/%VLLM_IMAGE_TAG% — cluster
+# instance data, not gentian-os defaults. To add/change/remove an instance:
+# edit VLLM_INSTANCES (and friends) in gentian-deployments'
+# clusters/<cluster>/kernel/cluster-settings.env, then run `./update.sh --llm`.
+# See docs/design/agentic-ai.md §10.2 for the full flag cheat-sheet.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: vllm-model-cache
+  name: vllm-%VLLM_INSTANCE%-model-cache
   namespace: platform-kernel
+  labels:
+    app.kubernetes.io/component: vllm-instance
+    gentianos.io/vllm-instance: "%VLLM_INSTANCE%"
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
-      # HF model caches run 15-40GB per 7-8B model; bump (VLLM_MODEL_CACHE_SIZE)
-      # if you serve multiple models or switch to a larger one.
+      # HF model caches run 15-40GB per 7-8B model; bump (VLLM_<INSTANCE>_MODEL_CACHE_SIZE)
+      # for a larger model.
       storage: %VLLM_MODEL_CACHE_SIZE%
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-inference
+  name: vllm-%VLLM_INSTANCE%-inference
   namespace: platform-kernel
+  labels:
+    app.kubernetes.io/component: vllm-instance
+    gentianos.io/vllm-instance: "%VLLM_INSTANCE%"
 spec:
   replicas: 1
   strategy:
     type: Recreate # only one GPU slice budget is planned per replica; avoid two pods racing for it mid-rollout
   selector:
     matchLabels:
-      app: vllm-inference
+      app: vllm-%VLLM_INSTANCE%-inference
   template:
     metadata:
       labels:
-        app: vllm-inference
+        app: vllm-%VLLM_INSTANCE%-inference
+        app.kubernetes.io/component: vllm-instance
+        gentianos.io/vllm-instance: "%VLLM_INSTANCE%"
     spec:
       nodeSelector:
         nvidia.com/gpu.present: "true"
@@ -54,11 +68,14 @@ spec:
         # Which model to swap in is cluster instance data (cluster-settings.env),
         # not a gentian-os default — see the header comment above. Gated models
         # (e.g. Llama) additionally need HUGGING_FACE_HUB_TOKEN below (create the
-        # vllm-hf-token Secret first — see agentic-ai.md §10.2).
+        # vllm-hf-token Secret first — see agentic-ai.md §10.2; shared across
+        # every instance — one HF account token covers whatever it's licensed for).
         - name: VLLM_MODEL_ID
           value: "%VLLM_MODEL_ID%"
-        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml.tmpl) —
-        # stay well under 1.0 so this pod doesn't starve/OOM its neighbors.
+        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml.tmpl)
+        # and how many OTHER instances/workloads share the same card(s) — stay
+        # well under 1.0, and under what's left after every other instance's
+        # own budget, so this pod doesn't starve/OOM its neighbors.
         - name: VLLM_GPU_MEMORY_UTILIZATION
           value: "%VLLM_GPU_MEMORY_UTILIZATION%"
         - name: VLLM_MAX_MODEL_LEN
@@ -98,16 +115,19 @@ spec:
       volumes:
       - name: model-cache
         persistentVolumeClaim:
-          claimName: vllm-model-cache
+          claimName: vllm-%VLLM_INSTANCE%-model-cache
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: vllm-inference
+  name: vllm-%VLLM_INSTANCE%-inference
   namespace: platform-kernel
+  labels:
+    app.kubernetes.io/component: vllm-instance
+    gentianos.io/vllm-instance: "%VLLM_INSTANCE%"
 spec:
   ports:
   - port: 8000
     targetPort: 8000
   selector:
-    app: vllm-inference
+    app: vllm-%VLLM_INSTANCE%-inference
