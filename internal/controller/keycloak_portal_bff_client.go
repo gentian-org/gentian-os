@@ -31,7 +31,7 @@ import (
 )
 
 const portalBFFClientID = "gentian-portal-bff"
-const portalBFFClientVersion = "2"
+const portalBFFClientVersion = "3"
 
 func tenantPortalBFFClientJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-portal-bff-%s", tenantName)
@@ -44,6 +44,12 @@ func buildPortalBFFClientScript(realmExpr string) string {
 set -eu
 REALM=%s
 CLIENT_ID=%q
+PORTAL="${PORTAL_ORIGIN%%/}"
+
+if [ -z "${PORTAL:-}" ]; then
+  echo "ERROR: PORTAL_ORIGIN unset" >&2
+  exit 1
+fi
 
 if [ -z "${PORTAL_BFF_CLIENT_SECRET:-}" ]; then
   echo "ERROR: PORTAL_BFF_CLIENT_SECRET unset" >&2
@@ -61,7 +67,21 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 EXISTING=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}" || echo "[]")
-BODY="{\"clientId\":\"${CLIENT_ID}\",\"name\":\"Gentian Portal BFF\",\"protocol\":\"openid-connect\",\"publicClient\":false,\"standardFlowEnabled\":false,\"directAccessGrantsEnabled\":true,\"serviceAccountsEnabled\":false,\"fullScopeAllowed\":true,\"secret\":\"${PORTAL_BFF_CLIENT_SECRET}\"}"
+BODY=$(jq -n --arg portal "${PORTAL}" --arg clientId "${CLIENT_ID}" --arg secret "${PORTAL_BFF_CLIENT_SECRET}" '{
+  clientId: $clientId,
+  name: "Gentian Portal BFF",
+  protocol: "openid-connect",
+  publicClient: false,
+  standardFlowEnabled: false,
+  directAccessGrantsEnabled: true,
+  serviceAccountsEnabled: false,
+  fullScopeAllowed: true,
+  secret: $secret,
+  redirectUris: [($portal + "/login"), ($portal + "/login/*"), ($portal + "/*")],
+  attributes: {
+    "post.logout.redirect.uris": (($portal + "/login") + "##" + ($portal + "/*"))
+  }
+}')
 if echo "${EXISTING}" | grep -q "\"clientId\":\"${CLIENT_ID}\""; then
   %s
   curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_KC_ID}" \
@@ -92,10 +112,11 @@ fi
 		keycloak.ShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalBFFClientID))
 }
 
-func makePortalBFFClientJob(tenantName, realmName string) *batchv1.Job {
+func makePortalBFFClientJob(tenantName, realmName, portalOrigin string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("portal-bff-client", buildPortalBFFClientScript(fmt.Sprintf("%q", realmName)))
 	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "PORTAL_ORIGIN", Value: portalOrigin},
 		corev1.EnvVar{
 			Name: "PORTAL_BFF_CLIENT_SECRET",
 			ValueFrom: &corev1.EnvVarSource{

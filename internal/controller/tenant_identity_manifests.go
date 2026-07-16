@@ -218,8 +218,8 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		externalURL := kernelExternalURL(r.KernelDomain)
 		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, externalURL))
 		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm, externalURL))
-		jobs = append(jobs, *makePortalBFFClientJob(tenant.Name, realmName))
 		portalOrigin := fmt.Sprintf("https://%s", kernelPortalHost(r.KernelDomain))
+		jobs = append(jobs, *makePortalBFFClientJob(tenant.Name, realmName, portalOrigin))
 		jobs = append(jobs, *makePortalPublicClientJob(tenant.Name, realmName, portalOrigin))
 		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName))
