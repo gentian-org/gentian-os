@@ -29,7 +29,12 @@ replicaCount: 1
 # In prod, override with: global.storageClass: longhorn (or similar)
 global:
   storageClass: nfs-csi
-  # Pull secret for registry.opencode.de — injected by ESO on startup.
+  # Optional private-registry pull secret, replicated into tenant namespaces
+  # by the operator's ensureRegistryCredentials if a `registry-credentials`
+  # Secret exists in the kernel services namespace (see internal/controller/
+  # tenant_controller.go). No such Secret ships by default in gentian-os —
+  # a downstream deployment can add one (e.g. via an ExternalSecret dropped
+  # into kernel/services/_globals/secrets/{env}/).
   # Bitnami (and most Helm) charts merge global.imagePullSecrets into every pod spec.
   imagePullSecrets:
     - registry-credentials

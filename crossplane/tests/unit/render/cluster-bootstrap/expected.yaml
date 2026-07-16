@@ -51,8 +51,6 @@ spec:
         - https://github.com/gentian-org/gentian-os
         - https://github.com/gentian-org/gentian-apps
         - https://github.com/gentian-org/gentian-deployments
-        - registry.opencode.de/*
-        - oci://registry.opencode.de/*
   providerConfigRef:
     name: kubernetes
 ---
