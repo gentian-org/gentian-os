@@ -220,19 +220,29 @@ _gentian_os_deployments_kernel_dir() {
 _gentian_os_collect_operator_value_files() {
     local -n _files=$1
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
-    local kernel_dir
+    local kernel_dir deploy_dir
     kernel_dir="$(_gentian_os_deployments_kernel_dir)"
+    deploy_dir="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     _files=()
-    if [[ -f "${kernel_dir}/values-base.yaml" ]]; then
-        _files+=(-f "${kernel_dir}/values-base.yaml")
+    # Mirrors the layered valueFiles ArgoCD uses once it takes over this
+    # Application (kernel/bootstrap/gentian-os-application.yaml.tmpl):
+    # profiles/_base.yaml -> profiles/<stage>.yaml -> clusters/<cluster>/kernel/values.yaml
+    if [[ -f "${deploy_dir}/profiles/_base.yaml" ]]; then
+        _files+=(-f "${deploy_dir}/profiles/_base.yaml")
     else
-        warn "Missing ${kernel_dir}/values-base.yaml — operator Cloudflare/DNS settings may be incomplete."
+        warn "Missing ${deploy_dir}/profiles/_base.yaml — operator shared defaults not applied."
     fi
-    if [[ -f "${kernel_dir}/values-${stage}.yaml" ]]; then
-        _files+=(-f "${kernel_dir}/values-${stage}.yaml")
-        info "Layering operator Helm values from gentian-deployments (values-${stage}.yaml)."
+    if [[ -f "${deploy_dir}/profiles/${stage}.yaml" ]]; then
+        _files+=(-f "${deploy_dir}/profiles/${stage}.yaml")
+        info "Layering operator Helm values from gentian-deployments (profiles/${stage}.yaml)."
     else
-        warn "Missing ${kernel_dir}/values-${stage}.yaml — operator stage overlay not applied."
+        warn "Missing ${deploy_dir}/profiles/${stage}.yaml — operator stage overlay not applied."
+    fi
+    if [[ -f "${kernel_dir}/values.yaml" ]]; then
+        _files+=(-f "${kernel_dir}/values.yaml")
+        info "Layering operator Helm values from gentian-deployments (clusters/.../kernel/values.yaml)."
+    else
+        warn "Missing ${kernel_dir}/values.yaml — operator Cloudflare/DNS settings may be incomplete."
     fi
 }
 
