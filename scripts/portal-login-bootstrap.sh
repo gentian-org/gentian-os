@@ -314,6 +314,35 @@ _keycloak_smtp_configure_shell() {
 EOSMTP
 }
 
+# In-cluster shell fragment: re-authenticate and replace ${TOKEN}/${AUTH}.
+#
+# Keycloak's master realm (where the admin-cli password grant used
+# throughout this script authenticates against) has a default
+# accessTokenLifespan of 60 seconds. Scripts that chain many sequential
+# realm/client/group API calls (e.g. run_keycloak_portal_bootstrap_job)
+# can exceed that before reaching their later, optional sections — and
+# since every call here uses `curl -sf`, an expired-token 401 fails
+# completely silently (curl just exits 22, no response body printed), so
+# the job dies with no visible reason right after whatever was last
+# echoed. Splice this in before any section that runs after ~40-50s of
+# prior API calls to get a fresh token instead of gambling on the old
+# one still being valid.
+_keycloak_refresh_token_shell() {
+    cat <<'EOREFRESH'
+              TOKEN=$(curl -sf -X POST "${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \
+                -H "Content-Type: application/x-www-form-urlencoded" \
+                --data-urlencode "client_id=admin-cli" \
+                --data-urlencode "username=${KEYCLOAK_ADMIN_USERNAME}" \
+                --data-urlencode "password=${KEYCLOAK_ADMIN_PASSWORD}" \
+                --data-urlencode "grant_type=password" | jq -r .access_token)
+              if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+                echo "ERROR: Keycloak admin token refresh failed at ${KEYCLOAK_BASE}" >&2
+                exit 1
+              fi
+              AUTH="Authorization: Bearer ${TOKEN}"
+EOREFRESH
+}
+
 # Apply keycloak-smtp-credentials Secret used by bootstrap / SMTP-only Jobs.
 _apply_keycloak_smtp_secret() {
     local ns="${1:-platform-kernel}"
@@ -734,8 +763,9 @@ run_keycloak_portal_bootstrap_job() {
         "${bootstrap_secret_args[@]}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    local smtp_shell
+    local smtp_shell refresh_shell
     smtp_shell=$(_keycloak_smtp_configure_shell)
+    refresh_shell=$(_keycloak_refresh_token_shell)
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
@@ -987,6 +1017,7 @@ spec:
                 echo "gentian-argocd default scope: groups"
               fi
 
+${refresh_shell}
               if [ "\${LLM_SUPPORT}" = "true" ]; then
                 # Only kernel-realm users can ever reach this client (tenant users
                 # live in separate per-tenant realms), so a flat hardcoded
@@ -1050,6 +1081,7 @@ spec:
                 fi
               fi
 
+${refresh_shell}
 ${smtp_shell}
 
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
