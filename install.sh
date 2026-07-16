@@ -648,6 +648,7 @@ EOF
 # (portal chart is separate from the operator chart but shares this file).
 kernelDomain: ${domain}
 stage: ${stage}
+llmSupport: ${LLM_SUPPORT:-false}
 
 image:
   tag: "develop"
