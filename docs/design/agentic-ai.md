@@ -466,21 +466,31 @@ against real cluster GPU resources by `validate_config`, see
    HuggingFace, then create the token Secret it reads via
    `HUGGING_FACE_HUB_TOKEN`:
    `kubectl create secret generic vllm-hf-token -n platform-kernel --from-literal=token=<hf_...>`
-   (ungated models like Qwen need none of this).
+   (required for gated models; worth creating even for ungated ones
+   too — unauthenticated HF Hub requests are rate-limited, which can
+   turn a multi-GB first download into a race against the
+   `startupProbe` deadline below).
 3. `./update.sh --llm` — applies the manifests; first startup pulls
    weights into the PVC, which can take several minutes
-   (`startupProbe` allows up to ~20 min before giving up).
+   (`startupProbe` allows up to ~20 min before giving up). If it's a
+   large model on a slow/unauthenticated HuggingFace connection, the
+   download alone can eat most of that budget — see the `HF_TOKEN`
+   note above; without it the startup probe can kill the pod mid-load
+   on the very first pull (weights are cached in the PVC after that,
+   so the next attempt is fast).
 4. Watch it come up: `kubectl get pods -n platform-kernel -w | grep vllm-inference`,
    then `kubectl logs -n platform-kernel deploy/vllm-inference -f` for
    download/load progress.
-5. Confirm it's serving: from inside the cluster (or port-forward)
-   `curl http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1/models`.
-6. Register it with LiteLLM so it's usable through
-   `https://llm.<KERNEL_DOMAIN>`: Admin Console → **Models** → **Add
-   Model**, LiteLLM Model Name = your choice, Provider = OpenAI-compatible,
-   API Base = `http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1`
-   (no key needed, cluster-internal). Same thing via API:
-   `curl -X POST https://llm.<KERNEL_DOMAIN>/model/new -H "Authorization: Bearer <master-or-admin-key>" -H 'Content-Type: application/json' -d '{"model_name":"qwen2.5-7b","litellm_params":{"model":"openai/Qwen/Qwen2.5-7B-Instruct","api_base":"http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1"}}'`.
+5. That's it — no separate LiteLLM registration step. The same
+   `./update.sh --llm` run also calls `ensure_litellm_vllm_model()`
+   (`scripts/llm-lib.sh`), which registers/updates the vLLM backend as
+   a LiteLLM model keyed on its `api_base` (there's exactly one
+   vllm-inference backend): a swap to a different `VLLM_MODEL_ID`
+   deletes the stale entry and creates a fresh one, so LiteLLM's model
+   list always matches whatever vLLM is actually serving. Confirm via
+   `https://llm.<KERNEL_DOMAIN>/v1/models` (or from inside the cluster,
+   `curl http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1/models`
+   to check vLLM directly).
 
 There is no separate "vLLM CLI" for the admin to run against a live
 cluster beyond this — configuration changes are GitOps (edit the

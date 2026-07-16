@@ -1328,6 +1328,9 @@ install_llm_serving() {
     || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
     ensure_litellm_teams || warn "LiteLLM team sync failed — retry with ./update.sh --llm."
+    if [[ "${GPU_ACCELERATION}" == "true" ]]; then
+        ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./update.sh --llm."
+    fi
 
     success "LLM serving stack deployment complete."
 }
