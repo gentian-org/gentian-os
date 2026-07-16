@@ -257,8 +257,13 @@ ensure_litellm_vllm_model() {
         model_name="$(printf '%s' "${model_id}" | tr '[:upper:]/' '[:lower:]-')"
         local api_base="http://vllm-${instance_k8s}-inference.platform-kernel.svc.cluster.local:8000/v1"
 
-        desired_json="$(jq -c --arg name "${model_name}" --arg id "${model_id}" --arg base "${api_base}" \
-            '. + [{"model_name":$name,"model_id":$id,"api_base":$base}]' <<<"${desired_json}")"
+        # api_key is a required-but-unchecked field: LiteLLM's openai/
+        # provider integration refuses to even build a client without a
+        # non-empty api_key, regardless of whether the actual backend (vLLM
+        # here) enforces auth at all — confirmed live, chat completions
+        # 500'd with litellm.AuthenticationError until this was added.
+        desired_json="$(jq -c --arg name "${model_name}" --arg model "openai/${model_id}" --arg base "${api_base}" \
+            '. + [{"model_name":$name,"api_base":$base,"model":$model,"api_key":"not-needed"}]' <<<"${desired_json}")"
     done
 
     # Note: deliberately NOT returning early when desired_json is still
@@ -310,7 +315,7 @@ spec:
 
               ACTUAL=\$(printf '%s' "\${INFO}" | jq -c \\
                 'if (.data | type) == "array" then
-                   [.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference.platform-kernel.svc.cluster.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base}]
+                   [.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference.platform-kernel.svc.cluster.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base, model: .litellm_params.model, api_key: (.litellm_params.api_key // "")}]
                  else [] end')
 
               printf '%s' "\${ACTUAL}" | jq -c --argjson desired "\${DESIRED}" \\
@@ -326,25 +331,28 @@ spec:
 
               printf '%s' "\${DESIRED}" | jq -c '.[]' | while IFS= read -r want; do
                 wname=\$(printf '%s' "\${want}" | jq -r '.model_name')
-                wid=\$(printf '%s' "\${want}" | jq -r '.model_id')
                 wbase=\$(printf '%s' "\${want}" | jq -r '.api_base')
+                wmodel=\$(printf '%s' "\${want}" | jq -r '.model')
+                wkey=\$(printf '%s' "\${want}" | jq -r '.api_key')
 
                 match=\$(printf '%s' "\${ACTUAL}" | jq -c --arg base "\${wbase}" '[.[] | select(.api_base==\$base)] | first // empty')
                 if [ -n "\${match}" ]; then
                   mname=\$(printf '%s' "\${match}" | jq -r '.model_name')
+                  mmodel=\$(printf '%s' "\${match}" | jq -r '.model')
+                  mkey=\$(printf '%s' "\${match}" | jq -r '.api_key')
                   mid=\$(printf '%s' "\${match}" | jq -r '.id')
-                  if [ "\${mname}" = "\${wname}" ]; then
+                  if [ "\${mname}" = "\${wname}" ] && [ "\${mmodel}" = "\${wmodel}" ] && [ "\${mkey}" = "\${wkey}" ]; then
                     echo "LiteLLM model '\${wname}' already up to date (id=\${mid})"
                     continue
                   fi
-                  echo "vLLM instance at \${wbase} now serves a different model — removing stale entry '\${mname}' (id=\${mid})"
+                  echo "vLLM instance at \${wbase} changed (model/name/api_key) — removing stale entry '\${mname}' (id=\${mid})"
                   curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                     "\${BASE}/model/delete" -d "{\"id\":\"\${mid}\"}" >/dev/null
                 fi
 
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${BASE}/model/new" -d "{\"model_name\":\"\${wname}\",\"litellm_params\":{\"model\":\"openai/\${wid}\",\"api_base\":\"\${wbase}\"}}" >/dev/null
-                echo "Registered LiteLLM model '\${wname}' -> \${wid} (\${wbase})"
+                  "\${BASE}/model/new" -d "{\"model_name\":\"\${wname}\",\"litellm_params\":{\"model\":\"\${wmodel}\",\"api_base\":\"\${wbase}\",\"api_key\":\"\${wkey}\"}}" >/dev/null
+                echo "Registered LiteLLM model '\${wname}' -> \${wmodel} (\${wbase})"
               done
           env:
             - name: LITELLM_MASTER_KEY
