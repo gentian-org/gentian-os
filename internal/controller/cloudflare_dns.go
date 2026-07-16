@@ -26,6 +26,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
