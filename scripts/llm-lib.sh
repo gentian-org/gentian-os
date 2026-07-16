@@ -30,6 +30,7 @@ render_and_apply_vllm_gpu_manifest() {
     if [[ -z "${instances}" ]]; then
         warn "GPU_ACCELERATION=true but VLLM_INSTANCES is empty — no vLLM instance to deploy."
         warn "  Set VLLM_INSTANCES (space-separated instance IDs, e.g. \"qwen\") in cluster-settings.env."
+        prune_stale_vllm_instances ""
         return 0
     fi
 
@@ -71,18 +72,21 @@ render_and_apply_vllm_gpu_manifest() {
         rm -f "${rendered}"
     done
 
-    _prune_stale_vllm_instances "${instances}"
+    prune_stale_vllm_instances "${instances}"
 }
 
 # Removes the Deployment+Service for any vLLM instance that was previously
-# applied but is no longer in the current VLLM_INSTANCES list. PVCs are
+# applied but is no longer in the given desired-instances list — pass ""
+# to remove every real vLLM instance (e.g. GPU_ACCELERATION flipped back
+# to false; the mock backend's fixed-name Deployment doesn't collide with
+# any of these, so nothing prunes them automatically otherwise). PVCs are
 # deliberately left behind (orphaned, not deleted) — cached model weights
 # can be tens of GB and take many minutes to redownload (see the HF_TOKEN
 # rate-limit note in agentic-ai.md §10.2); re-adding the same instance ID
 # later picks the cache back up instead of paying that cost again. Remove
 # stale PVCs manually if you want the disk space back:
 #   kubectl delete pvc -n platform-kernel -l gentianos.io/vllm-instance=<id>
-_prune_stale_vllm_instances() {
+prune_stale_vllm_instances() {
     local desired_instances="$1"
     local ns="platform-kernel"
 
@@ -108,7 +112,7 @@ _prune_stale_vllm_instances() {
     [[ -z "${stale}" ]] && return 0
 
     warn "Removing vLLM instance(s) no longer in VLLM_INSTANCES:${stale}"
-    warn "  PVCs kept (see _prune_stale_vllm_instances comment) — delete manually if you want the cached weights gone too."
+    warn "  PVCs kept (see prune_stale_vllm_instances comment) — delete manually if you want the cached weights gone too."
     for id in ${stale}; do
         kubectl delete deployment,service -n "${ns}" -l "gentianos.io/vllm-instance=${id}" --ignore-not-found=true
     done
@@ -223,7 +227,7 @@ EOF
 # so a swap never leaves a stale entry claiming to be the old model. Any
 # LiteLLM entry pointed at a vllm-*-inference api_base that ISN'T one of
 # the current VLLM_INSTANCES gets removed entirely (the instance itself
-# was already pruned by _prune_stale_vllm_instances).
+# was already pruned by prune_stale_vllm_instances).
 ensure_litellm_vllm_model() {
     local ns="platform-kernel"
     local job_name="litellm-vllm-model-sync"
@@ -257,12 +261,18 @@ ensure_litellm_vllm_model() {
             '. + [{"model_name":$name,"model_id":$id,"api_base":$base}]' <<<"${desired_json}")"
     done
 
+    # Note: deliberately NOT returning early when desired_json is still
+    # "[]" (no vLLM instances configured) — the Job below also removes any
+    # LiteLLM entry left pointing at a vllm-*-inference api_base that isn't
+    # in the desired set, so this still needs to run to clean up
+    # registrations for instances that were removed entirely (or
+    # GPU_ACCELERATION flipped back to false — see the mock branch in
+    # install.sh/update.sh, which calls this unconditionally).
     if [[ "${desired_json}" == "[]" ]]; then
-        info "No valid vLLM instances in VLLM_INSTANCES — skipping LiteLLM model sync."
-        return 0
+        info "No vLLM instances configured — checking for stale LiteLLM registrations to remove."
+    else
+        info "Syncing LiteLLM model registrations for instances: ${instances}"
     fi
-
-    info "Syncing LiteLLM model registrations for instances: ${instances}"
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
     kubectl apply -f - <<EOF

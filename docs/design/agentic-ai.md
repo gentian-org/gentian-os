@@ -433,23 +433,36 @@ guide in
 | `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
 
 **In gentian-os today:** `kernel/services/llm/manifests/<env>/` has two
-interchangeable `vllm-inference` backends, selected by `GPU_ACCELERATION`
-in `install.env`/cluster-settings — `vllm-mock.yaml` (a fake
+kinds of backend, selected by `GPU_ACCELERATION` in
+`install.env`/cluster-settings — `vllm-mock.yaml` (a single fake
 OpenAI-compatible server, `GPU_ACCELERATION=false`, the default) and
-`vllm-gpu.yaml.tmpl` (real vLLM, `GPU_ACCELERATION=true`). Both declare
-a Deployment/Service both named `vllm-inference`, so switching between
-them is just re-running `./update.sh --llm` with the flag flipped — no
-orphaned resources. `vllm-gpu.yaml.tmpl` requests one `nvidia.com/gpu` (a
-time-sliced share, see §10.1's sibling note on `gpu-sharing.yaml.tmpl`).
+`vllm-gpu.yaml.tmpl` (real vLLM, `GPU_ACCELERATION=true`). Unlike the
+mock, the real backend is a **template rendered once per instance**:
+one gentian-os cluster can run several named vLLM instances
+concurrently (e.g. a small always-on chat model plus a larger
+on-demand one), each with its own `vllm-<id>-inference`
+Deployment/Service/PVC (`<id>` is the instance's ID, lowercased,
+underscores turned into hyphens) so they never collide — and one
+shared LiteLLM proxy sits in front of however many instances exist
+(`llm-services.yaml`; see below). Each instance requests one
+`nvidia.com/gpu` (a time-sliced share, see §10.1's sibling note on
+`gpu-sharing.yaml.tmpl`) — see the utilization-budget note at the end
+of this section for what running several concurrently actually costs.
 
-Which model to serve is cluster instance data, not a gentian-os
+Which model(s) to serve is cluster instance data, not a gentian-os
 default — `render_and_apply_vllm_gpu_manifest()` (`scripts/llm-lib.sh`)
-renders the `.tmpl` from `VLLM_MODEL_ID`/`VLLM_GPU_MEMORY_UTILIZATION`/
-`VLLM_MAX_MODEL_LEN`/`VLLM_MODEL_CACHE_SIZE`/`VLLM_IMAGE_TAG`, read from
-the cluster's `cluster-settings.env` in `gentian-deployments` (falling
-back to `Qwen/Qwen2.5-7B-Instruct` / `0.85` / `8192` / `60Gi` / `latest`
-if unset — `Qwen/Qwen2.5-7B-Instruct` has no HF license gate, ~14GB
-FP16, comfortable on a 24GB card with 3 time-sliced neighbors).
+reads `VLLM_INSTANCES` (a space-separated list of instance IDs) from
+the cluster's `cluster-settings.env` in `gentian-deployments`, and for
+each one renders the `.tmpl` from that instance's own
+`VLLM_<ID>_MODEL_ID`/`VLLM_<ID>_GPU_MEMORY_UTILIZATION`/
+`VLLM_<ID>_MAX_MODEL_LEN`/`VLLM_<ID>_MODEL_CACHE_SIZE`/
+`VLLM_<ID>_IMAGE_TAG` (falling back to `Qwen/Qwen2.5-7B-Instruct` /
+`0.85` / `8192` / `60Gi` / `latest` per-instance if unset —
+`Qwen/Qwen2.5-7B-Instruct` has no HF license gate, ~14GB FP16). Any
+instance previously deployed but no longer in `VLLM_INSTANCES` gets its
+Deployment+Service removed automatically (PVC kept — see the function's
+own comment for why); its corresponding LiteLLM registration is removed
+too (below).
 
 **To deploy your first model** (GPU_ACCELERATION already validated
 against real cluster GPU resources by `validate_config`, see
@@ -457,19 +470,21 @@ against real cluster GPU resources by `validate_config`, see
 
 1. Set `GPU_ACCELERATION=true` (and `LLM_SUPPORT=true`) in `install.env`
    or the cluster's `cluster-settings.env`.
-2. Optional — pick a different model: set `VLLM_MODEL_ID` (any
-   HuggingFace OpenAI-served model id) in the cluster's
-   `cluster-settings.env` in `gentian-deployments` (see
-   `cluster-settings.env.template` for the full `VLLM_*` list — memory
-   utilization, context length, cache PVC size, image tag). For a
-   **gated** model (e.g. Llama), first accept its license on
+2. Pick an instance ID (short, memorable, a valid identifier — letters/
+   digits/underscore) and add it to `VLLM_INSTANCES` in the cluster's
+   `cluster-settings.env` in `gentian-deployments`, e.g.
+   `VLLM_INSTANCES="qwen"`. Optional — pick a different model: set
+   `VLLM_QWEN_MODEL_ID` (any HuggingFace OpenAI-served model id; see
+   `cluster-settings.env.template` for the full per-instance `VLLM_<ID>_*`
+   list — memory utilization, context length, cache PVC size, image
+   tag). For a **gated** model (e.g. Llama), first accept its license on
    HuggingFace, then create the token Secret it reads via
    `HUGGING_FACE_HUB_TOKEN`:
    `kubectl create secret generic vllm-hf-token -n platform-kernel --from-literal=token=<hf_...>`
-   (required for gated models; worth creating even for ungated ones
-   too — unauthenticated HF Hub requests are rate-limited, which can
-   turn a multi-GB first download into a race against the
-   `startupProbe` deadline below).
+   (required for gated models, shared across every instance; worth
+   creating even for ungated ones too — unauthenticated HF Hub requests
+   are rate-limited, which can turn a multi-GB first download into a
+   race against the `startupProbe` deadline below).
 3. `./update.sh --llm` — applies the manifests; first startup pulls
    weights into the PVC, which can take several minutes
    (`startupProbe` allows up to ~20 min before giving up). If it's a
@@ -478,19 +493,36 @@ against real cluster GPU resources by `validate_config`, see
    note above; without it the startup probe can kill the pod mid-load
    on the very first pull (weights are cached in the PVC after that,
    so the next attempt is fast).
-4. Watch it come up: `kubectl get pods -n platform-kernel -w | grep vllm-inference`,
-   then `kubectl logs -n platform-kernel deploy/vllm-inference -f` for
-   download/load progress.
+4. Watch it come up: `kubectl get pods -n platform-kernel -w | grep vllm-<id>-inference`,
+   then `kubectl logs -n platform-kernel deploy/vllm-<id>-inference -f`
+   for download/load progress.
 5. That's it — no separate LiteLLM registration step. The same
    `./update.sh --llm` run also calls `ensure_litellm_vllm_model()`
-   (`scripts/llm-lib.sh`), which registers/updates the vLLM backend as
-   a LiteLLM model keyed on its `api_base` (there's exactly one
-   vllm-inference backend): a swap to a different `VLLM_MODEL_ID`
-   deletes the stale entry and creates a fresh one, so LiteLLM's model
-   list always matches whatever vLLM is actually serving. Confirm via
+   (`scripts/llm-lib.sh`), which registers/updates every
+   `VLLM_INSTANCES` entry as a LiteLLM model, each keyed on its own
+   `api_base` (one Service per instance, never shared): a swap to a
+   different `VLLM_<ID>_MODEL_ID` deletes that instance's stale LiteLLM
+   entry and creates a fresh one, and removing an ID from
+   `VLLM_INSTANCES` entirely removes its LiteLLM entry too — the model
+   list always matches whatever's actually running. Confirm via
    `https://llm.<KERNEL_DOMAIN>/v1/models` (or from inside the cluster,
-   `curl http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1/models`
-   to check vLLM directly).
+   `curl http://vllm-<id>-inference.platform-kernel.svc.cluster.local:8000/v1/models`
+   to check one instance directly).
+
+**Adding a second (or third) instance** is just adding another ID to
+`VLLM_INSTANCES` plus its own `VLLM_<ID>_*` block, then `./update.sh
+--llm` — no manifest changes, no separate registration. The real
+constraint is GPU memory, not configuration: `--gpu-memory-utilization`
+is a fraction of *one physical card's* VRAM, and every instance
+scheduled onto the same GPU (time-sliced compute, shared memory pool —
+see `GPU_TIME_SLICE_REPLICAS`) draws from that same pool, so concurrent
+instances' utilization values need to sum to comfortably under 1.0, not
+each independently approach it. A single 24GB card comfortably fits one
+7B-class model at `0.85`; a second concurrent 7B-class instance
+realistically needs both models quantized (AWQ/FP8) to fit. On a
+multi-GPU-node cluster the scheduler can place different instances on
+entirely different physical cards — nothing in `vllm-gpu.yaml.tmpl`
+pins an instance to a specific node beyond `nvidia.com/gpu.present`.
 
 There is no separate "vLLM CLI" for the admin to run against a live
 cluster beyond this — configuration changes are GitOps (edit the

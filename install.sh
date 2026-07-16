@@ -1316,11 +1316,15 @@ install_llm_serving() {
 
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
-        info "Deploying GPU vLLM inference backend..."
+        info "Deploying GPU vLLM inference backend(s)..."
         render_and_apply_vllm_gpu_manifest "${manifests_dir}"
     else
         info "Deploying mock inference backend (GPU_ACCELERATION=false) — see vllm-gpu.yaml.tmpl to serve a real model."
         kubectl apply -f "${manifests_dir}/vllm-mock.yaml"
+        # Mock uses a fixed name that never collides with vllm-<id>-inference,
+        # so flipping GPU_ACCELERATION back to false wouldn't otherwise clean
+        # up any real instances left running from before.
+        prune_stale_vllm_instances ""
     fi
 
     info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
@@ -1329,9 +1333,7 @@ install_llm_serving() {
     || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
     ensure_litellm_teams || warn "LiteLLM team sync failed — retry with ./update.sh --llm."
-    if [[ "${GPU_ACCELERATION}" == "true" ]]; then
-        ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./update.sh --llm."
-    fi
+    ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./update.sh --llm."
 
     success "LLM serving stack deployment complete."
 }
