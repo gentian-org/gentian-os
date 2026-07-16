@@ -927,6 +927,120 @@ spec:
                 name: kubernetes
             {{- end }}
 
+            {{- /* ── Emit post-install bootstrap Job ─────────────────────────────── */}}
+            {{- /* AppProfile.spec.postInstallJob: app-specific bootstrap that must   */}}
+            {{- /* happen via the app's own admin API rather than Helm values. Job is */}}
+            {{- /* retried via ttlSecondsAfterFinished + reconcile, so Script must be */}}
+            {{- /* idempotent and exit non-zero if a dependency isn't ready yet. See */}}
+            {{- /* app-profile-guide.md, "Post-install bootstrap jobs".               */}}
+            {{- $pij := default dict $pSpec.postInstallJob }}
+            {{- $pijImage := dig "image" "" $pij }}
+            {{- if $pijImage }}
+            {{- $pijScript := dig "script" "" $pij }}
+            {{- $pijEnvFrom := dig "envFrom" list $pij }}
+            {{- $pijSA := dig "serviceAccountName" "" $pij }}
+            {{- $pijPVC := dig "readOnlyPVC" dict $pij }}
+            {{- $pijPVCClaim := dig "claimName" "" $pijPVC }}
+            {{- $pijPVCMount := dig "mountPath" "" $pijPVC }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-cm
+              name: {{ $xrName }}-post-install-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-post-install
+                    namespace: {{ $ns }}
+                  data:
+                    run.sh: |
+                      {{- $pijScript | nindent 22 }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-job
+              name: {{ $xrName }}-post-install-job
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: {{ $app }}-post-install
+                    namespace: {{ $ns }}
+                    labels:
+                      app.kubernetes.io/managed-by: gentian-os
+                      gentianos.io/tenant: {{ $tenant }}
+                      gentianos.io/app: {{ $app }}
+                  spec:
+                    ttlSecondsAfterFinished: 600
+                    backoffLimit: 10
+                    template:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/managed-by: gentian-os
+                          gentianos.io/tenant: {{ $tenant }}
+                          gentianos.io/app: {{ $app }}
+                          gentianos.io/component: post-install
+                      spec:
+                        {{- if $pijSA }}
+                        serviceAccountName: {{ $pijSA }}
+                        {{- end }}
+                        restartPolicy: OnFailure
+                        securityContext:
+                          seccompProfile:
+                            type: RuntimeDefault
+                        volumes:
+                          - name: scripts
+                            configMap:
+                              name: {{ $app }}-post-install
+                          {{- if $pijPVCClaim }}
+                          - name: readonly-data
+                            persistentVolumeClaim:
+                              claimName: {{ $pijPVCClaim }}
+                              readOnly: true
+                          {{- end }}
+                        containers:
+                          - name: post-install
+                            image: {{ $pijImage | quote }}
+                            securityContext:
+                              allowPrivilegeEscalation: false
+                              capabilities:
+                                drop:
+                                  - ALL
+                              seccompProfile:
+                                type: RuntimeDefault
+                            command:
+                              - /bin/sh
+                              - /scripts/run.sh
+                            volumeMounts:
+                              - name: scripts
+                                mountPath: /scripts
+                              {{- if $pijPVCClaim }}
+                              - name: readonly-data
+                                mountPath: {{ $pijPVCMount }}
+                                readOnly: true
+                              {{- end }}
+                            {{- if gt (len $pijEnvFrom) 0 }}
+                            envFrom:
+                              {{- range $secretName := $pijEnvFrom }}
+                              - secretRef:
+                                  name: {{ $secretName }}
+                              {{- end }}
+                            {{- end }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
     # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────
     - step: automatically-detect-ready-composed-resources
       functionRef:

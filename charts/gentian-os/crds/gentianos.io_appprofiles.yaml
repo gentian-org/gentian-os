@@ -726,6 +726,68 @@ spec:
                   - name
                   type: object
                 type: array
+              postInstallJob:
+                description: |-
+                  PostInstallJob declares an optional Kubernetes Job the app-default
+                  composition runs alongside this app's Helm release, for app-specific
+                  bootstrap that must happen via the app's own admin API (e.g. seeding
+                  initial config) rather than Helm values — generic operator/composition
+                  behavior available to any profile, not a per-app composition.yaml.
+                  Retried automatically the same way every other composed resource in
+                  this graph is: the Job is recreated once ttlSecondsAfterFinished
+                  expires and the tenant reconciles again, so Script must exit non-zero
+                  if a dependency isn't ready yet, and must be idempotent (a no-op once
+                  the desired state is already correct). See app-profile-guide.md.
+                properties:
+                  envFrom:
+                    description: |-
+                      EnvFrom names Secrets already present in the tenant namespace to
+                      inject wholesale (matches how this app's own secrets already land —
+                      e.g. llm-credentials-{app}, {app}-sensitive-values).
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    description: Image is the container image the Job runs.
+                    type: string
+                  readOnlyPVC:
+                    description: |-
+                      ReadOnlyPVC optionally mounts an existing PersistentVolumeClaim
+                      read-only, for the rare case a bootstrap script needs information only
+                      available in the app's own persisted data and not obtainable over the
+                      network. Requires a storage class that supports concurrent multi-pod
+                      mounts even for RWO-labeled claims (e.g. NFS-backed) — most profiles
+                      won't need this.
+                    properties:
+                      claimName:
+                        description: ClaimName is the PersistentVolumeClaim name in
+                          the tenant namespace.
+                        type: string
+                      mountPath:
+                        description: MountPath is where the claim is mounted read-only
+                          in the Job container.
+                        type: string
+                    required:
+                    - claimName
+                    - mountPath
+                    type: object
+                  script:
+                    description: Script is the shell script body, run via `/bin/sh
+                      -c`.
+                    type: string
+                  serviceAccountName:
+                    description: |-
+                      ServiceAccountName runs the Job under an existing ServiceAccount in
+                      the tenant namespace (e.g. one already granted an OpenBao Kubernetes-
+                      auth role by another part of this app's composition), instead of the
+                      namespace default. The composition does not create this account or
+                      its RBAC — the profile/composition that needs it is responsible for
+                      both, same as any other Kubernetes-native RBAC setup.
+                    type: string
+                required:
+                - image
+                - script
+                type: object
               provides:
                 description: Provides lists the integration contracts this app can
                   act as a provider for.

@@ -1,0 +1,40 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  displayName: Demo App
+  compositionRef: app-demo-app
+  chart:
+    repository: oci://example.invalid/demo-app
+    name: demo-app
+    version: "1.0.0"
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: catalogue-test-client
+        name: Demo App
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+        postLogoutRedirectUris:
+          - "https://demo.${TENANT_DOMAIN}/"
+  valueMapping:
+    oidc:
+      clientSecretKey: demo-app.oidc.secret
+  postInstallJob:
+    image: curlimages/curl:8.10.1
+    script: |
+      #!/bin/sh
+      set -eu
+      echo "bootstrapping ${APP}"
+      curl -sf "http://demo-app.${NAMESPACE}.svc.cluster.local/health"
+    envFrom:
+      - llm-credentials-demo-app
+      - demo-app-sensitive-values
+    serviceAccountName: app-init
+    readOnlyPVC:
+      claimName: demo-app-data
+      mountPath: /data

@@ -171,6 +171,19 @@ type AppProfileSpec struct {
 	// +optional
 	Sidecars []AppSidecarSpec `json:"sidecars,omitempty"`
 
+	// PostInstallJob declares an optional Kubernetes Job the app-default
+	// composition runs alongside this app's Helm release, for app-specific
+	// bootstrap that must happen via the app's own admin API (e.g. seeding
+	// initial config) rather than Helm values — generic operator/composition
+	// behavior available to any profile, not a per-app composition.yaml.
+	// Retried automatically the same way every other composed resource in
+	// this graph is: the Job is recreated once ttlSecondsAfterFinished
+	// expires and the tenant reconciles again, so Script must exit non-zero
+	// if a dependency isn't ready yet, and must be idempotent (a no-op once
+	// the desired state is already correct). See app-profile-guide.md.
+	// +optional
+	PostInstallJob *AppPostInstallJob `json:"postInstallJob,omitempty"`
+
 	// PortalTiles defines the tiles this app contributes to the gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
 	// portal entry keyed as {tile.name}_{tenantName}.
@@ -859,6 +872,57 @@ type AppSidecarSpec struct {
 	// +optional
 	// +kubebuilder:default=80
 	StableServicePort int32 `json:"stableServicePort,omitempty"`
+}
+
+// AppPostInstallJob configures a Kubernetes Job the app-default composition
+// runs in the tenant namespace to bootstrap app-specific state (typically via
+// the app's own admin API) that Helm values alone can't express. Kept
+// deliberately narrow — not a general PodSpec pass-through — so this stays a
+// safe, generic composition feature rather than an arbitrary-workload escape
+// hatch. See app-profile-guide.md's "Post-install bootstrap jobs" section.
+type AppPostInstallJob struct {
+	// Image is the container image the Job runs.
+	// +kubebuilder:validation:Required
+	Image string `json:"image"`
+
+	// Script is the shell script body, run via `/bin/sh -c`.
+	// +kubebuilder:validation:Required
+	Script string `json:"script"`
+
+	// EnvFrom names Secrets already present in the tenant namespace to
+	// inject wholesale (matches how this app's own secrets already land —
+	// e.g. llm-credentials-{app}, {app}-sensitive-values).
+	// +optional
+	EnvFrom []string `json:"envFrom,omitempty"`
+
+	// ServiceAccountName runs the Job under an existing ServiceAccount in
+	// the tenant namespace (e.g. one already granted an OpenBao Kubernetes-
+	// auth role by another part of this app's composition), instead of the
+	// namespace default. The composition does not create this account or
+	// its RBAC — the profile/composition that needs it is responsible for
+	// both, same as any other Kubernetes-native RBAC setup.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// ReadOnlyPVC optionally mounts an existing PersistentVolumeClaim
+	// read-only, for the rare case a bootstrap script needs information only
+	// available in the app's own persisted data and not obtainable over the
+	// network. Requires a storage class that supports concurrent multi-pod
+	// mounts even for RWO-labeled claims (e.g. NFS-backed) — most profiles
+	// won't need this.
+	// +optional
+	ReadOnlyPVC *PostInstallJobPVCMount `json:"readOnlyPVC,omitempty"`
+}
+
+// PostInstallJobPVCMount is a read-only PVC mount for AppPostInstallJob.
+type PostInstallJobPVCMount struct {
+	// ClaimName is the PersistentVolumeClaim name in the tenant namespace.
+	// +kubebuilder:validation:Required
+	ClaimName string `json:"claimName"`
+
+	// MountPath is where the claim is mounted read-only in the Job container.
+	// +kubebuilder:validation:Required
+	MountPath string `json:"mountPath"`
 }
 
 // SidecarAppName returns the synthetic app key used for sidecar OpenBao paths
