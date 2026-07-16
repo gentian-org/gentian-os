@@ -212,29 +212,57 @@ EOF
     fi
 }
 
-# Registers/updates the GPU vLLM backend as a LiteLLM model, so changing
-# VLLM_MODEL_ID + `./update.sh --llm` is enough on its own — no Admin
-# Console / manual `/model/new` step. Keyed on api_base (there is exactly
-# one vllm-inference backend — see render_and_apply_vllm_gpu_manifest):
-# any existing LiteLLM entry pointed at that api_base gets deleted and
+# Registers/updates every VLLM_INSTANCES entry as a LiteLLM model (one
+# shared LiteLLM proxy in front of however many vLLM instances exist — see
+# llm-services.yaml), so editing VLLM_INSTANCES + `./update.sh --llm` is
+# enough on its own — no Admin Console / manual `/model/new` step. Each
+# instance is keyed on its own api_base (vllm-<id>-inference.platform-
+# kernel.svc.cluster.local — one Service per instance, never shared): any
+# existing LiteLLM entry pointed at that api_base gets deleted and
 # recreated under the current model's name if the served model changed,
-# so a swap never leaves a stale entry claiming to be the old model.
+# so a swap never leaves a stale entry claiming to be the old model. Any
+# LiteLLM entry pointed at a vllm-*-inference api_base that ISN'T one of
+# the current VLLM_INSTANCES gets removed entirely (the instance itself
+# was already pruned by _prune_stale_vllm_instances).
 ensure_litellm_vllm_model() {
     local ns="platform-kernel"
     local job_name="litellm-vllm-model-sync"
-    local model_id="${VLLM_MODEL_ID:-Qwen/Qwen2.5-7B-Instruct}"
-    local api_base="http://vllm-inference.platform-kernel.svc.cluster.local:8000/v1"
-    # Deterministic, reproducible from VLLM_MODEL_ID — not a hand-picked
-    # nickname — so re-running with the same model is a true no-op.
-    local model_name
-    model_name="$(printf '%s' "${model_id}" | tr '[:upper:]/' '[:lower:]-')"
+    local instances="${VLLM_INSTANCES:-}"
 
     if ! kubectl get secret llm-sensitive-values -n "${ns}" >/dev/null 2>&1; then
         warn "llm-sensitive-values Secret not found — skipping LiteLLM model sync (run after the LLM ExternalSecret syncs)."
         return 0
     fi
 
-    info "Syncing LiteLLM model registration: ${model_name} (${model_id})"
+    # Build the desired-state JSON array on the host (jq is a required
+    # tool — see check_prereqs) rather than parsing a delimited string
+    # inside the Job's alpine/busybox shell.
+    local desired_json="[]"
+    local instance
+    for instance in ${instances}; do
+        _vllm_instance_is_valid "${instance}" || continue
+
+        local instance_upper="${instance^^}"
+        local instance_k8s
+        instance_k8s="$(_vllm_instance_k8s_name "${instance}")"
+        local model_id_var="VLLM_${instance_upper}_MODEL_ID"
+        local model_id="${!model_id_var:-Qwen/Qwen2.5-7B-Instruct}"
+        # Deterministic, reproducible from the model id — not a hand-picked
+        # nickname — so re-running with the same model is a true no-op.
+        local model_name
+        model_name="$(printf '%s' "${model_id}" | tr '[:upper:]/' '[:lower:]-')"
+        local api_base="http://vllm-${instance_k8s}-inference.platform-kernel.svc.cluster.local:8000/v1"
+
+        desired_json="$(jq -c --arg name "${model_name}" --arg id "${model_id}" --arg base "${api_base}" \
+            '. + [{"model_name":$name,"model_id":$id,"api_base":$base}]' <<<"${desired_json}")"
+    done
+
+    if [[ "${desired_json}" == "[]" ]]; then
+        info "No valid vLLM instances in VLLM_INSTANCES — skipping LiteLLM model sync."
+        return 0
+    fi
+
+    info "Syncing LiteLLM model registrations for instances: ${instances}"
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
     kubectl apply -f - <<EOF
@@ -262,34 +290,46 @@ spec:
               set -eu
               BASE="http://litellm-proxy.${ns}.svc.cluster.local:4000"
               AUTH="Authorization: Bearer \${LITELLM_MASTER_KEY}"
+              DESIRED='${desired_json}'
               INFO=\$(curl -sf -H "\${AUTH}" "\${BASE}/model/info")
 
-              EXISTING_ID=\$(printf '%s' "\${INFO}" | jq -r --arg base "\${VLLM_API_BASE}" \
-                '.data[] | select(.litellm_params.api_base==\$base) | .model_info.id' | head -1)
-              EXISTING_NAME=\$(printf '%s' "\${INFO}" | jq -r --arg base "\${VLLM_API_BASE}" \
-                '.data[] | select(.litellm_params.api_base==\$base) | .model_name' | head -1)
+              ACTUAL=\$(printf '%s' "\${INFO}" | jq -c \\
+                '[.data[] | select((.litellm_params.api_base // "") | test("^http://vllm-[a-z0-9-]+-inference\\.platform-kernel\\.svc\\.cluster\\.local:8000/v1\$")) | {id: .model_info.id, model_name: .model_name, api_base: .litellm_params.api_base}]')
 
-              if [ -n "\${EXISTING_ID}" ] && [ "\${EXISTING_ID}" != "null" ] && [ "\${EXISTING_NAME}" = "\${MODEL_NAME}" ]; then
-                echo "LiteLLM model '\${MODEL_NAME}' already up to date (id=\${EXISTING_ID})"
-                exit 0
-              fi
-
-              if [ -n "\${EXISTING_ID}" ] && [ "\${EXISTING_ID}" != "null" ]; then
-                echo "vLLM backend now serves a different model — removing stale LiteLLM entry '\${EXISTING_NAME}' (id=\${EXISTING_ID})"
+              printf '%s' "\${ACTUAL}" | jq -c --argjson desired "\${DESIRED}" \\
+                '.[] | select(.api_base as \$b | ([\$desired[].api_base] | index(\$b)) == null)' | \\
+              while IFS= read -r stale; do
+                [ -z "\${stale}" ] && continue
+                sid=\$(printf '%s' "\${stale}" | jq -r '.id')
+                sname=\$(printf '%s' "\${stale}" | jq -r '.model_name')
+                echo "Removing stale LiteLLM model '\${sname}' (id=\${sid}) — vLLM instance no longer in VLLM_INSTANCES"
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${BASE}/model/delete" -d "{\"id\":\"\${EXISTING_ID}\"}" >/dev/null
-              fi
+                  "\${BASE}/model/delete" -d "{\"id\":\"\${sid}\"}" >/dev/null
+              done
 
-              curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                "\${BASE}/model/new" -d "{\"model_name\":\"\${MODEL_NAME}\",\"litellm_params\":{\"model\":\"openai/\${MODEL_ID}\",\"api_base\":\"\${VLLM_API_BASE}\"}}" >/dev/null
-              echo "Registered LiteLLM model '\${MODEL_NAME}' -> \${MODEL_ID}"
+              printf '%s' "\${DESIRED}" | jq -c '.[]' | while IFS= read -r want; do
+                wname=\$(printf '%s' "\${want}" | jq -r '.model_name')
+                wid=\$(printf '%s' "\${want}" | jq -r '.model_id')
+                wbase=\$(printf '%s' "\${want}" | jq -r '.api_base')
+
+                match=\$(printf '%s' "\${ACTUAL}" | jq -c --arg base "\${wbase}" '[.[] | select(.api_base==\$base)] | first // empty')
+                if [ -n "\${match}" ]; then
+                  mname=\$(printf '%s' "\${match}" | jq -r '.model_name')
+                  mid=\$(printf '%s' "\${match}" | jq -r '.id')
+                  if [ "\${mname}" = "\${wname}" ]; then
+                    echo "LiteLLM model '\${wname}' already up to date (id=\${mid})"
+                    continue
+                  fi
+                  echo "vLLM instance at \${wbase} now serves a different model — removing stale entry '\${mname}' (id=\${mid})"
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${BASE}/model/delete" -d "{\"id\":\"\${mid}\"}" >/dev/null
+                fi
+
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${BASE}/model/new" -d "{\"model_name\":\"\${wname}\",\"litellm_params\":{\"model\":\"openai/\${wid}\",\"api_base\":\"\${wbase}\"}}" >/dev/null
+                echo "Registered LiteLLM model '\${wname}' -> \${wid} (\${wbase})"
+              done
           env:
-            - name: MODEL_NAME
-              value: "${model_name}"
-            - name: MODEL_ID
-              value: "${model_id}"
-            - name: VLLM_API_BASE
-              value: "${api_base}"
             - name: LITELLM_MASTER_KEY
               valueFrom:
                 secretKeyRef:
@@ -298,11 +338,11 @@ spec:
 EOF
 
     if kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=120s; then
-        kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
-        success "LiteLLM model registration synced: ${model_name}"
+        kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true
+        success "LiteLLM model registrations synced."
     else
         warn "LiteLLM model sync Job failed or timed out."
-        kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
+        kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true
         return 1
     fi
 }

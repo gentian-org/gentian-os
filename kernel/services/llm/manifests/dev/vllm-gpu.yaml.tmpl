@@ -1,18 +1,23 @@
+# NOTE: this header is a sed substitution target (see below) — every
+# %TOKEN% placeholder name mentioned here would itself get replaced if
+# written literally, so this comment spells them without the %...%
+# wrapper on purpose.
+#
 # One of possibly several real vLLM inference backends (GPU_ACCELERATION=true).
 # Replaces vllm-mock.yaml. One gentian-os cluster can run multiple named vLLM
 # instances (e.g. a small always-on chat model plus a larger on-demand one) —
-# each instance gets its own PVC/Deployment/Service, named vllm-%VLLM_INSTANCE%-*
+# each instance gets its own PVC/Deployment/Service, named vllm-INSTANCE-*
 # so they don't collide, and its own entry in LiteLLM (one shared LiteLLM
 # proxy in front of however many vLLM instances exist — see llm-services.yaml).
 #
 # Rendered from this .tmpl once per entry in VLLM_INSTANCES by
 # render_and_apply_vllm_gpu_manifest() (scripts/llm-lib.sh), substituting
-# %VLLM_INSTANCE%/%VLLM_MODEL_ID%/%VLLM_GPU_MEMORY_UTILIZATION%/
-# %VLLM_MAX_MODEL_LEN%/%VLLM_MODEL_CACHE_SIZE%/%VLLM_IMAGE_TAG% — cluster
-# instance data, not gentian-os defaults. To add/change/remove an instance:
-# edit VLLM_INSTANCES (and friends) in gentian-deployments'
-# clusters/<cluster>/kernel/cluster-settings.env, then run `./update.sh --llm`.
-# See docs/design/agentic-ai.md §10.2 for the full flag cheat-sheet.
+# INSTANCE/MODEL_ID/GPU_MEMORY_UTILIZATION/MAX_MODEL_LEN/MODEL_CACHE_SIZE/
+# IMAGE_TAG — cluster instance data, not gentian-os defaults. To
+# add/change/remove an instance: edit VLLM_INSTANCES (and friends) in
+# gentian-deployments' clusters/<cluster>/kernel/cluster-settings.env,
+# then run `./update.sh --llm`. See docs/design/agentic-ai.md §10.2 for
+# the full flag cheat-sheet.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -658,7 +658,9 @@ api:
 
 appLifecycle:
   deployments:
+    enabled: true
     repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
+    gitCredentialsSecret: gentian-deployments-git-credentials
 EOF
         info "Scaffolded ${kernel_dir}/values.yaml"
         generated=1
