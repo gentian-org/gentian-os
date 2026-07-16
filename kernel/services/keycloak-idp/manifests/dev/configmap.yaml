@@ -35,12 +35,26 @@ data:
       port: 5432
       database: keycloak
       username: keycloak_user
+    # Single source of truth for extraEnv: Helm's values-merge REPLACES
+    # (doesn't deep-merge) same-named string scalars, so if
+    # externalsecret.yaml's sensitive-values.yaml also declared its own
+    # top-level extraEnv, it would silently wipe out everything below
+    # (that's exactly what broke KERNEL_DOMAIN/KC_HOSTNAME here before —
+    # sensitive-values.yaml is merged last, so its extraEnv always won).
+    # KEYCLOAK_ADMIN_PASSWORD is pulled in via secretKeyRef instead.
     extraEnv: |
       - name: KERNEL_DOMAIN
         valueFrom:
           configMapKeyRef:
             name: gentian-kernel-services
             key: KERNEL_DOMAIN
+      - name: KEYCLOAK_ADMIN
+        value: admin
+      - name: KEYCLOAK_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-idp-sensitive-values
+            key: admin-password
       - name: KC_HEALTH_ENABLED
         value: "true"
       - name: KC_METRICS_ENABLED
