@@ -173,6 +173,10 @@ func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname,
 
 	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
 	if err != nil {
+		if strings.Contains(err.Error(), "1055") || strings.Contains(err.Error(), "not found") {
+			ctrl.LoggerFrom(ctx).Info("Cloudflare tunnel configuration not found or access denied; skipping dynamic tunnel routing updates. Ensure a wildcard or manual ingress rule is set up in your Cloudflare dashboard.", "tunnel", tunnelID, "err", err)
+			return nil
+		}
 		return err
 	}
 	desired := tunnelIngressRuleForService(hostname, service)
@@ -199,6 +203,9 @@ func (c *CloudflareDNSClient) deleteTunnelIngress(ctx context.Context, hostname 
 	tunnelID := parseTunnelID(c.tunnelCNAME)
 	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
 	if err != nil {
+		if strings.Contains(err.Error(), "1055") || strings.Contains(err.Error(), "not found") {
+			return nil
+		}
 		return err
 	}
 	idx := ingressRuleIndex(config.Ingress, hostname)

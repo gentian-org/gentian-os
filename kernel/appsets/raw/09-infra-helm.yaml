@@ -69,3 +69,4 @@ spec:
         - .spec.data[].remoteRef.decodingStrategy
         - .spec.data[].remoteRef.metadataPolicy
         - .spec.target.deletionPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
