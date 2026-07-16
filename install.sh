@@ -1315,9 +1315,9 @@ install_llm_serving() {
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
         info "Deploying GPU vLLM inference backend..."
-        kubectl apply -f "${manifests_dir}/vllm-gpu.yaml"
+        render_and_apply_vllm_gpu_manifest "${manifests_dir}"
     else
-        info "Deploying mock inference backend (GPU_ACCELERATION=false) — see vllm-gpu.yaml to serve a real model."
+        info "Deploying mock inference backend (GPU_ACCELERATION=false) — see vllm-gpu.yaml.tmpl to serve a real model."
         kubectl apply -f "${manifests_dir}/vllm-mock.yaml"
     fi
 

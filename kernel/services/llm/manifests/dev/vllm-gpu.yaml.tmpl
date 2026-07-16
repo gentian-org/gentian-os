@@ -1,8 +1,12 @@
 # Real vLLM inference backend (GPU_ACCELERATION=true). Replaces vllm-mock.yaml.
 #
-# To change the served model: edit VLLM_MODEL_ID below, commit, and run
-# `./update.sh --llm`. See docs/design/agentic-ai.md §10.2 for the full
-# CLI-flag cheat-sheet and how to add a model to LiteLLM afterwards.
+# Rendered from this .tmpl by render_vllm_gpu_manifest() (scripts/llm-lib.sh)
+# via VLLM_MODEL_ID/VLLM_GPU_MEMORY_UTILIZATION/VLLM_MAX_MODEL_LEN/
+# VLLM_MODEL_CACHE_SIZE/VLLM_IMAGE_TAG — cluster-specific instance data, not
+# gentian-os defaults. To change the served model: set VLLM_MODEL_ID (and
+# friends) in gentian-deployments' clusters/<cluster>/kernel/cluster-settings.env,
+# then run `./update.sh --llm`. See docs/design/agentic-ai.md §10.2 for the
+# full CLI-flag cheat-sheet and how to add a model to LiteLLM afterwards.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -12,9 +16,9 @@ spec:
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
-      # HF model caches run 15-40GB per 7-8B model; bump if you serve
-      # multiple models or switch to a larger one.
-      storage: 60Gi
+      # HF model caches run 15-40GB per 7-8B model; bump (VLLM_MODEL_CACHE_SIZE)
+      # if you serve multiple models or switch to a larger one.
+      storage: %VLLM_MODEL_CACHE_SIZE%
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -37,7 +41,7 @@ spec:
         nvidia.com/gpu.present: "true"
       containers:
       - name: vllm-server
-        image: vllm/vllm-openai:latest
+        image: vllm/vllm-openai:%VLLM_IMAGE_TAG%
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -47,18 +51,18 @@ spec:
               --max-model-len "${VLLM_MAX_MODEL_LEN}" \
               --enable-prefix-caching
         env:
-        # No HuggingFace gating on Qwen2.5 — swap freely for other ungated
-        # models. Gated models (e.g. Llama) additionally need HUGGING_FACE_HUB_TOKEN
-        # below (create the vllm-hf-token Secret first — see agentic-ai.md §10.2).
+        # Which model to swap in is cluster instance data (cluster-settings.env),
+        # not a gentian-os default — see the header comment above. Gated models
+        # (e.g. Llama) additionally need HUGGING_FACE_HUB_TOKEN below (create the
+        # vllm-hf-token Secret first — see agentic-ai.md §10.2).
         - name: VLLM_MODEL_ID
-          value: "Qwen/Qwen2.5-7B-Instruct"
-        # 24GB card, 4-way time-sliced with no memory isolation between
-        # slices (see gpu-sharing.yaml) — stay well under 1.0 so this pod
-        # doesn't starve/OOM its neighbors.
+          value: "%VLLM_MODEL_ID%"
+        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml) —
+        # stay well under 1.0 so this pod doesn't starve/OOM its neighbors.
         - name: VLLM_GPU_MEMORY_UTILIZATION
-          value: "0.85"
+          value: "%VLLM_GPU_MEMORY_UTILIZATION%"
         - name: VLLM_MAX_MODEL_LEN
-          value: "8192"
+          value: "%VLLM_MAX_MODEL_LEN%"
         - name: HUGGING_FACE_HUB_TOKEN
           valueFrom:
             secretKeyRef:

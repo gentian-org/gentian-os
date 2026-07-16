@@ -436,14 +436,20 @@ guide in
 interchangeable `vllm-inference` backends, selected by `GPU_ACCELERATION`
 in `install.env`/cluster-settings — `vllm-mock.yaml` (a fake
 OpenAI-compatible server, `GPU_ACCELERATION=false`, the default) and
-`vllm-gpu.yaml` (real vLLM, `GPU_ACCELERATION=true`). Both files declare
+`vllm-gpu.yaml.tmpl` (real vLLM, `GPU_ACCELERATION=true`). Both declare
 a Deployment/Service both named `vllm-inference`, so switching between
 them is just re-running `./update.sh --llm` with the flag flipped — no
-orphaned resources. `vllm-gpu.yaml` requests one `nvidia.com/gpu` (a
-time-sliced share, see §10.1's sibling note on `gpu-sharing.yaml`), a
-60Gi PVC for the HuggingFace cache, and defaults to
-`Qwen/Qwen2.5-7B-Instruct` (no HF license gate, ~14GB FP16 — comfortable
-on a 24GB card with 3 time-sliced neighbors).
+orphaned resources. `vllm-gpu.yaml.tmpl` requests one `nvidia.com/gpu` (a
+time-sliced share, see §10.1's sibling note on `gpu-sharing.yaml`).
+
+Which model to serve is cluster instance data, not a gentian-os
+default — `render_and_apply_vllm_gpu_manifest()` (`scripts/llm-lib.sh`)
+renders the `.tmpl` from `VLLM_MODEL_ID`/`VLLM_GPU_MEMORY_UTILIZATION`/
+`VLLM_MAX_MODEL_LEN`/`VLLM_MODEL_CACHE_SIZE`/`VLLM_IMAGE_TAG`, read from
+the cluster's `cluster-settings.env` in `gentian-deployments` (falling
+back to `Qwen/Qwen2.5-7B-Instruct` / `0.85` / `8192` / `60Gi` / `latest`
+if unset — `Qwen/Qwen2.5-7B-Instruct` has no HF license gate, ~14GB
+FP16, comfortable on a 24GB card with 3 time-sliced neighbors).
 
 **To deploy your first model** (GPU_ACCELERATION already validated
 against real cluster GPU resources by `validate_config`, see
@@ -451,8 +457,11 @@ against real cluster GPU resources by `validate_config`, see
 
 1. Set `GPU_ACCELERATION=true` (and `LLM_SUPPORT=true`) in `install.env`
    or the cluster's `cluster-settings.env`.
-2. Optional — pick a different model: edit `VLLM_MODEL_ID` in
-   `vllm-gpu.yaml` (any HuggingFace OpenAI-served model id). For a
+2. Optional — pick a different model: set `VLLM_MODEL_ID` (any
+   HuggingFace OpenAI-served model id) in the cluster's
+   `cluster-settings.env` in `gentian-deployments` (see
+   `cluster-settings.env.template` for the full `VLLM_*` list — memory
+   utilization, context length, cache PVC size, image tag). For a
    **gated** model (e.g. Llama), first accept its license on
    HuggingFace, then create the token Secret it reads via
    `HUGGING_FACE_HUB_TOKEN`:
