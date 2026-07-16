@@ -470,6 +470,20 @@ install_kernel_wildcard() {
         warn "Continuing — wildcard Certificate will issue once the Secret appears."
     fi
 
+    # install_kernel_cert_resources (Step 2b) applies the DNS-01-Cloudflare
+    # ClusterIssuer long before this Secret exists (it's only created just
+    # above). cert-manager evaluates a ClusterIssuer's readiness once, at
+    # apply time, and does not automatically re-check it just because a
+    # Secret it depends on shows up later — so without this, the issuer
+    # stays permanently stuck on its very first "secret not found" result
+    # and every Certificate issuance through it fails from then on, even
+    # once the Secret is long since present. Re-applying is a no-op change
+    # to the object but does trigger cert-manager to re-evaluate it now
+    # that the Secret genuinely exists (same idempotent call used by
+    # update.sh --acme-issuers to recover from this after the fact).
+    info "Re-applying ClusterIssuers now that cloudflare-api-token exists..."
+    apply_gentian_cluster_issuers
+
     # 3) Apply the wildcard Certificate (with domain name templating).
     envsubst "\${KERNEL_DOMAIN} \${DNS01_CLUSTER_ISSUER}" \
         < "${SCRIPT_DIR}/kernel/manifests/cert-manager/wildcard-kernel-cert.yaml" \
