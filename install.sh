@@ -659,6 +659,7 @@ api:
 appLifecycle:
   deployments:
     enabled: true
+    cluster: ${cluster}
     repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
     gitCredentialsSecret: gentian-deployments-git-credentials
 EOF
