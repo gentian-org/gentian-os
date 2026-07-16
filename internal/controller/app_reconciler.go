@@ -17,10 +17,14 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -40,6 +44,11 @@ import (
 
 const (
 	conditionAppsReady = "AppsReady"
+
+	litellmProxyBaseURL    = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
+	litellmMasterKeySecret = "llm-sensitive-values"
+	litellmMasterKeyNS     = "platform-kernel"
+	litellmMasterKeySecKey = "litellm_master_key" //nolint:gosec // Secret key name, not a credential.
 )
 
 // appClaimGVK is the GVK for namespace-scoped App claims reconciled by Crossplane.
@@ -157,7 +166,9 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 }
 
 // injectLLMCredentials creates a secret inside the tenant namespace containing the OpenAI API
-// endpoints and virtual key configured by the platform.
+// endpoints and virtual key configured by the platform, and registers that same virtual key
+// with LiteLLM itself (idempotent — see ensureLiteLLMVirtualKey) so it is actually usable
+// rather than a string the proxy has never heard of.
 func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) error {
 	if os.Getenv("LLM_SUPPORT") != "true" {
 		return nil
@@ -165,11 +176,12 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 
 	nsName := tenantNamespaceName(tenant)
 	secretName := fmt.Sprintf("llm-credentials-%s", appName)
+	virtualKey := fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName)
 
 	stringData := map[string]string{
-		"OPENAI_API_BASE":     "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
-		"OPENAI_API_BASE_URL": "http://litellm-proxy.platform-kernel.svc.cluster.local:4000/v1",
-		"OPENAI_API_KEY":      fmt.Sprintf("sk-gentian-%s-%s", tenant.Name, appName),
+		"OPENAI_API_BASE":     litellmProxyBaseURL + "/v1",
+		"OPENAI_API_BASE_URL": litellmProxyBaseURL + "/v1",
+		"OPENAI_API_KEY":      virtualKey,
 	}
 	if appName == "open-webui" {
 		h := sha256.New()
@@ -194,16 +206,114 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
+		if err := r.Create(ctx, desired); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		patch := client.MergeFrom(existing.DeepCopy())
+		existing.Labels = desired.Labels
+		existing.StringData = desired.StringData
+		if err := r.Patch(ctx, existing, patch); err != nil {
+			return err
+		}
 	}
+
+	masterKey, err := r.getLiteLLMMasterKey(ctx)
+	if err != nil {
+		return fmt.Errorf("read LiteLLM master key: %w", err)
+	}
+	keyAlias := fmt.Sprintf("%s-%s", tenant.Name, appName)
+	return ensureLiteLLMVirtualKey(ctx, masterKey, virtualKey, keyAlias)
+}
+
+// getLiteLLMMasterKey reads the admin key LiteLLM itself was seeded with
+// (scripts/seed-openbao.sh → ExternalSecret llm-sensitive-values in
+// platform-kernel), needed to call its key-management API as an admin.
+func (r *TenantReconciler) getLiteLLMMasterKey(ctx context.Context) (string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: litellmMasterKeySecret, Namespace: litellmMasterKeyNS}, secret); err != nil {
+		return "", err
+	}
+	key := string(secret.Data[litellmMasterKeySecKey])
+	if key == "" {
+		return "", fmt.Errorf("secret %s/%s has no %q key", litellmMasterKeyNS, litellmMasterKeySecret, litellmMasterKeySecKey)
+	}
+	return key, nil
+}
+
+// ensureLiteLLMVirtualKey registers virtualKey with LiteLLM's own key database if it isn't
+// already known, via LiteLLM's admin key-management API (GET /key/info to check, POST
+// /key/generate to create — LiteLLM supports a caller-supplied `key` value, it does not
+// only generate random ones). Without this, a virtual key computed by injectLLMCredentials
+// authenticates against nothing: LiteLLM returns 401 token_not_found_in_db for any request
+// using it, however correct the Secret otherwise looks — confirmed live against this
+// cluster's open-webui deployment before this function existed.
+func ensureLiteLLMVirtualKey(ctx context.Context, masterKey, virtualKey, keyAlias string) error {
+	exists, err := litellmKeyExists(ctx, masterKey, virtualKey)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"key":       virtualKey,
+		"key_alias": keyAlias,
+	})
 	if err != nil {
 		return err
 	}
 
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Labels = desired.Labels
-	existing.StringData = desired.StringData
-	return r.Patch(ctx, existing, patch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, litellmProxyBaseURL+"/key/generate", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+masterKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("LiteLLM /key/generate: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("LiteLLM /key/generate status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// litellmKeyExists checks LiteLLM's key database via GET /key/info?key=... — 200 means the
+// key is already registered (nothing to do), 404 means it genuinely is not (create it), any
+// other status is a real error worth surfacing (bad master key, proxy unreachable, etc.).
+func litellmKeyExists(ctx context.Context, masterKey, virtualKey string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, litellmProxyBaseURL+"/key/info?key="+virtualKey, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+masterKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("LiteLLM /key/info: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		respBody, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("LiteLLM /key/info status %d: %s", resp.StatusCode, string(respBody))
+	}
 }
 
 // deleteAppDeployment is a no-op under C1: App claims are owned by the XTenant
