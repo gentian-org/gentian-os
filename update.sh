@@ -31,6 +31,11 @@
 #       recreates it (provider-helm does not watch ConfigMaps, so this is the
 #       only way to force value pick-up after a ConfigMap change)
 #     - With --force: also re-reconciles currently healthy Release CRs
+#   Every run (not just --reconcile-releases) also ends with an automatic
+#   force_reconcile_failed_helm_releases sweep (scripts/lib/common.sh) —
+#   catches ANY live Release CR stuck in Helm's own "failed" state,
+#   including Crossplane-composition-generated ones (Keycloak, OpenFGA,
+#   infra-*) that the release.yaml file-globbing above can't see.
 # Prerequisites:
 #   - install.sh must have completed at least once.
 #   - kubectl configured to the target cluster.
@@ -770,6 +775,19 @@ _init
 [[ "${OP_RECONCILE}"       == "1" ]] && op_reconcile_releases
 [[ "${OP_PLUGIN}"          == "1" ]] && install_app_catalogue
 [[ "${OP_ACME_ISSUERS}"    == "1" ]] && op_acme_issuers
+
+# Automatic safety-net sweep: a Crossplane Release CR that fails a helm
+# upgrade (e.g. two ConfigMaps colliding on the same values key — see
+# 334fae7) doesn't retry itself; it just sits failed until something
+# forces a new reconcile. Catches that on every run instead of relying on
+# someone noticing and remembering --reconcile-releases. Covers ALL live
+# Release CRs (including Crossplane-composition-generated ones like
+# Keycloak/OpenFGA/infra-*, which --reconcile-releases' file-globbing
+# can't see); --reconcile-releases itself, run above if requested, still
+# covers the stronger delete+recreate path for release.yaml-backed ones.
+if [[ "${DRY_RUN}" != "1" ]]; then
+    force_reconcile_failed_helm_releases
+fi
 
 echo ""
 success "update.sh completed."

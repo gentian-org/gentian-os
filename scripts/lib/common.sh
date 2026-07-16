@@ -1094,6 +1094,47 @@ cleanup_orphaned_kyverno_webhooks() {
 }
 
 # =============================================================================
+# force_reconcile_failed_helm_releases — self-heal for Crossplane
+# helm.crossplane.io Release CRs stuck in Helm's own "failed" state.
+#
+# provider-helm does not retry on its own: once a `helm upgrade` fails (e.g.
+# two ConfigMaps colliding on the same values key — see 334fae7, which sat
+# stuck for 2+ hours until manually annotated), the Release's Synced
+# condition still reports ReconcileSuccess (Crossplane executed the
+# reconcile; the reconcile just happened to conclude "failed") — so nothing
+# about the object's own status signals "needs another look" or triggers
+# another attempt on its own.
+#
+# update.sh's --reconcile-releases only covers Release CRs backed by a
+# committed kernel/services/*/manifests/${env}/release.yaml — most Release
+# CRs in this cluster are Crossplane-composition-generated (owned by
+# XApp/XInfraData/XSuze, e.g. Keycloak, OpenFGA, infra-{mariadb,minio,
+# postgresql,redis}), which that file-globbing approach can't see at all.
+# This checks live Release objects directly instead, regardless of how
+# they were created, and force-reconciles (annotate + let Crossplane retry)
+# any genuinely in Helm's "failed" state. Safe to call unconditionally —
+# a no-op when everything is deployed/healthy.
+# =============================================================================
+force_reconcile_failed_helm_releases() {
+    local failed
+    failed=$(kubectl get release.helm.crossplane.io \
+        -o jsonpath='{range .items[?(@.status.atProvider.state=="failed")]}{.metadata.name}{"\n"}{end}' \
+        2>/dev/null || true)
+    [[ -z "${failed}" ]] && return 0
+
+    warn "Crossplane Release CR(s) stuck in Helm 'failed' state (provider-helm does not retry on its own):"
+    warn "  $(printf '%s' "${failed}" | tr '\n' ' ')"
+    warn "  Forcing a re-reconcile on each..."
+    while IFS= read -r name; do
+        [[ -z "${name}" ]] && continue
+        kubectl annotate release.helm.crossplane.io "${name}" \
+            "gentian.io/force-reconcile=$(date +%s)" --overwrite >/dev/null 2>&1 || true
+    done <<< "${failed}"
+    success "Requested re-reconcile for: $(printf '%s' "${failed}" | tr '\n' ' ')"
+    info "  Monitor with: kubectl get release.helm.crossplane.io"
+}
+
+# =============================================================================
 # 0. Pre-flight checks
 # =============================================================================
 check_prereqs() {
@@ -1123,6 +1164,7 @@ check_prereqs() {
     else
         success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
         cleanup_orphaned_kyverno_webhooks
+        force_reconcile_failed_helm_releases
     fi
 
     # ── MicroK8s kubelet max-pods ─────────────────────────────────────────────
