@@ -81,6 +81,7 @@ spec:
             {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
             {{- $lrRequestCPU := dig "tenant.limitRange.defaultRequest.cpu" "100m" $ccData }}
             {{- $lrRequestMem := dig "tenant.limitRange.defaultRequest.memory" "128Mi" $ccData }}
+            {{- $llmEnabled := eq "true" (dig "llm.enabled" "false" $ccData) }}
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -263,6 +264,28 @@ spec:
                   {{- . | toYaml | nindent 18 }}
                 {{- end }}
               {{- end }}
+            {{- end }}
+
+            {{- if $llmEnabled }}
+            ---
+            apiVersion: gentianos.io/v1alpha1
+            kind: App
+            metadata:
+              name: open-webui
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: app-open-webui
+              labels:
+                gentianos.io/tenant: {{ $tenant }}
+                gentianos.io/app: open-webui
+                gentianos.io/managed-by: crossplane
+                app.kubernetes.io/managed-by: gentian-os
+            spec:
+              compositionUpdatePolicy: Automatic
+              profileRef:
+                name: open-webui
+              tenantNamespace: {{ $ns }}
+              domain: {{ $domain }}
             {{- end }}
 
     - step: automatically-detect-ready-composed-resources

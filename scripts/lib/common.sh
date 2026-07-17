@@ -1370,6 +1370,7 @@ data:
   mail.serviceMode: "${_mail_mode}"
   secretMode: "${SECRET_MODE:-derived}"
   node.ip: "${NODE_IP:-}"
+  llm.enabled: "${LLM_SUPPORT:-false}"
   network.infraNamespace: "${_infra_ns}"
   network.servicesNamespace: "${_services_ns}"
   network.openbaoNamespace: "${_openbao_ns}"
