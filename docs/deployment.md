@@ -5,7 +5,7 @@
 This guide describes how Gentian OS clusters are configured, how a new
 cluster gets bootstrapped, and how releases promote from development to
 production. For first-time bootstrap steps see
-[getting-started.md](../getting-started.md); for day-2 commands see
+[GETTING-STARTED.md](../GETTING-STARTED.md); for day-2 commands see
 [commands.md](commands.md).
 
 **Design principle:** `gentian-os` is agnostic to app, tenant, stage, and
@@ -511,7 +511,7 @@ cluster is live, and a second set of eyes catches what the author missed.
 
 | Topic | Document |
 | --- | --- |
-| First-time install | [getting-started.md](../getting-started.md) |
+| First-time install | [GETTING-STARTED.md](../GETTING-STARTED.md) |
 | System architecture | [architecture.md](architecture.md) |
 | Image updater details | [design/operations.md](design/operations.md) §7 |
 | Secrets and TLS | [design/security.md](design/security.md) |

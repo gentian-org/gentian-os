@@ -293,7 +293,7 @@ contract:demo/project-management#consumer@app:crm-app
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. **App administrators** use a separate cross-app group (`gentian:tenant:<t>:app-admins`) reconciled into each app's declared `AppProfile.spec.provisioning.privilegedRole` (see [app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) §6h). User/group administration is the [Gentian Admin Console](admin-console.md). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
+**Today (Stage 1 Suze path):** OIDC authentication via **Suze** Keycloak (per-tenant realms + kernel broker), tenant MAC isolation, `IntegrationBinding` wiring, and **group entitlements** (`gentian:tenant:<t>:app:<profile>`) for portal visibility. **App administrators** use a separate cross-app group (`gentian:tenant:<t>:app-admins`) reconciled into each app's declared `AppProfile.spec.provisioning.privilegedRole` (see [app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md) §6h). User/group administration is the [Gentian Admin Console](admin-console.md). OpenFGA PEP is wired in `gentian-ui` when `OPENFGA_*` is set; catalogue apps carry **PEP stubs** that pass through when unset.
 
 **Target (Stage 2+):**
 
@@ -590,7 +590,7 @@ Synapse may still allow **local password login** for internal Matrix service
 accounts (e.g. `@uvs` for the User Verification Service bootstrap job). Those
 passwords live in OpenBao (`matrix_uvs_password`) and are not human credentials.
 Do not set `password_config.enabled: false` on Synapse unless the UVS bootstrap
-path is replaced — see [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §7b.
+path is replaced — see [app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md) §7b.
 
 ## 12. TLS and certificates
 

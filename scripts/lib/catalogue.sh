@@ -161,7 +161,7 @@ configure_github_actions_secrets() {
     if [[ -z "${CI_BOT_PAT:-}" ]]; then
         warn "CI_BOT_PAT not set — skipping GitHub Actions secret upload for image-pin workflows."
         warn "  CI_BOT_PAT not configured — gentian-os git automation from Actions may fail."
-        warn "  See getting-started.md § GitHub Actions CI and gentian-ui/docs/ci-setup.md."
+        warn "  See GETTING-STARTED.md"
         return 0
     fi
 

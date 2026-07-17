@@ -202,8 +202,8 @@ kubectl gentian apps uninstall demo-app --tenant gtn-demo
 
 Guides:
 
-- [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) — build new apps
-- [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) — publish upstream charts
+- [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) — build new apps
+- [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) — publish upstream charts
 
 Show all available `kubectl gentian` subcommands:
 
@@ -359,7 +359,7 @@ kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}
 ```
 
 Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
-**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §8.
+**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 

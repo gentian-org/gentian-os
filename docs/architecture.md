@@ -191,7 +191,7 @@ duplicate OIDC client Jobs for those apps.
 For Keycloak consolidation and other follow-ups see [roadmap.md](roadmap.md).
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
-documented in [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §2.
+documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
 
 ---
 
@@ -743,10 +743,10 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Commercial model & Odoo integration | [design/business-logic-plan.md](design/business-logic-plan.md) |
 | OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
-| OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
+| OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
 | LLM serving architecture & Stage 1 plan | [design/llms.md](design/llms.md) |
-| AppProfile authoring (upstream charts) | [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) |
-| Custom Gentian-native apps | [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) |
+| AppProfile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) |
+| Custom Gentian-native apps | [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) |

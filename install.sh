@@ -29,7 +29,7 @@
 #   ./install.sh --validate          # validate config only, no cluster changes
 #   ./install.sh --no-cluster-infra  # skip cert-manager/CNPG/reloader
 #
-# Required environment variables: same as install.sh (see getting-started.md)
+# Required environment variables: same as install.sh (see GETTING-STARTED.md)
 # =============================================================================
 
 set -euo pipefail

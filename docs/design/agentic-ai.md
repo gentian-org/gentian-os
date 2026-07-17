@@ -213,7 +213,7 @@ spec:
   reach apps in its own tenant.
 - **Internal service URLs.** The operator wires connections to
   `http://{service}.tenant-{t}.svc.cluster.local:{port}` (§2 of
-  [app-profile-guide.md](../../gentian-apps/app-profile-guide.md)),
+  [app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md)),
   not public hostnames.
 
 ### 5.5 Cross-app workflow examples
@@ -288,8 +288,8 @@ The same MCP fabric powers operator-side automation:
   `values.yaml`, infers the kernel requirements (does it need OIDC?
   S3? mail?), and proposes an `AppProfile` — a human reviews and
   commits to `gentian-apps`. For building new first-party apps, agents should
-  follow [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md)
-  and [gentian-apps/apps/_template/docs/AGENTS.md](../../gentian-apps/apps/_template/docs/AGENTS.md).
+  follow [gentian-apps/docs/custom-app-guide.md](../../../gentian-apps/docs/custom-app-guide.md)
+  and [gentian-apps/AGENTS.md](../../../gentian-apps/AGENTS.md).
 - **Tenant provisioning assistant:** "spin up a new tenant for ACME
   Corp with Nextcloud, OpenProject, Element, mail mode external,
   isolation namespace" — produces the Tenant CR for review.

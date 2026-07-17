@@ -209,7 +209,7 @@ Fulfillment is handled via the FastAPI service gateway between customer operator
 |---|---|
 | Profile fields & versioning | [app-profiles.md](app-profiles.md) |
 | Catalogue & install flow | [app-catalogue.md](app-catalogue.md) |
-| Profile authoring | [gentian-apps/app-profile-guide.md](../../../gentian-apps/app-profile-guide.md) |
+| Profile authoring | [gentian-apps/docs/app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md) |
 | IAM / roles | [iam.md](iam.md) |
 | Commercial roadmap | [roadmap.md](../roadmap.md#commercial-layer) |
 | Kernel rebuild / gentian-pro artefacts | [architecture.md](../architecture.md) §8 |

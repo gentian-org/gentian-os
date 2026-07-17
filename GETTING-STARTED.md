@@ -33,7 +33,7 @@ You need a running, reachable cluster. Both `install.sh` and
 **Requirements:**
 - Kubernetes 1.26+
 - Default StorageClass available (configure per cluster in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`)
-- Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 2c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/FAQ.md](docs/FAQ.md))
+- Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 2c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/faq.md](docs/faq.md))
 - DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
 
 > `install.sh` provisions cert-manager, CloudNativePG, and Stakater Reloader
@@ -609,7 +609,7 @@ kubectl logs -n platform-kernel job/<name>-keycloak-realm
 
 - [Deployment environments](docs/deployment.md) — dev / staging / prod mapping, promotion flows, GitOps layout
 - [Architecture](docs/architecture.md) — full system design
-- [FAQ](docs/FAQ.md) — quick operational answers (edge routing, storage class)
+- [FAQ](docs/faq.md) — quick operational answers (edge routing, storage class)
 - [Design docs](docs/design/) — deep-dives: kernel, multi-tenancy, secrets, mail, operations, agentic AI
 - [docs/commands.md](docs/commands.md) — reference for day-2 kubectl commands
 - [Roadmap](docs/roadmap.md) — planned features (rotation, SOC 2 hardening)
