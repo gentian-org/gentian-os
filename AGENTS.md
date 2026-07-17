@@ -10,7 +10,7 @@ covers architecture in depth.
 
 ## Build & deployment — CI/GitOps only
 
-* CI runs in `.github/workflows/ci.yaml` (Go vet/build/test with envtest, plus chart/image
+* CI runs in `.github/workflows/ci.yaml` (Go vet/build/test with envtest, plus image
   builds). Cluster configuration is layered and reconciled via ArgoCD, with cluster-specific
   values living in [gentian-deployments](https://github.com/gentian-org/gentian-deployments) (see
   [docs/deployment.md](docs/deployment.md)).
