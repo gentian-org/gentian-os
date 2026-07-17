@@ -113,7 +113,7 @@ flowchart TD
 1. **Browse:** The app-store reads the unified `AppCatalogue` index. All community and Pro profiles are visible.
 2. **Order:** The tenant admin clicks **Buy** on a Pro app, initiating the checkout session.
 3. **Entitlement:** Odoo records the partner's active subscription status.
-4. **Fulfill:** The operator fetches the single-use install-grant JWT, exchanges it with the portal gateway for OCI registry secrets, and proceeds to deploy the `App` claim in the tenant namespace.
+4. **Fulfill:** The app-store fetches the single-use install-grant JWT from gentian-corp; the operator exchanges it with the portal gateway for OCI registry secrets and proceeds to deploy the `App` claim in the tenant namespace.
 5. **Invoice:** Odoo generates recurring monthly invoices based on reported usage metrics.
 
 **Multi-tenant cluster:** Tenant B can browse Pro profiles but cannot install them. The operator blocks deployment and denies OCI registry pull keys until a valid entitlement is verified.
