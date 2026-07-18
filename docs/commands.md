@@ -42,13 +42,17 @@ kubectl get tenants
 ## 3. Provision a Tenant
 
 Each cluster maintains tenant **definitions** under
-`clusters/<cluster>/definitions/<tenant>/<stage>/`. Fresh installs leave
-`clusters/<cluster>/tenants/` empty until a definition is deployed.
+`clusters/<cluster>/definitions/<tenant>/`. Fresh installs leave
+`clusters/<cluster>/tenants/` empty until a definition is deployed. There's
+no `<stage>` segment in either path — a cluster has exactly one stage for
+its whole lifetime, so `clusters/<cluster>/...` already scopes everything
+under it to that one stage (see
+[deployment.md](deployment.md) §1).
 
 | Path | State |
 |------|--------|
-| `definitions/<tenant>/<stage>/` | Defined only (`ACTIVE=no` in list) |
-| `tenants/<tenant>/<stage>/` | Deployed to GitOps (`ACTIVE=yes`) |
+| `definitions/<tenant>/` | Defined only (`ACTIVE=no` in list) |
+| `tenants/<tenant>/` | Deployed to GitOps (`ACTIVE=yes`) |
 
 List all tenant definitions and deployment status:
 
@@ -71,7 +75,7 @@ If not yet under `tenants/`, deploy copies the definition from `definitions/` fi
 Deploy is transactional:
 
 - waits until the Tenant reaches `status.phase=Ready`
-- retrieves the initial tenant-admin credentials
+- retrieves the initial tenant-admin credentials from OpenBao or the `keycloak-admin-<tenant>` Job
 - only then prints login credentials
 - if provisioning or credential retrieval fails, it rolls back the GitOps deploy and prints `failed to provision tenant, rolling back`
 - rollback reverts the GitOps change, triggers ArgoCD prune, deletes the Tenant CR, and waits for operator finalizers (same cleanup path as `tenants undeploy`)
@@ -83,24 +87,22 @@ After successful deploy, the CLI prints tenant-admin login guidance, including:
 - OpenBao fallback command for the tenant-admin password
 - realm admin console URL
 
-Render and apply the active tenant set for dev manually (optional):
+Render and apply the active tenant set manually (optional):
 
 ```bash
-kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo/dev
+kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo
 ```
 
-To target another environment, use `--env`:
-
-```bash
-kubectl gentian tenants list --env staging
-kubectl gentian tenants deploy demo --env staging
-```
+There's no `--env`/`--stage` flag to target another stage — `GENTIAN_DEPLOYMENTS_CLUSTER`
+already selects a cluster that's pinned to exactly one stage. To promote a
+tenant to a different stage, promote it to a *different cluster*'s
+`definitions/` tree instead (see [deployment.md](deployment.md) §6.3).
 
 The deploy command writes/updates tenant manifests under
-`gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
+`gentian-deployments/clusters/<cluster>/tenants/<tenant>/`, commits/pushes,
 and ArgoCD ApplicationSet discovers the directory automatically.
 
-Equivalent Git change: add/remove tenant directories for the selected stage.
+Equivalent Git change: add/remove the tenant's directory under `tenants/`.
 
 Check tenant reconciliation:
 
@@ -117,8 +119,8 @@ Undeploy a tenant instance:
 kubectl gentian tenants undeploy demo
 ```
 
-For destructive cleanup that removes all orchestrator-owned artifacts (LDAP
-users, databases, mail secrets, UMC releases, and labeled kernel Jobs), use:
+For destructive cleanup that removes all orchestrator-owned artifacts (Keycloak
+realm, databases, storage, mail secrets, and labeled kernel Jobs), use:
 
 ```bash
 kubectl gentian tenants undeploy demo --purge
@@ -130,13 +132,14 @@ The purge flag sets `deletionPolicy=Delete` on the live Tenant CR, waits until
 that policy is stable (re-patching if ArgoCD selfHeal reverts it), deletes the
 Tenant CR, removes the instance from Git, and immediately syncs the tenants
 ArgoCD Application so selfHeal cannot recreate the CR from a stale revision.
-It then waits for controller Delete cleanup (LDAP OU delete, databases, etc.).
+It then waits for controller Delete cleanup (Keycloak realm delete, databases,
+storage, mail secrets, and labeled kernel Jobs).
 If the Tenant CR reappears without a `deletionTimestamp`, the plugin re-syncs
 ArgoCD and re-issues delete until cleanup completes. After the Tenant CR is
 gone it also deletes any remaining kernel artifacts labeled
 `gentianos.io/tenant=<name>`.
-If a prior undeploy ran Retain cleanup only, purge falls back to an LDAP OU
-delete Job when it detects `ldap-lock-<tenant>` without `ldap-ou-delete-<tenant>`.
+If a prior undeploy ran Retain cleanup only, purge waits for any in-flight
+`keycloak-realm-delete-*` Job before removing labeled kernel artifacts.
 
 The undeploy command removes the instance from
 `gentian-deployments/clusters/<cluster>/tenants/<tenant>/<env>/`, commits/pushes,
@@ -193,14 +196,14 @@ Portal: tenant admins see an **App Store** tile (`allowedGroup: Tenant Admins`).
 
 ```bash
 kubectl gentian apps list
-kubectl gentian apps install openproject --tenant gtn-demo
-kubectl gentian apps uninstall openproject --tenant gtn-demo
+kubectl gentian apps install demo-app --tenant gtn-demo
+kubectl gentian apps uninstall demo-app --tenant gtn-demo
 ```
 
 Guides:
 
-- [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) — build new apps
-- [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) — publish upstream charts
+- [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) — build new apps
+- [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) — publish upstream charts
 
 Show all available `kubectl gentian` subcommands:
 
@@ -224,7 +227,7 @@ gtnctl apps list
 Install an app on a tenant (commits/pushes GitOps, syncs Argo CD, waits for Ready):
 
 ```bash
-kubectl gentian apps install openproject --tenant demo
+kubectl gentian apps install demo-app --tenant demo
 # shorthand:
 gtnctl apps install xwiki --tenant demo
 ```
@@ -232,7 +235,7 @@ gtnctl apps install xwiki --tenant demo
 Uninstall (removes the app from Git; retains databases and OpenBao secrets by default):
 
 ```bash
-kubectl gentian apps uninstall openproject --tenant demo
+kubectl gentian apps uninstall demo-app --tenant demo
 ```
 
 Purge persistent state (Postgres/MariaDB, S3 bucket, Redis keys, OpenBao paths):
@@ -252,24 +255,41 @@ kubectl get pods -n tenant-demo | grep xwiki
 kubectl logs -n tenant-demo -l app.kubernetes.io/instance=xwiki --tail=50
 ```
 
-Tenant stage (`dev`, `staging`, `prod`) is selected via `install.env` /
-`GENTIAN_DEPLOYMENTS_ENV` — app commands do not take `--env`; they target the
-active tenant file for that stage.
+A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
+`GENTIAN_DEPLOYMENTS_STAGE` in `install.env` (see
+[deployment.md](deployment.md) §1) — `apps`/`tenants` commands don't take a
+`--env`/`--stage` flag; they always target the one cluster selected by
+`GENTIAN_DEPLOYMENTS_CLUSTER`.
 
 ## 7. Retrieve Admin Credentials
 
-Portal and identity credentials can be read from Kubernetes Secrets.
+Portal and identity credentials can be read from Kubernetes Secrets or the
+`kubectl gentian` plugin.
 
-Cluster admin (Nubus/Portal):
+Gentian portal login (derived from `MASTER_PASSWORD` during install):
 
 ```bash
-kubectl get secret nubus-credentials -n gentian-dev -o jsonpath='{.data.admin-password}' | base64 -d && echo
+# Printed at end of install.sh (portal-login-bootstrap helpers)
+kubectl get secret keycloak-admin -n platform-kernel -o yaml
 ```
 
-Keycloak admin (master realm):
+Tenant admin (after `kubectl gentian tenants deploy <tenant>` — or read from Job logs):
 
 ```bash
-kubectl get secret nubus-credentials -n gentian-dev -o jsonpath='{.data.keycloak-admin-password}' | base64 -d && echo
+kubectl logs -n platform-kernel job/keycloak-admin-<tenant> --tail=20
+```
+
+OpenBao fallback (when seeded):
+
+```bash
+bao kv get gentian-os/tenants/<tenant>/identity/admin
+```
+
+Keycloak master-realm admin (Suze stack):
+
+```bash
+kubectl get secret keycloak-admin -n platform-kernel \
+  -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
 ArgoCD admin:
@@ -324,23 +344,22 @@ the Tenant and external curl to the public hostname.
 
 ### OIDC pack catalogue
 
-OpenDesk-style apps depend on the cluster-scoped `OIDCPackCatalog` CR shipped
-from `gentian-apps` (`profiles/opendesk-oidc-catalog/`). Verify it is synced
+Apps with Path B OIDC depend on the cluster-scoped `OIDCPackCatalog` CR shipped
+from `gentian-apps` (`profiles/<app>/oidc-catalog.yaml`). Verify packs are synced
 before debugging pack Jobs or missing client scopes:
 
 ```bash
-kubectl get oidcpackcatalog opendesk -o yaml
-# expect: metadata.labels.gentianos.io/oidc-catalog: opendesk
+kubectl get oidcpackcatalog -l gentianos.io/profile-name=demo-app -o yaml
 ```
 
 List pack keys and confirm a profile's `clientId` is present:
 
 ```bash
-kubectl get oidcpackcatalog opendesk -o jsonpath='{.spec.packs}' | jq 'keys'
+kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.packs}{"\n"}{end}'
 ```
 
 Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
-**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §8.
+**not** need a pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 
@@ -351,6 +370,10 @@ relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
 **operator** provisions per organisation. See [design/mail.md](design/mail.md) §0.
 
 On dev, in-cluster SMTP is `postfix-dev.gentian-dev.svc.cluster.local:587`.
+
+**Tunnel clusters:** `MAIL_SERVICE_MODE=kernel` is rejected by `./install.sh --validate` when
+`NETWORK_MODE=tunnel`. Cloudflare tunnel exposes HTTP/HTTPS only — use
+`MAIL_SERVICE_MODE=external` with `EXTERNAL_SMTP_HOST` / `SMTP_RELAY_*` for invitation mail.
 
 ### Enable kernel mail delivery
 
@@ -377,6 +400,17 @@ within a few minutes (or run `argocd app sync gentian-infra-helm-dev` immediatel
 
 ### Check mail component health
 
+Install and `update.sh --mail` (kernel mode) run automated smoke checks:
+Keycloak master-realm OIDC discovery (Step 12) and Dovecot IMAP/LMTP TCP
+(Step 13b). Re-run anytime:
+
+```bash
+make verify-kernel-services
+```
+
+Set `VERIFY_KERNEL_SERVICES=0` to skip during `./install.sh`. Tune timeouts with
+`KEYCLOAK_VERIFY_TIMEOUT` / `DOVECOT_VERIFY_TIMEOUT` (seconds, default 300).
+
 ```bash
 # Dovecot
 kubectl get release dovecot-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
@@ -397,8 +431,8 @@ kubectl get externalsecret -n gentian-dev dovecot-sensitive-values postfix-sensi
 MAIL_SERVICE_MODE=external
 EXTERNAL_SMTP_HOST=smtp.gmail.com
 EXTERNAL_SMTP_PORT=587
-OD_SMTP_RELAY_USERNAME=<gmail-address>
-OD_SMTP_RELAY_PASSWORD=<app-password>
+SMTP_RELAY_USERNAME=<gmail-address>
+SMTP_RELAY_PASSWORD=<app-password>
 ```
 
 ```bash

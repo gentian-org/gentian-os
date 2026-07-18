@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create gentian-staging-ca-tls in the services namespace for ACME staging dev
 # clusters. Pods that call https://id.<kernel-domain> need the Let's Encrypt
-# staging intermediate in their trust store (opendesk certificate.selfSigned parity).
+# staging intermediate in their trust store (self-signed CA parity).
 #
 # Usage: create-staging-ca-secret.sh [namespace]
 # Default namespace: ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}

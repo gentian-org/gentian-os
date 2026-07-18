@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package tiles
 
 import (
@@ -35,9 +51,7 @@ func TestResolveLogoPriority(t *testing.T) {
 
 	got, err := ResolveLogo(
 		&gentianov1alpha1.TileSpec{Icon: "erp"},
-		"legacy-profile",
 		&gentianov1alpha1.TileSpec{Icon: "mail"},
-		"legacy-portal",
 	)
 	if err != nil {
 		t.Fatalf("ResolveLogo: %v", err)
@@ -46,7 +60,7 @@ func TestResolveLogoPriority(t *testing.T) {
 		t.Fatalf("portal tile icon should win")
 	}
 
-	got, err = ResolveLogo(&gentianov1alpha1.TileSpec{Icon: "erp"}, "legacy-profile", nil, "")
+	got, err = ResolveLogo(&gentianov1alpha1.TileSpec{Icon: "erp"}, nil)
 	if err != nil {
 		t.Fatalf("ResolveLogo: %v", err)
 	}
@@ -54,11 +68,15 @@ func TestResolveLogoPriority(t *testing.T) {
 		t.Fatalf("profile tile icon expected")
 	}
 
-	got, err = ResolveLogo(nil, "data:image/svg+xml;base64,QUJD", nil, "")
+	got, err = ResolveLogo(nil, nil)
 	if err != nil {
 		t.Fatalf("ResolveLogo: %v", err)
 	}
-	if got != "data:image/svg+xml;base64,QUJD" {
-		t.Fatalf("legacy profile logo expected, got %q", got)
+	defaultIcon, err := ResolveIcon(defaultIconID)
+	if err != nil {
+		t.Fatalf("ResolveIcon: %v", err)
+	}
+	if got != defaultIcon {
+		t.Fatalf("default catalogue icon expected, got %q", got)
 	}
 }

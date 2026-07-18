@@ -1,0 +1,135 @@
+apiVersion: v1
+entries:
+  mariadb:
+  - annotations:
+      category: Database
+      licenses: Apache-2.0
+    apiVersion: v2
+    created: "2026-06-28T13:45:31.5448263+02:00"
+    dependencies:
+    - name: common
+      repository: https://charts.bitnami.com/bitnami
+      tags:
+      - bitnami-common
+      version: ^2.x.x
+    description: A Helm chart for running MariaDB database
+    digest: efe8cff77b3f0213f203f88366331f15583160fa590f6ae21d7cb566e3b02ae1
+    home: https://zendis.de
+    keywords:
+    - mariadb
+    - database
+    - sql
+    name: mariadb
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/mariadb-3.0.3.tgz
+    version: 3.0.3
+  minio:
+  - annotations:
+      category: Infrastructure
+      images: |
+        - name: minio
+          image: docker.io/bitnami/minio:2025.4.22-debian-12-r1
+        - name: minio-client
+          image: docker.io/bitnami/minio-client:2025.4.16-debian-12-r1
+        - name: os-shell
+          image: docker.io/bitnami/os-shell:12-debian-12-r43
+      licenses: Apache-2.0
+      tanzuCategory: service
+    apiVersion: v2
+    appVersion: 2025.4.22
+    created: "2026-06-28T13:45:31.546511712+02:00"
+    dependencies:
+    - name: common
+      repository: oci://registry-1.docker.io/bitnamicharts
+      tags:
+      - bitnami-common
+      version: 2.x.x
+    description: MinIO(R) is an object storage server, compatible with Amazon S3 cloud
+      storage service, mainly used for storing unstructured data (such as photos,
+      videos, log files, etc.).
+    digest: 85af73c6576c09244d2029e6428a7395cf741493c226ff4818a1e0c8c3be440f
+    home: https://bitnami.com
+    icon: https://dyltqmyl993wv.cloudfront.net/assets/stacks/minio/img/minio-stack-220x234.png
+    keywords:
+    - minio
+    - storage
+    - object-storage
+    - s3
+    - cluster
+    maintainers:
+    - name: Broadcom, Inc. All Rights Reserved.
+      url: https://github.com/bitnami/charts
+    name: minio
+    sources:
+    - https://github.com/bitnami/charts/tree/main/bitnami/minio
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/minio-16.0.10.tgz
+    version: 16.0.10
+  postgresql:
+  - annotations:
+      category: Database
+    apiVersion: v2
+    created: "2026-06-28T13:45:31.547776803+02:00"
+    dependencies:
+    - name: common
+      repository: https://charts.bitnami.com/bitnami
+      tags:
+      - bitnami-common
+      version: 2.x.x
+    description: A Helm chart for running PostgreSQL (Postgres) database
+    digest: 763149d9e87f7a69333f529cb98f547b21f3a7776d639eeecdff71288576a1dd
+    home: https://zendis.de
+    keywords:
+    - postgresql
+    - postgres
+    - database
+    - sql
+    name: postgresql
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/postgresql-2.1.2.tgz
+    version: 2.1.2
+  redis:
+  - annotations:
+      category: Database
+      flavor: sha256:1e1b4657a77f0d47e9220f0c37b9bf7802581b93214fff7d1bd2364c8bf22e8e
+      images: |
+        - image: registry-1.docker.io/bitnami/os-shell:11-debian-11-r92
+          name: os-shell
+        - image: registry-1.docker.io/bitnami/redis-exporter:1.55.0-debian-11-r3
+          name: redis-exporter
+        - image: registry-1.docker.io/bitnami/redis-sentinel:7.2.3-debian-11-r2
+          name: redis-sentinel
+        - image: registry-1.docker.io/bitnami/redis:7.2.3-debian-11-r2
+          name: redis
+      licenses: Apache-2.0
+    apiVersion: v2
+    appVersion: 7.2.3
+    created: "2026-06-28T13:45:31.550772936+02:00"
+    dependencies:
+    - name: common
+      repository: oci://registry-1.docker.io/bitnamicharts
+      tags:
+      - bitnami-common
+      version: 2.14.1
+    description: Redis(R) is an open source, advanced key-value store. It is often
+      referred to as a data structure server since keys can contain strings, hashes,
+      lists, sets and sorted sets.
+    digest: 1d2f87c389a4d27557b6099d2335c770dab3a67fd9a387ccafc9aa7e0b8ef623
+    home: https://bitnami.com
+    icon: https://bitnami.com/assets/stacks/redis/img/redis-stack-220x234.png
+    keywords:
+    - redis
+    - keyvalue
+    - database
+    maintainers:
+    - name: VMware, Inc.
+      url: https://github.com/bitnami/charts
+    name: redis
+    sources:
+    - https://github.com/bitnami/charts/tree/main/bitnami/redis
+    urls:
+    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/redis-18.6.1.tgz
+    version: 18.6.1
+generated: "2026-06-28T13:45:31.54352862+02:00"

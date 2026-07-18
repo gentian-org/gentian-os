@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package tiles
 
 import (
@@ -74,24 +90,16 @@ func ResolveIcon(iconID string) (string, error) {
 }
 
 // ResolveLogo picks the portal tile logo using profile and optional per-tile overrides.
-// Priority: tileSpec > profileSpec > legacy fields > default catalogue icon.
+// Priority: portal tile spec > profile tile spec > default catalogue icon.
 func ResolveLogo(
 	profileTile *gentianov1alpha1.TileSpec,
-	profileLegacyLogo string,
 	portalTile *gentianov1alpha1.TileSpec,
-	portalLegacyLogo string,
 ) (string, error) {
 	if uri, ok := resolveTileSpec(portalTile); ok {
 		return uri, nil
 	}
-	if portalLegacyLogo != "" {
-		return normalizeDataURI(portalLegacyLogo), nil
-	}
 	if uri, ok := resolveTileSpec(profileTile); ok {
 		return uri, nil
-	}
-	if profileLegacyLogo != "" {
-		return normalizeDataURI(profileLegacyLogo), nil
 	}
 	return ResolveIcon(defaultIconID)
 }
@@ -120,7 +128,7 @@ func normalizeDataURI(value string) string {
 	return dataURIPrefix + strings.TrimPrefix(value, dataURIPrefix)
 }
 
-// LogoBase64 returns the base64 payload without the data URI prefix for LDAP jobs.
+// LogoBase64 returns the base64 payload without the data URI prefix for portal tile jobs.
 func LogoBase64(dataURI string) string {
 	return strings.TrimPrefix(dataURI, dataURIPrefix)
 }

@@ -1,0 +1,7 @@
+version: "2"
+linters:
+  enable:
+    - goheader
+  settings:
+    goheader:
+      template-path: ${config-path}/hack/boilerplate.header.txt

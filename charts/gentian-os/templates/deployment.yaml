@@ -62,6 +62,8 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
+            - name: VAULT_SKIP_VERIFY
+              value: "true"
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
             - name: TENANCY_MODE
@@ -72,20 +74,47 @@ spec:
               value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
-            - name: LDAP_SERVER
-              value: {{ .Values.ldap.server | default "" | quote }}
-            - name: LDAP_BASE
-              value: {{ .Values.ldap.base | default "" | quote }}
+            {{- if .Values.authzBridge.enabled }}
+            - name: AUTHZ_BRIDGE_ENABLED
+              value: "true"
+            - name: OPENFGA_API_URL
+              value: {{ .Values.authzBridge.openfgaURL | quote }}
+            {{- if .Values.authzBridge.openfgaToken }}
+            - name: OPENFGA_API_TOKEN
+              value: {{ .Values.authzBridge.openfgaToken | quote }}
+            {{- end }}
+            {{- end }}
             - name: CLOUDFLARE_ZONE_ID
-              value: {{ .Values.cloudflare.zoneID | default "" | quote }}
+              {{- if .Values.cloudflare.zoneID }}
+              value: {{ .Values.cloudflare.zoneID | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "zone-id"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
             - name: CLOUDFLARE_TUNNEL_CNAME
-              value: {{ .Values.cloudflare.tunnelCNAME | default "" | quote }}
+              {{- if .Values.cloudflare.tunnelCNAME }}
+              value: {{ .Values.cloudflare.tunnelCNAME | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "tunnel-cname"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
             {{- if .Values.cloudflare.apiTokenSecretRef.name }}
             - name: CLOUDFLARE_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
                   key: {{ .Values.cloudflare.apiTokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             {{- if .Values.cloudflare.tunnelAPITokenSecretRef.name }}
             - name: CLOUDFLARE_TUNNEL_API_TOKEN
@@ -100,6 +129,22 @@ spec:
               value: {{ .Values.servicesNamespace | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
+            - name: LLM_SUPPORT
+              value: {{ .Values.llmSupport | default false | quote }}
+            {{- if .Values.commerce.enabled }}
+            - name: GENTIAN_COMMERCE_ENABLED
+              value: "true"
+            - name: GENTIAN_CORP_API_URL
+              value: {{ .Values.commerce.corpAPIURL | quote }}
+            {{- if .Values.commerce.operatorToken }}
+            - name: GENTIAN_CORP_OPERATOR_TOKEN
+              value: {{ .Values.commerce.operatorToken | quote }}
+            {{- end }}
+            {{- if .Values.commerce.meteringInterval }}
+            - name: METERING_INTERVAL
+              value: {{ .Values.commerce.meteringInterval | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}
@@ -108,6 +153,16 @@ spec:
               value: {{ .Values.openbaoNamespace | quote }}
             - name: MEMCACHED_IMAGE
               value: {{ .Values.memcached.image | quote }}
+            - name: POSTGRES_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.postgres | quote }}
+            - name: MARIADB_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.mariadb | quote }}
+            - name: REDIS_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.redis | quote }}
+            - name: KEYCLOAK_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.keycloak | quote }}
+            - name: CNPG_CLUSTER_NAME
+              value: {{ .Values.database.clusterName | quote }}
             - name: TENANT_CROSSPLANE_ONLY
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS
@@ -115,7 +170,7 @@ spec:
             - name: GENTIAN_DEPLOYMENTS_PATH
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             - name: GENTIAN_DEPLOYMENTS_STAGE
@@ -258,7 +313,7 @@ spec:
               exit 1
           env:
             - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://github.com/gentian-org/gentian-deployments" | quote }}
+              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
           securityContext:
             runAsUser: 65532
             runAsNonRoot: true

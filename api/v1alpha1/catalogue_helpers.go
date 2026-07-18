@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -113,9 +129,22 @@ func ProfileReferenceMatches(ref ProfileReference, p *AppProfile) bool {
 }
 
 // ProfileRequiresEntitlement reports whether CRM entitlement is required before install.
-// Premium profiles in gentian-premium use license: proprietary.
+// Premium profiles in gentian-pro use license: proprietary.
 func ProfileRequiresEntitlement(p *AppProfile) bool {
 	return strings.EqualFold(p.Spec.License, "proprietary")
+}
+
+// ProfileIsAPI reports whether the profile is an ApiProfile (deploymentMethod: api):
+// a catalogue entry backed by an external service that runs no workload pods.
+func ProfileIsAPI(p *AppProfile) bool {
+	return p != nil && p.Spec.DeploymentMethod == DeploymentMethodAPI
+}
+
+// ProfileDeploysWorkload reports whether the orchestrator should create a tenant
+// workload (Crossplane App claim / Helm release) for this profile. ApiProfiles
+// contribute only catalogue and portal metadata and deploy no workload.
+func ProfileDeploysWorkload(p *AppProfile) bool {
+	return !ProfileIsAPI(p)
 }
 
 // EffectiveDeploymentRole reads gentianos.io/deployment-role (default: standalone).
@@ -187,4 +216,52 @@ func ProfileOIDCDefaultRedirectURIs(p *AppProfile) ([]string, error) {
 		return nil, err
 	}
 	return uris, nil
+}
+
+// GatewayFrameAncestorsSpec is the JSON shape for gentianos.io/gateway-frame-ancestors.
+type GatewayFrameAncestorsSpec struct {
+	Mode    string   `json:"mode"`
+	Origins []string `json:"origins"`
+}
+
+// IngressGatewayFrameAncestors parses gentianos.io/gateway-frame-ancestors on an ingress.
+func IngressGatewayFrameAncestors(ingress *IngressSpec) (*GatewayFrameAncestorsSpec, error) {
+	if ingress == nil || len(ingress.Annotations) == 0 {
+		return nil, nil
+	}
+	raw := strings.TrimSpace(ingress.Annotations[AnnotationIngressGatewayFrameAncestors])
+	if raw == "" {
+		return nil, nil
+	}
+	var spec GatewayFrameAncestorsSpec
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return nil, err
+	}
+	return &spec, nil
+}
+
+// IngressGatewayEscapedSlashesAction returns gentianos.io/gateway-escaped-slashes-action when set.
+func IngressGatewayEscapedSlashesAction(ingress *IngressSpec) string {
+	if ingress == nil || len(ingress.Annotations) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(ingress.Annotations[AnnotationIngressGatewayEscapedSlashesAction])
+}
+
+// ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on an AppProfile.
+func ProfileKernelEgressNamespaces(p *AppProfile) []string {
+	if p == nil || len(p.Annotations) == 0 {
+		return nil
+	}
+	raw := strings.TrimSpace(p.Annotations[AnnotationProfileKernelEgressNamespaces])
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if ns := strings.TrimSpace(part); ns != "" {
+			out = append(out, ns)
+		}
+	}
+	return out
 }

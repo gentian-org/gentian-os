@@ -28,8 +28,8 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          OIDCPackCatalog is a cluster-scoped catalogue of OpenDesk-style OIDC packs.
-          Shipped from gentian-apps (e.g. profiles/opendesk-oidc-catalog/) and consumed
+          OIDCPackCatalog is a cluster-scoped catalogue of OIDC packs for tenant apps.
+          Shipped from gentian-apps (profiles/<app>/oidc-catalog.yaml) and consumed
           by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
         properties:
           apiVersion:
@@ -56,8 +56,8 @@ spec:
               extraManagedByAttributeGroups:
                 description: |-
                   ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
-                  provisioned per tenant OU that are not tied to an OIDC pack ldapGroup (e.g.
-                  openDesk portal admin groups).
+                  provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
+                  portal admin groups).
                 items:
                   type: string
                 type: array
@@ -89,12 +89,11 @@ spec:
                 type: object
               packs:
                 additionalProperties:
-                  description: OIDCPackSpec is the OpenDesk-style OIDC configuration
-                    for one clientId.
+                  description: OIDCPackSpec is the OIDC configuration for one clientId.
                   properties:
                     clientRole:
                       description: ClientRole is the Keycloak client role mapped from
-                        the LDAP group.
+                        the entitlement group.
                       type: string
                     defaultScopes:
                       description: DefaultScopes are realm default scopes attached
@@ -102,15 +101,14 @@ spec:
                       items:
                         type: string
                       type: array
+                    entitlementGroup:
+                      description: EntitlementGroup is the Keycloak group name mapped
+                        to the pack client role.
+                      type: string
                     fullScopeAllowed:
                       description: FullScopeAllowed controls Keycloak fullScopeAllowed
                         on the client.
                       type: boolean
-                    ldapGroup:
-                      description: |-
-                        LDAPGroup is the managed-by-attribute-* LDAP group (full cn suffix or short
-                        name — the operator normalizes to the short suffix for OU provisioning).
-                      type: string
                     mappers:
                       description: Mappers lists mapper template keys from spec.mapperTemplates.
                       items:
@@ -130,7 +128,7 @@ spec:
                       type: string
                   required:
                   - clientRole
-                  - ldapGroup
+                  - entitlementGroup
                   - scopeName
                   type: object
                 description: Packs maps OIDC clientId to pack configuration.

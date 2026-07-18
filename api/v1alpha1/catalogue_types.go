@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 // Catalogue label keys index AppProfile revisions by logical identity.
@@ -21,8 +37,25 @@ const (
 	// Shape: [{"pathPrefix":"/api","serviceName":"my-api","port":8080}]
 	AnnotationProfileGatewayAPIBackends = "gentianos.io/gateway-api-backends"
 	// OIDCDefaultRedirectURIs is a JSON array used when spec.kernelRequirements.identity.oidc.redirectUris is empty.
-	// Supports ${TENANT_DOMAIN} substitution (legacy pack Jobs and operator fallbacks).
+	// Supports ${TENANT_DOMAIN} substitution.
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
+	// KernelEgressNamespaces is a comma-separated list of extra cluster namespaces the
+	// app workload may reach (merged into kernel-access NetworkPolicy egress).
+	AnnotationProfileKernelEgressNamespaces = "gentianos.io/kernel-egress-namespaces"
+)
+
+// Per-host gateway policy annotations on IngressSpec.annotations (primary or additionalIngresses).
+const (
+	// GatewayFrameAncestors is JSON: {"mode":"replace|append","origins":["portal","mainApp",...]}.
+	AnnotationIngressGatewayFrameAncestors = "gentianos.io/gateway-frame-ancestors"
+	// GatewayEscapedSlashesAction sets Envoy ClientTrafficPolicy path.escapedSlashesAction.
+	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
+	// GatewayRequestTimeout sets BackendTrafficPolicy timeout.http.requestTimeout (e.g. "3600s" or "3600").
+	AnnotationIngressGatewayRequestTimeout = "gentianos.io/gateway-request-timeout"
+	// GatewayResponseTimeout sets BackendTrafficPolicy timeout.http.responseTimeout.
+	AnnotationIngressGatewayResponseTimeout = "gentianos.io/gateway-response-timeout"
+	// GatewayBufferLimit sets BackendTrafficPolicy connection.bufferLimit (e.g. "128m").
+	AnnotationIngressGatewayBufferLimit = "gentianos.io/gateway-buffer-limit"
 )
 
 // ProfileDeploymentRole describes how a catalogue entry is deployed relative to siblings.
@@ -66,7 +99,7 @@ const (
 // ProfileIdentity uniquely identifies an immutable AppProfile catalogue revision
 // within the tuple (family, catalogueVersion, edition).
 type ProfileIdentity struct {
-	// Family is the stable logical application id (e.g. "openproject").
+	// Family is the stable logical application id (e.g. "demo-app").
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63

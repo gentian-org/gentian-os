@@ -2,11 +2,12 @@
 #
 # Applied unconditionally by install.sh (step 3b) right after cert-manager
 # is up. Both issuers use Let's Encrypt production; choose with the
-# `cert-manager.io/cluster-issuer` annotation on Certificates / Ingresses.
+# `cert-manager.io/cluster-issuer` annotation on Certificates.
 #
 # Templated on:
-#   ${LETSENCRYPT_EMAIL}     — ACME account email (default admin@${KERNEL_DOMAIN})
-#   ${INGRESS_CLASS_NAME}    — IngressClass for HTTP-01 challenges (default public)
+#   ${LETSENCRYPT_EMAIL}                 — ACME account email (default admin@${KERNEL_DOMAIN})
+#   ${KERNEL_PUBLIC_GATEWAY_NAMESPACE}   — namespace of kernel-public-gateway (default gentian-dev)
+#   ${KERNEL_PUBLIC_GATEWAY_NAME}        — Gateway API parent for HTTP-01 challenges
 #
 # For dev / rate-limit relief use cluster-issuers-staging.yaml (ACME_ENV=staging).
 # See docs/design/multi-tenancy.md §3.
@@ -26,8 +27,12 @@ spec:
       name: letsencrypt-http01-account-key
     solvers:
       - http01:
-          ingress:
-            ingressClassName: ${INGRESS_CLASS_NAME}
+          gatewayHTTPRoute:
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: ${KERNEL_PUBLIC_GATEWAY_NAME}
+                namespace: ${KERNEL_PUBLIC_GATEWAY_NAMESPACE}
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

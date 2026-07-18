@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,24 +10,29 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations and the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package applifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
 const platformAppAnnotation = "gentianos.io/platform-app"
@@ -71,7 +76,7 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		client:    c,
 		clientset: cs,
 		opts:      opts,
-		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster, opts.DeploymentsStage),
+		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster),
 	}, nil
 }
 
@@ -86,6 +91,18 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		return nil, err
 	}
 	if status == "already_installed" {
+		if req.Provision {
+			if err := s.provisionAppGroupUsers(ctx, req.Tenant, req.Profile); err != nil {
+				return nil, fmt.Errorf("failed to provision users: %w", err)
+			}
+			return &Result{
+				Status:  "provisioned",
+				Tenant:  req.Tenant,
+				Profile: req.Profile,
+				Ready:   true,
+				Message: "All existing users successfully added to the application access group.",
+			}, nil
+		}
 		ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
 		if err != nil {
 			return nil, err
@@ -101,7 +118,7 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		}
 	}
 	if file != "" {
-		if err := s.reconcileTenantFile(ctx, file); err != nil {
+		if err := s.reconcileTenantFile(ctx, file, req.Wait); err != nil {
 			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
 		}
 	}
@@ -110,6 +127,11 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		status = "installed"
 	}
 	if !req.Wait {
+		if req.Provision {
+			if err := s.provisionAppGroupUsers(ctx, req.Tenant, req.Profile); err != nil {
+				return nil, fmt.Errorf("failed to provision users: %w", err)
+			}
+		}
 		ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
 		if err != nil {
 			return nil, err
@@ -128,6 +150,11 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 
 	if err := s.waitForAppReady(ctx, req.Tenant, req.Profile, s.opts.WaitTimeout); err != nil {
 		return nil, err
+	}
+	if req.Provision {
+		if err := s.provisionAppGroupUsers(ctx, req.Tenant, req.Profile); err != nil {
+			return nil, fmt.Errorf("failed to provision users: %w", err)
+		}
 	}
 	return &Result{
 		Status:  status,
@@ -162,7 +189,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile}, nil
 	}
 	if changed && file != "" {
-		if err := s.reconcileTenantFile(ctx, file); err != nil {
+		if err := s.reconcileTenantFile(ctx, file, false); err != nil {
 			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
 		}
 	}
@@ -174,8 +201,6 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 	var warnings []string
 	if req.Purge {
 		warnings = s.purge(ctx, tenant, profileCR, req.Profile)
-	} else if req.Profile == "element" && profileUsesPostgres(profileCR) {
-		warnings = append(warnings, s.cleanupElementSynapseIdentities(ctx, req.Tenant)...)
 	}
 
 	return &Result{
@@ -199,13 +224,6 @@ func (s *Service) validateProfile(ctx context.Context, profile string) error {
 		return fmt.Errorf("cannot modify platform app %q", profile)
 	}
 	return nil
-}
-
-func profileUsesPostgres(ap *gentianov1alpha1.AppProfile) bool {
-	if ap == nil || ap.Spec.KernelRequirements == nil || ap.Spec.KernelRequirements.Database == nil {
-		return false
-	}
-	return ap.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL
 }
 
 func (s *Service) appClaimExists(ctx context.Context, tenant, profile string) bool {
@@ -278,3 +296,85 @@ func (s *Service) ListInstalled(ctx context.Context, tenant string) ([]Result, e
 	}
 	return out, nil
 }
+
+func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string, error) {
+	secret := &corev1.Secret{}
+	err := s.client.Get(ctx, types.NamespacedName{Name: "keycloak-admin", Namespace: "platform-kernel"}, secret)
+	if err != nil {
+		return "", "", "", err
+	}
+	u := string(secret.Data["url"])
+	user := string(secret.Data["username"])
+	pass := string(secret.Data["password"])
+	if u == "" || user == "" || pass == "" {
+		return "", "", "", fmt.Errorf("keycloak-admin secret is incomplete")
+	}
+	return u, user, pass, nil
+}
+
+func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profileName string) error {
+	profile := &unstructured.Unstructured{}
+	profile.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "gentianos.io",
+		Version: "v1alpha1",
+		Kind:    "AppProfile",
+	})
+	err := s.client.Get(ctx, client.ObjectKey{Name: profileName}, profile)
+	if err != nil {
+		return fmt.Errorf("failed to get AppProfile %s: %w", profileName, err)
+	}
+
+	var attrs map[string][]string
+	annotations := profile.GetAnnotations()
+	if annotations != nil {
+		if val, ok := annotations["gentianos.io/keycloak-group-attributes"]; ok {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(val), &parsed); err == nil {
+				attrs = make(map[string][]string)
+				for k, v := range parsed {
+					if list, ok := v.([]any); ok {
+						var strList []string
+						for _, item := range list {
+							strList = append(strList, fmt.Sprint(item))
+						}
+						attrs[k] = strList
+					} else if valStr, ok := v.(string); ok {
+						attrs[k] = []string{valStr}
+					} else {
+						attrs[k] = []string{fmt.Sprint(v)}
+					}
+				}
+			}
+		}
+	}
+
+	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
+	if err != nil {
+		return fmt.Errorf("load keycloak admin credentials: %w", err)
+	}
+
+	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
+	fullGroupName := fmt.Sprintf("gentian:tenant:%s:app:%s", tenantName, profileName)
+
+	groupID, err := kc.EnsureGroup(ctx, tenantName, fullGroupName, attrs)
+	if err != nil {
+		return fmt.Errorf("ensure keycloak group %s: %w", fullGroupName, err)
+	}
+	if groupID == "" {
+		return fmt.Errorf("group %s ID not found", fullGroupName)
+	}
+
+	users, err := kc.ListRealmUsers(ctx, tenantName)
+	if err != nil {
+		return fmt.Errorf("list keycloak users in realm %s: %w", tenantName, err)
+	}
+
+	for _, u := range users {
+		if err := kc.AddUserToGroup(ctx, tenantName, u.ID, groupID); err != nil {
+			return fmt.Errorf("failed to add user %s to group %s: %w", u.Username, fullGroupName, err)
+		}
+	}
+
+	return nil
+}
+

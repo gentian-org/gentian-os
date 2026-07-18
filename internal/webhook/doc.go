@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,4 +15,8 @@ limitations under the License.
 */
 
 // Package webhook contains admission webhooks for the Gentian OS operator.
+//
+// Implemented: Tenant validating webhook (optional via Helm values).
+// Deferred: AppProfile validating webhook — tracked on roadmap; catalogue
+// integrity is enforced via CRD OpenAPI and gentian-apps CI today.
 package webhook

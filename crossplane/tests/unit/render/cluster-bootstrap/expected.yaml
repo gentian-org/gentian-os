@@ -51,8 +51,6 @@ spec:
         - https://github.com/gentian-org/gentian-os
         - https://github.com/gentian-org/gentian-apps
         - https://github.com/gentian-org/gentian-deployments
-        - registry.opencode.de/*
-        - oci://registry.opencode.de/*
   providerConfigRef:
     name: kubernetes
 ---
@@ -86,8 +84,12 @@ spec:
           server: https://acme-v02.api.letsencrypt.org/directory
           solvers:
           - http01:
-              ingress:
-                ingressClassName: public
+              gatewayHTTPRoute:
+                parentRefs:
+                - group: gateway.networking.k8s.io
+                  kind: Gateway
+                  name: kernel-public-gateway
+                  namespace: gentian-dev
   providerConfigRef:
     name: kubernetes
 ---
@@ -123,8 +125,13 @@ spec:
                 serviceAccountRef:
                   name: external-secrets
                   namespace: external-secrets
+            caProvider:
+              key: tls.crt
+              name: openbao-tls
+              namespace: openbao
+              type: Secret
             path: secret
-            server: http://openbao.openbao.svc.cluster.local:8200
+            server: https://openbao.openbao.svc.cluster.local:8200
             version: v2
   providerConfigRef:
     name: kubernetes
@@ -292,6 +299,35 @@ apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-kv-authz-openfga
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-authz-openfga
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-authz-openfga
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/authz/openfga
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-kv-cache-redis
   labels:
     crossplane.io/composite: dev-cluster
@@ -398,35 +434,6 @@ spec:
       namespace: crossplane-system
     mount: secret
     name: gentian-os/kernel/identity/keycloak-bootstrap
-  managementPolicies:
-  - Observe
-  - Create
-  providerConfigRef:
-    name: openbao
----
-apiVersion: kv.vault.upbound.io/v1alpha1
-kind: SecretV2
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: vault-kv-identity-nubus
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-kv-identity-nubus
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    dataJsonSecretRef:
-      key: data.json
-      name: gentian-os-kernel-identity-nubus
-      namespace: crossplane-system
-    mount: secret
-    name: gentian-os/kernel/identity/nubus
   managementPolicies:
   - Observe
   - Create

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/meta"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -32,6 +32,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
@@ -39,15 +41,26 @@ const (
 	cnpgGroup              = "postgresql.cnpg.io"
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
-	cnpgClusterName        = "postgres" // shared CloudNativePG Cluster in platform-kernel
-	psqlProvisionerImage   = "postgres:16-alpine"
 	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
 )
 
+// cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
+var cnpgClusterName = envOrDefault("CNPG_CLUSTER_NAME", "postgres")
+
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	portalShellDone, err := r.ensurePortalShellDatabase(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure portal shell database: %w", err)
+	}
+	if !portalShellDone {
+		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
+			"ProvisioningPortalShell", "Waiting for portal shell PostgreSQL database")
+		return r.requeueForPendingJob(ctx, tenant.Name, roleJobName(tenant.Name, portalShellAppName)), nil
+	}
+
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -55,30 +68,16 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 
 	if len(pgApps) == 0 {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
-			"NoDatabaseRequired", "No apps require PostgreSQL provisioning")
+			"PortalShellReady", "Portal shell database ready; no app databases required")
 		return ctrl.Result{}, nil
 	}
 
 	nsName := tenantNamespaceName(tenant)
 	allDone := true
+	var pendingJobs []string
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: appName}, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-
-		if appUsesCrossplaneDBInit(profile) {
-			done, err := r.waitForTenantNamespaceJob(ctx, tenant, appCompositionInitJobName(appName, "db-init"))
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("wait for db-init Job for app %s: %w", appName, err)
-			}
-			if !done {
-				allDone = false
-			}
-			continue
-		}
 
 		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
@@ -86,10 +85,10 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		}
 		if !roleJobDone {
 			allDone = false
+			pendingJobs = append(pendingJobs, roleJobName(tenant.Name, appName))
 			continue
 		}
 
-		// Step 2 — CloudNativePG Database CR (only after role exists)
 		dbReady, err := r.ensureDatabaseCR(ctx, tenant, nsName, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Database CR for app %s: %w", appName, err)
@@ -102,7 +101,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 	if !allDone {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
 			"Provisioning", "Waiting for PostgreSQL databases and roles to be ready")
-		return ctrl.Result{RequeueAfter: databaseRequeueAfter}, nil
+		return r.requeueForPendingJob(ctx, tenant.Name, pendingJobs...), nil
 	}
 
 	r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
@@ -113,14 +112,15 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 // collectPostgresApps returns profile names of apps that require a per-tenant
 // PostgreSQL database.
 func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
 	var pgApps []string
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+		if !ok {
+			continue
 		}
 		if profile.Spec.KernelRequirements != nil &&
 			profile.Spec.KernelRequirements.Database != nil &&
@@ -237,7 +237,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
-		Image:   psqlProvisionerImage,
+		Image:   kernel.PostgresProvisionerImage(),
 		Command: []string{"/bin/bash", "-c", script},
 		Env: []corev1.EnvVar{
 			{
@@ -289,6 +289,11 @@ func buildRoleScript(dbName, roleName string) string {
 	// unset, a random password is generated locally and discarded after Job
 	// completion (legacy behaviour — apps without seeded OpenBao cannot
 	// connect, but backends that only need the database to exist still work).
+	searchPath := fmt.Sprintf("\\\"%s\\\", public", dbName)
+	if strings.Contains(roleName, "activepieces") {
+		searchPath = fmt.Sprintf("public, \\\"%s\\\"", dbName)
+	}
+
 	return fmt.Sprintf(`set -euo pipefail
 if [ -z "${ROLE_PW:-}" ]; then
   ROLE_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
@@ -307,13 +312,13 @@ if [ "${DB_EXISTS}" != "1" ]; then
   echo "database %s created"
 fi
 psql -c "GRANT ALL PRIVILEGES ON DATABASE \"%s\" TO \"%s\";" postgres
-# openDesk XWiki uses PostgreSQL schema virtual_mode: tables live in a schema
+# Some catalogue apps (e.g. XWiki) use PostgreSQL schema virtual_mode: tables live in a schema
 # matching the database name (e.g. demo_xwiki), not public.
 psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZATION \"%s\";"
 psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
-psql -c "ALTER ROLE \"%s\" SET search_path TO \"%s\", public;" postgres
+psql -c "ALTER ROLE \"%s\" SET search_path TO %s;" postgres
 echo "schema %s ensured"
-echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, dbName, dbName)
+echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
 }
 
 // --- Status helpers ----------------------------------------------------------

@@ -1,4 +1,19 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
@@ -10,50 +25,40 @@ import (
 	"testing"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
-func TestOIDCPacksNeedLDAPGroups(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
-	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+const testOIDCCatalogFixture = "../oidc/testdata/minimal-oidc-catalog.yaml"
+
+func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
+	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-client")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	if !oidcPacksNeedLDAPGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
-		t.Fatal("expected opendesk-jitsi pack to require LDAP groups")
+	if !oidcPacksNeedEntitlementGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
+		t.Fatal("expected catalogue-test-client pack to require entitlement groups")
 	}
-	if oidcPacksNeedLDAPGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
-		t.Fatal("expected custom client without pack to skip LDAP group gate")
-	}
-}
-
-func TestBuildKCLDAPGroupSyncScript(t *testing.T) {
-	script := buildKCLDAPGroupSyncScript("demo")
-	for _, want := range []string{
-		`REALM="demo"`,
-		"group-mapper",
-		"mappers/${MAPPER_ID}/sync?direction=fedToKeycloak",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("script missing %q", want)
-		}
+	if oidcPacksNeedEntitlementGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
+		t.Fatal("expected custom client without pack to skip entitlement group gate")
 	}
 }
 
-func TestBuildOIDCPackScriptJitsi(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, "../oidc/testdata/opendesk-catalog.yaml")
-	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "opendesk-jitsi")
+func TestBuildOIDCPackScript(t *testing.T) {
+	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-client")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
-	script := buildOIDCPackScript("demo", "opendesk-jitsi", pack, templates,
-		[]string{"https://meet.demo.desk.gentian.org/*"}, "")
+	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
+		[]string{"https://app.demo.desk.gentian.org/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
 	for _, want := range []string{
-		"opendesk-jitsi-scope",
-		"opendesk-jitsi-access-control",
-		"managed-by-attribute-Videoconference",
+		"catalogue-test-client-scope",
+		"catalogue-test-client-access-control",
+		"gentian:tenant:demo:app:catalogue-test-client",
 		"PUBLIC_CLIENT=true",
-		"https://meet.demo.desk.gentian.org/*",
+		"https://app.demo.desk.gentian.org/*",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
@@ -65,11 +70,11 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 	if !strings.Contains(script, "_kj_scope_id_from_list") {
 		t.Fatal("expected dedicated client-scope id lookup helper")
 	}
-	if strings.Contains(script, `\"name\":"opendesk_useruuid"`) {
+	if strings.Contains(script, `\"name\":"gentian_useruuid"`) {
 		t.Fatal("mapper POST JSON must quote name field values")
 	}
-	if !strings.Contains(script, `"name":"opendesk_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
-		t.Fatal("mapper POST body must include opendesk_useruuid name and usermodel protocolMapper")
+	if !strings.Contains(script, `"name":"gentian_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
+		t.Fatal("mapper POST body must include gentian_useruuid name and usermodel protocolMapper")
 	}
 	if !strings.Contains(script, `"consentRequired":false`) {
 		t.Fatal("mapper POST body must set consentRequired false")
@@ -98,7 +103,7 @@ func TestBuildOIDCPackScriptJitsi(t *testing.T) {
 func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 	script := buildFirstBrokerLoginFlowScript("demo")
 	if path := os.Getenv("DUMP_FIRST_BROKER_LOGIN_SCRIPT"); path != "" {
-		if err := os.WriteFile(path, []byte(keycloakProvisionerBootstrap+script), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(keycloak.ProvisionerBootstrap+script), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -106,7 +111,8 @@ func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 		firstBrokerLoginFlowAlias,
 		`idp-detect-existing-broker-user`,
 		`first broker login flow ${FLOW_ALIAS} ready`,
-		`idp-auto-link`,
+		`idp-confirm-link`,
+		`idp-email-verification`,
 		`requirement\":\"REQUIRED`,
 		`federated-identity/kernel`,
 		`kernel broker link purge finished`,
@@ -125,20 +131,20 @@ func TestBuildOIDCBrowserFlowScript(t *testing.T) {
 	if !strings.Contains(script, "defaultProvider") {
 		t.Fatal("expected IdP redirector defaultProvider config")
 	}
-	if !strings.Contains(script, "requirement") || !strings.Contains(script, "REQUIRED") {
-		t.Fatal("expected IdP redirector execution reconciled to REQUIRED")
+	if !strings.Contains(script, "requirement") || !strings.Contains(script, "ALTERNATIVE") {
+		t.Fatal("expected executions configured with ALTERNATIVE requirement")
 	}
-	if !strings.Contains(script, "set to REQUIRED (defaultProvider=kernel)") {
-		t.Fatal("expected IdP redirector REQUIRED reconciliation log line")
+	if !strings.Contains(script, "configured with defaultProvider=kernel") {
+		t.Fatal("expected IdP redirector configuration log line")
 	}
 }
 
-func TestResolveOIDCRedirectURIsFromProfile(t *testing.T) {
+func TestSubstituteTenantDomainInURIs(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Spec.Domain = "demo.desk.gentian.org"
-	uris := resolveOIDCRedirectURIs(tenant, "jitsi",
-		[]string{"https://meet.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
-	if len(uris) != 1 || uris[0] != "https://meet.demo.desk.gentian.org/*" {
+	uris := substituteTenantDomainInURIs(tenant,
+		[]string{"https://app.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
+	if len(uris) != 1 || uris[0] != "https://app.demo.desk.gentian.org/*" {
 		t.Fatalf("redirects: %v", uris)
 	}
 }

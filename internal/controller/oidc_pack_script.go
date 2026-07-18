@@ -1,4 +1,19 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
@@ -8,9 +23,10 @@ import (
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/oidc"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
-// buildOIDCPackScript provisions OpenDesk-style Keycloak client scope, mappers,
+// buildOIDCPackScript provisions Keycloak client scope, mappers,
 // client role, group role mapping, and default scopes for one OIDC client.
 func buildOIDCPackScript(
 	realmName, clientID string,
@@ -18,6 +34,7 @@ func buildOIDCPackScript(
 	templates map[string]oidc.MapperTemplate,
 	redirectURIs []string,
 	clientSecret string,
+	entitlementGroup string,
 ) string {
 	redirectJSON, _ := json.Marshal(redirectURIs)
 	mapperBlocks := buildMapperPOSTBlocks(pack, templates)
@@ -36,17 +53,22 @@ func buildOIDCPackScript(
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
-	scopeLookupBlock := keycloakShellLookupClientScopeID()
-	clientUUIDBlock := keycloakShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
-	groupIDBlock := keycloakShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${LDAP_GROUP}")
+	groupName := entitlementGroup
+	if groupName == "" {
+		groupName = pack.EntitlementGroup
+	}
 
-	return keycloakShellJSONIDExtractor() + keycloakShellScopeIDFromList() + fmt.Sprintf(`set -eu
+	scopeLookupBlock := keycloak.ShellLookupClientScopeID()
+	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
+	groupIDBlock := keycloak.ShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${ENTITLEMENT_GROUP}")
+
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
 SCOPE_DESC=%q
 CLIENT_ROLE=%q
-LDAP_GROUP=%q
+ENTITLEMENT_GROUP=%q
 REDIRECT_URIS='%s'
 PUBLIC_CLIENT=%s
 FULL_SCOPE_ALLOWED=%s
@@ -98,14 +120,14 @@ ROLE_JSON=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles/${CLIENT_ROLE}")
 ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 
-# --- Map LDAP group to client role ---
+# --- Map entitlement group to client role ---
 GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?search=${LDAP_GROUP}")
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?search=${ENTITLEMENT_GROUP}")
 %s
 curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${GROUP_ID}/role-mappings/clients/${CLIENT_UUID}" \
   -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${CLIENT_ROLE}\"}]" >/dev/null || true
-echo "group ${LDAP_GROUP} mapped to client role ${CLIENT_ROLE}"
+echo "group ${ENTITLEMENT_GROUP} mapped to client role ${CLIENT_ROLE}"
 
 # --- Default client scopes (built-ins + app scope) ---
 for SCOPE in profile email roles web-origins acr ${SCOPE_NAME}; do
@@ -119,7 +141,7 @@ done
 SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
 
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
-		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, pack.LDAPGroup,
+		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
 		string(redirectJSON), publicClient, fullScope,
 		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
 }
@@ -217,33 +239,34 @@ if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-redirect to kernel IdP\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Check cookie first, then auto-redirect to kernel IdP\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+  
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-    -d "{\"provider\":\"identity-provider-redirector\",\"requirement\":\"REQUIRED\"}"
+    -d "{\"provider\":\"auth-cookie\"}"
+    
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
+    -d "{\"provider\":\"identity-provider-redirector\"}"
   echo "browser flow ${FLOW_ALIAS} created"
 fi
 
-EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-  | jq -r 'map(select(.providerId == "identity-provider-redirector"))[0].id // empty')
-if [ -z "${EXEC_ID}" ]; then
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-    -d "{\"provider\":\"identity-provider-redirector\",\"requirement\":\"REQUIRED\"}"
-  EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    | jq -r 'map(select(.providerId == "identity-provider-redirector"))[0].id // empty')
-fi
-if [ -n "${EXEC_ID}" ]; then
+EXECS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions")
+printf '%%s' "${EXECS}" | jq -c '.[]' | while read -r EXEC; do
+  EID=$(printf '%%s' "${EXEC}" | jq -r '.id')
+  PROVIDER=$(printf '%%s' "${EXEC}" | jq -r '.providerId')
+  
   curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/executions/${EXEC_ID}/config" \
-    -d "{\"alias\":\"autoredirect-kernel\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null 2>&1 || true
-  echo "identity-provider-redirector execution ${EXEC_ID} set to REQUIRED (defaultProvider=kernel)"
-fi
+    -d "{\"id\":\"${EID}\",\"requirement\":\"ALTERNATIVE\"}"
+    
+  if [ "${PROVIDER}" = "identity-provider-redirector" ]; then
+    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/executions/${EID}/config" \
+      -d "{\"alias\":\"autoredirect-kernel\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null 2>&1 || true
+    echo "identity-provider-redirector execution ${EID} configured with defaultProvider=kernel"
+  fi
+done
 
 curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}" \
@@ -254,6 +277,12 @@ echo "realm ${REALM} browser flow set to ${FLOW_ALIAS}"`, realmName)
 // buildEnsureFirstBrokerLoginFlowShell creates the custom first-broker-login flow
 // when missing. Requires TOKEN and sets REALM from realmExpr (e.g. "demo" or "${REALM_NAME}").
 func buildEnsureFirstBrokerLoginFlowShell(realmExpr string) string {
+	return buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, firstBrokerLoginFlowAlias)
+}
+
+// buildEnsureFirstBrokerLoginFlowShellWithAlias is like buildEnsureFirstBrokerLoginFlowShell
+// but allows a custom flow alias (e.g. kernel portal broker login).
+func buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, flowAlias string) string {
 	return fmt.Sprintf(`
 REALM=%s
 FLOW_ALIAS=%q
@@ -265,11 +294,11 @@ if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
 else
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Auto-link kernel IdP to LDAP users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
+    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Confirm/verify link kernel IdP to tenant users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
   echo "first broker login flow ${FLOW_ALIAS} created"
 fi
 
-for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
+for PROVIDER in idp-detect-existing-broker-user idp-confirm-link idp-email-verification; do
   EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
     | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
@@ -288,11 +317,11 @@ for PROVIDER in idp-detect-existing-broker-user idp-auto-link; do
       -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
   fi
 done
-echo "first broker login flow ${FLOW_ALIAS} ready (detect + auto-link)"`, realmExpr, firstBrokerLoginFlowAlias)
+echo "first broker login flow ${FLOW_ALIAS} ready (detect + confirm-link + email-verification)"`, realmExpr, flowAlias)
 }
 
 // buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
-// that links kernel IdP identities to existing LDAP users by email without prompting.
+// that links kernel IdP identities to existing tenant users by email with confirmation.
 // See Keycloak docs: "Detect existing user first login flow".
 func buildFirstBrokerLoginFlowScript(realmName string) string {
 	return fmt.Sprintf(`set -eu

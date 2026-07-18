@@ -37,12 +37,33 @@ if [[ ${#releases[@]} -eq 0 ]]; then
 fi
 
 if [[ ${#releases[@]} -eq 0 ]]; then
-  fail "No Release.helm.crossplane.io in ${SERVICES_NS} — run install.sh first"
+  warn "No standalone kernel Helm Releases in ${SERVICES_NS} — InfraData XR may own postgres/mariadb"
+else
+  pass "Found ${#releases[@]} standalone Helm Release(s) in ${SERVICES_NS}"
 fi
-pass "Found ${#releases[@]} Helm Release(s) in ${SERVICES_NS}"
+
+failed=0
+
+# InfraData XR — shared postgres/mariadb/redis/minio
+info "Checking InfraData shared infra Releases..."
+for rel in dev-infra-data-postgresql dev-infra-data-mariadb dev-infra-data-redis dev-infra-data-minio; do
+  if kubectl get release.helm.crossplane.io/"${rel}" >/dev/null 2>&1; then
+    if kubectl wait "release.helm.crossplane.io/${rel}" \
+        --for=condition=Synced --timeout="${TIMEOUT_RELEASE}" 2>/dev/null \
+    && kubectl wait "release.helm.crossplane.io/${rel}" \
+        --for=condition=Ready --timeout="${TIMEOUT_RELEASE}" 2>/dev/null; then
+      pass "InfraData Release ${rel} Synced + Ready"
+    else
+      warn "InfraData Release ${rel} not Synced/Ready"
+      failed=1
+    fi
+  else
+    warn "InfraData Release ${rel} not found"
+    failed=1
+  fi
+done
 
 info "Waiting for kernel Releases Synced + Ready (timeout: ${TIMEOUT_RELEASE})..."
-failed=0
 for rel in "${releases[@]}"; do
   if ! kubectl wait "release.helm.crossplane.io/${rel}" -n "${SERVICES_NS}" \
       --for=condition=Synced --timeout="${TIMEOUT_RELEASE}" 2>/dev/null; then
@@ -81,52 +102,37 @@ fi
 
 # ── Core kernel pod health ───────────────────────────────────────────────────
 
-info "Checking core kernel workloads in ${SERVICES_NS}..."
-check_deployment_ready() {
-  local deploy="$1"
-  if ! kubectl get deployment "$deploy" -n "${SERVICES_NS}" >/dev/null 2>&1; then
-    warn "Deployment ${deploy} not found (skipped)"
+info "Checking core kernel workloads..."
+check_statefulset_ready() {
+  local sts="$1"
+  local ns="$2"
+  if ! kubectl get statefulset "$sts" -n "$ns" >/dev/null 2>&1; then
+    return 1
+  fi
+  local ready desired
+  ready=$(kubectl get statefulset "$sts" -n "$ns" \
+    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+  desired=$(kubectl get statefulset "$sts" -n "$ns" \
+    -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+  if [[ "${ready:-0}" -ge 1 && "${ready}" == "${desired}" ]]; then
+    pass "StatefulSet ${sts} ready (${ready}/${desired}) in ${ns}"
     return 0
   fi
-  kubectl wait "deployment/${deploy}" -n "${SERVICES_NS}" --for=condition=Available \
-    --timeout="${TIMEOUT_RELEASE}" >/dev/null 2>&1 \
-    || fail "Deployment ${deploy} not Available"
-  pass "Deployment ${deploy} Available"
+  fail "StatefulSet ${sts} not ready (${ready}/${desired}) in ${ns}"
 }
 
-# Nubus (Keycloak/LDAP stack), mail, Nextcloud — representative Pattern B services
-check_deployment_ready "nubus-dev-portal-server"
-check_deployment_ready "postfix-dev"
-check_deployment_ready "dovecot-dev"
-check_deployment_ready "nextcloud-dev-aio"
-
-# LDAP server is a StatefulSet
-if kubectl get statefulset nubus-dev-ldap-server-primary -n "${SERVICES_NS}" >/dev/null 2>&1; then
-  ready=$(kubectl get statefulset nubus-dev-ldap-server-primary -n "${SERVICES_NS}" \
-    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-  desired=$(kubectl get statefulset nubus-dev-ldap-server-primary -n "${SERVICES_NS}" \
-    -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
-  if [[ "${ready:-0}" -ge 1 && "${ready}" == "${desired}" ]]; then
-    pass "StatefulSet nubus-dev-ldap-server-primary ready (${ready}/${desired})"
-  else
-    fail "StatefulSet nubus-dev-ldap-server-primary not ready (${ready}/${desired})"
-  fi
-else
-  warn "StatefulSet nubus-dev-ldap-server-primary not found (skipped)"
-fi
-
-if kubectl get statefulset nubus-dev-keycloak -n "${SERVICES_NS}" >/dev/null 2>&1; then
-  ready=$(kubectl get statefulset nubus-dev-keycloak -n "${SERVICES_NS}" \
-    -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-  desired=$(kubectl get statefulset nubus-dev-keycloak -n "${SERVICES_NS}" \
-    -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
-  if [[ "${ready:-0}" -ge 1 && "${ready}" == "${desired}" ]]; then
-    pass "StatefulSet nubus-dev-keycloak ready (${ready}/${desired})"
-  else
-    fail "StatefulSet nubus-dev-keycloak not ready (${ready}/${desired})"
-  fi
-else
-  warn "StatefulSet nubus-dev-keycloak not found (skipped)"
+keycloak_found=0
+for ns in platform-kernel "${SERVICES_NS}"; do
+  for sts in gentian-idp-keycloak-keycloakx gentian-idp-keycloak; do
+    if kubectl get statefulset "$sts" -n "$ns" >/dev/null 2>&1; then
+      check_statefulset_ready "$sts" "$ns"
+      keycloak_found=1
+      break 2
+    fi
+  done
+done
+if [[ $keycloak_found -eq 0 ]]; then
+  warn "Suze Keycloak StatefulSet not found in platform-kernel or ${SERVICES_NS} (skipped)"
 fi
 
 pass "P2 Pattern B kernel chart verification complete"

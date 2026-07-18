@@ -1,4 +1,19 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
@@ -11,6 +26,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
@@ -158,6 +175,10 @@ func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname,
 
 	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
 	if err != nil {
+		if strings.Contains(err.Error(), "1055") || strings.Contains(err.Error(), "not found") {
+			ctrl.LoggerFrom(ctx).Info("Cloudflare tunnel configuration not found or access denied; skipping dynamic tunnel routing updates. Ensure a wildcard or manual ingress rule is set up in your Cloudflare dashboard.", "tunnel", tunnelID, "err", err)
+			return nil
+		}
 		return err
 	}
 	desired := tunnelIngressRuleForService(hostname, service)
@@ -184,6 +205,9 @@ func (c *CloudflareDNSClient) deleteTunnelIngress(ctx context.Context, hostname 
 	tunnelID := parseTunnelID(c.tunnelCNAME)
 	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
 	if err != nil {
+		if strings.Contains(err.Error(), "1055") || strings.Contains(err.Error(), "not found") {
+			return nil
+		}
 		return err
 	}
 	idx := ingressRuleIndex(config.Ingress, hostname)

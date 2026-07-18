@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations and the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package applifecycle
@@ -26,7 +27,6 @@ type Options struct {
 	DeploymentsPath     string
 	DeploymentsRepo     string
 	DeploymentsCluster  string
-	DeploymentsStage    string
 	WaitTimeout         time.Duration
 }
 
@@ -38,6 +38,9 @@ type InstallRequest struct {
 	// Wait blocks until the App claim is Ready. HTTP clients should leave this false
 	// to avoid gateway timeouts during long provisioning.
 	Wait bool
+	// Provision, when true, adds all existing tenant users to the app's Keycloak group
+	// after the installation step, granting them immediate access.
+	Provision bool
 }
 
 // UninstallRequest removes an app profile from a tenant.

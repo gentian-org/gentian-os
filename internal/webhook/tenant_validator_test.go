@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ func TestTenantValidatorHandleNilDecoder_DeniesMissingAppProfile(t *testing.T) {
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "ox-appsuite"}},
+			Apps: []gentianov1alpha1.TenantApp{{Profile: "missing-profile-app"}},
 		},
 	}
 
@@ -71,7 +71,7 @@ func TestTenantValidatorHandleNilDecoder_DeniesMissingAppProfile(t *testing.T) {
 		t.Fatalf("expected denial result message")
 	}
 
-	if !strings.Contains(resp.Result.Message, "AppProfile \"ox-appsuite\" not found") {
+	if !strings.Contains(resp.Result.Message, "AppProfile \"missing-profile-app\" not found") {
 		t.Fatalf("unexpected denial message: %q", resp.Result.Message)
 	}
 }

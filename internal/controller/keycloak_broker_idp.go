@@ -1,10 +1,27 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
 import (
 	"context"
 	"fmt"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,14 +33,14 @@ import (
 
 // brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
 // completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "7"
+const brokerIdentityProviderVersion = "8"
 
 // firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
-// kernel IdP logins to pre-provisioned LDAP users by email (no confirm/re-auth).
+// kernel IdP logins to pre-provisioned users by email (no confirm/re-auth).
 const firstBrokerLoginFlowAlias = "first-broker-login-gentian"
 
 // brokerFirstLoginFlowJobVersion bumps when the auto-link flow script changes.
-const brokerFirstLoginFlowJobVersion = "2"
+const brokerFirstLoginFlowJobVersion = "3"
 
 func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
@@ -34,7 +51,7 @@ func tenantBrokerIdPJobName(tenantName string) string {
 // so Keycloak does not hairpin through the public id.<kernel> URL during broker
 // code exchange; browser-facing issuer and authorizationUrl stay external.
 func buildBrokerIdentityProviderScript() string {
-	return keycloakShellJSONIDExtractor() + ensureLDAPUIDAttributeMapperShell + fmt.Sprintf(`
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`
 set -eu
 
 if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
@@ -66,7 +83,7 @@ if [ "${IDP_HTTP}" != "200" ]; then
   exit 1
 fi
 
-IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"firstBrokerLoginFlowAlias\":\"%s\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
+IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"storeToken\":true,\"firstBrokerLoginFlowAlias\":\"%s\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"logoutUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/logout\",\"backchannelSupported\":\"true\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
 
 HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X PUT \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
@@ -78,41 +95,40 @@ else
   echo "ERROR: kernel IdP update for realm ${REALM_NAME} failed (HTTP ${HTTP})" >&2
   exit 1
 fi
-ensure_ldap_uid_attribute_mapper "${KERNEL_REALM}" "ldap-provider"
 %s%s
 `, brokerResolveIDShell, buildEnsureFirstBrokerLoginFlowShell(`"${REALM_NAME}"`), firstBrokerLoginFlowAlias,
 		brokerKernelClientUsernameMapperShell, brokerIdPUsernameImporterShell)
 }
 
 const brokerKernelClientUsernameMapperShell = `
-# Kernel broker client must emit opendesk_username (LDAP uid) in tokens issued
+# Kernel broker client must emit gentian_username in tokens issued
 # during tenant→kernel broker login; otherwise tenant scope mappers see empty uid.
 BROKER_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" || echo "[]")
-if echo "${BROKER_M}" | grep -q '"name":"opendesk_username"'; then
-  echo "broker client opendesk_username mapper already on ${BROKER_CLIENT_ID}"
+if echo "${BROKER_M}" | grep -q '"name":"gentian_username"'; then
+  echo "broker client gentian_username mapper already on ${BROKER_CLIENT_ID}"
 else
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/protocol-mappers/models" \
     -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    -d '{"name":"opendesk_username","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"uid","claim.name":"opendesk_username","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true","multivalued":"false"}}'
-  echo "broker client opendesk_username mapper added on ${BROKER_CLIENT_ID}"
+    -d '{"name":"gentian_username","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"uid","claim.name":"gentian_username","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true","multivalued":"false"}}'
+  echo "broker client gentian_username mapper added on ${BROKER_CLIENT_ID}"
 fi
 `
 
 const brokerIdPUsernameImporterShell = `
-# Import opendesk_username from the kernel IdP into the tenant user's uid attribute
-# so opendesk-matrix-scope mappers can emit the claim for Synapse localpart mapping.
+# Import gentian_username from the kernel IdP into the tenant user's uid attribute
+# so gentian-matrix-scope mappers can emit the claim for Synapse localpart mapping.
 IDP_M=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" || echo "[]")
-if echo "${IDP_M}" | grep -q '"name":"opendesk_username"'; then
-  echo "IdP mapper opendesk_username already in realm ${REALM_NAME}"
+if echo "${IDP_M}" | grep -q '"name":"gentian_username"'; then
+  echo "IdP mapper gentian_username already in realm ${REALM_NAME}"
 else
   curl -sf --max-time 30 -X POST \
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel/mappers" \
     -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    -d '{"name":"opendesk_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","identityProviderAlias":"kernel","config":{"syncMode":"IMPORT","claim":"opendesk_username","user.attribute":"uid"}}'
-  echo "IdP mapper opendesk_username registered in realm ${REALM_NAME}"
+    -d '{"name":"gentian_username","identityProviderMapper":"oidc-user-attribute-idp-mapper","identityProviderAlias":"kernel","config":{"syncMode":"IMPORT","claim":"gentian_username","user.attribute":"uid"}}'
+  echo "IdP mapper gentian_username registered in realm ${REALM_NAME}"
 fi
 `
 

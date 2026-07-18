@@ -1,0 +1,10 @@
+apiVersion: gentianos.io/v1alpha1
+kind: XInfraData
+metadata:
+  name: dev-infra-data
+  annotations:
+    crossplane.io/external-name: dev-infra-data
+spec:
+  environment: dev
+  compositeDeletePolicy: Background
+  resourceRefs: []

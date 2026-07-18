@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations and the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package applifecycle
@@ -42,7 +43,6 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
 		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
 		DeploymentsCluster: envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER", "default-cluster"),
-		DeploymentsStage:   envOrDefault("GENTIAN_DEPLOYMENTS_STAGE", envOrDefault("GENTIAN_STAGE", "dev")),
 	})
 	if err != nil {
 		return nil, err

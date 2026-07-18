@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 // IsolationMode defines how a tenant's workloads are isolated.
@@ -35,7 +51,7 @@ const (
 	// This is the safe default for compliance and accidental-deletion recovery.
 	DeletionPolicyRetain DeletionPolicy = "Retain"
 	// DeletionPolicyDelete removes all tenant resources including databases,
-	// storage buckets, mailboxes, and LDAP entries. Intended for dev/test.
+	// storage buckets, and mailboxes. Intended for dev/test.
 	DeletionPolicyDelete DeletionPolicy = "Delete"
 )
 
@@ -57,8 +73,8 @@ const (
 	CacheEngineMemcached CacheEngine = "memcached"
 )
 
-// DeploymentMethod determines how the orchestrator delivers the app Helm release.
-// +kubebuilder:validation:Enum=argocd;crossplane
+// DeploymentMethod determines how the orchestrator delivers the app.
+// +kubebuilder:validation:Enum=argocd;crossplane;api
 type DeploymentMethod string
 
 const (
@@ -68,6 +84,10 @@ const (
 	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
 	// App Composition that emits an ExternalSecret and a provider-helm Release.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
+	// DeploymentMethodAPI marks an ApiProfile: a catalogue entry that runs no
+	// workload pods. The orchestrator provisions no Helm release or App claim;
+	// runtime traffic is served by an external service (see spec.apiIntegration).
+	DeploymentMethodAPI DeploymentMethod = "api"
 )
 
 // TenantPhase represents the overall lifecycle phase of a Tenant.

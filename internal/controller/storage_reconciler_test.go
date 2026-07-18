@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// newS3Profile creates a minimal AppProfile that requires an S3 bucket.
 func newS3Profile(name string) *gentianov1alpha1.AppProfile {
 	return &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -42,28 +41,6 @@ func newS3Profile(name string) *gentianov1alpha1.AppProfile {
 			KernelRequirements: &gentianov1alpha1.KernelRequirements{
 				Storage: &gentianov1alpha1.StorageRequirement{
 					S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
-				},
-			},
-		},
-	}
-}
-
-// newWebDAVProfile creates a minimal AppProfile that requires WebDAV file access.
-func newWebDAVProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName: name,
-			Chart: gentianov1alpha1.ChartRef{
-				Repository: "https://charts.example.com",
-				Name:       name,
-				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
-				Storage: &gentianov1alpha1.StorageRequirement{
-					Files: &gentianov1alpha1.FilesRequirement{
-						Protocol: "webdav",
-					},
 				},
 			},
 		},
@@ -87,11 +64,7 @@ func TestStorage_NoStorageApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nostorage"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nostorage", "StorageReady")
 
 	var cond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -103,73 +76,8 @@ func TestStorage_NoStorageApps(t *testing.T) {
 	if cond == nil {
 		t.Fatal("expected StorageReady condition")
 	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected StorageReady=True, got %v", cond.Status)
-	}
 	if cond.Reason != "NoStorageRequired" {
 		t.Errorf("expected reason NoStorageRequired, got %q", cond.Reason)
-	}
-}
-
-// TestStorage_NextcloudGroupAlwaysCreated verifies that a Tenant with NO storage-requiring
-// apps still gets a Nextcloud group Job — Nextcloud is a kernel service, not app-gated.
-func TestStorage_NextcloudGroupAlwaysCreated(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "nc-always"},
-		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "NC Always Co",
-			Domain:      "nc-always.example.com",
-			AdminEmail:  "admin@nc-always.example.com",
-			// Intentionally no Apps — NC group should appear regardless.
-		},
-	}
-	if err := testClient.Create(context.Background(), tenant); err != nil {
-		t.Fatalf("create tenant: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
-
-	// NC group job must be created even with no apps.
-	job := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "nc-group-nc-always", Namespace: "platform-kernel"}, job) == nil
-	})
-
-	if job.Labels["gentianos.io/tenant"] != "nc-always" {
-		t.Errorf("expected tenant label 'nc-always', got %q", job.Labels["gentianos.io/tenant"])
-	}
-	if len(job.Spec.Template.Spec.Containers) == 0 {
-		t.Fatal("expected container in NC group Job")
-	}
-	// Confirm credentials come from the nextcloud-admin Secret.
-	secretEnvs := make(map[string]string)
-	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
-		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
-		}
-	}
-	for _, required := range []string{"NEXTCLOUD_URL", "NEXTCLOUD_ADMIN_USER", "NEXTCLOUD_ADMIN_PASSWORD"} {
-		if secretEnvs[required] != "nextcloud-admin" {
-			t.Errorf("expected %s from nextcloud-admin Secret, got %q", required, secretEnvs[required])
-		}
-	}
-
-	// StorageReady must still be True/NoStorageRequired (no S3 apps).
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nc-always"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
-	var cond *metav1.Condition
-	for i := range updated.Status.Conditions {
-		if updated.Status.Conditions[i].Type == "StorageReady" {
-			cond = &updated.Status.Conditions[i]
-			break
-		}
-	}
-	if cond == nil || cond.Reason != "NoStorageRequired" {
-		t.Errorf("expected StorageReady/NoStorageRequired, got %v", cond)
 	}
 }
 
@@ -243,61 +151,6 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	}
 }
 
-// TestStorage_CreatesNextcloudGroupJob verifies that a Tenant with a WebDAV-requiring
-// app creates the Nextcloud group Job in the kernel namespace.
-func TestStorage_CreatesNextcloudGroupJob(t *testing.T) {
-	t.Parallel()
-	profile := newWebDAVProfile("webdav-app1")
-	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
-
-	tenant := &gentianov1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "nccreate"},
-		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "NC Create Co",
-			Domain:      "nccreate.example.com",
-			AdminEmail:  "admin@nccreate.example.com",
-			Apps:        []gentianov1alpha1.TenantApp{{Profile: "webdav-app1"}},
-		},
-	}
-	if err := testClient.Create(context.Background(), tenant); err != nil {
-		t.Fatalf("create tenant: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
-
-	job := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "nc-group-nccreate", Namespace: "platform-kernel"}, job) == nil
-	})
-
-	if job.Labels["gentianos.io/tenant"] != "nccreate" {
-		t.Errorf("expected tenant label 'nccreate', got %q", job.Labels["gentianos.io/tenant"])
-	}
-	if len(job.Spec.Template.Spec.Containers) == 0 {
-		t.Fatal("expected at least one container in Nextcloud group Job")
-	}
-	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "curlimages/curl:8.7.1" {
-		t.Errorf("unexpected container image %q", container.Image)
-	}
-
-	// Credentials must come from the nextcloud-admin Secret.
-	secretEnvs := make(map[string]string)
-	for _, e := range container.Env {
-		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
-		}
-	}
-	for _, required := range []string{"NEXTCLOUD_URL", "NEXTCLOUD_ADMIN_USER", "NEXTCLOUD_ADMIN_PASSWORD"} {
-		if secretEnvs[required] != "nextcloud-admin" {
-			t.Errorf("expected %s sourced from nextcloud-admin Secret, got %q", required, secretEnvs[required])
-		}
-	}
-}
-
 // TestStorage_SetsReadyWhenAllJobsDone verifies that StorageReady=True and
 // Phase=Ready are set only after all storage Jobs have completed.
 func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
@@ -355,8 +208,8 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	}
 }
 
-// TestStorage_DeleteDeletePolicy_CreatesDeleteJobs verifies that both the S3 delete
-// Job and Nextcloud delete Job are created on DeletionPolicy=Delete.
+// TestStorage_DeleteDeletePolicy_CreatesDeleteJobs verifies that the S3 delete
+// Job is created on DeletionPolicy=Delete.
 func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	t.Parallel()
 	s3Prof := newS3Profile("s3-app3")
@@ -364,12 +217,6 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 		t.Fatalf("create S3 AppProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), s3Prof) })
-
-	webdavProf := newWebDAVProfile("webdav-app2")
-	if err := testClient.Create(context.Background(), webdavProf); err != nil {
-		t.Fatalf("create WebDAV AppProfile: %v", err)
-	}
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), webdavProf) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "storagedelete"},
@@ -380,7 +227,6 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "s3-app3"},
-				{Profile: "webdav-app2"},
 			},
 		},
 	}
@@ -399,11 +245,9 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteStorage; mark their jobs.
+	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
 	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-storagedelete", "platform-kernel")
 
-	// S3 delete Job should appear.
 	s3DeleteJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
@@ -411,15 +255,5 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	})
 	if s3DeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
 		t.Errorf("expected tenant label 'storagedelete', got %q", s3DeleteJob.Labels["gentianos.io/tenant"])
-	}
-
-	// Nextcloud delete Job should appear.
-	ncDeleteJob := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "nc-group-delete-storagedelete", Namespace: "platform-kernel"}, ncDeleteJob) == nil
-	})
-	if ncDeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
-		t.Errorf("expected tenant label 'storagedelete' on NC delete job, got %q", ncDeleteJob.Labels["gentianos.io/tenant"])
 	}
 }

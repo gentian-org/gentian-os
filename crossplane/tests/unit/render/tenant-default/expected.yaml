@@ -6,7 +6,7 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-element'
+    message: 'Unready resources: app-catalogue-test-app'
     reason: Creating
     status: "False"
     type: Ready
@@ -15,14 +15,14 @@ apiVersion: gentianos.io/v1alpha1
 kind: App
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: app-element
+    crossplane.io/composition-resource-name: app-catalogue-test-app
   labels:
     app.kubernetes.io/managed-by: gentian-os
     crossplane.io/composite: render-fixture
-    gentianos.io/app: element
+    gentianos.io/app: catalogue-test-app
     gentianos.io/managed-by: crossplane
     gentianos.io/tenant: render-fixture
-  name: element
+  name: catalogue-test-app
   namespace: tenant-render-fixture
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
@@ -35,7 +35,7 @@ spec:
   compositionUpdatePolicy: Automatic
   domain: render-fixture.desk.gentian.org
   profileRef:
-    name: element
+    name: catalogue-test-app
   tenantNamespace: tenant-render-fixture
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -97,41 +97,6 @@ spec:
         labels:
           gentianos.io/tenant: render-fixture
         name: keycloak-realm-render-fixture
-        namespace: platform-kernel
-      spec:
-        template:
-          spec:
-            containers:
-            - image: ghcr.io/gentian-org/gentian-app-init:develop
-              name: provision
-            restartPolicy: Never
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: job-ldap-bind-render-fixture-keycloak
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-job-ldap-bind-render-fixture-keycloak
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        labels:
-          gentianos.io/tenant: render-fixture
-        name: ldap-bind-render-fixture-keycloak
         namespace: platform-kernel
       spec:
         template:
@@ -210,109 +175,6 @@ spec:
           gentianos.io/managed-by: crossplane
           gentianos.io/tenant: render-fixture
         name: tenant-render-fixture
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: networkpolicy
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-networkpolicy
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: networking.k8s.io/v1
-      kind: NetworkPolicy
-      metadata:
-        labels:
-          app.kubernetes.io/managed-by: gentian-os
-          gentianos.io/tenant: render-fixture
-        name: tenant-isolation
-        namespace: tenant-render-fixture
-      spec:
-        egress:
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: platform-kernel
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-infra-dev
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-dev
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: openbao
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-system
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                gentianos.io/tenant: render-fixture
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: ingress
-        - to:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: envoy-gateway-system
-        - ports:
-          - port: 53
-            protocol: UDP
-          - port: 53
-            protocol: TCP
-        - ports:
-          - port: 443
-            protocol: TCP
-          to:
-          - ipBlock:
-              cidr: 10.96.0.0/12
-        ingress:
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                gentianos.io/tenant: render-fixture
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: platform-kernel
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-infra-dev
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: gentian-dev
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: ingress
-        - from:
-          - namespaceSelector:
-              matchLabels:
-                kubernetes.io/metadata.name: envoy-gateway-system
-        podSelector: {}
-        policyTypes:
-        - Ingress
-        - Egress
   providerConfigRef:
     name: kubernetes
 ---

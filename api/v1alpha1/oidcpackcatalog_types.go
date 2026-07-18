@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// OIDCPackCatalog is a cluster-scoped catalogue of OpenDesk-style OIDC packs.
-// Shipped from gentian-apps (e.g. profiles/opendesk-oidc-catalog/) and consumed
+// OIDCPackCatalog is a cluster-scoped catalogue of OIDC packs for tenant apps.
+// Shipped from gentian-apps (profiles/<app>/oidc-catalog.yaml) and consumed
 // by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
 //
 // +kubebuilder:object:root=true
@@ -45,8 +45,8 @@ type OIDCPackCatalogSpec struct {
 	Packs map[string]OIDCPackSpec `json:"packs,omitempty"`
 
 	// ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
-	// provisioned per tenant OU that are not tied to an OIDC pack ldapGroup (e.g.
-	// openDesk portal admin groups).
+	// provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
+	// portal admin groups).
 	// +optional
 	ExtraManagedByAttributeGroups []string `json:"extraManagedByAttributeGroups,omitempty"`
 }
@@ -67,7 +67,7 @@ type OIDCMapperTemplate struct {
 	Config map[string]string `json:"config,omitempty"`
 }
 
-// OIDCPackSpec is the OpenDesk-style OIDC configuration for one clientId.
+// OIDCPackSpec is the OIDC configuration for one clientId.
 type OIDCPackSpec struct {
 	// ScopeName is the Keycloak client scope created for this pack.
 	// +kubebuilder:validation:Required
@@ -77,14 +77,13 @@ type OIDCPackSpec struct {
 	// +optional
 	ScopeDescription string `json:"scopeDescription,omitempty"`
 
-	// ClientRole is the Keycloak client role mapped from the LDAP group.
+	// ClientRole is the Keycloak client role mapped from the entitlement group.
 	// +kubebuilder:validation:Required
 	ClientRole string `json:"clientRole"`
 
-	// LDAPGroup is the managed-by-attribute-* LDAP group (full cn suffix or short
-	// name — the operator normalizes to the short suffix for OU provisioning).
+	// EntitlementGroup is the Keycloak group name mapped to the pack client role.
 	// +kubebuilder:validation:Required
-	LDAPGroup string `json:"ldapGroup"`
+	EntitlementGroup string `json:"entitlementGroup"`
 
 	// PublicClient marks the OIDC client as PUBLIC (PKCE, no secret).
 	// +optional

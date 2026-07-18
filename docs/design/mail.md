@@ -66,15 +66,16 @@ and re-running `update.sh`.
 
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
 
-When the extension is enabled, **one** Postfix, **one** Dovecot, and
-**one** Rspamd instance handle all tenant domains. Tenant isolation is
+When the extension is enabled, **one** Postfix and **one** Dovecot instance handle all
+tenant domains (placeholders under `kernel/services/postfix` and
+`kernel/services/dovecot` — **UNTESTED**, public chart/image only). Tenant isolation is
 enforced at the configuration level:
 
 - **Postfix:** `virtual_mailbox_domains` lists all tenant domains;
   per-tenant SASL credentials authenticate SMTP submission.
 - **Dovecot:** mailboxes stored at isolated paths
-  (`/var/mail/{domain}/{user}`); IMAP authenticates against the
-  tenant's LDAP OU.
+  (`/var/mail/{domain}/{user}`); IMAP authenticates against per-tenant
+  credentials provisioned by the platform.
 - **Rspamd:** spam filtering for all tenants; DKIM signing uses
   per-domain keys fetched from OpenBao at runtime.
 
@@ -132,7 +133,7 @@ For each app in the tenant that declares `mail.smtp` and/or
 - SMTP host (`postfix-dev.gentian-dev.svc.cluster.local` on dev), port,
   user (per-app SASL identity), password.
 - IMAP host (Dovecot service in `gentian-dev` when deployed), port,
-  bind credentials (the same LDAP bind the app already uses for SSO).
+  per-tenant bind credentials from OpenBao.
 
 The chart consumes these via standard `existingSecret` references —
 no app-specific mail logic in the platform.
@@ -145,8 +146,8 @@ no app-specific mail logic in the platform.
 - **SMTP submission requires SASL.** No open relay. Per-app SASL
   identities mean a compromised app can be revoked without affecting
   other apps in the same tenant.
-- **IMAP authentication** uses the tenant's LDAP OU. Cross-tenant IMAP
-  access is structurally impossible.
+- **IMAP authentication** uses per-tenant credentials from OpenBao.
+  Cross-tenant IMAP access is structurally impossible.
 - **Rate limits** (`Tenant.spec.mail.rateLimit`) are enforced per
   tenant at the Postfix `smtpd_client_message_rate_limit` level.
 - **Per-user quotas** (`Tenant.spec.mail.quotaPerUser`) are enforced

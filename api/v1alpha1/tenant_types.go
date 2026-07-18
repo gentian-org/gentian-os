@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -50,22 +66,6 @@ type TenantSpec struct {
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
-
-	// Office configures the Nextcloud Office (Collabora) document editing extension
-	// for this tenant. When enabled, the shared kernel Collabora service provides
-	// WOPI-based document editing inside Nextcloud.
-	// +optional
-	Office *TenantOffice `json:"office,omitempty"`
-}
-
-// TenantOffice configures the Nextcloud Office (Collabora) document editing extension.
-// Collabora is a shared kernel service — one instance serves all tenants.
-type TenantOffice struct {
-	// Enabled activates the Collabora WOPI document editor for this tenant.
-	// Defaults to false.
-	// +optional
-	// +kubebuilder:default=false
-	Enabled bool `json:"enabled"`
 }
 
 // TenantIsolation describes the namespace and identity boundaries.
@@ -80,11 +80,6 @@ type TenantIsolation struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9\-]*[a-z0-9]$`
 	Namespace string `json:"namespace,omitempty"`
-
-	// LDAPOu is the LDAP OU path for this tenant's users and groups.
-	// Defaults to "ou={tenant-name}" under the root DN.
-	// +optional
-	LDAPOu string `json:"ldapOU,omitempty"`
 
 	// KeycloakRealm is the Keycloak realm name for this tenant.
 	// Defaults to the tenant name.
@@ -252,7 +247,7 @@ type TenantMailStatus struct {
 //
 // Tenant is cluster-scoped and represents a customer organisation. Creating a
 // Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
-// creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
+// creation, Keycloak realm, per-app databases/buckets/cache, and
 // ArgoCD Application (or Crossplane App claim) CRs for each requested app.
 //
 // +kubebuilder:object:root=true

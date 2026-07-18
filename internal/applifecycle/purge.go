@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations under the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package applifecycle
@@ -31,8 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/remotecommand"
 
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 const mariadbDeleteScript = "" +
@@ -73,6 +76,7 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 	sidecars := sidecarNames(profile)
 	warnings = append(warnings, s.purgeOpenBaoSecrets(ctx, tenant.Name, app, sidecars)...)
 	warnings = append(warnings, s.purgeClusterArtifacts(ctx, tenant.Name, app)...)
+	warnings = append(warnings, s.purgePVCs(ctx, tenant.Name, app, profile)...)
 	return warnings
 }
 
@@ -120,28 +124,6 @@ func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []strin
 		if out, err := s.execPostgres(ctx, pod, sql); err != nil || strings.Contains(strings.ToUpper(out), "ERROR") {
 			return []string{fmt.Sprintf("Postgres purge failed for %s: %s", dbName, out)}
 		}
-	}
-	return nil
-}
-
-func (s *Service) cleanupElementSynapseIdentities(ctx context.Context, tenant string) []string {
-	dbName := dbRoleName(tenant, "element")
-	pod, err := s.postgresPod(ctx)
-	if err != nil || pod == "" {
-		return []string{fmt.Sprintf("Postgres pod not found; skipped Synapse identity cleanup for %s", dbName)}
-	}
-	sql := fmt.Sprintf(`
-BEGIN;
-DELETE FROM "%s".access_tokens;
-DELETE FROM "%s".devices;
-DELETE FROM "%s".user_external_ids;
-DELETE FROM "%s".user_threepids;
-DELETE FROM "%s".profiles;
-DELETE FROM "%s".users;
-COMMIT;
-`, dbName, dbName, dbName, dbName, dbName, dbName)
-	if out, err := s.execPostgres(ctx, pod, sql); err != nil || strings.Contains(strings.ToUpper(out), "ERROR") {
-		return []string{fmt.Sprintf("Synapse identity cleanup failed for %s: %s", dbName, out)}
 	}
 	return nil
 }
@@ -214,7 +196,7 @@ func (s *Service) runMariaDBDeleteJob(ctx context.Context, tenant *gentianov1alp
 	dbName := databaseName(tenant, app)
 	dbUser := mariadbUserName(tenant.Name, app)
 	job := kernelDeleteJob(s.opts.KernelNamespace, mariadbDeleteJobName(tenant.Name, app), tenant.Name, app,
-		"mariadb:11", "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
+		kernel.MariaDBProvisionerImage(), "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
 			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
 			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
 		))
@@ -239,7 +221,7 @@ redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-au
   ACL DELUSER %s 2>/dev/null || echo "user %s already absent"
 echo done`, user, user)
 	job := kernelDeleteJob(s.opts.KernelNamespace, redisACLDeleteJobName(tenant, app), tenant, app,
-		"redis:7-alpine", "del-acl-user", script, redisAdminEnv())
+		kernel.RedisProvisionerImage(), "del-acl-user", script, redisAdminEnv())
 	return s.runKernelJob(ctx, job)
 }
 
@@ -440,6 +422,59 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	dbObj.SetNamespace(s.opts.KernelNamespace)
 	if err := s.client.Delete(ctx, dbObj); err != nil && !apierrors.IsNotFound(err) {
 		warnings = append(warnings, fmt.Sprintf("delete CNPG database %s: %v", dbCR, err))
+	}
+	return warnings
+}
+
+func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, profile *gentianov1alpha1.AppProfile) []string {
+	var warnings []string
+	ns := tenantNamespace(tenantName)
+	pvcs, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return []string{fmt.Sprintf("list tenant PVCs: %v", err)}
+	}
+
+	family := ""
+	if profile != nil {
+		family = profile.Spec.Family
+	}
+
+	for _, pvc := range pvcs.Items {
+		shouldDelete := false
+
+		// 1. Check if the PVC label gentianos.io/app matches the appName
+		if pvc.Labels["gentianos.io/app"] == appName {
+			shouldDelete = true
+		}
+
+		// 2. Check if the PVC app.kubernetes.io/instance label prefix matches appName
+		if instance, ok := pvc.Labels["app.kubernetes.io/instance"]; ok {
+			if strings.HasPrefix(instance, appName) {
+				shouldDelete = true
+			}
+		}
+
+		// 3. Check if the app.kubernetes.io/name matches appName or family
+		if name, ok := pvc.Labels["app.kubernetes.io/name"]; ok {
+			if name == appName || (family != "" && name == family) {
+				shouldDelete = true
+			}
+		}
+
+		// 4. Fallback name checks
+		if strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family)) {
+			shouldDelete = true
+		}
+
+		if shouldDelete {
+			err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete PVC %s/%s: %v", ns, pvc.Name, err))
+			}
+		}
 	}
 	return warnings
 }

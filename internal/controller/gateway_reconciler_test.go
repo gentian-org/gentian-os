@@ -1,10 +1,25 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package controller
 
 import (
 	"strings"
 	"testing"
 
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,8 +62,8 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 5 {
-		t.Fatalf("listeners = %d, want 5", len(gw.Spec.Listeners))
+	if len(gw.Spec.Listeners) != 4 {
+		t.Fatalf("listeners = %d, want 4", len(gw.Spec.Listeners))
 	}
 	if gw.Spec.Listeners[0].Name != "https-wildcard" {
 		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
@@ -62,17 +77,11 @@ func TestBuildKernelGateway(t *testing.T) {
 	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
 		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
 	}
-	if gw.Spec.Listeners[2].Name != kernelCollaboraListenerName {
-		t.Fatalf("office listener name = %q", gw.Spec.Listeners[2].Name)
+	if gw.Spec.Listeners[2].Name != "https-tenant-demo-wildcard" {
+		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[2].Name)
 	}
-	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "office.desk.gentian.org" {
-		t.Fatalf("office listener hostname = %v", gw.Spec.Listeners[2].Hostname)
-	}
-	if gw.Spec.Listeners[3].Name != "https-tenant-demo-wildcard" {
-		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[3].Name)
-	}
-	if gw.Spec.Listeners[3].Hostname == nil || string(*gw.Spec.Listeners[3].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[3].Hostname)
+	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "*.demo.desk.gentian.org" {
+		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[2].Hostname)
 	}
 	if gw.Spec.Listeners[0].AllowedRoutes == nil || gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From == nil ||
 		*gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
@@ -157,27 +166,6 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 	}
 }
 
-func TestTenantIngressSupersededByGateway(t *testing.T) {
-	t.Parallel()
-	hosts := map[string]struct{}{"matrix.demo.desk.gentian.org": {}}
-	ing := &networkingv1.Ingress{
-		Spec: networkingv1.IngressSpec{
-			Rules: []networkingv1.IngressRule{{Host: "matrix.demo.desk.gentian.org"}},
-		},
-	}
-	if !tenantIngressSupersededByGateway(ing, hosts) {
-		t.Fatal("expected matrix host ingress to be superseded")
-	}
-	other := &networkingv1.Ingress{
-		Spec: networkingv1.IngressSpec{
-			Rules: []networkingv1.IngressRule{{Host: "other.demo.desk.gentian.org"}},
-		},
-	}
-	if tenantIngressSupersededByGateway(other, hosts) {
-		t.Fatal("unexpected supersession for unrelated host")
-	}
-}
-
 func TestTenantGatewayName(t *testing.T) {
 	t.Parallel()
 	if got := tenantGatewayName("demo"); got != "tenant-demo-gateway" {
@@ -189,13 +177,16 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain: "chat",
+		SubDomain: "app",
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "element", nil, ingress, "chat.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
-	if route.Name != "httproute-demo-element" {
+	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
+		appProfile: "catalogue-test-app",
+		ingress:    ingress,
+	}, "demo.desk.gentian.org", "desk.gentian.org")
+	if route.Name != "httproute-demo-catalogue-test-app" {
 		t.Fatalf("name = %q", route.Name)
 	}
-	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "chat.demo.desk.gentian.org" {
+	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.desk.gentian.org" {
 		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
 	}
 	if len(route.Spec.ParentRefs) != 2 {
@@ -215,34 +206,38 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	}
 }
 
-func TestBuildAppHTTPRouteOXRootRedirect(t *testing.T) {
+func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain:   "webmail",
-		ServiceName: "appsuite",
+		SubDomain:   "app",
+		ServiceName: "ui",
 	}
-	oxProfile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "ox-appsuite",
+			Name: "multi-route-app",
 			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/appsuite/",
-				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/appsuite/api","serviceName":"appsuite-api"}]`,
+				gentianov1alpha1.AnnotationProfileGatewayRootRedirect: "/ui/",
+				gentianov1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/ui/api","serviceName":"api"}]`,
 			},
 		},
 	}
-	route := buildAppHTTPRoute(tenant, "tenant-demo", "ox-appsuite", oxProfile, ingress, "webmail.demo.desk.gentian.org", "demo.desk.gentian.org", "desk.gentian.org")
+	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
+		appProfile: "multi-route-app",
+		profile:    profile,
+		ingress:    ingress,
+	}, "demo.desk.gentian.org", "desk.gentian.org")
 	if len(route.Spec.Rules) != 3 {
 		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
 	}
 	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
-	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/appsuite/" {
+	if redirect == nil || redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/ui/" {
 		t.Fatalf("redirect = %+v", redirect)
 	}
-	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "appsuite-api" {
+	if len(route.Spec.Rules[1].BackendRefs) != 1 || string(route.Spec.Rules[1].BackendRefs[0].Name) != "api" {
 		t.Fatalf("api backend rule = %+v", route.Spec.Rules[1].BackendRefs)
 	}
-	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "appsuite" {
+	if len(route.Spec.Rules[2].BackendRefs) != 1 || string(route.Spec.Rules[2].BackendRefs[0].Name) != "ui" {
 		t.Fatalf("ui backend rule = %+v", route.Spec.Rules[2].BackendRefs)
 	}
 }
@@ -271,23 +266,45 @@ func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", cryptpadSandboxSubDomain)
-	if policy.Mode != gatewayFrameAncestorsAppend {
+	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "app")
+	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if !strings.Contains(policy.Origins, "https://pad.demo.desk.gentian.org") {
+	if policy.Origins != "https://portal.desk.gentian.org https://demo.desk.gentian.org https://*.demo.desk.gentian.org" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
-	if !strings.Contains(policy.Origins, "https://files.desk.gentian.org") {
-		t.Fatalf("sandbox origins must include kernel Files host, got %q", policy.Origins)
+}
+
+func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
+	t.Parallel()
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
+		},
+	}
+	policy, ok, err := ingressFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "cloud", ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected custom policy")
+	}
+	if policy.Mode != gatewayFrameAncestorsReplace {
+		t.Fatalf("mode = %q", policy.Mode)
+	}
+	if !strings.Contains(policy.Origins, "https://cloud.demo.desk.gentian.org") {
+		t.Fatalf("origins = %q", policy.Origins)
+	}
+	if !strings.Contains(policy.Origins, "https://portal.desk.gentian.org") {
+		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
 
 func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 	t.Parallel()
 	spec := backendTrafficPolicySpecFromIngressAnnotations(map[string]string{
-		"nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
-		"nginx.ingress.kubernetes.io/proxy-body-size":    "128m",
+		gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "3600",
+		gentianov1alpha1.AnnotationIngressGatewayBufferLimit:    "128m",
 	})
 	if spec == nil {
 		t.Fatal("expected spec")
@@ -303,6 +320,35 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 	conn, ok := spec["connection"].(map[string]interface{})
 	if !ok || conn["bufferLimit"] != "128m" {
 		t.Fatalf("bufferLimit = %v", conn["bufferLimit"])
+	}
+}
+
+func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
+	t.Parallel()
+	profile := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				gentianov1alpha1.AnnotationProfileGatewayAPIBackends: `[{"pathPrefix":"/portal-bridge","serviceName":"app-portal-bridge","port":8080}]`,
+			},
+		},
+		Spec: gentianov1alpha1.AppProfileSpec{
+			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "projects"},
+		},
+	}
+	ingress := &gentianov1alpha1.IngressSpec{SubDomain: "projects"}
+	rules := appAPIBackendRules(profile, 8080, "desk.gentian.org", "demo.desk.gentian.org", ingress)
+	if len(rules) != 1 {
+		t.Fatalf("rules = %d, want 1", len(rules))
+	}
+	if len(rules[0].Filters) != 1 {
+		t.Fatalf("filters = %+v", rules[0].Filters)
+	}
+	modifier := rules[0].Filters[0].ResponseHeaderModifier
+	if modifier == nil || len(modifier.Set) != 1 {
+		t.Fatalf("modifier = %+v", modifier)
+	}
+	if !strings.Contains(modifier.Set[0].Value, "https://portal.desk.gentian.org") {
+		t.Fatalf("csp = %q", modifier.Set[0].Value)
 	}
 }
 
@@ -332,14 +378,14 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	ingress := &gentianov1alpha1.IngressSpec{
 		Annotations: map[string]string{
-			"nginx.ingress.kubernetes.io/proxy-read-timeout": "600",
+			gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
 		},
 	}
-	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "element", ingress)
+	obj := buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "catalogue-test-app", ingress)
 	if obj == nil {
 		t.Fatal("expected BackendTrafficPolicy object")
 	}
-	if obj.GetName() != "btp-demo-element" {
+	if obj.GetName() != "btp-demo-catalogue-test-app" {
 		t.Fatalf("name = %q", obj.GetName())
 	}
 	refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "targetRefs")
@@ -347,7 +393,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 		t.Fatalf("targetRefs = %v", refs)
 	}
 	ref, _ := refs[0].(map[string]interface{})
-	if ref["name"] != "httproute-demo-element" {
+	if ref["name"] != "httproute-demo-catalogue-test-app" {
 		t.Fatalf("target route = %v", ref["name"])
 	}
 
@@ -359,8 +405,8 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 18 {
-		t.Fatalf("spec count = %d, want 18", len(specs))
+	if len(specs) != 4 {
+		t.Fatalf("spec count = %d, want 4", len(specs))
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
@@ -369,165 +415,57 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if string(idRoute.Spec.Hostnames[0]) != "id.desk.gentian.org" {
 		t.Fatalf("id host = %v", idRoute.Spec.Hostnames[0])
 	}
-	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(keycloakProxyServicePort) {
-		t.Fatalf("id backend port = %d, want %d", got, keycloakProxyServicePort)
+	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
+		t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
 	}
-
-	var baseRouter, shellPrefs, udm *gatewayv1.HTTPRoute
-	for i := range specs {
-		switch specs[i].name {
-		case kernelRoutePortalBaseRouter:
-			baseRouter = buildKernelHTTPRoute(specs[i])
-		case kernelRoutePortalShellPrefs:
-			shellPrefs = buildKernelHTTPRoute(specs[i])
-		case kernelRoutePortalUDM:
-			udm = buildKernelHTTPRoute(specs[i])
-		}
+	idNS := idRoute.Spec.Rules[0].BackendRefs[0].Namespace
+	if idNS == nil || string(*idNS) != kernelNamespace {
+		t.Fatalf("id backend namespace = %v, want %s", idNS, kernelNamespace)
 	}
-	if baseRouter == nil {
-		t.Fatal("missing base-router spec")
+	portalRoute := buildKernelHTTPRoute(specs[1])
+	if portalRoute.Name != kernelRouteGentianPortal {
+		t.Fatalf("portal route name = %q", portalRoute.Name)
 	}
-	if got := *baseRouter.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(baseRouterServicePort) {
-		t.Fatalf("base-router port = %d, want %d", got, baseRouterServicePort)
+	if string(portalRoute.Spec.Hostnames[0]) != "portal.desk.gentian.org" {
+		t.Fatalf("portal host = %v", portalRoute.Spec.Hostnames[0])
 	}
-	if shellPrefs == nil {
-		t.Fatal("missing shell-prefs spec")
-	}
-	if got := *shellPrefs.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(shellPrefsServicePort) {
-		t.Fatalf("shell-prefs port = %d, want %d", got, shellPrefsServicePort)
-	}
-	if len(shellPrefs.Spec.Rules[0].Filters) != 1 || shellPrefs.Spec.Rules[0].Filters[0].URLRewrite == nil {
-		t.Fatal("shell-prefs route missing URL rewrite filter")
-	}
-	if udm == nil {
-		t.Fatal("missing udm spec")
-	}
-	if got := *udm.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(udmRestAPIServicePort) {
-		t.Fatalf("udm port = %d, want %d", got, udmRestAPIServicePort)
+	ns := portalRoute.Spec.Rules[0].BackendRefs[0].Namespace
+	if ns == nil || string(*ns) != kernelNamespace {
+		t.Fatalf("portal api backend namespace = %v, want %s", ns, kernelNamespace)
 	}
 }
 
-func TestKernelPortalServerDataRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelPortalServerDataRules("nubus-dev-portal-server", 80)
-	var portalJSON *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if rules[i].Matches[0].Path != nil && rules[i].Matches[0].Path.Value != nil &&
-			*rules[i].Matches[0].Path.Value == "/univention/portal/portal.json" {
-			portalJSON = &rules[i]
-			break
+func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
+	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
+	for _, spec := range specs {
+		if spec.name == kernelRouteLiteLLM {
+			t.Fatalf("kernel-llm route present without LLM_SUPPORT=true")
 		}
-	}
-	if portalJSON == nil {
-		t.Fatal("missing portal.json route")
-	}
-	if portalJSON.BackendRefs[0].Name != "nubus-dev-portal-server" {
-		t.Fatalf("backend = %v", portalJSON.BackendRefs[0].Name)
 	}
 }
 
-func TestKernelUMCGatewayShellRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelUMCGatewayShellRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 11 {
-		t.Fatalf("rule count = %d, want 11", len(rules))
+func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
+	t.Setenv("LLM_SUPPORT", "true")
+	specs := kernelHTTPRouteSpecs("desk.gentian.org", nil, nil, nil)
+	if len(specs) != 5 {
+		t.Fatalf("spec count = %d, want 5 with LLM_SUPPORT=true", len(specs))
 	}
-	if len(rules) > 16 {
-		t.Fatal("UMC shell route exceeds HTTPRoute rule limit")
+	llmRoute := buildKernelHTTPRoute(specs[len(specs)-1])
+	if llmRoute.Name != kernelRouteLiteLLM {
+		t.Fatalf("llm route name = %q, want %q", llmRoute.Name, kernelRouteLiteLLM)
 	}
-	var management *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rules[i].Matches[0].Path.Value == "/univention/management" {
-			management = &rules[i]
-			break
-		}
+	if string(llmRoute.Spec.Hostnames[0]) != "llm.desk.gentian.org" {
+		t.Fatalf("llm host = %v", llmRoute.Spec.Hostnames[0])
 	}
-	if management == nil {
-		t.Fatal("missing /univention/management rule")
+	backend := llmRoute.Spec.Rules[0].BackendRefs[0]
+	if string(backend.Name) != litellmProxyServiceName {
+		t.Fatalf("llm backend service = %q, want %q", backend.Name, litellmProxyServiceName)
 	}
-}
-
-func TestKernelUMCGatewayRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelUMCGatewayRules("nubus-dev-umc-gateway", 80)
-	if len(rules) != 12 {
-		t.Fatalf("rule count = %d, want 12", len(rules))
+	if backend.Namespace == nil || string(*backend.Namespace) != kernelNamespace {
+		t.Fatalf("llm backend namespace = %v, want %s", backend.Namespace, kernelNamespace)
 	}
-	var oidc *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rules[i].Matches[0].Path.Value == "/univention/oidc" {
-			oidc = &rules[i]
-			break
-		}
-	}
-	if oidc == nil {
-		t.Fatal("missing /univention/oidc rule")
-	}
-	if oidc.BackendRefs[0].Name != "nubus-dev-umc-gateway" {
-		t.Fatalf("backend = %v", oidc.BackendRefs[0].Name)
-	}
-}
-
-func TestKernelPortalFrontendRewriteRules(t *testing.T) {
-	t.Parallel()
-	rules := kernelPortalFrontendRewriteRules("nubus-dev-portal-frontend", 80)
-	if len(rules) == 0 {
-		t.Fatal("expected rewrite rules")
-	}
-	if len(kernelPortalFrontendAssetRewriteRules("nubus-dev-portal-frontend", 80)) > 16 {
-		t.Fatal("asset rewrite route exceeds HTTPRoute rule limit")
-	}
-	if len(kernelPortalFrontendAppRewriteRules("nubus-dev-portal-frontend", 80)) > 16 {
-		t.Fatal("app rewrite route exceeds HTTPRoute rule limit")
-	}
-	if len(kernelPortalFrontendRules("nubus-dev-portal-frontend", 80)) > 16 {
-		t.Fatal("portal route exceeds HTTPRoute rule limit")
-	}
-	var univentionRedirect *gatewayv1.HTTPRouteRule
-	for _, rule := range kernelPortalFrontendRules("nubus-dev-portal-frontend", 80) {
-		if len(rule.Matches) == 0 || rule.Matches[0].Path == nil || rule.Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rule.Matches[0].Path.Value == "/univention/" && len(rule.Filters) > 0 && rule.Filters[0].RequestRedirect != nil {
-			univentionRedirect = &rule
-			break
-		}
-	}
-	if univentionRedirect == nil {
-		t.Fatal("missing /univention/ redirect rule")
-	}
-	if univentionRedirect.Filters[0].RequestRedirect.Path == nil ||
-		univentionRedirect.Filters[0].RequestRedirect.Path.ReplaceFullPath == nil ||
-		*univentionRedirect.Filters[0].RequestRedirect.Path.ReplaceFullPath != "/login/" {
-		t.Fatalf("/univention/ redirect target = %v", univentionRedirect.Filters[0].RequestRedirect.Path)
-	}
-	var cssRewrite *gatewayv1.HTTPRouteRule
-	for i := range rules {
-		if len(rules[i].Matches) == 0 || rules[i].Matches[0].Path == nil || rules[i].Matches[0].Path.Value == nil {
-			continue
-		}
-		if *rules[i].Matches[0].Path.Value == "/univention/portal/css" {
-			cssRewrite = &rules[i]
-			break
-		}
-	}
-	if cssRewrite == nil {
-		t.Fatal("missing /univention/portal/css rewrite rule")
-	}
-	if len(cssRewrite.Filters) != 1 || cssRewrite.Filters[0].URLRewrite == nil {
-		t.Fatalf("css rewrite filters = %+v", cssRewrite.Filters)
-	}
-	if cssRewrite.Filters[0].URLRewrite.Path == nil || cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch == nil {
-		t.Fatalf("css rewrite path = %+v", cssRewrite.Filters[0].URLRewrite.Path)
-	}
-	if *cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch != "/css" {
-		t.Fatalf("css replace prefix = %q", *cssRewrite.Filters[0].URLRewrite.Path.ReplacePrefixMatch)
+	if got := *backend.Port; got != gatewayv1.PortNumber(litellmProxyPort) {
+		t.Fatalf("llm backend port = %d, want %d", got, litellmProxyPort)
 	}
 }
 

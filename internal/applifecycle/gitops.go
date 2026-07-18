@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing limitations and the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package applifecycle
@@ -29,12 +30,11 @@ type GitOps struct {
 	path    string
 	repo    string
 	cluster string
-	stage   string
 }
 
 // NewGitOps returns a GitOps helper. Path must be a local git checkout.
-func NewGitOps(path, repo, cluster, stage string) *GitOps {
-	return &GitOps{path: path, repo: repo, cluster: cluster, stage: stage}
+func NewGitOps(path, repo, cluster string) *GitOps {
+	return &GitOps{path: path, repo: repo, cluster: cluster}
 }
 
 func (g *GitOps) requirePath() error {
@@ -49,6 +49,12 @@ func (g *GitOps) ensureRepo() error {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(g.path, ".git")); err == nil {
+		cmd := exec.Command("git", "-C", g.path, "pull", "--rebase", "--autostash")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("git pull: %w", err)
+		}
 		return nil
 	}
 	if g.repo == "" {
@@ -68,13 +74,12 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 	if cluster == "" {
 		cluster = "default-cluster"
 	}
-	stage := g.stage
-	if stage == "" {
-		stage = "dev"
-	}
 
-	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/<stage>/).
-	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, stage, "tenant.yaml")
+	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/).
+	// No stage segment: a cluster has exactly one stage for its whole lifetime
+	// (docs/deployment.md §1), so encoding it again under this cluster's own
+	// tenants/ tree would be redundant.
+	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, "tenant.yaml")
 	if _, err := os.Stat(preferred); err == nil {
 		return preferred, nil
 	}
@@ -103,7 +108,7 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 		return "", err
 	}
 	if len(found) == 0 {
-		return "", fmt.Errorf("tenant file for %q not found under clusters/%s/tenants (stage %q)", tenant, cluster, stage)
+		return "", fmt.Errorf("tenant file for %q not found under clusters/%s/tenants", tenant, cluster)
 	}
 	return found[0], nil
 }
@@ -119,7 +124,7 @@ func (g *GitOps) Install(tenant, profile, actor string) (status, file string, ch
 		return "", file, false, err
 	}
 	text := string(content)
-	profileLine := regexp.MustCompile(`(?m)^\s+profile:\s+` + regexp.QuoteMeta(profile) + `\s*$`)
+	profileLine := regexp.MustCompile(`(?m)^\s*-\s*profile:\s*` + regexp.QuoteMeta(profile) + `\s*$`)
 	if profileLine.MatchString(text) {
 		return "already_installed", file, false, nil
 	}

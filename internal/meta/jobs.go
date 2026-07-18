@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,6 +24,10 @@ import (
 // ProvisioningJobTTLSeconds is how long finished Batch Jobs remain before the
 // TTL controller deletes them. Keep short so tenant CPU quotas free quickly.
 const ProvisioningJobTTLSeconds int32 = 600
+
+// ProvisioningJobBackoffLimit allows dependent identity Jobs to survive transient
+// failures while keycloak-realm-* is still running (Jobs are applied in parallel).
+const ProvisioningJobBackoffLimit int32 = 12
 
 // InitJobResources caps CPU/memory for operator-owned provisioning Jobs in
 // platform-kernel. Tenant-scoped init Jobs read tenant.initJob.* from

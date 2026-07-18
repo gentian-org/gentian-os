@@ -1,0 +1,41 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  displayName: Demo App
+  compositionRef: app-demo-app
+  chart:
+    repository: oci://example.invalid/demo-app
+    name: demo-app
+    version: "1.0.0"
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: catalogue-test-client
+        name: Demo App
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+        postLogoutRedirectUris:
+          - "https://demo.${TENANT_DOMAIN}/"
+  valueMapping:
+    oidc:
+      clientSecretKey: demo-app.oidc.secret
+  sidecars:
+    - name: mcp
+      chart:
+        repository: oci://example.invalid/demo-app-mcp
+        name: demo-app-mcp
+        version: "0.1.0"
+      appSecrets:
+        - name: service_password
+          valuePath: auth.password
+      extraValues:
+        image:
+          tag: "0.1.0"
+        upstreamUrl: "https://demo.${TENANT_DOMAIN}"
+      stableServiceName: demo-app-mcp
+      stableServicePort: 8765

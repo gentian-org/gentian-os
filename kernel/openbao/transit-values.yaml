@@ -29,7 +29,7 @@ server:
 
   dataStorage:
     enabled: true
-    storageClass: microk8s-hostpath
+    storageClass: nfs-csi
     size: 1Gi
     accessMode: ReadWriteOnce
 

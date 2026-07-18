@@ -9,7 +9,7 @@ spec:
   adminEmail: admin-render@gentian.org
   kernelDomain: desk.gentian.org
   apps:
-    - name: element
-      profile: element
+    - name: catalogue-test-app
+      profile: catalogue-test-app
   compositeDeletePolicy: Background
   resourceRefs: []

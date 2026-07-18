@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -186,7 +186,7 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 		return false, fmt.Errorf("register Dovecot domain config: %w", err)
 	}
 
-	// 5. Ensure opendesk-dovecot exists in the tenant realm for IMAP XOAUTH2 introspection.
+	// 5. Ensure gentian-dovecot exists in the tenant realm for IMAP XOAUTH2 introspection.
 	if ready, err := r.ensureDovecotTenantOIDCClientJob(ctx, tenant); err != nil {
 		return false, fmt.Errorf("ensure Dovecot tenant OIDC client: %w", err)
 	} else if !ready {
@@ -423,7 +423,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 // The SMTP password is *copied* from the per-tenant SMTP credentials Secret —
 // it is shared across all apps of a tenant since they authenticate to the
 // same Postfix submission endpoint with one user. IMAP gets only host/port
-// (per-user credentials come from LDAP at runtime).
+// (per-user credentials come from Keycloak/OIDC at runtime).
 //
 // No-op when the Seeder is nil (envtest / staged rollout). In MailModeDisabled
 // the caller never invokes this function.

@@ -83,9 +83,8 @@ spec:
                 description: |-
                   AdditionalIngresses declares extra Ingress resources to create alongside
                   the primary Ingress. Use this when an app requires a second hostname
-                  routed to the same (or a different) Service — for example, CryptPad
-                  requires a separate sandbox subdomain for its client-side iframe
-                  isolation model (httpSafeOrigin must differ from httpUnsafeOrigin).
+                  routed to the same (or a different) Service — for example, an app that
+                  requires a separate sandbox subdomain for client-side iframe isolation.
                   Each entry is treated identically to Ingress: the orchestrator creates
                   one Kubernetes Ingress per entry with its own host, TLS secret reference,
                   and lifecycle management (stale entries are deleted on app removal).
@@ -97,8 +96,8 @@ spec:
                       additionalProperties:
                         type: string
                       description: |-
-                        Annotations are merged into the Ingress object metadata.
-                        Use to set ingress class, NGINX configuration snippets, etc.
+                        Annotations are merged into Gateway edge policy for this host (frame-ancestors,
+                        timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
                       type: object
                     clusterIssuer:
                       default: letsencrypt-http01
@@ -108,12 +107,6 @@ spec:
                         (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
                         Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
                         See docs/design/multi-tenancy.md §3.
-                      type: string
-                    ingressClassName:
-                      default: nginx
-                      description: |-
-                        IngressClassName is the Kubernetes IngressClass to use.
-                        Defaults to "nginx" when not set.
                       type: string
                     serviceName:
                       description: |-
@@ -129,7 +122,7 @@ spec:
                     subDomain:
                       description: |-
                         SubDomain is the subdomain prefix prepended to the tenant domain to form the
-                        Ingress host, e.g. "files" yields "files.{tenant-domain}".
+                        HTTPRoute host, e.g. "files" yields "files.{tenant-domain}".
                         Defaults to the app profile name (chart name) when not set.
                       type: string
                     tlsEnabled:
@@ -140,6 +133,51 @@ spec:
                       type: boolean
                   type: object
                 type: array
+              apiIntegration:
+                description: |-
+                  APIIntegration configures an ApiProfile (deploymentMethod: api): a
+                  catalogue entry backed by an external service instead of tenant workloads.
+                  Required when deploymentMethod is api; ignored otherwise.
+                properties:
+                  baseUrl:
+                    description: BaseURL is the external service origin (e.g. https://corp.gentian.org).
+                    minLength: 1
+                    pattern: ^https?://.+
+                    type: string
+                  runtime:
+                    allOf:
+                    - enum:
+                      - redirect
+                      - proxy
+                      - portal-proxy
+                    - enum:
+                      - redirect
+                      - proxy
+                      - portal-proxy
+                    default: redirect
+                    description: |-
+                      Runtime selects how the tenant reaches the external service.
+                      redirect sends the browser to baseUrl (default).
+                      proxy routes through a kernel API proxy (reserved for a later phase).
+                      portal-proxy reverse-proxies requests through the portal BFF same-origin.
+                    type: string
+                  tenantBinding:
+                    allOf:
+                    - enum:
+                      - tenant-domain
+                      - none
+                    - enum:
+                      - tenant-domain
+                      - none
+                    default: tenant-domain
+                    description: |-
+                      TenantBinding declares how the tenant is identified to the external
+                      service. tenant-domain appends the tenant effective domain as a query
+                      parameter (default). none passes no tenant hint.
+                    type: string
+                required:
+                - baseUrl
+                type: object
               appSecrets:
                 description: |-
                   AppSecrets declares app-internal secrets (admin passwords, session keys,
@@ -231,8 +269,18 @@ spec:
                   Distinct from spec.chart.version (upstream Helm chart pin).
                 pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
                 type: string
+              categories:
+                description: Categories lists the classification categories for this
+                  application.
+                items:
+                  type: string
+                type: array
               chart:
-                description: Chart references the upstream Helm chart for this app.
+                description: |-
+                  Chart references the upstream Helm chart for this app. Required for
+                  crossplane and argocd deployment methods; omitted for ApiProfiles
+                  (deploymentMethod: api), which run no workload. Enforced by a spec-level
+                  validation rule.
                 properties:
                   name:
                     description: Name is the chart name within the repository.
@@ -256,17 +304,19 @@ spec:
                   CompositionRef overrides the Crossplane Composition used to deploy this
                   app. When empty the XRD default (app-default) applies. Set to the name
                   of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
-                  (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
+                  (e.g. "app-custom") for profiles that require custom MR graphs in the catalogue repo.
                 type: string
               deploymentMethod:
                 default: crossplane
                 description: |-
                   DeploymentMethod controls how the orchestrator deploys this app.
                   Defaults to crossplane. Use argocd for kernel-layer services managed
-                  directly by the cache or identity reconcilers.
+                  directly by the cache or identity reconcilers. Use api for an ApiProfile
+                  that runs no workload (see spec.apiIntegration).
                 enum:
                 - argocd
                 - crossplane
+                - api
                 type: string
               description:
                 description: Description is an optional human-readable description.
@@ -311,8 +361,8 @@ spec:
                     additionalProperties:
                       type: string
                     description: |-
-                      Annotations are merged into the Ingress object metadata.
-                      Use to set ingress class, NGINX configuration snippets, etc.
+                      Annotations are merged into Gateway edge policy for this host (frame-ancestors,
+                      timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
                     type: object
                   clusterIssuer:
                     default: letsencrypt-http01
@@ -322,12 +372,6 @@ spec:
                       (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
                       Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
                       See docs/design/multi-tenancy.md §3.
-                    type: string
-                  ingressClassName:
-                    default: nginx
-                    description: |-
-                      IngressClassName is the Kubernetes IngressClass to use.
-                      Defaults to "nginx" when not set.
                     type: string
                   serviceName:
                     description: |-
@@ -343,7 +387,7 @@ spec:
                   subDomain:
                     description: |-
                       SubDomain is the subdomain prefix prepended to the tenant domain to form the
-                      Ingress host, e.g. "files" yields "files.{tenant-domain}".
+                      HTTPRoute host, e.g. "files" yields "files.{tenant-domain}".
                       Defaults to the app profile name (chart name) when not set.
                     type: string
                   tlsEnabled:
@@ -395,27 +439,8 @@ spec:
                         type: string
                     type: object
                   identity:
-                    description: Identity specifies OIDC and/or LDAP requirements.
+                    description: Identity specifies OIDC requirements.
                     properties:
-                      ldap:
-                        description: LDAP requests a per-tenant LDAP bind account
-                          in the UCS LDAP directory.
-                        properties:
-                          interval:
-                            description: Interval is the sync interval (e.g., "1h").
-                              Defaults to "1h" when sync is true.
-                            pattern: ^[0-9]+(s|m|h|d)$
-                            type: string
-                          search:
-                            description: |-
-                              Search provisions a per-tenant LDAP search account via the app init Job on first install.
-                              Credentials are written to OpenBao and injected via valueMapping.ldap.
-                            type: boolean
-                          sync:
-                            description: Sync enables periodic user/group sync from
-                              LDAP into the app's own store.
-                            type: boolean
-                        type: object
                       oidc:
                         description: |-
                           OIDC describes the OIDC client to register in the tenant's Keycloak realm.
@@ -475,6 +500,24 @@ spec:
                             type: array
                         required:
                         - clientId
+                        type: object
+                      saml:
+                        description: SAML describes the SAML client to register in
+                          the tenant's Keycloak realm.
+                        properties:
+                          acsUrl:
+                            description: ACSURL is the SAML Assertion Consumer Service
+                              URL for the auth callback.
+                            minLength: 1
+                            type: string
+                          entityId:
+                            description: EntityID is the SAML Service Provider Entity
+                              ID registered in Keycloak.
+                            minLength: 1
+                            type: string
+                        required:
+                        - acsUrl
+                        - entityId
                         type: object
                     type: object
                   mail:
@@ -566,16 +609,15 @@ spec:
                         type: object
                     type: object
                 type: object
+              keywords:
+                description: Keywords lists search keywords for this application.
+                items:
+                  type: string
+                type: array
               license:
                 description: |-
                   License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
-                  Premium profiles in gentian-premium typically use proprietary.
-                type: string
-              logo:
-                description: |-
-                  Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
-                  The LDAP reconciler writes the resolved value to pathToLogo on portal entries.
-                pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                  Pro profiles in gentian-pro typically use proprietary.
                 type: string
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume
@@ -604,9 +646,9 @@ spec:
                 type: array
               portalTiles:
                 description: |-
-                  PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
+                  PortalTiles defines the tiles this app contributes to the gentian-ui
                   portal when deployed for a tenant in dedicated mode. Each tile creates a
-                  UDM portal entry under swp.{tile.name}_{tenantName}.
+                  portal entry keyed as {tile.name}_{tenantName}.
                   Requires ingress.subDomain to be set (used as the tile base URL).
                   When empty no per-tenant portal entries are created.
                 items:
@@ -617,7 +659,7 @@ spec:
                     allowedGroup:
                       default: Domain Users
                       description: |-
-                        AllowedGroup is the LDAP CN of the group whose members can see this tile.
+                        AllowedGroup is the Keycloak group whose members can see this tile.
                         Defaults to "Domain Users" (all authenticated portal users).
                         Use managed-by-attribute-{Capability} groups (e.g., "managed-by-attribute-Groupware")
                         to restrict to users with a specific provisioned capability.
@@ -627,7 +669,7 @@ spec:
                         type: string
                       description: |-
                         DisplayName is the localized label shown in the portal.
-                        Locale keys follow the UDM convention (e.g., "de_DE", "en_US").
+                        Locale keys use BCP 47-style tags (e.g., "de_DE", "en_US").
                         At least one entry is required.
                       type: object
                     linkSuffix:
@@ -652,15 +694,10 @@ spec:
                         newwindow opens in a new browser tab (default).
                         embedded opens inside the gentian-ui window manager (iframe).
                       type: string
-                    logo:
-                      description: Logo is deprecated; prefer tile. Optional per-tile
-                        data URI override.
-                      pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
-                      type: string
                     name:
                       description: |-
-                        Name is the unique tile identifier, forming the portal entry CN:
-                        swp.{name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
+                        Name is the unique tile identifier, forming the portal entry key:
+                        {name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
                       minLength: 1
                       pattern: ^[a-z0-9-]+$
                       type: string
@@ -689,6 +726,68 @@ spec:
                   - name
                   type: object
                 type: array
+              postInstallJob:
+                description: |-
+                  PostInstallJob declares an optional Kubernetes Job the app-default
+                  composition runs alongside this app's Helm release, for app-specific
+                  bootstrap that must happen via the app's own admin API (e.g. seeding
+                  initial config) rather than Helm values — generic operator/composition
+                  behavior available to any profile, not a per-app composition.yaml.
+                  Retried automatically the same way every other composed resource in
+                  this graph is: the Job is recreated once ttlSecondsAfterFinished
+                  expires and the tenant reconciles again, so Script must exit non-zero
+                  if a dependency isn't ready yet, and must be idempotent (a no-op once
+                  the desired state is already correct). See app-profile-guide.md.
+                properties:
+                  envFrom:
+                    description: |-
+                      EnvFrom names Secrets already present in the tenant namespace to
+                      inject wholesale (matches how this app's own secrets already land —
+                      e.g. llm-credentials-{app}, {app}-sensitive-values).
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    description: Image is the container image the Job runs.
+                    type: string
+                  readOnlyPVC:
+                    description: |-
+                      ReadOnlyPVC optionally mounts an existing PersistentVolumeClaim
+                      read-only, for the rare case a bootstrap script needs information only
+                      available in the app's own persisted data and not obtainable over the
+                      network. Requires a storage class that supports concurrent multi-pod
+                      mounts even for RWO-labeled claims (e.g. NFS-backed) — most profiles
+                      won't need this.
+                    properties:
+                      claimName:
+                        description: ClaimName is the PersistentVolumeClaim name in
+                          the tenant namespace.
+                        type: string
+                      mountPath:
+                        description: MountPath is where the claim is mounted read-only
+                          in the Job container.
+                        type: string
+                    required:
+                    - claimName
+                    - mountPath
+                    type: object
+                  script:
+                    description: Script is the shell script body, run via `/bin/sh
+                      -c`.
+                    type: string
+                  serviceAccountName:
+                    description: |-
+                      ServiceAccountName runs the Job under an existing ServiceAccount in
+                      the tenant namespace (e.g. one already granted an OpenBao Kubernetes-
+                      auth role by another part of this app's composition), instead of the
+                      namespace default. The composition does not create this account or
+                      its RBAC — the profile/composition that needs it is responsible for
+                      both, same as any other Kubernetes-native RBAC setup.
+                    type: string
+                required:
+                - image
+                - script
+                type: object
               provides:
                 description: Provides lists the integration contracts this app can
                   act as a provider for.
@@ -710,15 +809,266 @@ spec:
                   - name
                   type: object
                 type: array
+              provisioning:
+                description: |-
+                  Provisioning configures how Gentian maps workspace groups to in-app roles.
+                  Members of gentian:tenant:<t>:app-admins are reconciled into the privileged
+                  role declared here when the app is installed for a tenant.
+                properties:
+                  privilegedRole:
+                    description: |-
+                      PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
+                      administrator role (for example the Nextcloud "admin" group).
+                    properties:
+                      kind:
+                        allOf:
+                        - enum:
+                          - group
+                        - enum:
+                          - group
+                        description: Kind is the application's native role type. Only
+                          "group" is supported today.
+                        type: string
+                      name:
+                        description: Name is the in-app role identifier (for example
+                          Nextcloud group "admin").
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                    required:
+                    - kind
+                    - name
+                    type: object
+                type: object
+              security:
+                description: |-
+                  Security declares MAC and other security requests for this catalogue entry.
+                  Cluster administrators approve waivers via PlatformSecurityPolicy.
+                properties:
+                  egress:
+                    description: Egress lists specific outbound network rules required
+                      by the application.
+                    items:
+                      description: |-
+                        NetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
+                        matched by a NetworkPolicySpec's podSelector. The traffic must match both ports and to.
+                        This type is beta-level in 1.8
+                      properties:
+                        ports:
+                          description: |-
+                            ports is a list of destination ports for outgoing traffic.
+                            Each item in this list is combined using a logical OR. If this field is
+                            empty or missing, this rule matches all ports (traffic not restricted by port).
+                            If this field is present and contains at least one item, then this rule allows
+                            traffic only if the traffic matches at least one port in the list.
+                          items:
+                            description: NetworkPolicyPort describes a port to allow
+                              traffic on
+                            properties:
+                              endPort:
+                                description: |-
+                                  endPort indicates that the range of ports from port to endPort if set, inclusive,
+                                  should be allowed by the policy. This field cannot be defined if the port field
+                                  is not defined or if the port field is defined as a named (string) port.
+                                  The endPort must be equal or greater than port.
+                                format: int32
+                                type: integer
+                              port:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: |-
+                                  port represents the port on the given protocol. This can either be a numerical or named
+                                  port on a pod. If this field is not provided, this matches all port names and
+                                  numbers.
+                                  If present, only traffic on the specified protocol AND port will be matched.
+                                x-kubernetes-int-or-string: true
+                              protocol:
+                                description: |-
+                                  protocol represents the protocol (TCP, UDP, or SCTP) which traffic must match.
+                                  If not specified, this field defaults to TCP.
+                                type: string
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                        to:
+                          description: |-
+                            to is a list of destinations for outgoing traffic of pods selected for this rule.
+                            Items in this list are combined using a logical OR operation. If this field is
+                            empty or missing, this rule matches all destinations (traffic not restricted by
+                            destination). If this field is present and contains at least one item, this rule
+                            allows traffic only if the traffic matches at least one item in the to list.
+                          items:
+                            description: |-
+                              NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                              fields are allowed
+                            properties:
+                              ipBlock:
+                                description: |-
+                                  ipBlock defines policy on a particular IPBlock. If this field is set then
+                                  neither of the other fields can be.
+                                properties:
+                                  cidr:
+                                    description: |-
+                                      cidr is a string representing the IPBlock
+                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                    type: string
+                                  except:
+                                    description: |-
+                                      except is a slice of CIDRs that should not be included within an IPBlock
+                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                      Except values will be rejected if they are outside the cidr range
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - cidr
+                                type: object
+                              namespaceSelector:
+                                description: |-
+                                  namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                                  standard label selector semantics; if present but empty, it selects all namespaces.
+
+                                  If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                  the pods matching podSelector in the namespaces selected by namespaceSelector.
+                                  Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                                properties:
+                                  matchExpressions:
+                                    description: matchExpressions is a list of label
+                                      selector requirements. The requirements are
+                                      ANDed.
+                                    items:
+                                      description: |-
+                                        A label selector requirement is a selector that contains values, a key, and an operator that
+                                        relates the key and values.
+                                      properties:
+                                        key:
+                                          description: key is the label key that the
+                                            selector applies to.
+                                          type: string
+                                        operator:
+                                          description: |-
+                                            operator represents a key's relationship to a set of values.
+                                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                                          type: string
+                                        values:
+                                          description: |-
+                                            values is an array of string values. If the operator is In or NotIn,
+                                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                            the values array must be empty. This array is replaced during a strategic
+                                            merge patch.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      required:
+                                      - key
+                                      - operator
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  matchLabels:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                    type: object
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              podSelector:
+                                description: |-
+                                  podSelector is a label selector which selects pods. This field follows standard label
+                                  selector semantics; if present but empty, it selects all pods.
+
+                                  If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                  the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                                  Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                                properties:
+                                  matchExpressions:
+                                    description: matchExpressions is a list of label
+                                      selector requirements. The requirements are
+                                      ANDed.
+                                    items:
+                                      description: |-
+                                        A label selector requirement is a selector that contains values, a key, and an operator that
+                                        relates the key and values.
+                                      properties:
+                                        key:
+                                          description: key is the label key that the
+                                            selector applies to.
+                                          type: string
+                                        operator:
+                                          description: |-
+                                            operator represents a key's relationship to a set of values.
+                                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                                          type: string
+                                        values:
+                                          description: |-
+                                            values is an array of string values. If the operator is In or NotIn,
+                                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                            the values array must be empty. This array is replaced during a strategic
+                                            merge patch.
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                      required:
+                                      - key
+                                      - operator
+                                      type: object
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  matchLabels:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                    type: object
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
+                    type: array
+                  macWaivers:
+                    description: |-
+                      MacWaivers lists Kyverno MAC policies the app may need when upstream charts
+                      cannot satisfy baseline pod security (for example s6-based init as root).
+                    items:
+                      description: MacWaiverRequest identifies a MAC policy exception
+                        scope requested by the profile.
+                      properties:
+                        policy:
+                          description: Policy is the Kyverno ClusterPolicy name (for
+                            example gentian-require-non-root).
+                          minLength: 1
+                          type: string
+                        scope:
+                          description: Scope narrows the waiver to a composition component
+                            (for example sidecar-jitsi).
+                          minLength: 1
+                          type: string
+                      required:
+                      - policy
+                      - scope
+                      type: object
+                    type: array
+                type: object
               sidecars:
                 description: |-
                   Sidecars declares companion services deployed by purpose-built compositions
-                  alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+                  alongside the primary app (for example a video sidecar). Sidecar OIDC
                   clients and internal secrets use the synthetic app key {profile}-{sidecar}.
                 items:
                   description: |-
                     AppSidecarSpec declares a companion service deployed alongside the primary
-                    app by a purpose-built composition (for example Jitsi with Element).
+                    app by a purpose-built composition (for example a sidecar with its own ingress).
                   properties:
                     appSecrets:
                       description: |-
@@ -818,27 +1168,8 @@ spec:
                               type: string
                           type: object
                         identity:
-                          description: Identity specifies OIDC and/or LDAP requirements.
+                          description: Identity specifies OIDC requirements.
                           properties:
-                            ldap:
-                              description: LDAP requests a per-tenant LDAP bind account
-                                in the UCS LDAP directory.
-                              properties:
-                                interval:
-                                  description: Interval is the sync interval (e.g.,
-                                    "1h"). Defaults to "1h" when sync is true.
-                                  pattern: ^[0-9]+(s|m|h|d)$
-                                  type: string
-                                search:
-                                  description: |-
-                                    Search provisions a per-tenant LDAP search account via the app init Job on first install.
-                                    Credentials are written to OpenBao and injected via valueMapping.ldap.
-                                  type: boolean
-                                sync:
-                                  description: Sync enables periodic user/group sync
-                                    from LDAP into the app's own store.
-                                  type: boolean
-                              type: object
                             oidc:
                               description: |-
                                 OIDC describes the OIDC client to register in the tenant's Keycloak realm.
@@ -898,6 +1229,24 @@ spec:
                                   type: array
                               required:
                               - clientId
+                              type: object
+                            saml:
+                              description: SAML describes the SAML client to register
+                                in the tenant's Keycloak realm.
+                              properties:
+                                acsUrl:
+                                  description: ACSURL is the SAML Assertion Consumer
+                                    Service URL for the auth callback.
+                                  minLength: 1
+                                  type: string
+                                entityId:
+                                  description: EntityID is the SAML Service Provider
+                                    Entity ID registered in Keycloak.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - acsUrl
+                              - entityId
                               type: object
                           type: object
                         mail:
@@ -993,15 +1342,15 @@ spec:
                       type: object
                     name:
                       description: |-
-                        Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
-                        use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+                        Name identifies the sidecar (e.g. "sidecar-meet"). OpenBao paths and OIDC jobs
+                        use the synthetic app key {parentProfile}-{name} (e.g. "catalogue-test-app-sidecar-meet").
                       minLength: 1
                       pattern: ^[a-z0-9-]+$
                       type: string
                     stableServiceName:
                       description: |-
                         StableServiceName is the Kubernetes Service name the tenant ingress
-                        reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+                        reconciler routes to (e.g. "sidecar-web"). When set, the composition emits
                         a stable ClusterIP alias pointing at the sidecar release.
                       type: string
                     stableServicePort:
@@ -1020,7 +1369,6 @@ spec:
                   Tile declares the Gentian portal app-menu icon for this profile.
                   Path 1 (custom): set tile.logo to a data URI or tile.image in git (inlined before publish).
                   Path 2 (catalogue): set tile.icon to a Gentian catalogue id (e.g. "mail", "chat").
-                  Legacy spec.logo is still honoured when tile is unset.
                 properties:
                   icon:
                     description: Icon selects a pre-made tile from the Gentian catalogue
@@ -1113,29 +1461,27 @@ spec:
                         description: PortKey is the Helm value key for the IMAP port.
                         type: string
                     type: object
-                  ldap:
-                    description: LDAP maps LDAP directory values to Helm keys.
-                    properties:
-                      baseDnKey:
-                        description: BaseDNKey is the Helm value key for the LDAP
-                          base DN.
-                        type: string
-                      bindDnKey:
-                        description: BindDNKey is the Helm value key for the LDAP
-                          bind DN.
-                        type: string
-                      bindPasswordKey:
-                        description: |-
-                          BindPasswordKey is the Helm value key for the LDAP bind password.
-                          Supports bracket notation for deeply nested propertiesFiles paths, e.g.:
-                          `appsuite.core-mw.propertiesFiles["/opt/.../ldapauth.properties"].bindDNPassword`
-                        type: string
-                      hostKey:
-                        description: HostKey is the Helm value key for the LDAP host.
-                        type: string
-                      portKey:
-                        description: PortKey is the Helm value key for the LDAP port.
-                        type: string
+                  integrations:
+                    additionalProperties:
+                      description: IntegrationValueMapping maps integration credentials
+                        to Helm chart keys.
+                      properties:
+                        endpointKey:
+                          description: EndpointKey is the Helm value key for the integration's
+                            service endpoint URL.
+                          type: string
+                        passwordKey:
+                          description: PasswordKey is the Helm value key for the integration
+                            password.
+                          type: string
+                        userKey:
+                          description: UserKey is the Helm value key for the integration
+                            username.
+                          type: string
+                      type: object
+                    description: |-
+                      Integrations maps optional integration credentials to Helm keys,
+                      keyed by the contract name.
                     type: object
                   oidc:
                     description: OIDC maps OIDC provider values to Helm keys.
@@ -1209,9 +1555,14 @@ spec:
                     type: object
                 type: object
             required:
-            - chart
             - displayName
             type: object
+            x-kubernetes-validations:
+            - message: spec.chart is required unless spec.deploymentMethod is api
+              rule: self.deploymentMethod == 'api' || has(self.chart)
+            - message: spec.apiIntegration is required when spec.deploymentMethod
+                is api
+              rule: self.deploymentMethod != 'api' || has(self.apiIntegration)
         type: object
     served: true
     storage: true

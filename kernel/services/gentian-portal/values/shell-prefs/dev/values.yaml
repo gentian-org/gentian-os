@@ -1,6 +1,0 @@
-# =============================================================================
-# gentian-ui shell-prefs — dev environment overrides
-# =============================================================================
-
-env:
-  sessionInfoURL: "http://nubus-dev-umc-server/get/session-info"

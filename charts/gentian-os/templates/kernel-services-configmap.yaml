@@ -2,44 +2,57 @@
 {{- $stage := .Values.stage | default "dev" -}}
 {{- $keycloakInternal := $ks.keycloakInternalURL -}}
 {{- if not $keycloakInternal -}}
-{{- $keycloakInternal = printf "http://nubus-%s-keycloak.%s.svc.cluster.local:8080" $stage .Values.servicesNamespace -}}
+{{- $keycloakInternal = printf "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080" -}}
 {{- end -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode .Values.ldap.server .Values.ldap.base .Values.ldap.bindSearchDn $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- /*
+  Cluster-service hostnames follow a fixed naming convention
+  (<service>-<stage>.<namespace>.svc.cluster.local) and don't need to be
+  hand-specified per cluster — derive them from stage/infraNamespace,
+  but still allow an explicit override in kernelServices.* for the rare
+  case a cluster genuinely needs a different endpoint.
+*/ -}}
+{{- $infraNS := .Values.infraNamespace | default (printf "gentian-infra-%s" $stage) -}}
+{{- $mysqlHost := $ks.mysqlHost | default (printf "mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
+{{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
+{{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
+{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.gentian-%s.svc.cluster.local" $stage $stage) -}}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- /*
+  Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
+  restriction, not something a namespace field on the ref can work around.
+  Kernel SERVICES (keycloak-idp, etc.) that need KERNEL_DOMAIN/TENANCY_MODE
+  live in platform-kernel, not this release's own namespace (gentian-system),
+  so this ConfigMap is mirrored into both — same name, same data, so any
+  existing platform-kernel configMapKeyRef to "gentian-kernel-services"
+  just works without a separate reference convention to maintain.
+*/ -}}
+{{- range $ns := list .Release.Namespace "platform-kernel" | uniq }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gentian-kernel-services
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ $ns }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     gentianos.io/config-type: kernel-services
 data:
-  {{- with .Values.kernelDomain }}
+  {{- with $.Values.kernelDomain }}
   KERNEL_DOMAIN: {{ . | quote }}
   {{- end }}
-  TENANCY_MODE: {{ .Values.tenancyMode | default "multi" | quote }}
-  {{- $issuer := .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
+  TENANCY_MODE: {{ $.Values.tenancyMode | default "multi" | quote }}
+  {{- $issuer := $.Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
   ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
   KEYCLOAK_INTERNAL_URL: {{ $keycloakInternal | quote }}
-  {{- with .Values.ldap.server }}
-  LDAP_SERVER: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.ldap.base }}
-  LDAP_BASE_DN: {{ . | quote }}
-  {{- end }}
-  {{- with .Values.ldap.bindSearchDn }}
-  LDAP_BIND_DN: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.smtpHost }}
+  {{- with $smtpHost }}
   SMTP_HOST: {{ . | quote }}
   {{- end }}
-  {{- with $ks.s3Endpoint }}
+  {{- with $s3Endpoint }}
   S3_ENDPOINT: {{ . | quote }}
   {{- end }}
-  {{- with $ks.mysqlHost }}
+  {{- with $mysqlHost }}
   MYSQL_HOST: {{ . | quote }}
   {{- end }}
-  {{- with $ks.redisHost }}
+  {{- with $redisHost }}
   REDIS_HOST: {{ . | quote }}
   {{- end }}
   {{- with $ks.turnHost }}
@@ -60,4 +73,8 @@ data:
   {{- with $ks.turnCredentials }}
   TURN_CREDENTIALS: {{ . | quote }}
   {{- end }}
+  {{- with $ks.openprojectEnterpriseToken }}
+  OPENPROJECT_ENTERPRISE_TOKEN: {{ . | quote }}
+  {{- end }}
+{{- end }}
 {{- end }}

@@ -19,7 +19,6 @@ industry-standard tool for its data type, orchestrated centrally.
 | Keycloak realms | **Keycloak realm export** (JSON) | Per-realm (tenant-scoped) | Scheduled export to S3, versioned |
 | OpenBao secrets | **OpenBao snapshots** (`bao operator raft snapshot`) | Full vault | Raft snapshots to S3, encrypted |
 | Kubernetes resources | **Velero** | Per-namespace (tenant-scoped) | CRD state, ConfigMaps, Secrets (encrypted) |
-| LDAP directory | **slapcat** or UDM backup API | Per-OU (tenant-scoped) | LDIF export to S3 |
 
 **Velero** serves as the cross-cutting backup orchestrator for
 Kubernetes-native resources (CRDs, ConfigMaps, namespace metadata)

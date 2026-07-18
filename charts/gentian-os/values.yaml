@@ -3,10 +3,10 @@
 
 replicaCount: 1
 
-# stage names kernel Helm releases (nubus-dev, postfix-dev, …).
+# stage names kernel Helm releases (postfix-dev, keycloak-dev, …).
 stage: dev
 
-# kernelDomain is the cluster-wide platform DNS suffix (e.g. desk.gentian.org).
+# kernelDomain is the cluster-wide platform DNS suffix (e.g. example.domain).
 # Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
 # Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
 kernelDomain: ""
@@ -28,30 +28,36 @@ routingMode: gateway
 tenantDNS01ClusterIssuer: ""
 
 # tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
-# is true the operator skips shared-kernel side effects (mail, office, portal/UMC,
-# Nextcloud group, LDAP base) so tenant lifecycle is validated via the Crossplane
-# graph alone (P3/P4 e2e).
+# is true the operator skips shared-kernel side effects (mail, portal redirect)
+# so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).
 # Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
 # if a cutover regresses; leave false for normal production behaviour.
 tenantProvisioning:
   crossplaneOnly: false
 
 # kernelRealm is the name of the shared Keycloak realm that holds all platform
-# users (synced via Nubus LDAP). Defaults to "kernel" when empty.
+# users. Defaults to "kernel" when empty.
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
-# LDAP configuration for per-tenant realm federation.
-# When ldap.server is empty the operator does not configure LDAP federation
-# for tenant Keycloak realms. Set both ldap.server and ldap.base to enable.
-ldap:
-  # LDAP connection URL including scheme and port, e.g.:
-  # ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389
-  server: ""
-  # LDAP base DN, e.g. dc=swp-ldap,dc=internal
-  base: ""
-  # Optional LDAP bind DN for apps that read a shared search account (OX).
-  bindSearchDn: ""
+# Stage 1 authz bridge (Keycloak → OpenFGA tuple sync). OpenFGA is a
+# standard, always-deployed kernel component (see openfgaURL below), so
+# this defaults on; a deployer without Suze/OpenFGA can still disable it.
+authzBridge:
+  enabled: true
+  openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+  openfgaToken: ""
+
+# platformSecurityPolicy is the cluster singleton edited by platform administrators
+# (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests
+# are intersected with this allowlist before MAC labels are applied to workloads.
+platformSecurityPolicy:
+  create: true
+  allowedMacWaivers: []
+  # Example (dev Element Jitsi sidecar):
+  # - profile: element
+  #   policy: gentian-require-non-root
+  #   scope: sidecar-jitsi
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
 # Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
@@ -60,9 +66,12 @@ infraNamespace: ""
 # openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
 openbaoNamespace: "openbao"
 
-# servicesNamespace hosts platform services (Nubus, Postfix, …).
-# Set per cluster in gentian-deployments kernel values.
-servicesNamespace: ""
+# servicesNamespace hosts platform services (Postfix, Nextcloud, …).
+# "platform-kernel" is this platform's fixed naming convention, not a
+# per-stage or per-cluster choice — override in a cluster's own
+# gentian-deployments values.yaml only if a specific cluster truly needs
+# something different.
+servicesNamespace: "platform-kernel"
 
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
@@ -78,7 +87,7 @@ kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
-  # Empty → http://nubus-{stage}-keycloak.<servicesNamespace>.svc.cluster.local:8080
+  # Empty → http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
   smtpHost: ""
@@ -88,10 +97,16 @@ kernelServices:
   turnTLSPort: "5349"
   turnTransport: "udp"
   turnCredentials: ""
+  # OpenProject Enterprise token (host must match projects.<tenant-domain>).
+  # Set via install.secrets.env OPENPROJECT_ENTERPRISE_TOKEN; enables portal OIDC SSO.
+  openprojectEnterpriseToken: ""
 
 image:
   repository: ghcr.io/gentian-org/gentian-os
-  pullPolicy: Always
+  # Image Updater mutates image.tag on every new build, so a fresh tag
+  # always triggers a pull regardless of pullPolicy — IfNotPresent avoids
+  # re-pulling the same tag on unrelated pod restarts.
+  pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   # Ignored when image.digest is set.
   tag: ""
@@ -137,12 +152,12 @@ cloudflare:
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
   apiTokenSecretRef:
     # Name of the Secret containing the API token. Leave empty to disable.
-    name: ""
+    name: "cloudflare-api-token-gentian-system"
     # Key inside the Secret (default: api-token).
     key: "api-token"
     # If set, an ExternalSecret is created to sync the token from OpenBao at this KV path.
     # e.g. "gentian-os/kernel/dns/cloudflare"
-    openbaoPath: ""
+    openbaoPath: "gentian-os/kernel/dns/cloudflare"
   # Cloudflare zone ID for the kernel domain.
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
@@ -156,7 +171,7 @@ cloudflare:
 
 # OpenBao / Vault integration
 openbao:
-  address: "http://openbao.openbao.svc.cluster.local:8200"
+  address: "https://openbao.openbao.svc.cluster.local:8200"
   authPath: "kubernetes"
   # Kubernetes auth role used by the operator to log in to OpenBao for the
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
@@ -165,10 +180,21 @@ openbao:
   # (useful for envtest / local dev).
   role: "gentian-os-operator"
 
+# Shared CloudNativePG cluster in platform-kernel (Database CR spec.cluster.name).
+database:
+  clusterName: postgres
+
 # ArgoCD integration
 argocd:
   namespace: "argocd"
-  project: "default"
+  project: "gentianos-tenants"
+
+# Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
+provisioners:
+  postgres: "postgres:16-alpine"
+  mariadb: "mariadb:11"
+  redis: "redis:7-alpine"
+  keycloak: "alpine:3.20"
 
 # Memcached image for tenant cache provisioning (operator-managed Deployment).
 # Changing this takes effect on the next operator redeploy without rebuilding.
@@ -184,8 +210,10 @@ defaults:
 # Metrics and observability
 metrics:
   serviceMonitor:
-    # Deploy a Prometheus ServiceMonitor for the operator metrics endpoint
-    enabled: true
+    # Deploy a Prometheus ServiceMonitor for the operator metrics endpoint.
+    # Off by default — no current cluster runs Prometheus yet; flip to true
+    # in a cluster's own values.yaml once one does.
+    enabled: false
     interval: "30s"
     scrapeTimeout: "10s"
     # Additional labels added to the ServiceMonitor (e.g. to match a Prometheus selector)
@@ -197,7 +225,7 @@ appLifecycle:
   deployments:
     enabled: false
     path: /data/gentian-deployments
-    repo: https://github.com/gentian-org/gentian-deployments
+    repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
     stage: dev
     # Secret with key .git-credentials (https://user:token@host) for git push.
@@ -216,3 +244,13 @@ grafana:
     enabled: false
     # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
     namespace: ""
+
+# Commerce integration configuration
+commerce:
+  enabled: false
+  corpAPIURL: ""
+  operatorToken: ""
+  meteringInterval: ""
+
+# LLM serving support configuration
+llmSupport: false

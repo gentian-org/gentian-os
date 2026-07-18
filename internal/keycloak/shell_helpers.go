@@ -1,0 +1,242 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package keycloak
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// ProvisionerBootstrap installs curl and jq before provisioner scripts run.
+const ProvisionerBootstrap = "apk add --no-cache --quiet curl jq >/dev/null 2>&1 || { echo 'ERROR: install curl/jq failed' >&2; exit 1; }; "
+
+// ShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
+// field from Keycloak Admin API JSON arrays. jq is preferred; sed/grep fallbacks
+// handle minified arrays and objects with fields between name and id.
+func ShellJSONIDExtractor() string {
+	return `keycloak_json_id_by_attr() {
+  _kj_json="$1"
+  _kj_attr="$2"
+  _kj_val="$3"
+  _kj_id=""
+  if command -v jq >/dev/null 2>&1; then
+    _kj_id=$(printf '%s' "${_kj_json}" | jq -r --arg a "${_kj_attr}" --arg v "${_kj_val}" '
+      (if type == "array" then .[] elif (.content? | type) == "array" then .content[] else empty end)
+      | select(has($a) and (.[$a] | tostring) == $v and has("id") and (.id | type) == "string" and .id != "")
+      | .id // empty' 2>/dev/null | head -1)
+    if [ "${_kj_id}" = "null" ]; then
+      _kj_id=""
+    fi
+  else
+    _kj_flat=$(printf '%s' "${_kj_json}" | tr -d '\n\r')
+    _kj_id=$(printf '%s' "${_kj_flat}" | sed 's/},[[:space:]]*{/}\n{/g' | grep -F "\"${_kj_attr}\":\"${_kj_val}\"" | head -1 | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+  fi
+}
+`
+}
+
+// ShellWaitForRealm polls until the tenant realm exists. Crossplane applies
+// all provisioning Jobs from jobs.json at once; dependent Jobs must wait for
+// keycloak-realm-* before calling realm-scoped Admin API endpoints.
+func ShellWaitForRealm(realmExpr string) string {
+	return fmt.Sprintf(`
+_wait_realm=0
+while [ ${_wait_realm} -lt 90 ]; do
+  if curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s" >/dev/null 2>&1; then
+    break
+  fi
+  _wait_realm=$((_wait_realm + 1))
+  sleep 2
+done
+if ! curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/%s" >/dev/null 2>&1; then
+  echo "ERROR: realm %s not available after waiting" >&2
+  exit 1
+fi
+`, realmExpr, realmExpr, realmExpr)
+}
+
+// ShellRequireID emits shell that assigns outVar from the extractor or exits 1.
+// jsonVar must be a shell expansion such as ${EXISTING}; it is always double-quoted
+// so JSON arrays/objects are not word-split by the shell.
+func ShellRequireID(outVar, jsonVar, attr, value string) string {
+	return fmt.Sprintf(`keycloak_json_id_by_attr "%s" "%s" "%s"
+%s="${_kj_id}"
+if [ -z "${%s}" ]; then
+  echo "ERROR: could not resolve Keycloak resource id (%s=%s)" >&2
+  exit 1
+fi`, jsonVar, attr, value, outVar, outVar, attr, value)
+}
+
+// ShellScopeIDFromList defines a helper to extract a client-scope id by name from JSON.
+func ShellScopeIDFromList() string {
+	return `_kj_scope_id_from_list() {
+  _kj_id=$(printf '%s' "$1" | jq -r --arg n "${SCOPE_NAME}" '
+    (if type == "array" then .[] elif (.content? | type) == "array" then .content[] else empty end)
+    | select(.name? == $n) | .id // empty' 2>/dev/null | head -1)
+  if [ "${_kj_id}" = "null" ]; then
+    _kj_id=""
+  fi
+}
+`
+}
+
+// ShellLookupClientScopeID resolves SCOPE_UUID for the OIDC pack job (create if missing).
+func ShellLookupClientScopeID() string {
+	return ShellScopeIDFromList() + `
+SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+_kj_scope_id_from_list "${SCOPE_LIST}"
+SCOPE_UUID="${_kj_id}"
+if [ -z "${SCOPE_UUID}" ]; then
+  for _kj_ep in default-default-client-scopes optional-client-scopes; do
+    _kj_list=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/${_kj_ep}" 2>/dev/null || true)
+    if [ -n "${_kj_list}" ]; then
+      _kj_scope_id_from_list "${_kj_list}"
+      SCOPE_UUID="${_kj_id}"
+      if [ -n "${SCOPE_UUID}" ]; then
+        break
+      fi
+    fi
+  done
+fi
+if [ -z "${SCOPE_UUID}" ]; then
+  _kj_hdr=$(curl -si -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes" \
+    -d "{\"name\":\"${SCOPE_NAME}\",\"description\":\"${SCOPE_DESC}\",\"protocol\":\"openid-connect\"}")
+  SCOPE_UUID=$(echo "${_kj_hdr}" | grep -i '^Location:' | tail -1 | tr -d '\r' | sed 's|.*/||')
+  if [ -n "${SCOPE_UUID}" ]; then
+    echo "client scope ${SCOPE_NAME} created"
+  else
+    echo "client scope ${SCOPE_NAME} already exists"
+    SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+    _kj_scope_id_from_list "${SCOPE_LIST}"
+    SCOPE_UUID="${_kj_id}"
+  fi
+else
+  echo "client scope ${SCOPE_NAME} already exists"
+fi
+if [ -z "${SCOPE_UUID}" ]; then
+  echo "ERROR: could not resolve client scope id (name=${SCOPE_NAME})" >&2
+  exit 1
+fi
+echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
+`
+}
+
+// ShellEnsureInviteEmailUserProfile registers gentian.inviteEmail and uid on the realm
+// user profile so Admin API can persist recovery addresses for invite/reset delivery.
+func ShellEnsureInviteEmailUserProfile(realmExpr string) string {
+	return fmt.Sprintf(`
+# Ensure gentian.inviteEmail and uid are managed user-profile attributes.
+PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
+UPDATED="${PROFILE}"
+if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
+  UPDATED=$(echo "${UPDATED}" | jq '.attributes += [{"name":"gentian.inviteEmail","displayName":"Recovery email","validations":{"email":{},"length":{"max":255}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
+  echo "user profile gentian.inviteEmail added to update"
+fi
+if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="uid")' >/dev/null 2>&1; then
+  UPDATED=$(echo "${UPDATED}" | jq '.attributes += [{"name":"uid","displayName":"User ID","validations":{"length":{"max":255}},"permissions":{"view":["admin","user"],"edit":["admin"]},"multivalued":false}]')
+  echo "user profile uid added to update"
+fi
+if [ "${UPDATED}" != "${PROFILE}" ]; then
+  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${UPDATED}"
+  echo "user profile updated for realm %s"
+else
+  echo "user profile attributes already present for realm %s"
+fi
+`, realmExpr, realmExpr, realmExpr, realmExpr)
+}
+
+// ShellDisableProfilePromptRequiredActions stops post-password profile forms
+// when admin delivery swaps the transient email used for action-token links.
+func ShellDisableProfilePromptRequiredActions(realmExpr string) string {
+	return fmt.Sprintf(`
+for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
+  RA=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" 2>/dev/null || true)
+  if [ -n "${RA}" ]; then
+    UPDATED=$(echo "${RA}" | jq '.enabled = false')
+    curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" -d "${UPDATED}" >/dev/null
+    echo "required action ${ACTION} disabled for realm %s"
+  fi
+done
+PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
+RELAXED=$(echo "${PROFILE}" | jq '.attributes = [.attributes[] | if .name == "firstName" or .name == "lastName" then del(.required) else . end]')
+curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${RELAXED}" >/dev/null
+echo "user profile firstName/lastName optional for realm %s"
+`, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr)
+}
+
+// ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
+func ExtractJSONIDByAttr(raw, attr, value string) string {
+	var walk func(any)
+	var found string
+	walk = func(v any) {
+		if found != "" {
+			return
+		}
+		m, ok := v.(map[string]any)
+		if !ok {
+			return
+		}
+		if fmt.Sprint(m[attr]) == value {
+			if id, ok := m["id"].(string); ok && id != "" {
+				found = id
+				return
+			}
+		}
+		for _, child := range m {
+			walk(child)
+		}
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed != "" {
+		var parsed any
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			if arr, ok := parsed.([]any); ok {
+				for _, item := range arr {
+					walk(item)
+				}
+			} else {
+				walk(parsed)
+			}
+			if found != "" {
+				return found
+			}
+		}
+	}
+	needle := `"` + attr + `":"` + value + `"`
+	idRe := regexp.MustCompile(`"id":"([^"]+)"`)
+	inner := strings.TrimSpace(raw)
+	inner = strings.TrimPrefix(inner, "[")
+	inner = strings.TrimSuffix(inner, "]")
+	if inner == "" {
+		return ""
+	}
+	for _, obj := range strings.Split(inner, "},{") {
+		if !strings.Contains(obj, needle) {
+			continue
+		}
+		if m := idRe.FindStringSubmatch(obj); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
+}

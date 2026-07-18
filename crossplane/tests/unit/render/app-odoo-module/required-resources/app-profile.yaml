@@ -1,0 +1,35 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: odoo-cb-crm
+  labels:
+    gentianos.io/profile-name: odoo-cb-crm
+  annotations:
+    gentianos.io/platform-app: "false"
+    gentianos.io/deployment-role: module
+    gentianos.io/requires-profile: odoo-cb-base
+spec:
+  displayName: "Odoo CRM"
+  description: "Customer Relationship Management module for Odoo."
+  family: odoo
+  catalogueVersion: "1.0.0"
+  edition: crm
+  trustTier: platform
+  license: LGPL-3.0
+  tile:
+    icon: erp
+
+  portalTiles:
+    - name: odoo-crm
+      displayName:
+        en_US: "Odoo CRM"
+        de_DE: "Odoo CRM"
+      linkSuffix: "/web?gentian_embed=1#action=crm.crm_lead_action_pipeline"
+      linkTarget: embedded
+      allowedGroup: "Tenant Admins"
+
+  compositionRef: app-odoo
+  deploymentMethod: crossplane
+  extraValues:
+    odoo:
+      module: crm

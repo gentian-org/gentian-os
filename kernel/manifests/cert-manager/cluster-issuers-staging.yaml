@@ -6,8 +6,9 @@
 #   letsencrypt-staging-dns01-cloudflare
 #
 # Templated on:
-#   ${LETSENCRYPT_EMAIL}     — ACME account email
-#   ${INGRESS_CLASS_NAME}    — IngressClass for HTTP-01 challenges
+#   ${LETSENCRYPT_EMAIL}                 — ACME account email
+#   ${KERNEL_PUBLIC_GATEWAY_NAMESPACE}   — namespace of kernel-public-gateway
+#   ${KERNEL_PUBLIC_GATEWAY_NAME}        — Gateway API parent for HTTP-01 challenges
 #
 # See docs/design/multi-tenancy.md §3 (ACME rate limits).
 ---
@@ -26,8 +27,12 @@ spec:
       name: letsencrypt-staging-http01-account-key
     solvers:
       - http01:
-          ingress:
-            ingressClassName: ${INGRESS_CLASS_NAME}
+          gatewayHTTPRoute:
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: ${KERNEL_PUBLIC_GATEWAY_NAME}
+                namespace: ${KERNEL_PUBLIC_GATEWAY_NAMESPACE}
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

@@ -23,14 +23,13 @@ spec:
             {{- $spec := $xr.spec }}
             {{- $name := $xr.metadata.name }}
 
-            {{- $openbaoServer    := default "http://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
+            {{- $openbaoServer    := default "https://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
             {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
             {{- $argoNs           := default "argocd" (dig "argocd" "namespace" "" $spec) }}
             {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
-            {{- $ingressClass     := default "public" (dig "certManager" "ingressClassName" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
             {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
             {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
@@ -214,8 +213,8 @@ spec:
                   "database/mariadb"
                   "cache/redis"
                   "storage/minio"
-                  "identity/nubus"
                   "identity/keycloak-bootstrap"
+                  "authz/openfga"
                   "mail/postfix"
             }}
             {{- range $kvSeeds }}
@@ -264,8 +263,6 @@ spec:
                       - "https://github.com/gentian-org/gentian-os"
                       - "https://github.com/gentian-org/gentian-apps"
                       - "https://github.com/gentian-org/gentian-deployments"
-                      - "registry.opencode.de/*"
-                      - "oci://registry.opencode.de/*"
                       {{- range (default list (dig "argocd" "sourceRepos" list $spec)) }}
                       - {{ . | quote }}
                       {{- end }}
@@ -303,6 +300,13 @@ spec:
                         server: {{ $openbaoServer }}
                         path: {{ $kvMount }}
                         version: v2
+                        {{- if hasPrefix "https://" $openbaoServer }}
+                        caProvider:
+                          type: Secret
+                          name: openbao-tls
+                          namespace: openbao
+                          key: tls.crt
+                        {{- end }}
                         auth:
                           kubernetes:
                             mountPath: {{ $authMount }}
@@ -336,7 +340,11 @@ spec:
                         name: letsencrypt-http01-account-key
                       solvers:
                         - http01:
-                            ingress:
-                              ingressClassName: {{ $ingressClass }}
+                            gatewayHTTPRoute:
+                              parentRefs:
+                                - group: gateway.networking.k8s.io
+                                  kind: Gateway
+                                  name: kernel-public-gateway
+                                  namespace: gentian-dev
               providerConfigRef:
                 name: kubernetes

@@ -1,0 +1,107 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xinfradata.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XInfraData
+    plural: xinfradata
+  claimNames:
+    kind: InfraData
+    plural: infradata
+  defaultCompositionRef:
+    name: infra-data
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - environment
+              properties:
+                environment:
+                  type: string
+                  description: >
+                    Environment slug (e.g. dev). Used to derive namespace and
+                    default Helm release names when not overridden.
+                infraNamespace:
+                  type: string
+                  description: >
+                    Namespace for shared data-plane workloads. Defaults to
+                    gentian-infra-{environment}.
+                chartRepository:
+                  type: string
+                  description: >
+                    Helm repository URL for vendored infra charts (postgres, mariadb,
+                    redis, minio).
+                  default: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+                postgresql:
+                  type: object
+                  description: Shared kernel PostgreSQL (Keycloak and platform services).
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      description: >
+                        Helm release name (and primary Service DNS label).
+                        Defaults to gentian-postgresql-{environment} for
+                        backward compatibility with existing consumers.
+                    chartVersion:
+                      type: string
+                      default: "2.1.2"
+                mariadb:
+                  type: object
+                  description: Shared kernel MariaDB (OX App Suite, mail).
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      description: >
+                        Helm release name (and primary Service DNS label).
+                        Defaults to gentian-mariadb-{environment} for backward
+                        compatibility with existing consumers.
+                    chartVersion:
+                      type: string
+                      default: "3.0.3"
+                redis:
+                  type: object
+                  description: Shared kernel Redis cache.
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      description: >
+                        Helm release name. Defaults to redis-{environment}
+                        (Service DNS redis-{environment}-master).
+                    chartVersion:
+                      type: string
+                      default: "18.6.1"
+                minio:
+                  type: object
+                  description: Shared kernel MinIO object storage.
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      description: >
+                        Helm release name. Defaults to minio-{environment}.
+                    chartVersion:
+                      type: string
+                      default: "16.0.10"
+            status:
+              type: object
+              properties:
+                postgresqlReleaseReady:
+                  type: boolean
+                  description: True when the PostgreSQL provider-helm Release is Synced+Ready.
+                mariadbReleaseReady:
+                  type: boolean
+                  description: True when the MariaDB provider-helm Release is Synced+Ready.
+                redisReleaseReady:
+                  type: boolean
+                  description: True when the Redis provider-helm Release is Synced+Ready.
+                minioReleaseReady:
+                  type: boolean
+                  description: True when the MinIO provider-helm Release is Synced+Ready.

@@ -1,0 +1,112 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: suze
+  labels:
+    gentianos.io/composition: suze
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XSuze
+  mode: Pipeline
+  pipeline:
+    - step: render-suze-releases
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec := $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+            {{- $env := $spec.environment }}
+            {{- $ns := default "platform-kernel" $spec.idpNamespace }}
+
+            {{- $fgaSpec := default dict $spec.openfga }}
+            {{- $fgaRelease := default "gentian-openfga" $fgaSpec.helmReleaseName }}
+            {{- $fgaVersion := default "0.3.10" $fgaSpec.chartVersion }}
+
+            {{- $kcSpec := default dict $spec.keycloak }}
+            {{- $kcRelease := default "gentian-idp-keycloak" $kcSpec.helmReleaseName }}
+            {{- $kcVersion := default "7.0.1" $kcSpec.chartVersion }}
+
+            {{- /* ── OpenFGA (ReBAC PDP) ─────────────────────────────────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openfga-release
+                crossplane.io/external-name: {{ $fgaRelease }}
+              name: {{ $name }}-openfga
+            spec:
+              forProvider:
+                chart:
+                  name: openfga
+                  repository: https://openfga.github.io/helm-charts
+                  version: {{ $fgaVersion | quote }}
+                namespace: {{ $ns }}
+                wait: true
+                waitTimeout: "15m"
+                valuesFrom:
+                  - configMapKeyRef:
+                      name: openfga-base-values
+                      namespace: {{ $ns }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: openfga-{{ $env }}-values
+                      namespace: {{ $ns }}
+                      key: values.yaml
+                      optional: false
+                  - secretKeyRef:
+                      name: openfga-sensitive-values
+                      namespace: {{ $ns }}
+                      key: sensitive-values.yaml
+                      optional: false
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Standalone Keycloak ─────────────────────────────────────── */}}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-release
+                crossplane.io/external-name: {{ $kcRelease }}
+              name: {{ $name }}-keycloak
+            spec:
+              forProvider:
+                chart:
+                  name: keycloakx
+                  repository: https://codecentric.github.io/helm-charts
+                  version: {{ $kcVersion | quote }}
+                namespace: {{ $ns }}
+                wait: true
+                waitTimeout: "15m"
+                valuesFrom:
+                  - configMapKeyRef:
+                      name: keycloak-idp-base-values
+                      namespace: {{ $ns }}
+                      key: values.yaml
+                      optional: false
+                  - configMapKeyRef:
+                      name: keycloak-idp-{{ $env }}-values
+                      namespace: {{ $ns }}
+                      key: values.yaml
+                      optional: false
+                  - secretKeyRef:
+                      name: keycloak-idp-sensitive-values
+                      namespace: {{ $ns }}
+                      key: sensitive-values.yaml
+                      optional: false
+              providerConfigRef:
+                name: kubernetes
+
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready

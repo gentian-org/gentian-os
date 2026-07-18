@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,15 +18,19 @@ package controller_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // newPostgresProfile creates a minimal AppProfile that requires a PostgreSQL database.
@@ -60,23 +64,66 @@ func patchDatabaseCRReady(t *testing.T, name, namespace string) {
 		Version: "v1",
 		Kind:    "Database",
 	}
-	db := &unstructured.Unstructured{}
-	db.SetGroupVersionKind(dbGVK)
 
-	if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, db); err != nil {
-		t.Fatalf("get Database CR %s: %v", name, err)
-	}
+	for range 20 {
+		db := &unstructured.Unstructured{}
+		db.SetGroupVersionKind(dbGVK)
 
-	if err := unstructured.SetNestedField(db.Object, true, "status", "applied"); err != nil {
-		t.Fatalf("set Database status.applied: %v", err)
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, db); err != nil {
+			t.Fatalf("get Database CR %s: %v", name, err)
+		}
+
+		if err := unstructured.SetNestedField(db.Object, true, "status", "applied"); err != nil {
+			t.Fatalf("set Database status.applied: %v", err)
+		}
+		if err := testClient.Status().Update(context.Background(), db); err != nil {
+			if k8serrors.IsConflict(err) {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("patch Database %s status: %v", name, err)
+		}
+		return
 	}
-	if err := testClient.Status().Update(context.Background(), db); err != nil {
-		t.Fatalf("patch Database %s status: %v", name, err)
-	}
+	t.Fatalf("patch Database %s status: too many conflicts", name)
 }
 
-// TestDB_NoPostgresApps verifies that a Tenant with no apps does not create any
-// Database CRs or role Jobs, and gets DatabaseReady=True with NoDatabaseRequired.
+// completePortalShellDatabase satisfies portal shell prerequisites while manual
+// data-plane tests keep app-specific role Jobs pending.
+func completePortalShellDatabase(t *testing.T, tenantName string) {
+	t.Helper()
+	jobName := "pg-role-" + tenantName + "-shell"
+	waitFor(t, jobAppearTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, jobName, "platform-kernel")
+
+	crName := "db-" + tenantName + "-shell"
+	dbGVK := schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"}
+	db := &unstructured.Unstructured{}
+	db.SetGroupVersionKind(dbGVK)
+	err := testClient.Get(context.Background(), types.NamespacedName{Name: crName, Namespace: "platform-kernel"}, db)
+	if err != nil {
+		safe := strings.ReplaceAll(tenantName, "-", "_")
+		db = &unstructured.Unstructured{}
+		db.SetGroupVersionKind(dbGVK)
+		db.SetName(crName)
+		db.SetNamespace("platform-kernel")
+		_ = unstructured.SetNestedField(db.Object, "postgres", "spec", "cluster", "name")
+		_ = unstructured.SetNestedField(db.Object, safe+"_shell", "spec", "name")
+		_ = unstructured.SetNestedField(db.Object, safe+"_shell", "spec", "owner")
+		_ = unstructured.SetNestedField(db.Object, "present", "spec", "ensure")
+		if err := testClient.Create(context.Background(), db); err != nil && !k8serrors.IsAlreadyExists(err) {
+			t.Fatalf("create shell Database CR %s: %v", crName, err)
+		}
+	}
+	patchDatabaseCRReady(t, crName, "platform-kernel")
+}
+
+// TestDB_NoPostgresApps verifies that a Tenant with no apps still provisions the
+// portal shell database and gets DatabaseReady=True with PortalShellReady.
 func TestDB_NoPostgresApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -92,11 +139,7 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nodb"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nodb", "DatabaseReady")
 
 	var dbCond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -108,12 +151,46 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	if dbCond == nil {
 		t.Fatal("expected DatabaseReady condition")
 	}
-	if dbCond.Status != metav1.ConditionTrue {
-		t.Errorf("expected DatabaseReady=True, got %v", dbCond.Status)
+	if dbCond.Reason != "PortalShellReady" {
+		t.Errorf("expected reason PortalShellReady, got %q", dbCond.Reason)
 	}
-	if dbCond.Reason != "NoDatabaseRequired" {
-		t.Errorf("expected reason NoDatabaseRequired, got %q", dbCond.Reason)
+}
+
+// TestDB_CrossplaneAppProvisionedByOperator verifies that Crossplane apps with
+// databasePerTenant are provisioned by the operator in the kernel namespace,
+// not deferred to composition-owned db-init Jobs. This is the SEC-1 hardening:
+// tenant-namespace init Jobs no longer read kernel credentials from OpenBao, so
+// the operator must own the role/database provisioning for every engine=postgres
+// app regardless of deployment method.
+func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
+	t.Parallel()
+	profile := newPostgresProfile("element")
+	profile.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodCrossplane
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
 	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "cpgdb"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Crossplane DB Co",
+			Domain:      "cpgdb.example.com",
+			AdminEmail:  "admin@cpgdb.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "element"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	// The operator must create its own role Job for the Crossplane app.
+	waitFor(t, jobAppearTimeout, func() bool {
+		job := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-cpgdb-element", Namespace: "platform-kernel"}, job) == nil
+	})
 }
 
 // TestDB_CreatesDatabaseCR verifies that a Tenant with an app requiring PostgreSQL
@@ -146,6 +223,8 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
 	})
+
+	completePortalShellDatabase(t, "dbcreate")
 
 	// Reconciler should wait on the role Job before Database CR is applied.
 	waitForTenantConditionReason(t, "dbcreate", "DatabaseReady", "Provisioning")
@@ -205,6 +284,8 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
 	})
 
+	completePortalShellDatabase(t, "rolejob")
+
 	waitForTenantConditionReason(t, "rolejob", "DatabaseReady", "Provisioning")
 
 	// Mark role Job as complete; Database CR is applied once all Jobs finish.
@@ -228,7 +309,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		t.Fatal("expected at least one container in role Job")
 	}
 	container := roleJob.Spec.Template.Spec.Containers[0]
-	if container.Image != "postgres:16-alpine" {
+	if container.Image != kernel.DefaultPostgresProvisionerImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 }
@@ -270,6 +351,7 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "platform-kernel"}, job) == nil
 	})
+	completePortalShellDatabase(t, "dbready")
 	markJobComplete(t, "pg-role-dbready-pg-app3", "platform-kernel")
 
 	// Step 2: wait for Database CR in platform-kernel then mark it ready.
@@ -343,9 +425,8 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteDatabase; mark their jobs.
+	// deleteIdentity runs before deleteDatabase; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-dbdelete", "platform-kernel")
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -416,7 +497,6 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-dborphan", "platform-kernel")
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}

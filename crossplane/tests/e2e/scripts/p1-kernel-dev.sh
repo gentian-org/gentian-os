@@ -78,6 +78,16 @@ kubectl wait xrd xclusters.gentianos.io \
 info "Applying Composition (cluster-default)..."
 kubectl apply -f "${REPO_ROOT}/compositions/cluster-default.yaml"
 
+info "Applying XRD (XInfraData / InfraData)..."
+kubectl apply -f "${REPO_ROOT}/xrds/infra-data.yaml"
+
+info "Waiting for InfraData XRD to be Established..."
+kubectl wait xrd xinfradata.gentianos.io \
+  --for=condition=Established --timeout=2m
+
+info "Applying Composition (infra-data)..."
+kubectl apply -f "${REPO_ROOT}/compositions/infra-data.yaml"
+
 # ── Step 4: Apply dev-cluster Claim ─────────────────────────────────────────
 
 info "Checking that master-password Secret exists..."
@@ -89,9 +99,20 @@ kubectl get secret gentian-os-master-password -n crossplane-system >/dev/null 2>
                --from-literal=password=<your-master-password>"
 
 info "Applying dev-cluster Cluster claim..."
-# The static dev-cluster.yaml (domain: desk.gentian.org) is used for e2e tests.
-# Production installs use crossplane/claims/dev-cluster.yaml.tmpl via install.sh.
-kubectl apply -f "${REPO_ROOT}/claims/dev-cluster.yaml"
+# e2e tests are self-contained (no gentian-deployments checkout available),
+# so this test fixture is inlined here rather than read from a file — real
+# installs get their Cluster claim from
+# gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml
+# (scaffolded by install.sh; see install.sh's apply_cluster_xr()).
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: dev-cluster
+  namespace: crossplane-system
+spec:
+  kernelDomain: desk.gentian.org
+EOF
 
 # ── Step 5: Wait for XCluster to be Ready ───────────────────────────────────
 

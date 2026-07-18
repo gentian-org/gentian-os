@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1_test
 
 import (
@@ -17,19 +33,18 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	qty := resource.MustParse("5Gi")
 
 	original := &v1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "openproject"},
+		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-app"},
 		Spec: v1alpha1.AppProfileSpec{
-			DisplayName:      "OpenProject",
+			DisplayName:      "Catalogue App",
 			DeploymentMethod: v1alpha1.DeploymentMethodArgoCD,
 			Chart: v1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
-				Name:       "openproject",
-				Version:    "14.2.0",
+				Name:       "catalogue-app",
+				Version:    "1.0.0",
 			},
 			KernelRequirements: &v1alpha1.KernelRequirements{
 				Identity: &v1alpha1.IdentityRequirement{
 					OIDC: &v1alpha1.OIDCClientSpec{ClientID: "test-client"},
-					LDAP: &v1alpha1.LDAPRequirement{Sync: true, Interval: "1h"},
 				},
 				Database: &v1alpha1.DatabaseRequirement{
 					Engine:            v1alpha1.DatabaseEnginePostgreSQL,
@@ -58,7 +73,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 				},
 			},
 			AppSecrets: []v1alpha1.AppSecret{
-				{Name: "admin_password", ValuePath: "openproject.adminPassword"},
+				{Name: "admin_password", ValuePath: "catalogue-app.adminPassword"},
 			},
 		},
 	}
@@ -72,8 +87,8 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	if copy.Spec.Chart.Version != original.Spec.Chart.Version {
 		t.Errorf("expected chart version %q, got %q", original.Spec.Chart.Version, copy.Spec.Chart.Version)
 	}
-	if copy.Spec.KernelRequirements.Identity.LDAP.Interval != "1h" {
-		t.Errorf("expected LDAP interval 1h, got %q", copy.Spec.KernelRequirements.Identity.LDAP.Interval)
+	if copy.Spec.KernelRequirements.Identity.OIDC.ClientID != "test-client" {
+		t.Errorf("expected OIDC clientID test-client, got %q", copy.Spec.KernelRequirements.Identity.OIDC.ClientID)
 	}
 	if len(copy.Spec.AppSecrets) != 1 {
 		t.Fatalf("expected 1 appSecret, got %d", len(copy.Spec.AppSecrets))
@@ -150,7 +165,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 				KeycloakRealm:  "gtn-demo",
 				DatabasePrefix: "gtn_",
 				S3Prefix:       "gtn-demo-",
-				LDAPOu:         "ou=gtn-demo",
 			},
 			Mail: &v1alpha1.TenantMail{
 				Mode:         v1alpha1.MailModeSelfhosted,
@@ -165,9 +179,9 @@ func TestTenant_DeepCopy(t *testing.T) {
 				Memory:  &memory,
 			},
 			Apps: []v1alpha1.TenantApp{
-				{Profile: "nextcloud"},
-				{Profile: "ox-appsuite"},
-				{Profile: "openproject", Config: &v1alpha1.TenantAppConfig{Replicas: &replicas}},
+				{Profile: "app-a"},
+				{Profile: "app-b"},
+				{Profile: "app-c", Config: &v1alpha1.TenantAppConfig{Replicas: &replicas}},
 			},
 		},
 	}
@@ -228,7 +242,7 @@ func TestTenant_StatusDeepCopy(t *testing.T) {
 		Status: v1alpha1.TenantStatus{
 			Phase:           v1alpha1.TenantPhaseReady,
 			Namespace:       "tenant-acme",
-			ProvisionedApps: []string{"nextcloud", "ox-appsuite"},
+			ProvisionedApps: []string{"app-a", "app-b"},
 			Conditions: []metav1.Condition{
 				{
 					Type:               "NamespaceReady",
@@ -268,8 +282,8 @@ func TestIntegrationBinding_DeepCopy(t *testing.T) {
 		},
 		Spec: v1alpha1.IntegrationBindingSpec{
 			Contract:     "filepicker",
-			Provider:     v1alpha1.AppEndpoint{App: "nextcloud", Namespace: "tenant-gtn-demo"},
-			Consumer:     v1alpha1.AppEndpoint{App: "ox-appsuite", Namespace: "tenant-gtn-demo"},
+			Provider:     v1alpha1.AppEndpoint{App: "provider-app", Namespace: "tenant-gtn-demo"},
+			Consumer:     v1alpha1.AppEndpoint{App: "consumer-app", Namespace: "tenant-gtn-demo"},
 			Capabilities: []string{"webdav:read", "webdav:write", "ocs:shares"},
 			Auth: &v1alpha1.BindingAuth{
 				Method:    "oidc-token-exchange",
@@ -337,8 +351,8 @@ func TestIntegrationBinding_StateValues(t *testing.T) {
 func TestAppProfileList_DeepCopy(t *testing.T) {
 	list := &v1alpha1.AppProfileList{
 		Items: []v1alpha1.AppProfile{
-			{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}},
-			{ObjectMeta: metav1.ObjectMeta{Name: "ox-appsuite"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "app-a"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "app-b"}},
 		},
 	}
 	copy := list.DeepCopy()

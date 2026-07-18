@@ -56,7 +56,7 @@ gen-all: generate manifests
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
-	git diff --exit-code api/ config/crd/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
@@ -238,3 +238,11 @@ e2e-p3:
 ## P4 — Cutover verification for an existing tenant
 e2e-p4:
 	@crossplane/tests/e2e/scripts/p4-tenant-cutover.sh
+
+## P5 — Keycloak + Dovecot install smoke (requires Stage 1 install on cluster)
+e2e-p5-keycloak-dovecot:
+	@crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
+
+## Re-run kernel service smoke checks without full install
+verify-kernel-services:
+	@crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh

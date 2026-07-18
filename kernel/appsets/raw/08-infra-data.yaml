@@ -1,0 +1,70 @@
+---
+# Shared kernel PostgreSQL, MariaDB, Redis, and MinIO — ESO secrets and plain-values ConfigMaps.
+#
+# Helm releases are provisioned by the InfraData Crossplane XR (infra-data
+# composition), not by Argo-synced Release CRs. This ApplicationSet syncs only
+# the prerequisites: ExternalSecrets and ConfigMaps in gentian-infra-{env}.
+#
+# MariaDB is provisioned for tenant catalogue apps via the operator.
+#
+# Sync wave 8: before InfraData claim (install.sh Step 11b).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-infra-data
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: infra-postgresql
+          - app: infra-mariadb
+          - app: infra-redis
+          - app: infra-minio
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "8"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests/{{.env}}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gentian-infra-{{.env}}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+      ignoreDifferences:
+      - group: external-secrets.io
+        kind: ExternalSecret
+        jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
+        - .metadata.finalizers

@@ -12,15 +12,15 @@ OS kernel does the same for cloud-native applications.
 
 | OS Function | Traditional OS | Gentian OS Equivalent | Scope |
 |---|---|---|---|
-| Identity & permissions | UID/GID, PAM | OIDC provider + LDAP directory (SSO, user/group, token exchange) | v1 |
-| Filesystem | VFS, ext4 | WebDAV (hierarchical files, locking, sharing) + S3 (object storage) | v1 |
-| Networking | TCP/IP stack | K8s CNI + Ingress + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) | v1 |
+| Identity & permissions | UID/GID, PAM | **Suze** — Keycloak (OIDC/SSO) + OpenFGA (ReBAC) | v1 |
+| Filesystem | VFS, ext4 | S3 object storage (MinIO); hierarchical files via installable apps (e.g. Nextcloud WebDAV) | v1 |
+| Networking | TCP/IP stack | K8s CNI + Gateway API edge + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) | v1 |
 | Process execution | Scheduler, init | K8s scheduling + GitOps deployment | v1 |
 | Secrets keyring | Keychain | Centralised secret store with tenant-scoped policies | v1 |
 | Database services | — | Shared SQL clusters with per-app-per-tenant isolation | v1 |
 | Cache | Page cache, tmpfs | Shared Redis / Memcached with per-app isolation | v1 |
-| Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage + spam filtering | v1 |
-| Package manager | apt, App Store | App catalogue CRD + automated deployment pipeline | v1 |
+| Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage + spam filtering (optional kernel extension) | v1 |
+| Package manager | apt, App Store | App catalogue (`AppProfile`) + `app-default` Crossplane composition | v1 |
 | App-to-app permissions | Capabilities, Android intents | Contract-based bindings + OIDC token exchange (RFC 8693) | v1 |
 | Window manager | Desktop env | Browser-based shell/portal with iframes, unified nav, SSO session | v1 |
 | Notifications | Notification daemon | Notification gateway aggregating across apps | v1 |
@@ -66,30 +66,39 @@ A desktop OS ships with default mounts: `C:`, `/`, `~/`. These are not
 "apps" — they are the filesystem the OS exposes so every other app has
 somewhere to read/write data through a standard API.
 
-Several Gentian OS components play exactly this role: nominally apps
-with their own UIs, but their primary job is to **be the default
-backing store for a kernel function** so any installable app can rely
-on a standard contract instead of bringing its own backend.
+Gentian OS ships a **kernel** that must be Ready before any tenant app
+can run. Kernel components provide **platform primitives**; catalogue
+apps (Nextcloud, Collabora, mail, …) are installed per tenant
+via `AppProfile` + the `app-default` composition in `gentian-apps`.
 
 | Kernel function | Default-install component | Desktop OS analogue | Standard contract exposed to apps |
 |---|---|---|---|
-| Hierarchical file storage | **Nextcloud** (WebDAV) | `C:` drive / home directory | `file-store` (WebDAV read/write, OCS shares) |
+| Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM | OIDC issuer, group entitlements, ReBAC graph |
 | Object storage | **MinIO** (S3) | Page cache, `/tmp`, `/var` | S3 endpoint + per-app bucket via kernel requirement |
-| Identity directory | **Nubus** (Keycloak + UCS LDAP) | `/etc/passwd` + PAM | OIDC issuer + LDAP base DN |
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Redis / Memcached** | Page cache, `tmpfs` | `cache` requirement |
-| Mail | **Postfix + Dovecot + Rspamd** | Built-in mail spool | SMTP submit + IMAP endpoint + DKIM (kernel extension) |
-| Window manager | **Gentian Portal** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell, Start menu | `central-navigation` contract |
+| Edge routing | **Gateway API** (Envoy Gateway) | Network stack + firewall | TLS termination, HTTPRoute, tenant wildcards |
+| Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell, Start menu | `central-navigation` contract |
 | Notification surface | **Notification Gateway** | Notification daemon, Action Center | Notifications contract (future) |
 | Secret store | **OpenBao** | Keychain | Underlying store for ESO-backed Secrets |
+
+**Not kernel** — installed from the catalogue when a tenant selects them
+in `Tenant.spec.apps`:
+
+| Capability | Catalogue profile(s) | Contract |
+|---|---|---|
+| Hierarchical files (WebDAV) | catalogue file-store profiles | `file-store` |
+| Collaborative editing | catalogue WOPI providers | WOPI |
+| Office editing | **Collabora** (catalogue app) | embed |
+| Self-hosted mail UI | mail app profiles in `gentian-apps` | SMTP/IMAP kernel requirements |
 
 In Crossplane terms: the default install is the set of `Cluster`-XR
 managed resources that must be Ready before any `Tenant` claim can
 reach Ready. They are the **kernel devices** the syscall layer assumes
 are present — formatted, mounted, addressable — at boot.
 
-A tenant can later swap implementations (Nextcloud → Seafile, MinIO →
-external S3) without breaking apps that program against the contract,
+A tenant can later swap implementations (e.g. external S3 instead of
+MinIO) without breaking apps that program against the contract,
 the way a desktop user can replace `C:` without breaking
 `CreateFile()`.
 

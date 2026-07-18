@@ -1,0 +1,109 @@
+---
+# Gentian portal shell (React + FastAPI) — ArgoCD-managed Helm release.
+#
+# Keycloak bootstrap + gentian-portal-secrets are created by install.sh Step 14
+# (portal-login-bootstrap.sh) before this Application is applied.
+#
+# Image updates: argocd-image-updater watches GHCR :%PORTAL_IMAGE_TAG% digests
+# and patches api/web image tags on this Application (write-back: argocd).
+#
+# Placeholders filled by portal-login-bootstrap.sh:
+#   %GENTIAN_OS_BRANCH%   — gentian-os branch for Helm values ref
+#   %GENTIAN_UI_BRANCH%   — gentian-ui branch for chart source
+#   %PORTAL_IMAGE_TAG%    — floating image tag (e.g. develop)
+#   %DEPLOYMENTS_REPO%    — gentian-deployments repo URL
+#   %DEPLOYMENTS_BRANCH%  — gentian-deployments branch
+#   %CLUSTER%             — cluster identifier in deployments repo
+#   %STAGE%               — stage name (dev / staging / prod)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-portal
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd-image-updater.argoproj.io/image-list: >-
+      api=ghcr.io/gentian-org/gentian-portal-api:%PORTAL_IMAGE_TAG%,
+      web=ghcr.io/gentian-org/gentian-portal-web:%PORTAL_IMAGE_TAG%
+    argocd-image-updater.argoproj.io/api.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/web.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/api.helm.image-name: api.image.repository
+    argocd-image-updater.argoproj.io/api.helm.image-tag: api.image.tag
+    argocd-image-updater.argoproj.io/web.helm.image-name: web.image.repository
+    argocd-image-updater.argoproj.io/web.helm.image-tag: web.image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: platform-kernel
+    jqPathExpressions:
+    - .status
+    - .metadata.annotations
+    - .spec.parentRefs[].group
+    - .spec.parentRefs[].kind
+    - .spec.rules[].backendRefs[].group
+    - .spec.rules[].backendRefs[].kind
+    - .spec.rules[].backendRefs[].weight
+  - group: apps
+    kind: Deployment
+    namespace: platform-kernel
+    jqPathExpressions:
+    - .metadata.annotations
+    - .spec.progressDeadlineSeconds
+    - .spec.revisionHistoryLimit
+    - .spec.strategy
+    - .spec.template.metadata.creationTimestamp
+    - .spec.template.spec.dnsPolicy
+    - .spec.template.spec.restartPolicy
+    - .spec.template.spec.schedulerName
+    - .spec.template.spec.terminationGracePeriodSeconds
+    - .spec.template.spec.containers[].imagePullPolicy
+    - .spec.template.spec.containers[].resources
+    - .spec.template.spec.containers[].terminationMessagePath
+    - .spec.template.spec.containers[].terminationMessagePolicy
+    - .spec.template.spec.containers[].livenessProbe.failureThreshold
+    - .spec.template.spec.containers[].livenessProbe.successThreshold
+    - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].readinessProbe.failureThreshold
+    - .spec.template.spec.containers[].readinessProbe.successThreshold
+    - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
+  sources:
+  - repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: %GENTIAN_OS_BRANCH%
+    ref: values
+  - repoURL: %DEPLOYMENTS_REPO%
+    targetRevision: %DEPLOYMENTS_BRANCH%
+    ref: deploy
+  - repoURL: https://github.com/gentian-org/gentian-ui
+    targetRevision: %GENTIAN_UI_BRANCH%
+    path: chart
+    helm:
+      releaseName: gentian-portal
+      valueFiles:
+      - $values/kernel/services/gentian-portal-web/values/_base.yaml
+      # kernelDomain + api.env.BACKEND_CORS_ORIGINS — cluster-specific
+      # (see docs/deployment.md §1).
+      - $deploy/clusters/%CLUSTER%/kernel/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-kernel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 2m
+    syncOptions:
+    - CreateNamespace=false
+    - ServerSideApply=true

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the permissions and limitations under the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 // Package tenantshell builds Kubernetes namespace scaffolding for a tenant.
@@ -26,9 +27,9 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -38,30 +39,16 @@ const (
 	ManagedByValue               = meta.ManagedByValue
 	KernelNamespace              = meta.KernelNamespace
 	OperatorNamespace            = meta.OperatorNamespace
-	IngressNamespace             = meta.IngressNamespace
 	EnvoyGatewayInstallNamespace = meta.EnvoyGatewayInstallNamespace
 	RoutingModeGateway           = meta.RoutingModeGateway
 )
 
-// Config carries cluster-specific namespace names and routing options used when
-// building tenant isolation NetworkPolicies.
-type Config struct {
-	InfraNamespace    string
-	ServicesNamespace string
-	OpenbaoNamespace  string
-	RoutingMode       string
-	KubeAPIServerCIDR string
-}
+// Config is shared with netpolicy for MAC policy generation.
+type Config = netpolicy.Config
 
-// DefaultConfig returns test-friendly defaults; production callers should pass explicit Config.
+// DefaultConfig returns test-friendly defaults.
 func DefaultConfig() Config {
-	return Config{
-		InfraNamespace:    "gentian-infra-dev",
-		ServicesNamespace: "gentian-dev",
-		OpenbaoNamespace:  "openbao",
-		RoutingMode:       RoutingModeGateway,
-		KubeAPIServerCIDR: "10.96.0.1/32",
-	}
+	return netpolicy.DefaultConfig()
 }
 
 func tenantLabels(tenantName string) map[string]string {
@@ -147,121 +134,9 @@ func resourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceLis
 	return rl
 }
 
-// NetworkPolicy returns tenant isolation policy aligned with the operator's
-// historical rules (pre-C1 owner transfer to Crossplane).
+// NetworkPolicy returns the default-deny baseline for a tenant namespace.
 func NetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) *networkingv1.NetworkPolicy {
-	protocolTCP := corev1.ProtocolTCP
-	protocolUDP := corev1.ProtocolUDP
-	dnsPort := intstr.FromInt32(53)
-	apiServerPort := intstr.FromInt32(443)
-
-	egressRules := []networkingv1.NetworkPolicyEgressRule{
-		namespaceEgress(cfg.InfraNamespace),
-		namespaceEgress(KernelNamespace),
-		namespaceEgress(cfg.ServicesNamespace),
-		namespaceEgress(cfg.OpenbaoNamespace),
-		namespaceEgress(OperatorNamespace),
-		{
-			To: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{TenantLabel: tenantName},
-				}},
-			},
-		},
-		namespaceEgress(IngressNamespace),
-	}
-	if cfg.RoutingMode == RoutingModeGateway {
-		egressRules = append(egressRules, namespaceEgress(EnvoyGatewayInstallNamespace))
-	}
-
-	egressRules = append(egressRules,
-		networkingv1.NetworkPolicyEgressRule{
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolUDP, Port: &dnsPort},
-				{Protocol: &protocolTCP, Port: &dnsPort},
-			},
-		},
-	)
-	if cfg.KubeAPIServerCIDR != "" {
-		egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{
-				{IPBlock: &networkingv1.IPBlock{CIDR: cfg.KubeAPIServerCIDR}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolTCP, Port: &apiServerPort},
-			},
-		})
-	}
-	if kubeAPIEndpts != nil {
-		for _, ep := range kubeAPIEndpts.Endpoints {
-			for _, addr := range ep.Addresses {
-				for _, port := range kubeAPIEndpts.Ports {
-					if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP || port.Port == nil {
-						continue
-					}
-					endpointPort := intstr.FromInt32(*port.Port)
-					egressRules = append(egressRules, networkingv1.NetworkPolicyEgressRule{
-						To: []networkingv1.NetworkPolicyPeer{
-							{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
-						},
-						Ports: []networkingv1.NetworkPolicyPort{
-							{Protocol: &protocolTCP, Port: &endpointPort},
-						},
-					})
-				}
-			}
-		}
-	}
-
-	ingress := []networkingv1.NetworkPolicyIngressRule{
-		{From: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{TenantLabel: tenantName}}},
-		}},
-		namespaceIngress(KernelNamespace),
-		namespaceIngress(cfg.InfraNamespace),
-		namespaceIngress(cfg.ServicesNamespace),
-		namespaceIngress(IngressNamespace),
-	}
-	if cfg.RoutingMode == RoutingModeGateway {
-		ingress = append(ingress, namespaceIngress(EnvoyGatewayInstallNamespace))
-	}
-
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tenant-isolation",
-			Namespace: nsName,
-			Labels:    tenantLabels(tenantName),
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-			Ingress: ingress,
-			Egress:  egressRules,
-		},
-	}
-}
-
-func namespaceEgress(ns string) networkingv1.NetworkPolicyEgressRule {
-	return networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
-			}},
-		},
-	}
-}
-
-func namespaceIngress(ns string) networkingv1.NetworkPolicyIngressRule {
-	return networkingv1.NetworkPolicyIngressRule{
-		From: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
-			}},
-		},
-	}
+	return netpolicy.BaselineNetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts)
 }
 
 // NamespaceName resolves the tenant namespace from a Tenant spec.

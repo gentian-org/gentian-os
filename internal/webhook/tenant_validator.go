@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -122,13 +122,6 @@ func (v *TenantValidator) validateTenancy(ctx context.Context, tenant *gentianov
 		return fmt.Errorf(
 			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
 			gentianov1alpha1.SingleTenantName, tenant.Name,
-		)
-	}
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
-		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
-			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
 		)
 	}
 	var others gentianov1alpha1.TenantList

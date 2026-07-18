@@ -1,0 +1,32 @@
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: test-oidc-catalog
+  labels:
+    gentianos.io/oidc-catalog: test
+    gentianos.io/profile-name: odoo-cb-crm
+spec:
+  mapperTemplates:
+    gentian_useruuid:
+      protocolMapper: oidc-usermodel-attribute-mapper
+      config:
+        user.attribute: entryUUID
+        claim.name: gentian_useruuid
+        jsonType.label: String
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+  packs:
+    odoo-cb:
+      scopeName: odoo-cb-scope
+      clientRole: odoo-cb-access-control
+      entitlementGroup: managed-by-attribute-Odoo
+      fullScopeAllowed: false
+      defaultScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+        - acr
+      mappers:
+        - gentian_useruuid

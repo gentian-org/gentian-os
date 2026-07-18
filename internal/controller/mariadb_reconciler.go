@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,15 +19,13 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/kernel"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -35,7 +33,6 @@ import (
 
 const (
 	conditionMariaDBReady = "MariaDBReady"
-	mysqlProvisionerImage = "mariadb:11"
 	mariadbAdminSecret    = "mariadb-admin"
 	mariadbRequeueAfter   = 2 * time.Second
 )
@@ -45,57 +42,19 @@ const (
 // then runs a setup Job for each (CREATE DATABASE IF NOT EXISTS + CREATE USER +
 // GRANT). Completion of all setup Jobs sets MariaDBReady=True.
 func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	mariaApps, err := r.collectMariaDBApps(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if len(mariaApps) == 0 {
-		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionTrue,
-			"NoMariaDBRequired", "No apps require MariaDB provisioning")
-		return ctrl.Result{}, nil
-	}
-
-	allDone := true
-	for _, appName := range mariaApps {
-		done, err := r.ensureMariaDBSetupJob(ctx, tenant, appName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure MariaDB setup Job for app %s: %w", appName, err)
-		}
-		if !done {
-			allDone = false
-		}
-	}
-
-	if !allDone {
-		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionFalse,
-			"Provisioning", "Waiting for MariaDB databases and users to be ready")
-		return ctrl.Result{RequeueAfter: mariadbRequeueAfter}, nil
-	}
-
-	r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionTrue,
-		"Provisioned", "All MariaDB databases and users are ready")
-	return ctrl.Result{}, nil
+	return r.reconcileJobWaitRequirement(ctx, tenant, jobWaitRequirement{
+		conditionType: conditionMariaDBReady,
+		emptyReason:   "NoMariaDBRequired",
+		readyReason:   "Provisioned",
+		jobNameForApp: mariadbSetupJobName,
+	}, r.collectMariaDBApps, r.ensureMariaDBSetupJob)
 }
 
-// collectMariaDBApps returns the names of AppProfiles that require MariaDB.
-func (r *TenantReconciler) collectMariaDBApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	var apps []string
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Database != nil &&
-			profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB {
-			apps = append(apps, app.Profile)
-		}
-	}
-	return apps, nil
+// collectMariaDBApps returns AppProfiles that require MariaDB provisioning or cleanup.
+func (r *TenantReconciler) collectMariaDBApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) ([]string, error) {
+	return r.collectKernelApps(ctx, tenant, mode, matchMariaDBProfile, func(tenantName string) string {
+		return mariadbSetupJobName(tenantName, "")
+	})
 }
 
 // ensureMariaDBSetupJob waits for the Crossplane-owned MariaDB setup Job.
@@ -111,30 +70,11 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
-	apps, err := r.collectMariaDBAppsForDelete(ctx, tenant)
+	apps, err := r.collectMariaDBApps(ctx, tenant, CollectForDelete)
 	if err != nil {
 		return err
 	}
-
-	pending := false
-	for _, appName := range apps {
-		deleteJobName := mariadbDeleteJobName(tenant.Name, appName)
-		existing := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: deleteJobName, Namespace: kernelNamespace}, existing); errors.IsNotFound(err) {
-			if err := r.Create(ctx, makeMariaDBDeleteJob(tenant, appName)); err != nil {
-				return fmt.Errorf("create MariaDB delete Job for %s: %w", appName, err)
-			}
-			pending = true
-		} else if err != nil {
-			return err
-		} else if !jobIsComplete(existing) {
-			pending = true
-		}
-	}
-	if pending {
-		return errDeleteJobPending
-	}
-	return nil
+	return r.ensureDeleteJobs(ctx, tenant, apps, mariadbDeleteJobName, makeMariaDBDeleteJob)
 }
 
 // --- Job constructors --------------------------------------------------------
@@ -144,7 +84,6 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // The database name and username are passed as explicit env vars to avoid shell
 // quoting issues.
 func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword string, allowDynamic bool) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	c := mariadbContainer("provision-db", mariadbSetupScript, dbName, dbUser)
@@ -154,55 +93,19 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword st
 	if allowDynamic {
 		c.Env = append(c.Env, corev1.EnvVar{Name: "ALLOW_DYNAMIC", Value: "true"})
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      mariadbSetupJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{c},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(mariadbSetupJobName(tenant.Name, appName), tenant, appName, c)
 }
 
 // makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job.
 func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      mariadbDeleteJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						mariadbContainer("delete-db", mariadbDeleteScript, dbName, dbUser),
-					},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(
+		mariadbDeleteJobName(tenant.Name, appName),
+		tenant,
+		appName,
+		mariadbContainer("delete-db", mariadbDeleteScript, dbName, dbUser),
+	)
 }
 
 // mariadbContainer returns a Container that runs a mariadb CLI script.
@@ -211,7 +114,7 @@ func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batc
 func mariadbContainer(name, script, dbName, dbUser string) corev1.Container {
 	return corev1.Container{
 		Name:    name,
-		Image:   mysqlProvisionerImage,
+		Image:   kernel.MariaDBProvisionerImage(),
 		Command: []string{"/bin/bash", "-c", script},
 		Env: []corev1.EnvVar{
 			// Credentials from the kernel mariadb-admin Secret

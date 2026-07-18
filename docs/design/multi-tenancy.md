@@ -44,8 +44,7 @@ Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 | **`multi`** | Shared SaaS | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.desk.gentian.org` |
 | **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.desk.gentian.org` |
 
-**Single-tenancy rules:** exactly one `Tenant` CR named `default`, users in
-`ou=default`, operator env `TENANCY_MODE=single`. Vanity `spec.domain` still overrides
+**Single-tenancy rules:** exactly one `Tenant` CR named `default`, operator env `TENANCY_MODE=single`. Vanity `spec.domain` still overrides
 in either mode.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
@@ -56,16 +55,14 @@ in either mode.
 **Effective domain** (same for edge routing, mail, OIDC redirect URIs to apps):
 
 - If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
-- Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat OpenDesk-style URLs).
+- Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat URLs).
 - Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
 
 App hostnames are always `{subDomain}.{effectiveDomain}`.
 
-**Portal contact deep links** (video call / chat from the address book): the operator
-creates per-tenant UDM entries `swp.realtime_videoconference_<tenant>` and
-`swp.realtime_collaboration_<tenant>` with `allowedGroups` scoped to that tenant's
-LDAP OU, so each user receives URLs for their tenant zone. In `single` mode, legacy
-OpenDesk entry names (`swp.realtime_videoconference`) are also maintained.
+**Portal contact deep links** (video call / chat from the address book): the
+Gentian shell resolves per-tenant app URLs from `effectiveDomain` and entitlement
+groups (`gentian:tenant:<t>:app:<profile>`).
 
 The gentian-os operator creates, for every tenant with edge-routed apps:
 
@@ -113,7 +110,7 @@ Let's Encrypt production enforces per-account and per-registered-domain limits (
 
 | Environment | Recommendation |
 |---|---|
-| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/clusters/<cluster>/kernel/values-dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./update.sh --acme-issuers`. |
+| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/profiles/dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./update.sh --acme-issuers`. |
 | **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `uninstall.sh -f` loops that re-issue everything. |
 | **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.desk.gentian.org` gets an edge cert — Universal SSL on `*.desk.gentian.org` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
 | **Switching issuer on a live cluster** | Patch operator Helm value, run `./update.sh --acme-issuers`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
@@ -134,33 +131,37 @@ NetworkPolicies enforce three rules at the CNI level:
 
 ## 5. Identity and OIDC Trust Chain
 
-The identity provider (Keycloak in Nubus) is the **single trust
-anchor**. Each tenant gets a dedicated realm; apps authenticate users
-via OIDC against that realm. App-to-app calls use **OIDC token
-exchange (RFC 8693)** — app A presents its user-bound token and
-receives a scoped token usable against app B. The
-`IntegrationBinding` configures which exchanges are permitted; the
-binding's status surfaces credential validity and last rotation time.
+**Suze** (Keycloak + OpenFGA) is the **single trust anchor** on new installs.
+Each tenant gets a dedicated Keycloak realm; apps authenticate users via OIDC
+against that realm. The shared portal at `portal.<KERNEL_DOMAIN>` uses the
+**kernel realm**, which brokers to the correct tenant realm by email / tenant
+resolution. App-to-app calls use **OIDC token exchange (RFC 8693)** — app A
+presents its user-bound token and receives a scoped token usable against app B.
+The `IntegrationBinding` configures which exchanges are permitted; the binding's
+status surfaces credential validity and last rotation time.
 
-### 5.1 One OU · One realm · One namespace — the canonical isolation rule
+### 5.1 One realm · One namespace — the canonical isolation rule
 
-Every tenant is identified by a triple that must be kept in 1:1 correspondence:
+Every tenant is identified by a pair that must be kept in 1:1 correspondence:
 
 ```
-ou=<tenant>,dc=swp-ldap,dc=internal   ↔   Keycloak realm <tenant>   ↔   namespace tenant-<tenant>
+Keycloak realm <tenant>   ↔   namespace tenant-<tenant>
 ```
 
-Breaking this correspondence — e.g. having a user in one OU authenticate
-via another tenant's realm — is a configuration error and must never occur.
+On the Suze path, users live in the **tenant realm**.
+
+Breaking realm ↔ namespace correspondence is a configuration error and must never occur.
 
 ### 5.2 Identity and Access Management (IAM)
 
-For details on the exact LDAP topology, Keycloak realm structure, and how roles (Tenant Admin vs App User) are separated and enforced, see the dedicated [Identity and Access Management (IAM) Document](iam.md).
+For Keycloak realm structure, group entitlements, Admin Console roles, and how
+tenant admin vs member are separated, see [iam.md](iam.md) and
+[admin-console.md](admin-console.md).
 
 ## 6. Database Isolation
 
 Each app within each tenant gets a database named
-`{databasePrefix}_{app}` (e.g., `gtn_openproject`) with a dedicated
+`{databasePrefix}_{app}` (e.g., `gtn_demo_app`) with a dedicated
 user that has grants limited to that database only. There is no
 shared schema, no cross-app access, no possibility of one tenant
 seeing another's data via SQL.
@@ -176,8 +177,7 @@ When the mail extension is enabled:
   Tenant status for DNS configuration.
 - SMTP submission requires SASL authentication against per-tenant
   credentials — no open relay.
-- IMAP authentication uses the tenant's LDAP OU with the same bind
-  credentials provisioned by the platform for other apps.
+- IMAP authentication uses per-tenant credentials provisioned by the platform.
 
 See [mail.md](mail.md) for the full mail extension model.
 
@@ -193,17 +193,19 @@ Three roles, three scopes:
 
 ### 8.1 Admin / User Separation of Duties
 
-Following the openDesk model, the **tenant admin and tenant user are strictly
-separate identities**. It is strongly recommended that a single person does not
-use the same account for both day-to-day app usage and tenant administration.
+The **tenant admin and tenant user are strictly separate identities**.
+It is strongly recommended that a single person does not use the same
+account for both day-to-day app usage and tenant administration.
 
-**Portal Tile Enforcement & Templates:**
-Access to apps is strictly controlled through LDAP group memberships and OIDC claims. Gentian OS leverages UMC templates (`Admin User` and `App User`) to provision mutually exclusive roles. This ensures tenant admins do not consume application licenses or inadvertently gain access to user application tiles.
-
-For a comprehensive explanation of how these templates function, and how the "App Users" group isolates roles, see the [Identity and Access Management (IAM) Document](iam.md).
+**Portal tile enforcement:**
+Access to apps is controlled through **Keycloak group entitlements**
+(`gentian:tenant:<t>:app:<profile>`) and OpenFGA `can_launch` checks.
+Tenant admins and members are **mutually exclusive** roles provisioned
+via the [Gentian Admin Console](admin-console.md).
 
 **Current operating model:** tenant admins edit Tenant manifests in
-the deployments repo via PR (process-controlled).
+the deployments repo via PR (process-controlled), and manage members/groups in
+the Admin Console (when deployed).
 
 **App Store (current):** tenant admins use the **App Store** web UI
 (`app-store` AppProfile) or `kubectl gentian apps` to install catalogue apps.

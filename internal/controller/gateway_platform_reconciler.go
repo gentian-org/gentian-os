@@ -1,15 +1,28 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,20 +68,16 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "reconcile kernel HTTPRoutes")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := r.deleteSupersededKernelIngress(ctx); err != nil {
-		logger.Error(err, "delete superseded kernel Ingress resources")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
-	}
 	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.CloudflareDNS, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.RoutingMode); err != nil {
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.RoutingMode); err != nil {
 		logger.Error(err, "reconcile CoreDNS kernel hairpin")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
-	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
+	return reconcile.Result{}, nil
 }
 
 func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -183,12 +192,6 @@ func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) err
 func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
 	extraListeners := []gatewayv1.Listener{
 		kernelApexListener(kernelDomain, kernelWildcardTLSSecretName),
-		tlsListener(
-			kernelCollaboraListenerName,
-			gatewayv1.Hostname(fmt.Sprintf("office.%s", kernelDomain)),
-			kernelWildcardTLSSecretName,
-			servicesNamespace,
-		),
 	}
 	for i := range tenants {
 		tenant := &tenants[i]
@@ -318,49 +321,4 @@ func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewa
 		return c.Patch(ctx, existing, patch)
 	}
 	return nil
-}
-
-// deleteSupersededKernelIngress removes legacy nginx Ingress objects for kernel
-// hosts once Gateway API routes are in place. Chart-managed Ingress may be
-// recreated until gateway Helm overlays are applied; this keeps the cluster
-// converged on kernel-public-gateway.
-func (r *GatewayPlatformReconciler) deleteSupersededKernelIngress(ctx context.Context) error {
-	list := &networkingv1.IngressList{}
-	if err := r.List(ctx, list, client.InNamespace(servicesNamespace)); err != nil {
-		return fmt.Errorf("list kernel Ingress resources: %w", err)
-	}
-
-	logger := log.FromContext(ctx)
-	var deleted int
-	for i := range list.Items {
-		ing := &list.Items[i]
-		if !kernelIngressSupersededByGateway(ing, r.KernelDomain) {
-			continue
-		}
-		if err := r.Delete(ctx, ing); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete superseded kernel Ingress %s: %w", ing.Name, err)
-		}
-		deleted++
-	}
-	if deleted > 0 {
-		logger.Info("deleted legacy kernel Ingress superseded by Gateway API",
-			"namespace", servicesNamespace, "count", deleted)
-	}
-	return nil
-}
-
-func kernelIngressSupersededByGateway(ing *networkingv1.Ingress, kernelDomain string) bool {
-	if ing.GetNamespace() != servicesNamespace || kernelDomain == "" {
-		return false
-	}
-	for _, rule := range ing.Spec.Rules {
-		host := strings.ToLower(rule.Host)
-		if host == "" {
-			continue
-		}
-		if host == kernelDomain || strings.HasSuffix(host, "."+kernelDomain) {
-			return true
-		}
-	}
-	return false
 }

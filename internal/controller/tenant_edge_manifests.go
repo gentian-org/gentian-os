@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package controller
@@ -58,14 +59,17 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	objects = append(objects, gw)
 	objects = append(objects, buildTenantReferenceGrantObjects(tenant)...)
 
-	for _, intent := range intents {
-		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress, host, effectiveDomain, r.KernelDomain)
+	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
 		route.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("HTTPRoute"))
 		objects = append(objects, route)
+	}
+	for _, intent := range intents {
 		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
 			objects = append(objects, btp)
 		}
+	}
+	if anyIntentNeedsEscapedSlashesKeepUnchanged(intents) {
+		objects = append(objects, buildTenantEscapedSlashesClientTrafficPolicyObject(tenant, nsName))
 	}
 
 	return objects, nil
@@ -98,9 +102,7 @@ func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenan
 		return false, reason, nil
 	}
 
-	for _, intent := range intents {
-		host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
-		route := buildAppHTTPRoute(tenant, nsName, intent.appProfile, intent.profile, intent.ingress, host, effectiveDomain, r.KernelDomain)
+	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
 		if ok, reason := httpRouteProgrammed(ctx, r.Client, route); !ok {
 			return false, reason, nil
 		}

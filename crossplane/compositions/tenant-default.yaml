@@ -72,9 +72,6 @@ spec:
             {{- $jobs      := fromJson $jobsJSON }}
             {{- $objectsJSON := dig "data" "objects.json" "[]" $provCM }}
             {{- $objects     := fromJson $objectsJSON }}
-            {{- $infraNs     := default "gentian-infra-dev" (dig "network.infraNamespace" "" $ccData) }}
-            {{- $servicesNs  := dig "network.servicesNamespace" "" $ccData }}
-            {{- $openbaoNs   := default "openbao" (dig "network.openbaoNamespace" "" $ccData) }}
             {{- $routingMode := default "gateway" (dig "network.routingMode" "" $ccData) }}
             {{- $kubeApiCIDR := dig "network.kubeApiServerCidr" "" $ccData }}
             {{- $kubeApiEndpointIP := dig "network.kubeApiServerEndpointIp" "" $ccData }}
@@ -84,6 +81,7 @@ spec:
             {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
             {{- $lrRequestCPU := dig "tenant.limitRange.defaultRequest.cpu" "100m" $ccData }}
             {{- $lrRequestMem := dig "tenant.limitRange.defaultRequest.memory" "128Mi" $ccData }}
+            {{- $llmEnabled := eq "true" (dig "llm.enabled" "false" $ccData) }}
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -176,115 +174,6 @@ spec:
                       {{- end }}
             {{- end }}
 
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              name: {{ $tenant }}-networkpolicy
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: networkpolicy
-            spec:
-              providerConfigRef:
-                name: kubernetes
-              forProvider:
-                manifest:
-                  apiVersion: networking.k8s.io/v1
-                  kind: NetworkPolicy
-                  metadata:
-                    name: tenant-isolation
-                    namespace: {{ $ns }}
-                    labels:
-                      gentianos.io/tenant: {{ $tenant }}
-                      app.kubernetes.io/managed-by: gentian-os
-                  spec:
-                    podSelector: {}
-                    policyTypes:
-                      - Ingress
-                      - Egress
-                    ingress:
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                gentianos.io/tenant: {{ $tenant }}
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: platform-kernel
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $infraNs }}
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $servicesNs }}
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: ingress
-                      {{- if eq $routingMode "gateway" }}
-                      - from:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: envoy-gateway-system
-                      {{- end }}
-                    egress:
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: platform-kernel
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $infraNs }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $servicesNs }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: {{ $openbaoNs }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: gentian-system
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                gentianos.io/tenant: {{ $tenant }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: ingress
-                      {{- if eq $routingMode "gateway" }}
-                      - to:
-                          - namespaceSelector:
-                              matchLabels:
-                                kubernetes.io/metadata.name: envoy-gateway-system
-                      {{- end }}
-                      - ports:
-                          - protocol: UDP
-                            port: 53
-                          - protocol: TCP
-                            port: 53
-                      {{- if $kubeApiCIDR }}
-                      - to:
-                          - ipBlock:
-                              cidr: {{ $kubeApiCIDR | quote }}
-                        ports:
-                          - protocol: TCP
-                            port: 443
-                      {{- end }}
-                      {{- /* Post-DNAT apiserver endpoint (MicroK8s/k3s often :16443). */}}
-                      {{- if and $kubeApiEndpointIP $kubeApiEndpointPort }}
-                      - to:
-                          - ipBlock:
-                              cidr: {{ printf "%s/32" $kubeApiEndpointIP | quote }}
-                        ports:
-                          - protocol: TCP
-                            port: {{ $kubeApiEndpointPort }}
-                      {{- end }}
 
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
@@ -377,6 +266,28 @@ spec:
               {{- end }}
             {{- end }}
 
+            {{- if $llmEnabled }}
+            ---
+            apiVersion: gentianos.io/v1alpha1
+            kind: App
+            metadata:
+              name: open-webui
+              namespace: {{ $ns }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: app-open-webui
+              labels:
+                gentianos.io/tenant: {{ $tenant }}
+                gentianos.io/app: open-webui
+                gentianos.io/managed-by: crossplane
+                app.kubernetes.io/managed-by: gentian-os
+            spec:
+              compositionUpdatePolicy: Automatic
+              profileRef:
+                name: open-webui
+              tenantNamespace: {{ $ns }}
+              domain: {{ $domain }}
+            {{- end }}
+
     - step: automatically-detect-ready-composed-resources
       functionRef:
         name: function-auto-ready
@@ -400,15 +311,7 @@ spec:
           # realm matches both patterns if the broad job-keycloak-.* form is used.
           - sequence:
             - job-keycloak-realm-.*
-            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
+            - job-keycloak-(admin|broker|client|kernel|oidc)-.*
           - sequence:
-            - job-keycloak-(admin|broker|client|kernel|ldap|oidc)-.*
-            - app-.*
-          # LDAP OU before remaining LDAP Jobs; LDAP before App Compositions.
-          # job-ldap-(admin|…)-.* excludes job-ldap-ou-* for the same reason.
-          - sequence:
-            - job-ldap-ou-.*
-            - job-ldap-(admin|app|bind|mba|portal)-.*
-          - sequence:
-            - job-ldap-(admin|app|bind|mba|portal)-.*
+            - job-keycloak-(admin|broker|client|kernel|oidc)-.*
             - app-.*

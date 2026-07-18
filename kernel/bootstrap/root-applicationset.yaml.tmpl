@@ -1,0 +1,40 @@
+---
+# Bootstrap Application: deploys all ApplicationSet manifests from appsets/ to the cluster.
+# kernel/appsets is a tiny Helm chart (Chart.yaml + values.yaml + a single
+# template that passes raw/*.yaml through verbatim, only substituting the
+# "env: dev" generator element for the cluster's actual stage — see
+# kernel/appsets/templates/appsets.yaml). Adding a new app = add
+# appsets/raw/<app>.yaml. Removing one = delete the file.
+# ${GENTIAN_DEPLOYMENTS_STAGE} is substituted by install.sh (envsubst) —
+# this file is a .tmpl, not applied directly.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-appsets
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: argoproj.io
+    kind: ApplicationSet
+    jsonPointers:
+    - /metadata/annotations/argocd.argoproj.io~1tracking-id
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: kernel/appsets
+    helm:
+      parameters:
+      - name: stage
+        value: "${GENTIAN_DEPLOYMENTS_STAGE}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true

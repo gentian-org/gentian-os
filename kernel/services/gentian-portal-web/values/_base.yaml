@@ -1,0 +1,54 @@
+# Gentian shell (React + FastAPI) — portal values for ArgoCD.
+# Chart source: gentian-ui/chart
+#
+# Shared across every stage — not gentian-ui's own chart default (that
+# lives in the gentian-ui repo), but gentian-os's opinionated override
+# values, the same across dev/staging/prod. Genuine stage deltas (if any
+# emerge) belong in the cluster's own values.yaml instead.
+#
+# kernelDomain and api.env.BACKEND_CORS_ORIGINS are cluster-specific and
+# come from clusters/<cluster>/kernel/values.yaml in gentian-deployments,
+# layered on top of this file (see gentian-portal.yaml's valueFiles).
+#
+# api.image.tag/web.image.tag below are just the bootstrap seed — ArgoCD
+# Image Updater (see gentian-portal.yaml's annotations) overwrites them
+# in-cluster immediately. api.env.ENVIRONMENT is the one field that's
+# arguably stage-specific (development vs production) and isn't yet split
+# out — low-stakes, revisit if it ever needs to actually differ.
+
+kernelRealm: kernel
+
+auth:
+  disabled: false
+
+api:
+  image:
+    repository: ghcr.io/gentian-org/gentian-portal-api
+    tag: develop
+    pullPolicy: Always
+  env:
+    ENVIRONMENT: development
+    TENANCY_MODE: multi
+
+web:
+  image:
+    repository: ghcr.io/gentian-org/gentian-portal-web
+    tag: develop
+    pullPolicy: Always
+
+gateway:
+  enabled: true
+  parentGatewayName: kernel-public-gateway
+  parentGatewayNamespace: platform-kernel
+  host: portal
+
+existingSecret:
+  name: gentian-portal-secrets
+
+openfga:
+  apiUrl: http://gentian-openfga.platform-kernel.svc.cluster.local:8080
+  storeId: ""
+  authzenEnabled: true
+
+networkPolicy:
+  create: false

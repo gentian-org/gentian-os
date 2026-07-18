@@ -12,7 +12,7 @@ set -euo pipefail
 # Usage:
 #   export BAO_ADDR=http://localhost:8200     # port-forwarded OpenBao
 #   export BAO_TOKEN="<root-or-admin-token>"
-#   ./scripts/seed-openbao.sh <master-password> [registry-user] [registry-password]
+#   ./scripts/seed-openbao.sh <master-password> [smtp-relay-user] [smtp-relay-password]
 #
 # Typical local run (port-forward first):
 #   kubectl port-forward svc/openbao 8200:8200 -n openbao &
@@ -25,20 +25,18 @@ set -euo pipefail
 #   database/mariadb
 #   cache/redis
 #   storage/minio
-#   identity/nubus
 #   identity/keycloak-bootstrap
-#   identity/intercom
-#   apps/nextcloud
+#   authz/openfga
 #   mail/postfix                  (requires args 4+5: smtp relay user/pass)
 #   mail/dovecot
 #   storage/registry              (optional, requires args 2+3)
 # =============================================================================
 
-MASTER_PASSWORD="${1:-sovereign-workplace}"
-REGISTRY_USER="${2:-}"
-REGISTRY_PASSWORD="${3:-}"
-SMTP_RELAY_USER="${4:-}"
-SMTP_RELAY_PASS="${5:-}"
+MASTER_PASSWORD="${1:-}"
+SMTP_RELAY_USER="${2:-}"
+SMTP_RELAY_PASS="${3:-}"
+REGISTRY_USER="${REGISTRY_USER:-}"
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -47,6 +45,8 @@ EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}"
 EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
 EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
 EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
+SECRET_MODE="${SECRET_MODE:-derived}"
+export VAULT_SKIP_VERIFY=true
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -62,32 +62,60 @@ for cmd in openssl sha1sum curl jq; do
     fi
 done
 
+# Try to read existing master-password and salt from OpenBao
+existing_secret=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
+existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
+
+if [ -n "${existing_master}" ]; then
+    MASTER_PASSWORD="${existing_master}"
+fi
+
+if [ -z "${MASTER_PASSWORD}" ]; then
+    echo "Error: MASTER_PASSWORD is empty. A master password must be provided as the first argument or pre-seeded in OpenBao." >&2
+    exit 1
+fi
+
+validate_master_password_entropy() {
+    local mp="$1"
+    if [ ${#mp} -lt 16 ]; then
+        echo "Error: MASTER_PASSWORD is too weak. It must be at least 16 characters long." >&2
+        exit 1
+    fi
+}
+validate_master_password_entropy "${MASTER_PASSWORD}"
+
+if [ -n "${existing_salt}" ]; then
+    DERIVATION_SALT="${existing_salt}"
+elif [ -n "${existing_master}" ]; then
+    DERIVATION_SALT=""
+else
+    DERIVATION_SALT="${DERIVATION_SALT:-$(openssl rand -hex 16)}"
+fi
+export DERIVATION_SALT
+
 echo "=========================================="
 echo "Seeding OpenBao Secrets"
 echo "  OpenBao:     ${BAO_ADDR}"
 echo "  Path prefix: secret/gentian-os/kernel/"
+echo "  Mode:        ${SECRET_MODE}"
 echo "=========================================="
 
 # =============================================================================
 # Password derivation
-# Uses HMAC-SHA256 hex output directly. The previous implementation piped
-# through sha1sum, which weakened the construction: an attacker with one known
-# derived credential could run an offline dictionary attack against the master
-# password at SHA-1 speed. The corrected version uses the 64-char HMAC-SHA256
-# hex output directly. NOTE: this change is backward-incompatible — all derived
-# passwords change. It must be applied together with a full cluster re-seed.
+# Uses HMAC-SHA256 hex output directly.
+# Updated to support per-cluster random salting and SECRET_MODE=random.
 # =============================================================================
 derive_password() {
     local context="$1"
     local purpose="$2"
-    echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'
+    if [ "${SECRET_MODE:-derived}" = "random" ]; then
+        openssl rand -hex 32
+    else
+        echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
+    fi
 }
 
-derive_nats_password() {
-    local context="$1"
-    local purpose="$2"
-    echo "n$(derive_password "$context" "$purpose")"
-}
 
 echo ""
 echo "Deriving passwords..."
@@ -96,63 +124,22 @@ echo "Deriving passwords..."
 PG_POSTGRES_PW=$(derive_password "postgres" "postgres_user")
 PG_KEYCLOAK_PW=$(derive_password "postgres" "keycloak_user")
 PG_KC_EXT_PW=$(derive_password "postgres" "keycloak_extensions_user")
-PG_SELFSERVICE_PW=$(derive_password "postgres" "selfservice_user")
-PG_AUTHSESSION_PW=$(derive_password "postgres" "authsession_user")
-PG_GUARDIAN_PW=$(derive_password "postgres" "guardianmanagementapi_user")
-PG_NOTIFICATIONS_PW=$(derive_password "postgres" "notificationsapi_user")
+PG_OPENFGA_PW=$(derive_password "postgres" "openfga_user")
 # --- MariaDB ---
 MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
-MARIA_OX_PW=$(derive_password "mariadb" "openxchange_user")
 
 # --- Redis ---
 REDIS_PW=$(derive_password "redis" "password")
 
 # --- MinIO ---
 MINIO_ROOT_PW=$(derive_password "minio" "root_password")
-MINIO_UMS_PW=$(derive_password "minio" "ums_user")
-MINIO_MIGRATIONS_PW=$(derive_password "minio" "migrations_user")
-MINIO_DOVECOT_PW=$(derive_password "minio" "dovecot_user")
 
 # --- Keycloak ---
 KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
-KC_CLIENT_INTERCOM=$(derive_password "keycloak" "intercom_client_secret")
-
-# --- LDAP ---
-LDAP_ADMIN_PW=$(derive_password "cn=admin" "ldap")
-
-# --- Nubus system ---
-ADMIN_PW=$(derive_password "nubus" "Administrator")
-
-
-# --- NATS ---
-NATS_API_PW=$(derive_nats_password "api" "nats")
-NATS_DISPATCHER_PW=$(derive_nats_password "dispatcher" "nats")
-NATS_PREFILL_PW=$(derive_nats_password "prefill" "nats")
-NATS_UDM_LISTENER_PW=$(derive_nats_password "udmListener" "nats")
-NATS_UDM_TRANSFORMER_PW=$(derive_nats_password "udmTransformer" "nats")
 
 # --- Dovecot ---
 DOVECOT_DOVEADM_PW=$(derive_password "dovecot" "doveadm_password")
 
-# --- SMTP (placeholder — configure real SMTP credentials manually) ---
-SMTP_PW=$(derive_password "smtp" "password")
-
-# --- Intercom ---
-ICS_SESSION_SECRET=$(derive_password "intercom" "secret")
-ICS_SYNAPSE_AS_TOKEN=$(derive_password "intercom" "as_token")
-ICS_PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
-PORTAL_SHARED_SECRET=$(derive_password "centralnavigation" "api_key")
-
-# --- LDAP search users (kernel services only; per-app users created by app init Jobs) ---
-LDAP_SEARCH_KEYCLOAK=$(derive_password "nubus" "ldapsearch_keycloak")
-LDAP_SEARCH_DOVECOT=$(derive_password "nubus" "ldapsearch_dovecot")
-LDAP_SEARCH_POSTFIX=$(derive_password "nubus" "ldapsearch_postfix")
-
-# --- Provisioning consumer API passwords (stable — injected via set_sensitive) ---
-# These are passed to the portal-consumer and selfservice-consumer sub-charts so
-# that Helm never auto-rotates them on upgrade, keeping NATS JetStream subscriptions valid.
-PORTAL_CONSUMER_API_PW=$(derive_password "portal-consumer" "provisioning-api")
-SELFSERVICE_CONSUMER_API_PW=$(derive_password "selfservice-consumer" "provisioning-api")
 
 echo "  All passwords derived."
 
@@ -168,7 +155,7 @@ kv_put() {
     local full_path="secret/data/gentian-os/kernel/${path}"
     echo "  Writing ${full_path}..."
     local result http_code body
-    result=$(curl -s -w "\n%{http_code}" \
+    result=$(curl -k -s -w "\n%{http_code}" \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         -H "Content-Type: application/json" \
         -X POST \
@@ -198,7 +185,7 @@ kv_put_once() {
     local json_data="$2"
     local check_path="secret/data/gentian-os/kernel/${path}"
     local existing
-    existing=$(curl -sf \
+    existing=$(curl -k -sf \
         -H "X-Vault-Token: ${BAO_TOKEN}" \
         "${BAO_ADDR}/v1/${check_path}" 2>/dev/null || true)
     if echo "${existing}" | grep -q '"data":{'; then
@@ -216,7 +203,7 @@ echo "Writing secrets to OpenBao..."
 # into its HKDF-SHA256 deriver to produce per-tenant per-app credentials
 # deterministically. Path matches secrets.MasterPasswordPath in
 # internal/kernel/secrets/paths.go.
-kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" '{value: $v}')"
+kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" --arg s "${DERIVATION_SALT}" '{value: $v, salt: $s}')"
 
 # --- PostgreSQL ---
 # --- CNPG superuser (shared CloudNativePG Cluster in platform-kernel) ------
@@ -230,16 +217,22 @@ kv_put_once "database/cnpg" "$(cat <<EOF
 EOF
 )"
 
-# --- Bitnami PostgreSQL (Nubus components) ----------------------------------
+# --- Bitnami PostgreSQL (kernel platform services) ---------------------------
 kv_put_once "database/postgresql" "$(cat <<EOF
 {
   "postgres_password":              "${PG_POSTGRES_PW}",
   "keycloak_user_password":         "${PG_KEYCLOAK_PW}",
   "keycloak_extensions_user_password": "${PG_KC_EXT_PW}",
-  "selfservice_user_password":      "${PG_SELFSERVICE_PW}",
-  "authsession_user_password":      "${PG_AUTHSESSION_PW}",
-  "guardianmanagementapi_user_password": "${PG_GUARDIAN_PW}",
-  "notificationsapi_user_password": "${PG_NOTIFICATIONS_PW}"
+  "openfga_user_password":           "${PG_OPENFGA_PW}"
+}
+EOF
+)"
+
+# --- OpenFGA (Stage 1 ReBAC PDP) --------------------------------------------
+OPENFGA_PRESHARED=$(derive_password "openfga" "preshared_key")
+kv_put_once "authz/openfga" "$(cat <<EOF
+{
+  "preshared_key": "${OPENFGA_PRESHARED}"
 }
 EOF
 )"
@@ -247,8 +240,7 @@ EOF
 # --- MariaDB ---
 kv_put_once "database/mariadb" "$(cat <<EOF
 {
-  "root_password":        "${MARIA_ROOT_PW}",
-  "openxchange_password": "${MARIA_OX_PW}"
+  "root_password": "${MARIA_ROOT_PW}"
 }
 EOF
 )"
@@ -264,118 +256,29 @@ EOF
 # --- MinIO ---
 kv_put_once "storage/minio" "$(cat <<EOF
 {
-  "root_user":             "minio",
-  "root_password":         "${MINIO_ROOT_PW}",
-  "ums_password":          "${MINIO_UMS_PW}",
-  "migrations_password":   "${MINIO_MIGRATIONS_PW}",
-  "dovecot_password":      "${MINIO_DOVECOT_PW}"
+  "root_user":     "minio",
+  "root_password": "${MINIO_ROOT_PW}"
 }
 EOF
 )"
 
-# --- Nubus ---
-kv_put_once "identity/nubus" "$(cat <<EOF
-{
-  "master_password":            "${MASTER_PASSWORD}",
-  "admin_password":             "${ADMIN_PW}",
-  "ldap_admin_password":        "${LDAP_ADMIN_PW}",
-  "keycloak_admin_password":    "${KC_ADMIN_PW}",
-
-  "smtp_password":              "${SMTP_PW}",
-  "nats_api_password":          "${NATS_API_PW}",
-  "nats_dispatcher_password":   "${NATS_DISPATCHER_PW}",
-  "nats_prefill_password":      "${NATS_PREFILL_PW}",
-  "nats_udm_listener_password": "${NATS_UDM_LISTENER_PW}",
-  "nats_udm_transformer_password": "${NATS_UDM_TRANSFORMER_PW}",
-  "minio_ums_secret_access_key": "${MINIO_UMS_PW}",
-  "pg_selfservice_password":    "${PG_SELFSERVICE_PW}",
-  "pg_authsession_password":    "${PG_AUTHSESSION_PW}",
-  "pg_keycloak_password":       "${PG_KEYCLOAK_PW}",
-  "pg_keycloak_extensions_password": "${PG_KC_EXT_PW}",
-  "pg_guardian_password":       "${PG_GUARDIAN_PW}",
-  "pg_notifications_password":  "${PG_NOTIFICATIONS_PW}",
-  "ldapsearch_keycloak":        "${LDAP_SEARCH_KEYCLOAK}",
-  "ldapsearch_dovecot":         "${LDAP_SEARCH_DOVECOT}",
-  "ldapsearch_postfix":         "${LDAP_SEARCH_POSTFIX}",
-  "portal_shared_secret":             "${PORTAL_SHARED_SECRET}",
-  "portal_consumer_api_password":     "${PORTAL_CONSUMER_API_PW}",
-  "selfservice_consumer_api_password": "${SELFSERVICE_CONSUMER_API_PW}"
-}
-EOF
-)"
-# NOTE: If gentian-os/kernel/identity/nubus already exists (existing cluster), the above
-# kv_put_once was skipped. Add the two new consumer password keys manually:
-#   bao kv patch secret/gentian-os/kernel/identity/nubus \
-#     portal_consumer_api_password=<derive_password output> \
-#     selfservice_consumer_api_password=<derive_password output>
-# Then force-reconcile the affected Terraform CR.
-
-# --- Collabora (kernel office service) ---
-COLLABORA_ADMIN_PW=$(derive_password "collabora" "admin_password")
-kv_put_once "apps/collabora" "$(cat <<EOF
-{
-  "admin_password": "${COLLABORA_ADMIN_PW}"
-}
-EOF
-)"
-
-# --- Nextcloud ---
-NC_ADMIN_PW=$(derive_password "nextcloud" "admin_password")
-NC_STATUS_PW=$(derive_password "nextcloud" "status_password")
-NC_OIDC_SECRET=$(derive_password "nextcloud" "oidc_client_secret")
-NC_INTEGRATION_PW=$(derive_password "nextcloud" "integration_password")
-NC_METRICS_TOKEN=$(derive_password "nextcloud" "metrics_token")
-NC_MINIO_PW=$(derive_password "nextcloud" "minio_password")
-# Derivation contexts kept identical to original so existing installs stay compatible
-NC_LDAP_PW=$(derive_password "nubus" "ldapsearch_nextcloud")
-NC_DB_PW=$(derive_password "postgres" "nextcloud_user")
-kv_put_once "apps/nextcloud" "$(cat <<EOF
-{
-  "admin_password":       "${NC_ADMIN_PW}",
-  "status_password":      "${NC_STATUS_PW}",
-  "oidc_client_secret":   "${NC_OIDC_SECRET}",
-  "integration_password": "${NC_INTEGRATION_PW}",
-  "metrics_token":        "${NC_METRICS_TOKEN}",
-  "minio_password":       "${NC_MINIO_PW}",
-  "ldapsearch_password":  "${NC_LDAP_PW}",
-  "db_password":          "${NC_DB_PW}"
-}
-EOF
-)"
-
-# --- Intercom ---
-kv_put_once "identity/intercom" "$(cat <<EOF
-{
-  "session_secret":               "${ICS_SESSION_SECRET}",
-  "oidc_client_secret":           "${KC_CLIENT_INTERCOM}",
-  "matrix_as_token":              "${ICS_SYNAPSE_AS_TOKEN}",
-  "portal_shared_secret":         "${ICS_PORTAL_SHARED_SECRET}",
-  "redis_auth_password":          "${REDIS_PW}"
-}
-EOF
-)"
-
-# --- Keycloak Bootstrap ---
+# --- Keycloak Bootstrap (Suze IdP admin) ---
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
-  "admin_password":          "${KC_ADMIN_PW}",
-  "intercom_client_secret":  "${KC_CLIENT_INTERCOM}"
+  "admin_password": "${KC_ADMIN_PW}"
 }
 EOF
 )"
 
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
-# oidc_client_secret: written by the keycloak-config Crossplane composition on first run.
-#   If the keycloak-config workspace has already run, this kv_put_once is a no-op because
-#   the secret already exists with oidc_client_secret.  In that case, patch manually:
-#     bao kv patch gentian-os/kernel/mail/dovecot doveadm_password=<value>
-_DOVECOT_EXISTING=$(curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
+# oidc_client_secret: generated on first seed when absent.
+_DOVECOT_EXISTING=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
   echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"
 elif echo "${_DOVECOT_EXISTING}" | grep -q '"data":{'; then
-  # Secret exists (created by keycloak-config) but missing doveadm_password — patch it
+  # Secret exists but missing doveadm_password — patch it
   echo "  Patching gentian-os/kernel/mail/dovecot (adding doveadm_password)..."
   EXISTING_OIDC=$(echo "${_DOVECOT_EXISTING}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['data']['data']['oidc_client_secret'])" 2>/dev/null || echo "")
   if [ -n "${EXISTING_OIDC}" ]; then
@@ -413,7 +316,7 @@ else
     echo "  To add them later: bao kv put gentian-os/kernel/mail/postfix relay_username=<u> relay_password=<p>"
 fi
 
-# --- Mail transport settings consumed by Nubus rendering ---
+# --- Mail transport settings ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
 if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then
@@ -458,14 +361,47 @@ fi
 # kernel wildcard Certificate is enabled (see docs/design/multi-tenancy.md §3).
 # Sourced from CF_API_TOKEN env var to keep the positional-arg contract stable.
 if [ -n "${CF_API_TOKEN:-}" ]; then
-    kv_put_once "dns/cloudflare" "$(jq -n \
+    kv_put "dns/cloudflare" "$(jq -n \
         --arg api_token "${CF_API_TOKEN}" \
-        '{"api-token": $api_token}')"
+        --arg zone_id "${CF_ZONE_ID:-}" \
+        --arg tunnel_cname "${CF_TUNNEL_CNAME:-}" \
+        '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
 else
     echo ""
     echo "  Skipping Cloudflare API token (CF_API_TOKEN not set)."
     echo "  To add it later: bao kv put gentian-os/kernel/dns/cloudflare api-token=<token>"
 fi
+
+# --- LLM serving (LiteLLM / vLLM credentials) ---
+KERNEL_REALM="${KERNEL_REALM:-kernel}"
+LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
+LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
+VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
+LITELLM_MASTER_KEY=$(derive_password "llm" "litellm_master_key")
+LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
+LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
+# Admin console SSO (platform-admin only; see docs/design/llms.md and the
+# litellm-dashboard Keycloak client provisioned by portal-login-bootstrap.sh).
+LITELLM_PROXY_BASE_URL="https://llm.${KERNEL_DOMAIN}"
+LITELLM_SSO_AUTH_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/auth"
+LITELLM_SSO_TOKEN_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/token"
+LITELLM_SSO_USERINFO_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo"
+
+kv_put "llm" "$(cat <<EOF
+{
+  "vllm_api_key": "${VLLM_API_KEY}",
+  "litellm_master_key": "${LITELLM_MASTER_KEY}",
+  "litellm_db_password": "${LITELLM_DB_PW}",
+  "litellm_redis_password": "${LITELLM_REDIS_PW}",
+  "litellm_ui_username": "${LITELLM_UI_USERNAME}",
+  "litellm_ui_password": "${LITELLM_UI_PASSWORD}",
+  "litellm_proxy_base_url": "${LITELLM_PROXY_BASE_URL}",
+  "litellm_sso_authorization_endpoint": "${LITELLM_SSO_AUTH_ENDPOINT}",
+  "litellm_sso_token_endpoint": "${LITELLM_SSO_TOKEN_ENDPOINT}",
+  "litellm_sso_userinfo_endpoint": "${LITELLM_SSO_USERINFO_ENDPOINT}"
+}
+EOF
+)"
 
 echo ""
 echo "=========================================="

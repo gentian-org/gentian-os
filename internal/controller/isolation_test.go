@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -83,9 +83,8 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 	assertIngressDoesNotAllowNamespace(t, npB, "tenant-iso-a")
 }
 
-// TestIsolation_NetworkPolicyIngressRules verifies the five expected ingress
-// sources: same tenant namespace, platform-kernel, gentian-infra-dev,
-// gentian-dev, and ingress namespace.
+// TestIsolation_NetworkPolicyIngressRules verifies baseline ingress allows edge
+// routing (Envoy Gateway) and platform-kernel portal API access to tenant apps.
 func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -114,12 +113,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	// Must allow same-namespace traffic (via namespace selector with tenant label).
-	if !hasIngressNamespaceLabel(np, "gentianos.io/tenant", "iso-ingress") {
-		t.Error("expected ingress rule allowing from namespace with gentianos.io/tenant=iso-ingress label")
-	}
-
-	expectedNS := []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "ingress"}
+	expectedNS := []string{"envoy-gateway-system", "platform-kernel"}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {
@@ -134,9 +128,8 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 	}
 }
 
-// TestIsolation_NetworkPolicyEgressRules verifies egress allows the kernel
-// infrastructure namespaces, DNS, and Kubernetes API, but not other tenant
-// namespaces.
+// TestIsolation_NetworkPolicyEgressRules verifies baseline egress allows DNS
+// and the Kubernetes API only (kernel/contract access is separate policies).
 func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
@@ -164,18 +157,8 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 	}
 
 	egressNS := collectEgressNamespaces(np)
-
-	for _, expected := range []string{"platform-kernel", "gentian-infra-dev", "gentian-dev", "gentian-system", "ingress"} {
-		found := false
-		for _, ns := range egressNS {
-			if ns == expected {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected egress to allow namespace %q, allowed: %v", expected, egressNS)
-		}
+	if len(egressNS) != 0 {
+		t.Errorf("baseline egress should not allow namespace peers, got: %v", egressNS)
 	}
 
 	if !hasEgressPort(np, 53) {
@@ -276,9 +259,9 @@ func TestIsolation_LimitRangeDefaults(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestDeletion_EndToEnd_WithApps creates a Tenant with multiple apps (requiring
-// PostgreSQL, MariaDB, S3, Redis, Memcached), verifies all resources are
-// provisioned, then deletes the Tenant with DeletionPolicy=Delete and verifies
-// cleanup Jobs are created and resources are removed.
+// PostgreSQL, MariaDB, S3, Redis, Memcached), verifies shell resources exist,
+// then deletes the Tenant with DeletionPolicy=Delete and verifies cleanup Jobs
+// and resource removal. Mail provisioning is covered by TestMail_Selfhosted.
 func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -303,7 +286,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 			Domain:         "del-full.example.com",
 			AdminEmail:     "admin@del-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
-			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "del-pgapp"},
 				{Profile: "del-mariaapp"},
@@ -324,26 +306,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		return testClient.Get(ctx, types.NamespacedName{Name: "tenant-isolation", Namespace: "tenant-del-full"}, np) == nil
 	})
 
-	// Verify mail resources: DKIM secret + Postfix CM entry + SMTP credentials.
-	waitFor(t, jobAppearTimeout, func() bool {
-		cm := &corev1.ConfigMap{}
-		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
-			return false
-		}
-		_, ok := cm.Data["del-full"]
-		return ok
-	})
-
-	dkimSecret := &corev1.Secret{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, dkimSecret) == nil
-	})
-
-	smtpSecret := &corev1.Secret{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(ctx, types.NamespacedName{Name: "smtp-credentials-del-full", Namespace: "tenant-del-full"}, smtpSecret) == nil
-	})
-
 	// -- DELETE the tenant ------------------------------------------------
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
@@ -352,11 +314,9 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	// incomplete delete Jobs survive after the Tenant finalizer is removed.
 	cleanupJobs := []string{
 		"keycloak-realm-delete-del-full",
-		"ldap-ou-delete-del-full",
 		"mariadb-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
-		"nc-group-delete-del-full",
 		"redis-acl-delete-del-full-del-pgapp",
 	}
 	for _, jobName := range cleanupJobs {
@@ -376,7 +336,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	// Completed cleanup Jobs should be purged as final destructive cleanup.
 	for _, jobName := range []string{
 		"keycloak-realm-delete-del-full",
-		"ldap-ou-delete-del-full",
 		"mariadb-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
@@ -405,23 +364,9 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		})
 	}
 
-	// DKIM secret should be deleted.
-	err := testClient.Get(ctx, types.NamespacedName{Name: "dkim-del-full", Namespace: "platform-kernel"}, &corev1.Secret{})
-	if err == nil {
-		t.Error("DKIM secret should be deleted after DeletionPolicy=Delete")
-	}
-
-	// Postfix ConfigMap entry should be removed.
-	postfixCM := &corev1.ConfigMap{}
-	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
-		if _, ok := postfixCM.Data["del-full"]; ok {
-			t.Error("Postfix virtual-domain entry should be removed after deletion")
-		}
-	}
-
 	// Namespace should be terminating or gone.
 	ns := &corev1.Namespace{}
-	err = testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, ns)
+	err := testClient.Get(ctx, types.NamespacedName{Name: "tenant-del-full"}, ns)
 	if err == nil && ns.DeletionTimestamp == nil {
 		t.Error("namespace should be deleted or terminating after Delete policy")
 	}
@@ -479,7 +424,6 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	if err := testClient.Delete(ctx, tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// Retain policy: deleteLDAP preserves the admin user (no delete job created).
 	// Retain policy: deleteIdentity is a no-op for tenants with no OIDC apps (ret-app has none).
 
 	// Wait for Tenant CR to be gone (finalizer completed).
@@ -525,12 +469,6 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		Name: "keycloak-realm-delete-ret-full", Namespace: "platform-kernel",
 	}, identityDeleteJob); err == nil {
 		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
-	}
-	ldapDeleteJob := &batchv1.Job{}
-	if err := testClient.Get(ctx, types.NamespacedName{
-		Name: "ldap-ou-delete-ret-full", Namespace: "platform-kernel",
-	}, ldapDeleteJob); err == nil {
-		t.Error("LDAP OU deletion Job should NOT be created for Retain policy")
 	}
 }
 
@@ -636,21 +574,6 @@ func collectIngressNamespaces(np *networkingv1.NetworkPolicy) []string {
 		}
 	}
 	return result
-}
-
-// hasIngressNamespaceLabel checks if any ingress rule has a namespace selector
-// matching the given label key/value.
-func hasIngressNamespaceLabel(np *networkingv1.NetworkPolicy, key, value string) bool {
-	for _, rule := range np.Spec.Ingress {
-		for _, from := range rule.From {
-			if from.NamespaceSelector != nil {
-				if v, ok := from.NamespaceSelector.MatchLabels[key]; ok && v == value {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // collectEgressNamespaces extracts namespace names from egress rules.

@@ -1,5 +1,23 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
 
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+
+// Package oidc resolves OIDC client packs from cluster-scoped OIDCPackCatalog CRs.
+// App-specific mapper templates live in catalogue repos (gentian-apps / gentian-pro),
+// not as hardcoded constants in the operator.
 package oidc
 
 import (
@@ -48,7 +66,7 @@ func packFromCR(spec gentianov1alpha1.OIDCPackSpec) Pack {
 		ScopeName:        spec.ScopeName,
 		ScopeDescription: spec.ScopeDescription,
 		ClientRole:       spec.ClientRole,
-		LDAPGroup:        spec.LDAPGroup,
+		EntitlementGroup: spec.EntitlementGroup,
 		PublicClient:     spec.PublicClient,
 		FullScopeAllowed: spec.FullScopeAllowed,
 		DefaultScopes:    append([]string(nil), spec.DefaultScopes...),

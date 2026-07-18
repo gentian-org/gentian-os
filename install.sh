@@ -19,23 +19,26 @@
 #       - Crossplane applies identity, data-plane, and edge resources declaratively
 #   ✓ Remaining secrets seeded (registry, DNS/Cloudflare, internal)
 #
+# Upgrade note: this script targets greenfield installs. Legacy version-to-version
+# migration paths (pre-InfraData layouts, flat gentian-appprofiles Application,
+# etc.) were removed in cleanup batch b. Remaining delete/reset hooks heal failed
+# or partial installs only (Suze ghost Helm releases, orphaned Crossplane RBAC).
+#
 # Usage:
 #   ./install.sh
 #   ./install.sh --validate          # validate config only, no cluster changes
 #   ./install.sh --no-cluster-infra  # skip cert-manager/CNPG/reloader
 #
-# Required environment variables: same as install.sh (see getting-started.md)
+# Required environment variables: same as install.sh (see GETTING-STARTED.md)
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load all helper functions from scripts/install-lib.sh without running its main().
-export GENTIAN_INSTALL_LIB_ONLY=1
-# shellcheck source=scripts/install-lib.sh
-source "${SCRIPT_DIR}/scripts/install-lib.sh"
-unset GENTIAN_INSTALL_LIB_ONLY
+# Load all helper functions from scripts/lib/load.sh.
+# shellcheck source=scripts/lib/load.sh
+source "${SCRIPT_DIR}/scripts/lib/load.sh"
 
 # ─── Crossplane settings ──────────────────────────────────────────────────────
 CROSSPLANE_NAMESPACE=crossplane-system
@@ -94,17 +97,26 @@ _ensure_crossplane_package_crds() {
     info "Re-applying Crossplane CRDs from Helm chart..."
     helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update >/dev/null
     helm repo update >/dev/null
+    # --server-side, not plain apply: some of these CRDs' embedded OpenAPI
+    # schemas exceed the 256 KiB single-annotation limit once client-side
+    # apply embeds the full manifest into kubectl.kubernetes.io/last-applied-
+    # configuration (deploymentruntimeconfigs.pkg.crossplane.io hits this on
+    # Crossplane 2.x). Server-side apply uses field-manager tracking instead
+    # and has no such limit. --force-conflicts is safe here: these are
+    # Crossplane's own canonical chart-managed objects, never hand-edited.
     helm template crossplane crossplane-stable/crossplane \
         --version "${CROSSPLANE_VERSION}" \
         --namespace "${CROSSPLANE_NAMESPACE}" \
         --include-crds \
-        | kubectl apply -f - >/dev/null
+        | kubectl apply --server-side --force-conflicts -f - >/dev/null
 
     # Some chart packaging modes do not include CRDs in Helm output. Ensure the
     # required package CRDs are explicitly applied from upstream release assets.
     local crossplane_minor="${CROSSPLANE_VERSION%.*}"
     for crd in providers providerrevisions functions functionrevisions deploymentruntimeconfigs; do
-        kubectl apply -f "https://raw.githubusercontent.com/crossplane/crossplane/release-${crossplane_minor}/cluster/crds/pkg.crossplane.io_${crd}.yaml" >/dev/null 2>&1 || true
+        kubectl apply --server-side --force-conflicts \
+            -f "https://raw.githubusercontent.com/crossplane/crossplane/release-${crossplane_minor}/cluster/crds/pkg.crossplane.io_${crd}.yaml" \
+            >/dev/null 2>&1 || true
     done
 
     for crd in "${required[@]}"; do
@@ -129,7 +141,7 @@ _ensure_crossplane_package_crds() {
 # (mirrors the logic of crossplane/tests/e2e/scripts/p0-crossplane-install.sh)
 # =============================================================================
 install_crossplane() {
-    banner "Crossplane 0 — Install Crossplane core"
+    banner "Step 0 — Install Crossplane core"
 
     if kubectl get deployment crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
         success "Crossplane deployment already present in ${CROSSPLANE_NAMESPACE}; skipping."
@@ -175,7 +187,7 @@ install_crossplane() {
 # (mirrors crossplane/tests/e2e/scripts/p1-kernel-dev.sh steps 1-3)
 # =============================================================================
 install_crossplane_providers() {
-    banner "Crossplane 0b/0c — Providers, XRD, Composition"
+    banner "Step 0b — Crossplane providers, XRD, Composition"
 
     info "Applying providers (function-go-templating, provider-kubernetes, provider-vault)..."
     _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -265,11 +277,12 @@ install_crossplane_providers() {
     # AuthBackendConfig, AuthBackendRole, SecretV2, and Object (K8s) resources.
 # =============================================================================
 bootstrap_openbao_for_crossplane() {
-    banner "Step 10 — Bootstrap OpenBao auth for Crossplane"
+    banner "Step 8 — Bootstrap OpenBao auth for Crossplane"
 
     local BAO_SVC_IP
     BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export VAULT_ADDR="http://${BAO_SVC_IP}:8200"
+    export VAULT_ADDR="https://${BAO_SVC_IP}:8200"
+    export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
@@ -338,25 +351,6 @@ path "${_kv_mount}/metadata/gentian-os/tenants/*"       { capabilities = ["list"
 POLICY
     success "eso-read policy written."
 
-    # ── 3c. app-init policy ───────────────────────────────────────────────────
-    # App init Jobs (Crossplane Compositions) authenticate via K8s SA JWT and
-    # use this policy to provision per-tenant/app credentials in OpenBao on
-    # first app install (ldap, s3, database).
-    bao policy write app-init - <<POLICY
-path "${_kv_mount}/data/gentian-os/kernel/internal/master-password"   { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/kernel/identity/nubus"            { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/kernel/database/cnpg"             { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/kernel/storage/minio"             { capabilities = ["read"] }
-path "${_kv_mount}/metadata/gentian-os/kernel/database/cnpg"         { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/ldap"            { capabilities = ["create", "read", "update"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/ldap"        { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/s3"              { capabilities = ["create", "read", "update"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/s3"          { capabilities = ["read"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/+/database"        { capabilities = ["create", "read", "update"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/+/apps/+/database"    { capabilities = ["read"] }
-POLICY
-    success "app-init policy written."
-
     # ── 4. Kubernetes auth roles ──────────────────────────────────────────────
     # crossplane-provider: kept for future dynamic-token use (not used by
     # provider-vault ProviderConfig which reads a static token Secret).
@@ -375,16 +369,6 @@ POLICY
         token_ttl=3600
     success "eso K8s auth role created."
 
-    # app-init: short-lived tokens for Composition init Jobs running in tenant
-    # namespaces. Wildcard namespace binding allows Jobs in any tenant namespace.
-    bao write auth/kubernetes/role/app-init \
-        bound_service_account_names=app-init \
-        bound_service_account_namespaces="*" \
-        token_policies=app-init \
-        token_ttl=300 \
-        token_max_ttl=600
-    success "app-init K8s auth role created."
-
     # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
     # provider-vault v3.x (upjet/Terraform-based) does not support
     # InjectedIdentity. It reads credentials from a k8s Secret whose 'credentials'
@@ -399,7 +383,7 @@ POLICY
             | jq -r '.token // empty' 2>/dev/null || true)
         if [[ -n "${existing_token}" ]]; then
             local http_code
-            http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+            http_code=$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 5 \
                 -H "X-Vault-Token: ${existing_token}" \
                 "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
             if [[ "${http_code}" == "200" ]]; then
@@ -449,10 +433,43 @@ POLICY
 # --dry-run=client | kubectl apply ensures idempotency.
 # =============================================================================
 create_crossplane_secrets() {
-    banner "Step 11 — Create derived-credential Secrets for Cluster XR"
+    banner "Step 9 — Create derived-credential Secrets for Cluster XR"
+
+    # Enforce minimum-entropy on MASTER_PASSWORD
+    if [[ ${#MASTER_PASSWORD} -lt 16 ]]; then
+        error "MASTER_PASSWORD is too weak. It must be at least 16 characters long."
+        exit 1
+    fi
+
+    # Try to read existing master-password and salt from OpenBao
+    local existing_secret
+    existing_secret=$(bao kv get -mount=secret -format=json gentian-os/kernel/internal/master-password 2>/dev/null || true)
+    if [[ -n "${existing_secret}" ]]; then
+        local m_val s_val
+        m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
+        s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
+        if [[ -n "${m_val}" ]]; then
+            MASTER_PASSWORD="${m_val}"
+        fi
+        if [[ -n "${s_val}" ]]; then
+            DERIVATION_SALT="${s_val}"
+        elif [[ -n "${m_val}" ]]; then
+            DERIVATION_SALT=""
+        fi
+    fi
+    if [[ -z "${DERIVATION_SALT:-}" && -z "${existing_secret}" ]]; then
+        DERIVATION_SALT=$(openssl rand -hex 16)
+    fi
+    export DERIVATION_SALT
 
     # Same derivation as seed-openbao.sh and crossplane/functions/derive-secrets/derive.py
-    _derive() { echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}" | awk '{print $2}'; }
+    _derive() {
+        if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+            openssl rand -hex 32
+        else
+            echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}';
+        fi
+    }
     _nats()   { echo "n$(_derive "$1" "$2")"; }
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key
@@ -469,6 +486,7 @@ create_crossplane_secrets() {
     kubectl create secret generic gentian-os-master-password \
         -n "${CROSSPLANE_NAMESPACE}" \
         --from-literal=password="${MASTER_PASSWORD}" \
+        --from-literal=salt="${DERIVATION_SALT}" \
         --dry-run=client -o yaml | kubectl apply -f -
     success "  gentian-os-master-password"
 
@@ -478,19 +496,14 @@ create_crossplane_secrets() {
             --arg a "$(_derive postgres postgres_user)" \
             --arg b "$(_derive postgres keycloak_user)" \
             --arg c "$(_derive postgres keycloak_extensions_user)" \
-            --arg d "$(_derive postgres selfservice_user)" \
-            --arg e "$(_derive postgres authsession_user)" \
-            --arg f "$(_derive postgres guardianmanagementapi_user)" \
-            --arg g "$(_derive postgres notificationsapi_user)" \
-            --arg h "$(_derive postgres nextcloud_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,selfservice_user_password:$d,authsession_user_password:$e,guardianmanagementapi_user_password:$f,notificationsapi_user_password:$g,nextcloud_user_password:$h}')"
+            --arg h "$(_derive postgres openfga_user)" \
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h}')"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \
         "$(jq -nc \
             --arg a "$(_derive mariadb root_password)" \
-            --arg b "$(_derive mariadb openxchange_user)" \
-            '{root_password:$a,openxchange_password:$b}')"
+            '{root_password:$a}')"
 
     # ── cache/redis ───────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-cache-redis" \
@@ -503,54 +516,27 @@ create_crossplane_secrets() {
         "$(jq -nc \
             --arg a "minio" \
             --arg b "$(_derive minio root_password)" \
-            --arg c "$(_derive minio ums_user)" \
-            --arg h "$(_derive minio migrations_user)" \
-            --arg i "$(_derive minio dovecot_user)" \
-            '{root_user:$a,root_password:$b,ums_password:$c,migrations_password:$h,dovecot_password:$i}')"
+            '{root_user:$a,root_password:$b}')"
 
-    # ── identity/nubus ────────────────────────────────────────────────────────
-    # shellcheck disable=SC2016
-    _kv_secret "gentian-os-kernel-identity-nubus" \
-        "$(jq -nc \
-            --arg mp "${MASTER_PASSWORD}" \
-            --arg a  "$(_derive nubus Administrator)" \
-            --arg b  "$(_derive "cn=admin" ldap)" \
-            --arg c  "$(_derive keycloak adminPassword)" \
-            --arg e  "$(_nats api nats)" \
-            --arg f  "$(_nats dispatcher nats)" \
-            --arg g  "$(_nats prefill nats)" \
-            --arg h  "$(_nats udmListener nats)" \
-            --arg i  "$(_nats udmTransformer nats)" \
-            --arg j  "$(_derive minio ums_user)" \
-            --arg k  "$(_derive postgres selfservice_user)" \
-            --arg l  "$(_derive postgres authsession_user)" \
-            --arg m  "$(_derive postgres keycloak_user)" \
-            --arg n  "$(_derive postgres keycloak_extensions_user)" \
-            --arg o  "$(_derive postgres guardianmanagementapi_user)" \
-            --arg p  "$(_derive postgres notificationsapi_user)" \
-            --arg q  "$(_derive nubus ldapsearch_keycloak)" \
-            --arg s  "$(_derive nubus ldapsearch_dovecot)" \
-            --arg v  "$(_derive nubus ldapsearch_postfix)" \
-            --arg y  "$(_derive centralnavigation api_key)" \
-            --arg z  "$(_derive portal-consumer provisioning-api)" \
-            --arg z2 "$(_derive selfservice-consumer provisioning-api)" \
-            --arg z3 "$(_derive smtp password)" \
-            '{master_password:$mp,admin_password:$a,ldap_admin_password:$b,keycloak_admin_password:$c,nats_api_password:$e,nats_dispatcher_password:$f,nats_prefill_password:$g,nats_udm_listener_password:$h,nats_udm_transformer_password:$i,minio_ums_secret_access_key:$j,pg_selfservice_password:$k,pg_authsession_password:$l,pg_keycloak_password:$m,pg_keycloak_extensions_password:$n,pg_guardian_password:$o,pg_notifications_password:$p,ldapsearch_keycloak:$q,ldapsearch_dovecot:$s,ldapsearch_postfix:$v,portal_shared_secret:$y,portal_consumer_api_password:$z,selfservice_consumer_api_password:$z2,smtp_password:$z3}')"
-
-    # ── identity/keycloak-bootstrap ───────────────────────────────────────────
+    # ── identity/keycloak-bootstrap (Suze Keycloak admin password) ─────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --arg a "$(_derive keycloak adminPassword)" \
-            --arg b "$(_derive keycloak intercom_client_secret)" \
-            '{admin_password:$a,intercom_client_secret:$b}')"
+            '{admin_password:$a}')"
+
+    # ── authz/openfga ─────────────────────────────────────────────────────────
+    _kv_secret "gentian-os-kernel-authz-openfga" \
+        "$(jq -nc \
+            --arg a "$(_derive openfga preshared_key)" \
+            '{preshared_key:$a}')"
 
     # ── mail/postfix (HMAC-derived fields + operator-supplied relay credentials) ─
     _kv_secret "gentian-os-kernel-mail-postfix" \
         "$(jq -nc \
             --arg host "${EXTERNAL_SMTP_HOST:-}" \
             --arg port "${EXTERNAL_SMTP_PORT:-587}" \
-            --arg user "${OD_SMTP_RELAY_USERNAME:-}" \
-            --arg pass "${OD_SMTP_RELAY_PASSWORD:-}" \
+            --arg user "${SMTP_RELAY_USERNAME:-}" \
+            --arg pass "${SMTP_RELAY_PASSWORD:-}" \
             '{relay_host:$host,relay_port:$port,relay_username:$user,relay_password:$pass}')"
 
     # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
@@ -559,11 +545,140 @@ create_crossplane_secrets() {
     # the minio secret for cross-service derivation consistency.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
-            --arg doveadm "$(_derive minio dovecot_user)" \
+            --arg doveadm "$(_derive dovecot doveadm_password)" \
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
     success "All 9 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
+}
+
+# =============================================================================
+# scaffold_cluster_deployment — Day-0 only. If this cluster's kernel/
+# directory in gentian-deployments is missing claims/{cluster,infra-data,
+# suze}.yaml or values.yaml, generate them from KERNEL_DOMAIN/
+# GENTIAN_DEPLOYMENTS_STAGE and commit + push directly to main (no PR —
+# this is scaffolding a not-yet-running cluster, not changing a live one;
+# see docs/deployment.md §3). Per-file checks, not a directory-level one:
+# never overwrites a file that already exists, so this is a no-op on every
+# subsequent run, and it converges correctly even when cluster-settings.env
+# already exists but the mechanical files don't.
+#
+# The gentian-os/gentian-portal Applications and the ImageUpdater CR are
+# NOT scaffolded here — they're rendered directly from
+# kernel/bootstrap/{gentian-os,gentian-portal}-application.yaml.tmpl by
+# install_gentian_os_operator()/install_portal_login() (catalogue.sh /
+# portal-login-bootstrap.sh) and applied straight to the cluster, never
+# committed to gentian-deployments. Their content never varies except by
+# %CLUSTER%/%STAGE%, so there's nothing cluster-specific worth persisting
+# as a file — see docs/deployment.md §3.1.
+# =============================================================================
+scaffold_cluster_deployment() {
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
+    local generated=0
+
+    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
+        warn "gentian-deployments/profiles/${stage}.yaml does not exist yet."
+        warn "  Stage-tier policy (logLevel, ACME issuer, etc.) has no home for '${stage}' —"
+        warn "  add it (see profiles/dev.yaml for the existing example) before continuing."
+    fi
+    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/_base.yaml" ]]; then
+        warn "gentian-deployments/profiles/_base.yaml does not exist yet."
+        warn "  Cross-stage shared policy (platformSecurityPolicy, etc.) has no home —"
+        warn "  add it before continuing (see profiles/_base.yaml in an existing cluster's repo)."
+    fi
+
+    mkdir -p "${kernel_dir}/claims"
+
+    if [[ ! -f "${kernel_dir}/claims/cluster.yaml" ]]; then
+        cat > "${kernel_dir}/claims/cluster.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: dev-cluster
+  namespace: crossplane-system
+spec:
+  kernelDomain: ${domain}
+EOF
+        info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
+        cat > "${kernel_dir}/claims/infra-data.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: InfraData
+metadata:
+  name: dev-infra-data
+  namespace: crossplane-system
+spec:
+  environment: ${stage}
+  compositeDeletePolicy: Background
+EOF
+        info "Scaffolded ${kernel_dir}/claims/infra-data.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/claims/suze.yaml" ]]; then
+        cat > "${kernel_dir}/claims/suze.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Suze
+metadata:
+  name: dev-suze
+  namespace: crossplane-system
+spec:
+  environment: ${stage}
+  idpNamespace: platform-kernel
+  compositeDeletePolicy: Background
+  openfga:
+    chartVersion: "0.3.10"
+EOF
+        info "Scaffolded ${kernel_dir}/claims/suze.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/values.yaml" ]]; then
+        cat > "${kernel_dir}/values.yaml" <<EOF
+# Cluster overlay — only what's unique to THIS cluster. Tier-wide policy
+# lives in gentian-deployments/profiles/${stage}.yaml (Layer 2); chart
+# defaults live in gentian-os/charts/gentian-os/values.yaml (Layer 1).
+# Also read directly by the gentian-portal Application for kernelDomain
+# (portal chart is separate from the operator chart but shares this file).
+kernelDomain: ${domain}
+stage: ${stage}
+llmSupport: ${LLM_SUPPORT:-false}
+
+image:
+  tag: "develop"
+
+api:
+  env:
+    BACKEND_CORS_ORIGINS: https://portal.${domain}
+
+appLifecycle:
+  deployments:
+    enabled: true
+    cluster: ${cluster}
+    repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
+    gitCredentialsSecret: gentian-deployments-git-credentials
+EOF
+        info "Scaffolded ${kernel_dir}/values.yaml"
+        generated=1
+    fi
+
+    if (( generated )); then
+        (
+            cd "${GENTIAN_DEPLOYMENTS_PATH}"
+            git add "clusters/${cluster}/kernel"
+            git commit -m "Scaffold clusters/${cluster}/kernel (stage=${stage}, kernelDomain=${domain})"
+            git push origin "$(git rev-parse --abbrev-ref HEAD)"
+        )
+        success "Scaffolded and pushed clusters/${cluster}/kernel to gentian-deployments."
+    else
+        info "clusters/${cluster}/kernel already fully scaffolded — nothing to do."
+    fi
 }
 
 # =============================================================================
@@ -573,22 +688,16 @@ create_crossplane_secrets() {
 # ensures existing paths seeded by prior install runs are never overwritten.
 # =============================================================================
 apply_cluster_xr() {
-    banner "Step 12 — Apply Cluster XR (kernel structural provisioning)"
+    banner "Step 10 — Apply Cluster XR (kernel structural provisioning)"
 
-    # Derive defaults for template variables not already set.
-    # LDAP_BASE_DN: dc= decomposition of KERNEL_DOMAIN (e.g. desk.example.com → dc=desk,dc=example,dc=com)
-    local _dn_parts
-    _dn_parts=$(echo "${KERNEL_DOMAIN}" | tr '.' '\n' | sed 's/^/dc=/' | paste -sd ',')
-    export LDAP_BASE_DN="${LDAP_BASE_DN:-${_dn_parts}}"
-    export LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-admin@${KERNEL_DOMAIN}}"
-    export OPENBAO_SERVER="${OPENBAO_SERVER:-http://openbao.openbao.svc.cluster.local:8200}"
-    export INGRESS_CLASS_NAME="${INGRESS_CLASS_NAME:-nginx}"
-    export KV_MOUNT="${KV_MOUNT:-secret}"
-    export KERNEL_REALM="${KERNEL_REALM:-kernel}"
+    local claims_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims"
+    [[ -f "${claims_dir}/cluster.yaml" ]] || {
+        error "No Cluster claim at ${claims_dir}/cluster.yaml — run install.sh's cluster scaffolding step first."
+        exit 1
+    }
 
-    info "Applying Cluster claim (kernelDomain=${KERNEL_DOMAIN})..."
-    envsubst < "${SCRIPT_DIR}/crossplane/claims/dev-cluster.yaml.tmpl" \
-        | kubectl apply -f -
+    info "Applying Cluster claim from ${claims_dir}/cluster.yaml..."
+    kubectl apply -f "${claims_dir}/cluster.yaml"
 
     # Crossplane generates a unique name for the XCluster composite (e.g.
     # dev-cluster-k4d2m). Read it from the Claim's resourceRef once populated.
@@ -630,7 +739,7 @@ apply_cluster_xr() {
 # =============================================================================
 # seed_secrets_remaining — Seed the KV paths that the Cluster XR does not
 # manage: internal/master-password, storage/registry, dns/cloudflare,
-# database/cnpg, and app-level paths (nextcloud, intercom, etc.).
+# database/cnpg, and other kernel paths.
 # Delegates to the existing seed-openbao.sh (uses kv_put_once for safety).
 # =============================================================================
 seed_secrets_remaining() {
@@ -642,17 +751,13 @@ seed_secrets_remaining() {
 }
 
 # =============================================================================
-# Step 12d — Apply root ArgoCD ApplicationSet
+# Step 10d — Apply root ArgoCD ApplicationSet
 #
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
 #   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
-#   - 10-infra:            minio, redis (Helm releases in gentian-infra-<env>)
-#   - 20-iam:              keycloak-bootstrap job
-#   - 21-nubus:            (reserved, currently deployed via provider-helm)
-#   - 22-gentian-portal:   portal-frontend from gentian-ui (replaces nubusPortalFrontend)
-#   - 30-kernel-services:  mariadb, postgresql, nextcloud, etc.
-#   - 40-apps:             tenant-facing applications
+#   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
+#   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
 #
 # Prerequisites:
 #   - ArgoCD must be installed and the 'gentian' AppProject must exist.
@@ -660,9 +765,11 @@ seed_secrets_remaining() {
 #   - seed_secrets_remaining must have run so ESO can sync the globals secrets.
 # =============================================================================
 bootstrap_root_appset() {
-    banner "Step 12d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
+    banner "Step 10d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
 
-    kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml"
+    export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
+        | kubectl apply -f -
     success "gentian-appsets Application applied."
 
     info "Waiting for gentian-appsets Application to be Synced (up to 2m)..."
@@ -685,19 +792,19 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Step 15c: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
+# Step 15: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
 # =============================================================================
 bootstrap_appprofiles() {
     install_catalogue_sync
 }
 
 # =============================================================================
-# Step 13: Install provider-helm
-# provider-helm deploys Helm charts into the local cluster. It replaces the
-# legacy Pattern B approach for secrets-hostile charts.
+# Step 11: Install provider-helm
+# provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
+# kernel services, tenant apps via compositions).
 # =============================================================================
 install_provider_helm() {
-    banner "Step 13 — Install provider-helm (Pattern B chart deployments)"
+    banner "Step 11 — Install provider-helm"
 
     # providers.yaml already contains provider-helm; apply idempotently.
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -716,420 +823,397 @@ install_provider_helm() {
 }
 
 # =============================================================================
-# Step 14: Deploy Nubus via provider-helm (Pattern B migration)
+# Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
 #
-# Creates:
-#   - gentian-dev + gentian-infra-dev namespaces
-#   - registry-credentials-helm Secret (crossplane-system) for OCI chart pull
-#   - registry-credentials imagePullSecret (gentian-dev) for pod image pull
-#   - nubus-base-values + nubus-dev-values ConfigMaps (non-sensitive values)
-#   - nubus-dev-udm-listener-nats-patch ConfigMap (NATS subject bug workaround)
-#     These are seeded by install.sh on first boot; ArgoCD (nubus-manifests-dev)
-#     manages them going forward via Kustomize in kernel/services/nubus/manifests/dev/.
-#   - ExternalSecrets: nubus-credentials + nubus-sensitive-values (via ESO)
-#   - provider-helm Release CR (nubus-dev)
+# Provisions kernel data stores via Crossplane InfraData XR.
+#
+# Prerequisites:
+#   - provider-helm Healthy (Step 11)
+#   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
+#   - charts/infra/packages published on GitHub for the target git branch
+#     (run ./scripts/publish-infra-charts.sh and push before install when adding charts)
 # =============================================================================
-deploy_nubus() {
-    banner "Step 14 — Deploy Nubus via provider-helm"
+detect_infra_chart_repo() {
+    if [[ -n "${INFRA_CHART_REPO:-}" ]]; then
+        echo "${INFRA_CHART_REPO}"
+        return
+    fi
+    local branch
+    branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo develop)"
+    if [[ "${branch}" == "HEAD" ]]; then
+        branch=develop
+    fi
+    echo "https://raw.githubusercontent.com/gentian-org/gentian-os/${branch}/charts/infra/packages"
+}
 
-    local ns="gentian-${ENV:-dev}"
-    local infra_ns="gentian-infra-${ENV:-dev}"
-    local release_name="nubus-${ENV:-dev}"
-    local install_start_epoch="${INSTALL_START_EPOCH:-0}"
+verify_infra_chart_index() {
+    local repo="$1"
+    local index_url="${repo}/index.yaml"
+    info "Verifying infra Helm index: ${index_url}"
+    local index
+    if ! index="$(curl -fsSL "${index_url}" 2>/dev/null)"; then
+        error "Could not fetch ${index_url}"
+        error "  Publish charts with: ./scripts/publish-infra-charts.sh && git push"
+        error "  Or set INFRA_CHART_REPO to a branch that contains redis/minio packages."
+        return 1
+    fi
+    local missing=()
+    for chart in postgresql mariadb redis minio; do
+        if ! grep -q "^  ${chart}:" <<<"${index}"; then
+            missing+=("${chart}")
+        fi
+    done
+    if ((${#missing[@]} > 0)); then
+        error "Infra chart repo is missing: ${missing[*]}"
+        error "  Index: ${index_url}"
+        error "  Redis/MinIO were added on develop — merge/push to develop, or:"
+        error "  INFRA_CHART_REPO=https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages ./install.sh"
+        return 1
+    fi
+    success "Infra Helm index contains postgresql, mariadb, redis, and minio."
+}
 
-    # Return lines: <pvc_name>\t<reason>
-    # reason is one of: pvc-created-before-install, pv-created-before-install
-    # This avoids false positives when ArgoCD app-of-apps creates fresh PVCs
-    # during the same install run.
-    _find_stale_pvcs() {
-        local scan_ns="$1"
-        local exclude_regex="$2"
-        local cutoff=$((install_start_epoch - 15))
-        local pvc_list pvc pvc_epoch pvc_ts pv pv_epoch pv_ts reason
+apply_infra_data_xr() {
+    banner "Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
 
-        pvc_list=$(kubectl get pvc -n "${scan_ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
-        [[ -z "${pvc_list}" ]] && return 0
+    local claim="dev-infra-data"
+    local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
+    local chart_repo
+    chart_repo="$(detect_infra_chart_repo)"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
+    local infra_ns="${INFRA_NAMESPACE:-gentian-infra-${stage}}"
 
-        while IFS= read -r pvc; do
-            [[ -z "${pvc}" ]] && continue
-            [[ -n "${exclude_regex}" && "${pvc}" =~ ${exclude_regex} ]] && continue
+    verify_infra_chart_index "${chart_repo}"
 
-            reason=""
-            pvc_ts=$(kubectl get pvc "${pvc}" -n "${scan_ns}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
-            pvc_epoch=0
-            [[ -n "${pvc_ts}" ]] && pvc_epoch=$(date -d "${pvc_ts}" +%s 2>/dev/null || echo 0)
-            if (( install_start_epoch > 0 && pvc_epoch > 0 && pvc_epoch < cutoff )); then
-                reason="pvc-created-before-install"
-            fi
+    # Wait for the gentian-infra-data AppSet (kernel/appsets/08-infra-data.yaml,
+    # sync wave 8) to sync every ConfigMap/Secret the InfraData composition's
+    # Release CRs require via valuesFrom (all optional: false — see
+    # crossplane/compositions/infra-data.yaml). provider-helm does not watch
+    # ConfigMaps: a Release created before its ConfigMap exists fails once and
+    # never retries on its own (needs a manual delete+recreate, e.g.
+    # update.sh --reconcile-releases). Waiting here avoids hitting that race
+    # at all instead of recovering from it after the fact.
+    info "Waiting for gentian-infra-data AppSet prerequisites in ${infra_ns} (up to 3m)..."
+    local deadline=$((SECONDS + 180))
+    local apps=(
+        "infra-postgresql-${stage}" "infra-mariadb-${stage}"
+        "infra-redis-${stage}" "infra-minio-${stage}"
+    )
+    local configmaps=(
+        postgresql-base-values "postgresql-${stage}-values"
+        mariadb-base-values "mariadb-${stage}-values"
+        redis-env-values redis-base-values "redis-${stage}-values"
+        minio-env-values minio-base-values "minio-${stage}-values"
+    )
+    local secrets=(postgresql-sensitive-values mariadb-sensitive-values)
+    local app configmap secret ready
+    while :; do
+        ready=1
+        for app in "${apps[@]}"; do
+            kubectl get application "${app}" -n argocd \
+                -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
+                || { ready=0; break; }
+        done
+        if [[ "${ready}" == "1" ]]; then
+            for configmap in "${configmaps[@]}"; do
+                kubectl get configmap "${configmap}" -n "${infra_ns}" >/dev/null 2>&1 \
+                    || { ready=0; break; }
+            done
+        fi
+        if [[ "${ready}" == "1" ]]; then
+            for secret in "${secrets[@]}"; do
+                kubectl get secret "${secret}" -n "${infra_ns}" >/dev/null 2>&1 \
+                    || { ready=0; break; }
+            done
+        fi
+        [[ "${ready}" == "1" ]] && break
+        if (( SECONDS > deadline )); then
+            warn "InfraData prerequisites not ready after 3m — refresh gentian-appsets and retry."
+            warn "  kubectl get applications -n argocd | grep -E 'infra-(postgresql|mariadb|redis|minio)'"
+            warn "  kubectl get configmap,secret -n ${infra_ns}"
+            break
+        fi
+        sleep 5
+    done
 
-            pv=$(kubectl get pvc "${pvc}" -n "${scan_ns}" -o jsonpath='{.spec.volumeName}' 2>/dev/null || true)
-            if [[ -n "${pv}" ]]; then
-                pv_ts=$(kubectl get pv "${pv}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)
-                pv_epoch=0
-                [[ -n "${pv_ts}" ]] && pv_epoch=$(date -d "${pv_ts}" +%s 2>/dev/null || echo 0)
-                if (( install_start_epoch > 0 && pv_epoch > 0 && pv_epoch < cutoff )); then
-                    if [[ -n "${reason}" ]]; then
-                        reason="${reason},pv-created-before-install"
-                    else
-                        reason="pv-created-before-install"
-                    fi
-                fi
-            fi
+    info "Applying InfraData claim (${claim})..."
+    kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/infra-data.yaml"
 
-            [[ -n "${reason}" ]] && printf '%s\t%s\n' "${pvc}" "${reason}"
-        done <<< "${pvc_list}"
-        # Always return 0: under set -e, an exit code of 1 from the loop's
-        # last `[[ -n ... ]] && printf` (when the final PVC is non-stale) would
-        # propagate through $(...) and abort the caller silently.
+    info "Setting chartRepository to ${chart_repo}..."
+    kubectl patch infradata "${claim}" -n crossplane-system --type=merge \
+        -p "{\"spec\":{\"chartRepository\":\"${chart_repo}\"}}"
+
+    info "Waiting for InfraData claim to bind to a composite (up to 60s)..."
+    local xr_name=""
+    local deadline=$((SECONDS + 60))
+    until [[ -n "${xr_name}" ]]; do
+        xr_name=$(kubectl get infradata "${claim}" -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+        if (( SECONDS > deadline )); then
+            error "InfraData claim ${claim} was never bound to a composite after 60s."
+            error "  kubectl describe infradata ${claim} -n crossplane-system"
+            exit 1
+        fi
+        [[ -n "${xr_name}" ]] || sleep 3
+    done
+    info "  Composite name: ${xr_name}"
+
+    info "Waiting for XInfraData ${xr_name} to be Ready (timeout: ${timeout})..."
+    kubectl wait "xinfradata/${xr_name}" \
+        --for=condition=Ready --timeout="${timeout}" \
+    || {
+        error "XInfraData ${xr_name} did not become Ready within ${timeout}."
+        error "  kubectl describe xinfradata ${xr_name}"
+        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+        error "  kubectl describe release.helm.crossplane.io -l crossplane.io/composite=${xr_name}"
+        error "Common cause: chart not found — verify ${chart_repo}/index.yaml lists redis and minio."
+        exit 1
+    }
+
+    success "InfraData XR ${xr_name} is Ready — shared PostgreSQL, MariaDB, Redis, and MinIO provisioned."
+}
+
+# =============================================================================
+# Step 11c — Kyverno admission controller (Stage 0 MAC)
+#
+# Deployed by Argo CD via kernel/appsets/05-admission.yaml (sync wave 5–6).
+# This step waits for the controller so later workloads are admitted under policy.
+# =============================================================================
+install_mac_admission() {
+    banner "Step 11c — Kyverno admission controller (Stage 0 MAC)"
+
+    info "Kyverno is synced by gentian-appsets (kernel/appsets/05-admission.yaml)."
+    info "Waiting for kyverno-admission-controller (up to 5m)..."
+
+    local deadline=$((SECONDS + 300))
+    until kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "Kyverno deployment not found after 5m — refresh gentian-appsets and retry."
+            warn "  kubectl patch application gentian-appsets -n argocd --type merge -p '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}}}'"
+            return 0
+        fi
+        sleep 5
+    done
+
+    kubectl wait deployment/kyverno-admission-controller -n kyverno \
+        --for=condition=Available --timeout=300s \
+    || {
+        warn "Kyverno admission controller did not become Available within 300s."
+        warn "  kubectl get pods -n kyverno"
         return 0
     }
 
-    # ── Namespaces ────────────────────────────────────────────────────────────
-    # Guard: if a previous uninstall is still in progress, the namespace may be
-    # Terminating. Applying into a Terminating namespace reuses existing PVCs
-    # (incl. LDAP data), defeating a clean reinstall. Wait up to 120s.
-    for _guard_ns in "${ns}" "${infra_ns}"; do
-        local _deadline=$(( SECONDS + 120 ))
-        while [[ "$(kubectl get namespace "${_guard_ns}" \
-                -o jsonpath='{.status.phase}' 2>/dev/null)" == "Terminating" ]]; do
-            if (( SECONDS > _deadline )); then
-                error "Namespace ${_guard_ns} is still Terminating after 120s."
-                error "Run: kubectl delete namespace ${_guard_ns} --force --grace-period=0"
-                exit 1
-            fi
-            info "  Waiting for ${_guard_ns} to finish terminating..."
-            sleep 5
-        done
-    done
+    success "Kyverno admission controller is ready."
+}
 
-    info "Creating namespaces ${ns} and ${infra_ns}..."
-    kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f -
-    kubectl create namespace "${infra_ns}" --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Registry credentials ──────────────────────────────────────────────────
-    info "Creating registry-credentials-helm Secret in ${CROSSPLANE_NAMESPACE}..."
-    kubectl create secret generic registry-credentials-helm \
-        -n "${CROSSPLANE_NAMESPACE}" \
-        --from-literal=username="${OD_PRIVATE_REGISTRY_USERNAME}" \
-        --from-literal=password="${OD_PRIVATE_REGISTRY_PASSWORD}" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    info "Creating registry-credentials imagePullSecret in ${ns}..."
-    kubectl create secret docker-registry registry-credentials \
-        -n "${ns}" \
-        --docker-server="registry.opencode.de" \
-        --docker-username="${OD_PRIVATE_REGISTRY_USERNAME}" \
-        --docker-password="${OD_PRIVATE_REGISTRY_PASSWORD}" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Non-sensitive values ConfigMaps ───────────────────────────────────────
-    # Seeded here for install sequencing; ArgoCD owns them after first sync.
-    info "Creating nubus values ConfigMaps in ${ns}..."
-    kubectl create configmap nubus-base-values \
-        -n "${ns}" \
-        --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/_base.yaml" \
-        --dry-run=client -o yaml | kubectl apply -f -
-    kubectl create configmap nubus-dev-values \
-        -n "${ns}" \
-        --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/dev.yaml" \
-        --dry-run=client -o yaml | kubectl apply -f -
-    if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-        info "Creating nubus gateway values ConfigMap (ROUTING_MODE=gateway)..."
-        kubectl create configmap nubus-gateway-values \
-            -n "${ns}" \
-            --from-file=values.yaml="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/values/gateway.yaml" \
-            --dry-run=client -o yaml | kubectl apply -f -
-    fi
-
-    # ── NATS subject patch ConfigMap ──────────────────────────────────────────
-    # Fixes LDAP_SUBJECT mismatch between udm-listener and udm-transformer
-    # images in nubus 1.16.0. Referenced by nubusUdmListener.extraVolumes.
-    info "Creating ${release_name}-udm-listener-nats-patch ConfigMap in ${ns}..."
-    kubectl create configmap "${release_name}-udm-listener-nats-patch" \
-        -n "${ns}" \
-        --from-file=mq_adapter_nats.py="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/mq_adapter_nats.py" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Multi-tenant LDAP ACL patch ConfigMap ─────────────────────────────────
-    # Adds cn=Tenant Admins to the cn=temporary ACL rules so tenant admins can
-    # provision users (UID lock objects). Referenced by nubusLdapServer.extraVolumes.
-    info "Creating ${release_name}-ldap-gentian-acl ConfigMap in ${ns}..."
-    kubectl create configmap "${release_name}-ldap-gentian-acl" \
-        -n "${ns}" \
-        --from-file=92-gentian-tenant-acl.sh="${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/patches/92-gentian-tenant-acl.sh" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
-    # ── Pre-flight: abort if stale data PVCs exist ───────────────────────────
-    # Nubus StatefulSets (LDAP, UDM listener, portal-consumer, …) bind to
-    # volumeClaimTemplate PVCs by name. Helm never deletes these PVCs on
-    # uninstall. If they survive from a previous installation the new
-    # StatefulSets silently reuse the old volumes, inheriting old users, old
-    # LDAP passwords, and expired SSL certificates. Abort loudly instead.
-    local _stale_pvcs _stale_list
-    _stale_pvcs=$(_find_stale_pvcs "${ns}" "^nats-data-${release_name}-provisioning-nats-0$")
-    if [[ -n "${_stale_pvcs}" ]]; then
-        error "Stale PVCs detected in ${ns} — aborting to avoid installing on old data:"
-        while IFS=$'\t' read -r pvc reason; do
-            [[ -z "${pvc}" ]] && continue
-            _stale_list+="|${pvc}|${reason}|\n"
-        done <<< "${_stale_pvcs}"
-        printf '%b' "${_stale_list}" | sed 's/^/    /' >&2 || true
-        error ""
-        error "These PVCs are from a previous installation (LDAP data, SSL certs, etc.)."
-        error "Clean them up first, then re-run install.sh:"
-        error "    ./uninstall.sh -f && ./install.sh"
-        exit 1
-    fi
-    _stale_list=""
-    _stale_pvcs=$(_find_stale_pvcs "${infra_ns}" "")
-    if [[ -n "${_stale_pvcs}" ]]; then
-        error "Stale PVCs detected in ${infra_ns} — aborting to avoid installing on old data:"
-        while IFS=$'\t' read -r pvc reason; do
-            [[ -z "${pvc}" ]] && continue
-            _stale_list+="|${pvc}|${reason}|\n"
-        done <<< "${_stale_pvcs}"
-        printf '%b' "${_stale_list}" | sed 's/^/    /' >&2 || true
-        error ""
-        error "These PVCs are from a previous installation (postgres, MariaDB, MinIO, …)."
-        error "Clean them up first, then re-run install.sh:"
-        error "    ./uninstall.sh -f && ./install.sh"
-        exit 1
-    fi
-
-    # ── Pre-flight: clear stale NATS consumer state ──────────────────────────
-    # The provisioning register-consumers job fails with 409 if NATS retained
-    # consumer registrations from a previous interrupted install/uninstall.
-    # Delete the NATS PVC (only when NATS is not running) so NATS starts with
-    # clean JetStream state and consumer registration always succeeds with 201.
-    local nats_pvc="nats-data-${release_name}-provisioning-nats-0"
-    local _stale_nats=0
-    if kubectl get pvc "${nats_pvc}" -n "${ns}" >/dev/null 2>&1; then
-        # Use jsonpath to reliably read the pod phase; --field-selector is
-        # ignored by kubectl when a specific resource name is also given.
-        local _nats_phase
-        _nats_phase=$(kubectl get pod "${release_name}-provisioning-nats-0" \
-            -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
-        if [[ "$_nats_phase" != "Running" ]]; then
-            info "Deleting stale NATS PVC (consumer state from previous install)..."
-            # --wait=false: mark for deletion and return immediately; the PVC
-            # will be reclaimed once the old NATS pod (if any) fully terminates.
-            kubectl delete pvc "${nats_pvc}" -n "${ns}" --wait=false 2>/dev/null || true
-            _stale_nats=1
-        else
-            info "NATS pod is Running; skipping PVC deletion (healthy install)."
-        fi
-    fi
-    # Remove any leftover failed register-consumers job so Helm creates it fresh.
-    # Match any revision suffix (-1, -2, …) to cover manual helm upgrade remnants.
-    kubectl get jobs -n "${ns}" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
-        | grep "^${release_name}-provisioning-register-consumers-" \
-        | xargs -r kubectl delete job -n "${ns}" --ignore-not-found=true 2>/dev/null || true
-
-    # ── ExternalSecrets (ESO → OpenBao → K8s Secrets) ────────────────────────
-    info "Applying nubus ExternalSecrets..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/apps/nubus/externalsecrets.yaml"
-
-    info "Waiting for ESO to sync nubus-credentials (up to 60s)..."
-    kubectl wait externalsecret/nubus-credentials \
-        -n "${ns}" --for=condition=Ready --timeout=60s \
-    || { error "nubus-credentials ExternalSecret did not sync. Check ESO logs."; exit 1; }
-
-    info "Waiting for ESO to sync nubus-sensitive-values (up to 60s)..."
-    kubectl wait externalsecret/nubus-sensitive-values \
-        -n "${ns}" --for=condition=Ready --timeout=60s \
-    || { error "nubus-sensitive-values ExternalSecret did not sync. Check ESO logs."; exit 1; }
-
-    success "  nubus-credentials synced."
-    success "  nubus-sensitive-values synced."
-
-    # ── provider-helm Release CR ──────────────────────────────────────────────
-    info "Applying nubus Release CR (provider-helm)..."
-    kubectl apply -f "${SCRIPT_DIR}/kernel/services/nubus/manifests/dev/release.yaml"
-
-    # If stale NATS was detected and cleared, provider-helm may already report
-    # the release as Synced (from a previous reconcile) and will NOT run helm
-    # upgrade automatically — leaving the NATS StatefulSet missing. Force a
-    # direct helm upgrade in that case to guarantee all resources are present.
-    if [[ "$_stale_nats" == "1" ]]; then
-        info "Stale NATS was cleared; running helm upgrade to restore missing resources..."
-        local _base_vals _dev_vals _sens_vals _reg_cfg
-        _base_vals=$(kubectl get configmap nubus-base-values \
-            -n "${ns}" -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
-        _dev_vals=$(kubectl get configmap nubus-dev-values \
-            -n "${ns}" -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
-        _sens_vals=$(kubectl get secret nubus-sensitive-values \
-            -n "${ns}" -o jsonpath='{.data.sensitive-values\.yaml}' \
-            2>/dev/null | base64 -d 2>/dev/null || true)
-        _reg_cfg=$(
-            if _u=$(kubectl get secret registry-credentials-helm \
-                -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d) && \
-                _p=$(kubectl get secret registry-credentials-helm \
-                    -n "${CROSSPLANE_NAMESPACE}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d) && \
-                _auth=$(printf '%s:%s' "${_u}" "${_p}" | base64 -w0); then
-                printf '{"auths":{"registry.opencode.de":{"auth":"%s"}}}' "${_auth}"
-            fi
-        )
-        local _nubus_chart_repo _nubus_chart_ver
-        _nubus_chart_repo=$(kubectl get release.helm.crossplane.io "${release_name}" \
-            -o jsonpath='{.spec.forProvider.chart.repository}' 2>/dev/null || true)
-        _nubus_chart_ver=$(kubectl get release.helm.crossplane.io "${release_name}" \
-            -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null || true)
-        if [[ -n "$_base_vals" && -n "$_sens_vals" && -n "$_nubus_chart_repo" ]]; then
-            printf '%s' "$_base_vals"  > /tmp/_nubus_base.yaml
-            printf '%s' "$_dev_vals"   > /tmp/_nubus_dev.yaml
-            printf '%s' "$_sens_vals"  > /tmp/_nubus_sens.yaml
-            printf '%s' "$_reg_cfg"    > /tmp/_nubus_reg.json
-            helm upgrade "${release_name}" \
-                "${_nubus_chart_repo}/nubus" \
-                --version "${_nubus_chart_ver}" \
-                -n "${ns}" \
-                --reuse-values \
-                -f /tmp/_nubus_base.yaml \
-                -f /tmp/_nubus_dev.yaml \
-                -f /tmp/_nubus_sens.yaml \
-                --registry-config /tmp/_nubus_reg.json \
-                --timeout 5m 2>&1 | tail -3 || true
-            rm -f /tmp/_nubus_base.yaml /tmp/_nubus_dev.yaml \
-                  /tmp/_nubus_sens.yaml /tmp/_nubus_reg.json
-            success "helm upgrade complete — NATS StatefulSet restored."
-        else
-            warn "Could not gather helm values for forced upgrade; NATS may need manual recovery."
-        fi
-    fi
-
-    # Wait for the register-consumers job to appear (provider-helm must reconcile
-    # and helm-install the chart first) then wait for it to complete successfully.
-    info "Waiting for register-consumers job to appear (up to 5m)..."
-    # Match any revision suffix to be resilient to multiple helm upgrade cycles.
-    local deadline=$((SECONDS + 300))
-    local job_name=""
-    until [[ -n "$job_name" ]]; do
-        job_name=$(kubectl get jobs -n "${ns}" --no-headers \
-            -o custom-columns=NAME:.metadata.name 2>/dev/null \
-            | grep "^${release_name}-provisioning-register-consumers-" \
-            | tail -1 || true)
+# =============================================================================
+# Step 12 — Suze XR (Gentian IdP: Keycloak + OpenFGA, Stage 1)
+# =============================================================================
+wait_for_crd_established() {
+    local crd="$1"
+    local timeout_sec="${2:-120}"
+    local deadline=$((SECONDS + timeout_sec))
+    until kubectl get crd "${crd}" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null \
+        | grep -q True; do
         if (( SECONDS > deadline )); then
-            warn "  register-consumers job did not appear within 5m — continuing async."
-            warn "  Monitor: kubectl get pods -n ${ns} -l app.kubernetes.io/component=register-consumers"
-            success "Nubus Release submitted via provider-helm."
-            return 0
-        fi
-        [[ -n "$job_name" ]] || sleep 5
-    done
-    info "Waiting for register-consumers job to complete (up to 2m)..."
-    if kubectl wait "job/${job_name}" -n "${ns}" \
-            --for=condition=Complete --timeout=120s 2>/dev/null; then
-        success "  Consumer registration complete."
-    else
-        warn "  register-consumers job did not complete within 2m."
-        warn "  Check: kubectl logs -n ${ns} -l job-name=${job_name} --tail=20"
-    fi
-    success "Nubus deployed via provider-helm."
-
-    # ── Wait for stack-data-ums job; auto-recover if it fails ────────────────
-    # The stack-data-ums job:
-    #   1. Creates settings/extended_attribute LDAP objects (opendesk properties)
-    #   2. Immediately uses those properties to update the Administrator user
-    # The UDM REST API caches its module registry at startup, so it doesn't
-    # know about extended_attributes created in step 1.  If the job fails with
-    # "The User module has no property opendeskFileshare*", restart the UDM
-    # REST API (which reloads the module registry from LDAP) then reapply the job.
-    # Also handles: if the job fails with "globaladdressbookdisabled has invalid
-    # value" (stale opendesk_standard profile from a previous partial install),
-    # remove the stale profile from LDAP, restart UDM, and reapply the job.
-    _wait_and_fix_stack_data_ums() {
-        local sdu_job="" sdu_ns="${ns}" sdu_deadline
-        info "Waiting for stack-data-ums job to appear (up to 5m)..."
-        sdu_deadline=$((SECONDS + 300))
-        until [[ -n "$sdu_job" ]]; do
-            sdu_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
-                -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-            if (( SECONDS > sdu_deadline )); then
-                warn "  stack-data-ums job did not appear in 5m — skipping wait."
-                return 0
-            fi
-            [[ -n "$sdu_job" ]] || sleep 5
-        done
-
-        # Patch TTL early so failed retry pods are garbage-collected even if
-        # install is interrupted before finalize_stack_data_ums_job runs.
-        finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
-
-        info "Waiting for stack-data-ums job '${sdu_job}' to complete (up to 10m)..."
-        if kubectl wait "job/${sdu_job}" -n "${sdu_ns}" \
-                --for=condition=Complete --timeout=600s 2>/dev/null; then
-            success "  stack-data-ums job completed successfully."
-            finalize_stack_data_ums_job "${sdu_ns}" "${sdu_job}"
-            return 0
-        fi
-
-        # Job failed — check if it's the known extended_attribute cache issue.
-        local sdu_logs
-        sdu_logs=$(kubectl logs -n "${sdu_ns}" \
-            -l "app.kubernetes.io/name=stack-data-ums,job-name=${sdu_job}" \
-            --tail=30 2>/dev/null || true)
-        if printf '%s' "${sdu_logs}" | grep -qE "has no property opendesk|globaladdressbookdisabled"; then
-            if printf '%s' "${sdu_logs}" | grep -q "globaladdressbookdisabled"; then
-                warn "  stack-data-ums failed: stale opendesk_standard profile (invalid globaladdressbookdisabled)."
-                warn "  Removing stale opendesk_standard accessprofile from LDAP..."
-                kubectl exec -n "${sdu_ns}" \
-                    "${release_name}-ldap-server-primary-0" -- \
-                    ldapdelete -Y EXTERNAL -H ldapi:/// \
-                    "cn=opendesk_standard,cn=accessprofiles,cn=open-xchange,dc=swp-ldap,dc=internal" \
-                    2>/dev/null || true
-            else
-                warn "  stack-data-ums failed: UDM REST API had stale module cache."
-            fi
-            warn "  Restarting UDM REST API to reload extended_attribute definitions..."
-            kubectl rollout restart deployment "${release_name}-udm-rest-api" \
-                -n "${sdu_ns}" 2>/dev/null || true
-            kubectl rollout status deployment "${release_name}-udm-rest-api" \
-                -n "${sdu_ns}" --timeout=2m 2>/dev/null || true
-            success "  UDM REST API restarted."
-
-            # Delete the failed job and reapply from the Helm manifest.
-            info "  Reapplying stack-data-ums job..."
-            kubectl delete job "${sdu_job}" -n "${sdu_ns}" \
-                --ignore-not-found=true 2>/dev/null || true
-            apply_stack_data_ums_job_from_helm "${release_name}" "${sdu_ns}" || true
-
-            info "  Waiting for reapplied stack-data-ums job to complete (up to 10m)..."
-            sdu_deadline=$((SECONDS + 600))
-            local new_job=""
-            until [[ -n "$new_job" ]]; do
-                new_job=$(kubectl get jobs -n "${sdu_ns}" --no-headers \
-                    -o custom-columns=NAME:.metadata.name 2>/dev/null \
-                    | grep -E "^${release_name}-stack-data-ums-[0-9]+" | tail -1 || true)
-                if (( SECONDS > sdu_deadline )); then
-                    warn "  Reapplied stack-data-ums job did not appear — check manually."
-                    return 1
-                fi
-                [[ -n "$new_job" ]] || sleep 3
-            done
-            if kubectl wait "job/${new_job}" -n "${sdu_ns}" \
-                    --for=condition=Complete --timeout=600s 2>/dev/null; then
-                success "  stack-data-ums job succeeded after UDM restart."
-                finalize_stack_data_ums_job "${sdu_ns}" "${new_job}"
-            else
-                warn "  stack-data-ums still failing after UDM restart."
-                warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${new_job} --tail=40"
-                return 1
-            fi
-        else
-            warn "  stack-data-ums job failed for an unknown reason."
-            warn "  Check: kubectl logs -n ${sdu_ns} -l job-name=${sdu_job} --tail=40"
+            error "CRD ${crd} did not become Established within ${timeout_sec}s."
             return 1
         fi
-    }
-    _wait_and_fix_stack_data_ums || true
+        sleep 3
+    done
 }
+
+wait_xr_condition_ready() {
+    local api_version_kind="$1"  # e.g. xsuze/my-xr
+    local timeout_sec="$2"
+    local deadline=$((SECONDS + timeout_sec))
+    while true; do
+        local ready
+        ready=$(kubectl get "${api_version_kind}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+        if [[ "${ready}" == "True" ]]; then
+            return 0
+        fi
+        if (( SECONDS > deadline )); then
+            return 1
+        fi
+        sleep 10
+    done
+}
+
+# Suze Keycloak uses keycloakx chart service {release}-keycloakx-http (default release gentian-idp-keycloak).
+_suze_keycloak_service_name() {
+    echo "${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http"
+}
+
+_suze_openfga_service_name() {
+    echo "${GENTIAN_OPENFGA_RELEASE:-gentian-openfga}"
+}
+
+# True when Crossplane Helm releases have live Endpoints (not just MR status=deployed).
+_suze_idp_workloads_ready() {
+    local ns="platform-kernel"
+    local kc_svc fga_svc
+    kc_svc=$(_suze_keycloak_service_name)
+    fga_svc=$(_suze_openfga_service_name)
+    kubectl get svc -n "${ns}" "${kc_svc}" >/dev/null 2>&1 \
+        && kubectl get endpoints -n "${ns}" "${kc_svc}" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q . \
+        && kubectl get svc -n "${ns}" "${fga_svc}" >/dev/null 2>&1 \
+        && kubectl get endpoints -n "${ns}" "${fga_svc}" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .
+}
+
+_reset_suze_ghost_helm_releases() {
+    local xr_name="$1"
+    warn "Suze XR ${xr_name} reports Ready but IdP Services are missing — resetting Helm Release MRs..."
+    while IFS= read -r rel; do
+        [[ -z "${rel}" ]] && continue
+        warn "  Deleting Release ${rel}..."
+        kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
+    done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+}
+
+# Heal ghost Suze state and wait for Keycloak + OpenFGA Services (used by Steps 14 and 16).
+ensure_suze_idp_workloads() {
+    local xr_name="${1:-}"
+    local timeout_sec="${2:-600}"
+    local ns="platform-kernel"
+
+    if [[ -z "${xr_name}" ]]; then
+        xr_name=$(kubectl get suze dev-suze -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+    fi
+    [[ -n "${xr_name}" ]] || {
+        error "Suze composite not found — run Step 12 first."
+        return 1
+    }
+
+    if _suze_idp_workloads_ready; then
+        return 0
+    fi
+
+    if [[ "$(kubectl get "xsuze/${xr_name}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)" == "True" ]]; then
+        _reset_suze_ghost_helm_releases "${xr_name}"
+    fi
+
+    local kc_svc fga_svc
+    kc_svc=$(_suze_keycloak_service_name)
+    fga_svc=$(_suze_openfga_service_name)
+    info "Waiting for Suze IdP Services (${kc_svc}, ${fga_svc}) in ${ns}..."
+    local deadline=$((SECONDS + timeout_sec))
+    while (( SECONDS < deadline )); do
+        if _suze_idp_workloads_ready; then
+            success "Suze IdP workloads are live."
+            return 0
+        fi
+        sleep 10
+    done
+
+    error "Suze IdP workloads not ready within ${timeout_sec}s."
+    error "  kubectl get release.helm.crossplane.io -l crossplane.io/composite=${xr_name}"
+    error "  kubectl get svc,pods -n ${ns} | grep -E 'keycloak|openfga'"
+    return 1
+}
+
+apply_suze_xr() {
+    banner "Step 12 — Apply Suze XR (Secure Universal Zero-trust Environment)"
+
+    local claim="dev-suze"
+    local timeout_sec="${SUZE_XR_TIMEOUT_SEC:-1200}"
+
+    info "Waiting for Suze Argo apps + prerequisites in platform-kernel (up to 3m)..."
+    local deadline=$((SECONDS + 180))
+    until kubectl get application openfga-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
+        && kubectl get application keycloak-idp-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
+        && kubectl get configmap openfga-base-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get configmap keycloak-idp-base-values -n platform-kernel >/dev/null 2>&1 \
+        && kubectl get secret keycloak-idp-sensitive-values -n platform-kernel >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "Suze prerequisites not ready — refresh gentian-appsets and retry."
+            warn "  kubectl get applications -n argocd | grep -E 'openfga|keycloak-idp'"
+            break
+        fi
+        sleep 5
+    done
+
+    info "Applying Suze claim (${claim})..."
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
+    wait_for_crd_established "xsuze.gentianos.io" 120
+    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/suze.yaml"
+    kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/suze.yaml"
+
+    info "Waiting for Suze claim to bind (up to 60s)..."
+    local xr_name=""
+    deadline=$((SECONDS + 60))
+    until [[ -n "${xr_name}" ]]; do
+        xr_name=$(kubectl get suze "${claim}" -n crossplane-system \
+            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+        if (( SECONDS > deadline )); then
+            error "Suze claim ${claim} was never bound to a composite after 60s."
+            exit 1
+        fi
+        [[ -n "${xr_name}" ]] || sleep 3
+    done
+    info "  Composite name: ${xr_name}"
+
+    if wait_xr_condition_ready "xsuze/${xr_name}" 10 && _suze_idp_workloads_ready; then
+        success "Suze XR ${xr_name} is already Ready with live IdP workloads — skipping reinstall."
+        return 0
+    fi
+
+    if wait_xr_condition_ready "xsuze/${xr_name}" 10 && ! _suze_idp_workloads_ready; then
+        _reset_suze_ghost_helm_releases "${xr_name}"
+    fi
+
+    # Delete failed Helm Release MRs so the composition reinstalls with updated values.
+    local rel state synced
+    while IFS= read -r rel; do
+        [[ -z "${rel}" ]] && continue
+        state=$(kubectl get release.helm.crossplane.io/"${rel}" \
+            -o jsonpath='{.status.atProvider.state}' 2>/dev/null || true)
+        synced=$(kubectl get release.helm.crossplane.io/"${rel}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)
+        if [[ "${state}" == "failed" || "${synced}" == "False" ]]; then
+            warn "Resetting failed Suze Release ${rel} for clean reinstall..."
+            kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
+        fi
+    done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+
+    for hr in gentian-openfga gentian-idp-keycloak; do
+        if helm status "${hr}" -n platform-kernel 2>/dev/null | grep -qE 'STATUS: (failed|pending-install|pending-upgrade)'; then
+            warn "Uninstalling stuck Helm release ${hr} in platform-kernel..."
+            helm uninstall "${hr}" -n platform-kernel --wait --timeout=3m 2>/dev/null || true
+        fi
+    done
+
+    info "Waiting for XSuze ${xr_name} to be Ready (timeout: ${timeout_sec}s)..."
+    wait_xr_condition_ready "xsuze/${xr_name}" "${timeout_sec}" \
+    || {
+        error "XSuze ${xr_name} did not become Ready within ${timeout_sec}s."
+        error "  kubectl describe xsuze ${xr_name}"
+        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+        error "  kubectl get pods -n platform-kernel"
+        exit 1
+    }
+
+    ensure_suze_idp_workloads "${xr_name}" 300 || exit 1
+
+    if ! verify_keycloak_installation; then
+        error "Keycloak installation verification failed."
+        exit 1
+    fi
+
+    success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
+}
+
 
 # =============================================================================
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count nubus_synced argocd_url argocd_pw portal_user portal_pw
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url argocd_pw
 
     xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
@@ -1139,49 +1223,121 @@ print_summary_cp() {
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    nubus_synced=$(kubectl get release.helm.crossplane.io/nubus-dev \
-        -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || echo "unknown")
+    infra_pg_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-postgresql \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    infra_mdb_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-mariadb \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    infra_redis_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-redis \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    infra_minio_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-minio \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    local suze_ready openfga_ready keycloak_ready suze_xr
+    suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    suze_xr=$(kubectl get suze dev-suze -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || echo "dev-suze")
+    openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1)
+    keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep keycloak | head -1)
+    openfga_ready=$(kubectl get release.helm.crossplane.io/"${openfga_rel}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    keycloak_ready=$(kubectl get release.helm.crossplane.io/"${keycloak_rel}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
     argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    portal_user=$(resolve_portal_admin_email)
-    portal_pw=$(resolve_portal_admin_password)
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete                       ║${NC}"
+    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete (new-security)        ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
     echo -e "${GREEN}  Tenancy mode   : ${TENANCY_MODE:-multi}${NC}"
     echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
-    echo -e "${GREEN}  Nubus Release  : nubus-dev (Synced=${nubus_synced})${NC}"
+    echo -e "${GREEN}  InfraData PG   : dev-infra-data-postgresql (Ready=${infra_pg_ready})${NC}"
+    echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
+    echo -e "${GREEN}  InfraData Redis: dev-infra-data-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
+    echo ""
+    echo -e "${GREEN}  Completed      : Steps 14–17 (Stage 1 IdP, authz bridge, portal, app catalogue)${NC}"
+    # Portal credentials (MASTER_PASSWORD-derived; same as keycloak-portal-bootstrap Job).
+    if [[ -f "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh" ]]; then
+        # shellcheck source=scripts/portal-login-bootstrap.sh
+        source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+        print_portal_login_summary
+    fi
+    echo ""
+    echo -e "${GREEN}  Inspect authz stack:${NC}"
+    echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"
+    echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
-    echo -e "${GREEN}    kubectl get release.helm.crossplane.io/nubus-dev${NC}"
+    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep dev-infra-data${NC}"
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
     echo -e "${GREEN}    User : admin${NC}"
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
     echo ""
-    echo -e "${GREEN}  Portal / UMC admin:${NC}"
-    echo -e "${GREEN}    URL  : https://portal.${KERNEL_DOMAIN}/login/${NC}"
-    echo -e "${GREEN}    User : ${portal_user:-administrator@${KERNEL_DOMAIN}}${NC}"
-    echo -e "${GREEN}    Pass : ${portal_pw:-not available}${NC}"
-    echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
-    echo -e "${GREEN}  Tenants: none — provision when ready:${NC}"
-    echo -e "${GREEN}    kubectl gentian tenants list${NC}"
-    echo -e "${GREEN}    kubectl gentian tenants deploy demo${NC}"
+    echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
     echo ""
-    echo -e "${GREEN}  Gentian OS installation complete.${NC}"
-    echo ""
+}
+
+# =============================================================================
+# Stage 1: LLM serving (vLLM / LocalAI serving backend + LiteLLM proxy)
+# =============================================================================
+install_llm_serving() {
+    LLM_SUPPORT="${LLM_SUPPORT:-false}"
+    if [[ "${LLM_SUPPORT}" != "true" ]]; then
+        info "LLM serving support disabled; skipping deployment."
+        return 0
+    fi
+
+    banner "Step 13c — Deploying LLM serving stack"
+    local env="${ENV:-dev}"
+    local ns="platform-kernel"
+
+    # litellm-services.yaml references the litellm-dashboard-sso Secret
+    # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even though Step 14
+    # (portal bootstrap) runs after this step.
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    ensure_litellm_sso_secret >/dev/null
+
+    local manifests_dir="${SCRIPT_DIR}/kernel/services/llm/manifests/${env}"
+    kubectl apply -f "${manifests_dir}/llm-services.yaml" -f "${manifests_dir}/externalsecret.yaml"
+    render_and_apply_gpu_sharing_manifest "${manifests_dir}"
+
+    GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
+    if [[ "${GPU_ACCELERATION}" == "true" ]]; then
+        info "Deploying GPU vLLM inference backend(s)..."
+        render_and_apply_vllm_gpu_manifest "${manifests_dir}"
+    else
+        info "Deploying mock inference backend (GPU_ACCELERATION=false) — see vllm-gpu.yaml.tmpl to serve a real model."
+        kubectl apply -f "${manifests_dir}/vllm-mock.yaml"
+        # Mock uses a fixed name that never collides with vllm-<id>-inference,
+        # so flipping GPU_ACCELERATION back to false wouldn't otherwise clean
+        # up any real instances left running from before.
+        prune_stale_vllm_instances ""
+    fi
+
+    info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
+    kubectl wait externalsecret/llm-sensitive-values \
+        -n "${ns}" --for=condition=Ready --timeout=60s \
+    || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
+
+    ensure_litellm_teams || warn "LiteLLM team sync failed — retry with ./update.sh --llm."
+    ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./update.sh --llm."
+
+    success "LLM serving stack deployment complete."
 }
 
 # =============================================================================
@@ -1205,6 +1361,7 @@ main_cp() {
     load_operator_config
     load_creds_cache
     load_install_state
+    load_deployments_cluster_settings
     try_load_creds_from_openbao
 
     # Capture run start so stale-data guards can distinguish resources created
@@ -1218,74 +1375,133 @@ main_cp() {
     export INSTALL_START_EPOCH
     save_install_state
 
-    load_deployments_cluster_settings
-
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
     prompt_app_repos
     prompt_credentials
+    resolve_kernel_domain_from_claim  # already-bootstrapped cluster: read from its Claim, skip the prompt below
     prompt_kernel_domain
     prompt_network_mode
     prompt_kernel_secrets
     CROSSPLANE_MODE=1 check_prereqs
     _ensure_bao
+    scaffold_cluster_deployment  # new cluster only — no-op if already scaffolded
 
     # ── Crossplane core + providers ──────────────────────────────────────────
-    install_crossplane          # Step 0   — Crossplane controller
-    install_crossplane_providers  # Step 0b/0c — providers, XRD, Composition
+    install_crossplane          # Step 0  — Crossplane controller
+    install_crossplane_providers  # Step 0b — providers, XRD, Composition
 
     # ── Cluster infrastructure ───────────────────────────────────────────────
     create_namespaces           # Step 1
-    prewarm_cluster             # Step 2
-    install_cert_manager        # Step 3
-    install_kernel_cert_resources  # Step 3b — ClusterIssuers
-    install_envoy_gateway       # Step 3c — Envoy Gateway (ROUTING_MODE=gateway)
-    install_eso                 # Step 4
+    prewarm_cluster             # Step 1b
+    install_cert_manager        # Step 2
+    install_kernel_cert_resources  # Step 2b — ClusterIssuers
+    install_envoy_gateway       # Step 2c — Envoy Gateway (ROUTING_MODE=gateway)
+    install_eso                 # Step 3
 
     # ── ArgoCD + OpenBao bootstrap ────────────────────────────────────────────
-    install_argocd              # Step 5
-    setup_argocd_repos          # Step 5b
-    install_argocd_image_updater  # Step 5c
-    bootstrap_transit_app       # Step 6  — transit seal ArgoCD app
-    init_openbao_transit        # Step 7  — transit init + auto-unseal Secret
-    bootstrap_argocd_apps       # Step 8  — openbao, reloader, cnpg, globals
-    init_openbao                # Step 9  — primary OpenBao init (BAO_TOKEN set here)
+    install_argocd              # Step 4
+    install_argocd_image_updater  # Step 4b
+    bootstrap_transit_app       # Step 5  — transit seal ArgoCD app
+    init_openbao_transit        # Step 5b — transit init + auto-unseal Secret
+    bootstrap_argocd_apps       # Step 6  — openbao, reloader, cnpg, globals
+    init_openbao                # Step 7  — primary OpenBao init (BAO_TOKEN set here)
 
     # ── Crossplane kernel provisioning ───────────────────────────────────────
-    bootstrap_openbao_for_crossplane  # Step 10 — K8s auth + crossplane-write policy
-    create_crossplane_secrets         # Step 11 — derived-credential K8s Secrets
-    apply_cluster_xr                  # Step 12 — Cluster XR → all kernel MRs
-    seed_secrets_remaining            # Step 12b — remaining paths (registry, DNS, etc.)
+    bootstrap_openbao_for_crossplane  # Step 8  — K8s auth + crossplane-write policy
+    create_crossplane_secrets         # Step 9  — derived-credential K8s Secrets
+    apply_cluster_xr                  # Step 10 — Cluster XR → all kernel MRs
+    seed_secrets_remaining            # Step 10b — remaining paths (registry, DNS, etc.)
 
     # ── Optional TLS wildcard ─────────────────────────────────────────────────
-    install_kernel_wildcard     # Step 12c (optional) — wildcard cert (requires CF_API_TOKEN)
-    bootstrap_root_appset       # Step 12d — root app-of-apps (minio, redis, mariadb, IAM…)
+    install_kernel_wildcard     # Step 10c (optional) — wildcard cert (requires CF_API_TOKEN)
+    bootstrap_root_appset       # Step 10d — root app-of-apps (minio, redis, mariadb, IAM…)
 
-    # ── Pattern B chart deployments ─────────────────────────────────────────
-    install_provider_helm       # Step 13 — wait for provider-helm Healthy
-    deploy_nubus                # Step 14 — Nubus namespaces + ESO Secrets + Release CR
-    "${SCRIPT_DIR}/update.sh" --fix-kernel-ldap-scope  # Step 14b — kernel LDAP SUBTREE for shared-portal login (iam.md)
-    deploy_kernel_mail_services # Step 15b — Postfix + Dovecot (only when MAIL_SERVICE_MODE=kernel)
-    install_orchestrator        # Step 15 — gentian-os operator (CRDs + controller)
-    apply_kernel_gateway_overlays || true  # Step 15a — gateway value overlays
-    wait_for_gateway_platform || true    # Step 15d — kernel Gateway + HTTPRoutes when ROUTING_MODE=gateway
-    bootstrap_appprofiles       # Step 15c — AppProfile CRs from gentian-apps repo
+    # ── Crossplane provider-helm + shared infra ───────────────────────────────
+    install_provider_helm       # Step 11  — wait for provider-helm Healthy
+    apply_infra_data_xr         # Step 11b — shared PostgreSQL + MariaDB via InfraData XR
+    install_mac_admission       # Step 11c — Kyverno admission (Stage 0 MAC)
 
-    # Step 16 — wait for async ArgoCD hooks / apps, then verify cluster health.
-    wait_for_setup_iam_job || true
-    verify_argocd_apps || true
-    verify_keycloak_iframe_policy || true
-    verify_intercom_ics || true
-    reconcile_nextcloud_office || true  # Step 16c — richdocuments doc_format + WOPI (Collabora is wave 12)
+    # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
+    apply_suze_xr               # Step 12  — Gentian IdP (Keycloak + OpenFGA) via Suze XR
+    install_gentian_os_operator # Step 13  — operator with authz bridge + Cloudflare tunnel
+    wait_for_gateway_platform || true
+    install_kernel_mail         # Step 13b — MAIL_SERVICE_MODE (external SMTP or Postfix)
+    install_llm_serving         # Step 13c — Deploy LLM serving stack (vLLM/LocalAI + LiteLLM)
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
+    install_portal_login        # Step 14 — portal OIDC login dogfood
 
-    configure_github_actions_secrets   # Step 16d — CI_BOT_PAT → gentian-os Actions secrets
+    # ── App catalogue + CLI (required for kubectl gentian apps install) ─────
+    bootstrap_appprofiles       # Step 15 — AppProfile CRs from gentian-apps repo
+    install_app_catalogue       # Step 16 — kubectl-gentian plugin + AppCatalogue CRD
 
-    # Clear the persisted run-start epoch so the next install (after a future
-    # uninstall/reinstall cycle) starts with a fresh stale-data cutoff.
+    # ── Optional kernel mail / gateway (uncomment when MAIL_SERVICE_MODE=kernel) ─
+    # deploy_kernel_mail_services
+    # apply_kernel_gateway_overlays || true
+    # wait_for_gateway_platform || true
+    # verify_argocd_apps || true
+    # verify_keycloak_iframe_policy || true
+    # configure_github_actions_secrets   # CI_BOT_PAT → gentian-os Actions secrets
+
+    success "Bootstrap complete — Stage 1 IdP (Keycloak + OpenFGA), authz bridge, and portal login are live."
     unset INSTALL_START_EPOCH
     save_install_state
-
     print_summary_cp
 }
+
+run_operator_only() {
+    load_operator_config
+    load_creds_cache
+    load_install_state
+    load_deployments_cluster_settings
+    try_load_creds_from_openbao
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        error "KERNEL_DOMAIN not set after loading install.env and cluster-settings.env."
+        error "  Set GENTIAN_DEPLOYMENTS_CLUSTER in install.env (e.g. test)."
+        error "  Ensure gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env defines KERNEL_DOMAIN."
+        exit 1
+    fi
+    info "Using KERNEL_DOMAIN=${KERNEL_DOMAIN}"
+    install_gentian_os_operator
+    wait_for_gateway_platform || true
+}
+
+run_portal_only() {
+    load_operator_config
+    load_creds_cache
+    load_install_state
+    load_deployments_cluster_settings
+    try_load_creds_from_openbao
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        error "KERNEL_DOMAIN not set after loading install.env and cluster-settings.env."
+        error "  Set GENTIAN_DEPLOYMENTS_CLUSTER in install.env (e.g. test)."
+        error "  Ensure gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env defines KERNEL_DOMAIN."
+        exit 1
+    fi
+    [[ -n "${MASTER_PASSWORD:-}" ]] || { error "MASTER_PASSWORD not set — add to install.secrets.env."; exit 1; }
+    [[ ${#MASTER_PASSWORD} -ge 16 ]] || { error "MASTER_PASSWORD is too weak. It must be at least 16 characters long."; exit 1; }
+    # Try to read existing derivation salt from OpenBao
+    local existing_salt
+    existing_salt=$(bao kv get -mount=secret -field=salt gentian-os/kernel/internal/master-password 2>/dev/null || true)
+    if [[ -n "${existing_salt}" ]]; then
+        export DERIVATION_SALT="${existing_salt}"
+    fi
+    # shellcheck source=scripts/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    install_portal_login
+}
+
+case "${1:-}" in
+    --operator-only)
+        run_operator_only
+        exit 0
+        ;;
+    --portal-only)
+        run_portal_only
+        exit 0
+        ;;
+esac
 
 main_cp "$@"

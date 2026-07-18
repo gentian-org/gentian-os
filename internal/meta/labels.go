@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,13 +20,27 @@ package meta
 
 const (
 	TenantLabel    = "gentianos.io/tenant"
+	AppLabel       = "gentianos.io/app"
 	ManagedByLabel = "app.kubernetes.io/managed-by"
 	ManagedByValue = "gentian-os"
 
-	// UMCFrontendComponent marks portal redirect resources owned by the shared kernel portal.
-	UMCFrontendComponentLabel = "gentianos.io/component"
-	UMCFrontendComponentValue = "umc-frontend"
+	// NetPolicyTypeLabel classifies operator-managed NetworkPolicies.
+	NetPolicyTypeLabel = "gentianos.io/netpolicy-type"
+	NetPolicyBaseline  = "baseline"
+	NetPolicyKernel    = "kernel-access"
+	NetPolicyAppInternal = "app-internal-access"
+	NetPolicyAppEgress   = "app-egress"
+	NetPolicyContract    = "contract-allow"
+	NetPolicyTenantCache = "tenant-cache-access"
+
+	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
+	ComponentLabel = "gentianos.io/component"
+	// TenantCacheComponentValue marks the shared per-tenant Memcached workload.
+	TenantCacheComponentValue = "tenant-cache"
+
+	// portalRedirectComponent marks portal redirect resources owned by the shared kernel portal.
+	PortalRedirectComponentLabel = ComponentLabel
+	PortalRedirectComponentValue = "portal-redirect"
 
 	EnvoyGatewayInstallNamespace = "envoy-gateway-system"
-	IngressNamespace             = "ingress"
 )

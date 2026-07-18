@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ package controller_test
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +28,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,7 +53,7 @@ var testClient client.Client
 
 // envtestWaitTimeout is the default poll deadline for controller envtest waits.
 // Tests share one manager; under t.Parallel() load on CI runners, shorter
-// deadlines flake when many tenants reconcile and extra Keycloak/LDAP Jobs run.
+// deadlines flake when many tenants reconcile and extra Keycloak Jobs run.
 const envtestWaitTimeout = 45 * time.Second
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
@@ -59,15 +62,8 @@ const tenantReadyTimeout = envtestWaitTimeout
 // jobAppearTimeout is an alias for waits on Job creation or intermediate conditions.
 const jobAppearTimeout = envtestWaitTimeout
 
-// ldapManualTestTenants lists tenant names whose LDAP base jobs must not be
-// auto-completed because ldap_reconciler_test.go asserts provisioning order.
-var ldapManualTestTenants = map[string]struct{}{
-	"adminpolicy": {},
-	"bindtest":    {},
-}
-
 // dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
-// manually in reconciler tests (redis/pg/mariadb/s3/nc-group assertions).
+// manually in reconciler tests (redis/pg/mariadb/s3 assertions).
 var dataPlaneManualTestTenants = map[string]struct{}{
 	"cacheready":   {},
 	"storageready": {},
@@ -76,8 +72,12 @@ var dataPlaneManualTestTenants = map[string]struct{}{
 	"rolejob":      {},
 	"dbready":      {},
 	"dbdelete":     {},
-	"nc-always":    {},
-	"nccreate":     {},
+}
+
+// deleteCleanupManualTestTenants lists tenants whose delete-cleanup Jobs must not be
+// auto-completed so tests can observe Job creation.
+var deleteCleanupManualTestTenants = map[string]struct{}{
+	"storagedelete": {},
 }
 
 // deleteRetainManualTestTenants lists tenants that assert Retain cleanup Job creation.
@@ -85,39 +85,12 @@ var deleteRetainManualTestTenants = map[string]struct{}{
 	"identretain": {},
 }
 
-func ldapBaseJobTenant(jobName string) (tenant string, ok bool) {
-	for _, prefix := range []string{
-		"ldap-ou-",
-		"ldap-mba-groups-",
-		"ldap-app-user-template-",
-		"ldap-app-user-capabilities-",
-		"ldap-admin-user-",
-		"ldap-admin-policy-",
-	} {
-		if strings.HasPrefix(jobName, prefix) {
-			return strings.TrimPrefix(jobName, prefix), true
-		}
-	}
-	return "", false
-}
-
-func shouldAutoCompleteLDAPJob(jobName string) bool {
-	tenant, ok := ldapBaseJobTenant(jobName)
-	if !ok {
-		return false
-	}
-	_, manual := ldapManualTestTenants[tenant]
-	return !manual
-}
-
 func provisioningJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
-		"ldap-bind-",
 		"redis-acl-",
 		"pg-role-",
 		"mariadb-setup-",
 		"s3-bucket-",
-		"nc-group-",
 	} {
 		if strings.HasPrefix(jobName, prefix) {
 			rest := strings.TrimPrefix(jobName, prefix)
@@ -135,14 +108,16 @@ func shouldAutoCompleteProvisioningJob(jobName string) bool {
 	if !ok {
 		return false
 	}
-	if _, manual := ldapManualTestTenants[tenant]; manual {
-		return false
-	}
 	if _, manual := dataPlaneManualTestTenants[tenant]; manual {
 		switch {
 		case strings.HasPrefix(jobName, "redis-acl-"):
 			return false
 		case strings.HasPrefix(jobName, "pg-role-"):
+			// Portal shell DB is required for every tenant; manual data-plane tests
+			// control app-specific role jobs only.
+			if strings.HasSuffix(jobName, "-shell") {
+				return true
+			}
 			return false
 		case strings.HasPrefix(jobName, "mariadb-setup-"):
 			return false
@@ -157,11 +132,8 @@ func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
 		"keycloak-realm-delete-",
 		"keycloak-realm-disable-",
-		"ldap-ou-delete-",
-		"ldap-lock-",
 		"mariadb-delete-",
 		"s3-delete-",
-		"nc-group-delete-",
 		"redis-acl-delete-",
 	} {
 		if strings.HasPrefix(jobName, prefix) {
@@ -180,8 +152,29 @@ func shouldAutoCompleteDeleteCleanupJob(jobName string) bool {
 	if !ok {
 		return false
 	}
+	if _, manual := deleteCleanupManualTestTenants[tenant]; manual {
+		return false
+	}
 	_, manual := deleteRetainManualTestTenants[tenant]
 	return !manual
+}
+
+// waitForTenantConditionTrue polls until the tenant has condType=True.
+func waitForTenantConditionTrue(t *testing.T, tenantName, condType string) *gentianov1alpha1.Tenant {
+	t.Helper()
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, tenantReadyTimeout, func() bool {
+		if err := testClient.Get(context.Background(), types.NamespacedName{Name: tenantName}, updated); err != nil {
+			return false
+		}
+		for _, c := range updated.Status.Conditions {
+			if c.Type == condType && c.Status == metav1.ConditionTrue {
+				return true
+			}
+		}
+		return false
+	})
+	return updated
 }
 
 // waitForTenantConditionReason polls until the tenant has a status condition
@@ -211,6 +204,30 @@ func markJobSucceeded(job *batchv1.Job) {
 		{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
 		{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastProbeTime: now, LastTransitionTime: now},
 	}
+}
+
+// startFakeKeycloak stands in for the Keycloak Admin REST API. envtest has no
+// real Keycloak, but the tenant reconcile now calls the Admin REST API
+// in-process (browser security headers in the SharedKernel stage, app-admin
+// group membership in the AppsAndEdge stage). Without a reachable endpoint the
+// SharedKernel stage requeues forever and tenants never reach Ready. The
+// handler issues admin tokens, accepts realm updates (204), and returns empty
+// arrays for group/member/user list queries.
+func startFakeKeycloak() *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/realms/master/protocol/openid-connect/token", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"test-admin-token","expires_in":300}`)
+	})
+	mux.HandleFunc("/admin/realms/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	return httptest.NewServer(mux)
 }
 
 // TestMain sets up a single envtest environment and controller manager shared
@@ -256,13 +273,12 @@ func TestMain(m *testing.M) {
 
 	if err := (&controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
+		APIReader:                mgr.GetAPIReader(),
 		Scheme:                   mgr.GetScheme(),
 		KernelDomain:             "desk.gentian.org",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,
-		LDAPBase:                 "dc=swp-ldap,dc=internal",
-		LDAPServer:               "ldap://nubus-dev-ldap-server.gentian-dev.svc.cluster.local:389",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -288,16 +304,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// argocd namespace is required by the cache reconciler for Memcached Application CRs.
-	if err := testClient.Create(context.Background(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "argocd"},
-	}); err != nil {
-		panic(err)
-	}
-
 	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
-	// gentian-infra-dev and ingress are referenced by gateway/isolation tests.
-	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "ingress"} {
+	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"} {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
 		}); err != nil {
@@ -305,21 +313,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// udm-admin Secret is required by the mail reconciler for Dovecot LDAP config.
-	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "udm-admin", Namespace: "platform-kernel"},
-		Data: map[string][]byte{
-			"url":               []byte("http://nubus-dev-ldap-server.gentian-dev.svc.cluster.local/univention/"),
-			"password":          []byte("test-ldap-password"),
-			"ldapBase":          []byte("dc=swp-ldap,dc=internal"),
-			"ldapHost":          []byte("nubus-dev-ldap-server.gentian-dev.svc.cluster.local"),
-			"ldapsearchDovecot": []byte("test-ldap-password"),
-		},
-	}); err != nil {
-		panic(err)
-	}
-
-	// dovecot-admin Secret provides OIDC + doveadm credentials for the opendesk-dovecot chart.
+	// dovecot-admin Secret provides OIDC + doveadm credentials for shared Dovecot.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
@@ -330,11 +324,15 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// keycloak-admin Secret provides the Keycloak URL for OIDC token introspection.
+	// keycloak-admin Secret provides the Keycloak URL for OIDC token introspection
+	// and Admin REST calls. Point it at the in-process fake so reconcile stages
+	// that talk to Keycloak (browser security headers, app-admin membership)
+	// succeed under envtest.
+	fakeKC := startFakeKeycloak()
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
 		Data: map[string][]byte{
-			"url":      []byte("http://nubus-dev-keycloak.gentian-dev.svc.cluster.local:8080"),
+			"url":      []byte(fakeKC.URL),
 			"username": []byte("kcadmin"),
 			"password": []byte("test-kc-password"),
 		},
@@ -342,7 +340,19 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	catalogRaw, err := os.ReadFile(filepath.Join("..", "oidc", "testdata", "opendesk-catalog.yaml"))
+	// minio-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
+	if err := testClient.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "platform-kernel"},
+		Data: map[string][]byte{
+			"endpoint":  []byte("http://minio.platform-kernel.svc:9000"),
+			"accessKey": []byte("minioadmin"),
+			"secretKey": []byte("minioadmin"),
+		},
+	}); err != nil {
+		panic(err)
+	}
+
+	catalogRaw, err := os.ReadFile(filepath.Join("..", "oidc", "testdata", "minimal-oidc-catalog.yaml"))
 	if err != nil {
 		panic(err)
 	}
@@ -354,10 +364,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// Auto-complete Keycloak Jobs and LDAP base provisioning Jobs for tests that
-	// do not assert job ordering manually. ensureIdentity blocks on the LDAP
-	// admin-user Job when ensureLDAPBase has created it; without auto-completion
-	// most controller tests time out waiting for Phase=Ready.
+	// Auto-complete Keycloak Jobs and data-plane provisioning Jobs for tests that
+	// do not assert job ordering manually.
 	go func() {
 		for {
 			time.Sleep(50 * time.Millisecond)
@@ -370,10 +378,9 @@ func TestMain(m *testing.M) {
 					}
 					name := j.Name
 					autoKeycloak := strings.HasPrefix(name, "keycloak-")
-					autoLDAP := shouldAutoCompleteLDAPJob(name)
 					autoProv := shouldAutoCompleteProvisioningJob(name)
 					autoDeleteCleanup := shouldAutoCompleteDeleteCleanupJob(name)
-					if !autoKeycloak && !autoLDAP && !autoProv && !autoDeleteCleanup {
+					if !autoKeycloak && !autoProv && !autoDeleteCleanup {
 						continue
 					}
 					if autoDeleteCleanup && strings.Contains(name, "realm-disable") {
@@ -406,9 +413,31 @@ func TestMain(m *testing.M) {
 		}
 	}()
 
+	// Memcached Deployments are created from tenant data-plane manifests; envtest has
+	// no kubelet to mark them ready, so integration tests would stall in CacheReady.
+	go func() {
+		for {
+			time.Sleep(50 * time.Millisecond)
+			var deps appsv1.DeploymentList
+			if err := testClient.List(context.Background(), &deps); err != nil {
+				continue
+			}
+			for _, dep := range deps.Items {
+				if dep.Name != "memcached" || dep.Status.ReadyReplicas > 0 {
+					continue
+				}
+				if !strings.HasPrefix(dep.Namespace, "tenant-") {
+					continue
+				}
+				patchDeploymentReady(context.Background(), testClient, dep.Namespace, dep.Name)
+			}
+		}
+	}()
+
 	code := m.Run()
 
 	cancel()
+	fakeKC.Close()
 	_ = env.Stop()
 	os.Exit(code)
 }
@@ -713,7 +742,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// For Retain policy deleteLDAP preserves the admin user (no delete job created).
 	// For Retain policy deleteIdentity is a no-op: retainer has no apps so no realm was provisioned.
 
 	// Wait for Tenant CR to be gone (finalizer removed)
@@ -753,10 +781,8 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// For Delete policy deleteIdentity and deleteLDAP create cleanup jobs.
+	// For Delete policy deleteIdentity creates cleanup jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-destroyer", "platform-kernel")
-	go markJobCompleteWhenReady("nc-group-delete-destroyer", "platform-kernel")
 
 	// Wait for Tenant CR to be gone
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -770,6 +796,48 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 	if err == nil && ns.DeletionTimestamp == nil {
 		t.Error("namespace should be deleted or terminating after Delete policy")
 	}
+}
+
+// TestTenantReconciler_DataPlaneRedisAndPostgresJobs verifies a tenant with both
+// cache and database profiles triggers kernel Jobs for each data-plane engine.
+func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
+	t.Parallel()
+	pgProfile := newPostgresProfile("combo-pg")
+	redisProfile := newRedisProfile("combo-redis")
+	for _, p := range []*gentianov1alpha1.AppProfile{pgProfile, redisProfile} {
+		if err := testClient.Create(context.Background(), p); err != nil {
+			t.Fatalf("create AppProfile: %v", err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(context.Background(), p) })
+	}
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "combodp"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Combo DP Co",
+			Domain:      "combodp.example.com",
+			AdminEmail:  "admin@combodp.example.com",
+			Apps: []gentianov1alpha1.TenantApp{
+				{Profile: "combo-pg"},
+				{Profile: "combo-redis"},
+			},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	pgJob := &batchv1.Job{}
+	waitFor(t, jobAppearTimeout, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "pg-role-combodp-combo-pg", Namespace: "platform-kernel"}, pgJob) == nil
+	})
+	redisJob := &batchv1.Job{}
+	waitFor(t, jobAppearTimeout, func() bool {
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "platform-kernel"}, redisJob) == nil
+	})
 }
 
 // containsPolicyType checks if the policy type is in the list.

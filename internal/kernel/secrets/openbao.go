@@ -1,18 +1,26 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
+
 
 package secrets
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,13 +60,19 @@ func NewKVClient(addr, role, saTokenPath string) *KVClient {
 	if saTokenPath == "" {
 		saTokenPath = defaultSATokenPath
 	}
+	var tr http.RoundTripper
+	if os.Getenv("BAO_SKIP_VERIFY") == "true" || os.Getenv("VAULT_SKIP_VERIFY") == "true" {
+		tr = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
 	return &KVClient{
 		addr:        strings.TrimRight(addr, "/"),
 		mount:       Mount,
 		authPath:    "kubernetes",
 		role:        role,
 		saTokenPath: saTokenPath,
-		http:        &http.Client{Timeout: 10 * time.Second},
+		http:        &http.Client{Timeout: 10 * time.Second, Transport: tr},
 	}
 }
 

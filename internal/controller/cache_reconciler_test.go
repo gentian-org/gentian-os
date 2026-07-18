@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // newRedisProfile creates a minimal AppProfile that requires a Redis cache.
@@ -86,11 +87,7 @@ func TestCache_NoCacheApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nocache"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nocache", "CacheReady")
 
 	var cond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -101,9 +98,6 @@ func TestCache_NoCacheApps(t *testing.T) {
 	}
 	if cond == nil {
 		t.Fatal("expected CacheReady condition")
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected CacheReady=True, got %v", cond.Status)
 	}
 	if cond.Reason != "NoCacheRequired" {
 		t.Errorf("expected reason NoCacheRequired, got %q", cond.Reason)
@@ -150,7 +144,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 		t.Fatal("expected at least one container in Redis ACL Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "redis:7-alpine" {
+	if container.Image != kernel.DefaultRedisProvisionerImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
@@ -321,10 +315,8 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteCache; mark their jobs.
+	// deleteIdentity runs before deleteCache; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-cachedelete", "platform-kernel")
-	go markJobCompleteWhenReady("nc-group-delete-cachedelete", "platform-kernel")
 
 	// Redis delete Job should appear.
 	deleteJob := &batchv1.Job{}

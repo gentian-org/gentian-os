@@ -7,31 +7,26 @@ metadata:
   name: gentian
   namespace: argocd
 spec:
-  description: Gentian OpenDesk deployment across all environments
+  description: Gentian OS kernel and tenant deployments across all environments
 
   # Source repositories
   sourceRepos:
-  - 'https://github.com/gentian-org/gentian-os'                                                         # OS/infrastructure Git repository
+  # Multi-source $values ref (bootstrap + ApplicationSets)
+  - 'https://github.com/gentian-org/gentian-os'
+  - 'https://github.com/gentian-org/gentian-os/*'                                                         # Paths under gentian-os repo
+  - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
+  - 'https://github.com/gentian-org/gentian-pro'                                                      # Pro / OpenDesk catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
-  - 'registry.opencode.de/*'                                                                            # ZenDiS OCI registry (without protocol)
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-postgresql'     # PostgreSQL chart
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-mariadb'        # MariaDB chart
-  - 'registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'                   # Univention charts (Nubus, Intercom)
-  - 'registry.opencode.de/bmi/opendesk/components/platform-development/charts/opendesk-keycloak-bootstrap'  # Keycloak Bootstrap
-  - 'registry.opencode.de/bmi/opendesk/components/external/charts/bitnami-charts'                      # Bitnami charts (MinIO, Redis)
-  - 'oci://registry.opencode.de/*'                                                                      # ZenDiS OCI registry (with protocol)
-  - 'oci://registry.opencode.de/bmi/opendesk/*'                                                         # All OpenDesk paths with OCI
-  - 'oci://registry.opencode.de/bmi/opendesk/components/platform-development/*'                        # OpenDesk platform-development path
-  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/*'                         # Univention path
-  - 'oci://registry.opencode.de/bmi/opendesk/components/supplier/univention/charts-mirror'             # Univention charts-mirror specifically
+  - 'https://github.com/gentian-org/gentian-corp'                                                       # Gentian commercial frontpage portal
   - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
   - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
   - 'ghcr.io/cloudnative-pg/charts'                                                                     # CloudNativePG OCI charts registry
+  - 'https://kyverno.github.io/kyverno/*'                                                               # Kyverno admission controller
 
   # Destination clusters and namespaces
   destinations:
@@ -50,6 +45,8 @@ spec:
   - namespace: 'platform-kernel'             # Shared CNPG Cluster + psql provisioner Jobs
     server: https://kubernetes.default.svc
   - namespace: 'crossplane-system'           # Crossplane managed resources (provider-http Requests, ESO)
+    server: https://kubernetes.default.svc
+  - namespace: 'kyverno'                     # Kyverno admission controller
     server: https://kubernetes.default.svc
 
   # Cluster-scoped resources (allowed at cluster level)
@@ -96,17 +93,3 @@ spec:
   # Degraded after a reboot is hidden behind orphan warnings).
   orphanedResources:
     warn: false
-    ignore:
-    # Nubus runtime-generated resources (created by init jobs/hooks, no Helm tracking labels)
-    - kind: ConfigMap
-      name: nubus-dev-ldap-server-status
-    - kind: Secret
-      name: nubus-dev-ecdsa-ca-secret
-    - kind: Secret
-      name: nubus-dev-guardian-management-api-postgresql-credentials
-    - kind: Secret
-      name: nubus-dev-portal-consumer-object-storage
-    - kind: Secret
-      name: nubus-dev-saml-tls
-    - kind: Service
-      name: ums-keycloak

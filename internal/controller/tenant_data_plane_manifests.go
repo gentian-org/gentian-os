@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -10,7 +10,8 @@ You may obtain a copy of the License at
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the License.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package controller
@@ -33,18 +34,15 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	var jobs []batchv1.Job
 	nsName := tenantNamespaceName(tenant)
 
+	if err := r.appendPortalShellRoleJob(ctx, tenant, nsName, &jobs); err != nil {
+		return nil, err
+	}
+
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
 	for _, appName := range pgApps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		if appUsesCrossplaneDBInit(profile) {
-			continue
-		}
 		dbName := databaseName(tenant, appName)
 		rolePassword := ""
 		if r.Seeder != nil {
@@ -62,7 +60,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
 	}
 
-	mariaApps, err := r.collectMariaDBApps(ctx, tenant)
+	mariaApps, err := r.collectMariaDBApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
@@ -91,40 +89,40 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		jobs = append(jobs, *makeMariaDBSetupJob(tenant, appName, dbPassword, allowDynamic))
 	}
 
-	s3Apps, err := r.collectStorageApps(ctx, tenant)
+	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
 	for _, appName := range s3Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		if appUsesCrossplaneS3Init(profile) {
-			continue
-		}
+		accessKey, secretKey := "", ""
 		if r.Seeder != nil {
-			if _, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
-				Bucket: s3BucketName(tenant, appName),
-			}); seedErr != nil {
+			creds, seedErr := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
+				Endpoint: r.minioEndpoint(ctx),
+				Bucket:   s3BucketName(tenant, appName),
+				Region:   "us-east-1",
+			})
+			if seedErr != nil {
 				return nil, fmt.Errorf("seed s3 for %s: %w", appName, seedErr)
 			}
+			accessKey, secretKey = creds.AccessKey, creds.SecretKey
 		}
-		jobs = append(jobs, *makeS3BucketJob(tenant, appName))
+		jobs = append(jobs, *makeS3BucketJob(tenant, appName, accessKey, secretKey))
 	}
 
-	jobs = append(jobs, *makeNextcloudGroupJob(tenant))
-
-	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant)
+	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
 	for _, appName := range redisApps {
 		userPassword := ""
 		if r.Seeder != nil {
+			redisHost, redisPort, hostErr := r.redisCacheEndpoint(ctx)
+			if hostErr != nil {
+				return nil, hostErr
+			}
 			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
-				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "redis-master", kernelNamespace),
-				Port: "6379",
+				Host: redisHost,
+				Port: redisPort,
 			})
 			if seedErr != nil {
 				return nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)
@@ -142,23 +140,23 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	var objects []client.Object
 	nsName := tenantNamespaceName(tenant)
 
+	objects = append(objects, buildDatabaseCR(
+		tenant,
+		nsName,
+		databaseName(tenant, portalShellAppName),
+		portalShellAppName,
+	))
+
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
 	for _, appName := range pgApps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
-		}
-		if appUsesCrossplaneDBInit(profile) {
-			continue
-		}
 		dbName := databaseName(tenant, appName)
 		objects = append(objects, buildDatabaseCR(tenant, nsName, dbName, appName))
 	}
 
-	_, memcachedApps, err := r.collectCacheApps(ctx, tenant)
+	_, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +183,11 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 		return nil, err
 	}
 	for _, ib := range bindings {
+		if r.Seeder != nil {
+			if _, err := r.Seeder.SeedContract(ctx, tenant.Name, ib.Spec.Contract); err != nil {
+				return nil, fmt.Errorf("seed contract %s: %w", ib.Spec.Contract, err)
+			}
+		}
 		objects = append(objects, ib)
 	}
 
@@ -195,6 +198,31 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	objects = append(objects, edgeObjects...)
 
 	return objects, nil
+}
+
+func (r *TenantReconciler) appendPortalShellRoleJob(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	jobs *[]batchv1.Job,
+) error {
+	appName := portalShellAppName
+	dbName := databaseName(tenant, appName)
+	rolePassword := ""
+	if r.Seeder != nil {
+		creds, err := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
+			Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+			Port: "5432",
+			Name: dbName,
+			User: roleUserName(tenant.Name, appName),
+		})
+		if err != nil {
+			return fmt.Errorf("seed portal shell database: %w", err)
+		}
+		rolePassword = creds.Password
+	}
+	*jobs = append(*jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
+	return nil
 }
 
 // collectDesiredIntegrationBindings returns IntegrationBinding CRs that should

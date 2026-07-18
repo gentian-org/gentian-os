@@ -1,34 +1,21 @@
 # =============================================================================
-# Functional Settings Baseline — Gentian openDesk Deployment
+# Functional Settings Baseline — Gentian Deployment
 # =============================================================================
-# This file mirrors the structure of the upstream openDesk functional.yaml:
-#   opendesk/helmfile/environments/default/functional.yaml.gotmpl
+# Single source of truth for kernel behavioral settings. Values here define what
+# we intend. They are manually projected into chart-specific _base.yaml files
+# (marked with "# functional.yaml: <key>") because ArgoCD/Helm has no template
+# layer equivalent to helmfile gotmpl transforms.
 #
-# PURPOSE:
-#   Single source of truth for ALL behavioral settings. The values here define
-#   what we intend. They are manually projected into chart-specific _base.yaml
-#   files (marked with "# functional.yaml: <key>") because ArgoCD/Helm has no
-#   template layer equivalent to helmfile's gotmpl transforms.
+# Catalogue app settings belong in gentian-apps profiles, not here.
 #
-# DRIFT DETECTION:
-#   Run on every upstream openDesk release bump:
-#     diff <(grep -E "^\s+\w+" ../opendesk/helmfile/environments/default/functional.yaml.gotmpl \
-#             | sed 's/:.*//' | sort) \
-#          <(grep -E "^\s+\w+" values/env/functional.yaml \
-#             | sed 's/:.*//' | sort)
-#   New keys upstream → add here + wire into relevant _base.yaml.
-#   Removed keys upstream → remove here + clean up _base.yaml.
-#
-# DEVIATIONS FROM UPSTREAM DEFAULTS (intentional):
-#   admin.portal.deploymentTimestamp.enabled  false   (upstream: true)
+# DEVIATIONS FROM DEFAULTS (intentional):
+#   admin.portal.deploymentTimestamp.enabled  false
 #     GitOps mode — avoids a spurious ArgoCD diff on every deploy.
-#   portal.linkLegalNotice                    ~       (upstream: https://opendesk.eu/impressum)
-#   portal.linkPrivacyStatement               ~       (upstream: https://www.zendis.de/datenschutzerklarung)
-#   portal.linkDocumentation                  ~       (upstream: https://docs.opendesk.eu/)
-#   portal.linkFeedback                       ~       (upstream: https://opendesk.eu/feedback)
+#   portal.linkLegalNotice                    ~
+#   portal.linkPrivacyStatement               ~
+#   portal.linkDocumentation                  ~
+#   portal.linkFeedback                       ~
 #     No external links set for this deployment; enable when public-facing.
-#
-# UPSTREAM SYNC: openDesk main branch, verified 2026-03-14
 # =============================================================================
 ---
 
@@ -60,7 +47,7 @@ authentication:
       - "Domain Admins"
 
   oidc:
-    # Additional OIDC clients beyond the defaults (intercom-service etc.)
+    # Additional OIDC clients beyond the defaults.
     clients: ~
     # Additional client scopes beyond the defaults
     clientScopes: ~
@@ -69,7 +56,7 @@ authentication:
   # All numeric "Lifespan" values are in seconds.
   # Ref.: https://www.keycloak.org/docs/latest/server_admin
   realmSettings:
-    accessTokenLifespan: 300                 # 5 minutes
+    accessTokenLifespan: 43200               # 12 hours
     revokeRefreshToken: false
     ssoSessionIdleTimeout: 14400             # 4 hours
     ssoSessionMaxLifespan: 57600             # 16 hours
@@ -91,179 +78,22 @@ authentication:
     idpDetails: {}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Chat (Element / Synapse)
-# ─────────────────────────────────────────────────────────────────────────────
-chat:
-  matrix:
-    profile:
-      # Allow users to change their own Matrix display name.
-      allowUsersToUpdateDisplayname: true
-      # Use LDAP entryUUID for the Matrix ID localpart (immutable identifiers).
-      useImmutableIdentifierForLocalpart: false
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data Protection
-# ─────────────────────────────────────────────────────────────────────────────
-dataProtection:
-  matrixPresence:
-    # Share user presence status (online/offline) with contacts.
-    enabled: false
-  jitsiRoomHistory:
-    # Store room history in browser local storage.
-    enabled: true
-
-# ─────────────────────────────────────────────────────────────────────────────
-# External Services
-# ─────────────────────────────────────────────────────────────────────────────
-externalServices:
-  nubus:
-    udmRestApi:
-      # Expose the UDM REST API externally for e2e test user import.
-      enabled: true
-  matrix:
-    federation:
-      # Enable Matrix federation with other homeservers.
-      enabled: true
-      # Allow-list: empty = federate with all homeservers.
-      domainAllowList: []
-
-# ─────────────────────────────────────────────────────────────────────────────
-# File Store (Nextcloud)
-# ─────────────────────────────────────────────────────────────────────────────
-filestore:
-  naming:
-    # Characters forbidden in file/directory names. Prevents sync issues on
-    # Windows/macOS clients that do not support these characters.
-    forbiddenChars:
-      - '*'
-      - '"'
-      - '|'
-      - '?'
-      - ';'
-      - ':'
-      - '\'
-      - '/'
-      - '~'
-      - '<'
-      - '>'
-  quota:
-    # Default storage quota per user, in gigabytes.
-    default: 1
-  sharing:
-    external:
-      # Allow sharing files with external (unauthenticated) participants.
-      enabled: false
-      enforcePasswords: false
-      sendPasswordMail: true
-      expiry:
-        activeByDefault: true
-        enforced: false
-        defaultDays: 30
-    internal:
-      expiry:
-        activeByDefault: false
-        enforced: false
-        defaultDays: 90
-  nextcloud:
-    clients:
-      # Enable Nextcloud mobile/desktop client detection via Basic Auth on /status.php.
-      enabled: true
-    retentionObligation:
-      trashbin: "auto"
-      versions: "auto"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Groupware (OX App Suite)
-# ─────────────────────────────────────────────────────────────────────────────
-groupware:
-  davSupport:
-    # Enable CalDAV/CardDAV endpoints.
-    enabled: true
-  externalClients:
-    # Show onboarding dialog for external IMAP/SMTP clients (Thunderbird etc.)
-    enabledOnboardingInfo: false
-    # FQDN overrides for IMAP/SMTP; null = use global.domain
-    fqdnImap: ~
-    fqdnSmtp: ~
-  externalSharing:
-    shareLinks:
-      enabled: false
-    inviteGuests:
-      enabled: false
-  mail:
-    categories:
-      enabled: true
-    inbound:
-      notify:
-        enabled: true
-      forward:
-        enabled: false
-    encryption:
-      # OX Guard email encryption.
-      enabled: true
-    maxSize: 25  # megabytes
-  quota:
-    # Default mail storage quota per user, in gigabytes.
-    default: 1
-  userProfile:
-    # Prevent users from manually changing their display name in OX
-    # (it is managed by openDesk IAM).
-    editRealName: false
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Internationalization
-# Wired into: apps/nubus/values/_base.yaml → templateContext.oxDefaultLanguage
-# ─────────────────────────────────────────────────────────────────────────────
-internationalization:
-  # Default language for OX App Suite (first login) and XWiki content detection.
-  # Supported: de_DE (tested), en_GB (tested).
-  defaultLanguage: "de_DE"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Migration (OX App Suite Enterprise only)
-# ─────────────────────────────────────────────────────────────────────────────
-migration:
-  oxAppSuite:
-    # Enable Master Password auth in Dovecot + migration Pod in OX.
-    # Only enable temporarily during data migration.
-    enabled: false
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Portal
-# Wired into: apps/nubus/values/_base.yaml → stackDataContext/templateContext
+# Wired into: apps/gentian-portal/values/_base.yaml → stackDataContext/templateContext
 # ─────────────────────────────────────────────────────────────────────────────
 portal:
   # Redirect to login when portal is opened (vs showing tiles and prompting later).
   enforceLogin: true
   # External links shown in the portal menu and footer.
-  # DEVIATION: all set to ~ (upstream points to opendesk.eu and zendis.de)
+  # DEVIATION: all set to ~ (no external footer links configured)
   linkLegalNotice: ~
   linkPrivacyStatement: ~
   linkDocumentation: ~
   linkSupport: ~
   linkFeedback: ~
   newsfeed:
-    # Show newsfeed tile (sourced from XWiki when deployed).
+    # Show newsfeed tile when a catalogue app provides one.
     enabled: true
   welcomeMessage:
     # Show the welcome message tile on first login.
     enabled: true
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Web Office (Collabora / Nextcloud Office)
-# Kernel service — deployed once per cluster in kernel/services/collabora/.
-# Wired into: kernel/services/collabora/manifests/<env>/configmap.yaml
-# and kernel/services/nextcloud-management/manifests/<env>/configmap.yaml
-#             (internalWopiUrl + public_wopi_url).
-# Per-tenant opt-in: Tenant.spec.office.enabled = true.
-# ─────────────────────────────────────────────────────────────────────────────
-weboffice:
-  # Default format for new documents created from the portal or Nextcloud.
-  # ODF → .odt/.ods/.odp | OOXML → .docx/.xlsx/.pptx
-  defaultFormat: "ODF"
-  macros:
-    # Enable macro execution (Basic/Python scripts) in Collabora.
-    enabled: false
-    # 1 = require confirmation before executing macros from untrusted sources.
-    # 0 = execute all macros without confirmation.
-    securityLevel: 1

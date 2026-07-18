@@ -1,12 +1,19 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
+
 
 package secrets
 
@@ -21,6 +28,7 @@ import (
 // reconciler tests can substitute an in-memory fake.
 type Writer interface {
 	PutOnce(ctx context.Context, logicalPath string, data map[string]string) error
+	Put(ctx context.Context, logicalPath string, data map[string]string) error
 	Get(ctx context.Context, logicalPath string) (map[string]string, error)
 }
 
@@ -64,9 +72,8 @@ func (s *Seeder) gen(salt, info string, n int) string {
 	return hex.EncodeToString(buf)[:n]
 }
 
-// genTenantAdminPassword returns a password that satisfies typical UCS/Nubus
-// complexity rules (mixed character classes). Pure-hex derived passwords are
-// rejected on PATCH even when CREATE succeeded on an earlier deploy.
+// genTenantAdminPassword returns a password with mixed character classes.
+// Pure-hex derived passwords are rejected on PATCH even when CREATE succeeded on an earlier deploy.
 func (s *Seeder) genTenantAdminPassword(salt string) string {
 	return "Gt!" + s.gen(salt, "password", 24)
 }
@@ -94,17 +101,34 @@ type OIDCCreds struct {
 }
 
 // SeedOIDC derives the OIDC client secret for (tenant, app) from the master,
-// persists the full record, and returns the effective credentials.
+// persists the full record, and returns the effective credentials. Issuer and
+// client-id are refreshed on reconcile; client-secret is write-once.
 func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID string) (OIDCCreds, error) {
 	salt := CategoryPath(tenant, app, "oidc")
+	existing, _ := s.w.Get(ctx, salt)
+	secret := s.gen(salt, "client-secret", 40)
+	if existing != nil {
+		if v := existing["client-secret"]; v != "" {
+			secret = v
+		}
+	}
 	want := map[string]string{
 		"issuer":        issuer,
 		"client-id":     clientID,
-		"client-secret": s.gen(salt, "client-secret", 40),
+		"client-secret": secret,
 	}
-	got, err := s.seedAndRead(ctx, salt, want)
+	var err error
+	if existing == nil {
+		err = s.w.PutOnce(ctx, salt, want)
+	} else {
+		err = s.w.Put(ctx, salt, want)
+	}
 	if err != nil {
 		return OIDCCreds{}, fmt.Errorf("seed oidc(%s/%s): %w", tenant, app, err)
+	}
+	got, err := s.w.Get(ctx, salt)
+	if err != nil {
+		got = want
 	}
 	return OIDCCreds{
 		Issuer:       got["issuer"],
@@ -122,6 +146,29 @@ type DatabaseCreds struct {
 	Name     string
 	User     string
 	Password string
+}
+
+// SeedKernelDatabase derives a kernel-scoped database password and writes the
+// connection record under gentian-os/kernel/database/{category}.
+func (s *Seeder) SeedKernelDatabase(ctx context.Context, category string, conn DatabaseCreds) (DatabaseCreds, error) {
+	salt := KernelPath("database", category)
+	if conn.Password == "" {
+		conn.Password = s.gen(salt, "password", 40)
+	}
+	got, err := s.seedAndRead(ctx, salt, map[string]string{
+		"host":     conn.Host,
+		"port":     conn.Port,
+		"name":     conn.Name,
+		"user":     conn.User,
+		"password": conn.Password,
+	})
+	if err != nil {
+		return DatabaseCreds{}, fmt.Errorf("seed kernel database(%s): %w", category, err)
+	}
+	return DatabaseCreds{
+		Host: got["host"], Port: got["port"], Name: got["name"],
+		User: got["user"], Password: got["password"],
+	}, nil
 }
 
 // SeedDatabase derives the role password and writes the connection record.
@@ -199,19 +246,39 @@ type CacheCreds struct {
 	Password string
 }
 
-// SeedCache derives the cache password from the master.
+// SeedCache derives the cache password from the master. Host and port are refreshed
+// on reconcile so infrastructure moves (e.g. shared Redis in gentian-infra-dev) propagate.
 func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCreds) (CacheCreds, error) {
 	salt := CategoryPath(tenant, app, "cache")
-	if base.Password == "" {
-		base.Password = s.gen(salt, "password", 40)
+	existing, _ := s.w.Get(ctx, salt)
+	password := base.Password
+	if password == "" {
+		if existing != nil && existing["password"] != "" {
+			password = existing["password"]
+		} else {
+			password = s.gen(salt, "password", 40)
+		}
 	}
-	got, err := s.seedAndRead(ctx, salt, map[string]string{
+	want := map[string]string{
 		"host":     base.Host,
 		"port":     base.Port,
-		"password": base.Password,
-	})
+		"password": password,
+	}
+	var err error
+	if existing == nil {
+		err = s.w.PutOnce(ctx, salt, want)
+	} else {
+		if existing["password"] != "" {
+			want["password"] = existing["password"]
+		}
+		err = s.w.Put(ctx, salt, want)
+	}
 	if err != nil {
 		return CacheCreds{}, fmt.Errorf("seed cache(%s/%s): %w", tenant, app, err)
+	}
+	got, err := s.w.Get(ctx, salt)
+	if err != nil {
+		return CacheCreds{Host: want["host"], Port: want["port"], Password: want["password"]}, nil //nolint:nilerr
 	}
 	return CacheCreds{Host: got["host"], Port: got["port"], Password: got["password"]}, nil
 }
@@ -250,7 +317,7 @@ type IMAPCreds struct {
 	Port string
 }
 
-// SeedIMAP writes host/port only; per-user IMAP credentials come from LDAP.
+// SeedIMAP writes host/port only; per-user IMAP credentials come from Keycloak at runtime.
 func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCreds) error {
 	return s.w.PutOnce(ctx, CategoryPath(tenant, app, "imap"), map[string]string{
 		"host": base.Host,
@@ -258,40 +325,7 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 	})
 }
 
-// --- LDAP --------------------------------------------------------------------
-
-// LDAPCreds is the set of values written to …/ldap.
-type LDAPCreds struct {
-	Host         string
-	Port         string
-	BaseDN       string
-	BindDN       string
-	BindPassword string
-}
-
-// SeedLDAP derives the bind password from the master.
-func (s *Seeder) SeedLDAP(ctx context.Context, tenant, app string, base LDAPCreds) (LDAPCreds, error) {
-	salt := CategoryPath(tenant, app, "ldap")
-	if base.BindPassword == "" {
-		base.BindPassword = s.gen(salt, "bind-password", 40)
-	}
-	got, err := s.seedAndRead(ctx, salt, map[string]string{
-		"host":          base.Host,
-		"port":          base.Port,
-		"base-dn":       base.BaseDN,
-		"bind-dn":       base.BindDN,
-		"bind-password": base.BindPassword,
-	})
-	if err != nil {
-		return LDAPCreds{}, fmt.Errorf("seed ldap(%s/%s): %w", tenant, app, err)
-	}
-	return LDAPCreds{
-		Host: got["host"], Port: got["port"], BaseDN: got["base-dn"],
-		BindDN: got["bind-dn"], BindPassword: got["bind-password"],
-	}, nil
-}
-
-// --- Tenant admin (Keycloak realm-admin) ------------------------------------
+// --- IMAP --------------------------------------------------------------------
 
 // TenantAdminCreds is the set of values written to …/admin.
 type TenantAdminCreds struct {
@@ -301,9 +335,8 @@ type TenantAdminCreds struct {
 
 // SeedTenantAdmin derives the tenant admin password from the master and
 // persists it write-once under gentian-os/tenants/<tenant>/admin.
-// Username defaults to "admin-<tenant>" to avoid collisions in the shared
-// Nubus LDAP directory. Operators can override it by writing a different
-// value to OpenBao before first reconcile.
+// Username defaults to "admin-<tenant>". Operators can override it by writing
+// a different value to OpenBao before first reconcile.
 func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdminCreds, error) {
 	salt := TenantAdminPath(tenant)
 	want := map[string]string{
@@ -333,4 +366,31 @@ func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (s
 		return "", fmt.Errorf("seed app-secret(%s/%s/%s): %w", tenant, app, name, err)
 	}
 	return got["value"], nil
+}
+
+// --- Contracts ---------------------------------------------------------------
+
+// ContractCreds represents the credentials shared between an integration provider and consumer.
+type ContractCreds struct {
+	Password string
+}
+
+// SeedContract writes a unique password into OpenBao for an integration contract.
+func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
+	salt := ContractPath(tenant, contract)
+	got, err := s.seedAndRead(ctx, salt, map[string]string{
+		"password": s.gen(salt, "password", 40),
+	})
+	if err != nil {
+		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
+	}
+	return ContractCreds{Password: got["password"]}, nil
+}
+
+func (s *Seeder) Read(ctx context.Context, logicalPath string) (map[string]string, error) {
+	return s.w.Get(ctx, logicalPath)
+}
+
+func (s *Seeder) Write(ctx context.Context, logicalPath string, data map[string]string) error {
+	return s.w.Put(ctx, logicalPath, data)
 }

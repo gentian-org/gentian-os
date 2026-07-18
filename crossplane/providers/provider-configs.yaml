@@ -31,22 +31,11 @@ metadata:
   name: openbao
 spec:
   # Address of the OpenBao server reachable from within the cluster.
-  address: http://openbao.openbao.svc.cluster.local:8200
+  address: https://openbao.openbao.svc.cluster.local:8200
+  skip_tls_verify: true
   credentials:
     source: Secret
     secretRef:
       namespace: crossplane-system
       name: openbao-crossplane-token
       key: credentials
----
-# ProviderConfig for provider-http.
-# Authentication is per-Request (Basic auth header injected via ESO-managed secret).
-# source: None because there is no global token — each Request injects its own
-# Authorization header using the {{ secret-name:namespace:key }} syntax.
-apiVersion: http.crossplane.io/v1alpha1
-kind: ProviderConfig
-metadata:
-  name: udm
-spec:
-  credentials:
-    source: None

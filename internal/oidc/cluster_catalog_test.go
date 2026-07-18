@@ -1,4 +1,19 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package oidc
 
@@ -14,26 +29,20 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func testOpenDeskClient(t *testing.T) client.Client {
+func testGentianCatalogClient(t *testing.T) client.Client {
 	t.Helper()
-	return NewTestClientWithCatalogFile(t, "testdata/opendesk-catalog.yaml")
+	return NewTestClientWithCatalogFile(t, "testdata/minimal-oidc-catalog.yaml")
 }
 
 func TestManagedByAttributeGroupNames_FromCatalog(t *testing.T) {
-	c := testOpenDeskClient(t)
+	c := testGentianCatalogClient(t)
 	groups, err := ManagedByAttributeGroupNames(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		"Fileshare",
-		"FileshareAdmin",
-		"Groupware",
-		"Knowledgemanagement",
-		"Livecollaboration",
-		"LivecollaborationAdmin",
-		"Projectmanagement",
-		"Videoconference",
+		"TestApp",
+		"TestAppAdmin",
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("groups: %v want %v", groups, want)
@@ -55,18 +64,18 @@ func TestNormalizeMBAGroupName(t *testing.T) {
 }
 
 func TestResolvePackClusterCatalog(t *testing.T) {
-	c := testOpenDeskClient(t)
-	pack, templates, ok, err := ResolvePack(context.Background(), c, "opendesk-jitsi")
+	c := testGentianCatalogClient(t)
+	pack, templates, ok, err := ResolvePack(context.Background(), c, "catalogue-test-client")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok {
 		t.Fatal("expected pack from cluster catalog")
 	}
-	if pack.ScopeName != "opendesk-jitsi-scope" {
+	if pack.ScopeName != "catalogue-test-client-scope" {
 		t.Fatalf("scopeName: %q", pack.ScopeName)
 	}
-	if _, found := templates["opendesk_useruuid"]; !found {
+	if _, found := templates["gentian_useruuid"]; !found {
 		t.Fatal("missing mapper template")
 	}
 }
@@ -87,7 +96,7 @@ func TestResolvePackNotFound(t *testing.T) {
 }
 
 func TestResolvePackRequiresClient(t *testing.T) {
-	_, _, _, err := ResolvePack(context.Background(), nil, "opendesk-openproject")
+	_, _, _, err := ResolvePack(context.Background(), nil, "catalogue-test-client")
 	if err == nil {
 		t.Fatal("expected error when client is nil")
 	}

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // newMariaDBProfile creates a minimal AppProfile that requires a MariaDB database.
@@ -66,11 +67,7 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
 
-	updated := &gentianov1alpha1.Tenant{}
-	waitFor(t, tenantReadyTimeout, func() bool {
-		_ = testClient.Get(context.Background(), types.NamespacedName{Name: "nomaria"}, updated)
-		return updated.Status.Phase == gentianov1alpha1.TenantPhaseReady
-	})
+	updated := waitForTenantConditionTrue(t, "nomaria", "MariaDBReady")
 
 	var cond *metav1.Condition
 	for i := range updated.Status.Conditions {
@@ -81,9 +78,6 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 	}
 	if cond == nil {
 		t.Fatal("expected MariaDBReady condition")
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected MariaDBReady=True, got %v", cond.Status)
 	}
 	if cond.Reason != "NoMariaDBRequired" {
 		t.Errorf("expected reason NoMariaDBRequired, got %q", cond.Reason)
@@ -137,7 +131,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		t.Fatal("expected at least one container in setup Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "mariadb:11" {
+	if container.Image != kernel.DefaultMariaDBProvisionerImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
@@ -261,9 +255,8 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity and deleteLDAP run before deleteMariaDB; mark their jobs.
+	// deleteIdentity runs before deleteMariaDB; mark its jobs.
 	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", "platform-kernel")
-	go markJobCompleteWhenReady("ldap-ou-delete-mariadelete", "platform-kernel")
 
 	// A delete Job should be created in the kernel namespace.
 	deleteJob := &batchv1.Job{}
@@ -276,7 +269,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 		t.Errorf("expected tenant label 'mariadelete', got %q", deleteJob.Labels["gentianos.io/tenant"])
 	}
 	container := deleteJob.Spec.Template.Spec.Containers[0]
-	if container.Image != "mariadb:11" {
+	if container.Image != kernel.DefaultMariaDBProvisionerImage {
 		t.Errorf("unexpected delete Job container image %q", container.Image)
 	}
 }

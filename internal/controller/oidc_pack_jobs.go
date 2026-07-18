@@ -1,11 +1,25 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
 import (
 	"context"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
@@ -29,11 +44,10 @@ type oidcAppConfig struct {
 	templates     map[string]oidc.MapperTemplate
 }
 
-// oidcPacksNeedLDAPGroups reports whether any resolved OIDC config uses an
-// OpenDesk pack that maps a managed-by-attribute-* LDAP group to a client role.
-func oidcPacksNeedLDAPGroups(configs []oidcAppConfig) bool {
+// oidcPacksNeedEntitlementGroups reports whether any OIDC pack maps a group to a client role.
+func oidcPacksNeedEntitlementGroups(configs []oidcAppConfig) bool {
 	for _, cfg := range configs {
-		if cfg.pack != nil && cfg.pack.LDAPGroup != "" {
+		if cfg.pack != nil && cfg.pack.EntitlementGroup != "" {
 			return true
 		}
 	}
@@ -82,19 +96,22 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 	return configs, nil
 }
 
-// cleanupOrphanedOIDCClientJobs deletes Keycloak OIDC client provisioning Jobs for
+// cleanupOrphanedClientJobs deletes Keycloak OIDC/SAML client provisioning Jobs for
 // apps no longer listed in tenant.Spec.Apps. Unlike App claims, client Jobs are not
 // removed automatically on app uninstall.
-func (r *TenantReconciler) cleanupOrphanedOIDCClientJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, desired []oidcAppConfig) error {
-	desiredApps := make(map[string]struct{}, len(desired))
-	for _, cfg := range desired {
+func (r *TenantReconciler) cleanupOrphanedClientJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig, samlConfigs []samlAppConfig) error {
+	desiredApps := make(map[string]struct{}, len(oidcConfigs)+len(samlConfigs))
+	for _, cfg := range oidcConfigs {
+		desiredApps[cfg.profileName] = struct{}{}
+	}
+	for _, cfg := range samlConfigs {
 		desiredApps[cfg.profileName] = struct{}{}
 	}
 
 	prefix := clientJobName(tenant.Name, "")
 	jobList := &batchv1.JobList{}
 	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
-		return fmt.Errorf("list OIDC client Jobs for tenant %s: %w", tenant.Name, err)
+		return fmt.Errorf("list OIDC/SAML client Jobs for tenant %s: %w", tenant.Name, err)
 	}
 	for i := range jobList.Items {
 		job := &jobList.Items[i]
@@ -110,7 +127,7 @@ func (r *TenantReconciler) cleanupOrphanedOIDCClientJobs(ctx context.Context, te
 		}
 		prop := metav1.DeletePropagationBackground
 		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete orphaned OIDC client Job %s: %w", job.Name, err)
+			return fmt.Errorf("delete orphaned OIDC/SAML client Job %s: %w", job.Name, err)
 		}
 	}
 	return nil
@@ -187,7 +204,7 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 
 // getOIDCOwnerProfile returns the AppProfile that owns an OIDC config. Sidecar
 // configs (element-jitsi) live on the parent profile (element); there is no
-// standalone AppProfile for sidecars (openDesk pattern).
+// standalone AppProfile for sidecars; sidecar OIDC configs live on the parent profile.
 func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppConfig) (*gentianov1alpha1.AppProfile, error) {
 	ownerName := cfg.profileName
 	if cfg.parentProfile != "" {
@@ -219,11 +236,9 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
-	host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
-	if host == "" {
-		host = tenant.Spec.Domain
-	}
-	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}, nil
+	// Sidecar OIDC redirect URIs must be declared on the AppProfile or in the pack spec.
+	return nil, fmt.Errorf("AppProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
+		profileName, gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs)
 }
 
 func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string, kernelDomain, tenancyMode string) []string {
@@ -236,18 +251,6 @@ func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string
 		out = append(out, strings.ReplaceAll(u, "${TENANT_DOMAIN}", host))
 	}
 	return out
-}
-
-// resolveOIDCRedirectURIsLegacy is a package-level helper for tests that do not have an AppProfile.
-func resolveOIDCRedirectURIs(tenant *gentianov1alpha1.Tenant, profileName string, uris []string, kernelDomain, tenancyMode string) []string {
-	if len(uris) > 0 {
-		return substituteTenantDomainInURIs(tenant, uris, kernelDomain, tenancyMode)
-	}
-	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-	if host == "" {
-		host = tenant.Spec.Domain
-	}
-	return []string{fmt.Sprintf("https://%s/%s/*", host, profileName)}
 }
 
 func (r *TenantReconciler) ensureBrokerFirstLoginFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
@@ -312,10 +315,10 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
-func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret string) *batchv1.Job {
+func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret, entitlementGroup string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	container := keycloakContainer("provision-oidc-pack",
-		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret))
+		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret, entitlementGroup))
 	if clientSecret != "" {
 		container.Env = append(container.Env, corev1.EnvVar{
 			Name:  "OIDC_CLIENT_SECRET",
@@ -371,4 +374,41 @@ func makeOIDCBrowserFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *
 
 func oidcBrowserFlowJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-oidc-browser-%s", tenantName)
+}
+
+// samlAppConfig holds resolved SAML settings for one tenant app profile.
+type samlAppConfig struct {
+	profileName string
+	entityID    string
+	acsURL      string
+}
+
+func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]samlAppConfig, error) {
+	var configs []samlAppConfig
+	for _, app := range tenant.Spec.Apps {
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+		}
+		if profile.Spec.KernelRequirements != nil &&
+			profile.Spec.KernelRequirements.Identity != nil &&
+			profile.Spec.KernelRequirements.Identity.SAML != nil {
+			samlSpec := profile.Spec.KernelRequirements.Identity.SAML
+			host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
+			if host == "" {
+				host = tenant.Spec.Domain
+			}
+			acsURL := strings.ReplaceAll(samlSpec.ACSURL, "${TENANT_DOMAIN}", host)
+
+			configs = append(configs, samlAppConfig{
+				profileName: app.Profile,
+				entityID:    samlSpec.EntityID,
+				acsURL:      acsURL,
+			})
+		}
+	}
+	return configs, nil
 }

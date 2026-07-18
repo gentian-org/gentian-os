@@ -17,14 +17,14 @@ server:
   readinessProbe:
     enabled: true
     path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+    scheme: HTTPS
 
   # Expose the API + UI on a fixed NodePort so the host and any LAN machine
   # can reach OpenBao without a port-forward session.
   # API:  http://<node-ip>:30820   (bao CLI, seed script)
   # UI:   http://<node-ip>:30820/ui
   service:
-    type: NodePort
-    nodePort: 30820   # API / UI (8200)
+    type: ClusterIP
 
   ui:
     enabled: true
@@ -48,7 +48,9 @@ server:
       ui = true
 
       listener "tcp" {
-        tls_disable     = 1
+        tls_disable     = 0
+        tls_cert_file   = "/openbao/tls/tls.crt"
+        tls_key_file    = "/openbao/tls/tls.key"
         address         = "[::]:8200"
         cluster_address = "[::]:8201"
       }
@@ -73,6 +75,18 @@ server:
       secretName: openbao-transit-token
       secretKey: token
 
+  volumes:
+    - name: tls
+      secret:
+        secretName: openbao-tls
+  volumeMounts:
+    - name: tls
+      mountPath: /openbao/tls
+      readOnly: true
+
 # Injector is not needed — ESO handles secret syncing
 injector:
   enabled: false
+
+global:
+  tlsDisable: false

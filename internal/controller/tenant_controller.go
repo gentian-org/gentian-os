@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,9 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -45,6 +49,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -55,13 +60,11 @@ const (
 	tenantLabel     = meta.TenantLabel
 	managedByLabel  = meta.ManagedByLabel
 	managedByValue  = meta.ManagedByValue
-	// umcFrontendComponentLabel marks Ingress objects owned by tenant portal redirect
+	// portalRedirectComponentLabel marks Ingress objects owned by tenant portal redirect
 	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
-	umcFrontendComponentLabel = meta.UMCFrontendComponentLabel
-	umcFrontendComponentValue = meta.UMCFrontendComponentValue
-	kernelNamespace           = meta.KernelNamespace
-	// ingressNamespace is the namespace where the nginx ingress controller runs.
-	ingressNamespace        = meta.IngressNamespace
+	portalRedirectComponentLabel = meta.PortalRedirectComponentLabel
+	portalRedirectComponentValue = meta.PortalRedirectComponentValue
+	kernelNamespace = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -82,7 +85,7 @@ func defaultServicesNamespace() string {
 // created but has not yet completed. reconcileDelete treats this as a signal to
 // requeue rather than a hard error, so the finalizer is only removed once all
 // cleanup Jobs have finished.
-var errDeleteJobPending = fmt.Errorf("cleanup job not yet complete")
+var errDeleteJobPending = provisioner.ErrDeleteJobPending
 
 // deleteProvisioningJobs removes completed provisioning Jobs by name, ignoring
 // not-found and transient errors. Call this after a cleanup Job completes so
@@ -141,6 +144,9 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 type TenantReconciler struct {
 	client.Client
+	// APIReader is an optional uncached client for kernel Secret lookups. The
+	// default cached Client can lag behind direct API writes (e.g. envtest).
+	APIReader client.Reader
 	Scheme *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
@@ -148,7 +154,7 @@ type TenantReconciler struct {
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
 	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
-	// on which kernel UIs (Keycloak, Argo CD, Nubus, Intercom) are served.
+	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
 	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
 	// unset. Sourced from KERNEL_DOMAIN at startup.
 	// See docs/design/multi-tenancy.md §3.
@@ -160,33 +166,26 @@ type TenantReconciler struct {
 	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
 	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.
 	TenantDNS01ClusterIssuer string
-	// KernelRealm is the name of the shared Keycloak realm that holds all
-	// platform users (synced via Nubus LDAP). Defaults to "kernel".
+	// KernelRealm is the name of the shared Keycloak realm for platform identity.
 	// Sourced from the KERNEL_REALM env var at startup.
 	KernelRealm string
-	// LDAPServer is the LDAP connection URL including scheme and port
-	// (e.g. ldap://nubus-ldap.gentian-dev.svc.cluster.local:389).
-	// When empty, LDAP federation is not configured for tenant Keycloak realms.
-	// Sourced from the LDAP_SERVER env var at startup.
-	LDAPServer string
-	// LDAPBase is the LDAP base DN (e.g. dc=swp-ldap,dc=internal).
-	// Used to construct per-tenant bind DNs and users DNs for LDAP federation.
-	// Sourced from the LDAP_BASE env var at startup.
-	LDAPBase string
 	// CloudflareDNS is an optional edge-DNS adapter: when set, the operator
 	// ensures a proxied CNAME *.<effectiveDomain> → tunnel so Cloudflare Total
 	// TLS can provision edge certs for tenant app hostnames (e.g.
 	// meet.demo.desk.gentian.org). Nil when CLOUDFLARE_* env vars are unset;
 	// use DNS-only (grey cloud) or passthrough to origin in that case.
 	CloudflareDNS *CloudflareDNSClient
-	// RoutingMode selects the edge routing stack: ingress (nginx Ingress) or
-	// gateway (Gateway API + Envoy Gateway). Sourced from ROUTING_MODE.
+	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
 	RoutingMode string
-	// CrossplaneOnly skips shared-kernel side effects (mail, office, portal/UMC
-	// convergence, Nextcloud group, LDAP base helpers) so tenant lifecycle is
-	// driven by the Crossplane graph alone. Used for P3/P4 e2e and rollback
-	// testing via TENANT_CROSSPLANE_ONLY. Default false preserves day-2 behaviour.
+	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
+	// so tenant lifecycle is driven by the Crossplane graph alone.
 	CrossplaneOnly bool
+	// CommerceEnabled flags if licensing checks and metering reports are active.
+	CommerceEnabled bool
+	// CorpAPIURL is the backend commercial API base URL.
+	CorpAPIURL string
+	// OperatorToken is the bearer token used to authenticate with gentian-corp.
+	OperatorToken string
 }
 
 // SetupWithManager registers the controller with the controller-manager.
@@ -231,11 +230,6 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Version: cnpgVersion,
 		Kind:    cnpgDatabaseKind,
 	})
-
-	// argocdApp watches ArgoCD Application CRs so that Memcached health transitions
-	// immediately trigger re-reconciliation rather than waiting for the requeue timer.
-	argocdApp := &unstructured.Unstructured{}
-	argocdApp.SetGroupVersionKind(argocdApplicationGVK)
 
 	mapAllTenants := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		tenantList := &gentianov1alpha1.TenantList{}
@@ -283,14 +277,6 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			})),
 		).
 		Watches(
-			argocdApp,
-			handler.EnqueueRequestsFromMapFunc(mapToTenant),
-			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-				_, hasLabel := obj.GetLabels()[tenantLabel]
-				return hasLabel && obj.GetNamespace() == argocdNamespace
-			})),
-		).
-		Watches(
 			&gentianov1alpha1.AppProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
 		)
@@ -322,13 +308,6 @@ func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenan
 			gentianov1alpha1.SingleTenantName, tenant.Name,
 		)
 	}
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.LDAPOu != "" &&
-		tenant.Spec.Isolation.LDAPOu != gentianov1alpha1.SingleTenantLDAPOU {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single requires spec.isolation.ldapOU %q (got %q)",
-			gentianov1alpha1.SingleTenantLDAPOU, tenant.Spec.Isolation.LDAPOu,
-		)
-	}
 	var others gentianov1alpha1.TenantList
 	if err := r.List(ctx, &others); err != nil {
 		return err
@@ -348,7 +327,6 @@ func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenan
 
 // Reconcile is the main reconciliation loop for Tenant resources.
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
 	start := time.Now()
 
 	tenant := &gentianov1alpha1.Tenant{}
@@ -374,234 +352,18 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	// Preflight gate: a tenant may only proceed when all requested AppProfiles
-	// exist. Run before implicit base injection so missing profiles surface as
-	// Degraded without hitting ensureImplicitBaseApps Get errors.
-	missingProfiles, err := r.validateTenantPrerequisites(ctx, tenant)
-	if err != nil {
-		reconcileErrors.WithLabelValues("tenant").Inc()
-		return ctrl.Result{}, err
-	}
-	if len(missingProfiles) > 0 {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-			fmt.Sprintf("AppProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
-			"Identity provisioning blocked because one or more requested AppProfiles are missing")
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, nil
-	}
-
-	if res, err := r.ensureImplicitBaseApps(ctx, tenant); res.RequeueAfter > 0 || err != nil {
-		return res, err
-	}
-
-	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint",
-			err.Error())
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, nil
-	}
-
-	nsName := tenantNamespaceName(tenant)
-	logger.Info("reconciling tenant", "tenant", tenant.Name, "namespace", nsName, "crossplaneOnly", r.CrossplaneOnly)
-
-	// ── Orchestration: validate → seed → patch XR → wait ─────────────────────
-	if err := r.ensureTenantProvisioningManifests(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err := r.ensureTenantXR(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-	if res, err := r.waitForTenantShell(ctx, tenant, nsName); res.RequeueAfter > 0 || err != nil {
-		_ = r.aggregateCrossplaneStatus(ctx, tenant)
-		_ = r.Status().Update(ctx, tenant)
-		return res, err
-	}
-
-	// Bootstrap side-effects retained until moved into tenant-default.
-	if err := r.ensureRegistryCredentials(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.ensureStagingCaTrust(ctx, tenant, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// ── Wait-only ensures: Crossplane owns resource creation via manifest bridge ─
-	identityResult, err := r.ensureIdentity(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 6. LDAP (UDM OU + groups + bind accounts)
-	ldapResult, err := r.ensureLDAP(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionLDAPReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 7. Database (CloudNativePG Database CRs + psql role Jobs)
-	databaseResult, err := r.ensureDatabase(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 8. MariaDB (Job-based CREATE DATABASE + CREATE USER + GRANT)
-	mariadbResult, err := r.ensureMariaDB(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 9. Storage (MinIO S3 buckets + Nextcloud groups)
-	storageResult, err := r.ensureStorage(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 10. Cache (Redis ACL users + Memcached ArgoCD Applications)
-	cacheResult, err := r.ensureCache(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 11. App deployment (ArgoCD Application CRs per app)
-	appsResult, err := r.ensureAppDeployment(ctx, tenant)
-	if err != nil {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 12. Edge routing — Gateway API (Envoy Gateway).
-	if _, err := r.ensureGateway(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// 13. Integration bindings (auto-wire provider+consumer pairs within the tenant)
-	if _, err := r.ensureIntegrationBindings(ctx, tenant); err != nil {
-		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
-		return ctrl.Result{}, err
-	}
-
-	// ── Shared-kernel extensions (skipped when TENANT_CROSSPLANE_ONLY) ─────────
-	var mailResult, officeResult ctrl.Result
-	if !r.CrossplaneOnly {
-		mailResult, err = r.ensureMail(ctx, tenant)
-		if err != nil {
-			_ = r.Status().Update(ctx, tenant)
-			return ctrl.Result{}, err
-		}
-
-		officeResult, err = r.ensureOffice(ctx, tenant)
-		if err != nil {
-			_ = r.Status().Update(ctx, tenant)
-			return ctrl.Result{}, err
-		}
-
-		if err := r.ensureUMC(ctx, tenant); err != nil {
-			logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
-		}
-
-		if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
-			logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
-		}
-	}
-
-	// ── Status aggregation ───────────────────────────────────────────────────
-	if err := r.aggregateCrossplaneStatus(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
-	tenant.Status.Namespace = nsName
-	tenant.Status.AppCount = len(tenant.Spec.Apps)
-	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
-	provisioning := identityResult.RequeueAfter > 0 || ldapResult.RequeueAfter > 0 ||
-		databaseResult.RequeueAfter > 0 || mariadbResult.RequeueAfter > 0 ||
-		storageResult.RequeueAfter > 0 || cacheResult.RequeueAfter > 0
-	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
-	// Note: mailResult, officeResult, and appsResult are intentionally excluded
-	// from the provisioning flag. Apps are converged asynchronously (like mail
-	// and office) and do not block Phase=Ready. AppsReady tracks state
-	// independently and the reconciler requeues until all App claims are Ready.
-	// Phase=Ready also requires CrossplaneReady (XTenant composite Ready).
-	if provisioning || !crossplaneReady {
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
-	} else {
-		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
-		provisioningDuration.WithLabelValues(tenant.Name).Observe(time.Since(start).Seconds())
-	}
-	// Update Prometheus gauges for this tenant.
-	tenantAppsTotal.WithLabelValues(tenant.Name).Set(float64(tenant.Status.AppCount))
-	if err := r.Status().Update(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-	if provisioning {
-		logger.Info("tenant provisioning in progress", "tenant", tenant.Name)
-		if identityResult.RequeueAfter > 0 {
-			return identityResult, nil
-		}
-		if ldapResult.RequeueAfter > 0 {
-			return ldapResult, nil
-		}
-		if databaseResult.RequeueAfter > 0 {
-			return databaseResult, nil
-		}
-		if mariadbResult.RequeueAfter > 0 {
-			return mariadbResult, nil
-		}
-		if storageResult.RequeueAfter > 0 {
-			return storageResult, nil
-		}
-		if cacheResult.RequeueAfter > 0 {
-			return cacheResult, nil
-		}
-		if mailResult.RequeueAfter > 0 {
-			return mailResult, nil
-		}
-		if officeResult.RequeueAfter > 0 {
-			return officeResult, nil
-		}
-		return appsResult, nil
-	}
-	if !crossplaneReady {
-		logger.Info("tenant operator paths ready; waiting for Crossplane XTenant Ready", "tenant", tenant.Name)
-		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
-	}
-	// Infrastructure is ready. Requeue for mail, office, or apps if still converging.
-	if mailResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; mail still converging", "tenant", tenant.Name)
-		return mailResult, nil
-	}
-	if officeResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; office still converging", "tenant", tenant.Name)
-		return officeResult, nil
-	}
-	if appsResult.RequeueAfter > 0 {
-		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
-		return appsResult, nil
-	}
-	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
-	return ctrl.Result{}, nil
+	return r.runTenantReconcileStages(ctx, &tenantReconcileState{
+		tenant: tenant,
+		start:  start,
+	})
 }
 
 // validateTenantPrerequisites checks that all requested AppProfiles exist.
 func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
 	missingMap := map[string]struct{}{}
 
 	for _, app := range tenant.Spec.Apps {
@@ -609,13 +371,8 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 		if err != nil {
 			return nil, err
 		}
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				missingMap[profileName] = struct{}{}
-				continue
-			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+		if _, ok := appProfileFromIndex(profileIndex, profileName); !ok {
+			missingMap[profileName] = struct{}{}
 		}
 	}
 
@@ -645,11 +402,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up identity resources before removing the namespace.
 	if requeue, res, err := awaitJob(r.deleteIdentity(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up LDAP resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteLDAP(ctx, tenant)); requeue {
 		return res, err
 	}
 
@@ -687,15 +439,17 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	if err := r.deleteIntegrationBindings(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.deleteAppGrants(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// Clean up mail resources (Application CRs always; Secrets under DeletionPolicy=Delete).
 	if err := r.deleteMail(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// Clean up portal redirect ingress and any remaining UMC stack artifacts
-	// (DeletionPolicy=Delete only; in-namespace Secrets/ConfigMaps go with the namespace).
-	if err := r.deleteUMC(ctx, tenant); err != nil {
+	// Clean up portal redirect routes.
+	if err := r.deletePortalRedirect(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -778,51 +532,268 @@ func (r *TenantReconciler) deleteOwnedResourcesInNamespace(ctx context.Context, 
 }
 
 // ensureRegistryCredentials replicates the kernel-managed `registry-credentials`
-// Secret from the services namespace into the tenant namespace.
+// Secret from the services namespace into the tenant namespace, and manages
+// scoped registry credentials for proprietary applications.
 func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	const secretName = "registry-credentials"
+	const defaultSecretName = "registry-credentials"
 
+	// 1. Replicate default registry credentials
 	source := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: servicesNamespace}, source); err != nil {
-		if errors.IsNotFound(err) {
-			return nil
+	if err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: servicesNamespace}, source); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
 		}
-		return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
+	} else {
+		desired := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      defaultSecretName,
+				Namespace: nsName,
+				Labels: map[string]string{
+					tenantLabel:    tenant.Name,
+					managedByLabel: managedByValue,
+				},
+			},
+			Type: source.Type,
+			Data: source.Data,
+		}
+
+		existing := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: nsName}, existing)
+		if errors.IsNotFound(err) {
+			if err := r.Create(ctx, desired); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
+			patch := client.MergeFrom(existing.DeepCopy())
+			existing.Type = desired.Type
+			existing.Data = desired.Data
+			if existing.Labels == nil {
+				existing.Labels = map[string]string{}
+			}
+			existing.Labels[tenantLabel] = tenant.Name
+			existing.Labels[managedByLabel] = managedByValue
+			if err := r.Patch(ctx, existing, patch); err != nil {
+				return err
+			}
+		}
 	}
 
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
+	// 2. Fetch scoped credentials for proprietary apps if commerce integration is enabled
+	for _, app := range tenant.Spec.Apps {
+		profileName := app.Profile
+		if profileName == "" {
+			continue
+		}
+
+		profile := &gentianov1alpha1.AppProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
+			return fmt.Errorf("failed to read AppProfile %s: %w", profileName, err)
+		}
+
+		if profile.Spec.License != "proprietary" {
+			continue
+		}
+
+		secretName := "registry-credentials-" + profileName
+		existingSec := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existingSec)
+		if err == nil {
+			// Secret exists already
+			continue
+		}
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to check existing secret %s: %w", secretName, err)
+		}
+
+		// Scoped secret is missing; exchange the grant
+		if !r.CommerceEnabled {
+			return fmt.Errorf("app %s has a proprietary license but commercial integration (GENTIAN_COMMERCE_ENABLED) is disabled", profileName)
+		}
+
+		annoKey := "gentianos.io/install-grant-" + profileName
+		log.FromContext(ctx).Info("checking registry credentials for proprietary app", "profile", profileName, "annoKey", annoKey, "annotations", tenant.Annotations)
+		jwtToken := tenant.Annotations[annoKey]
+		if jwtToken == "" {
+			return fmt.Errorf("app %s has a proprietary license; please purchase a subscription and provide the install grant JWT annotation %s", profileName, annoKey)
+		}
+
+		jti, err := extractJTIFromJWT(jwtToken)
+		if err != nil {
+			return fmt.Errorf("failed to extract token ID from grant for %s: %w", profileName, err)
+		}
+
+		log.FromContext(ctx).Info("exchanging install grant", "profile", profileName, "jti", jti)
+		exchangeRes, err := r.exchangeInstallGrant(ctx, jti, jwtToken)
+		if err != nil {
+			log.FromContext(ctx).Error(err, "failed to exchange install grant", "profile", profileName, "jti", jti)
+			return fmt.Errorf("failed to exchange install grant for %s: %w", profileName, err)
+		}
+		log.FromContext(ctx).Info("exchanged install grant successfully", "profile", profileName, "entitlementId", exchangeRes.EntitlementId)
+
+		dockerConfigJSON, err := buildDockerConfigJSON(
+			exchangeRes.RegistryCredential.Host,
+			exchangeRes.RegistryCredential.Username,
+			exchangeRes.RegistryCredential.Password,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to build dockerconfig JSON for %s: %w", profileName, err)
+		}
+
+		registrySec := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: nsName,
+				Labels: map[string]string{
+					tenantLabel:    tenant.Name,
+					managedByLabel: managedByValue,
+				},
+			},
+			Type: corev1.SecretTypeDockerConfigJson,
+			Data: map[string][]byte{
+				corev1.DockerConfigJsonKey: dockerConfigJSON,
+			},
+		}
+		log.FromContext(ctx).Info("creating registry credentials secret", "secret", secretName, "namespace", nsName)
+		if err := r.Create(ctx, registrySec); err != nil {
+			log.FromContext(ctx).Error(err, "failed to create registry credentials secret", "secret", secretName)
+			return fmt.Errorf("failed to create secret %s: %w", secretName, err)
+		}
+		log.FromContext(ctx).Info("created registry credentials secret successfully", "secret", secretName)
+
+		meteringSecName := "metering-secret-" + profileName
+		meteringSec := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      meteringSecName,
+				Namespace: nsName,
+				Labels: map[string]string{
+					tenantLabel:    tenant.Name,
+					managedByLabel: managedByValue,
+				},
+			},
+			Type: corev1.SecretTypeOpaque,
+			StringData: map[string]string{
+				"metering-secret": exchangeRes.MeteringSecret,
+				"entitlement-id":  exchangeRes.EntitlementId,
+				"product-sku":     profileName,
+			},
+		}
+		log.FromContext(ctx).Info("creating metering secret", "secret", meteringSecName, "namespace", nsName)
+		if err := r.Create(ctx, meteringSec); err != nil {
+			log.FromContext(ctx).Error(err, "failed to create metering secret", "secret", meteringSecName)
+			return fmt.Errorf("failed to create secret %s: %w", meteringSecName, err)
+		}
+		log.FromContext(ctx).Info("created metering secret successfully", "secret", meteringSecName)
+	}
+
+	return nil
+}
+
+type installExchangeRequest struct {
+	InstallGrantJwt string `json:"installGrantJwt"`
+}
+
+type registryCreds struct {
+	Host      string    `json:"host"`
+	Username  string    `json:"username"`
+	Password  string    `json:"password"`
+	Scopes    []string  `json:"scopes"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type installExchangeResponse struct {
+	Ok                 bool          `json:"ok"`
+	Profile            string        `json:"profile"`
+	EntitlementId      string        `json:"entitlementId"`
+	RegistryCredential registryCreds `json:"registryCredential"`
+	MeteringSecret     string        `json:"meteringSecret"`
+}
+
+func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtToken string) (*installExchangeResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CorpAPIURL, "/"), jti)
+	reqBody, err := json.Marshal(installExchangeRequest{InstallGrantJwt: jwtToken})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+r.OperatorToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("exchange failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var out installExchangeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func extractJTIFromJWT(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid JWT format")
+	}
+	payloadSegment := parts[1]
+	if l := len(payloadSegment) % 4; l > 0 {
+		payloadSegment += strings.Repeat("=", 4-l)
+	}
+	decoded, err := base64.URLEncoding.DecodeString(payloadSegment)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(payloadSegment)
+		if err != nil {
+			return "", err
+		}
+	}
+	var claims struct {
+		JTI string `json:"jti"`
+	}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return "", err
+	}
+	if claims.JTI == "" {
+		return "", fmt.Errorf("jti claim not found in JWT")
+	}
+	return claims.JTI, nil
+}
+
+type dockerConfig struct {
+	Auths map[string]dockerAuth `json:"auths"`
+}
+
+type dockerAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Auth     string `json:"auth"`
+}
+
+func buildDockerConfigJSON(host, username, password string) ([]byte, error) {
+	authStr := username + ":" + password
+	encodedAuth := base64.StdEncoding.EncodeToString([]byte(authStr))
+	config := dockerConfig{
+		Auths: map[string]dockerAuth{
+			host: {
+				Username: username,
+				Password: password,
+				Auth:     encodedAuth,
 			},
 		},
-		Type: source.Type,
-		Data: source.Data,
 	}
-
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Type = desired.Type
-		existing.Data = desired.Data
-		if existing.Labels == nil {
-			existing.Labels = map[string]string{}
-		}
-		existing.Labels[tenantLabel] = tenant.Name
-		existing.Labels[managedByLabel] = managedByValue
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return json.Marshal(config)
 }
 
 // ensureStagingCaTrust bootstraps gentian-staging-ca-tls in the services namespace
@@ -1009,9 +980,6 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		if tenant.Spec.Isolation.Namespace != "" {
 			iso["namespace"] = tenant.Spec.Isolation.Namespace
 		}
-		if tenant.Spec.Isolation.LDAPOu != "" {
-			iso["ldapOU"] = tenant.Spec.Isolation.LDAPOu
-		}
 		if tenant.Spec.Isolation.KeycloakRealm != "" {
 			iso["keycloakRealm"] = tenant.Spec.Isolation.KeycloakRealm
 		}
@@ -1048,17 +1016,29 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 	}
 
+	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("load AppProfile index: %w", err)
+	}
+
 	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		entry := map[string]interface{}{"profile": app.Profile}
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err == nil {
+		profile, exists := appProfileFromIndex(profileIndex, app.Profile)
+		if exists {
+			// ApiProfiles run no workload; keep them out of the XTenant so the
+			// composition creates no App claim / Helm release for them.
+			if gentianov1alpha1.ProfileIsAPI(profile) {
+				continue
+			}
 			if profile.Spec.CompositionRef != "" {
 				variant := strings.TrimPrefix(profile.Spec.CompositionRef, "app-")
 				if variant != "" {
 					entry["variant"] = variant
 				}
 			}
+		} else {
+			log.FromContext(ctx).Info("AppProfile not found in index in buildXTenant", "profile", app.Profile)
 		}
 		if app.Config != nil {
 			cfg := map[string]interface{}{}

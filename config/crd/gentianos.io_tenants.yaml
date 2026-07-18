@@ -41,7 +41,7 @@ spec:
 
           Tenant is cluster-scoped and represents a customer organisation. Creating a
           Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
-          creation, LDAP OU, Keycloak realm, per-app databases/buckets/cache, and
+          creation, Keycloak realm, per-app databases/buckets/cache, and
           ArgoCD Application (or Crossplane App claim) CRs for each requested app.
         properties:
           apiVersion:
@@ -124,7 +124,7 @@ spec:
                               type: string
                             family:
                               description: Family is the stable logical application
-                                id (e.g. "openproject").
+                                id (e.g. "demo-app").
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
@@ -182,11 +182,6 @@ spec:
                       KeycloakRealm is the Keycloak realm name for this tenant.
                       Defaults to the tenant name.
                     type: string
-                  ldapOU:
-                    description: |-
-                      LDAPOu is the LDAP OU path for this tenant's users and groups.
-                      Defaults to "ou={tenant-name}" under the root DN.
-                    type: string
                   mode:
                     default: namespace
                     description: Mode selects the isolation strategy. Defaults to
@@ -243,19 +238,6 @@ spec:
                       delivery. Required when mode=external.
                       The Secret must provide keys: host, port, username, password.
                     type: string
-                type: object
-              office:
-                description: |-
-                  Office configures the Nextcloud Office (Collabora) document editing extension
-                  for this tenant. When enabled, the shared kernel Collabora service provides
-                  WOPI-based document editing inside Nextcloud.
-                properties:
-                  enabled:
-                    default: false
-                    description: |-
-                      Enabled activates the Collabora WOPI document editor for this tenant.
-                      Defaults to false.
-                    type: boolean
                 type: object
               quotas:
                 description: Quotas sets resource limits for this tenant.

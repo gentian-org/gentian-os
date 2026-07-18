@@ -1,6 +1,17 @@
 /*
-Copyright 2026 The Gentian Authors.
-Licensed under the Apache License, Version 2.0.
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package secrets_test
@@ -93,6 +104,30 @@ func TestKVClientPutOnceIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSeederSeedOIDCUpdatesIssuerPreservesSecret(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
+
+	ctx := context.Background()
+	first, err := s.SeedOIDC(ctx, "demo", "test-app",
+		"https://id.example/realms/demo", "test-oidc-client")
+	if err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	second, err := s.SeedOIDC(ctx, "demo", "test-app",
+		"https://id.example/auth/realms/demo", "test-oidc-client")
+	if err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+	if second.Issuer != "https://id.example/auth/realms/demo" {
+		t.Fatalf("issuer not updated: %q", second.Issuer)
+	}
+	if first.ClientSecret != second.ClientSecret {
+		t.Fatalf("client secret changed: %q → %q", first.ClientSecret, second.ClientSecret)
+	}
+}
+
 func TestSeederSeedOIDCReturnsStoredSecretOnRepeat(t *testing.T) {
 	srv := newFakeBao()
 	defer srv.Close()
@@ -174,5 +209,16 @@ func TestDeriverKernelPathOmitsTenant(t *testing.T) {
 	want := "gentian-os/kernel/internal/master-password"
 	if got != want {
 		t.Fatalf("KernelPath mismatch: %q vs %q", got, want)
+	}
+}
+
+func TestDeriverSaltDiversifiesOutput(t *testing.T) {
+	d1 := secrets.NewDeriver("master-X", "salt-A")
+	d2 := secrets.NewDeriver("master-X", "salt-B")
+	salt := secrets.CategoryPath("acme", "element", "oidc")
+	a := d1.Derive(salt, "client-secret", 40)
+	b := d2.Derive(salt, "client-secret", 40)
+	if a == b {
+		t.Fatalf("per-cluster salt did not diversify output")
 	}
 }

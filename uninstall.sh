@@ -6,7 +6,7 @@
 #
 # Default (safe) mode:
 #   - Undeploys all tenants (GitOps + in-cluster) unless --keep-tenants
-#   - Removes the Nubus provider-helm Release and associated Secrets/ConfigMaps
+#   - Removes kernel Pattern B Helm Release CRs and associated Secrets/ConfigMaps
 #   - Removes the Cluster XR (waits for Crossplane GC)
 #   - Removes Crossplane resources (XRD, Composition, providers)
 #   - Tenant undeploy removes operator manifest-bridge ConfigMaps (tenant-*-provisioning-jobs)
@@ -19,6 +19,8 @@
 #   - All safe-mode steps
 #   - Tenant undeploy uses --purge (destructive tenant data removal)
 #   - Also deletes data namespaces and bound PVs (full teardown)
+#   - Removes Envoy Gateway, Kyverno (Gentian admission), and orphaned Gentian
+#     OS cluster scaffold (gentianos.io CRDs/CRs, operator RBAC, catalogue)
 #
 # Usage:
 #   ./uninstall.sh            # safe teardown
@@ -32,10 +34,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Shared helpers (composition glob, kernel Release discovery).
-export GENTIAN_INSTALL_LIB_ONLY=1
-# shellcheck source=scripts/install-lib.sh
-source "${SCRIPT_DIR}/scripts/install-lib.sh"
-unset GENTIAN_INSTALL_LIB_ONLY
+# shellcheck source=scripts/lib/load.sh
+source "${SCRIPT_DIR}/scripts/lib/load.sh"
 
 MODE="safe"
 ENV="${ENV:-dev}"
@@ -73,7 +73,8 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "Usage: $0 [-f] [--keep-tenants] [--cluster-infra]"
             echo "  default          : safe uninstall (preserve PVC/PV data)"
-            echo "  -f               : force uninstall (delete namespaces + bound PVs)"
+            echo "  -f               : force uninstall (delete namespaces, bound PVs,"
+            echo "                     Envoy Gateway, Kyverno, gentianos.io CRDs/RBAC)"
             echo "  --keep-tenants    : skip tenant undeploy (preserve tenant CRs, namespaces, Git manifests)"
             echo "  --cluster-infra   : also remove cert-manager/reloader/CNPG"
             exit 0
@@ -118,18 +119,26 @@ if [[ "${MODE}" == "force" ]]; then
     [[ "${confirm}" == "yes" ]] || { info "Aborted."; exit 0; }
 fi
 
+# Orphaned Kyverno webhook configs (cluster-scoped; survive a namespace
+# deletion that bypasses Kyverno's own Helm uninstall hooks) fail closed and
+# block ALL resource creation cluster-wide. Clean them up unconditionally,
+# regardless of safe/force mode — this isn't data, just broken admission
+# config, so there's no reason to gate it behind -f. See scripts/lib/common.sh.
+cleanup_orphaned_kyverno_webhooks
+
 _git_tenant_instances() {
     local tenants_root="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants"
-    local stage="${GENTIAN_DEPLOYMENTS_STAGE}"
     local tenant_dir instance
 
     [[ -d "${tenants_root}" ]] || return 0
 
+    # No <stage> segment here — a cluster has exactly one stage for its
+    # whole lifetime (docs/deployment.md §1), so tenants/<instance>/tenant.yaml
+    # is flat, not tenants/<instance>/<stage>/tenant.yaml.
     for tenant_dir in "${tenants_root}"/*; do
         [[ -d "${tenant_dir}" ]] || continue
         instance="$(basename "${tenant_dir}")"
-        [[ "${instance}" == "components" ]] && continue
-        [[ -f "${tenant_dir}/${stage}/tenant.yaml" ]] && echo "${instance}"
+        [[ -f "${tenant_dir}/tenant.yaml" ]] && echo "${instance}"
     done
 }
 
@@ -208,7 +217,7 @@ else
             done
         else
             warn "kubectl-gentian plugin not found; skipping GitOps undeploy."
-            warn "Remove clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants/*/${GENTIAN_DEPLOYMENTS_STAGE}/ manually to prevent ArgoCD from re-creating tenants on the next install."
+            warn "Remove clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/tenants/* manually to prevent ArgoCD from re-creating tenants on the next install."
         fi
     fi
 
@@ -289,6 +298,61 @@ fi
 # =============================================================================
 banner "Step 1 — Remove Cluster XR (Crossplane GC)"
 
+# InfraData XR owns shared postgres/mariadb Helm releases — remove before Cluster GC
+# so provider-helm can uninstall chart resources cleanly.
+if kubectl get infradata dev-infra-data -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting InfraData claim dev-infra-data..."
+    kubectl delete infradata dev-infra-data -n crossplane-system --timeout=120s || true
+else
+    info "InfraData claim dev-infra-data not found; skipping."
+fi
+
+if kubectl get xinfradata dev-infra-data >/dev/null 2>&1; then
+    info "Waiting for XInfraData dev-infra-data to be garbage-collected (max 5m)..."
+    local_deadline=$((SECONDS + 300))
+    while kubectl get xinfradata dev-infra-data >/dev/null 2>&1; do
+        if (( SECONDS > local_deadline )); then
+            warn "XInfraData dev-infra-data still present after 5m — forcing deletion."
+            kubectl delete xinfradata dev-infra-data --grace-period=0 --force >/dev/null 2>&1 || true
+            break
+        fi
+        sleep 5
+    done
+    success "XInfraData dev-infra-data removed."
+else
+    info "XInfraData dev-infra-data not found; skipping."
+fi
+
+# Suze XR (Keycloak + OpenFGA) — remove before Crossplane core so Helm releases GC cleanly.
+if kubectl get suze dev-suze -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting Suze claim dev-suze..."
+    kubectl delete suze dev-suze -n crossplane-system --timeout=120s || true
+else
+    info "Suze claim dev-suze not found; skipping."
+fi
+
+if kubectl get xsuze -o name 2>/dev/null | grep -q .; then
+    info "Waiting for XSuze composite(s) to be garbage-collected (max 5m)..."
+    local_deadline=$((SECONDS + 300))
+    while kubectl get xsuze -o name 2>/dev/null | grep -q .; do
+        if (( SECONDS > local_deadline )); then
+            warn "XSuze still present after 5m — forcing finalizer removal."
+            kubectl get xsuze -o name 2>/dev/null \
+                | xargs -r -I{} kubectl patch {} \
+                    --type=merge -p='{"metadata":{"finalizers":[]}}' \
+                    2>/dev/null || true
+            kubectl get xsuze -o name 2>/dev/null \
+                | xargs -r kubectl delete --grace-period=0 --force \
+                    2>/dev/null || true
+            break
+        fi
+        sleep 5
+    done
+    success "XSuze composite(s) removed."
+else
+    info "XSuze composite not found; skipping."
+fi
+
 if kubectl get cluster dev-cluster -n crossplane-system >/dev/null 2>&1; then
     info "Deleting Cluster claim dev-cluster..."
     kubectl delete cluster dev-cluster -n crossplane-system --timeout=60s || true
@@ -313,104 +377,48 @@ else
 fi
 
 # =============================================================================
-# Step 1b — Remove Nubus provider-helm Release and associated Secrets/ConfigMaps
-# Must run before Crossplane providers are removed so the Release GC can run.
+# Step 1b — Remove kernel Pattern B Helm Releases and associated Secrets/ConfigMaps
+# Must run before Crossplane providers are removed so Release GC can run.
 # =============================================================================
-banner "Step 1b — Remove Nubus provider-helm Release"
+banner "Step 1b — Remove kernel Pattern B Helm Releases"
 
-if kubectl get release.helm.crossplane.io/nubus-dev >/dev/null 2>&1; then
-    info "Deleting provider-helm Release nubus-dev..."
-    kubectl delete release.helm.crossplane.io/nubus-dev --timeout=60s || true
-    info "Waiting for Helm GC (nubus-dev uninstall, max 3m)..."
-    local_deadline=$((SECONDS + 180))
-    while kubectl get release.helm.crossplane.io/nubus-dev >/dev/null 2>&1; do
-        if (( SECONDS > local_deadline )); then
-            warn "Release nubus-dev still present after 3m — forcing finalizer removal."
-            kubectl patch release.helm.crossplane.io/nubus-dev \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                2>/dev/null || true
-            break
-        fi
-        sleep 5
-    done
-    success "Release nubus-dev removed."
-else
-    info "Release nubus-dev not found; skipping."
-fi
-
-# ── Pattern B Release CRs (kernel/services/*/manifests/<env>/release.yaml) ───
+# Pattern B Release CRs (kernel/services/*/manifests/<env>/release.yaml)
 # Discovered from manifests (same source as update.sh --reconcile-releases), not a
 # hardcoded app list. Tenant app Helm releases are removed with Tenant/App CRs.
 delete_kernel_helm_releases "${ENV}"
 
 for ns in "${SERVICES_NS}" "${INFRA_NS}"; do
-    info "Removing nubus ConfigMaps / Secrets from ${ns}..."
+    info "Removing kernel ConfigMaps / Secrets from ${ns}..."
     kubectl delete configmap \
-        nubus-base-values \
-        nubus-dev-values \
-        nubus-dev-udm-listener-nats-patch \
-        nubus-dev-ldap-gentian-acl \
         postgresql-base-values \
         postgresql-dev-values \
         mariadb-base-values \
         mariadb-dev-values \
-        nextcloud-base-values \
-        nextcloud-dev-values \
-        nextcloud-management-base-values \
-        nextcloud-management-dev-values \
-        nextcloud-notifypush-base-values \
-        nextcloud-notifypush-dev-values \
-        collabora-base-values \
-        collabora-dev-values \
-        cryptpad-base-values \
-        cryptpad-dev-values \
         postfix-base-values \
         postfix-dev-values \
         dovecot-base-values \
         dovecot-dev-values \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete externalsecret \
-        nubus-credentials \
-        nubus-sensitive-values \
         portal-object-storage-credentials \
-        keycloak-bootstrap-ldap-credentials \
         postgresql-sensitive-values \
         mariadb-sensitive-values \
-        nextcloud-sensitive-values \
-        nextcloud-management-sensitive-values \
-        nextcloud-notifypush-sensitive-values \
         postfix-sensitive-values \
         dovecot-sensitive-values \
-        collabora-sensitive-values \
-        -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
-    kubectl delete secretstore nubus-static \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     # ESO-owned Secrets: delete only if ExternalSecrets are gone
     kubectl delete secret \
-        nubus-credentials \
-        nubus-sensitive-values \
         portal-object-storage-credentials \
-        ums-keycloak-bootstrap-ldap-credentials \
         postgresql-sensitive-values \
         mariadb-sensitive-values \
-        nextcloud-sensitive-values \
-        nextcloud-management-sensitive-values \
-        nextcloud-notifypush-sensitive-values \
         postfix-sensitive-values \
         dovecot-sensitive-values \
-        collabora-sensitive-values \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
     kubectl delete secret registry-credentials \
         -n "${ns}" --ignore-not-found=true --timeout=30s 2>/dev/null || true
 done
 
-# Operator Secret in platform-kernel (replaces kubernetes_secret.nextcloud_admin)
-kubectl delete externalsecret nextcloud-admin -n platform-kernel \
-    --ignore-not-found=true --timeout=30s 2>/dev/null || true
-kubectl delete secret nextcloud-admin -n platform-kernel \
-    --ignore-not-found=true --timeout=30s 2>/dev/null || true
-
-success "Nubus + Pattern B resources removed."
+success "Kernel Pattern B resources removed."
 
 # =============================================================================
 # Step 1c — Drain all remaining Crossplane managed resources
@@ -477,7 +485,8 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
     for file in \
         "${SCRIPT_DIR}/crossplane/xrds/app.yaml" \
         "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml" \
-        "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
+        "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml" \
+        "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
     do
         if [[ -f "${file}" ]]; then
             kubectl delete -f "${file}" --ignore-not-found=true 2>/dev/null || true
@@ -502,7 +511,9 @@ if kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/de
         xtenants.gentianos.io \
         tenants.gentianos.io \
         xclusters.gentianos.io \
-        clusters.gentianos.io
+        clusters.gentianos.io \
+        xsuze.gentianos.io \
+        suze.gentianos.io
     do
         # Strip finalizers from all CR instances before deleting the CRD.
         kubectl get "${crd}" -A -o name 2>/dev/null \
@@ -693,7 +704,6 @@ for secret in \
     gentian-os-kernel-database-mariadb \
     gentian-os-kernel-cache-redis \
     gentian-os-kernel-storage-minio \
-    gentian-os-kernel-identity-nubus \
     gentian-os-kernel-identity-keycloak-bootstrap \
     gentian-os-kernel-mail-postfix \
     gentian-os-kernel-mail-dovecot \
@@ -916,7 +926,7 @@ fi
 if [[ "${UNINSTALL_CLUSTER_INFRA}" == "1" ]]; then
     banner "Step 9 — Remove additional cluster infra"
 
-    # Installed by install_argocd_image_updater() in scripts/install-lib.sh.
+    # Installed by install_argocd_image_updater() in scripts/lib/argocd.sh.
     if helm status argocd-image-updater -n argocd-image-updater >/dev/null 2>&1; then
         helm uninstall argocd-image-updater -n argocd-image-updater 2>/dev/null || true
         success "argocd-image-updater Helm release uninstalled."
@@ -1007,7 +1017,7 @@ _delete_namespace() {
 #  (a) NFS directories are actually cleaned up (reclaimPolicy: Delete)
 #  (b) PVC etcd entries are gone before the new install creates StatefulSets
 #      with the same volumeClaimTemplate names — otherwise the new StatefulSets
-#      bind to the surviving old PVCs and inherit old data (e.g. LDAP users).
+#      bind to the surviving old PVCs and inherit stale data.
 # Helm uninstall intentionally preserves StatefulSet volumeClaimTemplate PVCs.
 _drain_pvcs() {
     local ns="$1"
@@ -1054,6 +1064,155 @@ _delete_pvs_for_namespace() {
             2>/dev/null || true
         kubectl delete pv "${pv}" --ignore-not-found=true --wait=false 2>/dev/null || true
     done <<< "${pvs}"
+}
+
+# Strip finalizers and delete all instances of a CRD (cluster- and namespaced-scoped).
+_strip_and_delete_crd_instances() {
+    local crd="$1"
+    while IFS= read -r obj; do
+        [[ -z "${obj}" ]] && continue
+        [[ "${obj}" != */* ]] && continue
+        kubectl patch "${obj}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+        kubectl delete "${obj}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done < <(
+        kubectl get "${crd}" -A -o name 2>/dev/null || true
+        kubectl get "${crd}" -o name 2>/dev/null || true
+    )
+}
+
+# Delete CRDs whose names match an extended-regex pattern (e.g. 'gentianos\.io$').
+_delete_crds_matching() {
+    local pattern="$1"
+    local label="${2:-CRDs matching ${pattern}}"
+    local crds crd
+
+    crds=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep -E "${pattern}" || true)
+    if [[ -z "${crds}" ]]; then
+        info "No ${label}; skipping."
+        return 0
+    fi
+
+    info "Deleting ${label}..."
+    while IFS= read -r crd; do
+        [[ -z "${crd}" ]] && continue
+        _strip_and_delete_crd_instances "${crd}"
+        kubectl patch crd "${crd}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+        kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done <<< "${crds}"
+    success "${label} removal queued."
+}
+
+_delete_envoy_gateway_scaffold() {
+    local ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local gateway_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+
+    info "Removing Gentian Gateway API edge scaffold..."
+
+    for rt in \
+        backendtrafficpolicies.gateway.envoyproxy.io \
+        clienttrafficpolicies.gateway.envoyproxy.io \
+        securitypolicies.gateway.envoyproxy.io \
+        envoyextensionpolicies.gateway.envoyproxy.io \
+        envoypatchpolicies.gateway.envoyproxy.io \
+        backendtlspolicies.gateway.networking.k8s.io; do
+        kubectl get "${rt}" -A -o name 2>/dev/null \
+            | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    done
+
+    kubectl get httproute -A -o name 2>/dev/null \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    kubectl get gateway -A -o name 2>/dev/null \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    kubectl delete gatewayclass "${gateway_class}" --ignore-not-found=true 2>/dev/null || true
+
+    if helm status eg -n "${ns}" >/dev/null 2>&1; then
+        info "Uninstalling Envoy Gateway Helm release (eg) in ${ns}..."
+        helm uninstall eg -n "${ns}" --wait --timeout=3m 2>/dev/null || true
+        success "Envoy Gateway Helm release uninstalled."
+    else
+        info "Envoy Gateway Helm release not found in ${ns}; skipping helm uninstall."
+    fi
+
+    _delete_namespace "${ns}"
+    _delete_crds_matching 'gateway\.envoyproxy\.io$' 'Envoy Gateway extension CRDs'
+    _delete_crds_matching 'gateway\.networking\.k8s\.io$' 'Gateway API CRDs'
+}
+
+_delete_kyverno_scaffold() {
+    local policy
+
+    info "Removing Gentian Kyverno admission scaffold..."
+    for policy in \
+        gentian-disallow-privileged \
+        gentian-disallow-host-namespaces \
+        gentian-require-non-root; do
+        kubectl patch clusterpolicy "${policy}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' \
+            2>/dev/null || true
+        kubectl delete clusterpolicy "${policy}" --ignore-not-found=true --wait=false 2>/dev/null || true
+    done
+    success "Gentian Kyverno ClusterPolicies removed."
+
+    if helm status kyverno -n kyverno >/dev/null 2>&1; then
+        info "Uninstalling Kyverno Helm release..."
+        helm uninstall kyverno -n kyverno --wait --timeout=3m 2>/dev/null || true
+        success "Kyverno Helm release uninstalled."
+    else
+        info "Kyverno Helm release not found; skipping helm uninstall."
+    fi
+
+    _delete_namespace "kyverno"
+    _delete_crds_matching 'kyverno\.io$' 'Kyverno CRDs'
+
+    # Belt-and-suspenders: helm uninstall normally removes Kyverno's webhook
+    # configs as chart-managed resources, but not if the Helm release was
+    # already broken/missing above (helm uninstall never ran). These are
+    # cluster-scoped and fail closed, so leaving them behind blocks the next
+    # install — explicitly sweep them regardless of how the helm step went.
+    kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration -o name 2>/dev/null \
+        | grep 'kyverno-' \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+    success "Kyverno webhook configurations removed."
+}
+
+_delete_gentianos_api_scaffold() {
+    info "Removing Gentian OS API scaffold (CRs, CRDs, RBAC, webhooks)..."
+
+    kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator \
+        --ignore-not-found=true 2>/dev/null || true
+
+    if helm status gentian-os -n gentian-system >/dev/null 2>&1; then
+        helm uninstall gentian-os -n gentian-system --wait --timeout=3m 2>/dev/null || true
+        success "gentian-os Helm release uninstalled."
+    fi
+
+    _delete_crds_matching 'gentianos\.io$' 'gentianos.io CRDs'
+
+    kubectl delete apiservice v1alpha1.gentianos.io --ignore-not-found=true 2>/dev/null || true
+
+    kubectl delete clusterrolebinding \
+        gentian-os \
+        gentian-job-gc \
+        --ignore-not-found=true 2>/dev/null || true
+    kubectl get clusterrolebinding -o name 2>/dev/null \
+        | grep -E 'gentian-portal' \
+        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+
+    kubectl delete clusterrole \
+        gentian-os \
+        gentian-job-gc \
+        'crossplane:extra-resources:appprofiles.gentianos.io' \
+        --ignore-not-found=true 2>/dev/null || true
+    kubectl get clusterrole -o name 2>/dev/null \
+        | grep -E 'gentian-portal' \
+        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+
+    success "Gentian OS API scaffold removed."
 }
 
 # =============================================================================
@@ -1180,6 +1339,23 @@ else
 fi
 
 # =============================================================================
+# Step 13 — Force-mode platform scaffold cleanup
+#
+# Orphaned cluster-scoped resources (Envoy Gateway, Kyverno, gentianos.io CRDs,
+# operator RBAC, catalogue CRs) survive namespace teardown.  Remove them in force
+# mode so the next install starts from a clean API surface.
+# =============================================================================
+if [[ "${MODE}" == "force" ]]; then
+    banner "Step 13 — Force-mode platform scaffold cleanup"
+    _delete_envoy_gateway_scaffold
+    _delete_kyverno_scaffold
+    _delete_gentianos_api_scaffold
+else
+    info "Skipping platform scaffold cleanup (only enabled with -f)."
+    info "  Re-run with -f to also remove Envoy Gateway, Kyverno, and gentianos.io CRDs/RBAC."
+fi
+
+# =============================================================================
 # Remove host CLI tools (kubectl-gentian plugin + gtnctl symlink)
 # =============================================================================
 banner "Remove host CLI tools"
@@ -1225,7 +1401,8 @@ if [[ "${UNINSTALL_KEEP_TENANTS}" == "1" ]]; then
 fi
 if [[ "${MODE}" == "safe" ]]; then
     echo "  PVC/PV data is preserved (safe mode)."
-    echo "  Re-run with -f to also remove namespaces and bound PVs."
+    echo "  Re-run with -f to also remove namespaces, bound PVs, Envoy Gateway,"
+    echo "  Kyverno, and orphaned gentianos.io CRDs/RBAC."
 fi
 
 # Clear the persisted run-start epoch so the next install starts with a fresh

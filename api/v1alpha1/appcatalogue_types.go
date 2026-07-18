@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ type CatalogueEntry struct {
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod"`
 
 	// KernelRequirements is a compact human-readable list of kernel services the
-	// app requires (e.g., ["oidc", "postgresql", "s3", "smtp", "ldap"]).
+	// app requires (e.g., ["oidc", "postgresql", "s3", "smtp"]).
 	// +optional
 	KernelRequirements []string `json:"kernelRequirements,omitempty"`
 

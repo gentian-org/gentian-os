@@ -1,0 +1,41 @@
+model
+  schema 1.1
+
+type user
+
+type group
+  relations
+    define member: [user]
+
+type tenant
+  relations
+    define member: [user]
+    define admin: [user] or member
+
+type shell_app
+  relations
+    define parent: [tenant]
+    define can_launch: [user] or member from parent or admin from parent
+
+type installed_app
+  relations
+    define tenant: [tenant]
+
+type app_contract
+  relations
+    define tenant: [tenant]
+    define provider: [installed_app]
+    define consumer: [installed_app]
+
+type capability
+  relations
+    define link: [app_contract]
+    define granted: [installed_app]
+
+type document
+  relations
+    define parent: [tenant]
+    define owner: [user]
+    define reader: [user] or member from parent or owner
+    define acting_for: [user]
+    define can_read: reader or acting_for

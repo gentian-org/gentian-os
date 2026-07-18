@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-# Upload GitHub Actions secrets for gentian-os image-pin workflows.
-#
-# Used after gentian-ui builds portal-frontend / base-router images: the pin
-# jobs in gentian-os need CI_BOT_PAT (cross-repo git push). Cross-repo
-# workflow_call does not read gentian-os secrets automatically — the same PAT
-# must also exist on gentian-ui so the caller can pass it through. Optional
-# ArgoCD secrets trigger an immediate sync after pin (gentian-os only).
+# Upload GitHub Actions secrets for gentian-os automation (optional ArgoCD sync).
 #
 # Usage (normally called from install.sh):
 #   CI_BOT_PAT=... KERNEL_DOMAIN=desk.example.com \

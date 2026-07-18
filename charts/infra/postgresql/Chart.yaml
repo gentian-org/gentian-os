@@ -1,0 +1,19 @@
+annotations:
+  category: Database
+apiVersion: v2
+dependencies:
+- name: common
+  repository: https://charts.bitnami.com/bitnami
+  tags:
+  - bitnami-common
+  version: 2.x.x
+description: A Helm chart for running PostgreSQL (Postgres) database
+home: https://zendis.de
+keywords:
+- postgresql
+- postgres
+- database
+- sql
+name: postgresql
+type: application
+version: 2.1.2

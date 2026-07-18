@@ -1,0 +1,63 @@
+# Suze — Secure Universal Zero-trust Environment
+#
+# Gentian IdP composite (Keycloak authentication + OpenFGA authorization).
+# Provisioned by Crossplane composition `suze`; claim kind `Suze`, composite `XSuze`.
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xsuze.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XSuze
+    plural: xsuze
+  claimNames:
+    kind: Suze
+    plural: suze
+  defaultCompositionRef:
+    name: suze
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - environment
+              properties:
+                environment:
+                  type: string
+                  description: Environment slug (e.g. dev).
+                idpNamespace:
+                  type: string
+                  description: Namespace for Keycloak and OpenFGA workloads.
+                  default: platform-kernel
+                openfga:
+                  type: object
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      default: gentian-openfga
+                    chartVersion:
+                      type: string
+                      default: "0.3.10"
+                keycloak:
+                  type: object
+                  properties:
+                    helmReleaseName:
+                      type: string
+                      default: gentian-idp-keycloak
+                    chartVersion:
+                      type: string
+                      default: "7.0.1"
+            status:
+              type: object
+              properties:
+                openfgaReleaseReady:
+                  type: boolean
+                keycloakReleaseReady:
+                  type: boolean

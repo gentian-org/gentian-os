@@ -51,7 +51,7 @@ spec:
                     type: Value
                     value: kernel-services
             # Reads the gentian-cluster-config ConfigMap (crossplane-system) to supply
-            # cluster-specific LDAP base DN, UDM URL, and secret generation mode to
+            # cluster-specific identity URLs and secret generation mode to
             # app init Jobs emitted by this Composition.
             - kind: ConfigMap
               into: clusterConfig
@@ -63,17 +63,33 @@ spec:
                   - key: gentianos.io/config-type
                     type: Value
                     value: cluster-config
-            # OpenDesk OIDC pack catalogue — replaces hardcoded clientId dicts when synced.
+            # OIDC pack catalogue for the installed app profile (profiles/<app>/oidc-catalog.yaml).
             - kind: OIDCPackCatalog
               into: oidcPackCatalog
               apiVersion: gentianos.io/v1alpha1
               type: Selector
               selector:
                 maxMatch: 1
+                minMatch: 0
                 matchLabels:
-                  - key: gentianos.io/oidc-catalog
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+            # Optional portal-bridge SSO helper page shipped with the AppProfile catalogue.
+            - kind: ConfigMap
+              into: portalBridgeSso
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/profile-name
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.profileRef.name
+                  - key: gentianos.io/asset
                     type: Value
-                    value: opendesk
+                    value: portal-bridge-sso
 
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
@@ -82,7 +98,7 @@ spec:
     #     appSecret; creates a flat Secret with one key per sensitive value)
     #   • helm.crossplane.io/v1beta1 Release pointing at the chart from the
     #     AppProfile, with set[] entries that pull values from the Secret above
-    - step: render-app-resources
+    - step: render-app-core
       functionRef:
         name: function-go-templating
       input:
@@ -94,7 +110,7 @@ spec:
             {{- $xr     := .observed.composite.resource }}
             {{- $spec   := $xr.spec }}
             {{- $xrName := $xr.metadata.name }}
-            {{- /* App claim name (e.g. "nextcloud"). Used as the Helm release name
+            {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
                  and ExternalSecret name so both resources are discoverable by
                  app label without needing to know the generated XR name. */}}
             {{- $app    := $spec.claimRef.name }}
@@ -118,25 +134,16 @@ spec:
             {{- $appSecrets := default list $pSpec.appSecrets }}
             {{- $chart     := $pSpec.chart }}
 
-            {{- /* ── Load cluster-config ConfigMap for app init Jobs ────────────── */}}
-            {{- /* Provides ldap.baseDn, udm.url, and secretMode injected as env    */}}
-            {{- /* vars into ldap-search-init Jobs (and future s3/db init Jobs).    */}}
+            {{- $kr := default dict $pSpec.kernelRequirements }}
+
+            {{- /* ── Load cluster-config ConfigMap ──────────────────────────────── */}}
+            {{- /* Provides infra endpoints (e.g. node IP, SMTP host) for rendering. */}}
             {{- $ccRes      := dig "clusterConfig" list $extraRes }}
             {{- $ccCM       := default dict (index $ccRes 0) }}
             {{- $ccData     := dig "data" dict $ccCM }}
-            {{- $ldapBaseDn    := dig "ldap.baseDn"    "" $ccData }}
-            {{- $udmUrl        := dig "udm.url"        "" $ccData }}
-            {{- $secretMode    := dig "secretMode"     "derived" $ccData }}
-            {{- $minioEndpoint := dig "minio.endpoint" "" $ccData }}
-            {{- $cnpgHost      := dig "cnpg.host"      "" $ccData }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
-            {{- $appInitImage  := dig "appInit.image"  "ghcr.io/gentian-org/gentian-app-init:develop" $ccData }}
-            {{- $initJobLimitCPU := dig "tenant.initJob.limits.cpu" "500m" $ccData }}
-            {{- $initJobLimitMem := dig "tenant.initJob.limits.memory" "512Mi" $ccData }}
-            {{- $initJobRequestCPU := dig "tenant.initJob.requests.cpu" "100m" $ccData }}
-            {{- $initJobRequestMem := dig "tenant.initJob.requests.memory" "128Mi" $ccData }}
 
-            {{- /* OpenDesk OIDC pack scopes from cluster OIDCPackCatalog. */}}
+            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR. */}}
             {{- $oidcPackDefaultScopes := dict }}
             {{- $oidcPackFullScopeAllowed := dict }}
             {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
@@ -260,23 +267,19 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- /* LDAP */}}
-            {{- if $vm.ldap }}
-            {{- $ldapPath := printf "gentian-os/tenants/%s/apps/%s/ldap" $tenant $app }}
-            {{- if $vm.ldap.hostKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-host"          "remoteRef" (dict "key" $ldapPath "property" "host")) }}
+            {{- /* Integrations */}}
+            {{- if $vm.integrations }}
+            {{- range $contract, $mapping := $vm.integrations }}
+            {{- $contractPath := printf "gentian-os/tenants/%s/contracts/%s" $tenant $contract }}
+            {{- if $mapping.endpointKey }}
+            {{- $esData = append $esData (dict "secretKey" (printf "integration-%s-endpoint" $contract) "remoteRef" (dict "key" $contractPath "property" "endpoint")) }}
             {{- end }}
-            {{- if $vm.ldap.portKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-port"          "remoteRef" (dict "key" $ldapPath "property" "port")) }}
+            {{- if $mapping.userKey }}
+            {{- $esData = append $esData (dict "secretKey" (printf "integration-%s-user" $contract) "remoteRef" (dict "key" $contractPath "property" "user")) }}
             {{- end }}
-            {{- if $vm.ldap.baseDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-base-dn"       "remoteRef" (dict "key" $ldapPath "property" "base-dn")) }}
+            {{- if $mapping.passwordKey }}
+            {{- $esData = append $esData (dict "secretKey" (printf "integration-%s-password" $contract) "remoteRef" (dict "key" $contractPath "property" "password")) }}
             {{- end }}
-            {{- if $vm.ldap.bindDnKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-dn"       "remoteRef" (dict "key" $ldapPath "property" "bind-dn")) }}
-            {{- end }}
-            {{- if $vm.ldap.bindPasswordKey }}
-            {{- $esData = append $esData (dict "secretKey" "ldap-bind-password" "remoteRef" (dict "key" $ldapPath "property" "bind-password")) }}
             {{- end }}
             {{- end }}
 
@@ -467,26 +470,21 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- if $vm.ldap }}
-            {{- if $vm.ldap.hostKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.hostKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-host"))) }}
+            {{- /* Integrations */}}
+            {{- if $vm.integrations }}
+            {{- range $contract, $mapping := $vm.integrations }}
+            {{- if $mapping.endpointKey }}
+            {{- $relSet = append $relSet (dict "name" $mapping.endpointKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "integration-%s-endpoint" $contract)))) }}
             {{- end }}
-            {{- if $vm.ldap.portKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.portKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-port"))) }}
+            {{- if $mapping.userKey }}
+            {{- $relSet = append $relSet (dict "name" $mapping.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "integration-%s-user" $contract)))) }}
             {{- end }}
-            {{- if $vm.ldap.baseDnKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.baseDnKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-base-dn"))) }}
+            {{- if $mapping.passwordKey }}
+            {{- $relSet = append $relSet (dict "name" $mapping.passwordKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" (printf "integration-%s-password" $contract)))) }}
             {{- end }}
-            {{- if $vm.ldap.bindDnKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindDnKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-dn"))) }}
-            {{- end }}
-            {{- if $vm.ldap.bindPasswordKey }}
-            {{- $relSet = append $relSet (dict "name" $vm.ldap.bindPasswordKey
-                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "ldap-bind-password"))) }}
             {{- end }}
             {{- end }}
 
@@ -507,8 +505,6 @@ spec:
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
             {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
             {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
-            {{- /*   ${LDAP_HOST}        — UCS LDAP service (from cluster-config)  */}}
-            {{- /*   ${LDAP_BASE_DN}     — LDAP base DN (from cluster-config)     */}}
             {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- $extraVals := dict }}
@@ -516,7 +512,6 @@ spec:
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
-            {{- if $pSpec.extraValues }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
             {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
             {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
@@ -527,32 +522,22 @@ spec:
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- $clusterCfgs := dig "clusterConfig" list $extraRes }}
-            {{- $ldapServer  := "" }}
-            {{- $ldapBaseDn  := "" }}
-            {{- $smtpHost    := "" }}
-            {{- if gt (len $clusterCfgs) 0 }}
-            {{- $cc := index $clusterCfgs 0 }}
-            {{- $ccLdapServer := dig "data" "ldap.server" "" $cc }}
-            {{- if $ccLdapServer }}{{- $ldapServer = $ccLdapServer }}{{- end }}
-            {{- $ccLdapBaseDn := dig "data" "ldap.baseDn" "" $cc }}
-            {{- if $ccLdapBaseDn }}{{- $ldapBaseDn = $ccLdapBaseDn }}{{- end }}
-            {{- $ccSmtpHost := dig "data" "mail.smtpHost" "" $cc }}
+            {{- $smtpHost     := "" }}
+            {{- $ccSmtpHost := dig "mail.smtpHost" "" $ccData }}
             {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
-            {{- end }}
             {{- if not $smtpHost }}
             {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
             {{- end }}
+            {{- if $pSpec.extraValues }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
             {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
+            {{- $raw = $raw | replace "${APP_ID}"           $app }}
             {{- if $kernelDomain }}{{ $raw = $raw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
             {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
             {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
             {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
-            {{- $raw = $raw | replace "${LDAP_HOST}"    $ldapServer }}
-            {{- $raw = $raw | replace "${LDAP_BASE_DN}" $ldapBaseDn }}
             {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
             {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
             {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
@@ -569,8 +554,12 @@ spec:
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
+            {{- /* Match tenant kernel-access NetworkPolicy (gentianos.io/app selector). */}}
+            {{- $podLabels := default dict (dig "podLabels" dict $extraVals) }}
+            {{- $podLabels = mergeOverwrite $podLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict "podLabels" $podLabels) }}
 
-            {{- /* opendesk/Bitnami charts expect imagePullSecrets as a string list. */}}
+            {{- /* Bitnami charts expect imagePullSecrets as a string list. */}}
             {{- $rawImagePull := dig "imagePullSecrets" list $extraVals }}
             {{- $imagePull := list }}
             {{- range $entry := $rawImagePull }}
@@ -584,10 +573,24 @@ spec:
             {{- if eq (len $imagePull) 0 }}
             {{- $imagePull = list "registry-credentials" }}
             {{- end }}
+            {{- $profileMeta := default dict (dig "metadata" dict $profile) }}
+            {{- $profileAnnos := default dict (dig "annotations" dict $profileMeta) }}
+            {{- $standardPull := eq (dig "gentianos.io/standard-image-pull-secrets" "false" $profileAnnos) "true" }}
+            {{- if $standardPull }}
+            {{- $imagePullMaps := list }}
+            {{- range $item := $imagePull }}
+            {{- $imagePullMaps = append $imagePullMaps (dict "name" $item) }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "imagePullSecrets" $imagePullMaps
+                "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePullMaps))
+            ) }}
+            {{- else }}
             {{- $extraVals = mergeOverwrite $extraVals (dict
                 "imagePullSecrets" $imagePull
                 "global" (mergeOverwrite (dig "global" dict $extraVals) (dict "imagePullSecrets" $imagePull))
             ) }}
+            {{- end }}
 
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
             {{- if $acmeStaging }}
@@ -606,7 +609,7 @@ spec:
                 (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
                 (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
             }}
-            {{- /* Charts that render env from values.environment (e.g. OpenProject)   */}}
+            {{- /* Charts that render env from values.environment need OIDC/truststore keys merged there too. */}}
             {{- /* ignore top-level extraEnvVars — merge staging CA paths there too. */}}
             {{- $stagingEnvironment := dict
                 "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
@@ -634,6 +637,12 @@ spec:
                 "extraVolumes" (concat (default list (dig "extraVolumes" list $extraVals)) (list $stagingVol))
                 "extraVolumeMounts" (concat (default list (dig "extraVolumeMounts" list $extraVals)) $stagingMounts)
             ) }}
+            {{- if eq $app "open-webui" }}
+            {{- $extraVals = mergeOverwrite $extraVals (dict
+                "volumes" (concat (default list (dig "volumes" list $extraVals)) (list $stagingVol))
+                "volumeMounts" (dict "container" (concat (default list (dig "volumeMounts" "container" list $extraVals)) $stagingMounts))
+            ) }}
+            {{- end }}
             {{- if $needsJavaTrust }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "javaOpts" $existingJavaOpts) }}
             {{- end }}
@@ -787,7 +796,33 @@ spec:
                 name: kubernetes
             {{- end }}
 
-
+            {{- /* Copy optional portal-bridge SSO helper into the tenant namespace. */}}
+            {{- $portalSsoRes := dig "portalBridgeSso" list $extraRes }}
+            {{- if gt (len $portalSsoRes) 0 }}
+            {{- $ssoCM := index $portalSsoRes 0 }}
+            {{- $ssoData := dig "data" dict $ssoCM }}
+            {{- if gt (len $ssoData) 0 }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-portal-bridge-sso-cm
+              name: {{ $xrName }}-portal-bridge-sso-cm
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: {{ $app }}-portal-bridge-sso
+                    namespace: {{ $ns }}
+                  data:
+                    {{ toYaml $ssoData | nindent 20 }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
 
             {{- /* Canonicalize extraVals so Helm values hashing is stable across reconciles */}}
             {{- $extraVals = $extraVals | toJson | fromJson }}
@@ -822,7 +857,7 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
-            {{- /* When AppProfile sets spec.ingress.serviceName (e.g. "jitsi-web") */}}
+            {{- /* When AppProfile sets spec.ingress.serviceName (non-default Service) */}}
             {{- /* the chart creates services named <xrName>-release-<component>.   */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}
@@ -892,102 +927,39 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit LDAP-search-init resources (when AppProfile requires ldap.search) */}}
-            {{- /* Provisions a per-tenant LDAP search user in UDM and writes its          */}}
-            {{- /* credential to OpenBao. Runs once; idempotent on retries.                */}}
-            {{- $ldapReqs := default dict (dig "ldap" dict $identity) }}
-            {{- if and $ldapReqs.search $ldapBaseDn $udmUrl }}
+            {{- /* ── Emit post-install bootstrap Job ─────────────────────────────── */}}
+            {{- /* AppProfile.spec.postInstallJob: app-specific bootstrap that must   */}}
+            {{- /* happen via the app's own admin API rather than Helm values. Job is */}}
+            {{- /* retried via ttlSecondsAfterFinished + reconcile, so Script must be */}}
+            {{- /* idempotent and exit non-zero if a dependency isn't ready yet. See */}}
+            {{- /* app-profile-guide.md, "Post-install bootstrap jobs".               */}}
+            {{- $pij := default dict $pSpec.postInstallJob }}
+            {{- $pijImage := dig "image" "" $pij }}
+            {{- if $pijImage }}
+            {{- $pijScript := dig "script" "" $pij }}
+            {{- $pijEnvFrom := dig "envFrom" list $pij }}
+            {{- $pijSA := dig "serviceAccountName" "" $pij }}
+            {{- $pijPVC := dig "readOnlyPVC" dict $pij }}
+            {{- $pijPVCClaim := dig "claimName" "" $pijPVC }}
+            {{- $pijPVCMount := dig "mountPath" "" $pijPVC }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-sa
-              name: {{ $xrName }}-ldap-init-sa
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ServiceAccount
-                  metadata:
-                    name: app-init
-                    namespace: {{ $ns }}
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-cm
-              name: {{ $xrName }}-ldap-init-cm
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-cm
+              name: {{ $xrName }}-post-install-cm
             spec:
               forProvider:
                 manifest:
                   apiVersion: v1
                   kind: ConfigMap
                   metadata:
-                    name: {{ $app }}-ldap-init
+                    name: {{ $app }}-post-install
                     namespace: {{ $ns }}
                   data:
-                    init.sh: |
-                      #!/bin/sh
-                      set -eu
-                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
-                        | jq -r '.auth.client_token')
-                      EXISTING=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap" \
-                        2>/dev/null || echo '{}')
-                      if echo "${EXISTING}" | jq -e '.data.data."bind-password"' >/dev/null 2>&1; then
-                        echo "[ldap-init] credential already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
-                      if [ "${SECRET_MODE}" = "random" ]; then
-                        PASSWORD=$(openssl rand -hex 32)
-                      else
-                        MASTER=$(curl -sf \
-                          -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
-                          | jq -r '.data.data.value')
-                        PASSWORD=$(printf '%s:%s:ldap-search' "${TENANT}" "${APP}" \
-                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
-                      fi
-                      NUBUS=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/identity/nubus")
-                      ADMIN_PW=$(echo "${NUBUS}" | jq -r '.data.data.admin_password')
-                      USERNAME="ldapsearch-${TENANT}-${APP}"
-                      BIND_DN="uid=${USERNAME},cn=users,${LDAP_BASE_DN}"
-                      DN_ENC=$(printf '%s' "${BIND_DN}" | jq -Rr @uri)
-                      HTTP_CREATE=$(curl -sf -o /tmp/resp -w '%{http_code}' \
-                        "${UDM_URL}/univention/udm/users/user/" \
-                        -u "Administrator:${ADMIN_PW}" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"properties\":{\"username\":\"${USERNAME}\",\"lastname\":\"LDAP-Search\",\"password\":\"${PASSWORD}\",\"primaryGroup\":\"cn=Domain Service Users,cn=groups,${LDAP_BASE_DN}\"},\"position\":\"cn=users,${LDAP_BASE_DN}\"}" \
-                        2>/dev/null || echo '000')
-                      case "${HTTP_CREATE}" in
-                        201) echo "[ldap-init] UDM user ${USERNAME} created" ;;
-                        422|409)
-                          echo "[ldap-init] UDM user ${USERNAME} already exists — updating password"
-                          curl -sf \
-                            "${UDM_URL}/univention/udm/users/user/${DN_ENC}" \
-                            -u "Administrator:${ADMIN_PW}" \
-                            -X PATCH \
-                            -H 'Content-Type: application/json' \
-                            -d "{\"properties\":{\"password\":\"${PASSWORD}\"}}" >/dev/null ;;
-                        *) echo "[ldap-init] ERROR: UDM create HTTP ${HTTP_CREATE}"; cat /tmp/resp; exit 1 ;;
-                      esac
-                      curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        -H 'Content-Type: application/json' \
-                        -X POST \
-                        -d "{\"data\":{\"bind-dn\":\"${BIND_DN}\",\"bind-password\":\"${PASSWORD}\",\"base-dn\":\"${LDAP_BASE_DN}\"}}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/ldap"
-                      echo "[ldap-init] OpenBao credential written for ${TENANT}/${APP}"
+                    run.sh: |
+                      {{- $pijScript | nindent 22 }}
               providerConfigRef:
                 name: kubernetes
             ---
@@ -995,15 +967,15 @@ spec:
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-ldap-init-job
-              name: {{ $xrName }}-ldap-init-job
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-post-install-job
+              name: {{ $xrName }}-post-install-job
             spec:
               forProvider:
                 manifest:
                   apiVersion: batch/v1
                   kind: Job
                   metadata:
-                    name: {{ $app }}-ldap-init
+                    name: {{ $app }}-post-install
                     namespace: {{ $ns }}
                     labels:
                       app.kubernetes.io/managed-by: gentian-os
@@ -1013,384 +985,257 @@ spec:
                     ttlSecondsAfterFinished: 600
                     backoffLimit: 10
                     template:
+                      metadata:
+                        labels:
+                          app.kubernetes.io/managed-by: gentian-os
+                          gentianos.io/tenant: {{ $tenant }}
+                          gentianos.io/app: {{ $app }}
+                          gentianos.io/component: post-install
                       spec:
-                        serviceAccountName: app-init
+                        {{- if $pijSA }}
+                        serviceAccountName: {{ $pijSA }}
+                        {{- end }}
                         restartPolicy: OnFailure
+                        securityContext:
+                          seccompProfile:
+                            type: RuntimeDefault
                         volumes:
                           - name: scripts
                             configMap:
-                              name: {{ $app }}-ldap-init
+                              name: {{ $app }}-post-install
+                          {{- if $pijPVCClaim }}
+                          - name: readonly-data
+                            persistentVolumeClaim:
+                              claimName: {{ $pijPVCClaim }}
+                              readOnly: true
+                          {{- end }}
                         containers:
-                          - name: ldap-search-init
-                            image: {{ $appInitImage | quote }}
+                          - name: post-install
+                            image: {{ $pijImage | quote }}
+                            securityContext:
+                              allowPrivilegeEscalation: false
+                              capabilities:
+                                drop:
+                                  - ALL
+                              seccompProfile:
+                                type: RuntimeDefault
                             command:
                               - /bin/sh
-                              - /scripts/init.sh
+                              - /scripts/run.sh
                             volumeMounts:
                               - name: scripts
                                 mountPath: /scripts
-                            env:
-                              - name: TENANT
-                                value: {{ $tenant }}
-                              - name: APP
-                                value: {{ $app }}
-                              - name: BAO_ADDR
-                                value: "http://openbao.openbao.svc.cluster.local:8200"
-                              - name: UDM_URL
-                                value: {{ $udmUrl | quote }}
-                              - name: LDAP_BASE_DN
-                                value: {{ $ldapBaseDn | quote }}
-                              - name: SECRET_MODE
-                                value: {{ $secretMode | quote }}
-                            resources:
-                              limits:
-                                cpu: {{ $initJobLimitCPU | quote }}
-                                memory: {{ $initJobLimitMem | quote }}
-                              requests:
-                                cpu: {{ $initJobRequestCPU | quote }}
-                                memory: {{ $initJobRequestMem | quote }}
+                              {{- if $pijPVCClaim }}
+                              - name: readonly-data
+                                mountPath: {{ $pijPVCMount }}
+                                readOnly: true
+                              {{- end }}
+                            {{- if gt (len $pijEnvFrom) 0 }}
+                            envFrom:
+                              {{- range $secretName := $pijEnvFrom }}
+                              - secretRef:
+                                  name: {{ $secretName }}
+                              {{- end }}
+                            {{- end }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit S3-init resources (when AppProfile requires storage.s3.bucketPerTenant) */}}
-            {{- /* Provisions a per-tenant MinIO user + bucket and writes credentials            */}}
-            {{- /* to OpenBao at tenants/<tenant>/apps/<app>/s3. Idempotent on retries.         */}}
-            {{- $storageReqs := default dict $kr.storage }}
-            {{- $s3Reqs      := default dict $storageReqs.s3 }}
-            {{- if and $s3Reqs.bucketPerTenant $minioEndpoint }}
+            {{- /* ── Emit sidecars (AppProfile.spec.sidecars) ────────────────────── */}}
+            {{- /* Each sidecar is its own Helm Release, deployed into the same       */}}
+            {{- /* tenant namespace as the primary app, with its own appSecrets       */}}
+            {{- /* synced from OpenBao at the SidecarAppName-scoped path              */}}
+            {{- /* ({parent}-{sidecar}, matching api/v1alpha1.SidecarAppName -- OIDC  */}}
+            {{- /* client registration and OpenBao secret purge on uninstall already   */}}
+            {{- /* key off this same synthetic name). KernelRequirements beyond OIDC   */}}
+            {{- /* (already handled independently by oidc_pack_jobs.go) are not wired  */}}
+            {{- /* into the sidecar's own Release values yet -- a sidecar that needs   */}}
+            {{- /* its own database/cache/S3 isn't supported by this mechanism yet.    */}}
+            {{- $sidecars := default list $pSpec.sidecars }}
+            {{- range $sc := $sidecars }}
+            {{- if and $sc.name $sc.chart.name }}
+            {{- $scKey := printf "%s-%s" $app $sc.name }}
+            {{- $scAppSecrets := default list $sc.appSecrets }}
+            {{- $scSecretName := printf "%s-sensitive-values" $scKey }}
+            {{- $scEsData := list }}
+            {{- $scRelSet := list }}
+            {{- range $s := $scAppSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $scInternalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $scKey $s.name }}
+            {{- $scEsData = append $scEsData (dict "secretKey" (printf "internal-%s" $s.name)
+                "remoteRef" (dict "key" $scInternalPath "property" "value")) }}
+            {{- $scRelSet = append $scRelSet (dict "name" $s.valuePath
+                "valueFrom" (dict "secretKeyRef" (dict "name" $scSecretName "namespace" $ns "key" (printf "internal-%s" $s.name)))) }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* OpenBao KV seeders for each sidecar appSecret (mirrors the primary   */}}
+            {{- /* app's own seeder block above -- deterministic seed, write-once).     */}}
+            {{- range $s := $scAppSecrets }}
+            {{- if and $s.name $s.valuePath }}
+            {{- $scSafeName := $s.name | replace "_" "-" }}
+            {{- $scSeedName := printf "%s-%s-%s-seed" $xrName $sc.name $scSafeName }}
+            {{- $scKvPath   := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $scKey $s.name }}
+            {{- $scSeedVal  := sha256sum (printf "%s:%s:%s" $xrName $scKey $s.name) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-s3-init-sa
-              name: {{ $xrName }}-s3-init-sa
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-{{ $scSafeName }}-seed-secret
+              name: {{ $scSeedName }}
             spec:
               forProvider:
                 manifest:
                   apiVersion: v1
-                  kind: ServiceAccount
+                  kind: Secret
                   metadata:
-                    name: app-init
-                    namespace: {{ $ns }}
+                    name: {{ $scSeedName }}
+                    namespace: crossplane-system
+                  type: Opaque
+                  stringData:
+                    data.json: '{"value":"{{ $scSeedVal }}"}'
               providerConfigRef:
                 name: kubernetes
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-{{ $scSafeName }}-kv
+              name: {{ $scSeedName }}-kv
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: secret
+                name: {{ $scKvPath }}
+                dataJsonSecretRef:
+                  name: {{ $scSeedName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+            {{- end }}
+
+            {{- if gt (len $scEsData) 0 }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-s3-init-cm
-              name: {{ $xrName }}-s3-init-cm
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-externalsecret
+              name: {{ $xrName }}-{{ $sc.name }}-es
             spec:
               forProvider:
                 manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
                   metadata:
-                    name: {{ $app }}-s3-init
+                    name: {{ $scSecretName }}
                     namespace: {{ $ns }}
-                  data:
-                    init.sh: |
-                      #!/bin/sh
-                      set -eu
-                      MC=mc
-                      command -v "${MC}" >/dev/null 2>&1 || MC=mcli
-                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
-                        | jq -r '.auth.client_token')
-                      ACCESS_KEY="${TENANT}-${APP}"
-                      BUCKET="${TENANT}-${APP}"
-                      MINIO=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/storage/minio")
-                      ROOT_USER=$(echo "${MINIO}" | jq -r '.data.data.root_user')
-                      ROOT_PASS=$(echo "${MINIO}" | jq -r '.data.data.root_password')
-                      ${MC} alias set minio "${MINIO_ENDPOINT}" "${ROOT_USER}" "${ROOT_PASS}" >/dev/null
-                      EXISTING=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3" \
-                        2>/dev/null || echo '{}')
-                      # Verify MinIO user and access-key match — OpenBao may retain stale credentials.
-                      if echo "${EXISTING}" | jq -e '.data.data."secret-key"' >/dev/null 2>&1; then
-                        EXISTING_ACCESS=$(echo "${EXISTING}" | jq -r '.data.data."access-key" // empty')
-                        SECRET_KEY=$(echo "${EXISTING}" | jq -r '.data.data."secret-key"')
-                        if [ "${EXISTING_ACCESS}" = "${ACCESS_KEY}" ] && ${MC} admin user info minio "${ACCESS_KEY}" >/dev/null 2>&1; then
-                          ${MC} mb --ignore-existing "minio/${BUCKET}"
-                          echo "[s3-init] credential and MinIO user already present for ${TENANT}/${APP} — skipping"
-                          exit 0
-                        fi
-                        if [ "${EXISTING_ACCESS}" != "${ACCESS_KEY}" ]; then
-                          echo "[s3-init] OpenBao access-key mismatch (got ${EXISTING_ACCESS}, want ${ACCESS_KEY}) — re-provisioning"
-                          SECRET_KEY=""
-                        else
-                          echo "[s3-init] OpenBao credential present but MinIO user ${ACCESS_KEY} missing — re-provisioning"
-                        fi
-                      fi
-                      if [ -z "${SECRET_KEY:-}" ]; then
-                        if [ "${SECRET_MODE}" = "random" ]; then
-                          SECRET_KEY=$(openssl rand -hex 32)
-                        else
-                          MASTER=$(curl -sf \
-                            -H "X-Vault-Token: ${BAO_TOKEN}" \
-                            "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
-                            | jq -r '.data.data.value')
-                          SECRET_KEY=$(printf '%s:%s:s3' "${TENANT}" "${APP}" \
-                            | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
-                        fi
-                      fi
-                      ${MC} mb --ignore-existing "minio/${BUCKET}"
-                      echo "[s3-init] bucket ${BUCKET} ensured"
-                      ${MC} admin user remove minio "${ACCESS_KEY}" >/dev/null 2>&1 || true
-                      ${MC} admin user add minio "${ACCESS_KEY}" "${SECRET_KEY}"
-                      echo "[s3-init] MinIO user ${ACCESS_KEY} created"
-                      printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/%s"]},"Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' \
-                        "${ACCESS_KEY}" "${BUCKET}" "${BUCKET}" > /tmp/policy.json
-                      ${MC} admin policy rm minio "${ACCESS_KEY}-policy" >/dev/null 2>&1 || true
-                      ${MC} admin policy create minio "${ACCESS_KEY}-policy" /tmp/policy.json
-                      ${MC} admin policy attach minio "${ACCESS_KEY}-policy" --user "${ACCESS_KEY}"
-                      echo "[s3-init] bucket policy attached"
-                      curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        -H 'Content-Type: application/json' \
-                        -X POST \
-                        -d "{\"data\":{\"endpoint\":\"${MINIO_ENDPOINT}\",\"bucket\":\"${BUCKET}\",\"access-key\":\"${ACCESS_KEY}\",\"secret-key\":\"${SECRET_KEY}\",\"region\":\"us-east-1\"}}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/s3"
-                      echo "[s3-init] OpenBao credential written for ${TENANT}/${APP}"
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-s3-init-job
-              name: {{ $xrName }}-s3-init-job
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: batch/v1
-                  kind: Job
-                  metadata:
-                    name: {{ $app }}-s3-init
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/tenant: {{ $tenant }}
-                      gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 600
-                    backoffLimit: 10
-                    template:
-                      spec:
-                        serviceAccountName: app-init
-                        restartPolicy: OnFailure
-                        volumes:
-                          - name: scripts
-                            configMap:
-                              name: {{ $app }}-s3-init
-                        containers:
-                          - name: s3-init
-                            image: {{ $appInitImage | quote }}
-                            command:
-                              - /bin/sh
-                              - /scripts/init.sh
-                            volumeMounts:
-                              - name: scripts
-                                mountPath: /scripts
-                            env:
-                              - name: TENANT
-                                value: {{ $tenant }}
-                              - name: APP
-                                value: {{ $app }}
-                              - name: BAO_ADDR
-                                value: "http://openbao.openbao.svc.cluster.local:8200"
-                              - name: MINIO_ENDPOINT
-                                value: {{ $minioEndpoint | quote }}
-                              - name: SECRET_MODE
-                                value: {{ $secretMode | quote }}
-                            resources:
-                              limits:
-                                cpu: {{ $initJobLimitCPU | quote }}
-                                memory: {{ $initJobLimitMem | quote }}
-                              requests:
-                                cpu: {{ $initJobRequestCPU | quote }}
-                                memory: {{ $initJobRequestMem | quote }}
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      kind: ClusterSecretStore
+                      name: openbao
+                    target:
+                      name: {{ $scSecretName }}
+                      creationPolicy: Owner
+                      deletionPolicy: Retain
+                    data:
+                      {{ toYaml $scEsData | nindent 22 }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit database-init resources (when AppProfile requires database.databasePerTenant */}}
-            {{- /* with engine=postgresql). Provisions a CNPG role + database and writes             */}}
-            {{- /* credentials to OpenBao at tenants/<tenant>/apps/<app>/database.                   */}}
-            {{- $dbRequirements := default dict $kr.database }}
-            {{- if and $dbRequirements.databasePerTenant (eq (default "" $dbRequirements.engine) "postgresql") $cnpgHost }}
+            {{- /* Sidecar extraValues -- substitutes the tenant-identity placeholders */}}
+            {{- /* a companion service most plausibly needs; not the full kernel-       */}}
+            {{- /* endpoint substitution list the primary app gets (see above) -- a     */}}
+            {{- /* sidecar that needs kernel service discovery isn't supported yet.     */}}
+            {{- $scExtraVals := dict }}
+            {{- if $sc.extraValues }}
+            {{- $scRaw := $sc.extraValues | toJson }}
+            {{- $scRaw = $scRaw | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $scRaw = $scRaw | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $scRaw = $scRaw | replace "${TENANT_ID}"        $tenant }}
+            {{- $scRaw = $scRaw | replace "${APP_ID}"           $app }}
+            {{- $scRaw = $scRaw | replace "${SIDECAR_ID}"       $sc.name }}
+            {{- if $kernelDomain }}{{ $scRaw = $scRaw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
+            {{- if $s3Endpoint  }}{{ $scRaw = $scRaw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
+            {{- if $mysqlHost   }}{{ $scRaw = $scRaw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
+            {{- if $redisHost   }}{{ $scRaw = $scRaw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- $scRaw = $scRaw | replace "${SMTP_HOST}"    $smtpHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $turnHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $turnPort }}
+            {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
+            {{- $scRaw = $scRaw | replace "${TURN_TRANSPORT}" $turnTransport }}
+            {{- $scRaw = $scRaw | replace "${TURN_CREDENTIALS}" $turnCreds }}
+            {{- if $nodeIP      }}{{ $scRaw = $scRaw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
+            {{- $scExtraVals = $scRaw | fromJson }}
+            {{- end }}
+            {{- $scExtraVals = $scExtraVals | toJson | fromJson }}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-release
+              name: {{ $xrName }}-{{ $sc.name }}-release
+            spec:
+              rollbackLimit: 3
+              forProvider:
+                chart:
+                  repository: {{ $sc.chart.repository }}
+                  name: {{ $sc.chart.name }}
+                  version: {{ $sc.chart.version | quote }}
+                namespace: {{ $ns }}
+                wait: false
+                skipCRDs: true
+                {{- if gt (len $scExtraVals) 0 }}
+                values:
+                  {{ toYaml $scExtraVals | nindent 18 }}
+                {{- end }}
+                {{- if gt (len $scRelSet) 0 }}
+                set:
+                  {{ toYaml $scRelSet | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- if $sc.stableServiceName }}
+            {{- $scSvcPort := default 80 ($sc.stableServicePort | int) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-sa
-              name: {{ $xrName }}-db-init-sa
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-stable-svc
+              name: {{ $xrName }}-{{ $sc.name }}-stable-svc
             spec:
               forProvider:
                 manifest:
                   apiVersion: v1
-                  kind: ServiceAccount
+                  kind: Service
                   metadata:
-                    name: app-init
+                    name: {{ $sc.stableServiceName }}
                     namespace: {{ $ns }}
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-cm
-              name: {{ $xrName }}-db-init-cm
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: v1
-                  kind: ConfigMap
-                  metadata:
-                    name: {{ $app }}-db-init
-                    namespace: {{ $ns }}
-                  data:
-                    init.sh: |
-                      #!/bin/sh
-                      set -eu
-                      JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-                      BAO_TOKEN=$(curl -sf "${BAO_ADDR}/v1/auth/kubernetes/login" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"role\":\"app-init\",\"jwt\":\"${JWT}\"}" \
-                        | jq -r '.auth.client_token')
-                      EXISTING=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database" \
-                        2>/dev/null || echo '{}')
-                      ROLE=$(printf '%s_%s' "${TENANT}" "${APP}" | tr '-' '_')
-                      DBNAME="${ROLE}"
-                      CNPG=$(curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/database/cnpg")
-                      SU_USER=$(echo "${CNPG}" | jq -r '.data.data.superuser_username')
-                      SU_PASS=$(echo "${CNPG}" | jq -r '.data.data.superuser_password')
-                      export PGPASSWORD="${SU_PASS}"
-                      ROLE_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ROLE}'" 2>/dev/null || echo "")
-                      DB_EXISTS=$(psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DBNAME}'" 2>/dev/null || echo "")
-                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1 \
-                        && [ "${ROLE_EXISTS}" = "1" ] && [ "${DB_EXISTS}" = "1" ]; then
-                        echo "[db-init] credential and database already present for ${TENANT}/${APP} — skipping"
-                        exit 0
-                      fi
-                      if echo "${EXISTING}" | jq -e '.data.data.password' >/dev/null 2>&1; then
-                        echo "[db-init] OpenBao credential present but Postgres role/db missing for ${TENANT}/${APP} — reprovisioning"
-                        PASSWORD=$(echo "${EXISTING}" | jq -r '.data.data.password')
-                      elif [ "${SECRET_MODE}" = "random" ]; then
-                        PASSWORD=$(openssl rand -hex 32)
-                      else
-                        MASTER=$(curl -sf \
-                          -H "X-Vault-Token: ${BAO_TOKEN}" \
-                          "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" \
-                          | jq -r '.data.data.value')
-                        PASSWORD=$(printf '%s:%s:database' "${TENANT}" "${APP}" \
-                          | openssl dgst -sha256 -hmac "${MASTER}" | awk '{print $2}')
-                      fi
-                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 <<SQL
-                      DO \$\$
-                      BEGIN
-                        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
-                          CREATE ROLE "${ROLE}" WITH LOGIN PASSWORD '${PASSWORD}';
-                        ELSE
-                          ALTER ROLE "${ROLE}" WITH PASSWORD '${PASSWORD}';
-                        END IF;
-                      END \$\$;
-                      SQL
-                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
-                        -c "SELECT 'CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DBNAME}')" \
-                        | grep -q 'CREATE DATABASE' \
-                        && psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres \
-                             -c "CREATE DATABASE \"${DBNAME}\" OWNER \"${ROLE}\"" || true
-                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
-                        -c "CREATE SCHEMA IF NOT EXISTS \"${DBNAME}\" AUTHORIZATION \"${ROLE}\";"
-                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d "${DBNAME}" -v ON_ERROR_STOP=1 \
-                        -c "GRANT ALL ON SCHEMA \"${DBNAME}\" TO \"${ROLE}\";"
-                      psql -h "${CNPG_HOST}" -U "${SU_USER}" -d postgres -v ON_ERROR_STOP=1 \
-                        -c "ALTER ROLE \"${ROLE}\" SET search_path TO \"${DBNAME}\", public;"
-                      echo "[db-init] role ${ROLE}, database ${DBNAME}, and schema ${DBNAME} ensured"
-                      curl -sf \
-                        -H "X-Vault-Token: ${BAO_TOKEN}" \
-                        -H 'Content-Type: application/json' \
-                        -X POST \
-                        -d "{\"data\":{\"host\":\"${CNPG_HOST}\",\"port\":\"5432\",\"name\":\"${DBNAME}\",\"user\":\"${ROLE}\",\"password\":\"${PASSWORD}\"}}" \
-                        "${BAO_ADDR}/v1/secret/data/gentian-os/tenants/${TENANT}/apps/${APP}/database"
-                      echo "[db-init] OpenBao credential written for ${TENANT}/${APP}"
-              providerConfigRef:
-                name: kubernetes
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-db-init-job
-              name: {{ $xrName }}-db-init-job
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: batch/v1
-                  kind: Job
-                  metadata:
-                    name: {{ $app }}-db-init
-                    namespace: {{ $ns }}
-                    labels:
-                      app.kubernetes.io/managed-by: gentian-os
-                      gentianos.io/tenant: {{ $tenant }}
-                      gentianos.io/app: {{ $app }}
                   spec:
-                    ttlSecondsAfterFinished: 600
-                    backoffLimit: 10
-                    template:
-                      spec:
-                        serviceAccountName: app-init
-                        restartPolicy: OnFailure
-                        volumes:
-                          - name: scripts
-                            configMap:
-                              name: {{ $app }}-db-init
-                        containers:
-                          - name: database-init
-                            image: {{ $appInitImage | quote }}
-                            command:
-                              - /bin/sh
-                              - /scripts/init.sh
-                            volumeMounts:
-                              - name: scripts
-                                mountPath: /scripts
-                            env:
-                              - name: TENANT
-                                value: {{ $tenant }}
-                              - name: APP
-                                value: {{ $app }}
-                              - name: BAO_ADDR
-                                value: "http://openbao.openbao.svc.cluster.local:8200"
-                              - name: CNPG_HOST
-                                value: {{ $cnpgHost | quote }}
-                              - name: SECRET_MODE
-                                value: {{ $secretMode | quote }}
-                            resources:
-                              limits:
-                                cpu: {{ $initJobLimitCPU | quote }}
-                                memory: {{ $initJobLimitMem | quote }}
-                              requests:
-                                cpu: {{ $initJobRequestCPU | quote }}
-                                memory: {{ $initJobRequestMem | quote }}
+                    selector:
+                      app.kubernetes.io/instance: {{ $xrName }}-{{ $sc.name }}-release
+                    ports:
+                    - name: http
+                      port: {{ $scSvcPort }}
+                      targetPort: {{ $scSvcPort }}
+                      protocol: TCP
               providerConfigRef:
                 name: kubernetes
+            {{- end }}
+            {{- end }}
             {{- end }}
 
     # ── Step 3: Mark XR Ready when all composed resources are Ready ───────────

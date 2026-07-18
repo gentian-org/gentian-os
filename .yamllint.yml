@@ -7,12 +7,15 @@ ignore: |
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/
+  charts/infra/
   export/**/chart/templates/
   export/gentian-apps/profiles/
   kernel/manifests/flux-crds/
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml
-  kernel/services/nextcloud-management/manifests/
+  kernel/services/openfga/manifests/dev/externalsecret.yaml
+  kernel/appsets/templates/
+
 
 rules:
   indentation:

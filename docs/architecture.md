@@ -46,7 +46,7 @@ direct analogues for every layer:
 | File descriptor / process handle | **Managed Resource (MR) status** |
 | Kernel scheduler / writeback | **Crossplane reconcile loop** |
 | `init` / `systemd` | **ArgoCD** |
-| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Nextcloud, MinIO, Nubus, …) |
+| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Suze, MinIO, PostgreSQL, Portal, Gateway API, …) |
 
 The CRDs are the syscall API. Crossplane is the kernel that implements
 those syscalls. Providers are the device drivers. Compositions are
@@ -157,10 +157,10 @@ Applying a `Tenant` from `gentian-deployments` (e.g. `demo` with
 
 1. **OpenBao seeding** — credentials before Compositions reconcile  
 2. **Manifest bridge** — operator writes `tenant-{name}-provisioning-jobs` (`jobs.json`, `objects.json`)  
-3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity/LDAP Jobs are Ready  
-4. **Wait-only ensures** — identity/LDAP Jobs, databases, storage, cache, gateway objects, IntegrationBindings  
+3. **`XTenant` patch** — Crossplane `tenant-default` materialises namespace shell, Vault policy, Jobs, Objects, and **`App` claims** (one per `spec.apps` entry); `function-sequencer` gates App claims until identity Jobs are Ready  
+4. **Wait-only ensures** — identity Jobs (Keycloak-native per tenant), databases, storage, cache, gateway objects, IntegrationBindings  
 5. **Bootstrap side-effects** — registry pull secret, staging CA trust in tenant namespace  
-6. **Shared-kernel extensions** — portal/UMC convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
+6. **Shared-kernel extensions** — portal shell convergence, mail/office when configured (see [design/mail.md](design/mail.md); operator-owned today)  
 7. **Status** — per-step conditions; `CrossplaneReady` from `XTenant` Ready; **`Phase=Ready` requires both operator paths and `CrossplaneReady`**
 
 Crossplane owns creation; the operator seeds secrets, drives the ConfigMap, and waits
@@ -182,14 +182,16 @@ via `tenant-default`; app Compositions deploy charts via **`provider-helm`
 | **Per-tenant realms and OIDC clients** | Crossplane **Object Jobs** via manifest bridge (operator wait-only) | `tenant-{name}-provisioning-jobs` → `tenant-default` |
 | **Kernel IdP broker refresh** | Crossplane Object Job via manifest bridge (`keycloak-broker-idp-{tenant}`) | `jobs.json` → `tenant-default` |
 
-App Compositions (`app-default`, `app-element`, `app-ox`) emit
-`openidclient.keycloak.crossplane.io/Client` MRs when `compositionRef` is set;
-the operator skips duplicate OIDC client Jobs for those apps.
+The platform ships **`app-default`** in `crossplane/compositions/`. Catalogue
+profiles with custom MR graphs set `spec.compositionRef` to a Composition bundled
+in `gentian-apps` or `gentian-pro` (e.g. `app-od-element`). Those compositions
+emit `openidclient.keycloak.crossplane.io/Client` MRs; the operator skips
+duplicate OIDC client Jobs for those apps.
 
 For Keycloak consolidation and other follow-ups see [roadmap.md](roadmap.md).
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
-documented in [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §2.
+documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
 
 ---
 
@@ -216,9 +218,9 @@ isolation mode (namespace), resource quotas, mail mode, a deletion
 policy, and **`spec.apps`** — the list of catalogue profiles to install
 for this tenant (e.g. `element` — Jitsi is deployed as an Element sidecar). Creating a `Tenant`
 provisions kernel-layer infrastructure: namespace, RBAC, OpenBao
-policies, LDAP entries, DNS/TLS, and the Keycloak realm. The operator
-then creates one **`App` claim per `spec.apps` entry**; Crossplane
-deploys the Helm charts.
+policies, DNS/TLS, and the Keycloak tenant realm. The operator then creates one **`App` claim per
+`spec.apps` entry**; Crossplane deploys the Helm charts. User/group administration
+is via the [Gentian Admin Console](design/admin-console.md) on the Suze path.
 
 ### 4.3 `App` (namespace-scoped) — the tenant's app installation
 
@@ -268,23 +270,26 @@ that must exist before any tenant app can run, because they back the
 
 | Kernel function | Default-install component | Desktop OS analogue |
 |---|---|---|
-| Identity & SSO | **Nubus** (Keycloak + UCS LDAP) | `/etc/passwd` + PAM |
-| Hierarchical files | **Nextcloud** (WebDAV) | `C:` drive / home directory |
+| Identity & SSO | **Suze** (Keycloak + OpenFGA) | `/etc/passwd` + PAM |
 | Object storage | **MinIO** (S3) | Page cache, scratch space |
 | Relational data | **CloudNativePG** + **MariaDB Operator** | Per-app SQLite / registry |
 | Cache | **Redis** + **Memcached** | Page cache / `tmpfs` |
-| Mail (extension) | **Postfix + Dovecot + Rspamd** | Built-in mail spool |
-| Window manager | **Gentian Portal** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
+| Edge routing | **Gateway API** (Envoy Gateway) | Network stack |
+| Mail (extension) | **Postfix + Dovecot + Rspamd** (optional) | Built-in mail spool |
+| Window manager | **Gentian Portal** + **Admin Console** ([gentian-ui](https://github.com/gentian-org/gentian-ui)) | Desktop shell / Start menu |
 | Notifications | **Notification Gateway** | Notification daemon |
 | Secrets keyring | **OpenBao** | Keychain |
+| AI Inference & Gateway (planned) | **vLLM + LocalAI + LiteLLM** | Co-processor / AI acceleration API |
 | Pod restart on secret rotation | **Stakater Reloader** | (no equivalent) |
 
 These are not "apps" the user picks à la carte — they are the **kernel
 devices** that must be Ready before a `Tenant` claim can reach Ready.
-Tenants can later swap implementations (Nextcloud → Seafile, MinIO →
-AWS S3) without breaking apps that program against the contract,
-exactly the way a desktop user can replace `C:` with a different
-volume without breaking `CreateFile()`.
+
+**Catalogue apps** (Nextcloud, Collabora, Element, …) install
+per tenant from `gentian-apps` via `AppProfile` + the `app-default`
+Crossplane composition — the same "install from app store" path as any
+other catalogue entry. See [design/kernel.md](design/kernel.md) for the
+kernel vs catalogue split.
 
 The full kernel function list, the default-drive analogy, and the
 "kernel extensions" mechanism (optional shared services like mail) are
@@ -374,15 +379,10 @@ For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstre
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single
 `frame-ancestors 'self' https://portal.<kernel_domain>` policy — many charts
 only emit `frame-ancestors 'self'`, and **appending** a second CSP header
-leaves both active so browsers still block the portal iframe. CryptPad
-(`pad` / `pad-sandbox` subdomains) **appends** a second header instead so
-upstream `script-src` without `'unsafe-eval'` stays intact. Per-tenant portal hostnames are not used;
-tenants authenticate via the kernel portal. CryptPad's additional
-`pad-sandbox.<tenant>` route instead allows `https://pad.<tenant>` and
-`https://portal.<kernel_domain>` because CSP checks the full ancestor chain when
-the portal embeds CryptPad in a window and CryptPad embeds the sandbox. Apps with
-extra edge snippet needs (e.g. CryptPad `sub_filter`) keep those lines;
-frame-ancestors is still injected on each route according to its role.
+leaves both active so browsers still block the portal iframe. Per-tenant portal
+hostnames are not used; tenants authenticate via the kernel portal. Apps with
+extra edge snippet needs keep those lines; frame-ancestors is still injected on
+each route according to its role.
 
 **IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
 `chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
@@ -391,8 +391,7 @@ Keycloak proxy route must allow both `https://portal.<kernel_domain>` and
 `https://*.<kernel_domain>` does not cover `chat.demo.<kernel>`). The
 **KeycloakPlatformReconciler** (gentian-os operator) owns frame-ancestors policy
 on the Keycloak IdP HTTPRoute and re-converges it when tenants change or Helm
-drifts; Nubus Helm values only strip
-upstream framing headers via `server-snippet`.
+drifts.
 
 ---
 
@@ -422,7 +421,7 @@ by the same ESO → K8s Secret pipeline:
 
 | Pattern | Mechanism | When to use |
 |---|---|---|
-| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **all current kernel apps**: Nubus, Nextcloud, PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO. |
+| **Pattern A** | ESO syncs OpenBao → K8s Secret; chart references it via `existingSecret` | Charts with native `existingSecret` support. This covers **kernel services**: PostgreSQL, MariaDB, Keycloak bootstrap, Redis, MinIO, Postfix, Dovecot. |
 | **Pattern B** | ESO syncs OpenBao → K8s Secret; `provider-helm` `spec.valuesFrom` maps individual keys to Helm value paths | Charts that accept secrets as plain values but have no structured `existingSecret` field. |
 
 In both patterns:
@@ -432,17 +431,15 @@ In both patterns:
   in ArgoCD.
 - etcd encryption at rest applies to the K8s Secrets.
 
-**Pattern A example** (Nubus — already supported upstream):
+**Pattern A example** (Keycloak — standalone Suze path):
 ```yaml
-# ExternalSecret (ESO) pulls from OpenBao → creates k8s Secret nubus-credentials
+# ExternalSecret (ESO) pulls from OpenBao → creates k8s Secret keycloak-credentials
 # provider-helm HelmRelease references it:
 spec:
   values:
-    postgresql:
-      auth:
-        existingSecret: nubus-credentials
-        secretKeys:
-          adminPasswordKey: postgresql-admin-password
+    auth:
+      existingSecret: keycloak-credentials
+      passwordSecretKey: admin-password
 ```
 
 **Pattern B example** (hypothetical chart with no existingSecret):
@@ -559,42 +556,17 @@ are in [design/mail.md](design/mail.md).
 
 ---
 
-## 9b. The Office Kernel Extension
+## 9b. Collabora (catalogue app)
 
-Nextcloud Office (powered by Collabora) is **optional** — not every
-tenant needs collaborative document editing. It is modelled as a
-**kernel extension**: one shared Collabora instance serves all tenants
-via the WOPI protocol. The extension is declared per-tenant with a
-single flag:
+Collaborative document editing (Collabora) is a **catalogue app**, not a kernel
+service. Profiles in `gentian-apps` (e.g. `nextcloud`, `od-nextcloud`, Collabora
+integration packs) declare the Helm charts and OIDC packs; Crossplane
+`app-default` deploys them into the tenant namespace when listed in
+`Tenant.spec.apps`.
 
-```yaml
-office:
-  enabled: true
-```
-
-Collabora is deployed as a kernel service in the platform namespace
-(not in per-tenant namespaces), so the ingress hostname
-`office.<domain>` is unique and shared across all tenants. Nextcloud's
-`wopi_url` points to the shared in-cluster service URL and is
-configured once at the platform level.
-
----
-
-## 9c. The Diagrams Kernel Extension (CryptPad)
-
-Nextcloud diagram editing (diagrams.net via the openincryptpad app) uses a
-**shared CryptPad kernel service**, modelled like Collabora in §9b. One
-instance at `pad.<kernel_domain>` (+ `pad-sandbox.<kernel_domain>` for the
-crypto sandbox origin) serves all tenants; Nextcloud embeds it from
-`files.<kernel_domain>`.
-
-There is **no AppProfile or portal tile** — users open diagrams from Nextcloud
-Files. Configuration matches OpenDesk: `restrictRegistration: true`,
-`availablePadTypes: ["diagram"]`, `enableEmbedding: true`, no OIDC.
-
-The nextcloud-management chart enables the CryptPad app when the kernel service
-is deployed (`feature.apps.cryptpad.enabled: true`). Per-tenant CryptPad
-AppProfiles are not used.
+Nextcloud is a common file-store catalogue app; Collabora integrates with it
+via WOPI/embed contracts declared in `AppProfile` optional integrations. See
+[design/app-catalogue.md](design/app-catalogue.md).
 
 ---
 
@@ -654,13 +626,32 @@ Environment policies:
 | staging | `newest-build` | Latest push to `staging` |
 | prod | `semver` | Semver tags `v*` only |
 
+### 11.1.1 Portal shell images (`gentian-portal-api` / `gentian-portal-web`)
+
+The Gentian portal shell uses the same Image Updater pattern as the operator:
+
+1. `gentian-ui` CI pushes `ghcr.io/gentian-org/gentian-portal-{api,web}:develop`
+   (and a short-SHA tag) on every merge to `develop`.
+2. The `gentian-portal` Argo CD Application (see
+   `gentian-deployments/clusters/<cluster>/kernel/gentian-portal-<stage>.yaml`)
+   carries Image Updater annotations for both images (`newest-build` on
+   `:develop`).
+3. The `ImageUpdater` CR in `image-updater-<stage>.yaml` includes
+   `gentian-portal` in `applicationRefs`.
+4. New digests trigger a Helm upgrade and rolling restart of API and web
+   Deployments — typically within 30–60 seconds of the CI push.
+
+Keycloak clients and `gentian-portal-secrets` are still created by
+`install.sh` Step 14 (`portal-login-bootstrap.sh`); Argo CD owns only the
+Helm release.
+
 For cluster-to-environment mapping, promotion workflows (with and without a
 staging tier), and `gentian-deployments` layout, see
 [deployment.md](deployment.md).
 
 ### 11.2 Install-time bootstrap
 
-`install.sh Step 15` uses a **two-step** approach to avoid a
+`install.sh Step 13` uses a **two-step** approach to avoid a
 chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
 established yet):
 
@@ -689,7 +680,12 @@ The Gentian Portal may host an AI assistant that uses three kernel services —
 identity, an MCP (Model Context Protocol) registry, and OIDC token exchange —
 to discover what apps are installed and act across them on behalf of the user.
 
-See [design/agentic-ai.md](design/agentic-ai.md) and [roadmap.md](roadmap.md).
+### Kernel vs. Tenant Land Split for LLM Serving
+To support resource-heavy LLM capabilities, Gentian OS uses a split-layer architectural model:
+* **Kernel Space:** Computational backends (e.g., GPU pools running **vLLM** and CPU fallbacks running **LocalAI**), model weight storage volumes (PVCs), the edge API Gateway (upgraded to **Envoy AI Gateway** with OpenFGA/Keycloak checks), and the centralized **LiteLLM** routing proxy live in the kernel to allow efficient hardware resource sharing and centralized security controls.
+* **Tenant Land:** Downstream applications (e.g., Nextcloud, OpenProject) consume the LLM API via injected credentials and virtual keys, keeping their user traffic isolated. Optional tenant-level proxies can also run in tenant space for custom routing and client-side budgeting.
+
+See [design/agentic-ai.md](design/agentic-ai.md), [design/llms.md](design/llms.md) and [roadmap.md](roadmap.md).
 
 ---
 
@@ -743,13 +739,14 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | Kernel functions, default install, OS analogy details | [design/kernel.md](design/kernel.md) |
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
 | AppProfile schema, IntegrationBindings, contracts, deployment flow | [design/app-catalogue.md](design/app-catalogue.md) |
-| Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue-security.md](design/app-catalogue-security.md) |
+| Catalogue tiers, sidecars, admission and CI policy | [design/app-catalogue.md](design/app-catalogue.md) |
 | Commercial model & Odoo integration | [design/business-logic-plan.md](design/business-logic-plan.md) |
 | OpenBao, ESO, TLS, deterministic seeding, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
-| OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
+| OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
-| AppProfile authoring (upstream charts) | [gentian-apps/app-profile-guide.md](../../gentian-apps/app-profile-guide.md) |
-| Custom Gentian-native apps | [gentian-apps/custom-app-guide.md](../../gentian-apps/custom-app-guide.md) |
+| LLM serving architecture & Stage 1 plan | [design/llms.md](design/llms.md) |
+| AppProfile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) |
+| Custom Gentian-native apps | [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) |

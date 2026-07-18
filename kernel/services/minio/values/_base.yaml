@@ -6,10 +6,10 @@
 #   persistence.size, resources, statefulset.replicaCount
 # =============================================================================
 
-# Allow use of OpenDesk mirrored images (not standard Bitnami)
 # storageClass/imagePullSecrets come from values/env/{env}.yaml
 global:
   security:
+    # Required when using docker.io/bitnamilegacy/* images with the Bitnami chart.
     allowInsecureImages: true
   ingress:
     enabled: false
@@ -38,19 +38,19 @@ podSecurityContext:
   enabled: true
   fsGroup: 1001
 
-# Image — OpenDesk-mirrored Bitnami minio
+# Image — Bitnami MinIO on Debian 12 (docker.io/bitnamilegacy/minio)
 image:
-  registry: registry.opencode.de
-  repository: bmi/opendesk/components/community/images-mirror/minio
+  registry: docker.io
+  repository: bitnamilegacy/minio
   tag: 2025.4.22-debian-12-r1
   pullPolicy: IfNotPresent
 
-# Volume permissions init container (uses OpenDesk os-shell mirror)
+# Volume permissions init container
 volumePermissions:
   enabled: true
   image:
-    registry: registry.opencode.de
-    repository: bmi/opendesk/components/community/images-mirror/os-shell
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
     tag: 12-debian-12-r44
     pullPolicy: IfNotPresent
 
@@ -93,61 +93,6 @@ persistence:
 statefulset:
   drivesPerNode: 1
 
-# Provisioning — buckets, policies, and extra commands (no secrets)
-# users[].password and provisioning.resources are in {env}/values.yaml
+# Provisioning disabled — tenant apps create buckets via the storage reconciler.
 provisioning:
-  enabled: true
-  cleanupAfterFinished:
-    enabled: true
-    seconds: 60
-  # Make portal-assets publicly readable
-  extraCommands:
-    - mc anonymous set download provisioning/ums/portal-assets
-  # All OpenDesk S3 buckets
-  buckets:
-    - name: migrations
-      versioning: Suspended
-      withLock: false
-    - name: nextcloud
-      versioning: Suspended
-      withLock: false
-    - name: notes
-      versioning: Versioned
-      withLock: false
-    - name: ums
-      versioning: Suspended
-      withLock: false
-  # Per-bucket IAM policies (no secrets — just ARN statements)
-  policies:
-    - name: migrations-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::migrations]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::migrations/*]
-          effect: Allow
-          actions: [s3:*]
-    - name: nextcloud-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::nextcloud]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::nextcloud/*]
-          effect: Allow
-          actions: [s3:*]
-    - name: notes-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::notes]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::notes/*]
-          effect: Allow
-          actions: [s3:*]
-    - name: ums-bucket-policy
-      statements:
-        - resources: [arn:aws:s3:::ums]
-          effect: Allow
-          actions: [s3:*]
-        - resources: [arn:aws:s3:::ums/*]
-          effect: Allow
-          actions: [s3:*]
+  enabled: false

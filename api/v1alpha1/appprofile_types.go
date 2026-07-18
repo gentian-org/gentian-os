@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -6,6 +22,8 @@ import (
 )
 
 // AppProfileSpec defines the desired state of AppProfile.
+// +kubebuilder:validation:XValidation:rule="self.deploymentMethod == 'api' || has(self.chart)",message="spec.chart is required unless spec.deploymentMethod is api"
+// +kubebuilder:validation:XValidation:rule="self.deploymentMethod != 'api' || has(self.apiIntegration)",message="spec.apiIntegration is required when spec.deploymentMethod is api"
 type AppProfileSpec struct {
 	// DisplayName is a human-readable name for the application.
 	// +kubebuilder:validation:Required
@@ -39,9 +57,17 @@ type AppProfileSpec struct {
 	TrustTier TrustTier `json:"trustTier,omitempty"`
 
 	// License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
-	// Premium profiles in gentian-premium typically use proprietary.
+	// Pro profiles in gentian-pro typically use proprietary.
 	// +optional
 	License string `json:"license,omitempty"`
+
+	// Categories lists the classification categories for this application.
+	// +optional
+	Categories []string `json:"categories,omitempty"`
+
+	// Keywords lists search keywords for this application.
+	// +optional
+	Keywords []string `json:"keywords,omitempty"`
 
 	// Description is an optional human-readable description.
 	// +optional
@@ -50,15 +76,8 @@ type AppProfileSpec struct {
 	// Tile declares the Gentian portal app-menu icon for this profile.
 	// Path 1 (custom): set tile.logo to a data URI or tile.image in git (inlined before publish).
 	// Path 2 (catalogue): set tile.icon to a Gentian catalogue id (e.g. "mail", "chat").
-	// Legacy spec.logo is still honoured when tile is unset.
 	// +optional
 	Tile *TileSpec `json:"tile,omitempty"`
-
-	// Logo is deprecated; prefer spec.tile. Application icon data URI for the portal.
-	// The LDAP reconciler writes the resolved value to pathToLogo on portal entries.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
-	Logo string `json:"logo,omitempty"`
 
 	// BrowserProxy declares HTTP routes the shell backend should transparently
 	// proxy on behalf of browser clients. Each route is exposed at
@@ -82,9 +101,12 @@ type AppProfileSpec struct {
 	// +optional
 	OptionalIntegrations []IntegrationRef `json:"optionalIntegrations,omitempty"`
 
-	// Chart references the upstream Helm chart for this app.
-	// +kubebuilder:validation:Required
-	Chart ChartRef `json:"chart"`
+	// Chart references the upstream Helm chart for this app. Required for
+	// crossplane and argocd deployment methods; omitted for ApiProfiles
+	// (deploymentMethod: api), which run no workload. Enforced by a spec-level
+	// validation rule.
+	// +optional
+	Chart ChartRef `json:"chart,omitempty"`
 
 	// ValueMapping is the schema-based mapping of kernel-provided values to
 	// Helm value keys. Validated at admission time.
@@ -108,15 +130,22 @@ type AppProfileSpec struct {
 
 	// DeploymentMethod controls how the orchestrator deploys this app.
 	// Defaults to crossplane. Use argocd for kernel-layer services managed
-	// directly by the cache or identity reconcilers.
+	// directly by the cache or identity reconcilers. Use api for an ApiProfile
+	// that runs no workload (see spec.apiIntegration).
 	// +optional
 	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
 
+	// APIIntegration configures an ApiProfile (deploymentMethod: api): a
+	// catalogue entry backed by an external service instead of tenant workloads.
+	// Required when deploymentMethod is api; ignored otherwise.
+	// +optional
+	APIIntegration *APIIntegration `json:"apiIntegration,omitempty"`
+
 	// CompositionRef overrides the Crossplane Composition used to deploy this
 	// app. When empty the XRD default (app-default) applies. Set to the name
 	// of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
-	// (e.g. "app-element", "app-ox") for profiles that require custom MR graphs.
+	// (e.g. "app-custom") for profiles that require custom MR graphs in the catalogue repo.
 	// +optional
 	CompositionRef string `json:"compositionRef,omitempty"`
 
@@ -128,9 +157,8 @@ type AppProfileSpec struct {
 
 	// AdditionalIngresses declares extra Ingress resources to create alongside
 	// the primary Ingress. Use this when an app requires a second hostname
-	// routed to the same (or a different) Service — for example, CryptPad
-	// requires a separate sandbox subdomain for its client-side iframe
-	// isolation model (httpSafeOrigin must differ from httpUnsafeOrigin).
+	// routed to the same (or a different) Service — for example, an app that
+	// requires a separate sandbox subdomain for client-side iframe isolation.
 	// Each entry is treated identically to Ingress: the orchestrator creates
 	// one Kubernetes Ingress per entry with its own host, TLS secret reference,
 	// and lifecycle management (stale entries are deleted on app removal).
@@ -138,18 +166,73 @@ type AppProfileSpec struct {
 	AdditionalIngresses []IngressSpec `json:"additionalIngresses,omitempty"`
 
 	// Sidecars declares companion services deployed by purpose-built compositions
-	// alongside the primary app (for example Jitsi with Element). Sidecar OIDC
+	// alongside the primary app (for example a video sidecar). Sidecar OIDC
 	// clients and internal secrets use the synthetic app key {profile}-{sidecar}.
 	// +optional
 	Sidecars []AppSidecarSpec `json:"sidecars,omitempty"`
 
-	// PortalTiles defines the tiles this app contributes to the Nubus/gentian-ui
+	// PostInstallJob declares an optional Kubernetes Job the app-default
+	// composition runs alongside this app's Helm release, for app-specific
+	// bootstrap that must happen via the app's own admin API (e.g. seeding
+	// initial config) rather than Helm values — generic operator/composition
+	// behavior available to any profile, not a per-app composition.yaml.
+	// Retried automatically the same way every other composed resource in
+	// this graph is: the Job is recreated once ttlSecondsAfterFinished
+	// expires and the tenant reconciles again, so Script must exit non-zero
+	// if a dependency isn't ready yet, and must be idempotent (a no-op once
+	// the desired state is already correct). See app-profile-guide.md.
+	// +optional
+	PostInstallJob *AppPostInstallJob `json:"postInstallJob,omitempty"`
+
+	// PortalTiles defines the tiles this app contributes to the gentian-ui
 	// portal when deployed for a tenant in dedicated mode. Each tile creates a
-	// UDM portal entry under swp.{tile.name}_{tenantName}.
+	// portal entry keyed as {tile.name}_{tenantName}.
 	// Requires ingress.subDomain to be set (used as the tile base URL).
 	// When empty no per-tenant portal entries are created.
 	// +optional
 	PortalTiles []PortalTileSpec `json:"portalTiles,omitempty"`
+
+	// Provisioning configures how Gentian maps workspace groups to in-app roles.
+	// Members of gentian:tenant:<t>:app-admins are reconciled into the privileged
+	// role declared here when the app is installed for a tenant.
+	// +optional
+	Provisioning *ProvisioningSpec `json:"provisioning,omitempty"`
+
+	// Security declares MAC and other security requests for this catalogue entry.
+	// Cluster administrators approve waivers via PlatformSecurityPolicy.
+	// +optional
+	Security *SecuritySpec `json:"security,omitempty"`
+}
+
+// ProvisioningSpec declares app-specific user lifecycle mappings.
+type ProvisioningSpec struct {
+	// PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
+	// administrator role (for example the Nextcloud "admin" group).
+	// +optional
+	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
+}
+
+// PrivilegedRoleKind is the native app role type referenced by PrivilegedRoleSpec.
+// +kubebuilder:validation:Enum=group
+type PrivilegedRoleKind string
+
+const (
+	// PrivilegedRoleKindGroup maps app-admins to an application-native group.
+	PrivilegedRoleKindGroup PrivilegedRoleKind = "group"
+)
+
+// PrivilegedRoleSpec identifies the in-app privileged role for app-admins members.
+type PrivilegedRoleSpec struct {
+	// Kind is the application's native role type. Only "group" is supported today.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=group
+	Kind PrivilegedRoleKind `json:"kind"`
+
+	// Name is the in-app role identifier (for example Nextcloud group "admin").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	Name string `json:"name"`
 }
 
 // TileSpec configures a Gentian portal tile icon (52×52 SVG).
@@ -188,15 +271,15 @@ const (
 // PortalTileSpec defines a single tile this app contributes to the portal when
 // deployed for a tenant in dedicated mode.
 type PortalTileSpec struct {
-	// Name is the unique tile identifier, forming the portal entry CN:
-	// swp.{name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
+	// Name is the unique tile identifier, forming the portal entry key:
+	// {name}_{tenantName}. Must be unique within an AppProfile. Use kebab-case.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
 	Name string `json:"name"`
 
 	// DisplayName is the localized label shown in the portal.
-	// Locale keys follow the UDM convention (e.g., "de_DE", "en_US").
+	// Locale keys use BCP 47-style tags (e.g., "de_DE", "en_US").
 	// At least one entry is required.
 	// +kubebuilder:validation:Required
 	DisplayName map[string]string `json:"displayName"`
@@ -215,7 +298,7 @@ type PortalTileSpec struct {
 	// +kubebuilder:validation:Enum=newwindow;samewindow;embedded
 	LinkTarget PortalLinkTarget `json:"linkTarget,omitempty"`
 
-	// AllowedGroup is the LDAP CN of the group whose members can see this tile.
+	// AllowedGroup is the Keycloak group whose members can see this tile.
 	// Defaults to "Domain Users" (all authenticated portal users).
 	// Use managed-by-attribute-{Capability} groups (e.g., "managed-by-attribute-Groupware")
 	// to restrict to users with a specific provisioned capability.
@@ -226,11 +309,6 @@ type PortalTileSpec struct {
 	// Tile overrides the app-level tile for this portal entry.
 	// +optional
 	Tile *TileSpec `json:"tile,omitempty"`
-
-	// Logo is deprecated; prefer tile. Optional per-tile data URI override.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
-	Logo string `json:"logo,omitempty"`
 }
 
 // BrowserProxyRoute declares a single proxy route the shell exposes for this app.
@@ -280,16 +358,10 @@ type IngressSpec struct {
 	ServicePort int32 `json:"servicePort,omitempty"`
 
 	// SubDomain is the subdomain prefix prepended to the tenant domain to form the
-	// Ingress host, e.g. "files" yields "files.{tenant-domain}".
+	// HTTPRoute host, e.g. "files" yields "files.{tenant-domain}".
 	// Defaults to the app profile name (chart name) when not set.
 	// +optional
 	SubDomain string `json:"subDomain,omitempty"`
-
-	// IngressClassName is the Kubernetes IngressClass to use.
-	// Defaults to "nginx" when not set.
-	// +optional
-	// +kubebuilder:default=nginx
-	IngressClassName string `json:"ingressClassName,omitempty"`
 
 	// TLSEnabled enables TLS via a cert-manager Certificate CR.
 	// Defaults to true.
@@ -306,15 +378,15 @@ type IngressSpec struct {
 	// +kubebuilder:default=letsencrypt-http01
 	ClusterIssuer string `json:"clusterIssuer,omitempty"`
 
-	// Annotations are merged into the Ingress object metadata.
-	// Use to set ingress class, NGINX configuration snippets, etc.
+	// Annotations are merged into Gateway edge policy for this host (frame-ancestors,
+	// timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // KernelRequirements specifies which kernel services the app requires.
 type KernelRequirements struct {
-	// Identity specifies OIDC and/or LDAP requirements.
+	// Identity specifies OIDC requirements.
 	// +optional
 	Identity *IdentityRequirement `json:"identity,omitempty"`
 
@@ -341,7 +413,7 @@ type KernelRequirements struct {
 	MCP *MCPRequirement `json:"mcp,omitempty"`
 }
 
-// IdentityRequirement specifies OIDC and/or LDAP needs.
+// IdentityRequirement specifies OIDC or SAML needs.
 type IdentityRequirement struct {
 	// OIDC describes the OIDC client to register in the tenant's Keycloak realm.
 	// When set, the composition emits a Client CR so every newly deployed tenant
@@ -351,9 +423,22 @@ type IdentityRequirement struct {
 	// +optional
 	OIDC *OIDCClientSpec `json:"oidc,omitempty"`
 
-	// LDAP requests a per-tenant LDAP bind account in the UCS LDAP directory.
+	// SAML describes the SAML client to register in the tenant's Keycloak realm.
 	// +optional
-	LDAP *LDAPRequirement `json:"ldap,omitempty"`
+	SAML *SAMLClientSpec `json:"saml,omitempty"`
+}
+
+// SAMLClientSpec describes a SAML client to be registered in the tenant's Keycloak realm.
+type SAMLClientSpec struct {
+	// EntityID is the SAML Service Provider Entity ID registered in Keycloak.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	EntityID string `json:"entityId"`
+
+	// ACSURL is the SAML Assertion Consumer Service URL for the auth callback.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ACSURL string `json:"acsUrl"`
 }
 
 // OIDCClientSpec describes an OIDC client to be registered in the tenant's
@@ -403,23 +488,6 @@ type OIDCClientSpec struct {
 	// pack key differs from clientId. When empty, clientId is used as the pack key.
 	// +optional
 	OIDCPackRef string `json:"oidcPackRef,omitempty"`
-}
-
-// LDAPRequirement describes per-tenant LDAP needs.
-type LDAPRequirement struct {
-	// Search provisions a per-tenant LDAP search account via the app init Job on first install.
-	// Credentials are written to OpenBao and injected via valueMapping.ldap.
-	// +optional
-	Search bool `json:"search,omitempty"`
-
-	// Sync enables periodic user/group sync from LDAP into the app's own store.
-	// +optional
-	Sync bool `json:"sync,omitempty"`
-
-	// Interval is the sync interval (e.g., "1h"). Defaults to "1h" when sync is true.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^[0-9]+(s|m|h|d)$`
-	Interval string `json:"interval,omitempty"`
 }
 
 // DatabaseRequirement specifies a relational database need.
@@ -535,6 +603,59 @@ type MCPRequirement struct {
 }
 
 // ChartRef references an upstream Helm chart.
+// APIIntegration configures how an ApiProfile (deploymentMethod: api) reaches
+// its backing external service. No workload pods are created; the operator only
+// contributes catalogue and portal metadata.
+type APIIntegration struct {
+	// Runtime selects how the tenant reaches the external service.
+	// redirect sends the browser to baseUrl (default).
+	// proxy routes through a kernel API proxy (reserved for a later phase).
+	// portal-proxy reverse-proxies requests through the portal BFF same-origin.
+	// +optional
+	// +kubebuilder:default=redirect
+	// +kubebuilder:validation:Enum=redirect;proxy;portal-proxy
+	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
+
+	// BaseURL is the external service origin (e.g. https://corp.gentian.org).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://.+`
+	BaseURL string `json:"baseUrl"`
+
+	// TenantBinding declares how the tenant is identified to the external
+	// service. tenant-domain appends the tenant effective domain as a query
+	// parameter (default). none passes no tenant hint.
+	// +optional
+	// +kubebuilder:default=tenant-domain
+	// +kubebuilder:validation:Enum=tenant-domain;none
+	TenantBinding APIIntegrationTenantBinding `json:"tenantBinding,omitempty"`
+}
+
+// APIIntegrationRuntime selects how an ApiProfile reaches its external service.
+// +kubebuilder:validation:Enum=redirect;proxy;portal-proxy
+type APIIntegrationRuntime string
+
+const (
+	// APIIntegrationRuntimeRedirect sends the browser to the external baseUrl.
+	APIIntegrationRuntimeRedirect APIIntegrationRuntime = "redirect"
+	// APIIntegrationRuntimeProxy routes via a kernel API proxy (future phase).
+	APIIntegrationRuntimeProxy APIIntegrationRuntime = "proxy"
+	// APIIntegrationRuntimePortalProxy routes via the portal BFF proxy.
+	APIIntegrationRuntimePortalProxy APIIntegrationRuntime = "portal-proxy"
+)
+
+// APIIntegrationTenantBinding declares how the tenant is identified to the
+// external service.
+// +kubebuilder:validation:Enum=tenant-domain;none
+type APIIntegrationTenantBinding string
+
+const (
+	// APIIntegrationTenantBindingDomain appends the tenant effective domain.
+	APIIntegrationTenantBindingDomain APIIntegrationTenantBinding = "tenant-domain"
+	// APIIntegrationTenantBindingNone passes no tenant hint.
+	APIIntegrationTenantBindingNone APIIntegrationTenantBinding = "none"
+)
+
 type ChartRef struct {
 	// Repository is the OCI repository URL (e.g., oci://registry.example.com/charts).
 	// +kubebuilder:validation:Required
@@ -580,9 +701,23 @@ type ValueMapping struct {
 	// +optional
 	IMAP *IMAPValueMapping `json:"imap,omitempty"`
 
-	// LDAP maps LDAP directory values to Helm keys.
+	// Integrations maps optional integration credentials to Helm keys,
+	// keyed by the contract name.
 	// +optional
-	LDAP *LDAPValueMapping `json:"ldap,omitempty"`
+	Integrations map[string]IntegrationValueMapping `json:"integrations,omitempty"`
+}
+
+// IntegrationValueMapping maps integration credentials to Helm chart keys.
+type IntegrationValueMapping struct {
+	// EndpointKey is the Helm value key for the integration's service endpoint URL.
+	// +optional
+	EndpointKey string `json:"endpointKey,omitempty"`
+	// UserKey is the Helm value key for the integration username.
+	// +optional
+	UserKey string `json:"userKey,omitempty"`
+	// PasswordKey is the Helm value key for the integration password.
+	// +optional
+	PasswordKey string `json:"passwordKey,omitempty"`
 }
 
 // OIDCValueMapping maps OIDC provider values to Helm chart keys.
@@ -700,34 +835,11 @@ type IMAPValueMapping struct {
 	PortKey string `json:"portKey,omitempty"`
 }
 
-// LDAPValueMapping maps LDAP directory values to Helm chart keys.
-// Supports deeply nested key paths for apps like OX App Suite that store
-// LDAP config in properties files.
-type LDAPValueMapping struct {
-	// HostKey is the Helm value key for the LDAP host.
-	// +optional
-	HostKey string `json:"hostKey,omitempty"`
-	// PortKey is the Helm value key for the LDAP port.
-	// +optional
-	PortKey string `json:"portKey,omitempty"`
-	// BaseDNKey is the Helm value key for the LDAP base DN.
-	// +optional
-	BaseDNKey string `json:"baseDnKey,omitempty"`
-	// BindDNKey is the Helm value key for the LDAP bind DN.
-	// +optional
-	BindDNKey string `json:"bindDnKey,omitempty"`
-	// BindPasswordKey is the Helm value key for the LDAP bind password.
-	// Supports bracket notation for deeply nested propertiesFiles paths, e.g.:
-	// `appsuite.core-mw.propertiesFiles["/opt/.../ldapauth.properties"].bindDNPassword`
-	// +optional
-	BindPasswordKey string `json:"bindPasswordKey,omitempty"`
-}
-
 // AppSidecarSpec declares a companion service deployed alongside the primary
-// app by a purpose-built composition (for example Jitsi with Element).
+// app by a purpose-built composition (for example a sidecar with its own ingress).
 type AppSidecarSpec struct {
-	// Name identifies the sidecar (e.g. "jitsi"). OpenBao paths and OIDC jobs
-	// use the synthetic app key {parentProfile}-{name} (e.g. "element-jitsi").
+	// Name identifies the sidecar (e.g. "sidecar-meet"). OpenBao paths and OIDC jobs
+	// use the synthetic app key {parentProfile}-{name} (e.g. "catalogue-test-app-sidecar-meet").
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^[a-z0-9-]+$`
@@ -751,7 +863,7 @@ type AppSidecarSpec struct {
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// StableServiceName is the Kubernetes Service name the tenant ingress
-	// reconciler routes to (e.g. "jitsi-web"). When set, the composition emits
+	// reconciler routes to (e.g. "sidecar-web"). When set, the composition emits
 	// a stable ClusterIP alias pointing at the sidecar release.
 	// +optional
 	StableServiceName string `json:"stableServiceName,omitempty"`
@@ -760,6 +872,57 @@ type AppSidecarSpec struct {
 	// +optional
 	// +kubebuilder:default=80
 	StableServicePort int32 `json:"stableServicePort,omitempty"`
+}
+
+// AppPostInstallJob configures a Kubernetes Job the app-default composition
+// runs in the tenant namespace to bootstrap app-specific state (typically via
+// the app's own admin API) that Helm values alone can't express. Kept
+// deliberately narrow — not a general PodSpec pass-through — so this stays a
+// safe, generic composition feature rather than an arbitrary-workload escape
+// hatch. See app-profile-guide.md's "Post-install bootstrap jobs" section.
+type AppPostInstallJob struct {
+	// Image is the container image the Job runs.
+	// +kubebuilder:validation:Required
+	Image string `json:"image"`
+
+	// Script is the shell script body, run via `/bin/sh -c`.
+	// +kubebuilder:validation:Required
+	Script string `json:"script"`
+
+	// EnvFrom names Secrets already present in the tenant namespace to
+	// inject wholesale (matches how this app's own secrets already land —
+	// e.g. llm-credentials-{app}, {app}-sensitive-values).
+	// +optional
+	EnvFrom []string `json:"envFrom,omitempty"`
+
+	// ServiceAccountName runs the Job under an existing ServiceAccount in
+	// the tenant namespace (e.g. one already granted an OpenBao Kubernetes-
+	// auth role by another part of this app's composition), instead of the
+	// namespace default. The composition does not create this account or
+	// its RBAC — the profile/composition that needs it is responsible for
+	// both, same as any other Kubernetes-native RBAC setup.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// ReadOnlyPVC optionally mounts an existing PersistentVolumeClaim
+	// read-only, for the rare case a bootstrap script needs information only
+	// available in the app's own persisted data and not obtainable over the
+	// network. Requires a storage class that supports concurrent multi-pod
+	// mounts even for RWO-labeled claims (e.g. NFS-backed) — most profiles
+	// won't need this.
+	// +optional
+	ReadOnlyPVC *PostInstallJobPVCMount `json:"readOnlyPVC,omitempty"`
+}
+
+// PostInstallJobPVCMount is a read-only PVC mount for AppPostInstallJob.
+type PostInstallJobPVCMount struct {
+	// ClaimName is the PersistentVolumeClaim name in the tenant namespace.
+	// +kubebuilder:validation:Required
+	ClaimName string `json:"claimName"`
+
+	// MountPath is where the claim is mounted read-only in the Job container.
+	// +kubebuilder:validation:Required
+	MountPath string `json:"mountPath"`
 }
 
 // SidecarAppName returns the synthetic app key used for sidecar OpenBao paths

@@ -1,9 +1,27 @@
-// Copyright 2026 The Gentian Authors. Licensed under Apache 2.0.
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 
 package controller
 
 import (
 	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -16,7 +34,6 @@ const (
 	gatewayComponentApp      = "app-route"
 	gatewayComponentApex     = "apex-redirect"
 	gatewayComponentKernel   = "kernel-route"
-	umcPortalRedirectGateway = "umc-frontend"
 )
 
 type ingressIntent struct {
@@ -31,6 +48,10 @@ func appHTTPRouteName(tenantName, appProfile string) string {
 
 func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
+}
+
+func tenantEscapedSlashesClientTrafficPolicyName(tenantName string) string {
+	return fmt.Sprintf("ctp-%s-escaped-slashes", tenantName)
 }
 
 func tenantApexRedirectRouteName(tenantName string) string {
@@ -71,16 +92,31 @@ func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	}
 }
 
+// appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.
+func appHTTPRoutesForIntents(
+	tenant *gentianov1alpha1.Tenant,
+	nsName string,
+	intents []ingressIntent,
+	effectiveDomain, kernelDomain string,
+) []*gatewayv1.HTTPRoute {
+	routes := make([]*gatewayv1.HTTPRoute, 0, len(intents))
+	for _, intent := range intents {
+		routes = append(routes, buildAppHTTPRoute(tenant, nsName, intent, effectiveDomain, kernelDomain))
+	}
+	return routes
+}
+
 func buildAppHTTPRoute(
 	tenant *gentianov1alpha1.Tenant,
-	nsName, appProfile string,
-	profile *gentianov1alpha1.AppProfile,
-	ingress *gentianov1alpha1.IngressSpec,
-	host, effectiveDomain, kernelDomain string,
+	nsName string,
+	intent ingressIntent,
+	effectiveDomain, kernelDomain string,
 ) *gatewayv1.HTTPRoute {
+	host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
+	ingress := intent.ingress
 	svcName := ingress.ServiceName
 	if svcName == "" {
-		svcName = appProfile
+		svcName = intent.appProfile
 	}
 	svcPort := ingress.ServicePort
 	if svcPort == 0 {
@@ -101,25 +137,108 @@ func buildAppHTTPRoute(
 			},
 		},
 	}
-	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain); len(filters) > 0 {
+
+	if intent.profile != nil && gentianov1alpha1.ProfileIsAPI(intent.profile) && intent.profile.Spec.APIIntegration != nil {
+		api := intent.profile.Spec.APIIntegration
+		switch api.Runtime {
+		case gentianov1alpha1.APIIntegrationRuntimeRedirect:
+			u, err := url.Parse(api.BaseURL)
+			if err == nil {
+				scheme := u.Scheme
+				if scheme == "" {
+					scheme = "https"
+				}
+				hostname := gatewayv1.PreciseHostname(u.Hostname())
+
+				var portVal gatewayv1.PortNumber
+				if u.Port() != "" {
+					p, _ := strconv.Atoi(u.Port())
+					portVal = gatewayv1.PortNumber(p)
+				} else if scheme == "https" {
+					portVal = 443
+				} else {
+					portVal = 80
+				}
+
+				pathType := gatewayv1.FullPathHTTPPathModifier
+				targetPath := u.Path
+				if targetPath == "" {
+					targetPath = "/"
+				}
+				if api.TenantBinding == gentianov1alpha1.APIIntegrationTenantBindingDomain {
+					sep := "?"
+					if strings.Contains(targetPath, "?") || u.RawQuery != "" {
+						sep = "&"
+					}
+					rawQuery := u.RawQuery
+					if rawQuery != "" {
+						targetPath += sep + rawQuery + "&tenantDomain=" + effectiveDomain
+					} else {
+						targetPath += sep + "tenantDomain=" + effectiveDomain
+					}
+				} else if u.RawQuery != "" {
+					targetPath += "?" + u.RawQuery
+				}
+
+				statusCode := 302
+				rule = gatewayv1.HTTPRouteRule{
+					Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+					Filters: []gatewayv1.HTTPRouteFilter{{
+						Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+						RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+							Scheme:     &scheme,
+							Hostname:   &hostname,
+							Port:       &portVal,
+							StatusCode: &statusCode,
+							Path: &gatewayv1.HTTPPathModifier{
+								Type:            pathType,
+								ReplaceFullPath: &targetPath,
+							},
+						},
+					}},
+				}
+			}
+		case gentianov1alpha1.APIIntegrationRuntimePortalProxy:
+			portVal := gatewayv1.PortNumber(8000)
+			rule = gatewayv1.HTTPRouteRule{
+				Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+				BackendRefs: []gatewayv1.HTTPBackendRef{
+					{
+						BackendRef: gatewayv1.BackendRef{
+							BackendObjectReference: gatewayv1.BackendObjectReference{
+								Name:      gatewayv1.ObjectName("gentian-portal-gentian-portal-api"),
+								Namespace: (*gatewayv1.Namespace)(&servicesNamespace),
+								Port:      &portVal,
+							},
+						},
+					},
+				},
+			}
+		}
+	}
+	mainIngressSubDomain := ""
+	if intent.profile != nil && intent.profile.Spec.Ingress != nil {
+		mainIngressSubDomain = intent.profile.Spec.Ingress.SubDomain
+	}
+	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress); len(filters) > 0 {
 		rule.Filters = filters
 	}
 
 	rules := []gatewayv1.HTTPRouteRule{rule}
-	if apiRules := appAPIBackendRules(profile, svcPort); len(apiRules) > 0 {
+	if apiRules := appAPIBackendRules(intent.profile, svcPort, kernelDomain, effectiveDomain, intent.ingress); len(apiRules) > 0 {
 		rules = append(apiRules, rules...)
 	}
-	if rootRedirect := appRootRedirectRule(profile, host); rootRedirect != nil {
+	if rootRedirect := appRootRedirectRule(intent.profile, host); rootRedirect != nil {
 		rules = append([]gatewayv1.HTTPRouteRule{*rootRedirect}, rules...)
 	}
 
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      appHTTPRouteName(tenant.Name, appProfile),
+			Name:      appHTTPRouteName(tenant.Name, intent.appProfile),
 			Namespace: nsName,
 			Labels: map[string]string{
 				tenantLabel:           tenant.Name,
-				appLabel:              appProfile,
+				appLabel:              intent.appProfile,
 				managedByLabel:        managedByValue,
 				gatewayComponentLabel: gatewayComponentApp,
 			},
@@ -169,10 +288,23 @@ func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gat
 	}
 }
 
-func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32) []gatewayv1.HTTPRouteRule {
+func appAPIBackendRules(
+	profile *gentianov1alpha1.AppProfile,
+	defaultPort int32,
+	kernelDomain, effectiveDomain string,
+	ingress *gentianov1alpha1.IngressSpec,
+) []gatewayv1.HTTPRouteRule {
 	backends, err := gentianov1alpha1.ProfileGatewayAPIBackends(profile)
 	if err != nil || len(backends) == 0 {
 		return nil
+	}
+	mainIngressSubDomain := ""
+	if profile != nil && profile.Spec.Ingress != nil {
+		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
+	}
+	var filters []gatewayv1.HTTPRouteFilter
+	if ingress != nil {
+		filters = gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress)
 	}
 	var rules []gatewayv1.HTTPRouteRule
 	for _, backend := range backends {
@@ -185,7 +317,7 @@ func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32)
 		}
 		p := gatewayv1.PortNumber(port)
 		prefix := backend.PathPrefix
-		rules = append(rules, gatewayv1.HTTPRouteRule{
+		rule := gatewayv1.HTTPRouteRule{
 			Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
 			BackendRefs: []gatewayv1.HTTPBackendRef{{
 				BackendRef: gatewayv1.BackendRef{
@@ -195,7 +327,11 @@ func appAPIBackendRules(profile *gentianov1alpha1.AppProfile, defaultPort int32)
 					},
 				},
 			}},
-		})
+		}
+		if len(filters) > 0 {
+			rule.Filters = filters
+		}
+		rules = append(rules, rule)
 	}
 	return rules
 }
@@ -211,7 +347,7 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantApexRedirectRouteName(tenant.Name),
 			Namespace: nsName,
-			Labels:    umcPortalRedirectLabels(tenant.Name, tenantApexRedirectRouteName(tenant.Name)),
+			Labels:    portalRedirectLabels(tenant.Name, tenantApexRedirectRouteName(tenant.Name)),
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
@@ -242,8 +378,14 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 	}
 }
 
-func gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingressSubDomain string) []gatewayv1.HTTPRouteFilter {
+func gatewayEmbeddingResponseFilters(
+	kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string,
+	ingress *gentianov1alpha1.IngressSpec,
+) []gatewayv1.HTTPRouteFilter {
 	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain)
+	if custom, ok, err := ingressFrameAncestorsPolicy(kernelDomain, effectiveDomain, mainIngressSubDomain, ingress); err == nil && ok {
+		policy = custom
+	}
 	if policy.Origins == "" {
 		return nil
 	}
@@ -279,26 +421,22 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain string) gatewayFrameAncestorsPolicy {
-	switch {
-	case ingressSubDomain == cryptpadSandboxSubDomain && effectiveDomain != "":
-		return gatewayFrameAncestorsPolicy{
-			Mode:    gatewayFrameAncestorsAppend,
-			Origins: cryptpadSandboxFrameAncestorOrigins(kernelDomain, effectiveDomain),
-		}
-	case ingressSubDomain == cryptpadMainSubDomain && kernelDomain != "":
-		return gatewayFrameAncestorsPolicy{
-			Mode:    gatewayFrameAncestorsAppend,
-			Origins: fmt.Sprintf("https://portal.%s", kernelDomain),
-		}
-	case kernelDomain != "":
+func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
+	var origins []string
+	if kernelDomain != "" {
+		origins = append(origins, fmt.Sprintf("https://portal.%s", kernelDomain))
+	}
+	if effectiveDomain != "" && effectiveDomain != kernelDomain {
+		origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
+	}
+	if len(origins) > 0 {
 		return gatewayFrameAncestorsPolicy{
 			Mode:    gatewayFrameAncestorsReplace,
-			Origins: fmt.Sprintf("https://portal.%s", kernelDomain),
+			Origins: strings.Join(origins, " "),
 		}
-	default:
-		return gatewayFrameAncestorsPolicy{}
 	}
+	return gatewayFrameAncestorsPolicy{}
 }
 
 func keycloakGatewayResponseFilters(kernelDomain string, tenantEffectiveDomains []string, tenantOIDCSubdomains map[string][]string, tenantNames []string) []gatewayv1.HTTPRouteFilter {
@@ -309,34 +447,6 @@ func keycloakGatewayResponseFilters(kernelDomain string, tenantEffectiveDomains 
 	modifier := gatewayv1.HTTPHeaderFilter{
 		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
 		Set: []gatewayv1.HTTPHeader{
-			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", origins)},
-		},
-	}
-	return []gatewayv1.HTTPRouteFilter{
-		{
-			Type:                   gatewayv1.HTTPRouteFilterResponseHeaderModifier,
-			ResponseHeaderModifier: &modifier,
-		},
-	}
-}
-
-func kernelCryptpadMainResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
-	return cryptpadGatewayAppendFrameAncestorsFilters(cryptpadKernelMainFrameAncestorOrigins(kernelDomain))
-}
-
-func kernelCryptpadSandboxResponseFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
-	return cryptpadGatewayAppendFrameAncestorsFilters(cryptpadSandboxFrameAncestorOrigins(kernelDomain, kernelDomain))
-}
-
-// cryptpadGatewayAppendFrameAncestorsFilters appends a frame-ancestors CSP header
-// without removing CryptPad's upstream policy (script-src must stay strict).
-func cryptpadGatewayAppendFrameAncestorsFilters(origins string) []gatewayv1.HTTPRouteFilter {
-	if origins == "" {
-		return nil
-	}
-	modifier := gatewayv1.HTTPHeaderFilter{
-		Remove: []string{"X-Frame-Options"},
-		Add: []gatewayv1.HTTPHeader{
 			{Name: "Content-Security-Policy", Value: fmt.Sprintf("frame-ancestors 'self' %s", origins)},
 		},
 	}

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Gentian Authors.
+Copyright 2026 Gentian Organization.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package secrets provides the shared "seed OpenBao from the kernel" primitive
-// used by every Tenant reconciler (identity, ldap, database, mariadb, storage,
+// used by every Tenant reconciler (identity, database, mariadb, storage,
 // cache, mail, apps).
 //
 // A Seeder derives deterministic per-tenant-per-app credentials from a single
