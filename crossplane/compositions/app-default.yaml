@@ -512,7 +512,6 @@ spec:
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
-            {{- if $pSpec.extraValues }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
             {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
             {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
@@ -529,6 +528,7 @@ spec:
             {{- if not $smtpHost }}
             {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
             {{- end }}
+            {{- if $pSpec.extraValues }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
@@ -1164,6 +1164,18 @@ spec:
             {{- $scRaw = $scRaw | replace "${TENANT_ID}"        $tenant }}
             {{- $scRaw = $scRaw | replace "${APP_ID}"           $app }}
             {{- $scRaw = $scRaw | replace "${SIDECAR_ID}"       $sc.name }}
+            {{- if $kernelDomain }}{{ $scRaw = $scRaw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
+            {{- if $s3Endpoint  }}{{ $scRaw = $scRaw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
+            {{- if $mysqlHost   }}{{ $scRaw = $scRaw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
+            {{- if $redisHost   }}{{ $scRaw = $scRaw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
+            {{- $scRaw = $scRaw | replace "${SMTP_HOST}"    $smtpHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $turnHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $turnPort }}
+            {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
+            {{- $scRaw = $scRaw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
+            {{- $scRaw = $scRaw | replace "${TURN_TRANSPORT}" $turnTransport }}
+            {{- $scRaw = $scRaw | replace "${TURN_CREDENTIALS}" $turnCreds }}
+            {{- if $nodeIP      }}{{ $scRaw = $scRaw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $scExtraVals = $scRaw | fromJson }}
             {{- end }}
             {{- $scExtraVals = $scExtraVals | toJson | fromJson }}
