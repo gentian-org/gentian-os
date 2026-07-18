@@ -2,8 +2,8 @@ apiVersion: v2
 name: gentian-os
 description: Gentian OS — multi-tenant application orchestrator operator
 type: application
-version: 0.2.0
-appVersion: "0.1.2"
+version: 0.3.0
+appVersion: "0.3.0"
 keywords:
   - gentian
   - operator
