@@ -239,13 +239,24 @@ func (r *CustomizationReconciler) reviewOverdue(record *gentianov1alpha1.Customi
 	if record.Spec.ReviewBy == "" {
 		return false
 	}
-	reviewBy, err := time.Parse("2006-01-02", record.Spec.ReviewBy)
+	reviewBy, err := parseLadderDate(record.Spec.ReviewBy)
 	if err != nil {
 		// An unparseable date is caught by CRD pattern validation; treat it as
 		// overdue rather than silently ignoring it.
 		return true
 	}
 	return r.now().After(reviewBy)
+}
+
+// parseLadderDate parses a Customization date field. The CRD pattern accepts
+// both a bare date and the midnight-UTC RFC3339 form YAML parsers commonly
+// normalize an unquoted date scalar into on the way to JSON — see the field
+// comments on CustomizationSpec.ReviewBy/Created.
+func parseLadderDate(value string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02", value); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 // upstreamStale reports a broken upstream-first obligation: either the change was

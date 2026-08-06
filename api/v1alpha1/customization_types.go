@@ -257,13 +257,23 @@ type CustomizationSpec struct {
 
 	// Created is the date the record was written (RFC 3339 date).
 	// +optional
-	// +kubebuilder:validation:Pattern=`^\d{4}-\d{2}-\d{2}$`
+	// Accepts a bare date and, defensively, the midnight-UTC RFC3339 form YAML
+	// parsers commonly normalize an unquoted date scalar into (e.g.
+	// sigs.k8s.io/yaml turns 2027-08-06 into 2027-08-06T00:00:00Z on its way to
+	// JSON) — authors should still quote date values in YAML, but a record
+	// should not fail admission over a YAML parser quirk.
+	// +kubebuilder:validation:Pattern=`^\d{4}-\d{2}-\d{2}(T00:00:00Z)?$`
 	Created string `json:"created,omitempty"`
 
 	// ReviewBy is the date this deviation must be reconsidered. A record whose
 	// review date has passed is customization debt, and is reported as such.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^\d{4}-\d{2}-\d{2}$`
+	// Accepts a bare date and, defensively, the midnight-UTC RFC3339 form YAML
+	// parsers commonly normalize an unquoted date scalar into (e.g.
+	// sigs.k8s.io/yaml turns 2027-08-06 into 2027-08-06T00:00:00Z on its way to
+	// JSON) — authors should still quote date values in YAML, but a record
+	// should not fail admission over a YAML parser quirk.
+	// +kubebuilder:validation:Pattern=`^\d{4}-\d{2}-\d{2}(T00:00:00Z)?$`
 	ReviewBy string `json:"reviewBy"`
 
 	// ExitCriteria states what would allow this customization to be dropped.

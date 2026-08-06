@@ -87,9 +87,14 @@ spec:
                   type: object
                 type: array
               created:
-                description: Created is the date the record was written (RFC 3339
-                  date).
-                pattern: ^\d{4}-\d{2}-\d{2}$
+                description: |-
+                  Created is the date the record was written (RFC 3339 date).
+                  Accepts a bare date and, defensively, the midnight-UTC RFC3339 form YAML
+                  parsers commonly normalize an unquoted date scalar into (e.g.
+                  sigs.k8s.io/yaml turns 2027-08-06 into 2027-08-06T00:00:00Z on its way to
+                  JSON) — authors should still quote date values in YAML, but a record
+                  should not fail admission over a YAML parser quirk.
+                pattern: ^\d{4}-\d{2}-\d{2}(T00:00:00Z)?$
                 type: string
               delivery:
                 description: Delivery is how an L3 module reaches the running app.
@@ -171,7 +176,12 @@ spec:
                 description: |-
                   ReviewBy is the date this deviation must be reconsidered. A record whose
                   review date has passed is customization debt, and is reported as such.
-                pattern: ^\d{4}-\d{2}-\d{2}$
+                  Accepts a bare date and, defensively, the midnight-UTC RFC3339 form YAML
+                  parsers commonly normalize an unquoted date scalar into (e.g.
+                  sigs.k8s.io/yaml turns 2027-08-06 into 2027-08-06T00:00:00Z on its way to
+                  JSON) — authors should still quote date values in YAML, but a record
+                  should not fail admission over a YAML parser quirk.
+                pattern: ^\d{4}-\d{2}-\d{2}(T00:00:00Z)?$
                 type: string
               rung:
                 description: Rung is the ladder rung this customization sits at.
