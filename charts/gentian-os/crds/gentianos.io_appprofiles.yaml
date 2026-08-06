@@ -100,13 +100,14 @@ spec:
                         timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
                       type: object
                     clusterIssuer:
-                      default: letsencrypt-http01
                       description: |-
                         ClusterIssuer is reserved for future per-app issuer overrides. Tenant app
                         ingress TLS is issued by the operator as one DNS-01 wildcard per tenant
                         (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
-                        Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
-                        See docs/design/multi-tenancy.md §3.
+                        Not used by the ingress reconciler today. Empty is equivalent to
+                        "letsencrypt-http01" — left undefaulted at the schema level so profiles
+                        that omit it don't permanently diff against GitOps tooling that applies
+                        CRD defaults server-side; see docs/design/multi-tenancy.md §3.
                       type: string
                     serviceName:
                       description: |-
@@ -670,13 +671,14 @@ spec:
                       timeouts, buffer limits). See gentianos.io/gateway-* keys in catalogue_types.go.
                     type: object
                   clusterIssuer:
-                    default: letsencrypt-http01
                     description: |-
                       ClusterIssuer is reserved for future per-app issuer overrides. Tenant app
                       ingress TLS is issued by the operator as one DNS-01 wildcard per tenant
                       (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
-                      Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
-                      See docs/design/multi-tenancy.md §3.
+                      Not used by the ingress reconciler today. Empty is equivalent to
+                      "letsencrypt-http01" — left undefaulted at the schema level so profiles
+                      that omit it don't permanently diff against GitOps tooling that applies
+                      CRD defaults server-side; see docs/design/multi-tenancy.md §3.
                     type: string
                   serviceName:
                     description: |-
@@ -722,11 +724,13 @@ spec:
                     description: Database specifies a relational database requirement.
                     properties:
                       allowDynamicDatabaseCreation:
-                        default: false
                         description: |-
                           AllowDynamicDatabaseCreation grants the app user privileges to create new databases
                           dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-                          Only supported by the mariadb engine.
+                          Only supported by the mariadb engine. Omitted is equivalent to false, which
+                          is also Go's zero value for bool — left undefaulted at the schema level so
+                          profiles that omit it don't permanently diff against GitOps tooling that
+                          applies CRD defaults server-side.
                         type: boolean
                       databasePerTenant:
                         default: true
@@ -1451,11 +1455,13 @@ spec:
                           description: Database specifies a relational database requirement.
                           properties:
                             allowDynamicDatabaseCreation:
-                              default: false
                               description: |-
                                 AllowDynamicDatabaseCreation grants the app user privileges to create new databases
                                 dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-                                Only supported by the mariadb engine.
+                                Only supported by the mariadb engine. Omitted is equivalent to false, which
+                                is also Go's zero value for bool — left undefaulted at the schema level so
+                                profiles that omit it don't permanently diff against GitOps tooling that
+                                applies CRD defaults server-side.
                               type: boolean
                             databasePerTenant:
                               default: true
@@ -1659,9 +1665,12 @@ spec:
                         a stable ClusterIP alias pointing at the sidecar release.
                       type: string
                     stableServicePort:
-                      default: 80
-                      description: StableServicePort is the port on StableServiceName.
-                        Defaults to 80.
+                      description: |-
+                        StableServicePort is the port on StableServiceName. Consumers (e.g. the
+                        odoo-cb-base composition template) already apply their own `default 80`
+                        fallback when this is omitted — left undefaulted at the schema level so
+                        profiles that omit it don't permanently diff against GitOps tooling that
+                        applies CRD defaults server-side.
                       format: int32
                       type: integer
                   required:

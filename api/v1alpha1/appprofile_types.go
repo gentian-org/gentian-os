@@ -379,10 +379,11 @@ type IngressSpec struct {
 	// ClusterIssuer is reserved for future per-app issuer overrides. Tenant app
 	// ingress TLS is issued by the operator as one DNS-01 wildcard per tenant
 	// (*.<effectiveDomain>); see TenantDNS01ClusterIssuer / TENANT_DNS01_CLUSTER_ISSUER.
-	// Defaults to "letsencrypt-http01" when not set (not used by the ingress reconciler today).
-	// See docs/design/multi-tenancy.md §3.
+	// Not used by the ingress reconciler today. Empty is equivalent to
+	// "letsencrypt-http01" — left undefaulted at the schema level so profiles
+	// that omit it don't permanently diff against GitOps tooling that applies
+	// CRD defaults server-side; see docs/design/multi-tenancy.md §3.
 	// +optional
-	// +kubebuilder:default=letsencrypt-http01
 	ClusterIssuer string `json:"clusterIssuer,omitempty"`
 
 	// Annotations are merged into Gateway edge policy for this host (frame-ancestors,
@@ -512,9 +513,11 @@ type DatabaseRequirement struct {
 
 	// AllowDynamicDatabaseCreation grants the app user privileges to create new databases
 	// dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-	// Only supported by the mariadb engine.
+	// Only supported by the mariadb engine. Omitted is equivalent to false, which
+	// is also Go's zero value for bool — left undefaulted at the schema level so
+	// profiles that omit it don't permanently diff against GitOps tooling that
+	// applies CRD defaults server-side.
 	// +optional
-	// +kubebuilder:default=false
 	AllowDynamicDatabaseCreation bool `json:"allowDynamicDatabaseCreation,omitempty"`
 }
 
@@ -875,9 +878,12 @@ type AppSidecarSpec struct {
 	// +optional
 	StableServiceName string `json:"stableServiceName,omitempty"`
 
-	// StableServicePort is the port on StableServiceName. Defaults to 80.
+	// StableServicePort is the port on StableServiceName. Consumers (e.g. the
+	// odoo-cb-base composition template) already apply their own `default 80`
+	// fallback when this is omitted — left undefaulted at the schema level so
+	// profiles that omit it don't permanently diff against GitOps tooling that
+	// applies CRD defaults server-side.
 	// +optional
-	// +kubebuilder:default=80
 	StableServicePort int32 `json:"stableServicePort,omitempty"`
 }
 
