@@ -353,7 +353,12 @@ type CustomizationStatus struct {
 	TargetVersionDrift bool `json:"targetVersionDrift,omitempty"`
 
 	// RungAboveRecommended is true when the target's customization surface offers
-	// a lower rung than the one this record uses — a candidate for descending.
+	// a lower rung this record's rungJustification has no entry for — a rung the
+	// app has started supporting since the record was written, and therefore a
+	// candidate for descending. A cheaper rung the record already justified
+	// skipping does not set this; every rung below spec.rung must be justified
+	// to pass admission, so re-flagging those would mark every compliant record
+	// permanently, defeating the signal.
 	// +optional
 	RungAboveRecommended bool `json:"rungAboveRecommended,omitempty"`
 

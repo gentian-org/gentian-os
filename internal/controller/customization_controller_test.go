@@ -19,6 +19,8 @@ package controller
 import (
 	"testing"
 	"time"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // TestParseLadderDateAcceptsYAMLNormalizedForm guards against a real failure
@@ -44,5 +46,58 @@ func TestParseLadderDateAcceptsYAMLNormalizedForm(t *testing.T) {
 func TestParseLadderDateRejectsGarbage(t *testing.T) {
 	if _, err := parseLadderDate("not-a-date"); err == nil {
 		t.Fatal("expected an error for an unparseable date")
+	}
+}
+
+// TestRungAboveRecommendedIgnoresJustifiedRungs guards against a real failure
+// seen live: a valid L3 record against a grade-A app (which supports L0/L1 for
+// other purposes) was permanently flagged as "could descend" even though its
+// spec.rungJustification already explained why L0/L1/L2 do not apply — an
+// admission-time requirement for every record that passes validation. The
+// signal must only fire for a cheaper rung the record's justification map has
+// no entry for.
+func TestRungAboveRecommendedIgnoresJustifiedRungs(t *testing.T) {
+	surface := &gentianov1alpha1.CustomizationSurface{
+		SupportedRungs: []gentianov1alpha1.CustomizationRung{
+			gentianov1alpha1.RungConfigure,
+			gentianov1alpha1.RungDropIn,
+			gentianov1alpha1.RungExtension,
+		},
+	}
+	record := &gentianov1alpha1.Customization{
+		Spec: gentianov1alpha1.CustomizationSpec{
+			Rung: gentianov1alpha1.RungExtension,
+			RungJustification: map[string]string{
+				"L0": "no configuration flag exists",
+				"L1": "no drop-in mechanism applies",
+				"L2": "must alter the app's own UI",
+			},
+		},
+	}
+	if rungAboveRecommended(record, surface) {
+		t.Fatal("a record that justified every cheaper rung must not be flagged")
+	}
+}
+
+func TestRungAboveRecommendedFlagsUnjustifiedNewCapability(t *testing.T) {
+	surface := &gentianov1alpha1.CustomizationSurface{
+		SupportedRungs: []gentianov1alpha1.CustomizationRung{
+			gentianov1alpha1.RungConfigure,
+			gentianov1alpha1.RungDropIn,
+			gentianov1alpha1.RungExtension,
+		},
+	}
+	record := &gentianov1alpha1.Customization{
+		Spec: gentianov1alpha1.CustomizationSpec{
+			Rung: gentianov1alpha1.RungExtension,
+			RungJustification: map[string]string{
+				"L0": "no configuration flag exists",
+				// L1 deliberately missing: simulates a drop-in mechanism the
+				// app gained after this record was written.
+			},
+		},
+	}
+	if !rungAboveRecommended(record, surface) {
+		t.Fatal("expected a flag for a supported rung with no recorded justification")
 	}
 }

@@ -293,9 +293,19 @@ func targetVersionDrift(record *gentianov1alpha1.Customization, profile *gentian
 	return false
 }
 
-// rungAboveRecommended reports that the target now supports a cheaper rung than the
-// record uses — a concrete, actionable "you could descend" signal, which is the
-// only way the debt trend goes down.
+// rungAboveRecommended reports that the target supports a cheaper rung the
+// record itself never accounted for — a concrete, actionable "you could
+// descend" signal, which is the only way the debt trend goes down.
+//
+// Merely supporting a cheaper mechanism is not enough to flag: admission
+// already requires spec.rungJustification to explain, per rung, why every
+// rung below the chosen one was rejected (see policy.go). A record that
+// passed validation has therefore already considered every cheaper rung the
+// app supported *at authoring time* — re-flagging those would make every
+// well-justified L3+ record against a grade-A app permanently "flagged" and
+// drown the one case this exists to catch: a rung the app has started
+// supporting *since* the record was written, which the justification map
+// necessarily has no entry for.
 func rungAboveRecommended(
 	record *gentianov1alpha1.Customization,
 	surface *gentianov1alpha1.CustomizationSurface,
@@ -313,9 +323,13 @@ func rungAboveRecommended(
 		if !known || idx >= chosen {
 			continue
 		}
-		if customization.SupportsRung(surface, candidate) {
-			return true
+		if !customization.SupportsRung(surface, candidate) {
+			continue
 		}
+		if _, justified := record.Spec.RungJustification[string(candidate)]; justified {
+			continue
+		}
+		return true
 	}
 	return false
 }
