@@ -346,9 +346,10 @@ spec:
                           - files
                           type: string
                         maxBytes:
-                          default: 262144
-                          description: MaxBytes caps the total tenant-supplied content
-                            for this drop-in.
+                          description: |-
+                            MaxBytes caps the total tenant-supplied content for this drop-in. Zero
+                            means unset; consumers apply customization.DefaultDropInMaxBytes rather
+                            than the schema defaulting it — see the Grade field comment above for why.
                           format: int32
                           maximum: 1048576
                           minimum: 1
@@ -365,7 +366,6 @@ spec:
                           pattern: ^/.*
                           type: string
                         source:
-                          default: configMap
                           description: Source is the Kubernetes object the content
                             is delivered through.
                           enum:
@@ -401,7 +401,6 @@ spec:
                         description: APIDocs links to the extension API documentation.
                         type: string
                       apiStability:
-                        default: undocumented
                         description: |-
                           APIStability rates the extension API. When this is not "stable", the L2/L3
                           tie-break in the decision procedure defaults to L2.
@@ -482,10 +481,13 @@ spec:
                         type: string
                     type: object
                   grade:
-                    default: unknown
                     description: |-
                       Grade rates customization readiness (see CustomizationGrade). It summarises
-                      the rubric score recorded in the profile's customization.md.
+                      the rubric score recorded in the profile's customization.md. Empty is
+                      equivalent to GradeUnknown — treat it that way rather than defaulting it
+                      in the schema, which would make every profile that omits it permanently
+                      diff against its own git manifest under GitOps tooling that applies CRD
+                      defaults server-side (as this one did, live, before this comment existed).
                     enum:
                     - A
                     - B
@@ -510,12 +512,10 @@ spec:
                           upstream and the series.
                         type: string
                       requiresApproval:
-                        default: platform-team
                         description: RequiresApproval names the role that must approve
                           a new patch.
                         type: string
                       seriesPath:
-                        default: patches/series
                         description: SeriesPath is the repo-relative path to the quilt-style
                           series file.
                         type: string
@@ -566,7 +566,6 @@ spec:
                       packaging.'
                     properties:
                       chartOwnership:
-                        default: upstream
                         description: |-
                           ChartOwnership records whether the chart is upstream's, Gentian-authored, or
                           a vendored copy. A vendored chart is a fork of the packaging and needs an

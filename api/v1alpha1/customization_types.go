@@ -142,7 +142,6 @@ type CustomizationArtifact struct {
 type CustomizationOrigin struct {
 	// Authorship records who wrote the customization.
 	// +optional
-	// +kubebuilder:default=gentian
 	Authorship CustomizationAuthorship `json:"authorship,omitempty"`
 
 	// Organisation names the authoring organisation, when not Gentian.
@@ -159,7 +158,6 @@ type CustomizationOrigin struct {
 
 	// RepoOwnership records who controls that repository.
 	// +optional
-	// +kubebuilder:default=gentian
 	RepoOwnership CustomizationRepoOwnership `json:"repoOwnership,omitempty"`
 
 	// ReviewedBy names the role at Gentian that accepted the customization.
@@ -168,7 +166,6 @@ type CustomizationOrigin struct {
 
 	// SupportContract records the support terms.
 	// +optional
-	// +kubebuilder:default=none
 	SupportContract CustomizationSupportContract `json:"supportContract,omitempty"`
 }
 
@@ -194,7 +191,6 @@ type CustomizationSecurity struct {
 type CustomizationLicensing struct {
 	// Effect records whether licensing terms change.
 	// +optional
-	// +kubebuilder:default=none
 	Effect CustomizationLicensingEffect `json:"effect,omitempty"`
 
 	// Notes explains a non-none effect.
@@ -282,7 +278,6 @@ type CustomizationSpec struct {
 
 	// UpgradeRisk estimates the cost of the next upstream version bump.
 	// +optional
-	// +kubebuilder:default=medium
 	UpgradeRisk CustomizationUpgradeRisk `json:"upgradeRisk,omitempty"`
 
 	// TestedAgainst lists the app versions this customization was verified against.

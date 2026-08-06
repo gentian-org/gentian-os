@@ -72,9 +72,12 @@ const (
 // and raise a task to characterise the app. L2 is always available regardless.
 type CustomizationSurface struct {
 	// Grade rates customization readiness (see CustomizationGrade). It summarises
-	// the rubric score recorded in the profile's customization.md.
+	// the rubric score recorded in the profile's customization.md. Empty is
+	// equivalent to GradeUnknown — treat it that way rather than defaulting it
+	// in the schema, which would make every profile that omits it permanently
+	// diff against its own git manifest under GitOps tooling that applies CRD
+	// defaults server-side (as this one did, live, before this comment existed).
 	// +optional
-	// +kubebuilder:default=unknown
 	Grade CustomizationGrade `json:"grade,omitempty"`
 
 	// RubricScore is the §4.1 rubric total backing Grade (0-8). CI checks that the
@@ -167,7 +170,6 @@ type CustomizationDropIn struct {
 
 	// Source is the Kubernetes object the content is delivered through.
 	// +optional
-	// +kubebuilder:default=configMap
 	Source CustomizationDropInSource `json:"source,omitempty"`
 
 	// UpstreamDocumented reports whether upstream documents this path as an
@@ -182,9 +184,10 @@ type CustomizationDropIn struct {
 	// +optional
 	TenantEditable bool `json:"tenantEditable,omitempty"`
 
-	// MaxBytes caps the total tenant-supplied content for this drop-in.
+	// MaxBytes caps the total tenant-supplied content for this drop-in. Zero
+	// means unset; consumers apply customization.DefaultDropInMaxBytes rather
+	// than the schema defaulting it — see the Grade field comment above for why.
 	// +optional
-	// +kubebuilder:default=262144
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=1048576
 	MaxBytes int32 `json:"maxBytes,omitempty"`
@@ -245,7 +248,6 @@ type CustomizationExtension struct {
 	// APIStability rates the extension API. When this is not "stable", the L2/L3
 	// tie-break in the decision procedure defaults to L2.
 	// +optional
-	// +kubebuilder:default=undocumented
 	APIStability CustomizationAPIStability `json:"apiStability,omitempty"`
 
 	// APIDocs links to the extension API documentation.
@@ -307,7 +309,6 @@ type CustomizationRepackage struct {
 	// a vendored copy. A vendored chart is a fork of the packaging and needs an
 	// UPSTREAM.md.
 	// +optional
-	// +kubebuilder:default=upstream
 	ChartOwnership CustomizationChartOwnership `json:"chartOwnership,omitempty"`
 
 	// CompositionRef names the profile-scoped Crossplane composition, when the app
@@ -328,12 +329,10 @@ type CustomizationPatch struct {
 
 	// SeriesPath is the repo-relative path to the quilt-style series file.
 	// +optional
-	// +kubebuilder:default=patches/series
 	SeriesPath string `json:"seriesPath,omitempty"`
 
 	// RequiresApproval names the role that must approve a new patch.
 	// +optional
-	// +kubebuilder:default=platform-team
 	RequiresApproval string `json:"requiresApproval,omitempty"`
 }
 

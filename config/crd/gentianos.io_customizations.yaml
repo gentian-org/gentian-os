@@ -112,7 +112,6 @@ spec:
                 description: Licensing records the licensing effect.
                 properties:
                   effect:
-                    default: none
                     description: Effect records whether licensing terms change.
                     enum:
                     - none
@@ -127,7 +126,6 @@ spec:
                 description: Origin records authorship and repository ownership.
                 properties:
                   authorship:
-                    default: gentian
                     description: Authorship records who wrote the customization.
                     enum:
                     - gentian
@@ -147,7 +145,6 @@ spec:
                     description: Repo is the backing repository, when externally owned.
                     type: string
                   repoOwnership:
-                    default: gentian
                     description: RepoOwnership records who controls that repository.
                     enum:
                     - gentian
@@ -158,7 +155,6 @@ spec:
                       the customization.
                     type: string
                   supportContract:
-                    default: none
                     description: SupportContract records the support terms.
                     enum:
                     - none
@@ -281,7 +277,6 @@ spec:
                 type: array
                 x-kubernetes-list-type: set
               upgradeRisk:
-                default: medium
                 description: UpgradeRisk estimates the cost of the next upstream version
                   bump.
                 enum:
