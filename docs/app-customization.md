@@ -660,6 +660,47 @@ The single table an agent needs to know *where to type*.
 | L6 | profile | fork repo | vendored source, `UPSTREAM-COMPARISON.md` |
 | any | platform | `gentian-os` | **only** if generic for all apps (§3) |
 
+Note `profiles/<n>/` is a *bundle*, not a fixed depth: singletons sit at
+`profiles/xwiki/`, members of a multi-profile family at
+`profiles/odoo/odoo-cb-crm/`. Locate a bundle by its leaf directory name, which
+CI requires to equal the `AppProfile`'s `metadata.name` — never by counting path
+segments.
+
+### 6.2 Why the artifact for each rung lives where it does
+
+The rung → repository map is not arbitrary; it falls out of `gentian-apps` being
+a **distribution repo** rather than an application monorepo (the full argument is
+in [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md) §0).
+Three consequences bind this framework directly:
+
+**Artifact types live in separate flat trees, so a rung maps to a tree.** A
+profile references its chart by OCI coordinate + version, never by a path
+relative to itself, and `charts/odoo` backs 10 different profiles. So L0/L1
+(metadata and content) land in `profiles/`, while L4 (packaging) lands in
+`charts/` — different rungs, different trees, because they are consumed by
+different pipelines and versioned independently. Colocating a chart inside the
+profile that happens to use it would imply a 1:1 ownership that mostly does not
+exist.
+
+**Placement never encodes a mutable fact.** A tempting alternative is to put an
+artifact wherever its consumers' nearest common ancestor is — shared things high,
+specific things low. That was rejected: it makes a directory's location depend on
+*how many things currently use it*, so a second consumer forces a physical move.
+The customization ladder has the same property and resolves it the same way:
+`scope` (tenant/profile/platform) is a **field on the record**, not a directory
+level, exactly as `spec.tier` is a field rather than a `free/`–`pro/` split.
+Anything that changes over time belongs in a field, where it can be queried and
+validated; only stable identity belongs in a path.
+
+**The repo versions packaging, not build output.** This is why an L5 record
+points at a `patches/series` (the delta) rather than a vendored copy of upstream,
+and why a rung-L6 fork must still carry `UPSTREAM` pinning plus DEP-3 headers.
+Debian commits `debian/patches/`, not `.deb` files; Gentoo commits an ebuild that
+*fetches* source rather than embedding it. A vendored chart or a checked-in
+`.tgz` is the same category error, which is why `charts/packages/` was deleted
+and why `chartOwnership: vendored` is a signal to review rather than a normal
+state.
+
 ---
 
 ## 7. Best practices, templated in `gentian-app-template`
