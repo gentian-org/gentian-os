@@ -511,15 +511,19 @@ other catalogue object. Being a cluster object buys three things a file cannot:
 * `status` carries **derived state** — `reviewOverdue`, `upstreamStale`, `targetVersionDrift` — so
   the debt report is computed by the operator, not by a script guessing from YAML.
 
-Profile-scoped records land in the profile's namespace alongside the catalogue sync; tenant-scoped
-records land in `tenant-<name>`.
+`AppProfile` and `Composition` are cluster-scoped — there is no per-profile namespace. Profile-scoped
+records therefore land in the **fixed system namespace the `gentian-catalogue` ApplicationSet syncs
+every profile's namespaced objects into** (`gentian-system` on this deployment layout — check the
+ApplicationSet's `template.spec.destination.namespace`, since it is a cluster-wide constant, not
+derived from the profile name). Tenant-scoped records land in `tenant-<name>`.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
 kind: Customization
 metadata:
   name: acme-invoice-approval
-  namespace: tenant-acme        # profile-scoped records live with the catalogue sync
+  namespace: tenant-acme        # tenant-scoped example; profile-scoped records use the
+                                 # catalogue's fixed system namespace instead (see above)
 spec:
   # WHAT
   summary: "Two-stage approval on vendor invoices above 10k"
