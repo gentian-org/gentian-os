@@ -300,7 +300,18 @@ type CustomizationPublishedAPI struct {
 }
 
 // CustomizationChartOwnership records who owns the packaging of this app.
-// +kubebuilder:validation:Enum=upstream;gentian-owned;vendored
+//
+//	upstream      — upstream's chart consumed as published, configured by values only
+//	patched       — upstream fetched at a pinned version with a local patch series
+//	                applied at build time (pristine + delta, no copy in the repo)
+//	gentian-owned — the chart is ours
+//	vendored      — a full copy of upstream's chart lives in the repo
+//
+// "patched" is the correct destination for a chart that needs template changes:
+// it carries the delta rather than a copy, so upstream bumps surface as patch
+// conflicts instead of silently diverging. "vendored" is a review signal, not a
+// normal state — see docs/app-customization.md §6.2.
+// +kubebuilder:validation:Enum=upstream;patched;gentian-owned;vendored
 type CustomizationChartOwnership string
 
 // CustomizationRepackage describes the L4 (packaging) surface.

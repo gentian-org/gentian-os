@@ -573,6 +573,7 @@ spec:
                           UPSTREAM.md.
                         enum:
                         - upstream
+                        - patched
                         - gentian-owned
                         - vendored
                         type: string
