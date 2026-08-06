@@ -1,11 +1,26 @@
 ---
 # Syncs app catalogue profile bundles from gentian-apps into the cluster.
 #
-# One Argo CD Application per profiles/<name>/ directory (kustomization.yaml required).
-# Each bundle may contain:
+# One Argo CD Application per profile bundle, discovered by the presence of a
+# kustomization.yaml. Each bundle may contain:
 #   profile.yaml       — AppProfile CR
 #   composition.yaml   — optional Crossplane Composition (spec.compositionRef)
+#   customizations/    — optional Customization CRs (docs/app-customization.md)
 #   assets/            — optional cluster-scoped prerequisites (ConfigMaps, …)
+#
+# A **files** generator (not directories) is deliberate: gentian-apps groups
+# profiles by spec.family at mixed depth — singletons sit at profiles/<name>/,
+# multi-profile families at profiles/<family>/<name>/. Matching the marker file
+# rather than a fixed directory depth supports both without an exclude-list of
+# "known family folders", and makes intermediate family directories (which have
+# no kustomization.yaml) invisible to the generator instead of failed syncs.
+#
+# Application names use .path.basename — the bundle's leaf directory. That name
+# is required by CI to equal the AppProfile's metadata.name, and AppProfile is
+# cluster-scoped, so leaf names are globally unique by construction and cannot
+# collide across families. It also means regrouping a profile into a family
+# directory does NOT rename its Application: the move is a source-path update
+# in place, with no delete/recreate cycle and no prune of live AppProfile CRs.
 #
 # Replaces the legacy gentian-appprofiles Application (flat profiles/*.yaml only).
 apiVersion: argoproj.io/v1alpha1
@@ -22,8 +37,8 @@ spec:
   - git:
       repoURL: %REPO_URL%
       revision: %BRANCH%
-      directories:
-      - path: profiles/*
+      files:
+      - path: profiles/**/kustomization.yaml
   template:
     metadata:
       name: 'catalogue-{{ .path.basename }}'
