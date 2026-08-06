@@ -161,6 +161,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.CustomizationReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Customization")
+		os.Exit(1)
+	}
+
 	openfgaURL := os.Getenv("OPENFGA_API_URL")
 	if openfgaURL == "" {
 		openfgaURL = "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"

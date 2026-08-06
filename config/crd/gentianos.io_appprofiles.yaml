@@ -306,6 +306,312 @@ spec:
                   of a profile-scoped composition shipped in gentian-apps/profiles/<name>/composition.yaml
                   (e.g. "app-custom") for profiles that require custom MR graphs in the catalogue repo.
                 type: string
+              customization:
+                description: |-
+                  Customization declares which rungs of the Gentian customization ladder this
+                  app supports and by which mechanism. Humans and agents read it to select the
+                  lowest viable rung for a requested change.
+                  See docs/app-customization.md.
+                properties:
+                  configure:
+                    description: Configure describes the L0 surface.
+                    properties:
+                      hotReload:
+                        description: HotReload reports whether a values change applies
+                          without a restart.
+                        type: boolean
+                      valuesSchema:
+                        description: |-
+                          ValuesSchema is the repo-relative path to the chart's values.schema.json.
+                          Its presence is what makes L0 machine-checkable.
+                        type: string
+                    type: object
+                  dropIns:
+                    description: 'DropIns declares the L1 surface: directories the
+                      app treats as extension points.'
+                    items:
+                      description: CustomizationDropIn declares one L1 drop-in directory.
+                      properties:
+                        format:
+                          description: |-
+                            Format is the content format expected in this directory. Content is parsed
+                            at admission so a malformed fragment fails there rather than at pod boot.
+                          enum:
+                          - ini
+                          - yaml
+                          - json
+                          - toml
+                          - xml
+                          - properties
+                          - files
+                          type: string
+                        maxBytes:
+                          default: 262144
+                          description: MaxBytes caps the total tenant-supplied content
+                            for this drop-in.
+                          format: int32
+                          maximum: 1048576
+                          minimum: 1
+                          type: integer
+                        name:
+                          description: Name identifies the drop-in. Tenant drop-ins
+                            reference it by this name.
+                          maxLength: 63
+                          pattern: ^[a-z][a-z0-9-]*$
+                          type: string
+                        path:
+                          description: Path is the absolute in-container directory
+                            the files are mounted at.
+                          pattern: ^/.*
+                          type: string
+                        source:
+                          default: configMap
+                          description: Source is the Kubernetes object the content
+                            is delivered through.
+                          enum:
+                          - configMap
+                          - secret
+                          type: string
+                        tenantEditable:
+                          description: |-
+                            TenantEditable allows tenant admins to supply files here through
+                            Tenant.spec.apps[].config.dropIns. Not every drop-in directory is safe to
+                            expose — a policy file usually is not.
+                          type: boolean
+                        upstreamDocumented:
+                          description: |-
+                            UpstreamDocumented reports whether upstream documents this path as an
+                            extension point. When false the mount is really L4, not L1: upstream has
+                            made no promise about the path surviving a reorganisation.
+                          type: boolean
+                      required:
+                      - format
+                      - name
+                      - path
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  extension:
+                    description: 'Extension describes the L3 surface: the app''s own
+                      module system.'
+                    properties:
+                      apiDocs:
+                        description: APIDocs links to the extension API documentation.
+                        type: string
+                      apiStability:
+                        default: undocumented
+                        description: |-
+                          APIStability rates the extension API. When this is not "stable", the L2/L3
+                          tie-break in the decision procedure defaults to L2.
+                        enum:
+                        - stable
+                        - evolving
+                        - undocumented
+                        - none
+                        type: string
+                      delivery:
+                        description: Delivery lists the supported ways a module reaches
+                          the running app.
+                        items:
+                          description: CustomizationDelivery is how an L3 module reaches
+                            the running app.
+                          enum:
+                          - git-sidecar
+                          - image-layer
+                          - module-profile
+                          - app-store-api
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      mechanism:
+                        description: |-
+                          Mechanism names the app's extension system (for example "odoo-addon",
+                          "nextcloud-app", "xwiki-extension", "activepieces-piece").
+                        pattern: ^[a-z][a-z0-9-]*$
+                        type: string
+                      modulePath:
+                        description: ModulePath is the in-container directory modules
+                          are loaded from.
+                        pattern: ^/.*
+                        type: string
+                      perTenantModules:
+                        description: |-
+                          PerTenantModules reports whether tenants may have divergent module sets.
+                          Only valid when the app runs in the tenant's own namespace — a shared
+                          runtime with per-tenant code is a cross-tenant data leak waiting to happen.
+                        type: boolean
+                      registry:
+                        description: Registry is the repository or index modules are
+                          sourced from.
+                        type: string
+                      testMatrix:
+                        description: TestMatrix lists the upstream app versions modules
+                          are tested against.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                    required:
+                    - mechanism
+                    type: object
+                  fork:
+                    description: 'Fork describes the L6 surface: whether a fork is
+                      permitted, and who owns it.'
+                    properties:
+                      allowed:
+                        description: Allowed gates whether a fork is a permitted outcome
+                          for this app.
+                        type: boolean
+                      cveWatch:
+                        description: |-
+                          CVEWatch reports whether the fork has active vulnerability monitoring.
+                          A fork without it is an unowned liability.
+                        type: boolean
+                      owner:
+                        description: |-
+                          Owner is the team or organisation accountable for the fork, including its
+                          CVE response. Free-form so an external maintainer can hold it later.
+                        type: string
+                      repo:
+                        description: Repo is the Gentian-owned fork.
+                        type: string
+                      upstream:
+                        description: Upstream is the project the fork diverged from.
+                        type: string
+                    type: object
+                  grade:
+                    default: unknown
+                    description: |-
+                      Grade rates customization readiness (see CustomizationGrade). It summarises
+                      the rubric score recorded in the profile's customization.md.
+                    enum:
+                    - A
+                    - B
+                    - C
+                    - D
+                    - unknown
+                    type: string
+                  ladderDocs:
+                    description: LadderDocs links to human documentation of this app's
+                      ladder.
+                    type: string
+                  patch:
+                    description: 'Patch describes the L5 surface: whether a patch
+                      series is permitted.'
+                    properties:
+                      allowed:
+                        description: Allowed gates whether a patch series may be carried
+                          for this app at all.
+                        type: boolean
+                      buildRepo:
+                        description: BuildRepo is the repository holding the pinned
+                          upstream and the series.
+                        type: string
+                      requiresApproval:
+                        default: platform-team
+                        description: RequiresApproval names the role that must approve
+                          a new patch.
+                        type: string
+                      seriesPath:
+                        default: patches/series
+                        description: SeriesPath is the repo-relative path to the quilt-style
+                          series file.
+                        type: string
+                    type: object
+                  publishes:
+                    description: |-
+                      Publishes describes what this app offers so that *another* app can be built
+                      at L2 against it. It is not a rung of this app.
+                    properties:
+                      apis:
+                        description: APIs lists the published interfaces a companion
+                          app can build against.
+                        items:
+                          description: CustomizationPublishedAPI is one interface
+                            offered to companion apps.
+                          properties:
+                            auth:
+                              description: Auth is the authentication method companions
+                                must use.
+                              type: string
+                            contract:
+                              description: Contract is the Gentian contract name this
+                                API satisfies.
+                              pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            path:
+                              description: Path is the base path the API is served
+                                at.
+                              type: string
+                            protocol:
+                              description: Protocol is the wire protocol (for example
+                                "http-json", "webdav", "matrix").
+                              type: string
+                            spec:
+                              description: Spec names the interface description format
+                                (for example "openapi", "graphql").
+                              type: string
+                          required:
+                          - contract
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - contract
+                        x-kubernetes-list-type: map
+                    type: object
+                  repackage:
+                    description: 'Repackage describes the L4 surface: who owns the
+                      packaging.'
+                    properties:
+                      chartOwnership:
+                        default: upstream
+                        description: |-
+                          ChartOwnership records whether the chart is upstream's, Gentian-authored, or
+                          a vendored copy. A vendored chart is a fork of the packaging and needs an
+                          UPSTREAM.md.
+                        enum:
+                        - upstream
+                        - gentian-owned
+                        - vendored
+                        type: string
+                      compositionRef:
+                        description: |-
+                          CompositionRef names the profile-scoped Crossplane composition, when the app
+                          needs a custom managed-resource graph.
+                        type: string
+                    type: object
+                  rubricScore:
+                    description: |-
+                      RubricScore is the §4.1 rubric total backing Grade (0-8). CI checks that the
+                      score and the grade agree: A>=7, B 5-6, C 3-4, D<=2.
+                    format: int32
+                    maximum: 8
+                    minimum: 0
+                    type: integer
+                  supportedRungs:
+                    description: |-
+                      SupportedRungs lists the rungs at which this app can be customized.
+                      L2 must not be listed: a companion app is always buildable, so L2 is a
+                      property of the customization rather than of the target.
+                    items:
+                      description: |-
+                        CustomizationRung identifies a rung of the customization ladder.
+                        Rungs are ordered by how much of the app's own delivery artifact Gentian owns,
+                        which is what determines upgrade cost.
+                      enum:
+                      - L0
+                      - L1
+                      - L2
+                      - L3
+                      - L4
+                      - L5
+                      - L6
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               deploymentMethod:
                 default: crossplane
                 description: |-

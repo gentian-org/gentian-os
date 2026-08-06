@@ -240,6 +240,12 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 		return ctrl.Result{}, fmt.Errorf("ensure mac waivers: %w", err)
 	}
 
+	// Tenant drop-ins (customization ladder L1 at tenant scope) must exist before
+	// the app workload is created, so the mount is populated on first start.
+	if _, err := r.ensureTenantDropIns(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure tenant drop-ins: %w", err)
+	}
+
 	appsResult, err := r.ensureAppDeployment(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())

@@ -248,6 +248,26 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Write an auto-sleep / scale-to-zero controller in the cluster operator.
   - `[ ]` Configure the ingress proxy to intercept requests for sleeping namespaces and trigger container wakeup.
 
+### 2.13 Automated Customization Readiness Grading (**)
+* **Target Domain**: App Catalogue & Customization Framework
+* **Context**: The customization ladder (see [app-customization.md](app-customization.md)) grades each catalogue app **A–D** on how far up the ladder it can be customized, which determines whether a requested change lands at L1, L3, or L5. For v0.4 the grade is assigned by hand by the catalogue maintainer and recorded in `AppProfile.spec.customization.grade`; CI only checks that a grade is present and that it matches the recorded rubric score. Hand-assigned grades drift as upstreams evolve, and nothing currently detects that drift.
+* **Proposed Solution**: Automate the mechanical subset of the §4.1 rubric in `gentian-apps` CI and re-score on every chart version bump. Criteria such as "declared drop-in directories exist in the image", "published API spec resolves", and "plugin API version is pinned in the test matrix" are machine-checkable; judgement criteria ("upstream accepts patches", "ABI survives minor releases") stay manual with a maintainer attestation and an expiry date. CI proposes a grade change as a PR comment rather than mutating the profile.
+* **Backlog Items**:
+  - `[ ]` Implement the mechanical rubric scorer over `spec.customization` and the resolved chart/image.
+  - `[ ]` Add drift detection: re-score on chart version bumps and open a PR comment when the computed banding differs from the declared grade.
+  - `[ ]` Add expiry to manual attestations so judgement criteria are revisited at a fixed cadence.
+  - `[ ]` Feed grade history into the customization debt report (Admin Console).
+
+### 2.14 Third-Party Customization Delegation (***)
+* **Target Domain**: App Catalogue & Partner Ecosystem
+* **Context**: The customization framework is authorship-neutral by design — `Customization.spec.origin` already records whether a customization was authored by Gentian, a tenant, a supplier, or a partner, and whether the backing repo is Gentian-owned or external. v0.4 ships the data model only; Gentian still owns every roadmap and repository on the ladder.
+* **Proposed Solution**: Delegate repository and roadmap ownership to app owners and partners, and push the ladder's practices and definitions towards a published specification others can implement. Requires artifact signing and provenance, sandboxing for third-party L3 modules, an entitlement model for commercial customizations, and a delegated-maintainer role in the approval matrix.
+* **Backlog Items**:
+  - `[ ]` Define signing/provenance requirements for externally built customization artifacts.
+  - `[ ]` Design sandboxing for third-party in-app (L3) modules.
+  - `[ ]` Add a delegated-maintainer role to the customization approval matrix and RBAC.
+  - `[ ]` Publish the ladder and record schema as an external specification.
+
 ---
 
 ## 3. User Management & Shell UI

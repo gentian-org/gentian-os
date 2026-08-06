@@ -24,6 +24,14 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["platformsecuritypolicies", "platformsecuritypolicies/status", "platformsecuritypolicies/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Customization records — the operator computes derived debt state on status,
+  # but never authors records: those are written in git by humans and agents.
+  - apiGroups: ["gentianos.io"]
+    resources: ["customizations"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["gentianos.io"]
+    resources: ["customizations/status"]
+    verbs: ["get", "update", "patch"]
   # Core resources
   - apiGroups: [""]
     resources: ["namespaces"]

@@ -186,6 +186,38 @@ type TenantAppConfig struct {
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
+
+	// DropIns supply tenant-authored files into drop-in directories the target
+	// AppProfile declares as tenantEditable. This is rung L1 at tenant scope —
+	// the highest rung a tenant admin may reach unaided, and the only one where
+	// self-service makes sense: content, never code.
+	//
+	// Each entry must name a declared, tenantEditable drop-in; filenames are
+	// restricted to the 90-99 range so platform and profile files keep priority.
+	// Content lands in a ConfigMap and is therefore not secret material.
+	// See docs/app-customization.md §2.2.1.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	DropIns []TenantAppDropIn `json:"dropIns,omitempty"`
+}
+
+// TenantAppDropIn is tenant-authored content for one declared drop-in directory.
+type TenantAppDropIn struct {
+	// Name must match an AppProfile.spec.customization.dropIns[].name entry that
+	// sets tenantEditable: true. Tenants cannot invent mount paths — that would be
+	// repackaging (L4) at tenant scope.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Files maps filename to content. Filenames are validated against the
+	// tenant-reserved 90-99 numeric prefix range, and total content is capped by
+	// the drop-in's maxBytes.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinProperties=1
+	Files map[string]string `json:"files"`
 }
 
 // TenantStatus holds the observed state of a Tenant.

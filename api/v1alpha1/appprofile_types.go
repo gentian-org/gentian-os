@@ -202,6 +202,13 @@ type AppProfileSpec struct {
 	// Cluster administrators approve waivers via PlatformSecurityPolicy.
 	// +optional
 	Security *SecuritySpec `json:"security,omitempty"`
+
+	// Customization declares which rungs of the Gentian customization ladder this
+	// app supports and by which mechanism. Humans and agents read it to select the
+	// lowest viable rung for a requested change.
+	// See docs/app-customization.md.
+	// +optional
+	Customization *CustomizationSurface `json:"customization,omitempty"`
 }
 
 // ProvisioningSpec declares app-specific user lifecycle mappings.
