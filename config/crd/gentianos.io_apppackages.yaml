@@ -1,0 +1,128 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: apppackages.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: AppPackage
+    listKind: AppPackageList
+    plural: apppackages
+    shortNames:
+    - apkg
+    - apkgs
+    singular: apppackage
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.displayName
+      name: Display Name
+      type: string
+    - jsonPath: .spec.family
+      name: Family
+      type: string
+    - jsonPath: .spec.addons
+      name: Addons
+      type: string
+    - jsonPath: .spec.author
+      name: Author
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AppPackage is a named addon preset for a family. Presentation only — see the
+          type comment above for why it carries no status and no reconciler.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AppPackageSpec is the desired state of an AppPackage.
+            properties:
+              addons:
+                description: |-
+                  Addons lists the AppProfile names this preset pre-selects. Each must name an
+                  addon profile (gentianos.io/deployment-role: addon) in the same family.
+
+                  Entries are a starting point, not a constraint: the user may untick any of
+                  them, and may add addons the preset does not list. A preset that names an
+                  addon the tenant is not entitled to still renders — with a Buy button rather
+                  than a tick — so a package can advertise a pro addon without gating install.
+                items:
+                  type: string
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              author:
+                description: |-
+                  Author is who supplies this preset — a company, an organisation, or an
+                  individual. Same meaning as AppProfile.spec.author.
+                maxLength: 128
+                type: string
+              description:
+                description: Description explains what the preset bundles, for the
+                  selection window.
+                maxLength: 512
+                type: string
+              displayName:
+                description: DisplayName is the name shown in the App Store (e.g.
+                  "Nextcloud Suite").
+                maxLength: 128
+                minLength: 1
+                type: string
+              family:
+                description: |-
+                  Family is the app family this preset belongs to (matches AppProfile.spec.family).
+                  The App Store only offers the preset while installing an app of that family.
+                minLength: 1
+                pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
+                type: string
+              tile:
+                description: Tile is the App Store icon for the preset.
+                properties:
+                  icon:
+                    description: Icon selects a pre-made tile from the Gentian catalogue
+                      (path 2).
+                    pattern: ^[a-z][a-z0-9-]*$
+                    type: string
+                  image:
+                    description: |-
+                      Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
+                      Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+                    type: string
+                  logo:
+                    description: Logo is a custom tile as a data URI (path 1). Mutually
+                      exclusive with icon.
+                    pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
+                    type: string
+                type: object
+            required:
+            - addons
+            - displayName
+            - family
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources: {}

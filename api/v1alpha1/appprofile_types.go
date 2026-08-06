@@ -61,6 +61,20 @@ type AppProfileSpec struct {
 	// +optional
 	License string `json:"license,omitempty"`
 
+	// Author is who supplies and maintains *this* catalogue entry — a company
+	// (vendor), an organisation, or an individual. It describes the entry, not the
+	// upstream project: the same application can appear as several profiles from
+	// different authors, e.g. a "ce" edition packaged by Gentian alongside a "pro"
+	// edition supplied by openDesk.
+	//
+	// This is why the edition must never be inferred from a profile's name. Two
+	// profiles may both be edition "pro" from different authors and carry entirely
+	// unrelated names; spec.edition and spec.author are the authoritative pair, the
+	// name is only a hint. See gentian-apps/docs/L3-cleanup.md §2.2.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	Author string `json:"author,omitempty"`
+
 	// Categories lists the classification categories for this application.
 	// +optional
 	Categories []string `json:"categories,omitempty"`
