@@ -1,0 +1,38 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  displayName: Demo App
+  compositionRef: app-demo-app
+  chart:
+    repository: oci://example.invalid/demo-app
+    name: demo-app
+    version: "1.0.0"
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: catalogue-test-client
+        name: Demo App
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+        postLogoutRedirectUris:
+          - "https://demo.${TENANT_DOMAIN}/"
+  customization:
+    # Mirrors nextcloud-base-ce: the recipe lives with the app, the platform only
+    # renders it. The token is replaced with the space-separated selection.
+    addonActivation:
+      valuesPath: nextcloud.hooks.before-starting
+      script: |
+        #!/bin/sh
+        set -eu
+        SELECTED="__GENTIAN_ADDON_IDS__"
+        for id in $SELECTED; do
+          php /var/www/html/occ app:enable "$id" || true
+        done
+  valueMapping:
+    oidc:
+      clientSecretKey: demo-app.oidc.secret

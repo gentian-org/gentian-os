@@ -554,6 +554,37 @@ spec:
             {{- if and $spec.config $spec.config.replicas }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
+
+            {{- /* ── Activate addons selected into this base (L3) ────────────────── */}}
+            {{- /* The platform does not know how any app activates an addon. The base
+                   profile supplies the recipe in spec.customization.addonActivation and
+                   this only renders it into the release values, so `occ app:enable` and
+                   friends stay in gentian-apps next to the app they describe.
+
+                   Expressing activation as values rather than as a Job means it runs in
+                   the app's own container, with its config, data volume and secrets
+                   already mounted — nothing to re-plumb. Changing the selection changes
+                   the values, which rolls the pod, which re-runs the (idempotent) script.
+                   Deselecting an addon stops activating it; it does not uninstall it,
+                   since that is destructive and belongs to an explicit purge path. */}}
+            {{- /* Rendered whenever the base declares a recipe, including when the
+                   selection is empty: the script reconciles, so an empty selection is
+                   how "deselect everything" is expressed. Skipping it here would drop
+                   the values key and leave the last selection enabled forever. */}}
+            {{- $addons := dig "addons" list $spec }}
+            {{- $activation := dig "customization" "addonActivation" dict $pSpec }}
+            {{- if and $activation.valuesPath $activation.script }}
+            {{- $script := $activation.script | replace "__GENTIAN_ADDON_IDS__" (join " " $addons) }}
+            {{- /* Fold the dotted values path into a nested dict from the inside out;
+                   sprig has no set-nested-key, and a flat "a.b.c" key would be merged as
+                   a literal key rather than a path. */}}
+            {{- $parts := splitList "." $activation.valuesPath }}
+            {{- $node := $script }}
+            {{- range $i := until (len $parts) }}
+            {{- $node = dict (index $parts (sub (sub (len $parts) 1) $i)) $node }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals $node }}
+            {{- end }}
             {{- /* Match tenant kernel-access NetworkPolicy (gentianos.io/app selector). */}}
             {{- $podLabels := default dict (dig "podLabels" dict $extraVals) }}
             {{- $podLabels = mergeOverwrite $podLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}

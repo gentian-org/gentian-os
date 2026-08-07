@@ -360,6 +360,36 @@ spec:
                     - id
                     - of
                     type: object
+                  addonActivation:
+                    description: |-
+                      AddonActivation tells the platform how to turn a tenant's addon selection into
+                      Helm values for this base. Set on the base profile, not on the addons.
+                    properties:
+                      script:
+                        description: |-
+                          Script is written to ValuesPath with the token __GENTIAN_ADDON_IDS__ replaced
+                          by the space-separated addon ids. A literal token rather than a template
+                          placeholder: the composition is itself a Go template, so `{{ }}` here would be
+                          consumed as data and never re-rendered.
+
+                          It must be idempotent — it re-runs on every pod start, which is precisely what
+                          makes a changed selection converge without a migration step.
+                        maxLength: 8192
+                        minLength: 1
+                        type: string
+                      valuesPath:
+                        description: |-
+                          ValuesPath is the dot-separated Helm values path the rendered Script is
+                          written to, e.g. "nextcloud.hooks.before-starting". Path segments may not
+                          themselves contain a dot.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                        type: string
+                    required:
+                    - script
+                    - valuesPath
+                    type: object
                   configure:
                     description: Configure describes the L0 surface.
                     properties:

@@ -119,6 +119,11 @@ type CustomizationSurface struct {
 	// +optional
 	Addon *CustomizationAddon `json:"addon,omitempty"`
 
+	// AddonActivation tells the platform how to turn a tenant's addon selection into
+	// Helm values for this base. Set on the base profile, not on the addons.
+	// +optional
+	AddonActivation *CustomizationAddonActivation `json:"addonActivation,omitempty"`
+
 	// Publishes describes what this app offers so that *another* app can be built
 	// at L2 against it. It is not a rung of this app.
 	// +optional
@@ -413,4 +418,35 @@ type CustomizationAddon struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Of string `json:"of"`
+}
+
+// CustomizationAddonActivation describes how a base turns the tenant's selected
+// addons into Helm values.
+//
+// The platform must not know that Nextcloud enables apps with `occ app:enable` or
+// that Odoo installs modules with `-i`. So the base profile — which lives in
+// gentian-apps alongside the app — supplies the recipe, and the composition only
+// renders it. Apps whose activation cannot be expressed as chart values (Odoo needs
+// a database-side install) ship their own composition instead and leave this unset.
+type CustomizationAddonActivation struct {
+	// ValuesPath is the dot-separated Helm values path the rendered Script is
+	// written to, e.g. "nextcloud.hooks.before-starting". Path segments may not
+	// themselves contain a dot.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$`
+	ValuesPath string `json:"valuesPath"`
+
+	// Script is written to ValuesPath with the token __GENTIAN_ADDON_IDS__ replaced
+	// by the space-separated addon ids. A literal token rather than a template
+	// placeholder: the composition is itself a Go template, so `{{ }}` here would be
+	// consumed as data and never re-rendered.
+	//
+	// It must be idempotent — it re-runs on every pod start, which is precisely what
+	// makes a changed selection converge without a migration step.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=8192
+	Script string `json:"script"`
 }

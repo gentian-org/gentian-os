@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: crossplane-system
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  secretMode: derived
+  tenant.limitRange.default.cpu: 500m
+  tenant.limitRange.default.memory: 512Mi
+  tenant.limitRange.defaultRequest.cpu: 100m
+  tenant.limitRange.defaultRequest.memory: 128Mi
+  tenant.initJob.limits.cpu: 500m
+  tenant.initJob.limits.memory: 512Mi
+  tenant.initJob.requests.cpu: 100m
+  tenant.initJob.requests.memory: 128Mi
