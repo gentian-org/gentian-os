@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/tenants/{tenant}/apps", h.handleList)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/apps/{profile}", h.handleInstall)
 	mux.HandleFunc("DELETE /v1/tenants/{tenant}/apps/{profile}", h.handleUninstall)
+	mux.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
@@ -109,6 +111,38 @@ func (h *HTTPServer) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		Tenant:  tenant,
 		Profile: profile,
 		Purge:   purge,
+		Actor:   actor,
+	})
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
+	tenant := r.PathValue("tenant")
+	profile := r.PathValue("profile")
+	actor := r.Header.Get("X-Gentian-Actor")
+	if actor == "" {
+		actor = "app-lifecycle-api"
+	}
+
+	// PUT, not PATCH: the body is the complete selection. A partial "add these"
+	// verb would make deselection unexpressible, and deselecting to nothing is a
+	// selection the activation script has to see.
+	var body struct {
+		Addons []string `json:"addons"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	result, err := h.Service.SetAddons(r.Context(), SetAddonsRequest{
+		Tenant:  tenant,
+		Profile: profile,
+		Addons:  body.Addons,
 		Actor:   actor,
 	})
 	if err != nil {

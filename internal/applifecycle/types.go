@@ -20,14 +20,14 @@ import "time"
 
 // Options configures the lifecycle service.
 type Options struct {
-	KernelNamespace     string
-	OpenBaoNamespace    string
-	OperatorNamespace   string
-	OperatorSA          string
-	DeploymentsPath     string
-	DeploymentsRepo     string
-	DeploymentsCluster  string
-	WaitTimeout         time.Duration
+	KernelNamespace    string
+	OpenBaoNamespace   string
+	OperatorNamespace  string
+	OperatorSA         string
+	DeploymentsPath    string
+	DeploymentsRepo    string
+	DeploymentsCluster string
+	WaitTimeout        time.Duration
 }
 
 // InstallRequest installs an app profile on a tenant.
@@ -60,4 +60,14 @@ type Result struct {
 	Ready    bool     `json:"ready,omitempty"`
 	Message  string   `json:"message,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+}
+
+// SetAddonsRequest replaces the addon selection of one installed app.
+type SetAddonsRequest struct {
+	Tenant  string
+	Profile string
+	// Addons holds AppProfile names. An empty slice is a real selection meaning
+	// "none" and clears the list.
+	Addons []string
+	Actor  string
 }

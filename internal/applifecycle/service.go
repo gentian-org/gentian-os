@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
+	"github.com/gentian-org/gentian-os/internal/customization"
 )
 
 const platformAppAnnotation = "gentianos.io/platform-app"
@@ -378,3 +380,52 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 	return nil
 }
 
+// SetAddons replaces the tenant's addon selection for one installed app.
+//
+// Selections are validated against the catalogue before anything is written, so a
+// bad request fails with a message instead of committing a tenant file that the
+// operator will later reject. Entitlement is checked here too: a commercial addon
+// needs a grant, and technical compatibility is never the gate.
+func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result, error) {
+	base := &gentianov1alpha1.AppProfile{}
+	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Profile}, base); err != nil {
+		return nil, fmt.Errorf("get appprofile %q: %w", req.Profile, err)
+	}
+
+	profiles := &gentianov1alpha1.AppProfileList{}
+	if err := s.client.List(ctx, profiles); err != nil {
+		return nil, fmt.Errorf("list appprofiles: %w", err)
+	}
+	index := make(map[string]*gentianov1alpha1.AppProfile, len(profiles.Items))
+	for i := range profiles.Items {
+		index[profiles.Items[i].Name] = &profiles.Items[i]
+	}
+
+	resolved, errs := customization.ResolveAddons(base, req.Addons, index)
+	if len(errs) > 0 {
+		msgs := make([]string, 0, len(errs))
+		for _, e := range errs {
+			msgs = append(msgs, e.Error())
+		}
+		return nil, fmt.Errorf("invalid addon selection: %s", strings.Join(msgs, "; "))
+	}
+	if _, blocked := customization.EntitledAddons(resolved, nil); len(blocked) > 0 {
+		names := make([]string, 0, len(blocked))
+		for _, b := range blocked {
+			names = append(names, b.Profile)
+		}
+		return nil, fmt.Errorf(
+			"these addons require a commercial subscription: %s", strings.Join(names, ", "))
+	}
+
+	status, file, changed, err := s.git.SetAddons(req.Tenant, req.Profile, req.Addons, req.Actor)
+	if err != nil {
+		return nil, err
+	}
+	if changed && file != "" {
+		if err := s.reconcileTenantFile(ctx, file, false); err != nil {
+			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
+		}
+	}
+	return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile}, nil
+}
