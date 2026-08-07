@@ -64,7 +64,7 @@ thing that determines upgrade cost.
 | **L0** | **Configure** | edit a value in `/etc/foo.conf` | nothing (values only) | Yes |
 | **L1** | **Drop-in** | `/etc/foo.conf.d/50-gentian.conf`, `systemctl edit` override | one config/asset file | Yes |
 | **L2** | **Companion** | `apt install` a *new* program that talks to the old one | a separate deployable | Yes |
-| **L3** | **Extension** | `apt install foo-plugin-bar` | a module loaded by the app | Usually — bound to the app's plugin API |
+| **L3** | **Extension** | `apt install foo-plugin-bar` | an addon loaded by the app | Usually — bound to the app's plugin API |
 | **L4** | **Repackage** | rebuild the *package* (build flags, conffiles, wrapper) — source untouched | the chart / composition / entrypoint | Often — bound to chart+image layout |
 | **L5** | **Patch** | `debian/patches/series` over pristine upstream | a patch series + a rebuilt image | No — rebases every upstream release |
 | **L6** | **Fork** | a derivative distribution with its own release train | the source tree | No — full maintenance, incl. CVE duty |
@@ -187,7 +187,7 @@ spec:
 `oidc-token-exchange`, never shared static credentials; the companion must degrade gracefully if
 the target app is not installed.
 
-### 2.4 L3 — Extension (in-app module)
+### 2.4 L3 — Extension (in-app addon)
 
 Use the app's **own extension system**. Odoo addons (`_inherit`, view `xpath`/`inherit_id`),
 Nextcloud apps, XWiki extensions, Activepieces pieces, Keycloak SPIs, Collabora — none.
@@ -196,20 +196,20 @@ Gentian already has two delivery paths for this, and the framework should name t
 
 | Delivery | Mechanism | Use when |
 |---|---|---|
-| `git-sidecar` | `gentian-sidecar-git-modules` syncs a git repo into the app's module path (`odoo` chart: `gentian.git.repo` → `gentian.modulesPath`) | modules iterate faster than the app image |
-| `image-layer` | modules baked into a Gentian-built image layer at build time | reproducibility/airgap matters more than iteration speed |
-| `module-profile` | a thin `AppProfile` with `deployment-role: module` + `requires-profile: <base>`, module activated via composition Job (the `odoo-cb-*` pattern) | the module is a *catalogue-visible product* |
+| `git-sidecar` | `gentian-sidecar-git-modules` syncs a git repo into the app's addon path (`odoo` chart: `gentian.git.repo` → `gentian.modulesPath`) | addons iterate faster than the app image |
+| `image-layer` | addons baked into a Gentian-built image layer at build time | reproducibility/airgap matters more than iteration speed |
+| `addon-profile` | a thin `AppProfile` with `deployment-role: addon` + `requires-profile: <base>`, addon activated via composition Job (the `odoo-cb-*` pattern) | the addon is a *catalogue-visible product* |
 | `app-store-api` | the app's own runtime API installs the extension (Nextcloud `occ app:install`) via `spec.postInstallJob` | the app owns its own registry |
 
-**Multi-tenancy is the sharp edge here.** A module loaded into a shared runtime affects every
-tenant on that runtime. The existing Odoo pattern is the right precedent — per-tenant module sets
+**Multi-tenancy is the sharp edge here.** An addon loaded into a shared runtime affects every
+tenant on that runtime. The existing Odoo pattern is the right precedent — per-tenant addon sets
 driven by group attributes (`gentianos.io/keycloak-group-attributes: {"gentianOdooModules":["crm"]}`)
-rather than per-tenant module *binaries*. The framework should make this explicit:
+rather than per-tenant addon *binaries*. The framework should make this explicit:
 
-> **L3 rule (namespace test).** Per-tenant modules are allowed **only if the app instance runs in
+> **L3 rule (namespace test).** Per-tenant addons are allowed **only if the app instance runs in
 > that tenant's own namespace** (`tenant-<name>`). If the instance lives in a shared namespace
-> serving more than one tenant, modules are **profile-scoped only** — per-tenant behaviour must come
-> from the module reading tenant context at runtime, never from divergent module sets.
+> serving more than one tenant, addons are **profile-scoped only** — per-tenant behaviour must come
+> from the addon reading tenant context at runtime, never from divergent addon sets.
 
 The namespace, not the profile, is the test: "one instance per tenant" is an intention, but
 "deployed into `tenant-acme`" is a fact the operator can check. Concretely, the operator rejects a
@@ -221,9 +221,9 @@ Sharing a runtime across tenants and then loading tenant-specific code into it i
 fastest way to turn a customization into a cross-tenant data leak, which is why this is a hard
 operator check and not a review-time convention.
 
-**Obligations:** declare the module repo + delivery in `spec.customization.extension`; pin the
-module version alongside `spec.chart.version`; a `Customization` record (§5) is **required** from
-L2 upward; the module must be tested against the pinned app version in CI.
+**Obligations:** declare the addon repo + delivery in `spec.customization.extension`; pin the
+addon version alongside `spec.chart.version`; a `Customization` record (§5) is **required** from
+L2 upward; the addon must be tested against the pinned app version in CI.
 
 ### 2.5 L4 — Repackage
 
@@ -314,7 +314,7 @@ wrote it. A partner's Odoo addon and a Gentian addon are both L3 and carry ident
 
 Today Gentian owns every roadmap and every repository on the ladder. The end state is that the
 practices in this document become a published specification, and repo ownership is delegated to
-whoever owns the app — suppliers maintaining their own module registries, customers maintaining
+whoever owns the app — suppliers maintaining their own addon registries, customers maintaining
 their own tenant customizations. **v0.4 builds the model, not the process:** every record carries
 its authorship and repo ownership from day one, so delegation later is a policy change rather than
 a data migration.
@@ -336,7 +336,7 @@ spec:
 | Deferred | Why it can wait |
 |---|---|
 | Signing and provenance for external artifacts | today every artifact is still built by Gentian CI |
-| Sandboxing of third-party L3 modules | current modules run with the app's own privileges; changing that is an isolation project |
+| Sandboxing of third-party L3 addons | current addons run with the app's own privileges; changing that is an isolation project |
 | Entitlement / commercial terms for paid customizations | interacts with the marketplace and revenue-split roadmap items |
 | Review SLAs and a delegated maintainer role | needs the governance model in §8.1 to be operating first |
 | Automated upstreaming of external contributions | needs the debt report (§8.3) to have real data |
@@ -355,7 +355,7 @@ Rung and scope are **independent**. Minimise both.
 | Scope | Affects | Authored in | Approved by |
 |---|---|---|---|
 | **S0 · Tenant** | one tenant's install | `gentian-deployments` (`Tenant.spec.apps[].config`) | cluster admin |
-| **S1 · Profile** | every tenant that installs this profile | `gentian-apps` (`profiles/<n>/`, `apps/<n>/`, module repo) | catalogue maintainer |
+| **S1 · Profile** | every tenant that installs this profile | `gentian-apps` (`profiles/<n>/`, `apps/<n>/`, addon repo) | catalogue maintainer |
 | **S2 · Platform** | every tenant, every app | `gentian-os` (kernel, operator, compositions, policy) | platform team |
 
 **The S2 gate is the existing platform boundary rule and does not change:** a customization may
@@ -412,12 +412,12 @@ spec:
 
     extension:                             # L3
       mechanism: odoo-addon
-      delivery: [git-sidecar, module-profile]
+      delivery: [git-sidecar, addon-profile]
       registry: https://github.com/gentian-org/odoo-modules
-      modulePath: /opt/odoo/custom-addons
+      addonPath: /opt/odoo/custom-addons
       apiStability: stable                 # stable | evolving | undocumented | none
       apiDocs: https://www.odoo.com/documentation/18.0/developer.html
-      perTenantModules: true               # one runtime per tenant ⇒ allowed
+      perTenantAddons: true               # one runtime per tenant ⇒ allowed
       testMatrix: ["18.0"]
 
     # NOT a rung of this app. This is the surface Odoo offers so that SOME OTHER app
@@ -479,7 +479,7 @@ answer to "the way to do it depends on the app".
 | **?** | Not yet characterised | L0, L4 | new catalogue entries |
 
 **Grading rubric** (each +1; **A** ≥ 7, **B** 5–6, **C** 3–4, **D** ≤ 2): documented config
-reference · declared drop-in directories · documented plugin/module API · plugin API versioned with
+reference · declared drop-in directories · documented plugin/addon API · plugin API versioned with
 a deprecation policy · published HTTP API with a spec · upstream accepts patches (PR turnaround
 < 90d) · plugin ABI survives minor releases · a test harness plugin authors can use.
 
@@ -654,7 +654,7 @@ The single table an agent needs to know *where to type*.
 | L1 | profile | `gentian-apps` | `profiles/<n>/dropins/` + composition ConfigMap |
 | L1 | tenant | `gentian-deployments` | `Tenant.spec.apps[].config.dropIns` (§2.2.1) — or the Admin Console customization tab |
 | L2 | profile | `gentian-apps` | `apps/<new>/` (from template) + `contracts/<c>.yaml` + `profiles/<new>/` |
-| L3 | profile | module repo (`odoo-modules`, …) | module + pinned version in profile |
+| L3 | profile | addon repo (`odoo-modules`, …) | addon + pinned version in profile |
 | L4 | profile | `gentian-apps` | `charts/<app>/`, `profiles/<n>/composition.yaml`, `spec.postInstallJob` |
 | L5 | profile | build repo (`ocb`, …) | `patches/series` + DEP-3 headers + Dockerfile |
 | L6 | profile | fork repo | vendored source, `UPSTREAM-COMPARISON.md` |
@@ -758,7 +758,7 @@ precedence chain, so L1 works out of the box.
 <ExtensionSlot name="dashboard.widgets" context={{ tenant }} />
 ```
 
-Named slots + a manifest-driven dynamic import of `/extensions/*.js`, so a companion or module can
+Named slots + a manifest-driven dynamic import of `/extensions/*.js`, so a companion or addon can
 contribute UI without a rebuild. Slot names are part of the public API and follow the same
 versioning policy.
 
@@ -792,7 +792,7 @@ Populating `spec.customization` for the existing catalogue — the families **od
 **xwiki**, **element**, **openproject**, **activepieces**, **litellm**, plus the first-party
 **app-store** and **gentian-subscriptions** — is the highest-value first implementation step: it is
 pure documentation work that immediately makes the agent procedure executable. Grades are recorded
-per family in `profiles/<n>/customization.md`; module profiles (`odoo-cb-*`, `nextcloud-office*`)
+per family in `profiles/<n>/customization.md`; addon profiles (`odoo-cb-*`, `nextcloud-office*`)
 inherit their base profile's declaration rather than repeating it.
 
 ---
@@ -805,7 +805,7 @@ inherit their base profile's declaration rather than repeating it.
 |---|---|---|---|
 | L0–L1 | S0/S1 | normal PR review | schema validation |
 | L2 | S1 | catalogue maintainer | contract review; new profile |
-| L3 | S1 | catalogue maintainer | module CI against pinned app version |
+| L3 | S1 | catalogue maintainer | addon CI against pinned app version |
 | L4 | S1 | catalogue maintainer + platform | render-golden diff; `UPSTREAM.md` if vendored |
 | L5 | S1 | **platform team, 2 reviewers** | DEP-3 complete; `Forwarded:` set; SBOM; signed image |
 | L6 | S1 | **platform + product sign-off** | named owner, CVE watch, comparison doc |
@@ -818,7 +818,7 @@ inherit their base profile's declaration rather than repeating it.
 | L0 | values validate against `values.schema.json`; chart renders |
 | L1 | drop-in path is declared in `spec.customization.dropIns`; precedence test |
 | L2 | contract exists; companion tolerates target-app absence; token-exchange auth |
-| L3 | module builds against every version in `extension.testMatrix`; module version pinned |
+| L3 | addon builds against every version in `extension.testMatrix`; addon version pinned |
 | L4 | `crossplane render` golden diff reviewed; no plaintext secrets in values |
 | L5 | `patches/series` applies cleanly to the pinned upstream tag; **fails the version bump if not**; every patch has DEP-3 `Forwarded:` |
 | L6 | fork builds; CVE scan; `UPSTREAM-COMPARISON.md` regenerated |
@@ -864,7 +864,7 @@ ServiceNow and SAP shops build after the damage is done, and that Gentian can bu
 | "Custom Collabora save hook" | Collabora (C) | **L2** | grade C — no L1/L3 surface exists | companion service on the WOPI contract |
 | "Tenant-specific SMTP sender name" | any | **L0/S0** | pure value, one tenant | `Tenant.spec.apps[].config.extraValues` |
 | "Propagate tenant header through OIDC logout" | upstream app (D) | **L5** | no extension point; must change request handling | build repo `patches/`, DEP-3, forwarded upstream |
-| "Odoo without the enterprise-module nag" | Odoo | **L3** | already solved as a module (`hide_enterprise_modules`) — **never** L5 | `odoo-modules/` |
+| "Odoo without the enterprise-addon nag" | Odoo | **L3** | already solved as an addon (`hide_enterprise_modules`) — **never** L5 | `odoo-modules/` |
 
 ---
 
@@ -895,7 +895,7 @@ Sources: [Debian maint-guide ch.3](https://www.debian.org/doc/maint-guide/modify
 [SAP clean core best practices](https://learning.sap.com/courses/practicing-clean-core-extensibility-for-sap-s-4hana-cloud/explaining-extensibility-model-best-practices_e290f382-800e-40ef-a203-85a13115f487) ·
 [ServiceNow configuration vs customization](https://www.servicenow.com/community/developer-articles/servicenow-configuration-vs-customization/ta-p/2415251) ·
 [ServiceNow upgrade governance](https://www.servicenow.com/community/developer-blog/servicenow-upgrade-governance/ba-p/3506029) ·
-[Odoo: fork or module?](https://www.odoo.com/forum/help-1/is-it-best-to-fork-odoo-or-make-an-appmodule-96128) ·
+[Odoo: fork or addon?](https://www.odoo.com/forum/help-1/is-it-best-to-fork-odoo-or-make-an-appmodule-96128) ·
 [Nextcloud AppAPI](https://github.com/nextcloud/app_api) ·
 [Nextcloud patching guide](https://docs.nextcloud.com/server/latest/admin_manual/issues/applying_patch.html) ·
 [Helm post-renderer + Kustomize](https://gist.github.com/neoakris/edc0642a088be2cdc4f5ffe8d90ef5ca) ·
@@ -914,7 +914,7 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 1 | `Customization` as CRD or plain YAML? | **CRD** (`gentianos.io/v1alpha1`, namespaced) | Admin Console reads records live; admission can enforce the §3 cost matrix; §5 records are cluster objects, not just files |
 | 2 | Is `spec.customization` reference data or contract? | **CRD block on `AppProfile`** | Machine-readable for agents and the App Store; §6 step 2 is executable |
 | 3 | Tenant-scoped L1 drop-ins | **Build them**, tenant-admin configurable | New `Tenant.spec.apps[].config.dropIns` + operator-rendered ConfigMap; see §2.2.1 |
-| 4 | Per-tenant L3 on shared runtimes | **Forbidden**, and stated in namespace terms | Per-tenant modules require the app to run in the tenant's own namespace; see §2.4 |
+| 4 | Per-tenant L3 on shared runtimes | **Forbidden**, and stated in namespace terms | Per-tenant addons require the app to run in the tenant's own namespace; see §2.4 |
 | 5 | Third-party customization (tenants, suppliers, customers) | **In scope for the model, not yet for the process** | `Customization.spec.origin` carries authorship and repo ownership from day one; delegation processes deferred; see §2.9 |
 | 6 | Grade computation | **Manual now, CI later** | Maintainer-assigned in `spec.customization.grade`; automated rubric is roadmap item 2.13 |
 | 7 | Milestone | **v0.4** | Roadmap entries written against v0.4 |
