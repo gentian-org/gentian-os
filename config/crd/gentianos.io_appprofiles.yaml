@@ -77,7 +77,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: AppProfileSpec defines the desired state of AppProfile.
+            description: |-
+              AppProfileSpec defines the desired state of AppProfile.
+              An addon is activated inside a base rather than deployed, so it has no chart of
+              its own. The rule tests spec.customization.addon rather than the deployment-role
+              annotation because CEL on spec cannot reach metadata.
             properties:
               additionalIngresses:
                 description: |-
@@ -1922,7 +1926,9 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec.chart is required unless spec.deploymentMethod is api
-              rule: self.deploymentMethod == 'api' || has(self.chart)
+                or the profile declares spec.customization.addon
+              rule: self.deploymentMethod == 'api' || has(self.chart) || (has(self.customization)
+                && has(self.customization.addon))
             - message: spec.apiIntegration is required when spec.deploymentMethod
                 is api
               rule: self.deploymentMethod != 'api' || has(self.apiIntegration)

@@ -22,7 +22,10 @@ import (
 )
 
 // AppProfileSpec defines the desired state of AppProfile.
-// +kubebuilder:validation:XValidation:rule="self.deploymentMethod == 'api' || has(self.chart)",message="spec.chart is required unless spec.deploymentMethod is api"
+// An addon is activated inside a base rather than deployed, so it has no chart of
+// its own. The rule tests spec.customization.addon rather than the deployment-role
+// annotation because CEL on spec cannot reach metadata.
+// +kubebuilder:validation:XValidation:rule="self.deploymentMethod == 'api' || has(self.chart) || (has(self.customization) && has(self.customization.addon))",message="spec.chart is required unless spec.deploymentMethod is api or the profile declares spec.customization.addon"
 // +kubebuilder:validation:XValidation:rule="self.deploymentMethod != 'api' || has(self.apiIntegration)",message="spec.apiIntegration is required when spec.deploymentMethod is api"
 type AppProfileSpec struct {
 	// DisplayName is a human-readable name for the application.
