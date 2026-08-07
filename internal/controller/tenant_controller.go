@@ -1068,7 +1068,17 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 				log.FromContext(ctx).Error(addonErr, "skipping invalid addon selection",
 					"tenant", tenant.Name, "app", app.Profile)
 			}
-			if ids := customization.AddonIDs(resolved); len(ids) > 0 {
+			// Commercial addons are gated on an install grant. The grant source is
+			// roadmap item 2.5 and does not exist yet, so the map is empty and every
+			// addon carrying license: proprietary is withheld. Denying by default is
+			// the only safe posture for a paid feature: silently activating one
+			// because entitlement cannot be checked would give it away.
+			allowed, blocked := customization.EntitledAddons(resolved, nil)
+			for _, b := range blocked {
+				log.FromContext(ctx).Info("withholding commercial addon pending entitlement",
+					"tenant", tenant.Name, "app", app.Profile, "addon", b.Profile)
+			}
+			if ids := customization.AddonIDs(allowed); len(ids) > 0 {
 				entry["addons"] = toInterfaceSlice(ids)
 			}
 		}
