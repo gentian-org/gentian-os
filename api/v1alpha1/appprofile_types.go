@@ -140,6 +140,17 @@ type AppProfileSpec struct {
 	// +optional
 	AppSecrets []AppSecret `json:"appSecrets,omitempty"`
 
+	// DerivedSecretKeys declares extra deterministic values to place in the
+	// credentials Secret the platform manages for this app, which the app
+	// typically consumes with envFrom.
+	//
+	// Prefer appSecrets: those are HMAC'd from the master password and stored in
+	// OpenBao. This is the weaker, legacy carrier — a local SHA-256 with no
+	// OpenBao record — and exists so that apps already depending on such a value
+	// can declare it instead of the platform hardcoding their name.
+	// +optional
+	DerivedSecretKeys []DerivedSecretKey `json:"derivedSecretKeys,omitempty"`
+
 	// ExtraValues provides an escape hatch for non-standard values that don't
 	// fit the typed valueMapping schema. Merged into the rendered Helm values.
 	// Must not contain secrets — use appSecrets for secret values.
@@ -538,7 +549,34 @@ type DatabaseRequirement struct {
 	// applies CRD defaults server-side.
 	// +optional
 	AllowDynamicDatabaseCreation bool `json:"allowDynamicDatabaseCreation,omitempty"`
+
+	// SchemaPreference decides which schema the app's role resolves unqualified
+	// table names against first.
+	//
+	// Default (app-schema) puts the per-tenant schema ahead of public, which is
+	// what an app doing its own schema isolation expects. Apps whose migrations
+	// create everything in public — and then look it up unqualified — need
+	// public first, or the migration writes to one schema and the query reads
+	// the other.
+	//
+	// This is declared rather than inferred: the platform cannot know an app's
+	// migration behaviour from its name, and matching on the name is how a
+	// second app with the same need silently gets the wrong search_path.
+	// +optional
+	// +kubebuilder:validation:Enum=app-schema;public
+	SchemaPreference SchemaPreference `json:"schemaPreference,omitempty"`
 }
+
+// SchemaPreference selects the search_path order for an app's PostgreSQL role.
+type SchemaPreference string
+
+const (
+	// SchemaPreferenceAppSchema resolves the app's own schema before public.
+	// This is the default when unset.
+	SchemaPreferenceAppSchema SchemaPreference = "app-schema"
+	// SchemaPreferencePublic resolves public before the app's own schema.
+	SchemaPreferencePublic SchemaPreference = "public"
+)
 
 // StorageRequirement specifies object storage and/or filesystem needs.
 type StorageRequirement struct {
@@ -729,6 +767,13 @@ type ValueMapping struct {
 	// IMAP maps mail access values to Helm keys.
 	// +optional
 	IMAP *IMAPValueMapping `json:"imap,omitempty"`
+
+	// Volumes names where this chart takes extra pod volumes and mounts, for
+	// charts that do not use the conventional extraVolumes/extraVolumeMounts.
+	// Used when the platform has to mount something into the app itself, such as
+	// the staging CA trust bundle.
+	// +optional
+	Volumes *VolumeValueMapping `json:"volumes,omitempty"`
 
 	// Integrations maps optional integration credentials to Helm keys,
 	// keyed by the contract name.
@@ -981,6 +1026,46 @@ type AppSecret struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	ValuePath string `json:"valuePath"`
+}
+
+// DerivedSecretKey names one deterministic value the platform adds to the
+// credentials Secret it manages for an app.
+//
+// The derivation is deliberately frozen: the value is a function of the tenant
+// and app name only, so it survives reinstalls. Changing how it is computed
+// rotates the value for every existing tenant, which for a session-signing key
+// means logging everyone out — so the formula must not be "improved" in place.
+// A genuinely better derivation belongs in appSecrets under a new key name.
+type DerivedSecretKey struct {
+	// Key is the Secret key, and therefore the environment variable name when
+	// the app consumes the Secret with envFrom (e.g. "WEBUI_SECRET_KEY").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
+	Key string `json:"key"`
+}
+
+// VolumeValueMapping names the values paths a chart uses for extra volumes.
+//
+// The platform writes extraVolumes/extraVolumeMounts regardless, since that is
+// the common convention and an unrecognised value is inert. These paths are
+// written *in addition*, so declaring them cannot remove a mount the chart was
+// already receiving.
+type VolumeValueMapping struct {
+	// VolumesPath is the dot-separated values path holding a list of pod volumes
+	// (e.g. "volumes").
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$`
+	VolumesPath string `json:"volumesPath,omitempty"`
+
+	// VolumeMountsPath is the dot-separated values path holding a list of
+	// container volume mounts (e.g. "volumeMounts.container").
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$`
+	VolumeMountsPath string `json:"volumeMountsPath,omitempty"`
 }
 
 // ContractRef identifies an integration contract this app provides.

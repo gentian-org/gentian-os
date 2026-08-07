@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -131,6 +130,21 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 	return pgApps, nil
 }
 
+// schemaPreferenceFor reports the search_path order an app's profile asked for.
+// Unset means the app's own schema comes first, which is the safe default: it is
+// what an app doing its own schema isolation expects, and it is the behaviour
+// every app had before the preference was declarable.
+func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.SchemaPreference {
+	if profile == nil || profile.Spec.KernelRequirements == nil ||
+		profile.Spec.KernelRequirements.Database == nil {
+		return gentianov1alpha1.SchemaPreferenceAppSchema
+	}
+	if pref := profile.Spec.KernelRequirements.Database.SchemaPreference; pref != "" {
+		return pref
+	}
+	return gentianov1alpha1.SchemaPreferenceAppSchema
+}
+
 // ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.
 func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
 	crName := databaseCRName(tenant.Name, appName)
@@ -200,10 +214,10 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // that exact password to the role via CREATE/ALTER ROLE, so the live
 // PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
 // generates a random password locally (legacy behaviour).
-func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string) *batchv1.Job {
+func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string, schemaPref gentianov1alpha1.SchemaPreference) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	roleName := roleUserName(tenant.Name, appName)
-	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName), nsName)
+	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref), nsName)
 	if rolePassword != "" {
 		container.Env = append(container.Env, corev1.EnvVar{
 			Name:  "ROLE_PW",
@@ -282,15 +296,17 @@ func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
-func buildRoleScript(dbName, roleName string) string {
+func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference) string {
 	// When ROLE_PW is provided (Inc 21a — Seeder enabled) the script applies
 	// that exact password to the role via CREATE/ALTER ROLE WITH PASSWORD,
 	// keeping the live PostgreSQL password in lockstep with OpenBao. When
 	// unset, a random password is generated locally and discarded after Job
 	// completion (legacy behaviour — apps without seeded OpenBao cannot
 	// connect, but backends that only need the database to exist still work).
+	// The app's own schema first, unless the profile asked for public first
+	// (spec.kernelRequirements.database.schemaPreference).
 	searchPath := fmt.Sprintf("\\\"%s\\\", public", dbName)
-	if strings.Contains(roleName, "activepieces") {
+	if schemaPref == gentianov1alpha1.SchemaPreferencePublic {
 		searchPath = fmt.Sprintf("public, \\\"%s\\\"", dbName)
 	}
 

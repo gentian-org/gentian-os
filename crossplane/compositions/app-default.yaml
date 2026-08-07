@@ -668,11 +668,41 @@ spec:
                 "extraVolumes" (concat (default list (dig "extraVolumes" list $extraVals)) (list $stagingVol))
                 "extraVolumeMounts" (concat (default list (dig "extraVolumeMounts" list $extraVals)) $stagingMounts)
             ) }}
-            {{- if eq $app "open-webui" }}
-            {{- $extraVals = mergeOverwrite $extraVals (dict
-                "volumes" (concat (default list (dig "volumes" list $extraVals)) (list $stagingVol))
-                "volumeMounts" (dict "container" (concat (default list (dig "volumeMounts" "container" list $extraVals)) $stagingMounts))
-            ) }}
+            {{- /* Charts that do not use the extraVolumes/extraVolumeMounts convention
+                   name their own keys in valueMapping.volumes. Written in addition to
+                   the conventional keys above, never instead: an unrecognised value is
+                   inert, so declaring this cannot remove a mount the chart already got. */}}
+            {{- $volMap := dig "valueMapping" "volumes" dict $pSpec }}
+            {{- $volWrites := list }}
+            {{- if $volMap.volumesPath }}
+            {{- $volWrites = append $volWrites (dict "path" $volMap.volumesPath "add" (list $stagingVol)) }}
+            {{- end }}
+            {{- if $volMap.volumeMountsPath }}
+            {{- $volWrites = append $volWrites (dict "path" $volMap.volumeMountsPath "add" $stagingMounts) }}
+            {{- end }}
+            {{- range $w := $volWrites }}
+            {{- $parts := splitList "." $w.path }}
+            {{- /* Read whatever is already at the path; sprig dig cannot take a
+                   dynamic key list, so walk it. */}}
+            {{- $node := $extraVals }}
+            {{- $found := true }}
+            {{- range $k := $parts }}
+            {{- if and $found (kindIs "map" $node) (hasKey $node $k) }}
+            {{- $node = index $node $k }}
+            {{- else }}
+            {{- $found = false }}
+            {{- end }}
+            {{- end }}
+            {{- $existing := list }}
+            {{- if and $found (kindIs "slice" $node) }}
+            {{- $existing = $node }}
+            {{- end }}
+            {{- /* Fold the dotted path back into a nested dict from the inside out. */}}
+            {{- $built := concat $existing $w.add }}
+            {{- range $i := until (len $parts) }}
+            {{- $built = dict (index $parts (sub (sub (len $parts) 1) $i)) $built }}
+            {{- end }}
+            {{- $extraVals = mergeOverwrite $extraVals $built }}
             {{- end }}
             {{- if $needsJavaTrust }}
             {{- $extraVals = mergeOverwrite $extraVals (dict "javaOpts" $existingJavaOpts) }}

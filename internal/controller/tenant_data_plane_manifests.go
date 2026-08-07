@@ -42,7 +42,12 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	if err != nil {
 		return nil, err
 	}
+	pgProfileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
 	for _, appName := range pgApps {
+		profile, _ := appProfileFromIndex(pgProfileIndex, appName)
 		dbName := databaseName(tenant, appName)
 		rolePassword := ""
 		if r.Seeder != nil {
@@ -57,7 +62,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			}
 			rolePassword = creds.Password
 		}
-		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
+		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword, schemaPreferenceFor(profile)))
 	}
 
 	mariaApps, err := r.collectMariaDBApps(ctx, tenant, CollectForProvision)
@@ -221,7 +226,10 @@ func (r *TenantReconciler) appendPortalShellRoleJob(
 		}
 		rolePassword = creds.Password
 	}
-	*jobs = append(*jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword))
+	// The portal shell is not a catalogue app and has no profile to declare a
+	// preference, so it takes the default.
+	*jobs = append(*jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword,
+		gentianov1alpha1.SchemaPreferenceAppSchema))
 	return nil
 }
 

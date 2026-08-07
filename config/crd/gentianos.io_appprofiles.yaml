@@ -706,6 +706,39 @@ spec:
                 - crossplane
                 - api
                 type: string
+              derivedSecretKeys:
+                description: |-
+                  DerivedSecretKeys declares extra deterministic values to place in the
+                  credentials Secret the platform manages for this app, which the app
+                  typically consumes with envFrom.
+
+                  Prefer appSecrets: those are HMAC'd from the master password and stored in
+                  OpenBao. This is the weaker, legacy carrier — a local SHA-256 with no
+                  OpenBao record — and exists so that apps already depending on such a value
+                  can declare it instead of the platform hardcoding their name.
+                items:
+                  description: |-
+                    DerivedSecretKey names one deterministic value the platform adds to the
+                    credentials Secret it manages for an app.
+
+                    The derivation is deliberately frozen: the value is a function of the tenant
+                    and app name only, so it survives reinstalls. Changing how it is computed
+                    rotates the value for every existing tenant, which for a session-signing key
+                    means logging everyone out — so the formula must not be "improved" in place.
+                    A genuinely better derivation belongs in appSecrets under a new key name.
+                  properties:
+                    key:
+                      description: |-
+                        Key is the Secret key, and therefore the environment variable name when
+                        the app consumes the Secret with envFrom (e.g. "WEBUI_SECRET_KEY").
+                      maxLength: 64
+                      minLength: 1
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                      type: string
+                  required:
+                  - key
+                  type: object
+                type: array
               description:
                 description: Description is an optional human-readable description.
                 type: string
@@ -828,6 +861,24 @@ spec:
                         enum:
                         - postgresql
                         - mariadb
+                        type: string
+                      schemaPreference:
+                        description: |-
+                          SchemaPreference decides which schema the app's role resolves unqualified
+                          table names against first.
+
+                          Default (app-schema) puts the per-tenant schema ahead of public, which is
+                          what an app doing its own schema isolation expects. Apps whose migrations
+                          create everything in public — and then look it up unqualified — need
+                          public first, or the migration writes to one schema and the query reads
+                          the other.
+
+                          This is declared rather than inferred: the platform cannot know an app's
+                          migration behaviour from its name, and matching on the name is how a
+                          second app with the same need silently gets the wrong search_path.
+                        enum:
+                        - app-schema
+                        - public
                         type: string
                     type: object
                   identity:
@@ -1560,6 +1611,24 @@ spec:
                               - postgresql
                               - mariadb
                               type: string
+                            schemaPreference:
+                              description: |-
+                                SchemaPreference decides which schema the app's role resolves unqualified
+                                table names against first.
+
+                                Default (app-schema) puts the per-tenant schema ahead of public, which is
+                                what an app doing its own schema isolation expects. Apps whose migrations
+                                create everything in public — and then look it up unqualified — need
+                                public first, or the migration writes to one schema and the query reads
+                                the other.
+
+                                This is declared rather than inferred: the platform cannot know an app's
+                                migration behaviour from its name, and matching on the name is how a
+                                second app with the same need silently gets the wrong search_path.
+                              enum:
+                              - app-schema
+                              - public
+                              type: string
                           type: object
                         identity:
                           description: Identity specifies OIDC requirements.
@@ -1948,6 +2017,28 @@ spec:
                         type: string
                       userKey:
                         description: UserKey is the Helm value key for the SMTP username.
+                        type: string
+                    type: object
+                  volumes:
+                    description: |-
+                      Volumes names where this chart takes extra pod volumes and mounts, for
+                      charts that do not use the conventional extraVolumes/extraVolumeMounts.
+                      Used when the platform has to mount something into the app itself, such as
+                      the staging CA trust bundle.
+                    properties:
+                      volumeMountsPath:
+                        description: |-
+                          VolumeMountsPath is the dot-separated values path holding a list of
+                          container volume mounts (e.g. "volumeMounts.container").
+                        maxLength: 253
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                        type: string
+                      volumesPath:
+                        description: |-
+                          VolumesPath is the dot-separated values path holding a list of pod volumes
+                          (e.g. "volumes").
+                        maxLength: 253
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
                         type: string
                     type: object
                 type: object

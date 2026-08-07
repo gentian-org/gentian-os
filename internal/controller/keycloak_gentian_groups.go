@@ -14,12 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +42,8 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "GENTIAN_GROUPS_JSON", Value: groupsJSON},
+		// One protocol mapper per attribute the installed profiles actually declare.
+		corev1.EnvVar{Name: "GENTIAN_GROUP_ATTR_NAMES", Value: strings.Join(groupAttributeNames(groupsJSON), " ")},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -61,6 +65,58 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 			},
 		},
 	}
+}
+
+// groupAttributeNames returns the distinct group-attribute names present in the
+// groups JSON, sorted.
+//
+// Each one needs a protocol mapper or the attribute never reaches the token. The
+// names come from profiles' gentianos.io/keycloak-group-attributes annotations,
+// so the platform does not need to know that Odoo uses gentianOdooGroupRoles —
+// a second app declaring its own attribute gets a mapper without a code change.
+//
+// A malformed value yields no names rather than an error: the groups themselves
+// are provisioned from the same JSON by the script, and failing the whole realm
+// job over a mapper would be a worse outcome than a missing claim.
+func groupAttributeNames(groupsJSON string) []string {
+	var groups []struct {
+		Attributes map[string]any `json:"attributes"`
+	}
+	if err := json.Unmarshal([]byte(groupsJSON), &groups); err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var names []string
+	for _, g := range groups {
+		for name := range g.Attributes {
+			// Keycloak config keys are interpolated into JSON below; refuse anything
+			// that is not a plain identifier rather than escaping it.
+			if !validAttrName(name) {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func validAttrName(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // buildGentianGroupsScript creates Gentian entitlement groups in a tenant realm and
@@ -121,18 +177,26 @@ fi
 echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
 MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
-keycloak_json_id_by_attr "${MAPPERS}" "name" "gentianOdooGroupRoles"
-MAPPER_ID="${_kj_id}"
-if [ -n "${MAPPER_ID}" ]; then
-  curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models/${MAPPER_ID}" \
-    -d '{"id":"'"${MAPPER_ID}"'","name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","aggregate.attrs":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
-  echo "mapper gentianOdooGroupRoles updated with aggregation"
-else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
-    -d '{"name":"gentianOdooGroupRoles","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"user.attribute":"gentianOdooGroupRoles","claim.name":"gentianOdooGroupRoles","jsonType.label":"String","multivalued":"true","aggregate.attrs":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}'
-  echo "mapper gentianOdooGroupRoles added to groups client scope"
-fi
+# One aggregating mapper per declared group attribute. The names come from the
+# profiles' keycloak-group-attributes annotations, so an app introducing a new
+# attribute needs no change here.
+for ATTR_NAME in ${GENTIAN_GROUP_ATTR_NAMES:-}; do
+  # Body without the surrounding braces, so the PUT can prepend an id without
+  # having to splice a string that is already JSON.
+  MAPPER_BODY="\"name\":\"${ATTR_NAME}\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"oidc-usermodel-attribute-mapper\",\"consentRequired\":false,\"config\":{\"user.attribute\":\"${ATTR_NAME}\",\"claim.name\":\"${ATTR_NAME}\",\"jsonType.label\":\"String\",\"multivalued\":\"true\",\"aggregate.attrs\":\"true\",\"id.token.claim\":\"true\",\"access.token.claim\":\"true\",\"userinfo.token.claim\":\"true\"}"
+  keycloak_json_id_by_attr "${MAPPERS}" "name" "${ATTR_NAME}"
+  MAPPER_ID="${_kj_id}"
+  if [ -n "${MAPPER_ID}" ]; then
+    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models/${MAPPER_ID}" \
+      -d "{\"id\":\"${MAPPER_ID}\",${MAPPER_BODY}}"
+    echo "mapper ${ATTR_NAME} updated with aggregation"
+  else
+    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
+      -d "{${MAPPER_BODY}}"
+    echo "mapper ${ATTR_NAME} added to groups client scope"
+  fi
+done
 `, realmName, keycloak.ShellWaitForRealm("${REALM}"))
 }

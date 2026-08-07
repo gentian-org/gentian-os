@@ -1,0 +1,238 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-demo-app-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: demo-app-externalsecret, demo-app-keycloak-client,
+      demo-app-keycloak-default-scopes, and 2 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-externalsecret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: demo-app-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/oidc
+            property: client-secret
+          secretKey: oidc-client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: demo-app-sensitive-values
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keycloak-client
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-keycloak-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: catalogue-test-client
+    clientSecretSecretRef:
+      key: client-secret
+      name: render-demo-app-fixture-oidc-client-creds
+      namespace: crossplane-system
+    directAccessGrantsEnabled: false
+    fullScopeAllowed: false
+    name: Demo App
+    realmId: demo
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validPostLogoutRedirectUris:
+    - https://demo.demo.desk.gentian.org/
+    validRedirectUris:
+    - https://demo.demo.desk.gentian.org/oidc/callback
+    webOrigins:
+    - +
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keycloak-default-scopes
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-keycloak-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: demo-demo-app-keycloak-client
+    defaultScopes:
+    - profile
+    - email
+    - roles
+    - web-origins
+    - acr
+    - catalogue-test-client-scope
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-oidc-client-creds-es
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-oidc-client-creds-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: render-demo-app-fixture-oidc-client-creds
+        namespace: crossplane-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/oidc
+            property: client-secret
+          secretKey: client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          name: render-demo-app-fixture-oidc-client-creds
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-release
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-release
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: demo-app
+      repository: oci://example.invalid/demo-app
+      version: 1.0.0
+    namespace: tenant-demo
+    set:
+    - name: demo-app.oidc.secret
+      valueFrom:
+        secretKeyRef:
+          key: oidc-client-secret
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    skipCRDs: true
+    values:
+      environment:
+        DENO_CERT: /opt/gentian-staging-ca/ca.crt
+        REQUESTS_CA_BUNDLE: /opt/gentian-staging-ca/ca.crt
+        SSL_CERT_FILE: /opt/gentian-staging-ca/ca.crt
+      extraEnvVars:
+      - name: REQUESTS_CA_BUNDLE
+        value: /opt/gentian-staging-ca/ca.crt
+      - name: SSL_CERT_FILE
+        value: /opt/gentian-staging-ca/ca.crt
+      - name: DENO_CERT
+        value: /opt/gentian-staging-ca/ca.crt
+      extraVolumeMounts:
+      - mountPath: /opt/gentian-staging-ca
+        name: gentian-staging-ca
+        readOnly: true
+      extraVolumes:
+      - name: gentian-staging-ca
+        secret:
+          secretName: gentian-staging-ca-tls
+      global:
+        imagePullSecrets:
+        - registry-credentials
+      imagePullSecrets:
+      - registry-credentials
+      javaOpts:
+      - -Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks
+      - -Djavax.net.ssl.trustStoreType=JKS
+      - -Djavax.net.ssl.trustStorePassword=changeit
+      podLabels:
+        gentianos.io/app: demo-app
+        gentianos.io/tenant: demo
+      volumeMounts:
+        container:
+        - mountPath: /opt/gentian-staging-ca
+          name: gentian-staging-ca
+          readOnly: true
+      volumes:
+      - name: gentian-staging-ca
+        secret:
+          secretName: gentian-staging-ca-tls
+    wait: false
+  providerConfigRef:
+    name: kubernetes
+  rollbackLimit: 3

@@ -1,0 +1,31 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  displayName: Demo App
+  compositionRef: app-demo-app
+  chart:
+    repository: oci://example.invalid/demo-app
+    name: demo-app
+    version: "1.0.0"
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: catalogue-test-client
+        name: Demo App
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+        postLogoutRedirectUris:
+          - "https://demo.${TENANT_DOMAIN}/"
+  valueMapping:
+    # Mirrors open-webui: its chart takes `volumes` and `volumeMounts.container`
+    # rather than extraVolumes/extraVolumeMounts.
+    volumes:
+      volumesPath: volumes
+      volumeMountsPath: volumeMounts.container
+    oidc:
+      clientSecretKey: demo-app.oidc.secret

@@ -1,0 +1,14 @@
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-demo-app-fixture
+  annotations:
+    crossplane.io/external-name: render-demo-app-fixture
+spec:
+  claimRef:
+    name: demo-app
+    namespace: tenant-demo
+  profileRef:
+    name: demo-app
+  tenantNamespace: tenant-demo
+  domain: demo.desk.gentian.org

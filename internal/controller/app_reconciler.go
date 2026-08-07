@@ -98,7 +98,7 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", profileName, err)
 		}
 
-		if err := r.injectLLMCredentials(ctx, tenant, profileName); err != nil {
+		if err := r.injectLLMCredentials(ctx, tenant, profileName, profile); err != nil {
 			return ctrl.Result{}, fmt.Errorf("inject llm credentials for %s: %w", profileName, err)
 		}
 
@@ -149,6 +149,17 @@ func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov
 	return nil
 }
 
+// derivedSecretValue computes a stable per-tenant, per-app value.
+//
+// The formula is frozen — see DerivedSecretKey. It predates the declaration and
+// is reproduced exactly, so making the key declarative does not rotate it and
+// does not invalidate the sessions of any app already using one.
+func derivedSecretValue(tenantName, appName string) string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s-%s-secret-salt-value", tenantName, appName)
+	return base64.URLEncoding.EncodeToString(h.Sum(nil))
+}
+
 // waitForAppClaimReady returns true when the Crossplane-managed App claim exists
 // and its Ready condition is True.
 func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (bool, error) {
@@ -169,7 +180,7 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 // endpoints and virtual key configured by the platform, and registers that same virtual key
 // with LiteLLM itself (idempotent — see ensureLiteLLMVirtualKey) so it is actually usable
 // rather than a string the proxy has never heard of.
-func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) error {
+func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
 	if os.Getenv("LLM_SUPPORT") != "true" {
 		return nil
 	}
@@ -183,10 +194,12 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 		"OPENAI_API_BASE_URL": litellmProxyBaseURL + "/v1",
 		"OPENAI_API_KEY":      virtualKey,
 	}
-	if appName == "open-webui" {
-		h := sha256.New()
-		_, _ = fmt.Fprintf(h, "%s-%s-secret-salt-value", tenant.Name, appName)
-		stringData["WEBUI_SECRET_KEY"] = base64.URLEncoding.EncodeToString(h.Sum(nil))
+	// Extra deterministic keys the profile asked for. The platform does not know
+	// which apps need one — spec.derivedSecretKeys says so.
+	if profile != nil {
+		for _, dsk := range profile.Spec.DerivedSecretKeys {
+			stringData[dsk.Key] = derivedSecretValue(tenant.Name, appName)
+		}
 	}
 
 	desired := &corev1.Secret{
