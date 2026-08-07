@@ -66,6 +66,18 @@ spec:
                         Arbitrary Helm values deep-merged over the profile's
                         extraValues. Must not contain secrets.
                       x-kubernetes-preserve-unknown-fields: true
+                addons:
+                  type: array
+                  description: |
+                    Addon identifiers to activate inside this app, resolved by the
+                    operator to whatever the hosting app's own addon system calls them.
+
+                    Deliberately a sibling of config rather than a field inside it:
+                    config carries Helm value overrides, while addons are activation
+                    state applied through the app's own mechanism (Odoo `-i`,
+                    Nextcloud `occ app:enable`) after the release is up.
+                  items:
+                    type: string
             status:
               type: object
               properties:

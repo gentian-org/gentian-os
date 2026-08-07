@@ -112,6 +112,13 @@ type CustomizationSurface struct {
 	// +optional
 	Extension *CustomizationExtension `json:"extension,omitempty"`
 
+	// Addon declares that *this* profile is an addon rather than a deployable app,
+	// and how the base activates it. Set on profiles carrying
+	// gentianos.io/deployment-role: addon; Extension above is its counterpart on the
+	// base, describing the addon system this plugs into.
+	// +optional
+	Addon *CustomizationAddon `json:"addon,omitempty"`
+
 	// Publishes describes what this app offers so that *another* app can be built
 	// at L2 against it. It is not a rung of this app.
 	// +optional
@@ -377,4 +384,33 @@ type CustomizationFork struct {
 	// A fork without it is an unowned liability.
 	// +optional
 	CVEWatch bool `json:"cveWatch,omitempty"`
+}
+
+// CustomizationAddon declares an addon's identity to the app that hosts it.
+//
+// This exists so the operator can resolve a tenant's selected addons without
+// knowing anything app-specific. A tenant selects addons by AppProfile name
+// ("odoo-crm-ce"), but the app's own addon system knows them by its own
+// identifier — Odoo installs the module "crm", Nextcloud enables the app
+// "richdocuments". Declaring that identifier here keeps the mapping in the
+// catalogue, where app-specific knowledge belongs, instead of putting
+// per-app parsing in a reconciler (see the platform boundary rule in
+// gentian-apps/docs/app-profile-guide.md).
+type CustomizationAddon struct {
+	// ID is what the hosting app's own addon system calls this addon: an Odoo
+	// module name, a Nextcloud app id, an Activepieces piece name. The operator
+	// passes it to the composition, which renders the app-native activation.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
+	ID string `json:"id"`
+
+	// Of is the AppProfile name of the base this addon activates into. It must be
+	// in the same family. Replaces the gentianos.io/requires-profile annotation,
+	// which pointed the same way but existed to auto-install a base when an addon
+	// was installed standalone — the relationship the L3 cleanup inverts.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Of string `json:"of"`
 }

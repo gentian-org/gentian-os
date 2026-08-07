@@ -139,6 +139,20 @@ spec:
                         type: object
                         description: Per-tenant overrides for this app.
                         x-kubernetes-preserve-unknown-fields: true
+                      addons:
+                        type: array
+                        description: |
+                          Addon identifiers to activate inside this app, already
+                          resolved by the operator from the tenant's selected addon
+                          AppProfiles to whatever the hosting app's own addon system
+                          calls them (an Odoo module name, a Nextcloud app id).
+
+                          Resolving in the operator keeps compositions free of
+                          catalogue lookups; the mapping itself is declared per addon
+                          in spec.customization.addon.id, so app-specific knowledge
+                          stays in gentian-apps.
+                        items:
+                          type: string
             status:
               type: object
               properties:

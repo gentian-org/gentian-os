@@ -253,6 +253,12 @@ spec:
               compositionRef:
                 name: app-{{ $app.variant }}
               {{- end }}
+              {{- with dig "addons" list $app }}
+              addons:
+                {{- range . }}
+                - {{ . | quote }}
+                {{- end }}
+              {{- end }}
               {{- $appConfig := default dict $app.config }}
               {{- if or (dig "replicas" nil $appConfig) (dig "extraValues" nil $appConfig) }}
               config:

@@ -49,6 +49,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
@@ -1055,10 +1056,37 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 				entry["config"] = cfg
 			}
 		}
+
+		// Resolve selected addons to the identifiers the hosting app understands, so
+		// the composition renders app-native activation without the operator knowing
+		// anything app-specific. Invalid selections are reported on the Tenant and
+		// dropped rather than failing the whole reconcile — one bad addon must not
+		// block the app itself, or every other app in the tenant.
+		if exists && len(app.Addons) > 0 {
+			resolved, addonErrs := customization.ResolveAddons(profile, app.Addons, profileIndex)
+			for _, addonErr := range addonErrs {
+				log.FromContext(ctx).Error(addonErr, "skipping invalid addon selection",
+					"tenant", tenant.Name, "app", app.Profile)
+			}
+			if ids := customization.AddonIDs(resolved); len(ids) > 0 {
+				entry["addons"] = toInterfaceSlice(ids)
+			}
+		}
+
 		apps = append(apps, entry)
 	}
 	spec["apps"] = apps
 
 	_ = unstructured.SetNestedField(xr.Object, spec, "spec")
 	return xr, nil
+}
+
+// toInterfaceSlice converts a string slice for embedding in an unstructured XR spec,
+// which requires []interface{} rather than []string.
+func toInterfaceSlice(in []string) []interface{} {
+	out := make([]interface{}, 0, len(in))
+	for _, s := range in {
+		out = append(out, s)
+	}
+	return out
 }

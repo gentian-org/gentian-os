@@ -328,6 +328,34 @@ spec:
                   lowest viable rung for a requested change.
                   See docs/app-customization.md.
                 properties:
+                  addon:
+                    description: |-
+                      Addon declares that *this* profile is an addon rather than a deployable app,
+                      and how the base activates it. Set on profiles carrying
+                      gentianos.io/deployment-role: addon; Extension above is its counterpart on the
+                      base, describing the addon system this plugs into.
+                    properties:
+                      id:
+                        description: |-
+                          ID is what the hosting app's own addon system calls this addon: an Odoo
+                          module name, a Nextcloud app id, an Activepieces piece name. The operator
+                          passes it to the composition, which renders the app-native activation.
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$
+                        type: string
+                      of:
+                        description: |-
+                          Of is the AppProfile name of the base this addon activates into. It must be
+                          in the same family. Replaces the gentianos.io/requires-profile annotation,
+                          which pointed the same way but existed to auto-install a base when an addon
+                          was installed standalone — the relationship the L3 cleanup inverts.
+                        minLength: 1
+                        type: string
+                    required:
+                    - id
+                    - of
+                    type: object
                   configure:
                     description: Configure describes the L0 surface.
                     properties:
