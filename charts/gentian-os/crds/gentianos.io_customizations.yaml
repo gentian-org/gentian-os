@@ -101,6 +101,7 @@ spec:
                 enum:
                 - git-sidecar
                 - image-layer
+                - addon-profile
                 - module-profile
                 - app-store-api
                 type: string

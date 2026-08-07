@@ -410,8 +410,14 @@ spec:
                     x-kubernetes-list-type: map
                   extension:
                     description: 'Extension describes the L3 surface: the app''s own
-                      module system.'
+                      addon system.'
                     properties:
+                      addonPath:
+                        description: |-
+                          AddonPath is the in-container directory addons are loaded from (Odoo's
+                          custom-addons, Nextcloud's custom_apps).
+                        pattern: ^/.*
+                        type: string
                       apiDocs:
                         description: APIDocs links to the extension API documentation.
                         type: string
@@ -426,14 +432,18 @@ spec:
                         - none
                         type: string
                       delivery:
-                        description: Delivery lists the supported ways a module reaches
+                        description: Delivery lists the supported ways an addon reaches
                           the running app.
                         items:
-                          description: CustomizationDelivery is how an L3 module reaches
-                            the running app.
+                          description: |-
+                            CustomizationDelivery is how an L3 addon reaches the running app.
+
+                            TRANSITIONAL: module-profile is the pre-cleanup spelling of addon-profile and is
+                            removed once the catalogue has migrated.
                           enum:
                           - git-sidecar
                           - image-layer
+                          - addon-profile
                           - module-profile
                           - app-store-api
                           type: string
@@ -445,23 +455,18 @@ spec:
                           "nextcloud-app", "xwiki-extension", "activepieces-piece").
                         pattern: ^[a-z][a-z0-9-]*$
                         type: string
-                      modulePath:
-                        description: ModulePath is the in-container directory modules
-                          are loaded from.
-                        pattern: ^/.*
-                        type: string
-                      perTenantModules:
+                      perTenantAddons:
                         description: |-
-                          PerTenantModules reports whether tenants may have divergent module sets.
+                          PerTenantAddons reports whether tenants may have divergent addon sets.
                           Only valid when the app runs in the tenant's own namespace — a shared
                           runtime with per-tenant code is a cross-tenant data leak waiting to happen.
                         type: boolean
                       registry:
-                        description: Registry is the repository or index modules are
+                        description: Registry is the repository or index addons are
                           sourced from.
                         type: string
                       testMatrix:
-                        description: TestMatrix lists the upstream app versions modules
+                        description: TestMatrix lists the upstream app versions addons
                           are tested against.
                         items:
                           type: string

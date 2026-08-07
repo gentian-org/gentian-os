@@ -36,7 +36,7 @@ const (
 	// Never appears in SupportedRungs — it is a property of the customization, not
 	// of the target, and is therefore always available.
 	RungCompanion CustomizationRung = "L2"
-	// RungExtension loads a module through the app's own extension system.
+	// RungExtension loads an addon through the app's own extension system.
 	RungExtension CustomizationRung = "L3"
 	// RungRepackage owns the packaging (chart, composition, entrypoint); source untouched.
 	RungRepackage CustomizationRung = "L4"
@@ -108,7 +108,7 @@ type CustomizationSurface struct {
 	// +listMapKey=name
 	DropIns []CustomizationDropIn `json:"dropIns,omitempty"`
 
-	// Extension describes the L3 surface: the app's own module system.
+	// Extension describes the L3 surface: the app's own addon system.
 	// +optional
 	Extension *CustomizationExtension `json:"extension,omitempty"`
 
@@ -208,22 +208,28 @@ const (
 	APIStabilityNone CustomizationAPIStability = "none"
 )
 
-// CustomizationDelivery is how an L3 module reaches the running app.
-// +kubebuilder:validation:Enum=git-sidecar;image-layer;module-profile;app-store-api
+// CustomizationDelivery is how an L3 addon reaches the running app.
+//
+// TRANSITIONAL: module-profile is the pre-cleanup spelling of addon-profile and is
+// removed once the catalogue has migrated.
+// +kubebuilder:validation:Enum=git-sidecar;image-layer;addon-profile;module-profile;app-store-api
 type CustomizationDelivery string
 
 const (
-	// DeliveryGitSidecar syncs a git repo into the app's module path.
+	// DeliveryGitSidecar syncs a git repo into the app's addon path.
 	DeliveryGitSidecar CustomizationDelivery = "git-sidecar"
-	// DeliveryImageLayer bakes modules into a Gentian-built image layer.
+	// DeliveryImageLayer bakes addons into a Gentian-built image layer.
 	DeliveryImageLayer CustomizationDelivery = "image-layer"
-	// DeliveryModuleProfile ships the module as a catalogue-visible AppProfile.
+	// DeliveryAddonProfile ships the addon as its own AppProfile.
+	DeliveryAddonProfile CustomizationDelivery = "addon-profile"
+	// DeliveryModuleProfile is the pre-cleanup spelling of DeliveryAddonProfile.
+	// Deprecated: use DeliveryAddonProfile.
 	DeliveryModuleProfile CustomizationDelivery = "module-profile"
 	// DeliveryAppStoreAPI installs through the app's own runtime admin API.
 	DeliveryAppStoreAPI CustomizationDelivery = "app-store-api"
 )
 
-// CustomizationExtension describes the L3 (in-app module) surface.
+// CustomizationExtension describes the L3 (in-app addon) surface.
 type CustomizationExtension struct {
 	// Mechanism names the app's extension system (for example "odoo-addon",
 	// "nextcloud-app", "xwiki-extension", "activepieces-piece").
@@ -231,19 +237,20 @@ type CustomizationExtension struct {
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 	Mechanism string `json:"mechanism"`
 
-	// Delivery lists the supported ways a module reaches the running app.
+	// Delivery lists the supported ways an addon reaches the running app.
 	// +optional
 	// +listType=set
 	Delivery []CustomizationDelivery `json:"delivery,omitempty"`
 
-	// Registry is the repository or index modules are sourced from.
+	// Registry is the repository or index addons are sourced from.
 	// +optional
 	Registry string `json:"registry,omitempty"`
 
-	// ModulePath is the in-container directory modules are loaded from.
+	// AddonPath is the in-container directory addons are loaded from (Odoo's
+	// custom-addons, Nextcloud's custom_apps).
 	// +optional
 	// +kubebuilder:validation:Pattern=`^/.*`
-	ModulePath string `json:"modulePath,omitempty"`
+	AddonPath string `json:"addonPath,omitempty"`
 
 	// APIStability rates the extension API. When this is not "stable", the L2/L3
 	// tie-break in the decision procedure defaults to L2.
@@ -254,13 +261,13 @@ type CustomizationExtension struct {
 	// +optional
 	APIDocs string `json:"apiDocs,omitempty"`
 
-	// PerTenantModules reports whether tenants may have divergent module sets.
+	// PerTenantAddons reports whether tenants may have divergent addon sets.
 	// Only valid when the app runs in the tenant's own namespace — a shared
 	// runtime with per-tenant code is a cross-tenant data leak waiting to happen.
 	// +optional
-	PerTenantModules bool `json:"perTenantModules,omitempty"`
+	PerTenantAddons bool `json:"perTenantAddons,omitempty"`
 
-	// TestMatrix lists the upstream app versions modules are tested against.
+	// TestMatrix lists the upstream app versions addons are tested against.
 	// +optional
 	// +listType=set
 	TestMatrix []string `json:"testMatrix,omitempty"`
