@@ -179,3 +179,26 @@ func TestResolveProfileReference_ByIdentity(t *testing.T) {
 		t.Fatalf("resolve by identity: got %q, %v", name, ok)
 	}
 }
+
+// TestEffectiveDeploymentRoleAddonAlias locks in the migration alias: "module" is
+// the pre-cleanup spelling of "addon" and must normalise to Addon, so callers only
+// ever compare against one value and the catalogue can migrate profile-by-profile
+// instead of in a flag day.
+func TestEffectiveDeploymentRoleAddonAlias(t *testing.T) {
+	for _, annotation := range []string{"addon", "module", "Addon", " module "} {
+		p := &v1alpha1.AppProfile{}
+		p.Annotations = map[string]string{v1alpha1.AnnotationProfileDeploymentRole: annotation}
+		if got := v1alpha1.EffectiveDeploymentRole(p); got != v1alpha1.ProfileDeploymentRoleAddon {
+			t.Fatalf("annotation %q: got %q, want %q", annotation, got, v1alpha1.ProfileDeploymentRoleAddon)
+		}
+	}
+	// base and unset must be unaffected by the alias
+	base := &v1alpha1.AppProfile{}
+	base.Annotations = map[string]string{v1alpha1.AnnotationProfileDeploymentRole: "base"}
+	if v1alpha1.EffectiveDeploymentRole(base) != v1alpha1.ProfileDeploymentRoleBase {
+		t.Fatal("base role regressed")
+	}
+	if v1alpha1.EffectiveDeploymentRole(&v1alpha1.AppProfile{}) != v1alpha1.ProfileDeploymentRoleStandalone {
+		t.Fatal("unset role regressed")
+	}
+}

@@ -64,7 +64,14 @@ type ProfileDeploymentRole string
 const (
 	ProfileDeploymentRoleStandalone ProfileDeploymentRole = "standalone"
 	ProfileDeploymentRoleBase       ProfileDeploymentRole = "base"
-	ProfileDeploymentRoleModule     ProfileDeploymentRole = "module"
+	// ProfileDeploymentRoleAddon marks a profile activated inside a base rather than
+	// deployed on its own — customization-ladder rung L3. "addon" is the single word
+	// for this across all apps; upstream may call them modules (Odoo) or apps
+	// (Nextcloud), but that is their vocabulary, not ours.
+	ProfileDeploymentRoleAddon ProfileDeploymentRole = "addon"
+	// ProfileDeploymentRoleModule is the pre-cleanup spelling of Addon, still accepted
+	// on input so the catalogue can migrate without a flag day. Deprecated: use Addon.
+	ProfileDeploymentRoleModule ProfileDeploymentRole = "module"
 )
 
 // Default catalogue values applied when fields are omitted on legacy profiles.
@@ -72,10 +79,21 @@ const (
 	DefaultCatalogueVersion = "1.0.0"
 )
 
-// Edition describes the feature / footprint variant of a profile.
-// Examples: minimal (reduced components), full (all integrations), performant (scaled resources).
+// Edition identifies which edition of an app a profile packages:
 //
-// +kubebuilder:validation:Enum=minimal;standard;full;performant
+//	ce  — community edition, as published by the upstream organisation
+//	me  — maintained edition: ce plus active maintenance by Gentian
+//	pro — commercial, supplied by a vendor (see AppProfile.spec.author)
+//
+// Editions are technically interchangeable; what decides whether one may run is
+// authorization (a paid licence), and technical addon/base compatibility is managed
+// by version. See gentian-apps/docs/L3-cleanup.md §2.1.
+//
+// TRANSITIONAL: minimal/standard/full/performant are the pre-cleanup footprint
+// values, kept valid only while the catalogue migrates. They are removed once every
+// profile carries ce/me/pro.
+//
+// +kubebuilder:validation:Enum=ce;me;pro;minimal;standard;full;performant
 type Edition string
 
 const (

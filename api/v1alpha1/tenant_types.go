@@ -172,6 +172,23 @@ type TenantApp struct {
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *TenantAppConfig `json:"config,omitempty"`
+
+	// Addons lists the addon profiles activated inside this app for this tenant —
+	// customization-ladder rung L3. Each entry names an AppProfile carrying
+	// gentianos.io/deployment-role: addon in the same family as this app.
+	//
+	// Addons are activation state *inside* the installed app, not separate
+	// installs: they never appear as their own entries in spec.apps, get no App
+	// claim of their own, and are applied through the app's native mechanism
+	// (Odoo `-i`, Nextcloud `occ app:enable`).
+	//
+	// The App Store writes this list — pre-filled from an AppPackage preset when
+	// one is chosen, then editable afterwards. Entries the tenant is not entitled
+	// to are rejected; entitlement is what gates a pro addon, not compatibility.
+	// See gentian-apps/docs/L3-cleanup.md.
+	// +optional
+	// +listType=set
+	Addons []string `json:"addons,omitempty"`
 }
 
 // TenantAppConfig holds per-tenant application overrides.

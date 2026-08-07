@@ -652,6 +652,9 @@ spec:
                 description: Edition selects the feature / footprint variant (minimal,
                   full, performant, …).
                 enum:
+                - ce
+                - me
+                - pro
                 - minimal
                 - standard
                 - full

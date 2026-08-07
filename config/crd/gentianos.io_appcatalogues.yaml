@@ -88,6 +88,9 @@ spec:
                     edition:
                       description: Edition is the feature / footprint variant.
                       enum:
+                      - ce
+                      - me
+                      - pro
                       - minimal
                       - standard
                       - full

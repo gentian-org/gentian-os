@@ -28,9 +28,18 @@ import (
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 )
 
-// ensureImplicitBaseApps injects profiles listed in gentianos.io/requires-profile when
-// a module profile (gentianos.io/deployment-role=module) is installed. Generic
-// catalogue semantics — app-specific install Jobs read extraValues in compositions.
+// ensureImplicitBaseApps injects profiles listed in gentianos.io/requires-profile
+// when an addon profile (gentianos.io/deployment-role=addon) appears directly in
+// spec.apps. Generic catalogue semantics — app-specific install Jobs read
+// extraValues in compositions.
+//
+// TRANSITIONAL: this exists because addons were once installed as standalone
+// catalogue entries that pulled their base in behind them. Under the L3 cleanup the
+// relationship inverts — a tenant installs the base and selects addons into
+// spec.apps[].addons, so an addon never appears in spec.apps and there is nothing
+// to back-fill. This becomes dead once the App Store writes the addons field and
+// no tenant lists an addon directly; remove it then rather than leaving two ways to
+// install one addon. See gentian-apps/docs/L3-cleanup.md §3.1 item 3.
 func (r *TenantReconciler) ensureImplicitBaseApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if len(tenant.Spec.Apps) == 0 {
 		return ctrl.Result{}, nil
@@ -55,7 +64,7 @@ func (r *TenantReconciler) ensureImplicitBaseApps(ctx context.Context, tenant *g
 		if err := r.Get(ctx, client.ObjectKey{Name: profileName}, profile); err != nil {
 			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 		}
-		if gentianov1alpha1.EffectiveDeploymentRole(profile) != gentianov1alpha1.ProfileDeploymentRoleModule {
+		if gentianov1alpha1.EffectiveDeploymentRole(profile) != gentianov1alpha1.ProfileDeploymentRoleAddon {
 			continue
 		}
 		base := gentianov1alpha1.ProfileRequiresProfile(profile)
