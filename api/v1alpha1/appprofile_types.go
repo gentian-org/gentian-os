@@ -46,9 +46,11 @@ type AppProfileSpec struct {
 	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
 	CatalogueVersion string `json:"catalogueVersion,omitempty"`
 
-	// Edition selects the feature / footprint variant (minimal, full, performant, …).
+	// Edition selects the edition: ce (community, as upstream publishes it), me
+	// (ce plus active Gentian maintenance) or pro (commercial, supplied by the
+	// vendor named in spec.author).
 	// +optional
-	// +kubebuilder:default=full
+	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`
 
 	// TrustTier is the platform certification level for this catalogue entry.

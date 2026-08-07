@@ -36,7 +36,7 @@ func TestProfileIdentityFor_Defaults(t *testing.T) {
 	if id.CatalogueVersion != "1.0.0" {
 		t.Errorf("catalogueVersion: got %q", id.CatalogueVersion)
 	}
-	if id.Edition != v1alpha1.EditionFull {
+	if id.Edition != v1alpha1.EditionCE {
 		t.Errorf("edition: got %q", id.Edition)
 	}
 }
@@ -145,7 +145,7 @@ func TestProfileCatalogueLabels(t *testing.T) {
 		Spec: v1alpha1.AppProfileSpec{
 			Family:           "demo-app",
 			CatalogueVersion: "1.0.0",
-			Edition:          v1alpha1.EditionFull,
+			Edition:          v1alpha1.EditionCE,
 			TrustTier:        v1alpha1.TrustTierCertified,
 			License:          "Apache-2.0",
 		},
@@ -163,7 +163,7 @@ func TestResolveProfileReference_ByIdentity(t *testing.T) {
 			Spec: v1alpha1.AppProfileSpec{
 				Family:           "demo-app",
 				CatalogueVersion: "2.1.0",
-				Edition:          v1alpha1.EditionFull,
+				Edition:          v1alpha1.EditionCE,
 			},
 		},
 	}
@@ -171,7 +171,7 @@ func TestResolveProfileReference_ByIdentity(t *testing.T) {
 		Identity: &v1alpha1.ProfileIdentity{
 			Family:           "demo-app",
 			CatalogueVersion: "2.1.0",
-			Edition:          v1alpha1.EditionFull,
+			Edition:          v1alpha1.EditionCE,
 		},
 	}
 	name, ok := v1alpha1.ResolveProfileReference(profiles, ref)

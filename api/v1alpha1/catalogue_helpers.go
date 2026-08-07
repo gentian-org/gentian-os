@@ -21,10 +21,14 @@ import (
 	"strings"
 )
 
-// EffectiveEdition returns the edition for a profile, defaulting to full.
+// EffectiveEdition returns the edition for a profile, defaulting to ce.
+//
+// ce is the right default: an entry that does not say otherwise is the upstream
+// community edition. Defaulting to me or pro would silently claim maintenance or
+// a commercial relationship that nobody declared.
 func EffectiveEdition(e Edition) Edition {
 	if e == "" {
-		return EditionFull
+		return EditionCE
 	}
 	return e
 }

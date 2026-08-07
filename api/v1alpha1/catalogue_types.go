@@ -89,18 +89,16 @@ const (
 // authorization (a paid licence), and technical addon/base compatibility is managed
 // by version. See gentian-apps/docs/L3-cleanup.md §2.1.
 //
-// TRANSITIONAL: minimal/standard/full/performant are the pre-cleanup footprint
-// values, kept valid only while the catalogue migrates. They are removed once every
-// profile carries ce/me/pro.
-//
-// +kubebuilder:validation:Enum=ce;me;pro;minimal;standard;full;performant
+// +kubebuilder:validation:Enum=ce;me;pro
 type Edition string
 
 const (
-	EditionMinimal    Edition = "minimal"
-	EditionStandard   Edition = "standard"
-	EditionFull       Edition = "full"
-	EditionPerformant Edition = "performant"
+	// EditionCE is the community edition as published by the upstream organisation.
+	EditionCE Edition = "ce"
+	// EditionME is the community edition plus active maintenance by Gentian.
+	EditionME Edition = "me"
+	// EditionPro is a commercial edition supplied by a vendor (see spec.author).
+	EditionPro Edition = "pro"
 )
 
 // TrustTier describes platform certification / review level for a catalogue entry.
@@ -129,9 +127,9 @@ type ProfileIdentity struct {
 	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
 	CatalogueVersion string `json:"catalogueVersion"`
 
-	// Edition selects the feature / footprint variant.
+	// Edition selects the edition (ce, me, pro).
 	// +optional
-	// +kubebuilder:default=full
+	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`
 }
 

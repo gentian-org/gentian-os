@@ -91,10 +91,6 @@ spec:
                       - ce
                       - me
                       - pro
-                      - minimal
-                      - standard
-                      - full
-                      - performant
                       type: string
                     family:
                       description: Family is the logical application id (shared across

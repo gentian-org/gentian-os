@@ -172,17 +172,12 @@ spec:
                               pattern: ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$
                               type: string
                             edition:
-                              default: full
-                              description: Edition selects the feature / footprint
-                                variant.
+                              default: ce
+                              description: Edition selects the edition (ce, me, pro).
                               enum:
                               - ce
                               - me
                               - pro
-                              - minimal
-                              - standard
-                              - full
-                              - performant
                               type: string
                             family:
                               description: Family is the stable logical application

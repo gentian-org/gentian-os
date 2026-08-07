@@ -648,17 +648,15 @@ spec:
                 minLength: 1
                 type: string
               edition:
-                default: full
-                description: Edition selects the feature / footprint variant (minimal,
-                  full, performant, …).
+                default: ce
+                description: |-
+                  Edition selects the edition: ce (community, as upstream publishes it), me
+                  (ce plus active Gentian maintenance) or pro (commercial, supplied by the
+                  vendor named in spec.author).
                 enum:
                 - ce
                 - me
                 - pro
-                - minimal
-                - standard
-                - full
-                - performant
                 type: string
               extraValues:
                 description: |-
