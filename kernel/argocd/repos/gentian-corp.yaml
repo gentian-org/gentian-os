@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Gentian Organization
+# SPDX-License-Identifier: AGPL-3.0-or-later
+---
+# Argo CD credentials for the private gentian-corp repository.
+#
+# Without this secret the gentian-corp Application cannot render: Argo CD reports
+#   Failed to load target state: ... rpc error: code = Unknown desc = authentication required
+# and the Application sits in Unknown health indefinitely. Nothing is broken in
+# the manifests — Argo CD simply cannot read the repository.
+#
+# No credential is committed here, and none should be. Apply it with a PAT that
+# has read access to gentian-org/gentian-corp:
+#
+#   kubectl create secret generic repo-gentian-corp -n argocd \
+#     --from-literal=type=git \
+#     --from-literal=url=https://github.com/gentian-org/gentian-corp \
+#     --from-literal=username=git \
+#     --from-literal=password="${GENTIAN_CORP_GIT_TOKEN}" \
+#     --dry-run=client -o yaml | \
+#     kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | \
+#     kubectl apply -f -
+#
+# The repository is already an allowed source on the `gentian` AppProject
+# (kernel/argocd/projects/gentian.yaml), so no project change is needed.
+#
+# If gentian-corp is not meant to run on this cluster, the alternative fix is to
+# delete the Application rather than grant it a credential — it is applied by
+# hand, not by any repo, so nothing will recreate it.

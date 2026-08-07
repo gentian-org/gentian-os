@@ -21,6 +21,20 @@ spec:
     kind: ApplicationSet
     jsonPointers:
     - /metadata/annotations/argocd.argoproj.io~1tracking-id
+  # ArgoCD adds post-delete finalizers to a child Application whose chart has a
+  # PostDelete hook — kyverno's policyReportsCleanup is one. Git cannot declare
+  # them (ArgoCD owns them, and they appear only after the child first syncs), so
+  # with ServerSideApply + selfHeal the parent strips them, ArgoCD re-adds them,
+  # and the parent stays OutOfSync forever. They are runtime state, not desired
+  # config, so exclude them from the diff.
+  #
+  # This does not stop finalizers from being applied: ignoreDifferences affects
+  # only the diff, so a newly created child still gets the resources-finalizer
+  # declared in kernel/appsets/raw/.
+  - group: argoproj.io
+    kind: Application
+    jsonPointers:
+    - /metadata/finalizers
   source:
     repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop

@@ -13,4 +13,6 @@
 #     kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | \
 #     kubectl apply -f -
 #
-# Or set GENTIAN_PRO_GIT_TOKEN in install.secrets.env and run install.sh (Step 14c).
+# Apply it by hand: install.sh has no step for this, and neither
+# install.secrets.env nor GENTIAN_PRO_GIT_TOKEN is read anywhere in this repo.
+# (This file previously pointed at a "Step 14c" that does not exist.)
