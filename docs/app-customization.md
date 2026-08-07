@@ -198,8 +198,34 @@ Gentian already has two delivery paths for this, and the framework should name t
 |---|---|---|
 | `git-sidecar` | `gentian-sidecar-git-modules` syncs a git repo into the app's addon path (`odoo` chart: `gentian.git.repo` → `gentian.modulesPath`) | addons iterate faster than the app image |
 | `image-layer` | addons baked into a Gentian-built image layer at build time | reproducibility/airgap matters more than iteration speed |
-| `addon-profile` | a thin `AppProfile` with `deployment-role: addon` + `requires-profile: <base>`, addon activated via composition Job (the `odoo-cb-*` pattern) | the addon is a *catalogue-visible product* |
+| `addon-profile` | a thin `AppProfile` with `deployment-role: addon` declaring `spec.customization.addon.{id,of}`; the tenant selects it into a base via `Tenant.spec.apps[].addons` | the addon is a *catalogue-visible product* |
 | `app-store-api` | the app's own runtime API installs the extension (Nextcloud `occ app:install`) via `spec.postInstallJob` | the app owns its own registry |
+
+#### How an `addon-profile` is activated
+
+The tenant selects **profile names**; the operator resolves them to whatever the hosting app
+calls the thing (an Odoo module, a Nextcloud app id) through each addon's own
+`spec.customization.addon`. Nothing in gentian-os knows those app-native names — putting that
+knowledge in a reconciler would move an app fact into the platform, which is exactly the
+boundary this framework exists to hold.
+
+Activation itself has two shapes, and which one an app uses is a property of the app:
+
+| Shape | Declared by | Used when |
+|---|---|---|
+| **Values** | `spec.customization.addonActivation` on the *base* profile: a Helm values path and a script, with `__GENTIAN_ADDON_IDS__` substituted | the chart exposes a hook that runs inside the app container (Nextcloud's `hooks.before-starting`). Preferred — no Job, and the script runs with the app's config, data volume and secrets already mounted |
+| **Composition** | the app's own `composition.yaml` renders a Job | activation is not expressible as chart values. Odoo installs database-side via `odoo-bin -i`, so it needs a Job that reaches the database |
+
+**Write the script to reconcile, not to add.** It re-runs on every pod start, which is what makes
+a changed selection converge with no migration step — and it is the only way deselection can work
+at all. A base that declares `addonActivation` has it rendered even when the selection is *empty*,
+because "none" is a selection: skipping it there would drop the values key and leave the last
+selection enabled forever.
+
+Deselection is not uninstallation. Nextcloud's `occ app:disable` keeps the app's data, so
+deselecting is reversible. Odoo's `-i` has no safe inverse — uninstalling a module drops its
+tables — so an Odoo addon stops being activated but is not removed. Purging data is always a
+separate, explicit path.
 
 **Multi-tenancy is the sharp edge here.** An addon loaded into a shared runtime affects every
 tenant on that runtime. The existing Odoo pattern is the right precedent — per-tenant addon sets
@@ -935,5 +961,6 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
 | 10 | Tenant drop-in reconciler + Admin Console editor (§2.2.1) | `gentian-os`, `gentian-ui` | **done** |
+| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (`gentian-apps/docs/L3-cleanup.md`) | `gentian-os`, `gentian-apps` | **done** |
 | — | Automated grade rubric in CI | `gentian-apps` | roadmap 2.13 |
 | — | Third-party delegation process (signing, entitlement, review SLAs) | — | deferred, §2.9 |
