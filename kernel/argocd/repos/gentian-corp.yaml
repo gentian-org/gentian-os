@@ -3,10 +3,14 @@
 ---
 # Argo CD credentials for the private gentian-corp repository.
 #
-# Without this secret the gentian-corp Application cannot render: Argo CD reports
-#   Failed to load target state: ... rpc error: code = Unknown desc = authentication required
-# and the Application sits in Unknown health indefinitely. Nothing is broken in
-# the manifests — Argo CD simply cannot read the repository.
+# Without this secret Argo CD cannot read the repository, so it cannot compare
+# desired against live state. It reports
+#   ComparisonError: Failed to load target state: ... desc = authentication required
+# and the Application sits at sync=Unknown.
+#
+# Note health can still read Healthy: pods deployed earlier keep running. What is
+# lost is reconciliation — drift goes undetected and no change is ever rolled out.
+# Nothing is wrong with the manifests.
 #
 # No credential is committed here, and none should be. Apply it with a PAT that
 # has read access to gentian-org/gentian-corp:
