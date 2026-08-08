@@ -34,13 +34,13 @@ import (
 type ReconcileStage string
 
 const (
-	StagePreflight      ReconcileStage = "Preflight"
-	StageBootstrap      ReconcileStage = "Bootstrap"
-	StageDataPlane      ReconcileStage = "DataPlane"
-	StageAppsAndEdge    ReconcileStage = "AppsAndEdge"
-	StageIntegrations   ReconcileStage = "Integrations"
-	StageSharedKernel   ReconcileStage = "SharedKernel"
-	StageFinalize       ReconcileStage = "Finalize"
+	StagePreflight    ReconcileStage = "Preflight"
+	StageBootstrap    ReconcileStage = "Bootstrap"
+	StageDataPlane    ReconcileStage = "DataPlane"
+	StageAppsAndEdge  ReconcileStage = "AppsAndEdge"
+	StageIntegrations ReconcileStage = "Integrations"
+	StageSharedKernel ReconcileStage = "SharedKernel"
+	StageFinalize     ReconcileStage = "Finalize"
 )
 
 type tenantReconcileState struct {
@@ -129,10 +129,6 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		state.blocked = true
 		_ = r.Status().Update(ctx, tenant)
 		return ctrl.Result{}, nil
-	}
-
-	if res, err := r.ensureImplicitBaseApps(ctx, tenant); res.RequeueAfter > 0 || err != nil {
-		return res, err
 	}
 
 	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {

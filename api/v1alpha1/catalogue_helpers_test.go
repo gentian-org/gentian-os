@@ -55,17 +55,6 @@ func TestEffectiveDeploymentRole(t *testing.T) {
 	}
 }
 
-func TestProfileRequiresProfile(t *testing.T) {
-	mod := &v1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{v1alpha1.AnnotationProfileRequiresProfile: "base-app"},
-		},
-	}
-	if v1alpha1.ProfileRequiresProfile(mod) != "base-app" {
-		t.Fatalf("requires: got %q", v1alpha1.ProfileRequiresProfile(mod))
-	}
-}
-
 func TestProfileGatewayAnnotations(t *testing.T) {
 	p := &v1alpha1.AppProfile{
 		ObjectMeta: metav1.ObjectMeta{

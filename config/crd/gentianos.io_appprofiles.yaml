@@ -535,16 +535,12 @@ spec:
                         description: Delivery lists the supported ways an addon reaches
                           the running app.
                         items:
-                          description: |-
-                            CustomizationDelivery is how an L3 addon reaches the running app.
-
-                            TRANSITIONAL: module-profile is the pre-cleanup spelling of addon-profile and is
-                            removed once the catalogue has migrated.
+                          description: CustomizationDelivery is how an L3 addon reaches
+                            the running app.
                           enum:
                           - git-sidecar
                           - image-layer
                           - addon-profile
-                          - module-profile
                           - app-store-api
                           type: string
                         type: array

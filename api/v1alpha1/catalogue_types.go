@@ -29,8 +29,7 @@ const (
 // Profile bundle annotations — generic catalogue semantics without CRD fields per app.
 // App-specific install parameters belong in extraValues or profile-scoped compositions.
 const (
-	AnnotationProfileDeploymentRole  = "gentianos.io/deployment-role"
-	AnnotationProfileRequiresProfile = "gentianos.io/requires-profile"
+	AnnotationProfileDeploymentRole = "gentianos.io/deployment-role"
 	// GatewayRootRedirect is an HTTPRoute redirect target for GET / on the app host.
 	AnnotationProfileGatewayRootRedirect = "gentianos.io/gateway-root-redirect"
 	// GatewayAPIBackends is a JSON array of extra path→Service routes on the app host.

@@ -173,6 +173,7 @@ spec:
       namespace: crossplane-system
     directAccessGrantsEnabled: false
     fullScopeAllowed: false
+    implicitFlowEnabled: true
     name: Odoo
     realmId: demo
     serviceAccountsEnabled: false

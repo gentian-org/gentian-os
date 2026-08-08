@@ -228,10 +228,7 @@ const (
 )
 
 // CustomizationDelivery is how an L3 addon reaches the running app.
-//
-// TRANSITIONAL: module-profile is the pre-cleanup spelling of addon-profile and is
-// removed once the catalogue has migrated.
-// +kubebuilder:validation:Enum=git-sidecar;image-layer;addon-profile;module-profile;app-store-api
+// +kubebuilder:validation:Enum=git-sidecar;image-layer;addon-profile;app-store-api
 type CustomizationDelivery string
 
 const (
@@ -241,9 +238,6 @@ const (
 	DeliveryImageLayer CustomizationDelivery = "image-layer"
 	// DeliveryAddonProfile ships the addon as its own AppProfile.
 	DeliveryAddonProfile CustomizationDelivery = "addon-profile"
-	// DeliveryModuleProfile is the pre-cleanup spelling of DeliveryAddonProfile.
-	// Deprecated: use DeliveryAddonProfile.
-	DeliveryModuleProfile CustomizationDelivery = "module-profile"
 	// DeliveryAppStoreAPI installs through the app's own runtime admin API.
 	DeliveryAppStoreAPI CustomizationDelivery = "app-store-api"
 )
