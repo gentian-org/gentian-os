@@ -555,6 +555,24 @@ spec:
             {{- $extraVals = mergeOverwrite $extraVals (dict "replicaCount" $spec.config.replicas) }}
             {{- end }}
 
+            {{- /* ── Overlay values an addon needs from the base's chart ─────────── */}}
+            {{- /* Some addons need infrastructure, not just a flag in the running app:
+                   Nextcloud's richdocuments is inert without a Collabora server, which
+                   the upstream chart ships as a subchart gated on collabora.enabled.
+                   Running it unconditionally costs every tenant ~1Gi whether or not
+                   anyone opens a document.
+
+                   The base declares the overlay, keyed on the app-side addon id, so all
+                   of that infrastructure's tuning, MAC waivers and in-app wiring stay in
+                   one profile. Matching happens here because spec.addons already carries
+                   the resolved ids — no operator change and no new field on the XR. */}}
+            {{- $selectedAddons := dig "addons" list $spec }}
+            {{- range $overlay := (dig "customization" "addonValues" list $pSpec) }}
+            {{- if and $overlay.whenAddon $overlay.values (has $overlay.whenAddon $selectedAddons) }}
+            {{- $extraVals = mergeOverwrite $extraVals $overlay.values }}
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Activate addons selected into this base (L3) ────────────────── */}}
             {{- /* The platform does not know how any app activates an addon. The base
                    profile supplies the recipe in spec.customization.addonActivation and

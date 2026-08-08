@@ -16,6 +16,8 @@ limitations under the License.
 
 package v1alpha1
 
+import "k8s.io/apimachinery/pkg/runtime"
+
 // Types in this file describe the customization surface of a catalogue app —
 // which rungs of the Gentian customization ladder the app supports, and by which
 // mechanism. They are deliberately app-neutral: no per-app fields, no profile
@@ -123,6 +125,11 @@ type CustomizationSurface struct {
 	// Helm values for this base. Set on the base profile, not on the addons.
 	// +optional
 	AddonActivation *CustomizationAddonActivation `json:"addonActivation,omitempty"`
+
+	// AddonValues overlays extra Helm values onto this app's release when a given
+	// addon is selected. Set on the base profile, not on the addons.
+	// +optional
+	AddonValues []CustomizationAddonValues `json:"addonValues,omitempty"`
 
 	// Publishes describes what this app offers so that *another* app can be built
 	// at L2 against it. It is not a rung of this app.
@@ -418,6 +425,34 @@ type CustomizationAddon struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Of string `json:"of"`
+}
+
+// CustomizationAddonValues turns on part of a base's chart when an addon is
+// selected.
+//
+// Some addons need more than a flag flipped inside the running app: Nextcloud's
+// richdocuments is useless without a Collabora server, which the upstream chart
+// ships as a subchart gated on collabora.enabled. Deploying it unconditionally
+// costs every tenant ~1Gi of memory whether or not anyone opens a document.
+//
+// This lives on the base rather than on the addon on purpose. The base already
+// owns that infrastructure — its tuning, its MAC waivers (allow-listed per
+// profile, naming the base), and the in-app wiring that configures it. Splitting
+// the trigger away from all of that would put one feature in two profiles.
+type CustomizationAddonValues struct {
+	// WhenAddon is the app-side addon id — the value of spec.customization.addon.id
+	// on the addon's profile, e.g. "richdocuments", not the profile name.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
+	WhenAddon string `json:"whenAddon"`
+
+	// Values are merged into the release values when that addon is selected, and
+	// omitted entirely when it is not.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Values *runtime.RawExtension `json:"values"`
 }
 
 // CustomizationAddonActivation describes how a base turns the tenant's selected

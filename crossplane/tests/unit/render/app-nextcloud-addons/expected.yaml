@@ -192,6 +192,8 @@ spec:
           namespace: tenant-demo
     skipCRDs: true
     values:
+      demoSubchart:
+        enabled: true
       global:
         imagePullSecrets:
         - registry-credentials

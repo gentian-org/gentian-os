@@ -29,6 +29,17 @@ spec:
           #!/bin/bash
           echo "app's own setup: install portal bridge, hide header"
   customization:
+    # Overlay fires only when the addon is selected. The fixture selects
+    # calendar+mail, so "sidecarthing" must stay absent from the rendered values.
+    addonValues:
+      - whenAddon: mail
+        values:
+          demoSubchart:
+            enabled: true
+      - whenAddon: sidecarthing
+        values:
+          neverRendered:
+            enabled: true
     # Mirrors nextcloud-base-ce: the recipe lives with the app, the platform only
     # renders it. The token is replaced with the space-separated selection.
     addonActivation:
