@@ -575,10 +575,29 @@ spec:
             {{- $activation := dig "customization" "addonActivation" dict $pSpec }}
             {{- if and $activation.valuesPath $activation.script }}
             {{- $script := $activation.script | replace "__GENTIAN_ADDON_IDS__" (join " " $addons) }}
+            {{- $parts := splitList "." $activation.valuesPath }}
+            {{- /* Append to whatever the app already puts at this path rather than
+                   replacing it. Many charts expose a single lifecycle hook, and the app
+                   is usually already using it — Nextcloud's before-starting installs the
+                   portal-bridge SSO handler and hides the in-app header when embedded.
+                   mergeOverwrite replaces a string outright, so writing ours on top
+                   silently deleted the app's own setup and broke SSO and theming while
+                   the addon activation itself looked like it worked. */}}
+            {{- $existing := $extraVals }}
+            {{- $found := true }}
+            {{- range $k := $parts }}
+            {{- if and $found (kindIs "map" $existing) (hasKey $existing $k) }}
+            {{- $existing = index $existing $k }}
+            {{- else }}
+            {{- $found = false }}
+            {{- end }}
+            {{- end }}
+            {{- if and $found (kindIs "string" $existing) (ne $existing "") }}
+            {{- $script = printf "%s\n\n# --- appended by Gentian: addon activation ---\n%s" $existing $script }}
+            {{- end }}
             {{- /* Fold the dotted values path into a nested dict from the inside out;
                    sprig has no set-nested-key, and a flat "a.b.c" key would be merged as
                    a literal key rather than a path. */}}
-            {{- $parts := splitList "." $activation.valuesPath }}
             {{- $node := $script }}
             {{- range $i := until (len $parts) }}
             {{- $node = dict (index $parts (sub (sub (len $parts) 1) $i)) $node }}

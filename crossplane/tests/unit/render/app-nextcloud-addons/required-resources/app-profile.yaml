@@ -21,6 +21,13 @@ spec:
           - "https://demo.${TENANT_DOMAIN}/oidc/callback"
         postLogoutRedirectUris:
           - "https://demo.${TENANT_DOMAIN}/"
+  extraValues:
+    # The app already uses this hook — activation must append, not replace.
+    nextcloud:
+      hooks:
+        before-starting: |
+          #!/bin/bash
+          echo "app's own setup: install portal bridge, hide header"
   customization:
     # Mirrors nextcloud-base-ce: the recipe lives with the app, the platform only
     # renders it. The token is replaced with the space-separated selection.

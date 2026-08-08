@@ -200,6 +200,11 @@ spec:
       nextcloud:
         hooks:
           before-starting: |
+            #!/bin/bash
+            echo "app's own setup: install portal bridge, hide header"
+
+
+            # --- appended by Gentian: addon activation ---
             #!/bin/sh
             set -eu
             SELECTED="calendar mail"
