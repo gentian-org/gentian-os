@@ -69,5 +69,9 @@ type SetAddonsRequest struct {
 	// Addons holds AppProfile names. An empty slice is a real selection meaning
 	// "none" and clears the list.
 	Addons []string
-	Actor  string
+	// Provision grants access as well as installing, exactly as it does for an app:
+	// every existing tenant user is added to the addon's access group. Installing
+	// without it leaves access to be granted by assigning users to that group.
+	Provision bool
+	Actor     string
 }
