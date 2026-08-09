@@ -627,7 +627,7 @@ EOF
 apiVersion: gentianos.io/v1alpha1
 kind: InfraData
 metadata:
-  name: dev-infra-data
+  name: ${cluster}-${stage}-infra-data
   namespace: crossplane-system
 spec:
   environment: ${stage}
@@ -642,7 +642,7 @@ EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Suze
 metadata:
-  name: dev-suze
+  name: ${cluster}-${stage}-suze
   namespace: crossplane-system
 spec:
   environment: ${stage}
@@ -894,7 +894,7 @@ verify_infra_chart_index() {
 apply_infra_data_xr() {
     banner "Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
 
-    local claim="dev-infra-data"
+    local claim; claim="$(gentian_infradata_claim_name)"
     local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
     local chart_repo
     chart_repo="$(detect_infra_chart_repo)"
@@ -1098,7 +1098,7 @@ ensure_suze_idp_workloads() {
     local ns="platform-kernel"
 
     if [[ -z "${xr_name}" ]]; then
-        xr_name=$(kubectl get suze dev-suze -n crossplane-system \
+        xr_name=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n crossplane-system \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     fi
     [[ -n "${xr_name}" ]] || {
@@ -1136,7 +1136,7 @@ ensure_suze_idp_workloads() {
 apply_suze_xr() {
     banner "Step 12 — Apply Suze XR (Secure Universal Zero-trust Environment)"
 
-    local claim="dev-suze"
+    local claim; claim="$(gentian_suze_claim_name)"
     local timeout_sec="${SUZE_XR_TIMEOUT_SEC:-1200}"
 
     info "Waiting for Suze Argo apps + prerequisites in platform-kernel (up to 3m)..."
@@ -1243,18 +1243,27 @@ print_summary_cp() {
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    infra_pg_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-postgresql \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    infra_mdb_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-mariadb \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    infra_redis_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-redis \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    infra_minio_ready=$(kubectl get release.helm.crossplane.io/dev-infra-data-minio \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
+    # Releases are named <composite>-<chart>, and the composite carries
+    # Crossplane's random suffix (e.g. ifk-l2-prod-infra-data-n6z4s-postgresql).
+    # Looking them up under the *claim* name never matched, so these flags always
+    # read "unknown" regardless of the actual state. Resolve the composite first.
+    local infra_claim infra_xr
+    infra_claim="$(gentian_infradata_claim_name)"
+    infra_xr=$(kubectl get infradata.gentianos.io "${infra_claim}" -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
+    infra_xr="${infra_xr:-${infra_claim}}"
+    _release_ready() {
+        kubectl get "release.helm.crossplane.io/${infra_xr}-$1" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown"
+    }
+    infra_pg_ready=$(_release_ready postgresql)
+    infra_mdb_ready=$(_release_ready mariadb)
+    infra_redis_ready=$(_release_ready redis)
+    infra_minio_ready=$(_release_ready minio)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    suze_xr=$(kubectl get suze dev-suze -n crossplane-system \
-        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || echo "dev-suze")
+    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
     openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1)
     keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
@@ -1278,10 +1287,10 @@ print_summary_cp() {
     echo -e "${GREEN}  Tenancy mode   : ${TENANCY_MODE:-multi}${NC}"
     echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
-    echo -e "${GREEN}  InfraData PG   : dev-infra-data-postgresql (Ready=${infra_pg_ready})${NC}"
-    echo -e "${GREEN}  InfraData MDB  : dev-infra-data-mariadb (Ready=${infra_mdb_ready})${NC}"
-    echo -e "${GREEN}  InfraData Redis: dev-infra-data-redis (Ready=${infra_redis_ready})${NC}"
-    echo -e "${GREEN}  InfraData MinIO: dev-infra-data-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  InfraData PG   : ${infra_xr}-postgresql (Ready=${infra_pg_ready})${NC}"
+    echo -e "${GREEN}  InfraData MDB  : ${infra_xr}-mariadb (Ready=${infra_mdb_ready})${NC}"
+    echo -e "${GREEN}  InfraData Redis: ${infra_xr}-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  InfraData MinIO: ${infra_xr}-minio (Ready=${infra_minio_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
     echo -e "${GREEN}  Completed      : Steps 14–17 (Stage 1 IdP, authz bridge, portal, app catalogue)${NC}"
@@ -1298,7 +1307,7 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
-    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep dev-infra-data${NC}"
+    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep ${infra_xr}${NC}"
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"

@@ -300,35 +300,44 @@ banner "Step 1 — Remove Cluster XR (Crossplane GC)"
 
 # InfraData XR owns shared postgres/mariadb Helm releases — remove before Cluster GC
 # so provider-helm can uninstall chart resources cleanly.
-if kubectl get infradata dev-infra-data -n crossplane-system >/dev/null 2>&1; then
-    info "Deleting InfraData claim dev-infra-data..."
-    kubectl delete infradata dev-infra-data -n crossplane-system --timeout=120s || true
+INFRA_CLAIM_NAME="$(gentian_infradata_claim_name)"
+# Resolve the composite before deleting the claim: it is named <claim>-<hash>,
+# so matching on the claim name alone never found it and the GC wait was skipped.
+INFRA_XR_NAME="$(kubectl get infradata.gentianos.io "${INFRA_CLAIM_NAME}" \
+    -n crossplane-system -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)"
+
+if kubectl get infradata.gentianos.io "${INFRA_CLAIM_NAME}" -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting InfraData claim ${INFRA_CLAIM_NAME}..."
+    kubectl delete infradata.gentianos.io "${INFRA_CLAIM_NAME}" -n crossplane-system --timeout=120s || true
 else
-    info "InfraData claim dev-infra-data not found; skipping."
+    info "InfraData claim ${INFRA_CLAIM_NAME} not found; skipping."
 fi
 
-if kubectl get xinfradata dev-infra-data >/dev/null 2>&1; then
-    info "Waiting for XInfraData dev-infra-data to be garbage-collected (max 5m)..."
+if [[ -z "${INFRA_XR_NAME}" ]]; then
+    info "No XInfraData bound to ${INFRA_CLAIM_NAME}; skipping composite wait."
+elif kubectl get xinfradata.gentianos.io "${INFRA_XR_NAME}" >/dev/null 2>&1; then
+    info "Waiting for XInfraData ${INFRA_XR_NAME} to be garbage-collected (max 5m)..."
     local_deadline=$((SECONDS + 300))
-    while kubectl get xinfradata dev-infra-data >/dev/null 2>&1; do
+    while kubectl get xinfradata.gentianos.io "${INFRA_XR_NAME}" >/dev/null 2>&1; do
         if (( SECONDS > local_deadline )); then
-            warn "XInfraData dev-infra-data still present after 5m — forcing deletion."
-            kubectl delete xinfradata dev-infra-data --grace-period=0 --force >/dev/null 2>&1 || true
+            warn "XInfraData ${INFRA_XR_NAME} still present after 5m — forcing deletion."
+            kubectl delete xinfradata.gentianos.io "${INFRA_XR_NAME}" --grace-period=0 --force >/dev/null 2>&1 || true
             break
         fi
         sleep 5
     done
-    success "XInfraData dev-infra-data removed."
+    success "XInfraData ${INFRA_XR_NAME} removed."
 else
-    info "XInfraData dev-infra-data not found; skipping."
+    info "XInfraData ${INFRA_XR_NAME} not found; skipping."
 fi
 
 # Suze XR (Keycloak + OpenFGA) — remove before Crossplane core so Helm releases GC cleanly.
-if kubectl get suze dev-suze -n crossplane-system >/dev/null 2>&1; then
-    info "Deleting Suze claim dev-suze..."
-    kubectl delete suze dev-suze -n crossplane-system --timeout=120s || true
+SUZE_CLAIM_NAME="$(gentian_suze_claim_name)"
+if kubectl get suze.gentianos.io "${SUZE_CLAIM_NAME}" -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting Suze claim ${SUZE_CLAIM_NAME}..."
+    kubectl delete suze.gentianos.io "${SUZE_CLAIM_NAME}" -n crossplane-system --timeout=120s || true
 else
-    info "Suze claim dev-suze not found; skipping."
+    info "Suze claim ${SUZE_CLAIM_NAME} not found; skipping."
 fi
 
 if kubectl get xsuze -o name 2>/dev/null | grep -q .; then

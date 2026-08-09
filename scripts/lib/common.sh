@@ -1365,18 +1365,23 @@ gentian_report_abort() {
 # So read it from the claim the scaffolder wrote: new clusters get
 # <cluster>-<stage>, existing ones keep whatever their checked-in claim says.
 # =============================================================================
-gentian_cluster_claim_name() {
-    local claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER:-}/kernel/claims/cluster.yaml"
+gentian_claim_name() {
+    local claim_file="$1" fallback="$2"
+    local path="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER:-}/kernel/claims/${claim_file}.yaml"
     local name=""
-    name=$(yq_get '.metadata.name' "${claim}" 2>/dev/null || true)
+    name=$(yq_get '.metadata.name' "${path}" 2>/dev/null || true)
     if [[ -n "${name}" ]]; then
         echo "${name}"
         return 0
     fi
     # Fall back to the historical literal: a missing or unreadable claim then
     # behaves exactly as before rather than targeting some other object.
-    echo "dev-cluster"
+    echo "${fallback}"
 }
+
+gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
+gentian_infradata_claim_name() { gentian_claim_name infra-data dev-infra-data; }
+gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 
 # =============================================================================
 # apply_bootstrap_application — kubectl apply a bootstrap Application, rendering
