@@ -184,7 +184,7 @@ via `tenant-default`; app Compositions deploy charts via **`provider-helm`
 
 The platform ships **`app-default`** in `crossplane/compositions/`. Catalogue
 profiles with custom MR graphs set `spec.compositionRef` to a Composition bundled
-in `gentian-apps` or `gentian-pro` (e.g. `app-od-element`). Those compositions
+in their own catalogue repository (e.g. `app-od-element`). Those compositions
 emit `openidclient.keycloak.crossplane.io/Client` MRs; the operator skips
 duplicate OIDC client Jobs for those apps.
 

@@ -132,8 +132,8 @@ func ProfileReferenceMatches(ref ProfileReference, p *AppProfile) bool {
 		id.Edition == EffectiveEdition(want.Edition)
 }
 
-// ProfileRequiresEntitlement reports whether CRM entitlement is required before install.
-// Premium profiles in gentian-pro use license: proprietary.
+// ProfileRequiresEntitlement reports whether an entitlement must be redeemed
+// before install. Any catalogue entry marked license: proprietary needs one.
 func ProfileRequiresEntitlement(p *AppProfile) bool {
 	return strings.EqualFold(p.Spec.License, "proprietary")
 }

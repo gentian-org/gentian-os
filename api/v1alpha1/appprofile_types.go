@@ -62,7 +62,8 @@ type AppProfileSpec struct {
 	TrustTier TrustTier `json:"trustTier,omitempty"`
 
 	// License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
-	// Pro profiles in gentian-pro typically use proprietary.
+	// Entries requiring a paid entitlement use proprietary; see
+	// ProfileRequiresEntitlement.
 	// +optional
 	License string `json:"license,omitempty"`
 

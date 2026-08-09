@@ -16,10 +16,16 @@ spec:
   - 'https://github.com/gentian-org/gentian-os/*'                                                         # Paths under gentian-os repo
   - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
-  - 'https://github.com/gentian-org/gentian-pro'                                                      # Pro / OpenDesk catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
-  - 'https://github.com/gentian-org/gentian-corp'                                                       # Gentian commercial frontpage portal
+  #
+  # This list covers the platform's own repositories only.
+  #
+  # A private catalogue or an optional add-on deployed alongside the platform
+  # does not belong here: it declares its own AppProject naming its own
+  # sourceRepos, which keeps its existence — and its repository URL — out of
+  # gentian-os entirely. Adding it here instead would make the platform
+  # unable to install without a repository most clusters do not have.
   - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)

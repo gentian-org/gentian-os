@@ -246,10 +246,16 @@ grafana:
     namespace: ""
 
 # Commerce integration configuration
+# Optional commerce backend: the service that redeems install grants for
+# proprietary-licensed profiles and receives metering reports. Any service
+# implementing POST /api/v1/install-grants/{jti}/exchange and
+# POST /api/v1/metering/report will do; gentian-os ships no such service and
+# does not assume one exists. Left disabled, proprietary profiles simply refuse
+# to install and no metering is reported.
 commerce:
   enabled: false
-  corpAPIURL: ""
-  operatorToken: ""
+  apiURL: ""
+  apiToken: ""
   meteringInterval: ""
 
 # LLM serving support configuration
