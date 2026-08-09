@@ -1,0 +1,94 @@
+# =============================================================================
+# Shared kernel PostgreSQL — plain values ConfigMaps
+#
+# Two ConfigMaps merged by the InfraData Crossplane composition (provider-helm
+# valuesFrom) before the sensitive-values Secret:
+#   1. postgresql-base-values  — non-secret defaults for all environments
+#   2. postgresql-prod-values   — env-specific sizing and non-secret overrides
+#
+# DO NOT put any secret values here.  All passwords come from the
+# postgresql-sensitive-values Secret (see externalsecret.yaml).
+#
+# job.users is intentionally omitted: the sensitive-values.yaml template
+# renders the complete list (username + connectionLimit + password) so Helm
+# list-merge produces a single consistent array.
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-base-values
+  namespace: gentian-infra-prod
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    # Superuser username is constant; password overridden by sensitive-values.
+    postgres:
+      user: postgres
+
+    # Runtime image — official Postgres 15 on Alpine
+    image:
+      registry: registry-1.docker.io
+      repository: library/postgres
+      tag: 15.13-alpine3.20
+      imagePullPolicy: IfNotPresent
+
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      enabled: true
+      privileged: false
+      runAsUser: 1001
+      runAsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+
+    podSecurityContext:
+      enabled: true
+      fsGroup: 1001
+      fsGroupChangePolicy: OnRootMismatch
+
+    job:
+      databases:
+        - name: keycloak
+          user: keycloak_user
+        - name: keycloak_extensions
+          user: keycloak_extensions_user
+        - name: openfga
+          user: openfga_user
+
+    cleanup:
+      deletePodsOnSuccess: true
+      deletePodsOnSuccessTimeout: 60
+
+    persistence:
+      enabled: true
+
+    global:
+      ingress:
+        enabled: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-prod-values
+  namespace: gentian-infra-prod
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    persistence:
+      size: 1Gi
+
+    resources:
+      limits:
+        cpu: "4"
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi

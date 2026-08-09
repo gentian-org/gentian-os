@@ -1336,15 +1336,31 @@ resolve_storage_class() {
 gentian_report_abort() {
     local exit_code=$?
     local cmd="${BASH_COMMAND:-<unknown>}"
-    local src="${BASH_SOURCE[1]:-${0:-<unknown>}}"
-    local line="${BASH_LINENO[0]:-?}"
 
-    # Keep this dependency-free: it runs while the shell is already unwinding.
+    # A bare `exit N` is a deliberate stop: the step that called it has already
+    # printed its own diagnosis (which chart, which resource, what to run next).
+    # Appending an ABORT banner to that only buries the useful message under a
+    # generic one — and the frame it would name is wherever bash happened to be
+    # unwinding, not where the problem is. Stay quiet and let the real error
+    # stand.
+    case "${cmd}" in
+        exit|exit\ *|return|return\ *) return "${exit_code}" ;;
+    esac
+
+    # Walk the actual call stack rather than guessing one frame. Frame 0 is this
+    # function; start at 1. This is what makes the report trustworthy — the
+    # single-frame version pointed at whichever library was on the stack instead
+    # of the failing command's own file.
     echo "" >&2
     echo -e "\033[0;31m[ABORT]\033[0m Install stopped: a command failed and was not handled." >&2
     echo "  exit code : ${exit_code}" >&2
-    echo "  location  : ${src}:${line}" >&2
     echo "  command   : ${cmd}" >&2
+    echo "  call stack:" >&2
+    local i=1
+    while [[ -n "${BASH_SOURCE[i]:-}" ]]; do
+        echo "    ${BASH_SOURCE[i]}:${BASH_LINENO[i-1]:-?}  in ${FUNCNAME[i]:-main}()" >&2
+        i=$((i + 1))
+    done
     echo "" >&2
     echo "  If the command above ends in 2>/dev/null its error text was" >&2
     echo "  suppressed — re-run it by hand without that redirect to see why." >&2
