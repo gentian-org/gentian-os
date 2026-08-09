@@ -94,8 +94,7 @@ gentian_service_addr() {
     local pid=$!
     echo "${pid}" >> "${_GENTIAN_PF_PIDFILE}"
 
-    local i
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
         # port-forward died (RBAC, Service vanished) — no point waiting it out.
         kill -0 "${pid}" 2>/dev/null || return 1
         if curl -sk -o /dev/null --max-time 2 "${scheme}://127.0.0.1:${lport}/" 2>/dev/null; then
