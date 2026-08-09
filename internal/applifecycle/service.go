@@ -427,5 +427,20 @@ func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result,
 			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
 		}
 	}
-	return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile}, nil
+
+	// Installing an addon activates it; it does not decide who may see it. Access
+	// comes from membership of the addon's own group, which carries the grant
+	// attributes declared on its profile. Provision is the same shortcut it is for
+	// an app: put every existing tenant user in that group now, rather than leaving
+	// the admin to assign them.
+	var warnings []string
+	if req.Provision {
+		for _, addon := range resolved {
+			if err := s.provisionAppGroupUsers(ctx, req.Tenant, addon.Profile); err != nil {
+				warnings = append(warnings,
+					fmt.Sprintf("provision access for %s: %v", addon.Profile, err))
+			}
+		}
+	}
+	return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile, Warnings: warnings}, nil
 }

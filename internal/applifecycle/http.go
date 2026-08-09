@@ -133,6 +133,10 @@ func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
 	// selection the activation script has to see.
 	var body struct {
 		Addons []string `json:"addons"`
+		// Provision mirrors the app-level flag: install and grant access to all
+		// existing tenant users, rather than install and leave access to group
+		// assignment.
+		Provision bool `json:"provision"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
@@ -140,10 +144,11 @@ func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.Service.SetAddons(r.Context(), SetAddonsRequest{
-		Tenant:  tenant,
-		Profile: profile,
-		Addons:  body.Addons,
-		Actor:   actor,
+		Tenant:    tenant,
+		Profile:   profile,
+		Addons:    body.Addons,
+		Provision: body.Provision,
+		Actor:     actor,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
