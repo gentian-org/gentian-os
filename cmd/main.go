@@ -106,8 +106,8 @@ func main() {
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
 		CommerceEnabled:          controller.EnvBool("GENTIAN_COMMERCE_ENABLED"),
-		CorpAPIURL:               os.Getenv("GENTIAN_CORP_API_URL"),
-		OperatorToken:            os.Getenv("GENTIAN_CORP_OPERATOR_TOKEN"),
+		CommerceAPIURL:           os.Getenv("GENTIAN_COMMERCE_API_URL"),
+		CommerceAPIToken:         os.Getenv("GENTIAN_COMMERCE_API_TOKEN"),
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")

@@ -1094,7 +1094,8 @@ spec:
               license:
                 description: |-
                   License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
-                  Pro profiles in gentian-pro typically use proprietary.
+                  Entries requiring a paid entitlement use proprietary; see
+                  ProfileRequiresEntitlement.
                 type: string
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume

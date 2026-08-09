@@ -21,7 +21,7 @@ gentian-apps/               # Community & Pro AppProfile metadata (public)
 ├── profiles/               # All AppProfile CRs (Community, API, and Pro profiles)
 └── charts/                 # Free charts → public ghcr.io/gentian-org packages
 
-gentian-pro/                # Pro workloads (private) — gentian-org/gentian-pro
+<pro-catalogue>/            # Pro workloads (private, supplied per deployment)
 ├── charts/                 # Commercial Helm charts
 └── mirror/                 # Commercial container images (optional layout)
 
@@ -31,8 +31,8 @@ gentian-deployments/        # Tenant desired state (spec.apps[].profile)
 | Repo | Tier | Contents | Sync |
 |---|---|---|---|
 | **`gentian-apps`** | Public | All `AppProfile` metadata + free charts | ArgoCD → all clusters |
-| **`gentian-pro`** | Private | Commercial Helm charts + mirrored images | Registry auth (install-grants) |
-| **CRM (Odoo GCI)** | — | Customers, subscriptions, invoices | JSON-RPC API ← `gentian-corp` portal |
+| **Pro catalogue** | Private | Commercial Helm charts + mirrored images | Registry auth (install-grants) |
+| **CRM** | — | Customers, subscriptions, invoices | JSON-RPC API ← commerce backend |
 
 ---
 
@@ -85,9 +85,9 @@ flowchart TD
         GA["gentian-apps"]
     end
     subgraph pro ["Private Registry"]
-        GP["gentian-pro Registry"]
+        GP["Pro Registry"]
     end
-    subgraph crm ["Odoo GCI & Portal"]
+    subgraph crm ["CRM & Commerce Backend"]
         CUST["Customer"]
         SO["Sales order"]
         ENT["Entitlement"]
@@ -113,7 +113,7 @@ flowchart TD
 1. **Browse:** The app-store reads the unified `AppCatalogue` index. All community and Pro profiles are visible.
 2. **Order:** The tenant admin clicks **Buy** on a Pro app, initiating the checkout session.
 3. **Entitlement:** Odoo records the partner's active subscription status.
-4. **Fulfill:** The app-store fetches the single-use install-grant JWT from gentian-corp; the operator exchanges it with the portal gateway for OCI registry secrets and proceeds to deploy the `App` claim in the tenant namespace.
+4. **Fulfill:** The app-store fetches the single-use install-grant JWT from the commerce backend; the operator exchanges it for OCI registry secrets and proceeds to deploy the `App` claim in the tenant namespace.
 5. **Invoice:** Odoo generates recurring monthly invoices based on reported usage metrics.
 
 **Multi-tenant cluster:** Tenant B can browse Pro profiles but cannot install them. The operator blocks deployment and denies OCI registry pull keys until a valid entitlement is verified.
@@ -174,7 +174,7 @@ Use a **fulfillment service** (or n8n / Odoo automation) between Odoo and the cl
 | Trigger | Action |
 |---|---|
 | SO confirmed + paid (Community app) | Append `profile:` to tenant in `gentian-deployments` **or** call install API |
-| SO confirmed + paid (Pro app) | Write **entitlement**; enable `gentian-pro` sync if needed; append `profile:` to **that tenant only** |
+| SO confirmed + paid (Pro app) | Write **entitlement**; enable Pro catalogue sync if needed; append `profile:` to **that tenant only** |
 | Subscription cancelled | Remove entitlement + `profile:` from tenant; prune Pro app |
 | Entitlement expiry | Same as cancel; optional grace period in CRM only |
 
@@ -212,4 +212,4 @@ Fulfillment is handled via the FastAPI service gateway between customer operator
 | Profile authoring | [gentian-apps/docs/app-profile-guide.md](../../../gentian-apps/docs/app-profile-guide.md) |
 | IAM / roles | [iam.md](iam.md) |
 | Commercial roadmap | [roadmap.md](../roadmap.md#commercial-layer) |
-| Kernel rebuild / gentian-pro artefacts | [architecture.md](../architecture.md) §8 |
+| Kernel rebuild / Pro artefacts | [architecture.md](../architecture.md) §8 |

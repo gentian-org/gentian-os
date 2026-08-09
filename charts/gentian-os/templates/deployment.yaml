@@ -131,14 +131,23 @@ spec:
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
               value: {{ .Values.llmSupport | default false | quote }}
+            {{- /* Renamed keys: a cluster overlay still setting the old ones would
+                   otherwise render a commerce block pointing at nothing, and the
+                   operator would fail every install-grant exchange at runtime. */}}
+            {{- if .Values.commerce.corpAPIURL }}
+            {{- fail "commerce.corpAPIURL was renamed to commerce.apiURL" }}
+            {{- end }}
+            {{- if .Values.commerce.operatorToken }}
+            {{- fail "commerce.operatorToken was renamed to commerce.apiToken" }}
+            {{- end }}
             {{- if .Values.commerce.enabled }}
             - name: GENTIAN_COMMERCE_ENABLED
               value: "true"
-            - name: GENTIAN_CORP_API_URL
-              value: {{ .Values.commerce.corpAPIURL | quote }}
-            {{- if .Values.commerce.operatorToken }}
-            - name: GENTIAN_CORP_OPERATOR_TOKEN
-              value: {{ .Values.commerce.operatorToken | quote }}
+            - name: GENTIAN_COMMERCE_API_URL
+              value: {{ .Values.commerce.apiURL | quote }}
+            {{- if .Values.commerce.apiToken }}
+            - name: GENTIAN_COMMERCE_API_TOKEN
+              value: {{ .Values.commerce.apiToken | quote }}
             {{- end }}
             {{- if .Values.commerce.meteringInterval }}
             - name: METERING_INTERVAL

@@ -227,5 +227,6 @@ spec:
       useAnnotations: true
     - namePattern: "gentian-portal"
       useAnnotations: true
-    - namePattern: "gentian-corp"
-      useAnnotations: true
+  # Only gentian-os's own Applications belong here. An optional add-on deployed
+  # alongside the platform ships its own ImageUpdater — several may coexist in
+  # this namespace — so the platform never has to name it.

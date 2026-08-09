@@ -219,7 +219,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 ### 2.8 Database-Backed Marketplace Catalog (***)
 * **Target Domain**: Software Supply & Catalog Management
 * **Context**: In the short term, Git is the source of truth for the app catalog, requiring PR reviews for developer submissions to ensure quality control and audit logs. As the developer ecosystem scales, a Git-based workflow will become a bottleneck for updates.
-* **Proposed Solution**: Migrate from a Git-based metadata store to a database-backed marketplace catalog managed by `gentian-corp`. Developers will upload and update their profiles via a developer dashboard portal, bypassing Git PRs entirely while keeping automated validation testbenches.
+* **Proposed Solution**: Migrate from a Git-based metadata store to a database-backed marketplace catalog managed by the commerce backend. Developers will upload and update their profiles via a developer dashboard portal, bypassing Git PRs entirely while keeping automated validation testbenches.
 * **Backlog Items**:
   - `[ ]` Design the developer portal onboarding flow for app catalog submissions.
   - `[ ]` Define database schemas in Odoo/Postgres to store and version `AppProfile` manifests.
@@ -229,18 +229,18 @@ For the current baseline design of the system, refer to [architecture.md](archit
 ### 2.9 Third-Party App Developer Revenue Split (Stripe Connect) (***)
 * **Target Domain**: Platform Billing & Business Logic
 * **Context**: When external developers start publishing paid (Pro) applications on the Gentian Marketplace, a system is needed to automatically collect payments, deduct Gentian's commission, and distribute the remainder to the developer.
-* **Proposed Solution**: Integrate Stripe Connect (Express/Custom) into the `gentian-corp` checkout pipeline. Allow developers to onboard as sub-merchants, and configure Stripe Checkout to dynamically split payments between Gentian (commission fee) and the developer (revenue cut).
+* **Proposed Solution**: Integrate Stripe Connect (Express/Custom) into the commerce backend's checkout pipeline. Allow developers to onboard as sub-merchants, and configure Stripe Checkout to dynamically split payments between Gentian (commission fee) and the developer (revenue cut).
 * **Backlog Items**:
   - `[ ]` Integrate Stripe Connect Express onboarding flow for developers in the dashboard.
-  - `[ ]` Implement split-payment execution in `gentian-corp` checkout sessions.
+  - `[ ]` Implement split-payment execution in commerce-backend checkout sessions.
   - `[ ]` Update Odoo custom subscription billing modules to account for commission shares and developer payout records.
 
 ### 2.10 DNS TXT Record Verification for Custom Domains (**)
 * **Target Domain**: Ingress & Domain Security
 * **Context**: When a tenant registers an organization using a custom domain (e.g. `acme.com`), there is no check to ensure they actually own or control it. This can lead to domain conflicts, namespace hijacking, or incorrect routing.
-* **Proposed Solution**: Introduce a DNS TXT verification challenge. Before a custom domain configuration is activated on the cluster ingress, `gentian-corp` issues a unique token (e.g., `gentian-verification=token`) that the customer must publish in their DNS records. The operator verifies the presence of the TXT record before routing HTTP traffic.
+* **Proposed Solution**: Introduce a DNS TXT verification challenge. Before a custom domain configuration is activated on the cluster ingress, the commerce backend issues a unique token (e.g., `gentian-verification=token`) that the customer must publish in their DNS records. The operator verifies the presence of the TXT record before routing HTTP traffic.
 * **Backlog Items**:
-  - `[ ]` Implement a DNS TXT challenge generator in `gentian-corp` API.
+  - `[ ]` Implement a DNS TXT challenge generator in the commerce backend API.
   - `[ ]` Update the cluster operator ingress controller to query and verify TXT challenge records before binding host ingresses.
 
 ### 2.11 Zero-Hurdle Demo Sandbox Launcher (***)

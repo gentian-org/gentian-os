@@ -22,7 +22,7 @@ Public vs premium is implied by **source repo** and **license**:
 | Source | Typical license |
 |---|---|
 | **`gentian-apps/profiles/`** | OSS SPDX ids (e.g. `Apache-2.0`) |
-| **`gentian-pro/profiles/`** | `proprietary` |
+| Any additional catalogue repository | whatever it declares, `proprietary` included |
 
 `spec.chart.version` is the **Helm chart pin** — distinct from `catalogueVersion`.
 
@@ -70,7 +70,7 @@ Used by `Tenant.spec.apps[].profileRef` for dimensional installs.
 | Repo | Profiles |
 |---|---|
 | **`gentian-apps/profiles/`** | OSS catalogue |
-| **`gentian-pro/profiles/`** | Pro catalogue (`license: proprietary`) |
+| Additional catalogue repositories | Supplied per deployment; a profile that sets `license: proprietary` requires an entitlement to install |
 
 Recommended CR name for new revisions:
 

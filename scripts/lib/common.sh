@@ -769,14 +769,12 @@ prompt_app_repos() {
 
     : "${GENTIAN_APPS_REPO:=${default_apps_repo}}"
     : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
-    : "${GENTIAN_PRO_REPO:=https://git.example.domain/gentian-pro}"
-    : "${GENTIAN_PRO_BRANCH:=main}"
     : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
         : "${GENTIAN_DEPLOYMENTS_CLUSTER:=${default_deploy_cluster}}"
         : "${GENTIAN_DEPLOYMENTS_STAGE:=${default_deploy_stage}}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
-    export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH GENTIAN_PRO_REPO GENTIAN_PRO_BRANCH \
+    export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH \
             GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH \
             GENTIAN_DEPLOYMENTS_CLUSTER GENTIAN_DEPLOYMENTS_STAGE \
             GENTIAN_DEPLOYMENTS_PATH

@@ -90,8 +90,8 @@ gentian-deployments/
           infra-data.yaml
           suze.yaml
         addons/
-          gentian-corp/
-            application.yaml        # optional add-on (example) — hand-added, not every cluster runs it
+          <add-on>/
+            application.yaml        # optional add-on — hand-added, not every cluster runs one
       definitions/
         components/tenant-defaults/  # cluster-wide defaults applied to every tenant at activation
         <tenant>/tenant.yaml         # tenant catalogue (inactive) — stage-agnostic, see below
@@ -230,18 +230,31 @@ those two is intentionally *not* committed anywhere in
 | --- | --- | --- | --- |
 | **Kernel instance data** — genuinely unique per cluster | Crossplane Claims (`kernelDomain`), the cluster's `values.yaml` overlay | `clusters/<cluster>/kernel/{claims/*.yaml,values.yaml}` | Yes — `scaffold_cluster_deployment()` generates these (§3A) |
 | **Kernel bootstrap Applications** — near-identical across every cluster | `gentian-os` Application, `gentian-tenants` ApplicationSet, `gentian-portal` Application, `ImageUpdater` CR | Nowhere in `gentian-deployments` — they live as `.tmpl` files in `gentian-os`'s own `kernel/bootstrap/`, rendered with `%CLUSTER%`/`%STAGE%` and `kubectl apply`'d directly by `install.sh` (§3B) | No — not per-cluster data at all, just the same template rendered with different placeholders |
-| **Optional cluster add-ons** — most clusters don't run this | `gentian-corp` (a private, org-specific app — not part of the generic gentian-os offering) | `clusters/<cluster>/kernel/addons/gentian-corp/application.yaml`, hand-added | No — not every cluster wants it, so nothing generates it for you |
+| **Optional cluster add-ons** — most clusters run none | A private or org-specific app deployed beside the platform, not part of the gentian-os offering | `clusters/<cluster>/kernel/addons/<add-on>/application.yaml`, hand-added | No — not every cluster wants one, so nothing generates it for you |
 | **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/<tenant>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
 
-`gentian-corp` is also the concrete example of a rule that applies to any
-add-on: the *manifests* it deploys don't have to live in
-`gentian-deployments` at all — they can live in the add-on's own repo (here,
-`gentian-corp/deploy/gentian-corp.yaml`), with the `Application` in
-`gentian-deployments` reduced to a repo pointer plus an inline Kustomize
-patch for the one or two values that repo can't know on its own
-(`kernelDomain`, in this case). Same logic as the kernel bootstrap
-Applications above, one level down: don't commit a copy of something that
-already has a canonical home elsewhere.
+Add-ons follow a rule of their own: the *manifests* they deploy don't have to
+live in `gentian-deployments` at all — they can live in the add-on's own repo
+(`<add-on>/deploy/`), with the `Application` in `gentian-deployments` reduced
+to a repo pointer plus an inline Kustomize patch for the one or two values
+that repo can't know on its own (`kernelDomain`, typically). Same logic as the
+kernel bootstrap Applications above, one level down: don't commit a copy of
+something that already has a canonical home elsewhere.
+
+**An add-on is self-contained, and gentian-os does not know it exists.** There
+is deliberately no register-your-add-on hook here, because everything an add-on
+needs is already a plain Argo CD object it can create for itself:
+
+| It needs | It ships |
+| --- | --- |
+| Permission to sync from its own repo | Its own `AppProject`, naming its own `sourceRepos` and destination namespace. It must not borrow the `gentian` project — that one covers the platform's repositories only. |
+| Its private repo readable by Argo CD | Its own `repository` Secret in `argocd`, created by its installer. Nothing can GitOps this: it is the credential needed to read the repo that would contain it. |
+| Image tags followed | Its own `ImageUpdater` CR. Several may coexist in `argocd`; the platform's lists the platform's Applications only. |
+
+Consequently a cluster can install, upgrade and run gentian-os with no add-on
+present, and an add-on can be removed by deleting its `Application`,
+`AppProject` and namespace — with nothing left behind in the platform to
+clean up.
 
 The middle two rows are the ones easy to blur, since they used to be the
 same thing: earlier revisions of this design committed a
@@ -475,7 +488,7 @@ and that the staging cluster's own `clusters/<cluster>/kernel/`:
 | --- | --- | --- |
 | `gentian-deployments/profiles/` | Yes | Stage-tier policy, shared across clusters of that tier |
 | `gentian-deployments/clusters/<cluster>/kernel/claims/` | Yes | Crossplane Claims — `kernelDomain` and other cluster identity |
-| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay `values.yaml`, `cluster-settings.env`, optional add-ons (e.g. `addons/gentian-corp/application.yaml`) — **not** bootstrap Applications, see §3.1 |
+| `gentian-deployments/clusters/<cluster>/kernel/` (rest) | Yes | Cluster-unique overlay `values.yaml`, `cluster-settings.env`, optional add-ons (`addons/<add-on>/application.yaml`) — **not** bootstrap Applications, see §3.1 |
 | `gentian-deployments/clusters/<cluster>/definitions/` | Yes | Tenant definitions (inactive) |
 | `gentian-deployments/clusters/<cluster>/tenants/` | Yes | Activated tenant manifests |
 | `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `KERNEL_DOMAIN`, `ACME_ENV`, repo URLs |

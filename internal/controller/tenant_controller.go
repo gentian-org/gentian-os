@@ -183,10 +183,13 @@ type TenantReconciler struct {
 	CrossplaneOnly bool
 	// CommerceEnabled flags if licensing checks and metering reports are active.
 	CommerceEnabled bool
-	// CorpAPIURL is the backend commercial API base URL.
-	CorpAPIURL string
-	// OperatorToken is the bearer token used to authenticate with gentian-corp.
-	OperatorToken string
+	// CommerceAPIURL is the base URL of the commerce backend: the service that
+	// redeems install grants and accepts metering reports. Which service that is
+	// belongs to the deployment, not to this operator — anything implementing the
+	// two endpoints below will do, and with commerce disabled there is none.
+	CommerceAPIURL string
+	// CommerceAPIToken is the bearer token presented to that backend.
+	CommerceAPIToken string
 }
 
 // SetupWithManager registers the controller with the controller-manager.
@@ -712,7 +715,7 @@ type installExchangeResponse struct {
 }
 
 func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtToken string) (*installExchangeResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CorpAPIURL, "/"), jti)
+	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CommerceAPIURL, "/"), jti)
 	reqBody, err := json.Marshal(installExchangeRequest{InstallGrantJwt: jwtToken})
 	if err != nil {
 		return nil, err
@@ -723,7 +726,7 @@ func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtTok
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.OperatorToken)
+	req.Header.Set("Authorization", "Bearer "+r.CommerceAPIToken)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)

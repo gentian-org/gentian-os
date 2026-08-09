@@ -14,8 +14,10 @@ needs regardless of which apps run on it. It does **not** contain:
 - App or sidecar implementations/catalogues — see [gentian-apps](https://github.com/gentian-org/gentian-apps)
   (OSS AppProfiles) and [gentian-sidecars](https://github.com/gentian-org/gentian-sidecars)
   (sidecar templates).
-- Commercial/proprietary AppProfiles — see [gentian-pro](https://github.com/gentian-org/gentian-pro).
-- The commercial checkout/entitlement portal — see [gentian-corp](https://github.com/gentian-org/gentian-corp).
+- Proprietary AppProfiles, or any private catalogue: supplied by whoever operates
+  the cluster, as an additional catalogue repository.
+- A commerce backend for redeeming entitlements and receiving metering reports.
+  gentian-os calls one when `commerce.enabled` is set and ships none itself.
 - Cluster-specific GitOps manifests (tenant instances, per-cluster config) — see
   [gentian-deployments](https://github.com/gentian-org/gentian-deployments).
 - The kernel shell UI (login hub, app launcher) — see [gentian-ui](https://github.com/gentian-org/gentian-ui).

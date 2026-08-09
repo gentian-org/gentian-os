@@ -107,7 +107,7 @@ kernel IdP.
 
 User/group changes in Keycloak emit events consumed by a
 **provisioning bus** (CloudEvents + SCIM 2.0 payloads). App-specific
-handlers live in gentian-apps / gentian-pro.
+handlers live in the catalogue repositories, not here.
 
 ### 1.9 Tenant identity provisioning sequence
 
