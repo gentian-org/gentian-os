@@ -67,32 +67,9 @@ func (g *GitOps) SetAddons(tenant, profile string, addons []string, actor string
 // matched list item, so sibling entries and other keys survive untouched.
 func rewriteAddons(text, profile string, addons []string) (string, bool) {
 	lines := strings.Split(text, "\n")
-	itemRe := regexp.MustCompile(`^(\s*)-\s+profile:\s+` + regexp.QuoteMeta(profile) + `\s*$`)
-
-	start := -1
-	keyIndent := 0
-	for i, line := range lines {
-		if m := itemRe.FindStringSubmatch(line); m != nil {
-			start = i
-			keyIndent = len(m[1]) + 2
-			break
-		}
-	}
-	if start < 0 {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
 		return text, false
-	}
-
-	// The item's own keys are indented past the dash. Anything less indented starts
-	// a sibling entry or a new section and therefore ends this item.
-	end := len(lines)
-	for i := start + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "" {
-			continue
-		}
-		if indentOf(lines[i]) < keyIndent {
-			end = i
-			break
-		}
 	}
 
 	addonsKey := regexp.MustCompile(`^ {` + fmt.Sprint(keyIndent) + `}addons:\s*$`)
@@ -134,4 +111,61 @@ func rewriteAddons(text, profile string, addons []string) (string, bool) {
 
 func indentOf(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " "))
+}
+
+// appEntryExtent locates one `- profile: <name>` list item and the lines belonging
+// to it, returning [start, end) and the indent its own keys sit at.
+//
+// A list item owns every following line indented past its dash; the first line at
+// or left of that indent starts a sibling entry or a new section. Getting this
+// wrong is how an edit leaves a fragment behind — see removeAppEntry.
+func appEntryExtent(lines []string, profile string) (start, end, keyIndent int, ok bool) {
+	itemRe := regexp.MustCompile(`^(\s*)-\s+profile:\s+` + regexp.QuoteMeta(profile) + `\s*$`)
+
+	start = -1
+	for i, line := range lines {
+		if m := itemRe.FindStringSubmatch(line); m != nil {
+			start = i
+			keyIndent = len(m[1]) + 2
+			break
+		}
+	}
+	if start < 0 {
+		return 0, 0, 0, false
+	}
+
+	end = len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if indentOf(lines[i]) < keyIndent {
+			end = i
+			break
+		}
+	}
+	return start, end, keyIndent, true
+}
+
+// removeAppEntry deletes a whole `- profile: <name>` entry, including the keys
+// nested under it.
+//
+// Removing only the `- profile:` line leaves those keys orphaned. Once an entry
+// could carry an addons list, uninstalling such an app produced
+//
+//	apps:
+//	  addons:
+//	  - odoo-crm-ce
+//	- profile: nextcloud-base-ce
+//
+// a mapping key followed by sequence items, which does not parse — so every
+// reconcile after the uninstall failed and the tenant was stuck.
+func removeAppEntry(text, profile string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	start, end, _, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return text, false
+	}
+	out := append(append([]string{}, lines[:start]...), lines[end:]...)
+	return strings.Join(out, "\n"), true
 }
