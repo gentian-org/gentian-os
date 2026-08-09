@@ -324,21 +324,34 @@ seed_secrets() {
             warn "Could not resolve Cloudflare Zone ID for ${KERNEL_DOMAIN}"
         fi
 
-        info "Resolving in-cluster Cloudflare Tunnel ID..."
-        local tunnel_id=""
-        local token_val
-        token_val=$(kubectl get secret cf-tunnel -n default -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null | base64 -d 2>/dev/null || true)
-        if [[ -n "${token_val}" ]]; then
-            tunnel_id=$(echo "${token_val}" | jq -r '.t // empty')
-        fi
-        if [[ -z "${tunnel_id}" ]]; then
-            tunnel_id=$(kubectl get secret tunnel-credentials -n default -o jsonpath='{.data}' 2>/dev/null | jq -r 'keys[0] // empty' | sed 's/\.json$//')
-        fi
-        if [[ -n "${tunnel_id}" ]]; then
-            tunnel_cname="${tunnel_id}.cfargotunnel.com"
-            info "Resolved Cloudflare Tunnel CNAME: ${tunnel_cname}"
+        # A Cloudflare Tunnel only exists in NETWORK_MODE=tunnel. In static-ip
+        # mode DNS points straight at NODE_IP, so there is no tunnel to resolve
+        # and looking for one just produces a spurious warning.
+        if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+            info "NETWORK_MODE=static-ip: no Cloudflare Tunnel to resolve (DNS points at NODE_IP)."
         else
-            warn "Could not resolve Cloudflare Tunnel ID from tunnel-credentials secret"
+            info "Resolving in-cluster Cloudflare Tunnel ID..."
+            local tunnel_id=""
+            local token_val
+            token_val=$(kubectl get secret cf-tunnel -n default -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null | base64 -d 2>/dev/null || true)
+            if [[ -n "${token_val}" ]]; then
+                tunnel_id=$(echo "${token_val}" | jq -r '.t // empty' || true)
+            fi
+            if [[ -z "${tunnel_id}" ]]; then
+                # `|| true` is load-bearing: kubectl exits non-zero when the
+                # Secret is absent, and 2>/dev/null hides the message but not the
+                # status. Under `set -o pipefail` that aborted the whole install
+                # with no output at all.
+                tunnel_id=$(kubectl get secret tunnel-credentials -n default -o jsonpath='{.data}' 2>/dev/null \
+                    | jq -r 'keys[0] // empty' 2>/dev/null \
+                    | sed 's/\.json$//' || true)
+            fi
+            if [[ -n "${tunnel_id}" ]]; then
+                tunnel_cname="${tunnel_id}.cfargotunnel.com"
+                info "Resolved Cloudflare Tunnel CNAME: ${tunnel_cname}"
+            else
+                warn "Could not resolve Cloudflare Tunnel ID from tunnel-credentials secret"
+            fi
         fi
     fi
 

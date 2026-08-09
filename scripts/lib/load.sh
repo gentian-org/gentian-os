@@ -16,7 +16,11 @@ if [[ -n "${GENTIAN_LIB_LOADED:-}" ]]; then
 fi
 GENTIAN_LIB_LOADED=1
 
-set -euo pipefail
+# -E propagates the ERR trap into functions, command substitutions and
+# subshells. Without it gentian_report_abort (registered at the bottom of this
+# file) would only fire for top-level commands, which is exactly where install
+# failures do NOT happen — they happen deep inside step functions.
+set -Eeuo pipefail
 
 __GENTIAN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 __GENTIAN_SCRIPTS_DIR="$(cd "${__GENTIAN_LIB_DIR}/.." && pwd)"
@@ -43,3 +47,7 @@ source "${__GENTIAN_SCRIPTS_DIR}/llm-lib.sh"
 # Post-install smoke checks (Keycloak OIDC, Dovecot TCP when kernel mail).
 # shellcheck source=scripts/verify-kernel-services.sh
 source "${__GENTIAN_SCRIPTS_DIR}/verify-kernel-services.sh"
+
+# Report where an aborted run died. Registered last so every library function is
+# already defined. See gentian_report_abort in common.sh for the rationale.
+trap gentian_report_abort ERR

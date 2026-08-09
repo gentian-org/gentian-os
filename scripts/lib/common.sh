@@ -1320,6 +1320,40 @@ resolve_storage_class() {
 }
 
 # =============================================================================
+# gentian_report_abort — say something before `set -e` kills the run
+#
+# These scripts run under `set -euo pipefail`, so any unguarded command that
+# exits non-zero terminates the install immediately. When that command also had
+# its stderr redirected — the common `kubectl ... 2>/dev/null` idiom — the run
+# ends with no output whatsoever: the last thing printed is whatever INFO line
+# preceded it, and the operator is left staring at a shell prompt with no clue
+# which step failed or why. That happened at Step 10b, where a missing
+# tunnel-credentials Secret made kubectl exit 1 inside a pipeline.
+#
+# Registered as an ERR trap by load.sh (which also sets -E so it fires inside
+# functions). Failures that are already handled — `|| true`, `if cmd; then`,
+# `cmd && ...` — do not trigger ERR, so this only speaks up for genuinely
+# unhandled ones.
+# =============================================================================
+gentian_report_abort() {
+    local exit_code=$?
+    local cmd="${BASH_COMMAND:-<unknown>}"
+    local src="${BASH_SOURCE[1]:-${0:-<unknown>}}"
+    local line="${BASH_LINENO[0]:-?}"
+
+    # Keep this dependency-free: it runs while the shell is already unwinding.
+    echo "" >&2
+    echo -e "\033[0;31m[ABORT]\033[0m Install stopped: a command failed and was not handled." >&2
+    echo "  exit code : ${exit_code}" >&2
+    echo "  location  : ${src}:${line}" >&2
+    echo "  command   : ${cmd}" >&2
+    echo "" >&2
+    echo "  If the command above ends in 2>/dev/null its error text was" >&2
+    echo "  suppressed — re-run it by hand without that redirect to see why." >&2
+    return "${exit_code}"
+}
+
+# =============================================================================
 # gentian_cluster_claim_name — the Cluster claim's metadata.name for THIS cluster
 #
 # The name used to be the literal "dev-cluster" everywhere: the scaffolder wrote

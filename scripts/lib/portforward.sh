@@ -45,13 +45,19 @@ export _GENTIAN_PF_PIDFILE
 
 # Kill every port-forward we started. Registered on EXIT so an aborted install
 # never leaves orphaned kubectl processes squatting on local ports.
+# Note: no `local` here. This runs as an EXIT trap, and when the shell is
+# unwinding after an ERR trap fired inside a function, bash no longer considers
+# itself in a function scope and rejects `local` with
+# "can only be used in a function" — noise printed at the exact moment the
+# operator is trying to read a real error. The loop variable is namespaced
+# instead.
 gentian_cleanup_port_forwards() {
     [[ -f "${_GENTIAN_PF_PIDFILE}" ]] || return 0
-    local pid
-    while read -r pid; do
-        [[ -n "${pid}" ]] && kill "${pid}" 2>/dev/null
+    while read -r _gentian_pf_pid; do
+        [[ -n "${_gentian_pf_pid}" ]] && kill "${_gentian_pf_pid}" 2>/dev/null
     done < "${_GENTIAN_PF_PIDFILE}"
     rm -f "${_GENTIAN_PF_PIDFILE}"
+    unset _gentian_pf_pid
     return 0
 }
 trap gentian_cleanup_port_forwards EXIT
