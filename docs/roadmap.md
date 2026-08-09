@@ -142,6 +142,17 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Configure Envoy Gateway HTTPRoute filters to leverage external authentication.
   - `[ ]` Build a lightweight AuthZEN PEP helper that translates Gateway metadata to authz queries.
 
+### 1.16 Crossplane Provider RBAC Scoping (**)
+* **Target Domain**: Platform Security & Crossplane
+* **Context**: `provider-kubernetes` and `provider-helm` authenticate as their own ServiceAccounts (`credentials.source: InjectedIdentity`) and are bound to `cluster-admin` by `crossplane/providers/provider-rbac.yaml`. The grant is currently necessary — Crossplane's generated per-provider role covers only the provider's own CRDs, so without it every composed `Object` fails to observe and the XCluster never reaches Ready — but it means any Composition, or a compromised provider pod, holds unrestricted control of the cluster. This is the widest standing privilege in the platform and sits outside the tenant isolation model that the rest of section 1 hardens.
+* **Proposed Solution**: Replace the blanket binding with an aggregated `ClusterRole` assembled from the resource kinds the Compositions actually compose (namespaces, ClusterIssuers, ClusterSecretStores, AppProjects, and the kernel/tenant kinds). Because an under-specified role reproduces the original silent failure — a missing rule surfaces only as "observe failed" on an individual composed resource, never on the XR the installer waits on — the scoped role needs a CI guard that derives the required kinds from the Composition set and fails when the role does not cover them. Consider separate roles per provider, since `provider-helm` and `provider-kubernetes` do not need the same verbs.
+* **Backlog Items**:
+  - `[ ]` Enumerate the resource kinds and verbs each Composition requires of `provider-kubernetes` and `provider-helm`.
+  - `[ ]` Define aggregated ClusterRoles per provider and replace the `cluster-admin` bindings in `provider-rbac.yaml`.
+  - `[ ]` Add a CI check that extracts composed resource kinds from `crossplane/` and fails when the scoped roles omit one.
+  - `[ ]` Surface provider permission errors on the XR status so a missing rule fails fast instead of exhausting the install timeout.
+  - `[ ]` Document the "add a Composition → extend the provider role" step in `docs/deployment.md`.
+
 ---
 
 ## 2. Platform, Infrastructure & Lifecycle
