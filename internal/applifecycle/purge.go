@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
+	authv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	authv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -413,6 +413,28 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 			_ = s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).Delete(ctx, sec.Name, metav1.DeleteOptions{})
 		}
 	}
+	// The operator also writes Secrets into the tenant's own namespace — the LLM
+	// credentials among them — and this only ever swept the kernel namespace, so
+	// every install left one behind forever. The demo tenant had accumulated ten,
+	// including some for profiles renamed out of existence months earlier.
+	//
+	// The selector is app-scoped, so tenant-wide Secrets such as
+	// gentian-staging-ca-tls (labelled managed-by and tenant, but no app) are not
+	// matched. Secrets owned by an ExternalSecret are already removed with it when
+	// Crossplane deletes the App claim.
+	tenantSecrets, err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("list tenant secrets: %v", err))
+	} else {
+		for _, sec := range tenantSecrets.Items {
+			if err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).
+				Delete(ctx, sec.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete tenant secret %s: %v", sec.Name, err))
+			}
+		}
+	}
+
 	dbCR := cnpgDatabaseName(tenant, app)
 	dbObj := &unstructured.Unstructured{}
 	dbObj.SetGroupVersionKind(schema.GroupVersionKind{
