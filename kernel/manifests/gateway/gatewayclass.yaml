@@ -2,6 +2,13 @@
 #
 # GatewayClass is reconciled by the gentian-os operator when ROUTING_MODE=gateway.
 # Envoy Gateway must be installed first (install.sh Step 2c).
+#
+# NETWORK_MODE=static-ip adds a spec.parametersRef pointing at the gentian-edge
+# EnvoyProxy (kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl), which
+# pins the Envoy data-plane LoadBalancer to NODE_IP. That field is NOT declared
+# below: install.sh Step 2c patches it in, because it is only meaningful when
+# NODE_IP exists. The operator's ensureGatewayClass reconciles controllerName
+# only and leaves parametersRef alone, so the patch survives.
 
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass

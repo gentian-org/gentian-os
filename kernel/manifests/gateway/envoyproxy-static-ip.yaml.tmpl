@@ -1,0 +1,55 @@
+# Envoy Gateway data-plane overrides for NETWORK_MODE=static-ip.
+#
+# Applied by install.sh Step 2c (scripts/lib/certs.sh, _pin_static_ip_edge_address)
+# only when NETWORK_MODE=static-ip and NODE_IP is set. Referenced from the
+# gentian-envoy GatewayClass via spec.parametersRef.
+#
+# Why this exists
+# ---------------
+# With NETWORK_MODE=static-ip the Envoy data-plane Service is type LoadBalancer,
+# so the cloud controller provisions a load balancer and — by default —
+# allocates a NEW public IP for it. NODE_IP is then whatever the operator typed
+# into cluster-settings.env, which is not the address traffic actually arrives
+# on: DNS points one place, the load balancer answers on another.
+#
+# On OpenStack (e.g. Infomaniak) it also costs money twice: the pre-allocated
+# floating IP keeps billing while sitting unassociated, alongside the one the
+# cloud controller just created.
+#
+# Setting loadBalancerIP makes the cloud controller adopt an EXISTING,
+# UNASSOCIATED floating IP whose address equals NODE_IP instead of allocating a
+# fresh one. Allocate that IP first (OpenStack: `openstack floating ip create
+# ext-floating1`) and leave it unattached — "available" is what the cloud
+# controller looks for.
+#
+# Timing matters
+# --------------
+# cloud-provider-openstack honours loadBalancerIP only at Service *creation*,
+# never on update (kubernetes/cloud-provider-openstack#2443). That is why this
+# is applied in Step 2c, before the operator creates kernel-public-gateway and
+# Envoy Gateway materialises the data-plane Service. Re-running the pin against
+# an already-provisioned Service is a no-op.
+#
+# spec.loadBalancerIP is deprecated upstream (Kubernetes v1.24) but remains the
+# only mechanism cloud-provider-openstack supports; the annotation replacement
+# is still open at kubernetes/cloud-provider-openstack#3086.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: gentian-edge
+  namespace: ${ENVOY_GATEWAY_NAMESPACE}
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        loadBalancerIP: "${NODE_IP}"
+        annotations:
+          # OpenStack-specific; inert on other cloud providers. Keeps the
+          # floating IP allocated when the Service is deleted, so a reinstall
+          # re-adopts the same address instead of orphaning it and taking a new
+          # one (which would silently break DNS).
+          loadbalancer.openstack.org/keep-floatingip: "true"

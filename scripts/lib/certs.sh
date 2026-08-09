@@ -289,6 +289,68 @@ install_envoy_gateway() {
     info "  GatewayClass: ${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
     info "  Controller:   ${GENTIAN_GATEWAY_CONTROLLER_NAME}"
     info "  Status:       kubectl get gatewayclass,gateway -A"
+
+    _pin_static_ip_edge_address
+}
+
+gentian_envoyproxy_static_ip_manifest() {
+    echo "${SCRIPT_DIR}/kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl"
+}
+
+# Pin the Envoy data-plane LoadBalancer to NODE_IP (NETWORK_MODE=static-ip only).
+#
+# Without this the cloud controller allocates an arbitrary public IP for the
+# Envoy Service, so NODE_IP — which is what DNS and gentian-cluster-config point
+# at — never matches the address traffic actually arrives on. See
+# kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl for the full rationale.
+#
+# Must run before the operator creates kernel-public-gateway: loadBalancerIP is
+# honoured at Service creation only, never on update.
+_pin_static_ip_edge_address() {
+    [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] || return 0
+
+    local ns="${ENVOY_GATEWAY_NAMESPACE}"
+    local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-kernel-public-gateway}"
+    local gw_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+
+    if [[ -z "${NODE_IP:-}" ]]; then
+        warn "NETWORK_MODE=static-ip but NODE_IP is empty; skipping edge address pin."
+        warn "  The cloud provider will allocate an arbitrary LoadBalancer IP."
+        return 0
+    fi
+
+    if ! command -v envsubst &>/dev/null; then
+        error "envsubst not found (install gettext-base). Aborting."
+        exit 1
+    fi
+
+    # loadBalancerIP is create-time only, so pinning an already-provisioned data
+    # plane would silently do nothing. Say so rather than reporting success.
+    if kubectl get svc -n "${ns}" \
+        -l "gateway.envoyproxy.io/owning-gateway-name=${gw_name}" \
+        -o name 2>/dev/null | grep -q .; then
+        warn "Envoy data-plane Service already exists; loadBalancerIP applies at creation only."
+        warn "  Its current address stands. To re-pin to ${NODE_IP}, delete Gateway"
+        warn "  ${gw_name} (and its Service) and re-run install.sh."
+        return 0
+    fi
+
+    info "Pinning Envoy data-plane LoadBalancer to NODE_IP=${NODE_IP}..."
+    export ENVOY_GATEWAY_NAMESPACE NODE_IP
+    envsubst "\${ENVOY_GATEWAY_NAMESPACE} \${NODE_IP}" \
+        < "$(gentian_envoyproxy_static_ip_manifest)" \
+        | kubectl apply -f -
+
+    # Create the GatewayClass here rather than waiting for the operator, so the
+    # parametersRef is in place before any Gateway exists. ensureGatewayClass
+    # reconciles controllerName only, so it leaves this untouched.
+    kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/gateway/gatewayclass.yaml"
+    kubectl patch gatewayclass "${gw_class}" --type=merge -p \
+        "{\"spec\":{\"parametersRef\":{\"group\":\"gateway.envoyproxy.io\",\"kind\":\"EnvoyProxy\",\"name\":\"gentian-edge\",\"namespace\":\"${ns}\"}}}"
+
+    success "Envoy data plane pinned to ${NODE_IP} (EnvoyProxy gentian-edge)."
+    info "  The floating IP must already exist and be UNASSOCIATED for the"
+    info "  cloud controller to adopt it."
 }
 
 # =============================================================================
