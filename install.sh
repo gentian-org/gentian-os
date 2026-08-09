@@ -279,9 +279,12 @@ install_crossplane_providers() {
 bootstrap_openbao_for_crossplane() {
     banner "Step 8 — Bootstrap OpenBao auth for Crossplane"
 
-    local BAO_SVC_IP
-    BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export VAULT_ADDR="https://${BAO_SVC_IP}:8200"
+    if ! VAULT_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+        error "Could not reach the openbao Service on :8200."
+        error "  Neither the ClusterIP nor a kubectl port-forward responded."
+        exit 1
+    fi
+    export VAULT_ADDR
     export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then

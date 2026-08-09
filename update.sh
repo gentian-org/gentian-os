@@ -165,11 +165,14 @@ _init() {
 
     : "${MASTER_PASSWORD:?MASTER_PASSWORD must be set (via install.secrets.env or env var)}"
 
-    # Resolve OpenBao address and token.
-    local bao_ip
-    bao_ip=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
-    [[ -n "$bao_ip" ]] || { echo "ERROR: OpenBao service not found. Is the cluster running?" >&2; exit 1; }
-    export VAULT_ADDR="https://${bao_ip}:8200"
+    # Resolve OpenBao address and token. Uses the Service ClusterIP when this
+    # host can route to it, else a kubectl port-forward — see
+    # scripts/lib/portforward.sh.
+    if ! VAULT_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+        echo "ERROR: OpenBao service not reachable on :8200 (ClusterIP and port-forward both failed)." >&2
+        exit 1
+    fi
+    export VAULT_ADDR
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         local init_file="${OPENBAO_INIT_FILE:-${SCRIPT_DIR}/openbao-init.json}"
