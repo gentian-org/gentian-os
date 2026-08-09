@@ -40,6 +40,35 @@ You need a running, reachable cluster. Both `install.sh` and
 > automatically. Pass `--no-cluster-infra` (or `INSTALL_CLUSTER_INFRA=0`) to
 > skip if your cluster already provides them.
 
+#### Local or remote — no extra setup
+
+The installer talks HTTP to OpenBao during bootstrap (transit init, secret
+seeding, Crossplane auth). It reaches it through
+[`scripts/lib/portforward.sh`](scripts/lib/portforward.sh), which resolves each
+Service in two steps:
+
+1. Try the Service's **ClusterIP** directly. This succeeds when the machine
+   running `install.sh` shares the cluster's Service network — a single-node
+   k3s, a local minikube, or a workstation on a routed pod/service CIDR.
+2. Otherwise fall back to **`kubectl port-forward`**, which needs nothing
+   beyond the kubeconfig already in use.
+
+You do **not** need to start a port-forward yourself, and there is no flag to
+set: `install.sh`, `update.sh` and `uninstall.sh` all load this automatically.
+Running against a managed cluster (Infomaniak, EKS, GKE…) where ClusterIPs are
+not routable from your laptop works the same as running against a local one.
+
+Forwards are reused across the run — one process per Service, not one per
+lookup — and torn down when the script exits, including on failure. If a
+forward dies mid-run, the next lookup detects it and re-establishes.
+
+> **Diagnosing:** a forwarded address appears in the logs as
+> `https://127.0.0.1:<random-port>` instead of a ClusterIP. That is expected on
+> a remote cluster, not a fallback that indicates a problem.
+>
+> `scripts/init-openbao-transit.sh` also honours a `TRANSIT_ADDR` override if
+> you want to point it at a forward you manage yourself.
+
 ---
 
 ## What `install.sh` does
