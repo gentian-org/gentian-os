@@ -26,7 +26,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "${__GENTIAN_SCRIPTS_DIR}/.." && pwd)}"
 # shellcheck source=scripts/lib-runtime.sh
 source "${__GENTIAN_SCRIPTS_DIR}/lib-runtime.sh"
 
-for _gentian_lib in common certs openbao argocd catalogue; do
+for _gentian_lib in portforward common certs openbao argocd catalogue; do
     # shellcheck source=/dev/null
     source "${__GENTIAN_LIB_DIR}/${_gentian_lib}.sh"
 done

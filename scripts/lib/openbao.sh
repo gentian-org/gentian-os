@@ -34,11 +34,12 @@ try_load_creds_from_openbao() {
     fi
     [[ -n "$token" ]] || return 0
 
-    # Need a reachable OpenBao service. Skip silently if not yet deployed.
-    local bao_ip
-    bao_ip=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
-    [[ -n "$bao_ip" ]] || return 0
-    local bao_addr="https://${bao_ip}:8200"
+    # Need a reachable OpenBao service. Skip silently if not yet deployed, or if
+    # neither the ClusterIP nor a port-forward answers — this is a best-effort
+    # convenience path, so it must never abort the install.
+    local bao_addr
+    bao_addr=$(gentian_service_addr openbao openbao 8200 https 2>/dev/null) || return 0
+    [[ -n "${bao_addr}" ]] || return 0
     export VAULT_SKIP_VERIFY=true
 
     # Don't bother if OpenBao is sealed/unreachable.
@@ -162,9 +163,12 @@ init_openbao() {
     done
     echo ""
 
-    local BAO_SVC_IP
-    BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    local BAO_HTTP="https://${BAO_SVC_IP}:8200"
+    local BAO_HTTP
+    if ! BAO_HTTP=$(gentian_service_addr openbao openbao 8200 https); then
+        error "Could not reach the openbao Service on :8200."
+        error "  Neither the ClusterIP nor a kubectl port-forward responded."
+        exit 1
+    fi
     export VAULT_SKIP_VERIFY=true
 
     local init_status
@@ -284,9 +288,12 @@ init_openbao() {
 seed_secrets() {
     banner "Step 10b — Seeding kernel secrets"
 
-    local BAO_SVC_IP
-    BAO_SVC_IP=$(kubectl get svc openbao -n openbao -o jsonpath='{.spec.clusterIP}')
-    export BAO_ADDR="https://${BAO_SVC_IP}:8200"
+    if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+        error "Could not reach the openbao Service on :8200."
+        error "  Neither the ClusterIP nor a kubectl port-forward responded."
+        exit 1
+    fi
+    export BAO_ADDR
     export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then

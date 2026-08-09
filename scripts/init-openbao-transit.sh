@@ -29,23 +29,38 @@ TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}"
 TRANSIT_NS="${TRANSIT_NAMESPACE:-openbao}"
 
 # ─── Resolve transit address ─────────────────────────────────────────────────
-info "Resolving openbao-transit ClusterIP..."
-TRANSIT_IP=$(kubectl get svc openbao-transit -n "${TRANSIT_NS}" \
-               -o jsonpath='{.spec.clusterIP}')
-if [[ -z "$TRANSIT_IP" ]]; then
+# Prefer the Service's ClusterIP when this host can route to it, otherwise fall
+# back to a port-forward. Curling the ClusterIP directly only works when the
+# installer runs on a node (local k3s/minikube); against a remote cluster it
+# blackholes and the wait loop below times out on a perfectly healthy pod.
+# shellcheck source=scripts/lib/portforward.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/portforward.sh"
+
+info "Resolving openbao-transit address..."
+if ! kubectl get svc openbao-transit -n "${TRANSIT_NS}" >/dev/null 2>&1; then
   error "Service openbao-transit not found in namespace ${TRANSIT_NS}."
   echo "  Deploy the ArgoCD application first:"
   echo "    kubectl apply -f argocd/bootstrap/openbao-transit-application.yaml"
   exit 1
 fi
-TRANSIT_ADDR="http://${TRANSIT_IP}:8200"
-success "Transit address: ${TRANSIT_ADDR}"
 
-# ─── Wait for pod ready ───────────────────────────────────────────────────────
+# ─── Wait for pod ready (before probing: port-forward needs a live endpoint) ──
 info "Waiting for openbao-transit-0 to be Ready (up to 5 min)..."
 kubectl wait pod -n "${TRANSIT_NS}" openbao-transit-0 \
   --for=condition=Ready --timeout=300s
 success "openbao-transit-0 is Ready."
+
+if [[ -n "${TRANSIT_ADDR:-}" ]]; then
+  success "Transit address: ${TRANSIT_ADDR} (from TRANSIT_ADDR)"
+elif TRANSIT_ADDR=$(gentian_service_addr openbao-transit "${TRANSIT_NS}" 8200 http); then
+  success "Transit address: ${TRANSIT_ADDR}"
+else
+  error "Could not reach openbao-transit in namespace ${TRANSIT_NS}."
+  error "  Neither the ClusterIP nor a kubectl port-forward responded on :8200."
+  error "  Check: kubectl get pod,svc -n ${TRANSIT_NS} -l app.kubernetes.io/instance=openbao-transit"
+  error "  Override with: TRANSIT_ADDR=http://127.0.0.1:8200 (after your own port-forward)"
+  exit 1
+fi
 
 # ─── Wait for HTTP listener to bind ──────────────────────────────────────────
 # kubectl Ready means the pod's readiness probe succeeded, but OpenBao's HTTP
