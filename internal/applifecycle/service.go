@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -45,12 +46,43 @@ var appClaimGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
+// xAppGVK is the composite behind an App claim. Teardown is only finished once
+// this is gone too — see waitForAppUninstalled.
+var xAppGVK = schema.GroupVersionKind{
+	Group:   "gentianos.io",
+	Version: "v1alpha1",
+	Kind:    "XApp",
+}
+
 // Service implements tenant app install/uninstall/purge via GitOps.
 type Service struct {
 	client    client.Client
 	clientset kubernetes.Interface
 	opts      Options
 	git       *GitOps
+	// appLocks serializes lifecycle operations per (tenant, profile) — see lockApp.
+	appLocks sync.Map
+}
+
+// lockApp blocks until no other lifecycle operation is running for this app,
+// and returns the release function.
+//
+// Install, Uninstall and SetAddons each read the tenant manifest, rewrite it,
+// and then wait on the cluster to catch up; purge then deletes state on the
+// assumption that nothing is putting it back. Run two of them against the same
+// app at once and they interleave badly: a reinstall issued while a purge is
+// still deleting gets its freshly provisioned volumes and secrets removed by
+// the tail of the teardown, and the result looks like an install that half
+// worked. Serializing per app costs nothing when they are for different apps,
+// which is the normal case.
+//
+// In-process is sufficient: the operator runs a single replica, and with
+// leader election on only one manager is active.
+func (s *Service) lockApp(tenant, profile string) func() {
+	v, _ := s.appLocks.LoadOrStore(tenant+"/"+profile, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // NewService constructs a lifecycle service.
@@ -84,6 +116,8 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 
 // Install commits the profile to gentian-deployments, reconciles, and waits until Ready.
 func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, error) {
+	defer s.lockApp(req.Tenant, req.Profile)()
+
 	if err := s.validateProfile(ctx, req.Profile); err != nil {
 		return nil, err
 	}
@@ -169,6 +203,8 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 
 // Uninstall removes the profile from git, reconciles, waits for removal, and optionally purges.
 func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
+	defer s.lockApp(req.Tenant, req.Profile)()
+
 	tenant := &gentianov1alpha1.Tenant{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Tenant}, tenant); err != nil {
 		return nil, fmt.Errorf("get tenant %q: %w", req.Tenant, err)
@@ -395,6 +431,8 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 // operator will later reject. Entitlement is checked here too: a commercial addon
 // needs a grant, and technical compatibility is never the gate.
 func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result, error) {
+	defer s.lockApp(req.Tenant, req.Profile)()
+
 	base := &gentianov1alpha1.AppProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Profile}, base); err != nil {
 		return nil, fmt.Errorf("get appprofile %q: %w", req.Profile, err)

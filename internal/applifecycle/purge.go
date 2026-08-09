@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/remotecommand"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -471,11 +472,21 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 		family = profile.Spec.Family
 	}
 
+	logger := log.FromContext(ctx).WithName("purge").WithValues("app", appName)
+
 	var doomed []string
 	for _, pvc := range pvcs.Items {
-		if pvcBelongsToApp(pvc, appName, family) {
-			doomed = append(doomed, pvc.Name)
+		if !pvcBelongsToApp(pvc, appName, family) {
+			continue
 		}
+		if rel, other := ownedByOtherRelease(pvc.Annotations, appName); other {
+			// Deliberately not a warning: skipping is the correct outcome, and
+			// warnings fail the purge.
+			logger.Info("skipping PVC owned by another Helm release",
+				"pvc", pvc.Name, "release", rel)
+			continue
+		}
+		doomed = append(doomed, pvc.Name)
 	}
 	if len(doomed) == 0 {
 		return nil
@@ -505,6 +516,35 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 		warnings = append(warnings, err.Error())
 	}
 	return warnings
+}
+
+// ownedByOtherRelease reports whether a Helm-managed object belongs to some
+// release other than this app's, returning the release name for the log line.
+//
+// This is a veto over the matching below, and it exists because the damage is
+// asymmetric. provider-helm reconciles release *state*, not cluster contents:
+// it compares the desired chart and values against the recorded release and
+// does nothing when they agree. Delete an object out from under a live release
+// and nothing puts it back — not the next sync, not selfHeal, not a pod
+// restart — until someone changes the chart version or a value. The app just
+// runs without it. Meanwhile the cost of skipping wrongly is a leftover volume,
+// which the next purge or an operator can remove.
+//
+// pvcBelongsToApp falls back to a name substring, which is broad enough to
+// reach a sibling app's volume when two profiles share a family (purging
+// nextcloud-base-ce matches anything containing "nextcloud"). That is precisely
+// the case where deleting is unrecoverable, so Helm's own ownership record wins.
+//
+// Releases for one app are named after it — "<profile>-<suffix>-release" for
+// the app itself, "<tenant>-<profile>-<sidecar>" for its sidecars — so a
+// substring test identifies our own releases without needing the composite,
+// which is already gone by the time purge runs.
+func ownedByOtherRelease(annotations map[string]string, appName string) (string, bool) {
+	release := annotations["meta.helm.sh/release-name"]
+	if release == "" || strings.Contains(release, appName) {
+		return release, false
+	}
+	return release, true
 }
 
 // pvcBelongsToApp reports whether a PVC was provisioned for this app.
