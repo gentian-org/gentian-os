@@ -353,27 +353,32 @@ else
     info "XSuze composite not found; skipping."
 fi
 
-if kubectl get cluster dev-cluster -n crossplane-system >/dev/null 2>&1; then
-    info "Deleting Cluster claim dev-cluster..."
-    kubectl delete cluster dev-cluster -n crossplane-system --timeout=60s || true
+# Read the claim's real name rather than assuming the historical "dev-cluster"
+# literal — clusters scaffolded after the rename are called <cluster>-<stage>,
+# and deleting by the wrong name would silently leave the kernel provisioned.
+CLUSTER_CLAIM_NAME="$(gentian_cluster_claim_name)"
+
+if kubectl get cluster "${CLUSTER_CLAIM_NAME}" -n crossplane-system >/dev/null 2>&1; then
+    info "Deleting Cluster claim ${CLUSTER_CLAIM_NAME}..."
+    kubectl delete cluster "${CLUSTER_CLAIM_NAME}" -n crossplane-system --timeout=60s || true
 else
-    info "Cluster claim dev-cluster not found; skipping."
+    info "Cluster claim ${CLUSTER_CLAIM_NAME} not found; skipping."
 fi
 
-if kubectl get xcluster dev-cluster >/dev/null 2>&1; then
-    info "Waiting for XCluster dev-cluster to be garbage-collected (max 5m)..."
+if kubectl get xcluster "${CLUSTER_CLAIM_NAME}" >/dev/null 2>&1; then
+    info "Waiting for XCluster ${CLUSTER_CLAIM_NAME} to be garbage-collected (max 5m)..."
     local_deadline=$((SECONDS + 300))
-    while kubectl get xcluster dev-cluster >/dev/null 2>&1; do
+    while kubectl get xcluster "${CLUSTER_CLAIM_NAME}" >/dev/null 2>&1; do
         if (( SECONDS > local_deadline )); then
-            warn "XCluster dev-cluster still present after 5m — forcing deletion."
-            kubectl delete xcluster dev-cluster --grace-period=0 --force >/dev/null 2>&1 || true
+            warn "XCluster ${CLUSTER_CLAIM_NAME} still present after 5m — forcing deletion."
+            kubectl delete xcluster "${CLUSTER_CLAIM_NAME}" --grace-period=0 --force >/dev/null 2>&1 || true
             break
         fi
         sleep 5
     done
-    success "XCluster dev-cluster removed."
+    success "XCluster ${CLUSTER_CLAIM_NAME} removed."
 else
-    info "XCluster dev-cluster not found; skipping."
+    info "XCluster ${CLUSTER_CLAIM_NAME} not found; skipping."
 fi
 
 # =============================================================================

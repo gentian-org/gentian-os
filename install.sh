@@ -192,6 +192,13 @@ install_crossplane_providers() {
     info "Applying providers (function-go-templating, provider-kubernetes, provider-vault)..."
     _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
 
+    # Grant provider-kubernetes/provider-helm rights over the objects their
+    # Compositions manage. Applied before the Healthy wait so the permissions
+    # exist by the time the first Object is reconciled — a ClusterRoleBinding may
+    # reference a ServiceAccount that does not exist yet.
+    info "Applying provider RBAC (InjectedIdentity needs an explicit grant)..."
+    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-rbac.yaml"
+
     info "Waiting for providers to become Healthy (timeout: ${PROVIDER_WAIT_TIMEOUT})..."
 
     # function-go-templating and function-auto-ready are Function resources;
@@ -596,11 +603,17 @@ scaffold_cluster_deployment() {
     mkdir -p "${kernel_dir}/claims"
 
     if [[ ! -f "${kernel_dir}/claims/cluster.yaml" ]]; then
+        # Name from GENTIAN_DEPLOYMENTS_CLUSTER + _STAGE. The old literal
+        # "dev-cluster" was really "<stage>-cluster" from when dev was the only
+        # stage, and left prod clusters owning a claim called dev-cluster.
+        # Clusters scaffolded before this keep their existing name — the file is
+        # only written when absent, and every lookup goes through
+        # gentian_cluster_claim_name(), which reads it back from here.
         cat > "${kernel_dir}/claims/cluster.yaml" <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
-  name: dev-cluster
+  name: ${cluster}-${stage}
   namespace: crossplane-system
 spec:
   kernelDomain: ${domain}
@@ -703,16 +716,18 @@ apply_cluster_xr() {
     kubectl apply -f "${claims_dir}/cluster.yaml"
 
     # Crossplane generates a unique name for the XCluster composite (e.g.
-    # dev-cluster-k4d2m). Read it from the Claim's resourceRef once populated.
-    info "Waiting for Claim dev-cluster to be bound to a composite (up to 60s)..."
+    # ifk-l2-prod-k4d2m). Read it from the Claim's resourceRef once populated.
+    local claim_name
+    claim_name="$(gentian_cluster_claim_name)"
+    info "Waiting for Claim ${claim_name} to be bound to a composite (up to 60s)..."
     local xr_name=""
     local deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
+        xr_name=$(kubectl get cluster "${claim_name}" -n crossplane-system \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
-            error "Claim dev-cluster was never bound to a composite after 60s."
-            error "  kubectl describe cluster dev-cluster -n crossplane-system"
+            error "Claim ${claim_name} was never bound to a composite after 60s."
+            error "  kubectl describe cluster ${claim_name} -n crossplane-system"
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
@@ -1218,9 +1233,11 @@ apply_suze_xr() {
 print_summary_cp() {
     local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url argocd_pw
 
-    xr_name=$(kubectl get cluster dev-cluster -n crossplane-system \
+    local claim_name
+    claim_name="$(gentian_cluster_claim_name)"
+    xr_name=$(kubectl get cluster "${claim_name}" -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
-    xr_name="${xr_name:-dev-cluster}"
+    xr_name="${xr_name:-${claim_name}}"
 
     xr_ready=$(kubectl get "xcluster/${xr_name}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")

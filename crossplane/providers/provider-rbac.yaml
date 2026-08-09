@@ -1,0 +1,68 @@
+---
+# RBAC for the Crossplane providers that act on this cluster's API.
+#
+# Why this file exists
+# --------------------
+# provider-kubernetes and provider-helm authenticate with
+# `credentials.source: InjectedIdentity` (see provider-configs.yaml), meaning
+# they call the API server as their own ServiceAccount. Crossplane creates that
+# ServiceAccount and binds it to a generated role — but that role only covers
+# the provider's OWN managed resources (Object, Release, ProviderConfig...). It
+# grants nothing on the objects those resources are supposed to manage.
+#
+# Without the bindings below, every composed Object fails at the observe step:
+#
+#   observe failed: cannot get object: namespaces "gentian-system" is forbidden:
+#   User "system:serviceaccount:crossplane-system:provider-kubernetes-<hash>"
+#   cannot get resource "namespaces" in API group "" in the namespace
+#   "gentian-system"
+#
+# The XCluster then sits at Ready=False/Creating until the install times out,
+# reporting "Unready resources" rather than the permission error — the real
+# cause is only visible on the individual composed Objects.
+#
+# Scope
+# -----
+# cluster-admin is deliberate, and matches upstream provider-kubernetes
+# guidance. These providers manage arbitrary cluster objects on behalf of the
+# Compositions — namespaces, ClusterIssuers, ClusterSecretStores, AppProjects
+# today, and whatever a future Composition composes tomorrow. Enumerating that
+# set would produce a role that silently breaks each time a Composition grows a
+# new resource kind, reproducing exactly the failure above.
+#
+# If you need to tighten this, replace cluster-admin with an aggregated
+# ClusterRole and add rules per Composition — but treat "a Composition failed to
+# observe" as the expected symptom of a missing rule.
+#
+# The subjects reference the fixed ServiceAccount names pinned by the
+# DeploymentRuntimeConfigs in providers.yaml, NOT the revision-hashed defaults,
+# so these bindings survive provider upgrades.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane-provider-kubernetes-admin
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+subjects:
+  - kind: ServiceAccount
+    name: provider-kubernetes
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane-provider-helm-admin
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+subjects:
+  - kind: ServiceAccount
+    name: provider-helm
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io

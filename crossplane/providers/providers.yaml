@@ -43,8 +43,13 @@ metadata:
   name: provider-helm
 spec:
   # Deploys Helm charts into the local cluster (Pattern B: secrets-hostile charts).
-  # Uses InjectedIdentity for in-cluster access.
+  # Uses InjectedIdentity for in-cluster access — see provider-rbac.yaml for why
+  # that requires an explicit grant.
   package: xpkg.upbound.io/crossplane-contrib/provider-helm:v0.20.4
+  runtimeConfigRef:
+    apiVersion: pkg.crossplane.io/v1beta1
+    kind: DeploymentRuntimeConfig
+    name: helm-config
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -52,6 +57,10 @@ metadata:
   name: provider-kubernetes
 spec:
   package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v0.15.0
+  runtimeConfigRef:
+    apiVersion: pkg.crossplane.io/v1beta1
+    kind: DeploymentRuntimeConfig
+    name: kubernetes-config
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -81,6 +90,31 @@ spec:
   # crossplane-contrib/provider-keycloak: Upjet bridge over mrparkers/keycloak TF provider.
   # Manages Keycloak OIDC clients, protocol mappers, and client scopes via GitOps.
   package: xpkg.upbound.io/crossplane-contrib/provider-keycloak:v2.19.0
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: kubernetes-config
+spec:
+  # Pin a stable ServiceAccount name. By default Crossplane names the provider's
+  # SA after its revision hash (provider-kubernetes-c3daebeb97e2), which changes
+  # on every provider upgrade — a static ClusterRoleBinding written against that
+  # name silently stops applying the next time the package is bumped, and the
+  # provider loses its permissions with no error until a composition fails.
+  # provider-rbac.yaml binds this fixed name instead.
+  serviceAccountTemplate:
+    metadata:
+      name: provider-kubernetes
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: helm-config
+spec:
+  # Same reasoning as kubernetes-config above.
+  serviceAccountTemplate:
+    metadata:
+      name: provider-helm
 ---
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig

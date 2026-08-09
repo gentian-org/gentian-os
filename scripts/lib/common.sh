@@ -1320,6 +1320,33 @@ resolve_storage_class() {
 }
 
 # =============================================================================
+# gentian_cluster_claim_name — the Cluster claim's metadata.name for THIS cluster
+#
+# The name used to be the literal "dev-cluster" everywhere: the scaffolder wrote
+# it, and install.sh/uninstall.sh looked the object up by that same literal. That
+# is plainly wrong on any cluster that is not the original dev one — a prod
+# cluster ends up owning a claim called "dev-cluster" — but it also cannot simply
+# be recomputed, because clusters provisioned under the old name have a live
+# XCluster called dev-cluster. Recomputing would make install/uninstall look for
+# an object that does not exist and silently orphan the real one.
+#
+# So read it from the claim the scaffolder wrote: new clusters get
+# <cluster>-<stage>, existing ones keep whatever their checked-in claim says.
+# =============================================================================
+gentian_cluster_claim_name() {
+    local claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER:-}/kernel/claims/cluster.yaml"
+    local name=""
+    name=$(yq_get '.metadata.name' "${claim}" 2>/dev/null || true)
+    if [[ -n "${name}" ]]; then
+        echo "${name}"
+        return 0
+    fi
+    # Fall back to the historical literal: a missing or unreadable claim then
+    # behaves exactly as before rather than targeting some other object.
+    echo "dev-cluster"
+}
+
+# =============================================================================
 # apply_bootstrap_application — kubectl apply a bootstrap Application, rendering
 # it first when it ships as a .yaml.tmpl.
 #
