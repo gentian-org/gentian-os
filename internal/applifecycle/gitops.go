@@ -151,10 +151,12 @@ func (g *GitOps) Uninstall(tenant, profile, actor string) (status, file string, 
 	if err != nil {
 		return "", file, false, err
 	}
-	re := regexp.MustCompile(`(?m)^  - profile: ` + regexp.QuoteMeta(profile) + `\s*\n`)
+	// Remove the whole list entry, not just its `- profile:` line: an entry can carry
+	// nested keys (addons, config) and leaving those behind produces YAML that does
+	// not parse, which wedges every later reconcile. See removeAppEntry.
 	text := string(content)
-	newText := re.ReplaceAllString(text, "")
-	if newText == text {
+	newText, ok := removeAppEntry(text, profile)
+	if !ok || newText == text {
 		return "not_installed", file, false, nil
 	}
 	if err := os.WriteFile(file, []byte(newText), 0o644); err != nil {
