@@ -83,3 +83,58 @@ func TestPodReferencesAny(t *testing.T) {
 		t.Error("a pod with no volumes must not match")
 	}
 }
+
+// A resource Helm owns must only go with its own release. provider-helm
+// reconciles release state rather than cluster contents, so anything deleted
+// from under a live release stays deleted.
+
+func TestOwnedByOtherRelease(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		release string
+		app     string
+		want    bool
+	}{
+		{"our own release", "nextcloud-base-ce-jbwn6-release", "nextcloud-base-ce", false},
+		{"our sidecar's release", "demo-odoo-base-ce-git-modules", "odoo-base-ce", false},
+		{"a sibling profile in the same family", "nextcloud-suite-ab12-release", "nextcloud-base-ce", true},
+		{"an unrelated app", "open-webui-lm5pw-release", "odoo-base-ce", true},
+		// Not Helm-managed at all: the veto must not fire, or PVCs the operator
+		// created directly would survive every purge.
+		{"no helm annotation", "", "odoo-base-ce", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ann := map[string]string{}
+			if tc.release != "" {
+				ann["meta.helm.sh/release-name"] = tc.release
+			}
+			got, other := ownedByOtherRelease(ann, tc.app)
+			if other != tc.want {
+				t.Fatalf("ownedByOtherRelease(%q, %q) = %v, want %v", tc.release, tc.app, other, tc.want)
+			}
+			if got != tc.release {
+				t.Fatalf("release name: got %q want %q", got, tc.release)
+			}
+		})
+	}
+}
+
+// The veto has to actually override the match, since the name-substring
+// fallback is what reaches a sibling app's volume in the first place.
+func TestOwnedByOtherReleaseOverridesAFuzzyNameMatch(t *testing.T) {
+	t.Parallel()
+	pvc := corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "nextcloud-suite-data",
+			Annotations: map[string]string{"meta.helm.sh/release-name": "nextcloud-suite-ab12-release"},
+		},
+	}
+	if !pvcBelongsToApp(pvc, "nextcloud-base-ce", "nextcloud") {
+		t.Fatal("precondition: the family substring is expected to match here")
+	}
+	if _, other := ownedByOtherRelease(pvc.Annotations, "nextcloud-base-ce"); !other {
+		t.Fatal("the sibling's volume must be vetoed despite matching")
+	}
+}
