@@ -358,27 +358,36 @@ fi
 # and deleting by the wrong name would silently leave the kernel provisioned.
 CLUSTER_CLAIM_NAME="$(gentian_cluster_claim_name)"
 
-if kubectl get cluster "${CLUSTER_CLAIM_NAME}" -n crossplane-system >/dev/null 2>&1; then
+# Resolve the composite's name BEFORE deleting the claim. Crossplane names the
+# XCluster <claim>-<hash> (e.g. ifk-l2-prod-nh4w4), so looking it up by the claim
+# name never matches — and once the claim is gone there is nothing left to read
+# the resourceRef from.
+CLUSTER_XR_NAME="$(kubectl get cluster.gentianos.io "${CLUSTER_CLAIM_NAME}" \
+    -n crossplane-system -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)"
+
+if kubectl get cluster.gentianos.io "${CLUSTER_CLAIM_NAME}" -n crossplane-system >/dev/null 2>&1; then
     info "Deleting Cluster claim ${CLUSTER_CLAIM_NAME}..."
-    kubectl delete cluster "${CLUSTER_CLAIM_NAME}" -n crossplane-system --timeout=60s || true
+    kubectl delete cluster.gentianos.io "${CLUSTER_CLAIM_NAME}" -n crossplane-system --timeout=60s || true
 else
     info "Cluster claim ${CLUSTER_CLAIM_NAME} not found; skipping."
 fi
 
-if kubectl get xcluster "${CLUSTER_CLAIM_NAME}" >/dev/null 2>&1; then
-    info "Waiting for XCluster ${CLUSTER_CLAIM_NAME} to be garbage-collected (max 5m)..."
+if [[ -z "${CLUSTER_XR_NAME}" ]]; then
+    info "No XCluster bound to ${CLUSTER_CLAIM_NAME}; skipping composite wait."
+elif kubectl get xcluster.gentianos.io "${CLUSTER_XR_NAME}" >/dev/null 2>&1; then
+    info "Waiting for XCluster ${CLUSTER_XR_NAME} to be garbage-collected (max 5m)..."
     local_deadline=$((SECONDS + 300))
-    while kubectl get xcluster "${CLUSTER_CLAIM_NAME}" >/dev/null 2>&1; do
+    while kubectl get xcluster.gentianos.io "${CLUSTER_XR_NAME}" >/dev/null 2>&1; do
         if (( SECONDS > local_deadline )); then
-            warn "XCluster ${CLUSTER_CLAIM_NAME} still present after 5m — forcing deletion."
-            kubectl delete xcluster "${CLUSTER_CLAIM_NAME}" --grace-period=0 --force >/dev/null 2>&1 || true
+            warn "XCluster ${CLUSTER_XR_NAME} still present after 5m — forcing deletion."
+            kubectl delete xcluster.gentianos.io "${CLUSTER_XR_NAME}" --grace-period=0 --force >/dev/null 2>&1 || true
             break
         fi
         sleep 5
     done
-    success "XCluster ${CLUSTER_CLAIM_NAME} removed."
+    success "XCluster ${CLUSTER_XR_NAME} removed."
 else
-    info "XCluster ${CLUSTER_CLAIM_NAME} not found; skipping."
+    info "XCluster ${CLUSTER_XR_NAME} not found; skipping."
 fi
 
 # =============================================================================

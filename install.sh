@@ -723,11 +723,11 @@ apply_cluster_xr() {
     local xr_name=""
     local deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get cluster "${claim_name}" -n crossplane-system \
+        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
             error "Claim ${claim_name} was never bound to a composite after 60s."
-            error "  kubectl describe cluster ${claim_name} -n crossplane-system"
+            error "  kubectl describe cluster.gentianos.io ${claim_name} -n crossplane-system"
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
@@ -735,12 +735,12 @@ apply_cluster_xr() {
     info "  Composite name: ${xr_name}"
 
     info "Waiting for XCluster ${xr_name} to be Ready (timeout: ${CLUSTER_XR_TIMEOUT})..."
-    kubectl wait "xcluster/${xr_name}" \
+    kubectl wait "xcluster.gentianos.io/${xr_name}" \
         --for=condition=Ready --timeout="${CLUSTER_XR_TIMEOUT}" \
     || {
         error "XCluster ${xr_name} did not become Ready within ${CLUSTER_XR_TIMEOUT}."
         error "Diagnose with:"
-        error "  kubectl describe xcluster ${xr_name}"
+        error "  kubectl describe xcluster.gentianos.io ${xr_name}"
         error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
         exit 1
     }
@@ -1235,11 +1235,11 @@ print_summary_cp() {
 
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
-    xr_name=$(kubectl get cluster "${claim_name}" -n crossplane-system \
+    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     xr_name="${xr_name:-${claim_name}}"
 
-    xr_ready=$(kubectl get "xcluster/${xr_name}" \
+    xr_ready=$(kubectl get "xcluster.gentianos.io/${xr_name}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
         --no-headers 2>/dev/null | wc -l | tr -d ' ')
