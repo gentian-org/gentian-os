@@ -203,6 +203,14 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 	var warnings []string
 	if req.Purge {
 		warnings = s.purge(ctx, tenant, profileCR, req.Profile)
+		// A purge that leaves state behind must not report success. The app is gone
+		// from the tenant either way — that part already happened — but the caller
+		// needs to know the teardown is incomplete, because the residue is what
+		// blocks the next install rather than anything visible at the time.
+		if len(warnings) > 0 {
+			return nil, fmt.Errorf(
+				"purge of %s did not complete: %s", req.Profile, strings.Join(warnings, "; "))
+		}
 	}
 
 	return &Result{

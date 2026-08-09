@@ -52,6 +52,13 @@ const mariadbDeleteScript = "" +
 	"$MARIADB -e \"DROP DATABASE IF EXISTS ${DB_NAME};\"\n" +
 	"echo \"deleted database ${DB_NAME} and user ${DB_USER}\"\n"
 
+const (
+	// A purge must not return while volumes are still Terminating; NFS in
+	// particular can take a while, so allow generously before declaring failure.
+	pvcDeletionTimeout = 3 * time.Minute
+	pvcPollInterval    = 3 * time.Second
+)
+
 func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.AppProfile, app string) []string {
 	var warnings []string
 	dbEngine, s3Req, redisReq := profileKernelReqs(profile)
@@ -464,41 +471,123 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 		family = profile.Spec.Family
 	}
 
+	var doomed []string
 	for _, pvc := range pvcs.Items {
-		shouldDelete := false
-
-		// 1. Check if the PVC label gentianos.io/app matches the appName
-		if pvc.Labels["gentianos.io/app"] == appName {
-			shouldDelete = true
+		if pvcBelongsToApp(pvc, appName, family) {
+			doomed = append(doomed, pvc.Name)
 		}
+	}
+	if len(doomed) == 0 {
+		return nil
+	}
 
-		// 2. Check if the PVC app.kubernetes.io/instance label prefix matches appName
-		if instance, ok := pvc.Labels["app.kubernetes.io/instance"]; ok {
-			if strings.HasPrefix(instance, appName) {
-				shouldDelete = true
-			}
+	// Delete the pods still holding these volumes first.
+	//
+	// A PVC carries the pvc-protection finalizer while any pod references it, and
+	// that includes pods which have already Succeeded — a finished install Job
+	// keeps the claim alive indefinitely. Deleting the PVC alone leaves it
+	// Terminating forever, and worse, a reinstall then cannot schedule ("claim is
+	// being deleted") while its own Pending pods add fresh references. That is a
+	// deadlock that never resolves on its own.
+	warnings = append(warnings, s.releasePVCHolders(ctx, ns, doomed)...)
+
+	for _, name := range doomed {
+		err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			warnings = append(warnings, fmt.Sprintf("delete PVC %s/%s: %v", ns, name, err))
 		}
+	}
 
-		// 3. Check if the app.kubernetes.io/name matches appName or family
-		if name, ok := pvc.Labels["app.kubernetes.io/name"]; ok {
-			if name == appName || (family != "" && name == family) {
-				shouldDelete = true
-			}
+	// Wait for them to actually go. A purge that returns while volumes are still
+	// Terminating reports success for work it has not finished, and the caller has
+	// no way to know the next install will be blocked by it.
+	if err := s.waitForPVCsGone(ctx, ns, doomed); err != nil {
+		warnings = append(warnings, err.Error())
+	}
+	return warnings
+}
+
+// pvcBelongsToApp reports whether a PVC was provisioned for this app.
+func pvcBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) bool {
+	if pvc.Labels["gentianos.io/app"] == appName {
+		return true
+	}
+	if instance, ok := pvc.Labels["app.kubernetes.io/instance"]; ok && strings.HasPrefix(instance, appName) {
+		return true
+	}
+	if name, ok := pvc.Labels["app.kubernetes.io/name"]; ok {
+		if name == appName || (family != "" && name == family) {
+			return true
 		}
+	}
+	return strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family))
+}
 
-		// 4. Fallback name checks
-		if strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family)) {
-			shouldDelete = true
+// releasePVCHolders deletes pods referencing any of the named claims so the
+// pvc-protection finalizer can clear.
+func (s *Service) releasePVCHolders(ctx context.Context, ns string, claims []string) []string {
+	doomed := make(map[string]struct{}, len(claims))
+	for _, c := range claims {
+		doomed[c] = struct{}{}
+	}
+
+	pods, err := s.clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return []string{fmt.Sprintf("list pods holding PVCs in %s: %v", ns, err)}
+	}
+
+	var warnings []string
+	for _, pod := range pods.Items {
+		if !podReferencesAny(pod, doomed) {
+			continue
 		}
-
-		if shouldDelete {
-			err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
-			if err != nil && !apierrors.IsNotFound(err) {
-				warnings = append(warnings, fmt.Sprintf("delete PVC %s/%s: %v", ns, pvc.Name, err))
-			}
+		err := s.clientset.CoreV1().Pods(ns).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			warnings = append(warnings, fmt.Sprintf("delete pod %s/%s holding a purged PVC: %v", ns, pod.Name, err))
 		}
 	}
 	return warnings
+}
+
+func podReferencesAny(pod corev1.Pod, claims map[string]struct{}) bool {
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim == nil {
+			continue
+		}
+		if _, ok := claims[v.PersistentVolumeClaim.ClaimName]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForPVCsGone blocks until the claims disappear, or reports which remain.
+func (s *Service) waitForPVCsGone(ctx context.Context, ns string, claims []string) error {
+	deadline := time.Now().Add(pvcDeletionTimeout)
+	for {
+		var remaining []string
+		for _, name := range claims {
+			_, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				remaining = append(remaining, name)
+			} else if !apierrors.IsNotFound(err) {
+				remaining = append(remaining, name)
+			}
+		}
+		if len(remaining) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"PVCs still present after %s: %s — the next install of this app will not schedule until they are gone",
+				pvcDeletionTimeout, strings.Join(remaining, ", "))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pvcPollInterval):
+		}
+	}
 }
 
 func ptr[T any](v T) *T { return &v }
