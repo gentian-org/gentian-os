@@ -123,7 +123,7 @@ present.
 |---|---|---|---|
 | `TENANCY_MODE` | Optional | `multi` | `multi` = per-tenant subdomain + Keycloak realm; `single` = one tenant on `KERNEL_DOMAIN` directly |
 | `NETWORK_MODE` | Optional | `tunnel` | `tunnel` = behind a reverse-proxy/Cloudflare Tunnel; `static-ip` = DNS points directly at `NODE_IP` (becomes required) |
-| `NODE_IP` | Only if `NETWORK_MODE=static-ip` | auto-detected | Node's public/reachable IP |
+| `NODE_IP` | Only if `NETWORK_MODE=static-ip` | auto-detected | Public/reachable IP traffic arrives on. Must **already exist and be unassociated** before the first install — see [below](#static-ip-mode-allocate-the-public-ip-first). Auto-detection reads the node's `InternalIP`, which is wrong on NAT'd clouds |
 | `ROUTING_MODE` | Optional | `gateway` | Envoy Gateway + Gateway API edge routing — must match `routingMode` in `kernel/values.yaml` (auto-scaffolded, see "Cluster claim") |
 | `MAIL_SERVICE_MODE` | Optional | `external` | `external` = relay through SMTP (needs `EXTERNAL_SMTP_*` below + secrets in step 2); `kernel` = in-cluster Postfix/Dovecot (needs `NETWORK_MODE=static-ip`) |
 | `EXTERNAL_SMTP_HOST` | Only if `MAIL_SERVICE_MODE=external` | — | e.g. `smtp.gmail.com` |
@@ -133,11 +133,56 @@ present.
 | `SECRET_MODE` | Optional | `derived` | `derived` = HKDF from `MASTER_PASSWORD`; `random` = independently random, stored in OpenBao |
 | `MINIO_ENDPOINT` | Optional | per-stage default | Override only if this cluster's infra tier deviates from standard naming |
 | `CNPG_HOST` | Optional | per-stage default | Same |
-| `STORAGE_CLASS` | Optional | cluster's default StorageClass | Override only if needed |
+| `STORAGE_CLASS` | Optional | cluster's default StorageClass | Class for kernel PVCs. Unset = the class annotated `is-default-class`; resolved at pre-flight and validated to exist, so a wrong name fails fast instead of leaving PVCs `Pending`. Set only when this cluster needs a non-default class |
 
 The template also has an advanced, fully-optional block for LLM/vLLM serving
 and tenant namespace resource limits — see the comments in
 [`cluster-settings.env.template`](cluster-settings.env.template) directly.
+
+#### Static-IP mode: allocate the public IP first
+
+With `NETWORK_MODE=static-ip`, `NODE_IP` must be a public IP that **already
+exists** before the first install run — not one you read off the cluster
+afterwards. The Envoy data-plane Service is type `LoadBalancer` in this mode, so
+the cloud controller provisions a load balancer and, unless told otherwise,
+allocates a _fresh_ public IP for it. `NODE_IP` would then name an address
+nothing answers on, while DNS and `gentian-cluster-config` both point at it.
+
+`install.sh` Step 2c handles the pin for you: when `NETWORK_MODE=static-ip` and
+`NODE_IP` is set, it applies the `gentian-edge` `EnvoyProxy`
+([`envoyproxy-static-ip.yaml.tmpl`](kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl))
+and points the `gentian-envoy` GatewayClass at it through `spec.parametersRef`,
+so the cloud controller adopts your address instead of allocating one.
+
+On OpenStack clouds (Infomaniak, OVH, …) allocate the floating IP first and
+**leave it unassociated** — "available" is exactly what the cloud controller
+looks for:
+
+```bash
+source <project>-openrc.sh
+openstack floating ip create ext-floating1     # note the address
+```
+
+Put that address in `NODE_IP`, run `install.sh`, then verify:
+
+```bash
+kubectl get svc -n envoy-gateway-system \
+  -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway
+```
+
+`EXTERNAL-IP` must equal `NODE_IP`. Once it does, point `KERNEL_DOMAIN` and
+`*.KERNEL_DOMAIN` A records at it (wildcard matters when `TENANCY_MODE=multi`).
+
+> **The pin is create-time only.** `cloud-provider-openstack` ignores
+> `loadBalancerIP` on updates
+> ([#2443](https://github.com/kubernetes/cloud-provider-openstack/issues/2443)),
+> so editing `NODE_IP` on an existing cluster does **not** move the address.
+> Delete the `kernel-public-gateway` Gateway and its data-plane Service, then
+> re-run `install.sh`. Step 2c detects an existing Service and warns rather than
+> reporting a pin that did not happen.
+
+Bare-metal or MetalLB clusters use the same `NODE_IP` field; only the
+allocation step differs (MetalLB must own a pool containing that address).
 
 **2. `install.secrets.env`** — this repo, secrets only, never committed
 

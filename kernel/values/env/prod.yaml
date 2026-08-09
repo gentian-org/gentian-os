@@ -12,7 +12,6 @@
 # Production differences from dev:
 #   - HA replication counts (replicaCount: 3 where supported)
 #   - Larger storage PVC sizes (in per-app values/prod/)
-#   - Longhorn or Ceph storage class instead of nfs-csi
 #   - Consider: separate registry-credentials secret per env
 # =============================================================================
 
@@ -20,6 +19,17 @@
 replicaCount: 2
 
 global:
-  storageClass: longhorn
+  # storageClass is intentionally unset.
+  #
+  # This file is read from Git by the ApplicationSets, so it is shared by every
+  # prod cluster — naming one class here (it used to say "longhorn") asserts
+  # that the class exists everywhere, and on a cluster that has Cinder, EBS or
+  # anything else the PVCs simply sit Pending with
+  # `storageclass "longhorn" not found`.
+  #
+  # Unset means "use the cluster's default StorageClass", which is what Bitnami
+  # charts do with an empty global.storageClass. A cluster that needs a specific
+  # non-default class sets STORAGE_CLASS in its cluster-settings.env; see
+  # resolve_storage_class() in scripts/lib/common.sh.
   imagePullSecrets:
     - registry-credentials

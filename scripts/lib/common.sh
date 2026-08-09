@@ -1266,7 +1266,90 @@ check_prereqs() {
         exit 1
     fi
 
+    resolve_storage_class || exit 1
+
     success "All pre-flight checks passed."
+}
+
+# =============================================================================
+# resolve_storage_class — settle on ONE StorageClass name for the whole install
+#
+# cluster-settings.env documents STORAGE_CLASS as "leave unset to use the
+# cluster's own default StorageClass". That promise only holds if something
+# actually resolves "unset" into a concrete name: kernel components are Helm
+# charts fed from Git, and a chart cannot read the operator's shell. So resolve
+# it here, once, and export it — bootstrap Applications pass the result down as
+# a Helm parameter (see kernel/bootstrap/*-application.yaml.tmpl).
+#
+# Resolution order:
+#   1. STORAGE_CLASS from cluster-settings.env / environment (explicit wins)
+#   2. the cluster's default StorageClass (is-default-class annotation)
+#   3. hard error — a silent fallback here surfaces much later as a PVC that
+#      sits Pending forever, which is a far worse failure mode.
+# =============================================================================
+resolve_storage_class() {
+    if [[ -n "${STORAGE_CLASS:-}" ]]; then
+        if ! kubectl get storageclass "${STORAGE_CLASS}" &>/dev/null; then
+            error "STORAGE_CLASS=${STORAGE_CLASS} does not exist on this cluster."
+            error "  Available: $(kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' 2>/dev/null)"
+            error "  Fix STORAGE_CLASS in cluster-settings.env, or leave it unset to use the cluster default."
+            return 1
+        fi
+        info "StorageClass: ${STORAGE_CLASS} (explicit, from cluster-settings.env)"
+        export STORAGE_CLASS
+        return 0
+    fi
+
+    local default_sc
+    default_sc=$(kubectl get storageclass \
+        -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}' \
+        2>/dev/null | head -1)
+
+    if [[ -z "${default_sc}" ]]; then
+        error "STORAGE_CLASS is unset and this cluster has no default StorageClass."
+        error "  Available: $(kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' 2>/dev/null)"
+        error "  Set STORAGE_CLASS in cluster-settings.env, or annotate one class"
+        error "  with storageclass.kubernetes.io/is-default-class=true, and re-run."
+        return 1
+    fi
+
+    STORAGE_CLASS="${default_sc}"
+    export STORAGE_CLASS
+    info "StorageClass: ${STORAGE_CLASS} (cluster default; STORAGE_CLASS unset)"
+    return 0
+}
+
+# =============================================================================
+# apply_bootstrap_application — kubectl apply a bootstrap Application, rendering
+# it first when it ships as a .yaml.tmpl.
+#
+# Bootstrap Applications are applied by install.sh from the local checkout
+# rather than read from Git by ArgoCD, which is exactly why per-cluster values
+# (STORAGE_CLASS) can be substituted into them at all.
+#
+# envsubst is called with an explicit variable allowlist. That is not a style
+# choice: these manifests contain ArgoCD's multi-source "$values" reference, and
+# an unrestricted envsubst would silently expand it to the empty string and
+# break every valueFiles entry.
+# =============================================================================
+apply_bootstrap_application() {
+    local name="$1"
+    local base="${SCRIPT_DIR}/kernel/bootstrap/${name}-application"
+
+    if [[ -f "${base}.yaml.tmpl" ]]; then
+        if ! command -v envsubst &>/dev/null; then
+            error "envsubst not found (install gettext-base). Aborting."
+            exit 1
+        fi
+        if [[ -z "${STORAGE_CLASS:-}" ]]; then
+            error "STORAGE_CLASS is empty while rendering ${name}-application.yaml.tmpl."
+            error "  resolve_storage_class() should have set it during pre-flight."
+            exit 1
+        fi
+        envsubst "\${STORAGE_CLASS}" < "${base}.yaml.tmpl" | kubectl apply -f -
+    else
+        kubectl apply -f "${base}.yaml"
+    fi
 }
 
 # =============================================================================

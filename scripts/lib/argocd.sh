@@ -370,7 +370,7 @@ bootstrap_argocd_apps() {
     fi
 
     for app in "${apps[@]}"; do
-        kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/${app}-application.yaml"
+        apply_bootstrap_application "${app}"
         success "Applied ${app}-application.yaml"
     done
 

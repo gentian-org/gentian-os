@@ -107,8 +107,8 @@ bootstrap_transit_app() {
         success "Placeholder openbao-transit-unseal secret created."
     fi
 
-    kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/openbao-transit-application.yaml"
-    success "Applied openbao-transit-application.yaml"
+    apply_bootstrap_application openbao-transit
+    success "Applied openbao-transit-application.yaml (storageClass=${STORAGE_CLASS})"
 
     _wait_for_argocd_application_workload \
         openbao-transit openbao statefulset \

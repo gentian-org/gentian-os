@@ -29,7 +29,13 @@ server:
 
   dataStorage:
     enabled: true
-    storageClass: nfs-csi
+    # storageClass is deliberately NOT set here. This file is shared by every
+    # cluster (ArgoCD reads it from gentian-os), and the right class differs per
+    # cluster. install.sh resolves STORAGE_CLASS — explicit setting, else the
+    # cluster default — and passes it as a Helm parameter from
+    # kernel/bootstrap/openbao-transit-application.yaml.tmpl, which overrides
+    # this file. Omitting it here means an out-of-band `helm install` still
+    # lands on the cluster's default class rather than a name that may not exist.
     size: 1Gi
     accessMode: ReadWriteOnce
 

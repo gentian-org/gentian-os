@@ -9,7 +9,9 @@ server:
 
   dataStorage:
     enabled: true
-    storageClass: nfs-csi
+    # storageClass comes from the Helm parameter in
+    # kernel/bootstrap/openbao-application.yaml.tmpl (STORAGE_CLASS, resolved by
+    # install.sh) — see the longer note in transit-values.yaml.
     size: 10Gi
     accessMode: ReadWriteOnce
 
