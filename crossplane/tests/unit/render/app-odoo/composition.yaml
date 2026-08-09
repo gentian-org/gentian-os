@@ -801,7 +801,18 @@ spec:
                    set is a no-op while changing it creates a new Job that runs. Removing
                    an addon does NOT uninstall it — that is the destructive purge path and
                    is deliberately not done here. */}}
-            {{- $addons := dig "addons" list $spec }}
+            {{- /* gentian_os is always installed, selection or not. It is the platform
+                   integration driver, not an optional feature: it forces the https scheme
+                   Odoo otherwise gets wrong behind the gateway, auto-redirects an embedded
+                   login to Keycloak for zero-click SSO, and registers the Keycloak OAuth
+                   provider from OIDC_CLIENT_ID/OIDC_ISSUER on _register_hook. Without it
+                   Odoo has no SSO at all and the embedded frame lands on a login form.
+                   It also depends on auth_oauth, so `-i` pulls that in.
+
+                   It ships in the odoo-modules repo, which the git-modules sidecar syncs
+                   into /opt/odoo/custom-addons — so this Job depends on that sidecar
+                   having cloned successfully. */}}
+            {{- $addons := concat (list "gentian_os") (dig "addons" list $spec) }}
             {{- if gt (len $addons) 0 }}
             {{- $addonList := join "," $addons }}
             {{- $addonHash := substr 0 10 (sha256sum $addonList) }}
@@ -861,6 +872,25 @@ spec:
                                   echo "waiting for base odoo service..."
                                   sleep 2
                                 done
+                                # gentian_os is synced into custom-addons by the
+                                # git-modules sidecar. Installing before it lands fails
+                                # with "module not found", and the Job would burn its
+                                # backoff budget racing the clone. Wait for it instead,
+                                # bounded so a broken sidecar surfaces as a clear timeout
+                                # rather than an install error that hides the real cause.
+                                i=0
+                                until [ -d /opt/odoo/custom-addons/gentian_os ]; do
+                                  i=$((i+5))
+                                  if [ $i -ge 300 ]; then
+                                    echo "gentian_os not present after 5m — is the git-modules sidecar running?" >&2
+                                    exit 1
+                                  fi
+                                  echo "waiting for odoo-modules to sync..."
+                                  sleep 5
+                                done
+                            volumeMounts:
+                              - name: extra-addons
+                                mountPath: /opt/odoo/custom-addons
                             env:
                               - name: DB_HOST
                                 valueFrom:
