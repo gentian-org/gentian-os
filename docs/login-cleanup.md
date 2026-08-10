@@ -377,13 +377,28 @@ to recover it. Three entry points now:
 
 | Entry | What happens | Stages |
 |---|---|---|
-| `<tenant>.<kernel-domain>` | The gateway puts the tenant on the login URL, so the realm is known before the page renders. Straight to Keycloak, which asks for email and password together. | **one** |
+| `<tenant>.<kernel-domain>` | The portal is served here directly. It asks `/auth/entry`, which reads the realm from the Host header, and goes straight to Keycloak — email and password together. | **one** |
 | `<kernel-domain>` (apex) | Asks for an email, then hands the browser to that tenant's own host carrying it, so Keycloak pre-fills the field. | two, then one once bookmarked |
 | Platform operators | No tenant host; they authenticate in the kernel realm from the apex. | one |
 
-The tenant host is the entry worth bookmarking, and the apex teaches it: a user
-who signs in there once lands on their own host and sees the URL that skips the
-question next time.
+The tenant host is the entry worth bookmarking.
+
+It used to be a signpost — a 302 to the shared portal host — and that is why the
+first attempt at pre-filling the email failed: a Gateway API redirect replaces
+path *and* query, so anything travelling on the URL was discarded before the
+portal saw it. It now serves the portal itself, one HTTPRoute per tenant host
+pointing at the same backends as the shared route. One portal answering on more
+names, not a copy per tenant: a per-tenant portal would put its Keycloak
+master-admin credentials and cluster-wide secret reads inside every tenant's
+blast radius, which needs the BFF de-privileged first.
+
+**Two hosts means two sessions.** Tokens live in `sessionStorage`, which browsers
+scope per origin, so the same user on `<tenant>.<kernel-domain>` and on
+`portal.<kernel-domain>` holds two independent sets. Keycloak's SSO cookie makes
+crossing between them silent — no second password prompt — but they expire
+independently, and signing out of one does not clear the other's local copy.
+Deciding which host is canonical, and redirecting the other to it after sign-in,
+is the follow-up this leaves open.
 
 Keycloak cannot do better than this. A realm is an isolated user store and a
 login page belongs to exactly one realm, so one password form in front of users
