@@ -51,6 +51,15 @@ if [ -z "${PORTAL:-}" ]; then
   exit 1
 fi
 
+# The tenant's own entry, https://<realm>.<kernel-domain>, is where sign-out
+# returns a tenant member: the apex would ask them for an email again, turning
+# every sign-out into a two-stage sign-in. Keycloak validates
+# post_logout_redirect_uri against the registered list, so an unregistered host
+# does not merely redirect elsewhere — it fails the logout with "Invalid
+# redirect uri". This job runs once per tenant realm, so REALM is the tenant.
+KERNEL_DOMAIN="${PORTAL#https://portal.}"
+TENANT_ORIGIN="https://${REALM}.${KERNEL_DOMAIN}"
+
 TOKEN=$(curl -sf --max-time 30 \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -62,7 +71,7 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 EXISTING=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}" || echo "[]")
-BODY=$(jq -n --arg portal "${PORTAL}" --arg clientId "${CLIENT_ID}" '{
+BODY=$(jq -n --arg portal "${PORTAL}" --arg tenant "${TENANT_ORIGIN}" --arg clientId "${CLIENT_ID}" '{
   clientId: $clientId,
   name: "Gentian Portal",
   enabled: true,
@@ -72,12 +81,14 @@ BODY=$(jq -n --arg portal "${PORTAL}" --arg clientId "${CLIENT_ID}" '{
   implicitFlowEnabled: false,
   serviceAccountsEnabled: false,
   protocol: "openid-connect",
-  redirectUris: [($portal + "/login"), ($portal + "/login/*"), ($portal + "/*")],
+  redirectUris: [($portal + "/login"), ($portal + "/login/*"), ($portal + "/*"),
+                 ($tenant + "/"), ($tenant + "/*")],
   attributes: {
     "pkce.code.challenge.method": "S256",
-    "post.logout.redirect.uris": (($portal + "/login") + "##" + ($portal + "/*"))
+    "post.logout.redirect.uris": (($portal + "/login") + "##" + ($portal + "/*")
+                                  + "##" + ($tenant + "/") + "##" + ($tenant + "/*"))
   },
-  webOrigins: [$portal, "+"],
+  webOrigins: [$portal, $tenant, "+"],
   rootUrl: $portal,
   baseUrl: "/"
 }')
