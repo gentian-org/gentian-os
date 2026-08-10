@@ -532,6 +532,44 @@ Publishing the grade does two things: it sets expectations *before* a customizat
 and it creates pressure on the catalogue to prefer Grade A apps — the same pressure Debian applies
 by making well-behaved upstreams cheap to package.
 
+
+### 4.2 Bases, addons, editions and packages
+
+The catalogue shape L3 is delivered through. Referenced by the `AppProfile`,
+`AppPackage` and `Tenant` CRD field documentation.
+
+```text
+profiles/<family>/
+  base/       <family>-base-<name>      # deployable
+  addons/     <family>-<addon>-<name>   # activated inside a base, never installed alone
+  packages/   <family>-<package>        # not deployable — a UI preset
+```
+
+An **addon** declares `spec.customization.addon.{id,of}` and is selected into an
+installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
+ladder — same image, same drop-in dirs, same plugin API — so it never restates
+`grade`, `rubricScore` or `supportedRungs`.
+
+**Editions** are `ce · me · pro`, and say *who supplies the entry*, not how much of
+it you get. `od` is not an edition: openDesk is a vendor, so an openDesk profile is
+a `pro` edition with `spec.author: openDesk`. Editions are technically compatible
+with one another; what gates a `pro` addon is **entitlement**, and what constrains
+addon↔base compatibility is **version**. There is therefore one addon set per
+family and no per-edition compatibility matrix.
+
+An **edition shares a family name and nothing else** — `nextcloud-base-od` deploys
+the openDesk AIO chart from a credentialed registry, `nextcloud-base-ce` the
+community chart — so it inherits no ladder and must be characterised on its own.
+
+**Naming is a hint, not a contract.** Two profiles may both be edition `pro` from
+different authors under unrelated names. `spec.edition` and `spec.author` are the
+authoritative pair; never infer either from a profile name.
+
+A **package** is an `AppPackage`: cluster-scoped, no status, no reconciler, no
+workload. It names a family and a set of addons, and pre-selects them in the
+install window. The user may still adjust the selection, which is why a curated
+bundle stays a preset rather than becoming an artifact.
+
 ---
 
 ## 5. The `Customization` record
@@ -974,6 +1012,6 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
 | 10 | Tenant drop-in reconciler + Admin Console editor (§2.2.1) | `gentian-os`, `gentian-ui` | **done** |
-| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (`gentian-apps/docs/addon-model.md`) | `gentian-os`, `gentian-apps` | **done** |
+| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (§4.2) | `gentian-os`, `gentian-apps` | **done** |
 | — | Automated grade rubric in CI | `gentian-apps` | roadmap 2.13 |
 | — | Third-party delegation process (signing, entitlement, review SLAs) | — | deferred, §2.9 |

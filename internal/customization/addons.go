@@ -131,7 +131,7 @@ func AddonIDs(resolved []ResolvedAddon) []string {
 // EntitledAddons splits resolved addons into those that may be activated now and
 // those blocked pending an install grant. Entitlement — not technical
 // compatibility — is what gates a commercial addon; see the editions model in
-// gentian-apps/docs/addon-model.md §2.1.
+// gentian-os/docs/app-customization.md §4.2.
 func EntitledAddons(resolved []ResolvedAddon, granted map[string]bool) (allowed, blocked []ResolvedAddon) {
 	for _, a := range resolved {
 		if a.RequiresEntitlement && !granted[a.Profile] {
