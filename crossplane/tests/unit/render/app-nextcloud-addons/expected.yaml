@@ -210,6 +210,8 @@ spec:
             #!/bin/sh
             set -eu
             SELECTED="calendar mail"
+            COLLABORA="http://nextcloud-collabora.tenant-demo.svc.cluster.local:9980"
+            PUBLIC="https://collabora.demo.desk.gentian.org"
             for id in $SELECTED; do
               php /var/www/html/occ app:enable "$id" || true
             done
