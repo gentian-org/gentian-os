@@ -49,7 +49,15 @@ generate:
 ## Generate CRD manifests and sync them into the Helm chart crds/ directory
 manifests:
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./api/..." output:crd:artifacts:config=config/crd
-	cp config/crd/gentianos.io_*.yaml charts/gentian-os/crds/
+	@# Not a blanket copy: Apps and XTenants are Crossplane XRD-generated, and
+	@# Helm claims server-side apply ownership of everything in crds/, so shipping
+	@# them there fights Crossplane for the same objects — see crds/README.md.
+	@# The blanket copy used to drop both into crds/ on every run, leaving two
+	@# untracked files one commit away from breaking the install.
+	@for f in config/crd/gentianos.io_*.yaml; do \
+		case "$$f" in *_apps.yaml|*_xtenants.yaml) continue ;; esac; \
+		cp "$$f" charts/gentian-os/crds/; \
+	done
 
 ## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
 gen-theme:
