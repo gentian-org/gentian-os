@@ -88,7 +88,7 @@ spec:
                         The App Store writes this list — pre-filled from an AppPackage preset when
                         one is chosen, then editable afterwards. Entries the tenant is not entitled
                         to are rejected; entitlement is what gates a pro addon, not compatibility.
-                        See gentian-apps/docs/L3-cleanup.md.
+                        See gentian-apps/docs/addon-model.md.
                       items:
                         type: string
                       type: array

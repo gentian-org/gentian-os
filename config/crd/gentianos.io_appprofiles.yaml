@@ -227,7 +227,7 @@ spec:
                   This is why the edition must never be inferred from a profile's name. Two
                   profiles may both be edition "pro" from different authors and carry entirely
                   unrelated names; spec.edition and spec.author are the authoritative pair, the
-                  name is only a hint. See gentian-apps/docs/L3-cleanup.md §2.2.
+                  name is only a hint. See gentian-apps/docs/addon-model.md §2.2.
                 maxLength: 128
                 type: string
               browserProxy:

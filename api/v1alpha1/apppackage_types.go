@@ -33,7 +33,7 @@ import (
 // combinations. Making the curated set a preset rather than an artifact keeps the
 // curation benefit without constraining what a tenant can actually install.
 //
-// See gentian-apps/docs/L3-cleanup.md §2.3.
+// See gentian-apps/docs/addon-model.md §2.3.
 
 // AppPackageSpec is the desired state of an AppPackage.
 type AppPackageSpec struct {
