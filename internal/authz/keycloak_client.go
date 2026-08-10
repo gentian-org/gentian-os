@@ -172,7 +172,14 @@ func BrowserSecurityHeadersJSON() string {
 	return string(b)
 }
 
-// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders and functional session timeouts (12 hours) to a realm.
+// GentianLoginTheme is the Keycloak login theme shipped in
+// kernel/services/keycloak-idp/theme/. Keycloak falls back to the built-in theme
+// if it is absent, so setting this before the theme is deployed degrades to stock
+// styling rather than breaking login.
+const GentianLoginTheme = "gentian"
+
+// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders,
+// functional session timeouts (12 hours) and the Gentian login theme to a realm.
 func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
 	if realm == "" {
 		return nil
@@ -186,6 +193,12 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		"accessTokenLifespan":    43200, // 12 hours
 		"ssoSessionIdleTimeout":  43200, // 12 hours
 		"ssoSessionMaxLifespan":  43200, // 12 hours
+		// Every realm that can render a login screen renders Gentian's, so a user
+		// sent to the IdP sees the portal's own card rather than stock Keycloak.
+		// Set here rather than per realm-creation path because the kernel realm has
+		// no such path — it is bootstrapped once at install.
+		// See docs/login-cleanup.md §6.
+		"loginTheme": GentianLoginTheme,
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err

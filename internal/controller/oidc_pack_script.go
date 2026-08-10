@@ -221,11 +221,27 @@ fi`, mapperName, mapperName, templateKey, string(bodyJSON), templateKey, templat
 	return b.String()
 }
 
-// buildOIDCBrowserFlowScript configures the tenant realm browser flow to auto-redirect to the kernel IdP.
+// buildOIDCBrowserFlowScript makes the tenant realm authenticate its own users.
+//
+// It used to do the opposite: it built a custom "browser-kernel-idp" flow of
+// Cookie then identity-provider-redirector with defaultProvider=kernel, and bound
+// the realm to it. That left the tenant realm with no credential form at all, so
+// it could only recognise an existing cookie or bounce to the kernel realm — and
+// every interactive login in the system, including for apps that live in the
+// tenant realm, ended up rendering the kernel realm's form.
+//
+// Tenant members live in the tenant realm and every per-app OIDC client is
+// registered there, so that is where the session belongs. Keycloak's stock
+// "browser" flow already does what is wanted — Cookie first, then forms — and its
+// identity-provider-redirector stays inert without a default provider. So rather
+// than build another custom flow, this binds the realm back to the built-in one
+// and removes the redirect flow if an earlier reconcile created it.
+//
+// See docs/login-cleanup.md §5.
 func buildOIDCBrowserFlowScript(realmName string) string {
 	return fmt.Sprintf(`set -eu
 REALM=%q
-FLOW_ALIAS="browser-kernel-idp"
+LEGACY_FLOW="browser-kernel-idp"
 TOKEN=$(curl -sf \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -233,49 +249,40 @@ TOKEN=$(curl -sf \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
-FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
-if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
-  echo "browser flow ${FLOW_ALIAS} already exists"
+# Bind first, unbind second: Keycloak refuses to delete a flow the realm still
+# uses, and a realm pointing at a flow that is about to be deleted would be a
+# window with no usable login at all.
+REALM_JSON=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}")
+CURRENT=$(printf '%%s' "${REALM_JSON}" | jq -r '.browserFlow')
+if [ "${CURRENT}" = "browser" ]; then
+  echo "realm ${REALM} already uses the built-in browser flow"
 else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Check cookie first, then auto-redirect to kernel IdP\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
-  
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-    -d "{\"provider\":\"auth-cookie\"}"
-    
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-    -d "{\"provider\":\"identity-provider-redirector\"}"
-  echo "browser flow ${FLOW_ALIAS} created"
+  curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}" \
+    -d '{"browserFlow":"browser"}' >/dev/null
+  echo "realm ${REALM} browser flow set to the built-in browser flow (was ${CURRENT})"
 fi
 
-EXECS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions")
-printf '%%s' "${EXECS}" | jq -c '.[]' | while read -r EXEC; do
-  EID=$(printf '%%s' "${EXEC}" | jq -r '.id')
-  PROVIDER=$(printf '%%s' "${EXEC}" | jq -r '.providerId')
-  
-  curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    -d "{\"id\":\"${EID}\",\"requirement\":\"ALTERNATIVE\"}"
-    
-  if [ "${PROVIDER}" = "identity-provider-redirector" ]; then
-    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/executions/${EID}/config" \
-      -d "{\"alias\":\"autoredirect-kernel\",\"config\":{\"defaultProvider\":\"kernel\"}}" >/dev/null 2>&1 || true
-    echo "identity-provider-redirector execution ${EID} configured with defaultProvider=kernel"
-  fi
-done
-
+# The tenant realm renders its own login form now, so it needs the Gentian theme.
 curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}" \
-  -d "{\"browserFlow\":\"${FLOW_ALIAS}\"}" >/dev/null
-echo "realm ${REALM} browser flow set to ${FLOW_ALIAS}"`, realmName)
+  -d '{"loginTheme":"gentian"}' >/dev/null
+echo "realm ${REALM} login theme set to gentian"
+
+FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
+FLOW_ID=$(printf '%%s' "${FLOWS}" | jq -r --arg a "${LEGACY_FLOW}" '.[] | select(.alias==$a) | .id // empty')
+if [ -n "${FLOW_ID}" ]; then
+  if curl -sf -X DELETE -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ID}" >/dev/null 2>&1; then
+    echo "removed the legacy ${LEGACY_FLOW} flow"
+  else
+    # Not fatal: the realm is already on the built-in flow, so an orphaned
+    # definition changes no behaviour. Still worth reporting.
+    echo "WARNING: could not delete the legacy ${LEGACY_FLOW} flow; it is unused but still defined" >&2
+  fi
+fi`, realmName)
 }
 
-// buildEnsureFirstBrokerLoginFlowShell creates the custom first-broker-login flow
-// when missing. Requires TOKEN and sets REALM from realmExpr (e.g. "demo" or "${REALM_NAME}").
 func buildEnsureFirstBrokerLoginFlowShell(realmExpr string) string {
 	return buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, firstBrokerLoginFlowAlias)
 }
