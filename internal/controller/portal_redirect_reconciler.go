@@ -67,13 +67,3 @@ func (r *TenantReconciler) deleteTenantPortalRedirect(ctx context.Context, tenan
 func tenantPortalRedirectName(tenantName string) string {
 	return fmt.Sprintf("tenant-%s-portal-redirect", tenantName)
 }
-
-func portalRedirectLabels(tenantName, instance string) map[string]string {
-	return map[string]string{
-		tenantLabel:                  tenantName,
-		managedByLabel:               managedByValue,
-		portalRedirectComponentLabel: portalRedirectComponentValue,
-		"app.kubernetes.io/name":     "portal-redirect",
-		"app.kubernetes.io/instance": instance,
-	}
-}

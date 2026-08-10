@@ -49,23 +49,19 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
-	tenantFinalizer = "gentianos.io/tenant-cleanup"
-	tenantLabel     = meta.TenantLabel
-	managedByLabel  = meta.ManagedByLabel
-	managedByValue  = meta.ManagedByValue
-	// portalRedirectComponentLabel marks Ingress objects owned by tenant portal redirect
-	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
-	portalRedirectComponentLabel = meta.PortalRedirectComponentLabel
-	portalRedirectComponentValue = meta.PortalRedirectComponentValue
-	kernelNamespace = meta.KernelNamespace
+	tenantFinalizer         = "gentianos.io/tenant-cleanup"
+	tenantLabel             = meta.TenantLabel
+	managedByLabel          = meta.ManagedByLabel
+	managedByValue          = meta.ManagedByValue
+	kernelNamespace         = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -148,7 +144,7 @@ type TenantReconciler struct {
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
