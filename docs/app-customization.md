@@ -974,6 +974,6 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
 | 10 | Tenant drop-in reconciler + Admin Console editor (§2.2.1) | `gentian-os`, `gentian-ui` | **done** |
-| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (`gentian-apps/docs/L3-cleanup.md`) | `gentian-os`, `gentian-apps` | **done** |
+| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (`gentian-apps/docs/addon-model.md`) | `gentian-os`, `gentian-apps` | **done** |
 | — | Automated grade rubric in CI | `gentian-apps` | roadmap 2.13 |
 | — | Third-party delegation process (signing, entitlement, review SLAs) | — | deferred, §2.9 |
