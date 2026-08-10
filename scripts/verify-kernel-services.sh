@@ -46,17 +46,61 @@ _run_ephemeral_pod() {
     local image="$1"
     shift
     local name="gentian-verify-$$-${RANDOM}"
-    local phase exit_code=1
+    local ns="${VERIFY_POD_NAMESPACE:-default}"
+    local phase exit_code=1 create_err
 
-    kubectl run "${name}" --restart=Never --image="${image}" \
-        --command -- "$@" >/dev/null 2>&1 || return 1
+    # The pod spec is generated rather than left to `kubectl run`, because a bare
+    # `kubectl run` pod is rejected by the platform's OWN Kyverno baseline
+    # (kernel/security/kyverno/policies/gentian-baseline.yaml, installed in Step
+    # 11c):
+    #
+    #   admission webhook "validate.kyverno.svc-fail" denied the request:
+    #   gentian-disallow-privilege-escalation: Containers must set
+    #   allowPrivilegeEscalation to false
+    #
+    # The verification harness has to satisfy the same baseline it helped
+    # install: non-root, no privilege escalation, all capabilities dropped,
+    # RuntimeDefault seccomp, no host namespaces or hostPath.
+    local manifest
+    manifest=$(python3 -c '
+import json, sys
+name, ns, image = sys.argv[1], sys.argv[2], sys.argv[3]
+cmd = sys.argv[4:]
+print(json.dumps({
+    "apiVersion": "v1", "kind": "Pod",
+    "metadata": {"name": name, "namespace": ns,
+                 "labels": {"app.kubernetes.io/managed-by": "gentian-os",
+                            "gentianos.io/purpose": "verify"}},
+    "spec": {
+        "restartPolicy": "Never",
+        "securityContext": {"runAsNonRoot": True, "runAsUser": 65532,
+                            "seccompProfile": {"type": "RuntimeDefault"}},
+        "containers": [{
+            "name": "probe", "image": image, "command": cmd,
+            "securityContext": {
+                "allowPrivilegeEscalation": False, "privileged": False,
+                "readOnlyRootFilesystem": True, "runAsNonRoot": True,
+                "capabilities": {"drop": ["ALL"]},
+                "seccompProfile": {"type": "RuntimeDefault"}},
+        }],
+    },
+}))' "${name}" "${ns}" "${image}" "$@") || return 1
+
+    # Do NOT discard the creation error. Swallowing it is what turned an
+    # admission rejection into 300s of "…not answering yet" against a Keycloak
+    # that was serving HTTP 200 the whole time.
+    if ! create_err=$(printf '%s' "${manifest}" | kubectl apply -f - 2>&1); then
+        warn "  Could not create verification pod in namespace ${ns}:"
+        printf '    %s\n' "${create_err}" >&2
+        return 1
+    fi
 
     # One-shot curl/busybox pods often skip Ready and go straight to Succeeded.
-    kubectl wait --for=condition=Ready "pod/${name}" --timeout=30s >/dev/null 2>&1 || true
+    kubectl wait --for=condition=Ready "pod/${name}" -n "${ns}" --timeout=30s >/dev/null 2>&1 || true
 
     local deadline=$((SECONDS + 120))
     while (( SECONDS < deadline )); do
-        phase=$(kubectl get pod "${name}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+        phase=$(kubectl get pod "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
         case "${phase}" in
             Succeeded)
                 exit_code=0
@@ -64,7 +108,7 @@ _run_ephemeral_pod() {
                 ;;
             Failed)
                 warn "  Ephemeral pod ${name} failed:"
-                kubectl logs "${name}" 2>/dev/null || true
+                kubectl logs "${name}" -n "${ns}" 2>/dev/null || true
                 break
                 ;;
         esac
@@ -73,10 +117,10 @@ _run_ephemeral_pod() {
 
     if [[ "${exit_code}" -ne 0 && "${phase}" != "Failed" ]]; then
         warn "  Ephemeral pod ${name} did not complete (phase=${phase:-unknown})."
-        kubectl logs "${name}" 2>/dev/null || true
+        kubectl logs "${name}" -n "${ns}" 2>/dev/null || true
     fi
 
-    kubectl delete pod "${name}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+    kubectl delete pod "${name}" -n "${ns}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
     return "${exit_code}"
 }
 
