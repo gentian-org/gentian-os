@@ -185,7 +185,7 @@ type TenantApp struct {
 	// The App Store writes this list — pre-filled from an AppPackage preset when
 	// one is chosen, then editable afterwards. Entries the tenant is not entitled
 	// to are rejected; entitlement is what gates a pro addon, not compatibility.
-	// See gentian-apps/docs/addon-model.md.
+	// See gentian-os/docs/app-customization.md §4.2.
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`

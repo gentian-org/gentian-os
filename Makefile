@@ -51,12 +51,16 @@ manifests:
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./api/..." output:crd:artifacts:config=config/crd
 	cp config/crd/gentianos.io_*.yaml charts/gentian-os/crds/
 
+## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
+gen-theme:
+	python3 scripts/gen-keycloak-theme-configmap.py
+
 ## Both generate and manifests in order
-gen-all: generate manifests
+gen-all: generate manifests gen-theme
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ kernel/services/keycloak-idp/manifests/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:

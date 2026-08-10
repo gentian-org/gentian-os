@@ -86,7 +86,7 @@ const (
 //
 // Editions are technically interchangeable; what decides whether one may run is
 // authorization (a paid licence), and technical addon/base compatibility is managed
-// by version. See gentian-apps/docs/addon-model.md §2.1.
+// by version. See gentian-os/docs/app-customization.md §4.2.
 //
 // +kubebuilder:validation:Enum=ce;me;pro
 type Edition string
