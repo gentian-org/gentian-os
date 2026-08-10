@@ -18,7 +18,7 @@ _mail_kernel_namespace() {
 }
 
 _mail_dovecot_host() {
-    echo "dovecot-dev.$(_mail_kernel_namespace).svc.cluster.local"
+    echo "dovecot-${ENV:-dev}.$(_mail_kernel_namespace).svc.cluster.local"
 }
 
 # Tenant mail domains registered by the operator (platform-kernel ConfigMap).
@@ -28,9 +28,15 @@ _postfix_kernel_virtual_domains() {
 {{range $k,$v := .data}}{{$v}} {{end}}
 EOF
 )
+    # `|| true` is load-bearing. The ConfigMap is created by the operator when a
+    # tenant first registers a mail domain, so on a fresh cluster it simply does
+    # not exist yet: kubectl exits 1, 2>/dev/null hides the message but not the
+    # status, and under `set -o pipefail` that aborted the whole install from
+    # inside a command substitution. "No tenant mail domains yet" is a normal
+    # state and must return empty, not kill the run.
     kubectl get configmap mail-postfix-virtual-domains -n platform-kernel \
         -o go-template="${template}" 2>/dev/null \
-        | xargs echo
+        | xargs echo || true
 }
 
 # MAIL_SERVICE_MODE=kernel needs reachable SMTP ingress; Cloudflare tunnel is HTTP-only.
@@ -49,13 +55,13 @@ EOF
 }
 
 # =============================================================================
-# Detect deployed Postfix mode from postfix-dev-values ConfigMap.
+# Detect deployed Postfix mode from postfix-${ENV:-dev}-values ConfigMap.
 # Returns: external | kernel | unknown
 # =============================================================================
 _detect_deployed_mail_mode() {
     local ns cm_yaml
     ns="$(_mail_kernel_namespace)"
-    cm_yaml=$(kubectl get configmap postfix-dev-values -n "${ns}" \
+    cm_yaml=$(kubectl get configmap postfix-${ENV:-dev}-values -n "${ns}" \
         -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
 
     if [[ -z "${cm_yaml}" ]]; then
@@ -71,7 +77,7 @@ _detect_deployed_mail_mode() {
 }
 
 # =============================================================================
-# Build postfix-dev-values YAML for the given mode (external relay vs kernel LMTP).
+# Build postfix-${ENV:-dev}-values YAML for the given mode (external relay vs kernel LMTP).
 #
 # Values target the public bokysan/mail chart (see kernel/services/postfix/).
 # Kernel mode delivers tenant-domain mail to Dovecot via LMTP; Dovecot domain
@@ -87,7 +93,7 @@ _postfix_dev_values_yaml() {
         local relay_port="${EXTERNAL_SMTP_PORT:-587}"
         cat <<YAML
 postfix:
-  hostname: "postfix-dev"
+  hostname: "postfix-${ENV:-dev}"
 
   relayHost:
     enabled: true
@@ -122,7 +128,7 @@ YAML
         cat <<YAML
 config:
   postfix:
-    myhostname: postfix-dev
+    myhostname: postfix-${ENV:-dev}
     virtual_transport: "lmtp:[${dovecot_host}]:24"
     virtual_mailbox_domains: "${domains}"
     virtual_mailbox_maps: "lmdb:/etc/postfix/virtual_mailbox_maps"
@@ -138,7 +144,7 @@ extraVolumeMounts:
     subPath: virtual_mailbox_maps
 
 postfix:
-  hostname: "postfix-dev"
+  hostname: "postfix-${ENV:-dev}"
   relayHost:
     enabled: false
   smtpSASLAuthEnable: "no"
@@ -183,32 +189,32 @@ _sync_kernel_postfix_virtual_mailbox_maps() {
     success "  synced postfix-kernel-virtual-mailbox-maps for: ${domains}"
 }
 
-# Align the live postfix-dev pod env with the desired relay mode.
+# Align the live postfix-${ENV:-dev} pod env with the desired relay mode.
 _patch_postfix_live_relay() {
     local mode="$1"
     local ns relay_host relay_port
     ns="$(_mail_kernel_namespace)"
 
-    if ! kubectl get configmap postfix-dev -n "${ns}" >/dev/null 2>&1; then
+    if ! kubectl get configmap postfix-${ENV:-dev} -n "${ns}" >/dev/null 2>&1; then
         return 0
     fi
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        info "  [dry-run] Would patch live postfix-dev relay (mode=${mode})"
+        info "  [dry-run] Would patch live postfix-${ENV:-dev} relay (mode=${mode})"
         return 0
     fi
 
     if [[ "${mode}" == "external" ]]; then
         relay_host="${EXTERNAL_SMTP_HOST:-smtp.gmail.com}"
         relay_port="${EXTERNAL_SMTP_PORT:-587}"
-        kubectl patch configmap postfix-dev -n "${ns}" --type merge \
+        kubectl patch configmap postfix-${ENV:-dev} -n "${ns}" --type merge \
             -p "{\"data\":{\"RELAYHOST\":\"[${relay_host}]:${relay_port}\"}}" >/dev/null
     else
-        kubectl patch configmap postfix-dev -n "${ns}" --type merge \
+        kubectl patch configmap postfix-${ENV:-dev} -n "${ns}" --type merge \
             -p '{"data":{"RELAYHOST":"","RELAYHOST_USERNAME":"","RELAYHOST_PASSWORD":""}}' >/dev/null
     fi
-    kubectl delete pod postfix-dev-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    success "  patched live postfix-dev relay (mode=${mode})"
+    kubectl delete pod postfix-${ENV:-dev}-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    success "  patched live postfix-${ENV:-dev} relay (mode=${mode})"
 }
 
 # =============================================================================
@@ -254,16 +260,16 @@ _patch_postfix_allowed_sender_domains() {
         | kubectl apply -f - >/dev/null
     success "  patched postfix-base-values (ALLOWED_SENDER_DOMAINS=${kernel_domain})"
 
-    if kubectl get configmap postfix-dev -n "${ns}" >/dev/null 2>&1; then
-        kubectl patch configmap postfix-dev -n "${ns}" --type merge \
+    if kubectl get configmap postfix-${ENV:-dev} -n "${ns}" >/dev/null 2>&1; then
+        kubectl patch configmap postfix-${ENV:-dev} -n "${ns}" --type merge \
             -p "{\"data\":{\"ALLOWED_SENDER_DOMAINS\":\"${kernel_domain}\"}}" >/dev/null
-        kubectl delete pod postfix-dev-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-        success "  patched postfix-dev ConfigMap and restarted Postfix pod"
+        kubectl delete pod postfix-${ENV:-dev}-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        success "  patched postfix-${ENV:-dev} ConfigMap and restarted Postfix pod"
     fi
 }
 
 # =============================================================================
-# Patch postfix-dev-values ConfigMap to match MAIL_SERVICE_MODE postfix layout.
+# Patch postfix-${ENV:-dev}-values ConfigMap to match MAIL_SERVICE_MODE postfix layout.
 # =============================================================================
 _patch_postfix_configmap() {
     local mode="$1"
@@ -272,11 +278,11 @@ _patch_postfix_configmap() {
     values_yaml=$(_postfix_dev_values_yaml "${mode}")
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        info "  [dry-run] Would patch ConfigMap postfix-dev-values (mode=${mode})"
+        info "  [dry-run] Would patch ConfigMap postfix-${ENV:-dev}-values (mode=${mode})"
         return
     fi
 
-    kubectl create configmap postfix-dev-values \
+    kubectl create configmap postfix-${ENV:-dev}-values \
         -n "${ns}" \
         --from-literal="values.yaml=${values_yaml}" \
         --dry-run=client -o yaml \
@@ -284,7 +290,7 @@ _patch_postfix_configmap() {
             "argocd.argoproj.io/sync-wave=-1" \
             --dry-run=client -o yaml \
         | kubectl apply -f - >/dev/null
-    success "  patched postfix-dev-values (mode=${mode})"
+    success "  patched postfix-${ENV:-dev}-values (mode=${mode})"
 }
 
 # =============================================================================
@@ -318,7 +324,7 @@ install_kernel_mail() {
             info "Keycloak uses the relay directly; in-cluster Postfix (if present) relays via the same host."
         fi
         if kubectl get namespace "$(_mail_kernel_namespace)" >/dev/null 2>&1 \
-            && kubectl get configmap postfix-dev-values -n "$(_mail_kernel_namespace)" >/dev/null 2>&1; then
+            && kubectl get configmap postfix-${ENV:-dev}-values -n "$(_mail_kernel_namespace)" >/dev/null 2>&1; then
             _patch_postfix_configmap external
             _patch_postfix_allowed_sender_domains
             _patch_postfix_live_relay external
@@ -333,7 +339,7 @@ install_kernel_mail() {
     _patch_postfix_configmap kernel
     _patch_postfix_allowed_sender_domains
     _patch_postfix_live_relay kernel
-    info "Keycloak realm SMTP will target postfix-dev.${KERNEL_NAMESPACE}.svc.cluster.local:587"
+    info "Keycloak realm SMTP will target postfix-${ENV:-dev}.${KERNEL_NAMESPACE}.svc.cluster.local:587"
     if ! verify_dovecot_installation; then
         error "Dovecot installation verification failed."
         return 1

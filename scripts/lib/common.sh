@@ -1357,6 +1357,16 @@ gentian_report_abort() {
     local exit_code=$?
     local cmd="${BASH_COMMAND:-<unknown>}"
 
+    # ERR fires again at every enclosing frame as the failure unwinds, so one
+    # failed command printed the banner once per nesting level — three times for
+    # a failure three functions deep, each with a shorter stack, which reads like
+    # three separate faults. Report only the first (innermost) occurrence, whose
+    # stack is the complete one.
+    if [[ -n "${_GENTIAN_ABORT_REPORTED:-}" ]]; then
+        return "${exit_code}"
+    fi
+    _GENTIAN_ABORT_REPORTED=1
+
     # A bare `exit N` is a deliberate stop: the step that called it has already
     # printed its own diagnosis (which chart, which resource, what to run next).
     # Appending an ABORT banner to that only buries the useful message under a
