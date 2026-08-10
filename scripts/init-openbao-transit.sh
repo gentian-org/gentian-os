@@ -112,6 +112,33 @@ if [[ "$INIT_STATUS" == "true" ]]; then
     success "Transit already unsealed."
   fi
 
+  # Nothing below this point is reachable without the ROOT token, and the root
+  # token only lives in TRANSIT_INIT_FILE — which defaults to /tmp and therefore
+  # disappears on reboot. But everything the root token would do (enable the
+  # engine, create the autounseal key, write the policy, mint the app token,
+  # create the k8s Secret) is already done if openbao-transit-token exists and
+  # still authenticates. In that case the run has no work left, so finish here
+  # rather than prompting for a token the operator no longer has.
+  #
+  # This is what makes a re-run genuinely idempotent, as the header claims: the
+  # previous behaviour was to stop and ask, which fails outright in CI.
+  if kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" >/dev/null 2>&1; then
+    EXISTING_APP_TOKEN=$(kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" \
+      -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [[ -n "${EXISTING_APP_TOKEN}" ]]; then
+      APP_LOOKUP_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "X-Vault-Token: ${EXISTING_APP_TOKEN}" \
+        "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
+      if [[ "${APP_LOOKUP_HTTP}" == "200" ]]; then
+        success "openbao-transit-token Secret already present and valid — transit bootstrap is complete."
+        info "  Transit engine, autounseal key, policy and app token are all in place."
+        info "  (Root token not needed: nothing left to provision.)"
+        exit 0
+      fi
+      info "openbao-transit-token exists but its token no longer authenticates (HTTP ${APP_LOOKUP_HTTP}); re-provisioning."
+    fi
+  fi
+
   if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
     TRANSIT_ROOT_TOKEN=$(jq -r '.root_token' "${TRANSIT_INIT_FILE}")
     # Validate the cached token is still accepted by this transit instance.
@@ -128,7 +155,12 @@ if [[ "$INIT_STATUS" == "true" ]]; then
       success "Cached openbao-transit token validated."
     fi
   fi
-  if [[ -z "${TRANSIT_ROOT_TOKEN}" ]]; then
+  # :- is required, not cosmetic. TRANSIT_ROOT_TOKEN is only assigned inside the
+  # `[[ -f TRANSIT_INIT_FILE ]]` block above, so when that file is missing this
+  # test tripped `set -u` and killed the script with a bare
+  # "TRANSIT_ROOT_TOKEN: unbound variable" — before it could reach the prompt
+  # that exists precisely to handle a missing init file.
+  if [[ -z "${TRANSIT_ROOT_TOKEN:-}" ]]; then
     echo "  (token is read silently — characters will not appear as you type)"
     read -rsp "  Enter openbao-transit root token: " TRANSIT_ROOT_TOKEN; echo ""
     if [[ -z "${TRANSIT_ROOT_TOKEN}" ]]; then
