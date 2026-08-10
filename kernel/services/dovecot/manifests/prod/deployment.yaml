@@ -83,6 +83,22 @@ spec:
         - name: dovecot
           image: dovecot/dovecot:2.3.21
           imagePullPolicy: IfNotPresent
+          # Required by the Kyverno baseline (gentian-disallow-privilege-escalation,
+          # gentian-require-seccomp), which applies to gentian-<env> — that namespace
+          # is NOT in the policies' exclusion list, unlike platform-kernel and the
+          # other infrastructure namespaces. Without these the ReplicaSet cannot
+          # create a Pod at all: "denied the request ... failed at path
+          # /spec/containers/0/securityContext/".
+          #
+          # runAsNonRoot and a capability drop are deliberately NOT set: Dovecot
+          # binds 143/993/24, all privileged ports. Kyverno's non-root and
+          # capabilities rules use "=(securityContext)" conditionals, so they only
+          # engage on keys that are present — omitting them keeps the workload
+          # compliant without a MAC waiver.
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: imap
               containerPort: 143

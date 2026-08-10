@@ -11,6 +11,21 @@ metadata:
 data:
   values.yaml: |
     # Helm chart: bokysan/mail — https://bokysan.github.io/docker-postfix/
+    # Required by the Kyverno baseline (gentian-disallow-privilege-escalation,
+    # gentian-require-seccomp). gentian-<env> is not in those policies' exclusion
+    # list — unlike platform-kernel and the other infra namespaces — so without
+    # this the StatefulSet cannot create its Pod at all.
+    #
+    # runAsNonRoot and a capability drop are deliberately omitted: Postfix binds
+    # 25/587. Kyverno's non-root and capabilities rules are "=(securityContext)"
+    # conditionals that only engage on keys that are present, so leaving them out
+    # keeps this compliant without needing a MAC waiver.
+    container:
+      postfix:
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
     fullnameOverride: postfix-prod
     image:
       repository: boky/postfix
