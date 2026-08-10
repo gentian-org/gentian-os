@@ -24,6 +24,26 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["platformsecuritypolicies", "platformsecuritypolicies/status", "platformsecuritypolicies/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # AppCatalogue — watched by appstore_controller (For(&AppCatalogue{})).
+  # Omitting this does not merely break the App Store: the informer cannot list,
+  # so the manager's SHARED cache never syncs and every controller dies with
+  # "failed to wait for caches to sync" after 2m. The operator then
+  # CrashLoopBackOffs with no hint that RBAC is the cause — the only trace is one
+  # "Failed to watch ... is forbidden" line before the timeout. Verbs mirror the
+  # kubebuilder markers in appstore_controller.go, which this hand-maintained
+  # ClusterRole had drifted from.
+  - apiGroups: ["gentianos.io"]
+    resources: ["appcatalogues"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gentianos.io"]
+    resources: ["appcatalogues/status"]
+    verbs: ["get", "update", "patch"]
+  # Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
+  # list+watch are required even though the code only calls Get: the manager's
+  # client reads through the cache, so a Get starts an informer.
+  - apiGroups: ["gentianos.io"]
+    resources: ["xtenants", "xapps"]
+    verbs: ["get", "list", "watch"]
   # Customization records — the operator computes derived debt state on status,
   # but never authors records: those are written in git by humans and agents.
   - apiGroups: ["gentianos.io"]
@@ -65,6 +85,16 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gatewayclasses"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # ReferenceGrants authorise cross-namespace HTTPRoute -> Service references
+  # (e.g. the kernel Gateway routing to ArgoCD). The gateway-platform controller
+  # creates them and tenant_edge_tls.go deletes them on teardown, but the role
+  # granted none — every reconcile failed with "ensure ArgoCD ReferenceGrant:
+  # referencegrants.gateway.networking.k8s.io is forbidden". Unlike the
+  # appcatalogues gap this did not crash the operator, so it showed up only as a
+  # controller that never converged.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["referencegrants"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["gateway.envoyproxy.io"]
     resources: ["backendtrafficpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
