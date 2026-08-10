@@ -39,14 +39,53 @@
 html, body { height: 100%; margin: 0; }
 
 body.gentian-login {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: var(--gtn-paper-0);
   font-family: var(--gtn-font-sans);
 }
+
+/* Neutralise PatternFly's own login chrome.
+ *
+ * keycloak.v2 renders a grid: a header band carrying the realm name, then a
+ * white "main" card with its own shadow, and the Gentian card goes inside that.
+ * Left alone it is two stacked white cards with two shadows, and the inner one
+ * is not centred against the outer because the grid, not the card, owns the
+ * width. The portal has none of this — one card on the paper background — so the
+ * wrappers collapse to a single centring flex context and main loses its card
+ * styling entirely.
+ */
+.pf-v5-c-login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.pf-v5-c-login__container {
+  display: block;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: none;
+}
+
+.pf-v5-c-login__main,
+.pf-v5-c-login__main-body {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* The realm-name band and the (empty) page title: the card carries its own
+   logo, wordmark and subtitle, exactly as the portal's does. */
+.pf-v5-c-login__header,
+.pf-v5-c-login__main-header,
+.pf-v5-c-login__main-footer { display: none; }
 
 .gentian-login__card {
   display: flex;

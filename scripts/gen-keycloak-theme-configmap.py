@@ -23,6 +23,7 @@ With the init container, adding a template changes only this file's output.
 
 from __future__ import annotations
 
+import base64
 import pathlib
 import sys
 
@@ -54,8 +55,13 @@ metadata:
   namespace: platform-kernel
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
-data:
 """
+
+# Anything not decodable as UTF-8 goes to binaryData. The favicon is the only such
+# file today; the kubelet materialises both maps as real files, so the init
+# container copies them identically.
+BINARY_HEADER = "binaryData:\n"
+TEXT_HEADER = "data:\n"
 
 
 def render() -> tuple[str, int]:
@@ -63,19 +69,34 @@ def render() -> tuple[str, int]:
     if not files:
         sys.exit(f"no theme files under {THEME}")
 
-    out = [HEADER]
+    text_out: list[str] = []
+    binary_out: list[str] = []
     for path in files:
         rel = str(path.relative_to(THEME))
         if "__" in rel:
             sys.exit(f"{rel}: a literal '__' in a theme path is ambiguous once encoded")
-        text = path.read_text()
+        key = rel.replace("/", "__")
+        raw = path.read_bytes()
+        try:
+            text = raw.decode()
+        except UnicodeDecodeError:
+            binary_out.append(f"  {key}: {base64.b64encode(raw).decode()}\n")
+            continue
         if "\r" in text:
             sys.exit(f"{rel}: CRLF line endings would reach Keycloak verbatim")
         # "|-" rather than "|" so a missing trailing newline in a source file
         # cannot silently change the rendered bytes.
-        out.append(f"  {rel.replace('/', '__')}: |-\n")
+        text_out.append(f"  {key}: |-\n")
         for line in text.rstrip("\n").split("\n"):
-            out.append(f"    {line}\n" if line else "\n")
+            text_out.append(f"    {line}\n" if line else "\n")
+
+    out = [HEADER]
+    if text_out:
+        out.append(TEXT_HEADER)
+        out.extend(text_out)
+    if binary_out:
+        out.append(BINARY_HEADER)
+        out.extend(binary_out)
     return "".join(out), len(files)
 
 
