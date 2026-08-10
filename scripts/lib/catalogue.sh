@@ -171,6 +171,61 @@ configure_github_actions_secrets() {
 
 # Adopt cluster-scoped chart resources left from a prior ArgoCD or manual install so
 # helm upgrade --install gentian-os can proceed (missing meta.helm.sh/release-*).
+# =============================================================================
+# ensure_kernel_services_configmap — break the Step 12 / Step 13 deadlock
+#
+# The Keycloak pod created by the Suze XR (Step 12) reads KERNEL_DOMAIN from the
+# gentian-kernel-services ConfigMap in platform-kernel. That ConfigMap is
+# rendered by the gentian-os operator chart — Step 13. So on a first install the
+# pod fails with
+#
+#   Error: configmap "gentian-kernel-services" not found
+#
+# and Step 12 waits out its full 1200s timeout for a pod that cannot start,
+# while the thing it needs is scheduled to arrive one step later. Re-runs of an
+# already-bootstrapped cluster hide this, because the ConfigMap is left over
+# from the previous run — which is why it survived until the first prod install.
+#
+# Seed it before Step 12 with the keys that are unambiguous this early
+# (KERNEL_DOMAIN, TENANCY_MODE — the only ones any Step 12 workload reads), and
+# tag it so Helm adopts rather than collides at Step 13, using the same
+# annotation/label pair as adopt_gentian_os_helm_preflight below. Step 13 then
+# re-renders it with the full key set (SMTP_HOST, S3_ENDPOINT, MYSQL_HOST, …),
+# which is deliberately NOT guessed here: those hostnames come from chart
+# defaults that this function has no business duplicating.
+# =============================================================================
+ensure_kernel_services_configmap() {
+    local ns="platform-kernel"
+
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset; skipping gentian-kernel-services pre-seed."
+        return 0
+    fi
+
+    kubectl get namespace "${ns}" >/dev/null 2>&1 || kubectl create namespace "${ns}" >/dev/null
+
+    if kubectl get configmap gentian-kernel-services -n "${ns}" >/dev/null 2>&1; then
+        success "gentian-kernel-services already present in ${ns}."
+        return 0
+    fi
+
+    info "Pre-seeding gentian-kernel-services in ${ns} (needed by Keycloak in Step 12)..."
+    kubectl create configmap gentian-kernel-services -n "${ns}" \
+        --from-literal=KERNEL_DOMAIN="${KERNEL_DOMAIN}" \
+        --from-literal=TENANCY_MODE="${TENANCY_MODE:-multi}" >/dev/null
+
+    # Same adoption contract as adopt_gentian_os_helm_preflight: without these,
+    # Step 13's `helm upgrade --install` aborts with "invalid ownership metadata".
+    kubectl annotate configmap gentian-kernel-services -n "${ns}" \
+        "meta.helm.sh/release-name=gentian-os" \
+        "meta.helm.sh/release-namespace=gentian-system" --overwrite >/dev/null
+    kubectl label configmap gentian-kernel-services -n "${ns}" \
+        "app.kubernetes.io/managed-by=Helm" \
+        "gentianos.io/config-type=kernel-services" --overwrite >/dev/null
+
+    success "gentian-kernel-services seeded (Helm will adopt it in Step 13)."
+}
+
 adopt_gentian_os_helm_preflight() {
     local ns="${1:-gentian-system}"
     local vwc chart_ns

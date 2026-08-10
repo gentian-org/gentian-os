@@ -1452,6 +1452,8 @@ main_cp() {
     install_mac_admission       # Step 11c — Kyverno admission (Stage 0 MAC)
 
     # ── Stage 1: OpenFGA + standalone Keycloak + authz bridge ───────────────
+    ensure_kernel_services_configmap  # Step 11d — Keycloak (Step 12) reads KERNEL_DOMAIN from it,
+                                      #            but the operator that renders it is Step 13
     apply_suze_xr               # Step 12  — Gentian IdP (Keycloak + OpenFGA) via Suze XR
     install_gentian_os_operator # Step 13  — operator with authz bridge + Cloudflare tunnel
     wait_for_gateway_platform || true
