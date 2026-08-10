@@ -498,9 +498,9 @@ answer to "the way to do it depends on the app".
 
 | Grade | Meaning | Reachable rungs | Examples |
 |---|---|---|---|
-| **A** | Documented, versioned plugin API + declared drop-in dirs + published API for companions | L0–L3 | Odoo, Nextcloud, XWiki, Keycloak, Activepieces |
-| **B** | Config + drop-ins, published API, **no** plugin system | L0–L2, then L4 | Element/Synapse, most SPAs |
-| **C** | Config only; monolithic; no documented extension surface | L0, then L2 or L4 | Collabora, many appliance images |
+| **A** | Plugin API that is **documented and versioned**, plus declared drop-in dirs and a published API for companions | L0–L3 | Odoo, Nextcloud, XWiki, Keycloak, Activepieces |
+| **B** | A plugin system exists, but it is **undocumented, unversioned, or ABI-unstable**. Config, drop-ins and a published API as well. | L0–L3, at the risk `extension.apiStability` records | Element/Synapse (`synapse-module`), OpenProject (`openproject-plugin`), LiteLLM (`litellm-callback`) |
+| **C** | Config only; monolithic; **no** extension surface at all | L0, then L2 or L4 | Collabora, many appliance images |
 | **D** | Anything beyond a value change requires touching source | L0, then L5/L6 | unmaintained or hostile upstreams |
 | **?** | Not yet characterised | L0, L4 | new catalogue entries |
 
@@ -508,6 +508,19 @@ answer to "the way to do it depends on the app".
 reference · declared drop-in directories · documented plugin/addon API · plugin API versioned with
 a deprecation policy · published HTTP API with a spec · upstream accepts patches (PR turnaround
 < 90d) · plugin ABI survives minor releases · a test harness plugin authors can use.
+
+**A and B differ in the quality of the plugin system, not its existence.** Three of the eight
+criteria are about the plugin API — documented, versioned, ABI-stable — so an app with a real but
+poorly-kept extension system loses those points and lands in B while still being extensible.
+Reading B as "no plugin system" contradicts its own rubric, and would have forced Element,
+OpenProject and LiteLLM to either be misgraded or to hide working extension mechanisms.
+
+L3 therefore remains reachable at grade B. What changes is the warranty, and that is what
+`extension.apiStability` is for: `stable` at grade A, `evolving` or `undocumented` at B. An agent
+choosing L3 against an `undocumented` API is choosing to re-test it on every upstream bump, which
+is a decision the record must justify — not something the grade should silently forbid.
+
+Only at **C** is L3 genuinely unreachable, because there is nothing to extend.
 
 **Assignment is manual for v0.4.** The catalogue maintainer scores the rubric by hand, records the
 score in `customization.md`, and sets `spec.customization.grade`. Several criteria — "upstream
