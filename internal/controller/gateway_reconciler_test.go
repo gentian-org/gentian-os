@@ -242,31 +242,6 @@ func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 	}
 }
 
-func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	route := buildTenantApexRedirectHTTPRoute(tenant, "tenant-demo", "demo.desk.gentian.org", "desk.gentian.org")
-	if route.Name != tenantPortalRedirectName("demo") {
-		t.Fatalf("name = %q", route.Name)
-	}
-	if len(route.Spec.Rules) != 1 || len(route.Spec.Rules[0].Filters) != 1 {
-		t.Fatalf("rules = %+v", route.Spec.Rules)
-	}
-	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
-	if redirect == nil || redirect.Scheme == nil || *redirect.Scheme != "https" {
-		t.Fatalf("redirect scheme = %v", redirect)
-	}
-	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.desk.gentian.org" {
-		t.Fatalf("redirect hostname = %v", redirect.Hostname)
-	}
-	// The tenant rides along, so the portal does not have to ask for an email to
-	// recover what the hostname already said. Without it sign-in is two-stage.
-	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil ||
-		*redirect.Path.ReplaceFullPath != "/login/?tenant=demo" {
-		t.Fatalf("redirect path = %v", redirect.Path)
-	}
-}
-
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
 	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "app")
@@ -408,8 +383,20 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 4 {
-		t.Fatalf("spec count = %d, want 4", len(specs))
+	// One route per kernel host, plus one per tenant host serving the portal.
+	// Asserted by name rather than by count, so adding a route does not fail a
+	// test that has nothing to do with it.
+	byName := map[string]kernelHTTPRouteSpec{}
+	for _, s := range specs {
+		byName[s.name] = s
+	}
+	for _, want := range []string{
+		kernelRouteKeycloakIDP, kernelRouteGentianPortal, kernelRouteKernelApex,
+		kernelRouteArgoCD, "tenant-demo-portal",
+	} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("missing kernel route %q; got %v", want, specs)
+		}
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {

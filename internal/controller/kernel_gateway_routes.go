@@ -165,6 +165,32 @@ func kernelHTTPRouteSpecs(
 		host:  portalHost,
 		rules: kernelGentianPortalHTTPRouteRules(),
 	})
+	// Serve the portal on each tenant's own host, rather than redirecting there to
+	// the shared one.
+	//
+	// A redirect cannot carry anything: the gateway filter replaces path and query
+	// wholesale, so a login hint travelling on <tenant>.<kernel-domain> was dropped
+	// before the portal ever saw it. Answering directly also means the address bar
+	// stays on the tenant's name instead of bouncing through portal.<kernel-domain>.
+	//
+	// Same rules and the same backends as the shared route, so there is one portal
+	// deployment answering on more names — not a copy per tenant, which would put
+	// the portal's Keycloak admin credentials inside every tenant's blast radius.
+	//
+	// Consequence worth knowing: tokens live in sessionStorage, which is per origin,
+	// so a user signed in on the tenant host is a separate session from the same
+	// user on portal.<kernel-domain>. Keycloak's SSO cookie makes crossing between
+	// them silent, but they are two sessions. See docs/login-cleanup.md.
+	for i, domain := range tenantEffectiveDomains {
+		if i >= len(tenantNames) {
+			break
+		}
+		specs = append(specs, kernelHTTPRouteSpec{
+			name:  fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
+			host:  domain,
+			rules: kernelGentianPortalHTTPRouteRules(),
+		})
+	}
 	specs = append(specs,
 		kernelHTTPRouteSpec{
 			name: kernelRouteKernelApex,

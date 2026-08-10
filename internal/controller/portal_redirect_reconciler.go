@@ -20,7 +20,10 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -38,38 +41,27 @@ func kernelPortalHost(kernelDomain string) string {
 	return "portal." + kernelDomain
 }
 
-func kernelPortalURL(kernelDomain string) string {
-	return "https://" + kernelPortalHost(kernelDomain) + "/login/"
-}
-
-// ensurePortalRedirect converges tenants onto the shared Gentian portal login at
-// portal.<kernel-domain>/login/. Tenant apex hostnames redirect / to that login page.
 func (r *TenantReconciler) ensurePortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if r.KernelDomain == "" {
-		return nil
-	}
-	effectiveDomain := r.tenantEffectiveDomain(tenant)
-	if effectiveDomain == "" || effectiveDomain == kernelPortalHost(r.KernelDomain) {
-		return nil
-	}
-	return r.ensureTenantPortalRedirect(ctx, tenant, effectiveDomain)
+	return r.deleteTenantPortalRedirect(ctx, tenant)
 }
 
-// deletePortalRedirect is a no-op hook kept for tenant deletion ordering.
+// deletePortalRedirect is the tenant-deletion hook; the route is removed on every
+// reconcile, so deletion has nothing left to do.
 func (r *TenantReconciler) deletePortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	_ = ctx
-	_ = tenant
+	return r.deleteTenantPortalRedirect(ctx, tenant)
+}
+
+func (r *TenantReconciler) deleteTenantPortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tenantApexRedirectRouteName(tenant.Name),
+			Namespace: tenantNamespaceName(tenant),
+		},
+	}
+	if err := r.Delete(ctx, route); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete legacy tenant portal redirect: %w", err)
+	}
 	return nil
-}
-
-func (r *TenantReconciler) ensureTenantPortalRedirect(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) error {
-	nsName := tenantNamespaceName(tenant)
-	return r.ensureTenantPortalRedirectGateway(ctx, tenant, nsName, effectiveDomain)
-}
-
-func (r *TenantReconciler) ensureTenantPortalRedirectGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain string) error {
-	desired := buildTenantApexRedirectHTTPRoute(tenant, nsName, effectiveDomain, r.KernelDomain)
-	return ensureHTTPRouteResource(ctx, r.Client, desired)
 }
 
 func tenantPortalRedirectName(tenantName string) string {
