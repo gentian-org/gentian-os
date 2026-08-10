@@ -16,7 +16,7 @@
 #
 # What it reconciles:
 #   --mail:
-#     - Patches postfix-dev-values ConfigMap when MAIL_SERVICE_MODE drifts
+#     - Patches postfix-${ENV:-dev}-values ConfigMap when MAIL_SERVICE_MODE drifts
 #     - Re-seeds mail OpenBao KV paths (postfix + dovecot)
 #     - Force-refreshes ESO ExternalSecrets for postfix and dovecot
 #     - When MAIL_SERVICE_MODE=kernel: applies kernel mail service manifests
@@ -271,18 +271,18 @@ op_mail() {
 
     if [[ "${deployed}" != "${mode}" ]]; then
         if [[ "${deployed}" == "unknown" ]]; then
-            info "postfix-dev-values not yet deployed — will be provisioned by ArgoCD."
+            info "postfix-${ENV:-dev}-values not yet deployed — will be provisioned by ArgoCD."
         else
             warn "MAIL_SERVICE_MODE drift (${deployed} → ${mode}) — MAIL_SERVICE_MODE is fixed at install time."
-            warn "  Patching postfix-dev-values for recovery; prefer a clean reinstall when switching mail modes."
-            info "Mode drift detected → patching postfix-dev-values..."
+            warn "  Patching postfix-${ENV:-dev}-values for recovery; prefer a clean reinstall when switching mail modes."
+            info "Mode drift detected → patching postfix-${ENV:-dev}-values..."
             _patch_postfix_configmap "${mode}"
             info ""
             info "ConfigMap updated. provider-helm will reconcile on its next poll (≤5 min)."
             info "To reconcile immediately: argocd app sync gentian-infra-helm-dev"
         fi
     else
-        success "postfix-dev-values already in ${mode} mode — no ConfigMap change needed."
+        success "postfix-${ENV:-dev}-values already in ${mode} mode — no ConfigMap change needed."
     fi
 
     # ── 2. Seed/refresh mail/postfix in OpenBao ────────────────────────────────
@@ -333,7 +333,7 @@ op_mail() {
         _patch_postfix_allowed_sender_domains
         _patch_postfix_live_relay kernel
         verify_dovecot_installation || warn "Dovecot verification failed after mail reconciliation."
-    elif kubectl get configmap postfix-dev-values -n "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}" >/dev/null 2>&1; then
+    elif kubectl get configmap "postfix-${ENV:-dev}-values" -n "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}" >/dev/null 2>&1; then
         _patch_postfix_configmap external
         _patch_postfix_allowed_sender_domains
         _patch_postfix_live_relay external

@@ -263,7 +263,7 @@ _keycloak_smtp_settings() {
             if ! declare -F _derive >/dev/null 2>&1; then
                 return 1
             fi
-            KC_SMTP_HOST="postfix-dev.gentian-${env}.svc.cluster.local"
+            KC_SMTP_HOST="postfix-${env}.gentian-${env}.svc.cluster.local"
             KC_SMTP_PORT="587"
             KC_SMTP_USER="gentian-system@${kernel_domain}"
             KC_SMTP_PASSWORD="$(_derive smtp password)"
@@ -1263,6 +1263,14 @@ build_gentian_portal_images() {
     success "Portal images ready: ${PORTAL_WEB_IMAGE}"
 }
 
+# Returns the OpenFGA store id, or empty + non-zero when the authz bridge has
+# not created the Secret yet.
+#
+# Callers MUST invoke this as `$(_openfga_runtime_store_id || true)`. Every one
+# of them already handles an empty result — "portal API will start without
+# OPENFGA_* until authz bridge syncs" — but these scripts run under `set -e`, so
+# an unguarded command substitution aborts the install before that handling is
+# ever reached. A missing Secret is the normal state on a fresh cluster.
 _openfga_runtime_store_id() {
     if ! kubectl get secret openfga-runtime -n platform-kernel >/dev/null 2>&1; then
         return 1
@@ -1281,13 +1289,13 @@ wait_for_openfga_runtime_store_id() {
     local deadline=$((SECONDS + timeout_sec))
     while (( SECONDS < deadline )); do
         local store_id
-        store_id=$(_openfga_runtime_store_id)
+        store_id=$(_openfga_runtime_store_id || true)
         if [[ -n "${store_id}" ]]; then
             success "OpenFGA store_id ready."
             return 0
         fi
         if kubectl logs -n gentian-system deploy/gentian-os --tail=30 2>/dev/null | grep -q "authz bridge sync complete"; then
-            store_id=$(_openfga_runtime_store_id)
+            store_id=$(_openfga_runtime_store_id || true)
             [[ -n "${store_id}" ]] && return 0
         fi
         sleep 10
@@ -1312,7 +1320,7 @@ install_gentian_portal_secrets() {
     local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
 
     local store_id
-    store_id=$(_openfga_runtime_store_id)
+    store_id=$(_openfga_runtime_store_id || true)
     if [[ -z "${store_id}" ]]; then
         info "OpenFGA store_id not ready — portal API will start without OPENFGA_* until authz bridge syncs."
     fi
@@ -1505,7 +1513,7 @@ install_portal_login() {
 
     if wait_for_openfga_runtime_store_id 180; then
         local store_id
-        store_id=$(_openfga_runtime_store_id)
+        store_id=$(_openfga_runtime_store_id || true)
         if [[ -n "${store_id}" ]]; then
             refresh_gentian_portal_openfga "${store_id}"
         fi
