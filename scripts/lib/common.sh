@@ -779,6 +779,26 @@ prompt_app_repos() {
             GENTIAN_DEPLOYMENTS_CLUSTER GENTIAN_DEPLOYMENTS_STAGE \
             GENTIAN_DEPLOYMENTS_PATH
 
+    # ENV is the environment suffix behind namespaces, service hostnames and
+    # per-stage manifest paths: gentian-${ENV}, gentian-infra-${ENV},
+    # kernel/services/*/manifests/${ENV}, postfix-${ENV}, and ~30 more sites.
+    #
+    # It was never assigned anywhere on the install path, so every one of those
+    # `${ENV:-dev}` expansions silently resolved to "dev". On a prod cluster that
+    # meant SERVICES_NAMESPACE=gentian-dev and
+    # MINIO_ENDPOINT=http://minio-dev.gentian-infra-dev... while the
+    # ApplicationSets — which key off GENTIAN_DEPLOYMENTS_STAGE — deployed
+    # *-prod Applications into gentian-infra-prod. The shell half and the GitOps
+    # half disagreed about which environment the cluster was, and neither
+    # complained.
+    #
+    # Derive it from the stage so there is a single source of truth. An
+    # explicitly exported ENV still wins, for anyone who genuinely needs the two
+    # to differ.
+    ENV="${ENV:-${GENTIAN_DEPLOYMENTS_STAGE}}"
+    export ENV
+    info "Environment: ENV=${ENV} (from GENTIAN_DEPLOYMENTS_STAGE)"
+
     # Persist to ~/.gentian/config (bash-sourceable) so kubectl-gentian can read it.
     # The plugin sources this file directly; keep variable names aligned with the
     # plugin's expectations (GENTIAN_DEPLOYMENTS_PATH / GENTIAN_DEPLOYMENTS_REPO).

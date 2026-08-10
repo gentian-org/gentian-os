@@ -38,7 +38,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/scripts/lib/load.sh"
 
 MODE="safe"
-ENV="${ENV:-dev}"
+# Deliberately NOT defaulted to "dev" here. ENV is resolved below, after
+# install.env and ~/.gentian/config have been read, so it can follow
+# GENTIAN_DEPLOYMENTS_STAGE — see the note at the resolution site.
+ENV="${ENV:-}"
 UNINSTALL_CLUSTER_INFRA=0
 UNINSTALL_KEEP_TENANTS=0
 INSTALL_STATE_FILE="${INSTALL_STATE_FILE:-${SCRIPT_DIR}/.install-state.env}"
@@ -58,7 +61,17 @@ INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
 [[ -r "${HOME}/.gentian/config" ]] && source "${HOME}/.gentian/config"
 : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
 : "${GENTIAN_DEPLOYMENTS_CLUSTER:=default-cluster}"
-: "${GENTIAN_DEPLOYMENTS_STAGE:=${ENV}}"
+: "${GENTIAN_DEPLOYMENTS_STAGE:=${ENV:-dev}}"
+
+# Resolve ENV *after* install.env and ~/.gentian/config are loaded, and take it
+# from the stage the cluster was actually installed with. The dependency used to
+# run the other way (stage := ENV, with ENV defaulted to "dev" at the top of the
+# file), so uninstalling a prod cluster computed SERVICES_NS=gentian-dev and
+# INFRA_NS=gentian-infra-dev — it would have reported everything "not found",
+# exited cleanly, and left the real namespaces fully populated.
+# An explicitly exported ENV still wins, matching prompt_app_repos.
+ENV="${ENV:-${GENTIAN_DEPLOYMENTS_STAGE}}"
+export ENV
 
 SERVICES_NS="${SERVICES_NAMESPACE:-gentian-${ENV}}"
 INFRA_NS="${INFRA_NAMESPACE:-gentian-infra-${ENV}}"
