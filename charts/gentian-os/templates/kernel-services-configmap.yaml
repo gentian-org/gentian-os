@@ -12,7 +12,13 @@
   case a cluster genuinely needs a different endpoint.
 */ -}}
 {{- $infraNS := .Values.infraNamespace | default (printf "gentian-infra-%s" $stage) -}}
-{{- $mysqlHost := $ks.mysqlHost | default (printf "mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
+{{- /* The InfraData composition names this release gentian-mariadb-<stage>
+       (crossplane/compositions/infra-data.yaml), same as gentian-postgresql-<stage>.
+       The default here used to omit the "gentian-" prefix, so MYSQL_HOST pointed at
+       a Service that does not exist — silently, since nothing resolves it until an
+       app tries to connect. minio-<stage> and redis-<stage>-master below carry no
+       prefix, which is why the inconsistency was easy to miss. */ -}}
+{{- $mysqlHost := $ks.mysqlHost | default (printf "gentian-mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
 {{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.gentian-%s.svc.cluster.local" $stage $stage) -}}
