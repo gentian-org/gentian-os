@@ -20,6 +20,19 @@ data:
       - "--hostname-strict=false"
       - "--proxy-headers=xforwarded"
       - "--cache=local"
+      # Theme assets are served from /auth/resources/<hash>/, and Keycloak stamps
+      # them Cache-Control: max-age=2592000 because that path is meant to be
+      # content-addressed. It is not: the hash comes from the Keycloak build, so
+      # a theme change leaves the URL identical while the bytes change, and every
+      # cache in front — Cloudflare included — keeps serving the old file for
+      # thirty days. Observed exactly that: the pod had the new stylesheet while
+      # the edge returned the previous one on a cf-cache-status HIT.
+      #
+      # -1 stops Keycloak emitting max-age at all. The cost is refetching ~19 KB
+      # on a login page; the alternative is a theme edit that silently does not
+      # take effect. Server-side theme caching stays on: Reloader rolls the pod
+      # when the ConfigMap changes, so templates are re-read anyway.
+      - "--spi-theme-static-max-age=-1"
     proxy:
       mode: xforwarded
     service:
