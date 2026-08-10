@@ -34,6 +34,7 @@ bootstrap via `install.sh`.
 - [docs/commands.md](docs/commands.md) — `kubectl gentian` / operator commands
 - [docs/deployment.md](docs/deployment.md) — deployment model
 - [docs/faq.md](docs/faq.md) — frequently asked questions
+- [docs/login-cleanup.md](docs/login-cleanup.md) — why portal sign-in blocks SSO, and moving it onto Keycloak
 - [docs/roadmap.md](docs/roadmap.md) — roadmap
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)
 - [docs/research/](docs/research/) — exploratory research notes
