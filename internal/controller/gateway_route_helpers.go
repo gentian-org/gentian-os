@@ -341,7 +341,16 @@ func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, e
 	status := 302
 	port := gatewayv1.PortNumber(443)
 	pathType := gatewayv1.FullPathHTTPPathModifier
-	loginPath := "/login/"
+	// Carry the tenant across the redirect.
+	//
+	// The hostname the user arrived at already identifies the tenant, and sending
+	// them to a bare /login on the shared portal host threw that away — the portal
+	// then had to ask for an email purely to recover what the URL had just told it,
+	// which is what made sign-in a two-stage affair. With the tenant preserved the
+	// portal goes straight to that realm, so the Keycloak form asks for email and
+	// password together, and <tenant>.<kernel-domain> is a bookmarkable
+	// single-stage login.
+	loginPath := "/login/?tenant=" + tenant.Name
 	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
