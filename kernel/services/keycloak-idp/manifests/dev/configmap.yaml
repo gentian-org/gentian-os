@@ -51,6 +51,62 @@ data:
     # list ... doesn't match $setElementOrder list") — silently succeeds
     # on the very first install (no prior state to patch against) but
     # fails every upgrade after, so the failure mode is easy to miss.
+    # Gentian login theme — sources in kernel/services/keycloak-idp/theme/,
+    # rendered to a ConfigMap by scripts/gen-keycloak-theme-configmap.py.
+    #
+    # A ConfigMap key cannot contain "/", so the theme's directory tree is encoded
+    # as "__" and expanded here at startup. Mounting the ConfigMap directly does
+    # not work: login/resources/css would have to mount inside the read-only
+    # login volume, which has no such directory to mount onto. Per-file subPath
+    # mounts would work but put a copy of the file list in these values, so every
+    # new template would need editing in two places.
+    #
+    # The init container reuses the chart's own image so the Keycloak version is
+    # not pinned a second time here; extraInitContainers is tpl'd by the chart.
+    extraInitContainers: |
+      - name: expand-theme
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -eu
+            rm -rf /theme/gentian
+            for src in /theme-src/*; do
+              [ -f "$src" ] || continue
+              rel=$(basename "$src" | sed 's|__|/|g')
+              mkdir -p "/theme/gentian/$(dirname "$rel")"
+              cp "$src" "/theme/gentian/$rel"
+            done
+            echo "expanded $(find /theme/gentian -type f | wc -l) theme file(s)"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+          - name: theme-src
+            mountPath: /theme-src
+            readOnly: true
+          - name: theme
+            mountPath: /theme
+    extraVolumes: |
+      - name: theme-src
+        configMap:
+          name: keycloak-idp-theme
+      - name: theme
+        emptyDir: {}
+    extraVolumeMounts: |
+      - name: theme
+        mountPath: /opt/keycloak/themes
+        readOnly: true
+    # Keycloak caches themes, so a change has to roll the pod rather than rely on
+    # the kubelet refreshing a mounted file in place.
+    podAnnotations:
+      secret.reloader.stakater.com/reload: keycloak-idp-sensitive-values
+      configmap.reloader.stakater.com/reload: keycloak-idp-theme
     extraEnv: |
       - name: KERNEL_DOMAIN
         valueFrom:
