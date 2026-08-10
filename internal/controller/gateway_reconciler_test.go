@@ -259,7 +259,10 @@ func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
 	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.desk.gentian.org" {
 		t.Fatalf("redirect hostname = %v", redirect.Hostname)
 	}
-	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/login/" {
+	// The tenant rides along, so the portal does not have to ask for an email to
+	// recover what the hostname already said. Without it sign-in is two-stage.
+	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil ||
+		*redirect.Path.ReplaceFullPath != "/login/?tenant=demo" {
 		t.Fatalf("redirect path = %v", redirect.Path)
 	}
 }

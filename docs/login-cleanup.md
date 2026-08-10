@@ -348,7 +348,7 @@ Steps 1–3 have landed; 4 and 5 need a deployment.
 |---|---|---|
 | 1. Login theme | **done** | `kernel/services/keycloak-idp/theme/`, generated into a ConfigMap and expanded by an init container (`62083c7`) |
 | 2. Tenant realms authenticate their own users | **done** | `buildOIDCBrowserFlowScript` binds the built-in browser flow and deletes the redirect-only one; realms gain `loginTheme: gentian` (`440dd49`) |
-| 3. Portal redirects to Keycloak | **done** | gentian-ui `38c9a228` — email-first page resolves the realm, then authorization code + PKCE |
+| 3. Portal redirects to Keycloak | **done** | gentian-ui `38c9a228`, single-staged in `a2f73b64` + gentian-os `1db08e3` |
 | 4. Verify SSO | **pending a deploy** | see below |
 | 5. Delete the password-grant path | **blocked on 4** | `keycloak_password_login.py`, `/auth/login` |
 
@@ -369,12 +369,35 @@ authentication behaviour changed. Steps 2 and 3 are the switch-over and belong
 together. Step 5 is deliberately last: while the grant still exists, reverting
 step 3 restores the old behaviour without redeploying anything else.
 
-**What changed for the user.** The login page keeps its card, logo and email
-field; the password field is gone from it. After the email, Keycloak renders the
-themed password form, and the address bar reads `id.<kernel-domain>` for that
-step. Password reset is unchanged and still handled by the portal — moving it to
-Keycloak's tokenised email link needs `resetPasswordAllowed` on the realm and was
-left out of this change.
+### Entry points
+
+Sign-in must not be two-stage. The hostname a user arrives at already identifies
+the tenant, and the first cut of step 3 discarded it and then asked for an email
+to recover it. Three entry points now:
+
+| Entry | What happens | Stages |
+|---|---|---|
+| `<tenant>.<kernel-domain>` | The gateway puts the tenant on the login URL, so the realm is known before the page renders. Straight to Keycloak, which asks for email and password together. | **one** |
+| `<kernel-domain>` (apex) | Asks for an email, then hands the browser to that tenant's own host carrying it, so Keycloak pre-fills the field. | two, then one once bookmarked |
+| Platform operators | No tenant host; they authenticate in the kernel realm from the apex. | one |
+
+The tenant host is the entry worth bookmarking, and the apex teaches it: a user
+who signs in there once lands on their own host and sees the URL that skips the
+question next time.
+
+Keycloak cannot do better than this. A realm is an isolated user store and a
+login page belongs to exactly one realm, so one password form in front of users
+from several realms is not possible; Organizations solves multi-tenancy by
+collapsing tenants into a single realm, but its browser flow is *also*
+identity-first, so it would move the two-stage problem rather than remove it. The
+only way to get both fields on one page is to know the realm before rendering,
+which is exactly what the hostname gives us.
+
+**What else changed for the user.** The password field leaves the portal card,
+and the address bar reads `id.<kernel-domain>` while Keycloak renders the form.
+Password reset is unchanged and still handled by the portal — moving it to
+Keycloak's tokenised email link needs `resetPasswordAllowed` on the realm, and
+realm SMTP, and was left out of this change.
 
 **Verification for step 4** — with a user logged into the portal, that realm
 should hold exactly **one** SSO session, and launching an app should add its

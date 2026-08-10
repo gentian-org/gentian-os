@@ -156,14 +156,53 @@ data:
     html, body { height: 100%; margin: 0; }
 
     body.gentian-login {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       background: var(--gtn-paper-0);
       font-family: var(--gtn-font-sans);
     }
+
+    /* Neutralise PatternFly's own login chrome.
+     *
+     * keycloak.v2 renders a grid: a header band carrying the realm name, then a
+     * white "main" card with its own shadow, and the Gentian card goes inside that.
+     * Left alone it is two stacked white cards with two shadows, and the inner one
+     * is not centred against the outer because the grid, not the card, owns the
+     * width. The portal has none of this — one card on the paper background — so the
+     * wrappers collapse to a single centring flex context and main loses its card
+     * styling entirely.
+     */
+    .pf-v5-c-login {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      background: transparent;
+      box-sizing: border-box;
+    }
+
+    .pf-v5-c-login__container {
+      display: block;
+      width: auto;
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      grid-template-columns: none;
+    }
+
+    .pf-v5-c-login__main,
+    .pf-v5-c-login__main-body {
+      background: transparent;
+      box-shadow: none;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+    }
+
+    /* The realm-name band and the (empty) page title: the card carries its own
+       logo, wordmark and subtitle, exactly as the portal's does. */
+    .pf-v5-c-login__header,
+    .pf-v5-c-login__main-header,
+    .pf-v5-c-login__main-footer { display: none; }
 
     .gentian-login__card {
       display: flex;
@@ -327,3 +366,5 @@ data:
     # The portal's own form had no social/identity-provider buttons and no
     # registration link, so neither should this.
     kcFormSocialAccountListClass=gentian-hidden
+binaryData:
+  login__resources__img__favicon.ico: AAABAAEAEBAAAAAAIAD4AgAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAQAAAAEAgGAAAAH/P/YQAAAr9JREFUeJyFkztMk2EYhc93+fv3x9IqKMRgA02DEIxBZXGrbmqMmpiaOJhovAzGUSeGSkwccDUOuuigUYquEGGg0UQMEJWIInK/WCi3ltL2v33f5wAoaIxne9+T8+YdzgP8V4oCMfovl/8xE0ABICoUvNqoZKFzfIa8B4BIJMaRABKABJrkpsBmRRkQF6Hg5Waff/8tx1mGa2fa7HzqxmTq2eimrwhA1JYDDQ3XtL6+R06o4tJZozjcqsBtKQXT9QDLLvW0g9J+xoxcLvu9Jbn4enA9q9YPxOjGW1UVF+77AgevC7EiPNzk+QIX0pljXl8NQAiEk3Eda/bpyOTDi4AidCMc9B8N7w3d7NU0//mVpc8I+Dk/duoE/D6TgWiSIOdKN2dpnlJOmVEFANFonHLgtqos/1ilG+E2wwhWO24BSk6A0VUwbiBcW4uKPSGaSS/Qt12f4NFKoIQzAQCp1ADhAFHcc+WOsa2q2jLTlmHk9OOnz4EQjt53ndD1IgghMPxtSAnXJraZzApR6ACAssQXRQFAWsv3LDNpcq1Isx2vGh78ivm5aWiaDsY58vkslhbmFZTJCubEkCn7XwEgccQljaKFjaVe9pvWj5iSeWqZGdH9JoFMOo2Gw0dAKUWwMox99YcoZbtcf+BAgwd1ZwCoCGKMx3FOAFE2Pv2keXfZ8Q+GHmz176jxax6vmpoYIR96etT46KwEFGGcSyFch1Lm/NHEOgUAXDgDurfcR5lPDXwaVELqktIils3YzKPvhKbBAwVI6ToAkEAX1jveJKNoYVOLnbO2tfCCUk5ASqihlzNKaMp1ks+FWJo0CzPthfzoXZfmeteKlBC/WIhjQAGQq5nhRsaLzxDCMzlrttu1Vx6MJR93ADAAFP4F1RbtLj1ZGwjUb/+92aAxRiORGP+boa36ZUajLWwNsK37zfoJwWc7SxaEHE0AAAAASUVORK5CYII=
