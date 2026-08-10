@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-proxy
+  namespace: platform-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: litellm-proxy
+  template:
+    metadata:
+      labels:
+        app: litellm-proxy
+    spec:
+      containers:
+      - name: litellm
+        image: ghcr.io/berriai/litellm:latest
+        ports:
+        - containerPort: 4000
+          name: http
+        env:
+        - name: LITELLM_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_master_key
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: litellm-db-app
+              key: uri
+        - name: STORE_MODEL_IN_DB
+          value: "True"
+        - name: UI_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_ui_username
+        - name: UI_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_ui_password
+        # Admin console SSO — platform-admin only (see docs/design/llms.md).
+        # Free for <=5 users on LiteLLM OSS (v1.76.0+); the litellm-dashboard
+        # Keycloak client only exists in the kernel realm, so tenant users
+        # cannot authenticate here.
+        - name: PROXY_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_proxy_base_url
+        - name: GENERIC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: litellm-dashboard-sso
+              key: client_id
+        - name: GENERIC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: litellm-dashboard-sso
+              key: client_secret
+        - name: GENERIC_AUTHORIZATION_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_sso_authorization_endpoint
+        - name: GENERIC_TOKEN_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_sso_token_endpoint
+        - name: GENERIC_USERINFO_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_sso_userinfo_endpoint
+        - name: GENERIC_SCOPE
+          value: "openid profile email"
+        - name: GENERIC_USER_ID_ATTRIBUTE
+          value: "email"
+        - name: GENERIC_USER_EMAIL_ATTRIBUTE
+          value: "email"
+        - name: GENERIC_USER_ROLE_ATTRIBUTE
+          value: "litellm_role"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-proxy
+  namespace: platform-kernel
+spec:
+  ports:
+  - port: 4000
+    targetPort: 4000
+  selector:
+    app: litellm-proxy
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: litellm-db
+  namespace: platform-kernel
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-llm
+  namespace: platform-kernel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-llm
+  template:
+    metadata:
+      labels:
+        app: redis-llm
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-llm
+  namespace: platform-kernel
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis-llm

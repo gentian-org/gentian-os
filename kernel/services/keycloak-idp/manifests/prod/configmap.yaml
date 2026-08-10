@@ -1,0 +1,91 @@
+# Standalone Keycloak (Stage 1) — plain Helm values for keycloakx chart.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-idp-base-values
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    replicas: 1
+    command:
+      - "/opt/keycloak/bin/kc.sh"
+    args:
+      - "start"
+      - "--http-enabled=true"
+      - "--hostname=https://id.$(KERNEL_DOMAIN)/auth"
+      - "--hostname-backchannel-dynamic=true"
+      - "--hostname-strict=false"
+      - "--proxy-headers=xforwarded"
+      - "--cache=local"
+    proxy:
+      mode: xforwarded
+    service:
+      type: ClusterIP
+      httpPort: 8080
+    ingress:
+      enabled: false
+    metrics:
+      enabled: false
+    database:
+      vendor: postgres
+      hostname: gentian-postgresql-prod.gentian-infra-prod.svc.cluster.local
+      port: 5432
+      database: keycloak
+      username: keycloak_user
+    # Single source of truth for extraEnv: Helm's values-merge REPLACES
+    # (doesn't deep-merge) same-named string scalars, so if
+    # externalsecret.yaml's sensitive-values.yaml also declared its own
+    # top-level extraEnv, it would silently wipe out everything below
+    # (that's exactly what broke KERNEL_DOMAIN/KC_HOSTNAME here before —
+    # sensitive-values.yaml is merged last, so its extraEnv always won).
+    # KEYCLOAK_ADMIN_PASSWORD is pulled in via secretKeyRef instead.
+    #
+    # Do NOT add KC_CACHE or KC_HEALTH_ENABLED here — the keycloakx chart
+    # already emits both natively (KC_CACHE from the --cache=local arg
+    # above; KC_HEALTH_ENABLED from the chart's own default health-check
+    # behavior), and a duplicate `name:` in the same env list breaks the
+    # strategic-merge-patch Helm computes on upgrade ("The order in patch
+    # list ... doesn't match $setElementOrder list") — silently succeeds
+    # on the very first install (no prior state to patch against) but
+    # fails every upgrade after, so the failure mode is easy to miss.
+    extraEnv: |
+      - name: KERNEL_DOMAIN
+        valueFrom:
+          configMapKeyRef:
+            name: gentian-kernel-services
+            key: KERNEL_DOMAIN
+      - name: KEYCLOAK_ADMIN
+        value: admin
+      - name: KEYCLOAK_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-idp-sensitive-values
+            key: admin-password
+      - name: KC_METRICS_ENABLED
+        value: "false"
+      - name: KC_HOSTNAME
+        value: "https://id.$(KERNEL_DOMAIN)/auth"
+      - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+        value: "true"
+      - name: KC_HOSTNAME_STRICT
+        value: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-idp-prod-values
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    resources:
+      requests:
+        cpu: 200m
+        memory: 768Mi
+      limits:
+        cpu: "2"
+        memory: 1.5Gi
