@@ -397,8 +397,32 @@ scope per origin, so the same user on `<tenant>.<kernel-domain>` and on
 `portal.<kernel-domain>` holds two independent sets. Keycloak's SSO cookie makes
 crossing between them silent — no second password prompt — but they expire
 independently, and signing out of one does not clear the other's local copy.
-Deciding which host is canonical, and redirecting the other to it after sign-in,
-is the follow-up this leaves open.
+
+**`<tenant>.<kernel-domain>` is canonical for tenant members** (gentian-ui
+`dad681c5`). This needed more than routing.
+
+`redirect_uri` was fixed at build time to `https://portal.<kernel-domain>/login`
+— confirmed against the live bundle, baked into the JS served on *every*
+hostname. So a login that started on the tenant host still told Keycloak to send
+the code back to the shared one, and the exchange finished there regardless of
+where it began. The tenant host looked canonical because sign-out returned to
+it; sign-in never actually landed there. Fixed by deriving `redirect_uri` from
+`window.location.origin` at runtime instead — the Keycloak client is already
+registered with both origins, so whichever host starts the flow is a valid place
+for it to finish.
+
+That alone still left the shared-host email form starting *and* finishing the
+flow on itself. `/auth/login-route` now also returns `tenantHost`, and the form
+navigates there — carrying the address as `?email=` — before starting OIDC,
+rather than linking to it afterwards. The earlier version of this handoff was
+reverted because its target was a gateway 302 that dropped the query; it isn't a
+redirect target any more; it's a real portal page, so the handoff works.
+
+A session already sitting on the wrong host — a bookmark, a shared link, one left
+over from before this fix — is walked over on its next load: `AuthProvider` checks
+an authenticated session's realm against its canonical host and navigates there,
+carrying the current path. Silent in practice, since the SSO cookie makes the
+resulting re-login on the new origin need no form.
 
 Keycloak cannot do better than this. A realm is an isolated user store and a
 login page belongs to exactly one realm, so one password form in front of users
