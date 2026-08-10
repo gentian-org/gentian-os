@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -123,19 +122,46 @@ func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 	}
 }
 
-func TestBuildOIDCBrowserFlowScript(t *testing.T) {
+// The tenant realm must authenticate its own users. It previously ran a custom
+// flow of Cookie then redirect-to-kernel, which left it with no credential form,
+// so every interactive login — including for apps that live in the tenant realm —
+// rendered the kernel realm's form instead. See docs/login-cleanup.md §5.
+
+func TestBuildOIDCBrowserFlowScriptBindsTheBuiltInFlow(t *testing.T) {
 	script := buildOIDCBrowserFlowScript("demo")
-	if !strings.Contains(script, "browser-kernel-idp") {
-		t.Fatal("expected browser-kernel-idp flow alias")
+
+	if !strings.Contains(script, `"browserFlow":"browser"`) {
+		t.Fatal("expected the realm to be bound to the built-in browser flow")
 	}
-	if !strings.Contains(script, "defaultProvider") {
-		t.Fatal("expected IdP redirector defaultProvider config")
+	// The built-in flow ends in forms, which is the whole point; a custom
+	// Cookie-then-redirect flow must not be recreated.
+	if strings.Contains(script, `"alias":\"browser-kernel-idp`) {
+		t.Fatal("must not create the redirect-only flow again")
 	}
-	if !strings.Contains(script, "requirement") || !strings.Contains(script, "ALTERNATIVE") {
-		t.Fatal("expected executions configured with ALTERNATIVE requirement")
+	if strings.Contains(script, "defaultProvider") {
+		t.Fatal("must not configure an IdP redirector default provider")
 	}
-	if !strings.Contains(script, "configured with defaultProvider=kernel") {
-		t.Fatal("expected IdP redirector configuration log line")
+}
+
+func TestBuildOIDCBrowserFlowScriptRemovesTheLegacyFlow(t *testing.T) {
+	script := buildOIDCBrowserFlowScript("demo")
+	if !strings.Contains(script, "LEGACY_FLOW=\"browser-kernel-idp\"") {
+		t.Fatal("expected the legacy flow to be named for removal")
+	}
+	if !strings.Contains(script, "authentication/flows/${FLOW_ID}") {
+		t.Fatal("expected a DELETE of the legacy flow by id")
+	}
+	// Keycloak refuses to delete a flow the realm still uses, so the rebind has
+	// to come first. Anything else leaves a window with no usable login.
+	if strings.Index(script, `"browserFlow":"browser"`) > strings.Index(script, "X DELETE") {
+		t.Fatal("the realm must be rebound before the legacy flow is deleted")
+	}
+}
+
+func TestBuildOIDCBrowserFlowScriptSetsTheLoginTheme(t *testing.T) {
+	script := buildOIDCBrowserFlowScript("demo")
+	if !strings.Contains(script, `"loginTheme":"gentian"`) {
+		t.Fatal("a realm that renders its own form needs the Gentian theme")
 	}
 }
 
