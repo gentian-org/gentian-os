@@ -336,57 +336,6 @@ func appAPIBackendRules(
 	return rules
 }
 
-func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *gatewayv1.HTTPRoute {
-	scheme := "https"
-	status := 302
-	port := gatewayv1.PortNumber(443)
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	// Carry the tenant across the redirect.
-	//
-	// The hostname the user arrived at already identifies the tenant, and sending
-	// them to a bare /login on the shared portal host threw that away — the portal
-	// then had to ask for an email purely to recover what the URL had just told it,
-	// which is what made sign-in a two-stage affair. With the tenant preserved the
-	// portal goes straight to that realm, so the Keycloak form asks for email and
-	// password together, and <tenant>.<kernel-domain> is a bookmarkable
-	// single-stage login.
-	loginPath := "/login/?tenant=" + tenant.Name
-	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
-	return &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tenantApexRedirectRouteName(tenant.Name),
-			Namespace: nsName,
-			Labels:    portalRedirectLabels(tenant.Name, tenantApexRedirectRouteName(tenant.Name)),
-		},
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: tenantGatewayParentRefs(tenant.Name),
-			},
-			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(effectiveDomain)},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
-					Filters: []gatewayv1.HTTPRouteFilter{
-						{
-							Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-							RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-								Scheme:   &scheme,
-								Hostname: &portalHost,
-								Path: &gatewayv1.HTTPPathModifier{
-									Type:            pathType,
-									ReplaceFullPath: &loginPath,
-								},
-								Port:       &port,
-								StatusCode: &status,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 func gatewayEmbeddingResponseFilters(
 	kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string,
 	ingress *gentianov1alpha1.IngressSpec,

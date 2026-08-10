@@ -17,19 +17,18 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-func TestKernelPortalURL(t *testing.T) {
-	got := kernelPortalURL("desk.gentian.org")
-	want := "https://portal.desk.gentian.org/login/"
-	if got != want {
-		t.Fatalf("kernelPortalURL = %q, want %q", got, want)
-	}
-}
 
 func TestKernelPortalHost(t *testing.T) {
 	t.Parallel()
@@ -41,20 +40,77 @@ func TestKernelPortalHost(t *testing.T) {
 	}
 }
 
-func TestTenantApexRedirectHTTPRoute(t *testing.T) {
+// The tenant host serves the portal directly now, so there is no redirect to
+// assert. What must hold is that the old one is removed: two routes claiming one
+// hostname is undefined, so it has to be deleted rather than merely left
+// unreconciled.
+
+func TestPortalRedirectIsDeletedNotRecreated(t *testing.T) {
 	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
-		Spec:       gentianov1alpha1.TenantSpec{DisplayName: "Demo"},
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	existing := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tenantApexRedirectRouteName("demo"),
+			Namespace: "tenant-demo",
+		},
 	}
-	route := buildTenantApexRedirectHTTPRoute(tenant, "tenant-demo", "demo.desk.gentian.org", "desk.gentian.org")
-	if route.Name != tenantPortalRedirectName("demo") {
-		t.Fatalf("route name = %q", route.Name)
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "desk.gentian.org"}
+
+	if err := r.ensurePortalRedirect(context.Background(), tenant); err != nil {
+		t.Fatalf("ensurePortalRedirect: %v", err)
 	}
-	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "demo.desk.gentian.org" {
-		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
+	var got gatewayv1.HTTPRoute
+	err := c.Get(context.Background(),
+		client.ObjectKey{Name: tenantApexRedirectRouteName("demo"), Namespace: "tenant-demo"}, &got)
+	if !errors.IsNotFound(err) {
+		t.Fatalf("legacy redirect still present (err=%v) — it would compete with the portal route", err)
 	}
-	if len(route.Spec.Rules) != 1 || len(route.Spec.Rules[0].Filters) == 0 {
-		t.Fatal("expected redirect filter on tenant apex route")
+
+	// Idempotent: nothing to delete on the next pass.
+	if err := r.ensurePortalRedirect(context.Background(), tenant); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+}
+
+func TestTenantHostGetsAPortalRouteWithTheSameBackends(t *testing.T) {
+	t.Parallel()
+	specs := kernelHTTPRouteSpecs(
+		"desk.gentian.org",
+		[]string{"demo.desk.gentian.org"},
+		nil,
+		[]string{"demo"},
+	)
+	var found *kernelHTTPRouteSpec
+	for i := range specs {
+		if specs[i].name == "tenant-demo-portal" {
+			found = &specs[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("no portal route for the tenant host")
+	}
+	if found.host != "demo.desk.gentian.org" {
+		t.Fatalf("host = %q", found.host)
+	}
+	// Same backends as the shared route: one portal deployment answering on more
+	// names, not a copy per tenant.
+	if len(found.rules) != len(kernelGentianPortalHTTPRouteRules()) {
+		t.Fatalf("expected the shared portal rules, got %d", len(found.rules))
+	}
+	// The API has to answer on the tenant host too, or the SPA cannot call it.
+	var hasAPI bool
+	for _, rule := range found.rules {
+		for _, b := range rule.BackendRefs {
+			if string(b.Name) == gentianPortalAPIService {
+				hasAPI = true
+			}
+		}
+	}
+	if !hasAPI {
+		t.Fatal("tenant host must route /api to the portal API")
 	}
 }
