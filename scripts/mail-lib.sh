@@ -61,7 +61,7 @@ EOF
 _detect_deployed_mail_mode() {
     local ns cm_yaml
     ns="$(_mail_kernel_namespace)"
-    cm_yaml=$(kubectl get configmap postfix-${ENV:-dev}-values -n "${ns}" \
+    cm_yaml=$(kubectl get configmap postfix-"${ENV:-dev}"-values -n "${ns}" \
         -o jsonpath='{.data.values\.yaml}' 2>/dev/null || true)
 
     if [[ -z "${cm_yaml}" ]]; then
@@ -195,7 +195,7 @@ _patch_postfix_live_relay() {
     local ns relay_host relay_port
     ns="$(_mail_kernel_namespace)"
 
-    if ! kubectl get configmap postfix-${ENV:-dev} -n "${ns}" >/dev/null 2>&1; then
+    if ! kubectl get configmap postfix-"${ENV:-dev}" -n "${ns}" >/dev/null 2>&1; then
         return 0
     fi
 
@@ -207,13 +207,13 @@ _patch_postfix_live_relay() {
     if [[ "${mode}" == "external" ]]; then
         relay_host="${EXTERNAL_SMTP_HOST:-smtp.gmail.com}"
         relay_port="${EXTERNAL_SMTP_PORT:-587}"
-        kubectl patch configmap postfix-${ENV:-dev} -n "${ns}" --type merge \
+        kubectl patch configmap postfix-"${ENV:-dev}" -n "${ns}" --type merge \
             -p "{\"data\":{\"RELAYHOST\":\"[${relay_host}]:${relay_port}\"}}" >/dev/null
     else
-        kubectl patch configmap postfix-${ENV:-dev} -n "${ns}" --type merge \
+        kubectl patch configmap postfix-"${ENV:-dev}" -n "${ns}" --type merge \
             -p '{"data":{"RELAYHOST":"","RELAYHOST_USERNAME":"","RELAYHOST_PASSWORD":""}}' >/dev/null
     fi
-    kubectl delete pod postfix-${ENV:-dev}-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    kubectl delete pod postfix-"${ENV:-dev}"-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     success "  patched live postfix-${ENV:-dev} relay (mode=${mode})"
 }
 
@@ -260,10 +260,10 @@ _patch_postfix_allowed_sender_domains() {
         | kubectl apply -f - >/dev/null
     success "  patched postfix-base-values (ALLOWED_SENDER_DOMAINS=${kernel_domain})"
 
-    if kubectl get configmap postfix-${ENV:-dev} -n "${ns}" >/dev/null 2>&1; then
-        kubectl patch configmap postfix-${ENV:-dev} -n "${ns}" --type merge \
+    if kubectl get configmap postfix-"${ENV:-dev}" -n "${ns}" >/dev/null 2>&1; then
+        kubectl patch configmap postfix-"${ENV:-dev}" -n "${ns}" --type merge \
             -p "{\"data\":{\"ALLOWED_SENDER_DOMAINS\":\"${kernel_domain}\"}}" >/dev/null
-        kubectl delete pod postfix-${ENV:-dev}-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+        kubectl delete pod postfix-"${ENV:-dev}"-0 -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
         success "  patched postfix-${ENV:-dev} ConfigMap and restarted Postfix pod"
     fi
 }
@@ -282,7 +282,7 @@ _patch_postfix_configmap() {
         return
     fi
 
-    kubectl create configmap postfix-${ENV:-dev}-values \
+    kubectl create configmap postfix-"${ENV:-dev}"-values \
         -n "${ns}" \
         --from-literal="values.yaml=${values_yaml}" \
         --dry-run=client -o yaml \
@@ -324,7 +324,7 @@ install_kernel_mail() {
             info "Keycloak uses the relay directly; in-cluster Postfix (if present) relays via the same host."
         fi
         if kubectl get namespace "$(_mail_kernel_namespace)" >/dev/null 2>&1 \
-            && kubectl get configmap postfix-${ENV:-dev}-values -n "$(_mail_kernel_namespace)" >/dev/null 2>&1; then
+            && kubectl get configmap postfix-"${ENV:-dev}"-values -n "$(_mail_kernel_namespace)" >/dev/null 2>&1; then
             _patch_postfix_configmap external
             _patch_postfix_allowed_sender_domains
             _patch_postfix_live_relay external
