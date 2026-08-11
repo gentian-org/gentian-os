@@ -234,6 +234,12 @@ spec:
             - command:
               - /bin/sh
               - /scripts/run.sh
+              env:
+              - name: OIDC_CLIENT_SECRET
+                valueFrom:
+                  secretKeyRef:
+                    key: oidc-client-secret
+                    name: demo-app-sensitive-values
               envFrom:
               - secretRef:
                   name: llm-credentials-demo-app

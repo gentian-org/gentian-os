@@ -1060,6 +1060,59 @@ spec:
             {{- $pijPVC := dig "readOnlyPVC" dict $pij }}
             {{- $pijPVCClaim := dig "claimName" "" $pijPVC }}
             {{- $pijPVCMount := dig "mountPath" "" $pijPVC }}
+
+            {{- /* ── Individual secretKeyRef env vars for postInstallJob ─────────── */}}
+            {{- /* envFrom (above) injects a whole Secret's keys as env vars, but    */}}
+            {{- /* Kubernetes silently drops any key that is not a valid C_IDENTIFIER */}}
+            {{- /* — which every hyphenated db, oidc, s3, etc. key here is. A         */}}
+            {{- /* bootstrap script that needs its own app's database or OIDC client  */}}
+            {{- /* credentials (e.g. to call `manage.py createsuperuser` before any   */}}
+            {{- /* HTTP API exists to talk to) has no other way to reach them. These   */}}
+            {{- /* fixed, documented names are a stable contract for postInstallJob    */}}
+            {{- /* scripts, independent of whatever Helm value path a profile's        */}}
+            {{- /* valueMapping happens to set for the Release itself.                 */}}
+            {{- $pijEnv := list }}
+            {{- if $vm.database }}
+            {{- if $vm.database.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_HOST" "key" "db-host") }}{{ end }}
+            {{- if $vm.database.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_PORT" "key" "db-port") }}{{ end }}
+            {{- if $vm.database.nameKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_NAME" "key" "db-name") }}{{ end }}
+            {{- if $vm.database.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_USER" "key" "db-user") }}{{ end }}
+            {{- if $vm.database.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_PASSWORD" "key" "db-password") }}{{ end }}
+            {{- end }}
+            {{- if $vm.oidc }}
+            {{- if $vm.oidc.issuerKey }}{{ $pijEnv = append $pijEnv (dict "name" "OIDC_ISSUER" "key" "oidc-issuer") }}{{ end }}
+            {{- if $vm.oidc.clientIdKey }}{{ $pijEnv = append $pijEnv (dict "name" "OIDC_CLIENT_ID" "key" "oidc-client-id") }}{{ end }}
+            {{- if $vm.oidc.clientSecretKey }}{{ $pijEnv = append $pijEnv (dict "name" "OIDC_CLIENT_SECRET" "key" "oidc-client-secret") }}{{ end }}
+            {{- end }}
+            {{- if $vm.s3 }}
+            {{- if $vm.s3.endpointKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_ENDPOINT" "key" "s3-endpoint") }}{{ end }}
+            {{- if $vm.s3.bucketKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_BUCKET" "key" "s3-bucket") }}{{ end }}
+            {{- if $vm.s3.accessKeyKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_ACCESS_KEY" "key" "s3-access-key") }}{{ end }}
+            {{- if $vm.s3.secretKeyKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_SECRET_KEY" "key" "s3-secret-key") }}{{ end }}
+            {{- if $vm.s3.regionKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_REGION" "key" "s3-region") }}{{ end }}
+            {{- end }}
+            {{- if $vm.cache }}
+            {{- if $vm.cache.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_HOST" "key" "cache-host") }}{{ end }}
+            {{- if $vm.cache.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PORT" "key" "cache-port") }}{{ end }}
+            {{- if $vm.cache.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_USER" "key" "cache-user") }}{{ end }}
+            {{- if $vm.cache.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PASSWORD" "key" "cache-password") }}{{ end }}
+            {{- end }}
+            {{- if $vm.smtp }}
+            {{- if $vm.smtp.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_HOST" "key" "smtp-host") }}{{ end }}
+            {{- if $vm.smtp.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_PORT" "key" "smtp-port") }}{{ end }}
+            {{- if $vm.smtp.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_USER" "key" "smtp-user") }}{{ end }}
+            {{- if $vm.smtp.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_PASSWORD" "key" "smtp-password") }}{{ end }}
+            {{- end }}
+            {{- if $vm.imap }}
+            {{- if $vm.imap.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "IMAP_HOST" "key" "imap-host") }}{{ end }}
+            {{- if $vm.imap.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "IMAP_PORT" "key" "imap-port") }}{{ end }}
+            {{- end }}
+            {{- /* appSecrets: env var name is the declared name, upper-cased. */}}
+            {{- range $s := $appSecrets }}
+            {{- if $s.name }}
+            {{- $pijEnv = append $pijEnv (dict "name" (upper $s.name) "key" (printf "internal-%s" $s.name)) }}
+            {{- end }}
+            {{- end }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -1148,11 +1201,21 @@ spec:
                                 mountPath: {{ $pijPVCMount }}
                                 readOnly: true
                               {{- end }}
+                            {{- if gt (len $pijEnv) 0 }}
+                            env:
+                              {{- range $e := $pijEnv }}
+                              - name: {{ $e.name }}
+                                valueFrom:
+                                  secretKeyRef:
+                                    name: {{ $secretName }}
+                                    key: {{ $e.key }}
+                              {{- end }}
+                            {{- end }}
                             {{- if gt (len $pijEnvFrom) 0 }}
                             envFrom:
-                              {{- range $secretName := $pijEnvFrom }}
+                              {{- range $secretRefName := $pijEnvFrom }}
                               - secretRef:
-                                  name: {{ $secretName }}
+                                  name: {{ $secretRefName }}
                               {{- end }}
                             {{- end }}
               providerConfigRef:

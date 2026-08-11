@@ -267,10 +267,30 @@ type PrivilegedRoleSpec struct {
 	Kind PrivilegedRoleKind `json:"kind"`
 
 	// Name is the in-app role identifier (for example Nextcloud group "admin").
+	// Protocols whose privilege model has no named role (for example
+	// "mathesar-rpc", which maps membership to a boolean is_superuser flag)
+	// ignore this field — set a descriptive placeholder for readability.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	Name string `json:"name"`
+
+	// Protocol selects how the operator talks to the app to reconcile
+	// membership into Name/the mapped privilege. Each value is a wire
+	// protocol the operator knows how to speak — not an app name — so a
+	// future app that happens to expose the same shape can reuse one.
+	// Unset means sync is not implemented for this profile yet (the operator
+	// reports that explicitly rather than silently doing nothing).
+	//
+	// "mathesar-rpc": HTTP Basic Auth (a per-tenant bootstrap superuser
+	// credential, see spec.appSecrets) against the app's own
+	// /api/rpc/v0/ JSON-RPC endpoint (users.list/users.add/users.patch_other).
+	// The endpoint is derived from this profile's spec.ingress
+	// serviceName/servicePort; Name is ignored (is_superuser is boolean, not
+	// a named group).
+	// +optional
+	// +kubebuilder:validation:Enum=mathesar-rpc
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // TileSpec configures a Gentian portal tile icon (52×52 SVG).

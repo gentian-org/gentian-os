@@ -33,6 +33,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/provisioning/mathesar"
 	"github.com/gentian-org/gentian-os/internal/provisioning/privilege"
 )
 
@@ -226,7 +227,126 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	default:
 		return fmt.Errorf("unsupported privileged role kind %q", role.Kind)
 	}
-	return fmt.Errorf("privileged role sync is not implemented for profile %q", profileName)
+	// Protocol is a wire protocol the operator knows how to speak, not an app
+	// name — see the field doc on PrivilegedRoleSpec. Add a case here (and a
+	// client package under internal/provisioning/) for each protocol a
+	// profile declares; never branch on profileName/family here.
+	switch role.Protocol {
+	case "mathesar-rpc":
+		return r.syncMathesarPrivilegedRole(ctx, tenant, profileName, profile, members)
+	default:
+		return fmt.Errorf("privileged role sync is not implemented for profile %q (protocol %q)", profileName, role.Protocol)
+	}
+}
+
+const (
+	// mathesarBootstrapUsername is the fixed, protocol-defined username of the
+	// technical Mathesar superuser this sync authenticates as. It is not a
+	// per-tenant human account (app-admins members get their own accounts,
+	// provisioned below) and not a secret itself — only its password is. A
+	// "mathesar-rpc" profile's spec.postInstallJob must create exactly this
+	// account (see profiles/mathesar/mathesar-ce/profile.yaml in gentian-apps
+	// for the reference script).
+	mathesarBootstrapUsername = "gentian-bootstrap-admin"
+
+	// mathesarBootstrapPasswordKey is the key inside
+	// "<profileName>-sensitive-values" (the same per-app Secret every
+	// AppProfile's valueMapping/appSecrets already populate — see the
+	// app-default composition and docs/app-profile-guide.md §4) holding that
+	// account's password. The profile must declare it via
+	// spec.appSecrets[].name: bootstrap_admin_password.
+	mathesarBootstrapPasswordKey = "internal-bootstrap_admin_password" //nolint:gosec // secret key name, not a credential.
+)
+
+// syncMathesarPrivilegedRole reconciles gentian:tenant:<t>:app-admins
+// membership into Mathesar's is_superuser flag via its own /api/rpc/v0/
+// JSON-RPC endpoint (see internal/provisioning/mathesar). There is no OIDC
+// claim Mathesar reads for this — upstream always creates new SSO logins as
+// regular users (mathesar/sso.py) — so a technical bootstrap superuser
+// (created once by the profile's spec.postInstallJob) authenticates every
+// call this makes.
+func (r *TenantReconciler) syncMathesarPrivilegedRole(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	profileName string,
+	profile *gentianov1alpha1.AppProfile,
+	members []authz.KeycloakUser,
+) error {
+	if profile.Spec.Ingress == nil || profile.Spec.Ingress.ServiceName == "" || profile.Spec.Ingress.ServicePort == 0 {
+		return fmt.Errorf("mathesar-rpc requires spec.ingress.serviceName/servicePort on profile %q", profileName)
+	}
+	ns := tenantNamespaceName(tenant)
+
+	secret := &corev1.Secret{}
+	secretName := profileName + "-sensitive-values"
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ns}, secret); err != nil {
+		return fmt.Errorf("load bootstrap credentials from %s/%s: %w", ns, secretName, err)
+	}
+	bootstrapPass := string(secret.Data[mathesarBootstrapPasswordKey])
+	if bootstrapPass == "" {
+		return fmt.Errorf("secret %s/%s is missing the bootstrap admin credential (key %q)",
+			ns, secretName, mathesarBootstrapPasswordKey)
+	}
+
+	// Internal service DNS, never the public tenant hostname — this is a
+	// kernel-component-to-tenant-app call (docs/app-profile-guide.md §2).
+	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
+		profile.Spec.Ingress.ServiceName, ns, profile.Spec.Ingress.ServicePort)
+	rpc := mathesar.NewClient(baseURL, mathesarBootstrapUsername, bootstrapPass)
+
+	users, err := rpc.ListUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("list mathesar users: %w", err)
+	}
+	byEmail := make(map[string]mathesar.User, len(users))
+	for _, u := range users {
+		if u.Email != "" {
+			byEmail[strings.ToLower(u.Email)] = u
+		}
+	}
+
+	wantAdmin := make(map[string]bool, len(members))
+	for _, m := range members {
+		if m.Email == "" {
+			// Mathesar links accounts by email; a Keycloak member without one
+			// can never be matched to (or provisioned as) a Mathesar user.
+			continue
+		}
+		email := strings.ToLower(m.Email)
+		wantAdmin[email] = true
+
+		existing, ok := byEmail[email]
+		switch {
+		case ok && !existing.IsSuperuser:
+			if _, err := rpc.SetSuperuser(ctx, existing, true); err != nil {
+				return fmt.Errorf("promote mathesar user %s: %w", email, err)
+			}
+		case !ok:
+			username := m.Username
+			if username == "" {
+				username = email
+			}
+			// Pre-provisions the account so the eventual first SSO login
+			// links to it (matched by email) instead of creating a fresh,
+			// non-superuser one — see mathesar/sso.py's save_user upstream.
+			if _, err := rpc.AddUser(ctx, username, email, true); err != nil {
+				return fmt.Errorf("provision mathesar user %s: %w", email, err)
+			}
+		}
+	}
+
+	// Demote accounts that lost app-admins membership. The technical
+	// bootstrap account is matched by username, not membership — it is what
+	// authenticates this very sync and is never a human app-admins member.
+	for email, u := range byEmail {
+		if u.Username == mathesarBootstrapUsername || !u.IsSuperuser || wantAdmin[email] {
+			continue
+		}
+		if _, err := rpc.SetSuperuser(ctx, u, false); err != nil {
+			return fmt.Errorf("demote mathesar user %s: %w", email, err)
+		}
+	}
+	return nil
 }
 
 func (r *TenantReconciler) appPrivilegeSynced(tenant *gentianov1alpha1.Tenant, profileName, fingerprint string) bool {
