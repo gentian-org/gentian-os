@@ -653,6 +653,76 @@ components:
 EOF
 }
 
+# The kustomization written above references a shared Component that carries
+# tenant-wide defaults. Nothing else creates it, so on a cluster that has never
+# deployed a tenant the build fails with
+#
+#   accumulating components: ... evalsymlink failure on
+#   '.../definitions/components/tenant-defaults': no such file or directory
+#
+# and the deploy rolls back — after already pushing the activation commit. Create
+# it on demand so a first tenant deploy works on a freshly bootstrapped cluster.
+#
+# mail.domain is derived from the cluster's own kernelDomain rather than copied
+# from another cluster: no tenant.yaml overrides it, so whatever lands here is
+# what every tenant gets, and a stale value silently misroutes tenant mail.
+ensure_tenant_defaults_component() {
+  local comp_dir kernel_domain claim
+  comp_dir="$(tenant_definitions_root)/components/tenant-defaults"
+
+  [[ -f "${comp_dir}/kustomization.yaml" ]] && return 0
+
+  claim="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/kernel/claims/cluster.yaml"
+  kernel_domain="$(awk '/kernelDomain:/ {print $2; exit}' "${claim}" 2>/dev/null || true)"
+
+  mkdir -p "${comp_dir}"
+  cat > "${comp_dir}/kustomization.yaml" <<'KEOF'
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+- path: defaults.yaml
+  target:
+    group: gentianos.io
+    version: v1alpha1
+    kind: Tenant
+KEOF
+
+  {
+    cat <<'DEOF'
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: placeholder  # matched via the target selector in kustomization.yaml
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # deletionPolicy is set per instance in tenant.yaml (Retain default).
+  isolation:
+    mode: namespace
+DEOF
+    if [[ -n "${kernel_domain}" ]]; then
+      cat <<DEOF
+  mail:
+    domain: ${kernel_domain}
+    mode: selfhosted
+    quotaPerUser: 5Gi
+    rateLimit: 100/h
+DEOF
+    fi
+    cat <<'DEOF'
+  quotas:
+    cpu: 32
+    maxApps: 20
+    memory: 32Gi
+    storage: 100Gi
+DEOF
+  } > "${comp_dir}/defaults.yaml"
+
+  echo "Created shared tenant defaults component at ${comp_dir}"
+  [[ -z "${kernel_domain}" ]] && echo "  NOTE: kernelDomain not readable from ${claim}; mail defaults omitted — set spec.mail per tenant." >&2
+  return 0
+}
+
 scaffold_tenant_from_definition() {
   local instance="${1}"
   local env_name="${2:-dev}"
@@ -673,6 +743,8 @@ scaffold_tenant_from_definition() {
     echo "ERROR: tenant definition at ${definition_dir} is missing tenant.yaml." >&2
     exit 1
   fi
+
+  ensure_tenant_defaults_component
 
   mkdir -p "${target_dir}"
   cp "${definition_dir}/tenant.yaml" "${target_dir}/tenant.yaml"
