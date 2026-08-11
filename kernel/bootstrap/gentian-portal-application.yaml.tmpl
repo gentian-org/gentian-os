@@ -22,6 +22,20 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    # KNOWN DEFECT — same shape as the one fixed in
+    # gentian-os-application.yaml.tmpl: pinning image-list to the moving
+    # %PORTAL_IMAGE_TAG% (develop) makes the candidate set a single entry whose
+    # name never changes, so newest-build re-picks it every cycle and
+    # api.image.tag / web.image.tag never move. New portal builds do not reach
+    # the cluster; the controller reports images_updated=0 while looking healthy.
+    #
+    # Not fixed here because the fix requires branch-scoped immutable tags
+    # (develop-<sha>) to exist in the portal image repos, and those are built by
+    # gentian-portal-api / gentian-portal-web, not by this repo's CI. An
+    # allow-tags regexp added before that would match nothing and change no
+    # behaviour. Once those pipelines publish branch-prefixed sha tags, drop the
+    # tag from image-list and add, per alias:
+    #   argocd-image-updater.argoproj.io/<alias>.allow-tags: regexp:^%PORTAL_IMAGE_TAG%-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/image-list: >-
       api=ghcr.io/gentian-org/gentian-portal-api:%PORTAL_IMAGE_TAG%,
       web=ghcr.io/gentian-org/gentian-portal-web:%PORTAL_IMAGE_TAG%

@@ -46,7 +46,25 @@ metadata:
     # Image updater: follow new builds published for %GENTIAN_OS_BRANCH% and
     # update image.tag in the Application's Helm parameters so ArgoCD triggers
     # a Helm upgrade (rolling restart) whenever a new image lands in GHCR.
-    argocd-image-updater.argoproj.io/image-list: gentianos=ghcr.io/gentian-org/gentian-os:%GENTIAN_OS_BRANCH%
+    #
+    # The image-list deliberately carries NO tag. Pinning it to the moving
+    # `%GENTIAN_OS_BRANCH%` tag made the candidate set exactly one entry whose
+    # name never changes, so newest-build re-selected it every cycle, image.tag
+    # never changed, and no new build ever reached the cluster — the controller
+    # reported images_considered=N images_updated=0 forever while looking
+    # perfectly healthy. Combined with imagePullPolicy IfNotPresent (a node that
+    # has cached a moving tag never re-pulls it), CI could publish for weeks
+    # while the cluster ran the same code.
+    #
+    # allow-tags restricts candidates to the branch-scoped immutable tags CI
+    # publishes (develop-abc1234, see the docker job in .github/workflows/ci.yaml).
+    # The bare short-sha tag is published from every branch and must NOT be
+    # tracked: a main build would be a valid candidate for a develop cluster.
+    # When %GENTIAN_OS_BRANCH% is a release tag rather than a branch, no
+    # candidate matches and the pinned image is left alone — which is what a
+    # pinned release should do.
+    argocd-image-updater.argoproj.io/image-list: gentianos=ghcr.io/gentian-org/gentian-os
+    argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^%GENTIAN_OS_BRANCH%-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
     argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
     argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag

@@ -113,11 +113,16 @@ image:
   # publish a new image and the cluster keeps running the old code through
   # restarts and rollouts alike, with nothing reporting the drift.
   #
-  # Always is the correct policy for a moving tag: the kubelet re-resolves it
-  # on every pod start, so a rollout restart actually picks up the new build.
-  # The proper fix is to publish immutable per-build tags (develop-<sha>) and
-  # let Image Updater track those — at which point IfNotPresent becomes right
-  # again, or better, set image.digest below and pin exactly.
+  # CI now publishes branch-scoped immutable tags (develop-<sha>) and Image
+  # Updater tracks those via allow-tags, so image.tag does move per build and
+  # the original reasoning holds again for steady-state operation.
+  #
+  # Always is kept regardless, deliberately: the moving `develop` tag still
+  # exists and is what a fresh bootstrap deploys before Image Updater has
+  # written a pinned tag, so IfNotPresent would reintroduce the stale-image
+  # trap in exactly the window where it is hardest to notice. The cost is one
+  # registry round-trip per pod start. Set image.digest below to pin exactly
+  # and make the question moot.
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   # Ignored when image.digest is set.

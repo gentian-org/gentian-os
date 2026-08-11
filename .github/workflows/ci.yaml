@@ -127,6 +127,14 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=branch
             type=sha,prefix=,format=short
+            # Branch-scoped immutable tag (develop-abc1234). The bare short-sha
+            # tag above is published from every branch, so it cannot be tracked
+            # safely — a main build would be a valid candidate for a develop
+            # cluster. argocd-image-updater follows THIS pattern via allow-tags
+            # in kernel/bootstrap/gentian-os-application.yaml.tmpl: the moving
+            # `develop` tag can never resolve to a new value, so tracking it
+            # meant image.tag never changed and new builds never deployed.
+            type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
