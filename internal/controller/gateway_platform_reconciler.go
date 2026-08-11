@@ -56,6 +56,14 @@ import (
 // ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
 // reconciler creates them and tenant cleanup lists them for stale removal.
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies,verbs=get;list;watch;create;update;patch;delete
+//
+// Deployments back the CoreDNS hairpin (coredns_hairpin.go): the ConfigMap name
+// is discovered from the volume the CoreDNS Deployment mounts, and the
+// Deployment is then patched to restart CoreDNS after the Corefile changes. The
+// apps group was absent from the ClusterRole entirely, so restartCoreDNSDeployment
+// could never have worked. list+watch accompany get because the manager's client
+// reads through its cache, so a Get starts an informer that must be able to list.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;patch
 type GatewayPlatformReconciler struct {
 	client.Client
 	KernelDomain  string

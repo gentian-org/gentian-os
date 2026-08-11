@@ -212,11 +212,16 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 		return err
 	}
 
+	cmName, err := resolveCoreDNSConfigMapName(ctx, c)
+	if err != nil {
+		return err
+	}
+
 	cm := &corev1.ConfigMap{}
 	if err := c.Get(ctx, types.NamespacedName{
-		Namespace: coreDNSNamespace, Name: coreDNSConfigMapName,
+		Namespace: coreDNSNamespace, Name: cmName,
 	}, cm); err != nil {
-		return fmt.Errorf("get CoreDNS ConfigMap: %w", err)
+		return fmt.Errorf("get CoreDNS ConfigMap %q: %w", cmName, err)
 	}
 
 	corefile := cm.Data["Corefile"]
@@ -231,6 +236,44 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 		return fmt.Errorf("patch CoreDNS ConfigMap: %w", err)
 	}
 	return restartCoreDNSDeployment(ctx, c)
+}
+
+// resolveCoreDNSConfigMapName finds the ConfigMap backing CoreDNS by reading
+// the volume the CoreDNS Deployment actually mounts, falling back to the
+// upstream "coredns" name.
+//
+// The name is not portable. kubeadm and most distributions use "coredns", but
+// managed providers prefix it per cluster — Infomaniak serves this cluster's
+// CoreDNS from "pck-whmxvl2-addon-coredns". Hardcoding the upstream name made
+// every hairpin reconcile fail with `ConfigMap "coredns" not found`, and
+// because that error propagates up through the tenant stage pipeline it
+// short-circuited the reconcile before Finalize: the tenant's NamespaceReady
+// and CrossplaneReady conditions froze at their initial "waiting" values while
+// the namespace was Active and the XTenant already Ready, and the phase stayed
+// Provisioning forever. The visible symptom was a tenant that never converged,
+// with nothing pointing at DNS.
+//
+// Reading the Deployment is the reliable discovery path: whatever CoreDNS is
+// actually serving, it is mounted there. A cluster whose CoreDNS Deployment is
+// itself named differently still falls back to the constant, which fails with
+// the same clear error as before rather than silently doing nothing.
+func resolveCoreDNSConfigMapName(ctx context.Context, c client.Client) (string, error) {
+	dep := &appsv1.Deployment{}
+	if err := c.Get(ctx, types.NamespacedName{
+		Namespace: coreDNSNamespace, Name: coreDNSDeployment,
+	}, dep); err != nil {
+		if errors.IsNotFound(err) {
+			return coreDNSConfigMapName, nil
+		}
+		return "", fmt.Errorf("get CoreDNS Deployment for ConfigMap discovery: %w", err)
+	}
+
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.ConfigMap != nil && v.ConfigMap.Name != "" {
+			return v.ConfigMap.Name, nil
+		}
+	}
+	return coreDNSConfigMapName, nil
 }
 
 func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDomain, tenancyMode string) (map[string]struct{}, error) {
