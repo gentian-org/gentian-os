@@ -51,8 +51,17 @@ rules:
   # Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
   # list+watch are required even though the code only calls Get: the manager's
   # client reads through the cache, so a Get starts an informer.
+  # xtenants needs WRITE verbs, not just read: ensureTenantXR creates the
+  # composite (tenant_controller.go, r.Create on a not-found XTenant). Granting
+  # only get/list/watch let the tenant reconcile run and then fail every pass
+  # with "xtenants.gentianos.io is forbidden" — the read verbs were inferred
+  # from the Get call and the Create three lines below it was missed.
   - apiGroups: ["gentianos.io"]
-    resources: ["xtenants", "xapps"]
+    resources: ["xtenants"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # xapps stays read-only — nothing writes it (applifecycle only Gets).
+  - apiGroups: ["gentianos.io"]
+    resources: ["xapps"]
     verbs: ["get", "list", "watch"]
   # Customization records — the operator computes derived debt state on status,
   # but never authors records: those are written in git by humans and agents.
