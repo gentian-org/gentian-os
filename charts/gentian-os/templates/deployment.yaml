@@ -79,9 +79,33 @@ spec:
               value: "true"
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
+            {{- /*
+              An explicitly-set literal wins, deliberately, even though it is
+              the deprecated form. A cluster installed before the token moved
+              behind a Secret still carries authzBridge.openfgaToken pinned in
+              its Argo CD Application, and nothing has written the OpenBao path
+              the ExternalSecret reads. Preferring secretKeyRef would make that
+              upgrade silently tokenless: the Secret would not exist, optional
+              would swallow it, and the authz bridge would come up with no
+              credential and no error. Precedence therefore follows what is
+              actually configured, and the installer simply stops setting the
+              literal — so new installs take the Secret path and existing ones
+              migrate when the pinned parameter is removed.
+
+              optional: true so the operator still starts while the
+              ExternalSecret is syncing; the bridge picks the token up on a
+              later reconcile rather than CrashLooping the whole operator.
+            */}}
             {{- if .Values.authzBridge.openfgaToken }}
             - name: OPENFGA_API_TOKEN
               value: {{ .Values.authzBridge.openfgaToken | quote }}
+            {{- else if .Values.authzBridge.openfgaTokenSecretRef.name }}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authzBridge.openfgaTokenSecretRef.name | quote }}
+                  key: {{ .Values.authzBridge.openfgaTokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             {{- end }}
             - name: CLOUDFLARE_ZONE_ID

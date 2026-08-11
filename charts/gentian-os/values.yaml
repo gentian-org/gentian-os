@@ -46,7 +46,22 @@ kernelRealm: ""
 authzBridge:
   enabled: true
   openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+  # DEPRECATED — a literal token here is rendered straight into the Deployment
+  # as an env value, and the installer additionally pinned it into the Argo CD
+  # Application's helm.parameters, leaving the OpenFGA API token in cleartext in
+  # two cluster objects that are far more widely readable than a Secret (anyone
+  # with get on Applications, every `argocd app get`, and any backup of them).
+  # Prefer openfgaTokenSecretRef below. Kept only so an existing deployment that
+  # still sets it does not lose the bridge on upgrade.
   openfgaToken: ""
+  # Preferred: read the token from a Secret via secretKeyRef, mirroring
+  # cloudflare.apiTokenSecretRef. When openbaoPath is set the chart also renders
+  # an ExternalSecret that syncs it out of OpenBao, so the token never transits
+  # a Helm value, an Application spec, or the installer's process arguments.
+  openfgaTokenSecretRef:
+    name: "gentian-os-openfga-token"
+    key: "api-token"
+    openbaoPath: "gentian-os/kernel/authz/openfga"
 
 # platformSecurityPolicy is the cluster singleton edited by platform administrators
 # (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests

@@ -337,6 +337,10 @@ wait_for_operator_cloudflare_token() {
 
 handoff_gentian_os_to_argocd() {
     local openfga_token="${1:-}"
+    # Passed explicitly rather than relied on through bash's dynamic scoping,
+    # which would silently resolve to the caller's local and break the moment
+    # this is called from anywhere else.
+    local openfga_token_in_bao="${2:-0}"
     local gentian_os_branch
     gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
@@ -360,21 +364,33 @@ handoff_gentian_os_to_argocd() {
     kubectl apply -f "$rendered"
     rm -f "$rendered"
 
-    if [[ -n "${openfga_token}" ]]; then
-        info "Pinning Stage 1 authz bridge settings on Argo CD Application gentian-os..."
-        kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
-            --arg token "${openfga_token}" \
-            '[{"op":"add","path":"/spec/sources/0/helm/parameters","value":[
-                {"name":"authzBridge.enabled","value":"true"},
-                {"name":"authzBridge.openfgaToken","value":$token}
-            ]}]')" 2>/dev/null \
-        || kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
-            --arg token "${openfga_token}" \
-            '[{"op":"replace","path":"/spec/sources/0/helm/parameters","value":[
-                {"name":"authzBridge.enabled","value":"true"},
-                {"name":"authzBridge.openfgaToken","value":$token}
-            ]}]')"
+    # Pin only non-sensitive bridge settings. The OpenFGA token deliberately does
+    # NOT go here: helm.parameters are stored verbatim in the Application spec,
+    # so writing it pinned the credential in cleartext where every reader of
+    # Applications — and every backup or git mirror of them — could see it. The
+    # chart now resolves the token through secretKeyRef, so the Application only
+    # needs to say which Secret to read.
+    local -a app_params=('{"name":"authzBridge.enabled","value":"true"}')
+    if ((openfga_token_in_bao)); then
+        app_params+=('{"name":"authzBridge.openfgaTokenSecretRef.name","value":"gentian-os-openfga-token"}')
+    elif [[ -n "${openfga_token}" ]]; then
+        warn "Pinning the OpenFGA token into the Argo CD Application in cleartext"
+        warn "  because it could not be stored in OpenBao. Re-run once OpenBao is"
+        warn "  reachable, then rotate the token — the old value stays in any"
+        warn "  backup of the Application taken meanwhile."
+        app_params+=("$(jq -nc --arg t "${openfga_token}" \
+            '{"name":"authzBridge.openfgaToken","value":$t}')")
     fi
+
+    info "Pinning Stage 1 authz bridge settings on Argo CD Application gentian-os..."
+    local params_json
+    params_json=$(printf '%s\n' "${app_params[@]}" | jq -sc .)
+    kubectl patch application gentian-os -n argocd --type=json -p \
+        "$(jq -nc --argjson v "${params_json}" \
+            '[{"op":"add","path":"/spec/sources/0/helm/parameters","value":$v}]')" 2>/dev/null \
+    || kubectl patch application gentian-os -n argocd --type=json -p \
+        "$(jq -nc --argjson v "${params_json}" \
+            '[{"op":"replace","path":"/spec/sources/0/helm/parameters","value":$v}]')"
 
     release_gentian_os_helm_bootstrap "gentian-system"
     kubectl annotate application gentian-os -n argocd \
@@ -406,6 +422,45 @@ install_gentian_os_operator() {
             | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
     fi
 
+    # Route the token through OpenBao so the chart's ExternalSecret can sync it
+    # into a Secret the Deployment reads via secretKeyRef. It used to be passed
+    # as a Helm value AND pinned into the Argo CD Application's helm.parameters,
+    # which left it in cleartext in two widely-readable cluster objects: anyone
+    # with get on Applications could read it, `argocd app get` printed it, and
+    # every backup of that spec captured it.
+    #
+    # openfga_token_in_bao gates the fallback below rather than the write being
+    # fatal: OpenBao can legitimately be unreachable here (sealed, or the
+    # port-forward path unavailable), and failing the whole install over it
+    # would be worse than the leak it prevents. The fallback is announced.
+    local openfga_token_in_bao=0
+    if [[ -n "${openfga_token}" ]]; then
+        if gentian_openbao_put "authz/openfga" \
+            "$(jq -nc --arg t "${openfga_token}" '{"api-token":$t}')"; then
+            openfga_token_in_bao=1
+            info "OpenFGA API token stored in OpenBao (gentian-os/kernel/authz/openfga)."
+        else
+            warn "Could not write the OpenFGA API token to OpenBao."
+            warn "  Falling back to passing it as a Helm value, which leaves it"
+            warn "  in cleartext in the gentian-os Deployment and Application."
+            warn "  Re-run once OpenBao is reachable to move it behind a Secret."
+        fi
+    fi
+
+    # When the token reached OpenBao the chart's ExternalSecret supplies it and
+    # nothing token-shaped crosses the Helm boundary — the chart's default
+    # secretRef already names the right Secret, so there is nothing to set.
+    # Otherwise pass the literal, which the chart prefers when present.
+    local -a authz_token_args=()
+    if ((openfga_token_in_bao)); then
+        authz_token_args+=(--set "authzBridge.openfgaTokenSecretRef.name=gentian-os-openfga-token")
+    # An explicit if, not `[[ ... ]] && cmd`: under set -e that idiom aborts the
+    # install when the token is empty, because the && list would be the last
+    # command in the branch and its status becomes the branch's.
+    elif [[ -n "${openfga_token}" ]]; then
+        authz_token_args+=(--set "authzBridge.openfgaToken=${openfga_token}")
+    fi
+
     local value_files=()
     _gentian_os_collect_operator_value_files value_files
 
@@ -430,7 +485,7 @@ install_gentian_os_operator() {
         --set kernelRealm="${KERNEL_REALM:-kernel}" \
         --set authzBridge.enabled=true \
         --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
-        --set "authzBridge.openfgaToken=${openfga_token}" \
+        "${authz_token_args[@]}" \
         --set infraNamespace="${_infra_ns}" \
         --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
         ${OPENPROJECT_ENTERPRISE_TOKEN:+--set "kernelServices.openprojectEnterpriseToken=${OPENPROJECT_ENTERPRISE_TOKEN}"} \
@@ -440,7 +495,7 @@ install_gentian_os_operator() {
 
     wait_for_operator_cloudflare_token "$ns" || true
 
-    handoff_gentian_os_to_argocd "${openfga_token}"
+    handoff_gentian_os_to_argocd "${openfga_token}" "${openfga_token_in_bao}"
 
     success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED and Cloudflare tunnel wiring."
     info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"
