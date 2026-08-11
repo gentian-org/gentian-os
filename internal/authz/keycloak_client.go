@@ -197,7 +197,6 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		// sent to the IdP sees the portal's own card rather than stock Keycloak.
 		// Set here rather than per realm-creation path because the kernel realm has
 		// no such path — it is bootstrapped once at install.
-		// See docs/login-cleanup.md §6.
 		"loginTheme": GentianLoginTheme,
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)

@@ -125,7 +125,7 @@ func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 // The tenant realm must authenticate its own users. It previously ran a custom
 // flow of Cookie then redirect-to-kernel, which left it with no credential form,
 // so every interactive login — including for apps that live in the tenant realm —
-// rendered the kernel realm's form instead. See docs/login-cleanup.md §5.
+// rendered the kernel realm's form instead.
 
 func TestBuildOIDCBrowserFlowScriptBindsTheBuiltInFlow(t *testing.T) {
 	script := buildOIDCBrowserFlowScript("demo")

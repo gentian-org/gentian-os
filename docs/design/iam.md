@@ -20,16 +20,15 @@ user and group store for that organisation.
 | Realm | Role |
 |---|---|
 | `master` | Keycloak operator CLI only |
-| `kernel` | Shared portal (`gentian-portal`), platform admins, identity-first login |
-| `<tenant>` | Authoritative user/group store for that tenant; per-app OIDC |
+| `kernel` | Shared portal's own clients, platform admins |
+| `<tenant>` | Authoritative user/group store for that tenant; per-app OIDC; **where tenant members authenticate** |
 
-All humans sign in at **`https://portal.<KERNEL_DOMAIN>/login`** with their **email address**.
+- **Members and tenant admins** are stored, and sign in, in the **tenant realm** — each has its own `Cookie → forms` browser flow, so there's no brokering on the sign-in path.
+- The canonical, bookmarkable entry point is the tenant's own host, **`https://<tenant>.<KERNEL_DOMAIN>/login`**, which asks for email and password together. The apex (`https://<KERNEL_DOMAIN>/login`) asks for email only, then hands off to the tenant host with it attached.
+- **Tenant apps** use the same tenant realm for OIDC, so a session created at portal login is reused silently by every app launch — no broker hop, no second login screen.
+- **Platform admins** sign in at the apex/kernel realm directly; there is no tenant realm for them to be routed to.
 
-- **Members and tenant admins** are stored in the **tenant realm**.
-- The **kernel realm** routes login (OIDC broker) to the correct tenant realm and issues the portal session.
-- **Tenant apps** use the tenant realm for OIDC; the tenant realm brokers to the kernel IdP so users are not prompted twice after portal login.
-
-See [admin-console.md §3](admin-console.md#3-identity-topology-suze--keycloak-native) for diagrams and broker details.
+See [admin-console.md §3](admin-console.md#3-identity-topology-suze--keycloak-native) for diagrams and entry-point details.
 
 ### 1.2 Group taxonomy
 

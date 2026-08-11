@@ -236,8 +236,6 @@ fi`, mapperName, mapperName, templateKey, string(bodyJSON), templateKey, templat
 // identity-provider-redirector stays inert without a default provider. So rather
 // than build another custom flow, this binds the realm back to the built-in one
 // and removes the redirect flow if an earlier reconcile created it.
-//
-// See docs/login-cleanup.md §5.
 func buildOIDCBrowserFlowScript(realmName string) string {
 	return fmt.Sprintf(`set -eu
 REALM=%q
