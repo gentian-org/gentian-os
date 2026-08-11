@@ -243,11 +243,17 @@ func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (
 type CacheCreds struct {
 	Host     string
 	Port     string
+	User     string
 	Password string
 }
 
 // SeedCache derives the cache password from the master. Host and port are refreshed
 // on reconcile so infrastructure moves (e.g. shared Redis in gentian-infra-dev) propagate.
+//
+// User is the per-app ACL user the cache reconciler provisions. It is derived from
+// the tenant and app names rather than generated, but it is recorded here so apps can
+// consume it through valueMapping.cache.userKey instead of reconstructing the naming
+// rule in every profile. Engines without per-app users (memcached) leave it empty.
 func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCreds) (CacheCreds, error) {
 	salt := CategoryPath(tenant, app, "cache")
 	existing, _ := s.w.Get(ctx, salt)
@@ -264,6 +270,13 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 		"port":     base.Port,
 		"password": password,
 	}
+	// Only record a user for engines that have one; never clobber a stored value
+	// with an empty string when the caller does not supply it.
+	if base.User != "" {
+		want["user"] = base.User
+	} else if existing != nil && existing["user"] != "" {
+		want["user"] = existing["user"]
+	}
 	var err error
 	if existing == nil {
 		err = s.w.PutOnce(ctx, salt, want)
@@ -278,9 +291,13 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 	}
 	got, err := s.w.Get(ctx, salt)
 	if err != nil {
-		return CacheCreds{Host: want["host"], Port: want["port"], Password: want["password"]}, nil //nolint:nilerr
+		return CacheCreds{
+			Host: want["host"], Port: want["port"], User: want["user"], Password: want["password"],
+		}, nil //nolint:nilerr
 	}
-	return CacheCreds{Host: got["host"], Port: got["port"], Password: got["password"]}, nil
+	return CacheCreds{
+		Host: got["host"], Port: got["port"], User: got["user"], Password: got["password"],
+	}, nil
 }
 
 // --- SMTP --------------------------------------------------------------------

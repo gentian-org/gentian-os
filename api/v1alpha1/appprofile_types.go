@@ -879,6 +879,12 @@ type CacheValueMapping struct {
 	// PortKey is the Helm value key for the cache port.
 	// +optional
 	PortKey string `json:"portKey,omitempty"`
+	// UserKey is the Helm value key for the cache ACL username. The kernel
+	// provisions a per-app user and records it alongside the password, so profiles
+	// should map this key rather than reconstructing the naming rule themselves.
+	// Engines without per-app users (memcached) leave it unset.
+	// +optional
+	UserKey string `json:"userKey,omitempty"`
 	// PasswordKey is the Helm value key for the cache password/ACL token.
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`

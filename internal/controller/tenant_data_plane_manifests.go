@@ -128,6 +128,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
 				Host: redisHost,
 				Port: redisPort,
+				User: redisACLUsername(tenant.Name, appName),
 			})
 			if seedErr != nil {
 				return nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)

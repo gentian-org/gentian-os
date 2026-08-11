@@ -1914,6 +1914,13 @@ spec:
                       portKey:
                         description: PortKey is the Helm value key for the cache port.
                         type: string
+                      userKey:
+                        description: |-
+                          UserKey is the Helm value key for the cache ACL username. The kernel
+                          provisions a per-app user and records it alongside the password, so profiles
+                          should map this key rather than reconstructing the naming rule themselves.
+                          Engines without per-app users (memcached) leave it unset.
+                        type: string
                     type: object
                   database:
                     description: Database maps database connection values to Helm

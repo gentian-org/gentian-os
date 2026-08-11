@@ -234,6 +234,9 @@ spec:
             {{- if $vm.cache.portKey }}
             {{- $esData = append $esData (dict "secretKey" "cache-port"     "remoteRef" (dict "key" $cachePath "property" "port")) }}
             {{- end }}
+            {{- if $vm.cache.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "cache-user"     "remoteRef" (dict "key" $cachePath "property" "user")) }}
+            {{- end }}
             {{- if $vm.cache.passwordKey }}
             {{- $esData = append $esData (dict "secretKey" "cache-password" "remoteRef" (dict "key" $cachePath "property" "password")) }}
             {{- end }}
@@ -433,6 +436,10 @@ spec:
             {{- if $vm.cache.portKey }}
             {{- $relSet = append $relSet (dict "name" $vm.cache.portKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-port"))) }}
+            {{- end }}
+            {{- if $vm.cache.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-user"))) }}
             {{- end }}
             {{- if $vm.cache.passwordKey }}
             {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey
