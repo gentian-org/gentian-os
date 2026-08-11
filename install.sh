@@ -1223,6 +1223,12 @@ apply_suze_xr() {
         exit 1
     fi
 
+    # Advisory, not fatal: a degraded Argo CD does not invalidate the install,
+    # but it must not pass unnoticed — everything from here on assumes GitOps
+    # is reconciling, and when it silently is not the cluster drifts from git
+    # while every Application still reports its last known status.
+    verify_argocd_controller || warn "Argo CD is not reconciling — see above. Nothing will sync until it is fixed." 
+
     success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
 }
 

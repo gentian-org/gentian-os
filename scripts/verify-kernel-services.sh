@@ -137,6 +137,78 @@ _verify_tcp_from_cluster() {
         sh -c "nc -z -w 5 ${host} ${port}"
 }
 
+# =============================================================================
+# verify_argocd_controller — is GitOps actually running?
+#
+# Everything after Step 4 assumes Argo CD reconciles. When the
+# application-controller dies, nothing announces it: Applications keep their
+# last status, sync just stops happening, and the cluster drifts from git while
+# looking healthy. Observed here as a four-hour outage found only by noticing an
+# Application pinned to a stale revision — install.sh had already exited 0.
+#
+# The pre-existing `kubectl rollout status || warn` cannot catch this: it warns
+# rather than fails, and it runs at install time, whereas the controller died
+# hours later. So check two things that reveal a dead controller regardless of
+# when it died:
+#
+#   1. restart count — a CrashLoopBackOff shows up here long before anything else
+#   2. reconciliation freshness — a live controller updates reconciledAt
+#      continuously; a stale timestamp across ALL Applications means it is not
+#      running, whatever the pod status claims
+#
+# Advisory by design: it reports loudly and returns non-zero, but callers decide
+# whether that is fatal. A degraded Argo CD does not invalidate an otherwise
+# successful install — it just must not pass unnoticed.
+# =============================================================================
+verify_argocd_controller() {
+    if ! _verify_kernel_services_enabled; then
+        info "Skipping Argo CD controller verification (VERIFY_KERNEL_SERVICES=0)."
+        return 0
+    fi
+
+    banner "Verify Argo CD controller"
+
+    local pod="argocd-application-controller-0"
+    local phase restarts
+    phase=$(kubectl get pod "${pod}" -n argocd -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    restarts=$(kubectl get pod "${pod}" -n argocd -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)
+
+    if [[ -z "${phase}" ]]; then
+        error "Argo CD application-controller not found in namespace argocd."
+        error "  Nothing will sync. kubectl get pods -n argocd"
+        return 1
+    fi
+
+    if [[ "${restarts}" -gt 5 ]]; then
+        error "Argo CD application-controller has restarted ${restarts} times."
+        error "  Check for OOMKilled: kubectl get pod ${pod} -n argocd -o jsonpath='{.status.containerStatuses[0].lastState}'"
+        error "  If OOM: lower ARGOCD_STATUS_PROCESSORS / ARGOCD_OPERATION_PROCESSORS (see tune_argocd_runtime)"
+        error "  and consider resource.exclusions in argocd-cm — this cluster has $(kubectl api-resources --verbs=list -o name 2>/dev/null | wc -l) resource types."
+        return 1
+    fi
+
+    # Freshness: the newest reconciledAt across all Applications. A controller
+    # that is running touches at least one of these every few minutes.
+    local newest age_min
+    newest=$(kubectl get applications -n argocd         -o jsonpath='{range .items[*]}{.status.reconciledAt}{"\n"}{end}' 2>/dev/null | sort -r | head -1)
+    if [[ -n "${newest}" ]]; then
+        local now_s then_s
+        now_s=$(date -u +%s)
+        then_s=$(date -u -d "${newest}" +%s 2>/dev/null || echo "${now_s}")
+        age_min=$(( (now_s - then_s) / 60 ))
+        if (( age_min > 15 )); then
+            error "No Application has reconciled for ${age_min} minutes — Argo CD is not syncing."
+            error "  kubectl get pod ${pod} -n argocd"
+            error "  kubectl logs ${pod} -n argocd --previous --tail=30"
+            return 1
+        fi
+        info "  Most recent reconcile: ${age_min}m ago."
+    fi
+
+    success "Argo CD application-controller healthy (phase=${phase}, restarts=${restarts})."
+    return 0
+}
+
 # Wait for Keycloak pods, then fetch OIDC discovery for the master realm in-cluster.
 verify_keycloak_installation() {
     if ! _verify_kernel_services_enabled; then
