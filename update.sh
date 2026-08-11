@@ -160,7 +160,7 @@ _init() {
     load_deployments_cluster_settings
     resolve_kernel_domain_from_claim  # KERNEL_DOMAIN lives in the Cluster claim, not cluster-settings.env
 
-    KERNEL_NAMESPACE="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    KERNEL_NAMESPACE="${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}"
     export KERNEL_NAMESPACE
 
     : "${MASTER_PASSWORD:?MASTER_PASSWORD must be set (via install.secrets.env or env var)}"
@@ -570,10 +570,10 @@ op_staging_ca_secret() {
         chmod +x "$script"
     fi
     if [[ "${DRY_RUN}" == "1" ]]; then
-        info "[dry-run] would run: $script ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+        info "[dry-run] would run: $script $(gentian_services_namespace)"
         return 0
     fi
-    "$script" "${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    "$script" "$(gentian_services_namespace)"
 }
 
 # =============================================================================

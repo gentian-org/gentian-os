@@ -309,7 +309,8 @@ _gentian_os_services_namespace() {
         echo "$ns"
         return
     fi
-    echo "gentian-${ENV:-dev}"
+    # Fallback must match the chart default, not the old gentian-<env> guess.
+    gentian_services_namespace
 }
 
 wait_for_operator_cloudflare_token() {

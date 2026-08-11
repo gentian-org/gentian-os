@@ -73,7 +73,7 @@ INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
 ENV="${ENV:-${GENTIAN_DEPLOYMENTS_STAGE}}"
 export ENV
 
-SERVICES_NS="${SERVICES_NAMESPACE:-gentian-${ENV}}"
+SERVICES_NS="$(gentian_services_namespace)"
 INFRA_NS="${INFRA_NAMESPACE:-gentian-infra-${ENV}}"
 export SERVICES_NS INFRA_NS
 

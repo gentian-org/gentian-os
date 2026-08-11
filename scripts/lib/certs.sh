@@ -107,7 +107,7 @@ apply_gentian_cluster_issuers() {
     fi
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=${SERVICES_NS:-gentian-${ENV:-dev}}}"
+    : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=$(gentian_services_namespace)}"
     : "${KERNEL_PUBLIC_GATEWAY_NAME:=kernel-public-gateway}"
     export LETSENCRYPT_EMAIL KERNEL_DOMAIN KERNEL_PUBLIC_GATEWAY_NAMESPACE KERNEL_PUBLIC_GATEWAY_NAME
 
@@ -297,6 +297,75 @@ gentian_envoyproxy_static_ip_manifest() {
     echo "${SCRIPT_DIR}/kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl"
 }
 
+# =============================================================================
+# _edge_lb_address_field / _edge_lb_annotations — provider-agnostic edge address
+#
+# Claiming a specific address for a LoadBalancer Service is not portable: every
+# provider spells it differently, and one of them refuses the portable field
+# outright. Rather than hardcode one cloud, both halves are generated from
+# LB_PROVIDER (a preset) plus LB_ANNOTATIONS (free-form escape hatch), so a new
+# provider needs a cluster-settings.env line, not a code change.
+#
+#   metallb    loadBalancerIP + metallb.universe.tf/loadBalancerIPs
+#   openstack  loadBalancerIP + keep-floatingip (survives Service deletion)
+#   gcp        loadBalancerIP (reserved regional static address)
+#   aws        NLBs IGNORE loadBalancerIP — the address comes from an EIP
+#              allocation annotation, so the field is omitted entirely to avoid
+#              promising something the provider will not honour
+#   ""         loadBalancerIP only (works on MetalLB, OpenStack, GCP)
+#
+# NETWORK_MODE=tunnel never reaches here — the Service stays ClusterIP.
+# =============================================================================
+_edge_lb_address_field() {
+    # AWS NLB: loadBalancerIP is silently ignored, so emitting it would be a lie.
+    if [[ "${LB_PROVIDER:-}" == "aws" ]]; then
+        return 0
+    fi
+    printf '        loadBalancerIP: "%s"\n' "${NODE_IP}"
+}
+
+_edge_lb_annotations() {
+    local -a lines=()
+    case "${LB_PROVIDER:-}" in
+        openstack)
+            lines+=("loadbalancer.openstack.org/keep-floatingip: \"true\"")
+            ;;
+        metallb)
+            lines+=("metallb.universe.tf/loadBalancerIPs: \"${NODE_IP}\"")
+            ;;
+        aws)
+            # EIP allocation IDs are account-specific, so they cannot be derived
+            # from NODE_IP; the operator supplies them via LB_ANNOTATIONS.
+            lines+=("service.beta.kubernetes.io/aws-load-balancer-type: \"external\"")
+            lines+=("service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: \"instance\"")
+            lines+=("service.beta.kubernetes.io/aws-load-balancer-scheme: \"internet-facing\"")
+            ;;
+        gcp|"")
+            ;;
+        *)
+            warn "Unknown LB_PROVIDER='${LB_PROVIDER}'; using loadBalancerIP only."
+            ;;
+    esac
+
+    # Free-form "key=value" pairs, newline- or comma-separated.
+    local pair
+    while IFS= read -r pair; do
+        [[ -z "${pair}" ]] && continue
+        [[ "${pair}" != *=* ]] && { warn "Ignoring malformed LB_ANNOTATIONS entry: ${pair}"; continue; }
+        lines+=("${pair%%=*}: \"${pair#*=}\"")
+    # printf '%s\n' (not '%s'): without a trailing newline `read` returns
+    # non-zero on the final line, so the loop silently dropped the last — or
+    # only — annotation.
+    done < <(printf '%s\n' "${LB_ANNOTATIONS:-}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    (( ${#lines[@]} == 0 )) && return 0
+    printf '        annotations:\n'
+    local l
+    for l in "${lines[@]}"; do
+        printf '          %s\n' "${l}"
+    done
+}
+
 # Pin the Envoy data-plane LoadBalancer to NODE_IP (NETWORK_MODE=static-ip only).
 #
 # Without this the cloud controller allocates an arbitrary public IP for the
@@ -336,8 +405,10 @@ _pin_static_ip_edge_address() {
     fi
 
     info "Pinning Envoy data-plane LoadBalancer to NODE_IP=${NODE_IP}..."
-    export ENVOY_GATEWAY_NAMESPACE NODE_IP
-    envsubst "\${ENVOY_GATEWAY_NAMESPACE} \${NODE_IP}" \
+    EDGE_LB_ADDRESS_FIELD="$(_edge_lb_address_field)"
+    EDGE_LB_ANNOTATIONS="$(_edge_lb_annotations)"
+    export ENVOY_GATEWAY_NAMESPACE NODE_IP EDGE_LB_ADDRESS_FIELD EDGE_LB_ANNOTATIONS
+    envsubst "\${ENVOY_GATEWAY_NAMESPACE} \${EDGE_LB_ADDRESS_FIELD} \${EDGE_LB_ANNOTATIONS}" \
         < "$(gentian_envoyproxy_static_ip_manifest)" \
         | kubectl apply -f -
 
@@ -428,7 +499,7 @@ print_gateway_tunnel_hints() {
     if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
         return 0
     fi
-    local ns="gentian-${ENV:-dev}"
+    local ns; ns="$(gentian_services_namespace)"
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
@@ -446,7 +517,7 @@ _reconcile_kernel_https_coredns_hairpin() {
     [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
-    local services_ns="gentian-${ENV:-dev}"
+    local services_ns; services_ns="$(gentian_services_namespace)"
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     local mail_domain="mail.${KERNEL_DOMAIN}"
     local edge_ip
@@ -619,7 +690,7 @@ install_kernel_wildcard() {
     # app_ns ("gentian-<env>") is kept because the shell half of the installer
     # defaults SERVICES_NAMESPACE there — the two halves disagree about which
     # namespace is "services", so copy to both rather than pick a side here.
-    local _wc_targets=("${app_ns}" "${SERVICES_NAMESPACE:-platform-kernel}" argocd)
+    local _wc_targets=("${app_ns}" "$(gentian_services_namespace)" argocd)
     local _wc_seen=""
     for _wc_ns in "${_wc_targets[@]}"; do
         [[ " ${_wc_seen} " == *" ${_wc_ns} "* ]] && continue

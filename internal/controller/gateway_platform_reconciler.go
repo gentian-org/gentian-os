@@ -258,6 +258,28 @@ func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretN
 	}
 }
 
+// httpRedirectListenerName is the plaintext listener that exists solely so
+// http:// requests can be answered with a permanent redirect to https://.
+//
+// Serving nothing on :80 is the unusual choice: a browser given a bare hostname
+// tries http:// first, and with no listener that is a connection refusal, which
+// is indistinguishable from an outage. It also blocks HSTS preload (which
+// requires the redirect to exist) and ACME HTTP-01, should DNS-01 ever be
+// unavailable.
+const httpRedirectListenerName = "http-redirect"
+
+// httpRedirectListener is deliberately hostname-less so it matches every host
+// arriving on :80 — apex, wildcard and tenant domains alike — and needs no
+// updating as domains come and go. The redirect itself lives in an HTTPRoute
+// bound to this listener by sectionName; see kernelHTTPRedirectRouteSpec.
+func httpRedirectListener() gatewayv1.Listener {
+	return gatewayv1.Listener{
+		Name:     gatewayv1.SectionName(httpRedirectListenerName),
+		Protocol: gatewayv1.HTTPProtocolType,
+		Port:     gatewayv1.PortNumber(80),
+	}
+}
+
 type gatewayBuildOptions struct {
 	allowCrossNamespaceRoutes bool
 	extraListeners            []gatewayv1.Listener
@@ -274,6 +296,7 @@ func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]s
 	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", domain))
 	listeners := []gatewayv1.Listener{
 		withAllowedRoutes(tlsListener("https-wildcard", hostname, tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
+		withAllowedRoutes(httpRedirectListener(), opts.allowCrossNamespaceRoutes),
 	}
 	for i := range opts.extraListeners {
 		listeners = append(listeners, withAllowedRoutes(opts.extraListeners[i], opts.allowCrossNamespaceRoutes))

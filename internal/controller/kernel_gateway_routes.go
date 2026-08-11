@@ -36,6 +36,7 @@ import (
 const (
 	kernelRouteKeycloakIDP   = "kernel-idp"
 	kernelRouteKernelApex    = "kernel-apex-redirect"
+	kernelRouteHTTPRedirect  = "kernel-http-redirect"
 	kernelRouteArgoCD        = "kernel-argocd"
 	kernelRouteGentianPortal = "kernel-gentian-portal"
 	kernelRouteLiteLLM       = "kernel-llm"
@@ -49,9 +50,16 @@ const (
 )
 
 type kernelHTTPRouteSpec struct {
-	name         string
-	host         string
-	rules        []gatewayv1.HTTPRouteRule
+	name string
+	// host empty means "match every hostname" — used by the :80 redirect, which
+	// must catch apex, wildcard and tenant domains without enumerating them.
+	host  string
+	rules []gatewayv1.HTTPRouteRule
+	// sectionName binds the route to a single Gateway listener. Without it a
+	// route attaches to every listener whose hostname matches, which for the
+	// HTTP->HTTPS redirect would include the :443 listeners and send TLS
+	// requests into an infinite redirect back to themselves.
+	sectionName  string
 	policy       map[string]interface{}
 	clientPolicy map[string]interface{}
 }
@@ -198,6 +206,12 @@ func kernelHTTPRouteSpecs(
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelApexRedirectRule(kernelDomain),
 			},
+		},
+		kernelHTTPRouteSpec{
+			// Plaintext :80 -> https, bound to the http-redirect listener only.
+			name:        kernelRouteHTTPRedirect,
+			sectionName: httpRedirectListenerName,
+			rules:       []gatewayv1.HTTPRouteRule{kernelHTTPSRedirectRule()},
 		},
 		kernelHTTPRouteSpec{
 			name: kernelRouteArgoCD,
@@ -386,6 +400,36 @@ func (r *GatewayPlatformReconciler) ensureGentianPortalReferenceGrant(ctx contex
 	return nil
 }
 
+// kernelHTTPSRedirectRule sends any plaintext request straight to https on the
+// same host and path.
+//
+// 301 (permanent) is the industry-standard status for http->https: it is
+// cacheable, and it is what HSTS preload and every scanner expects. Gateway API
+// permits only 301 or 302 here, so 308 — which would additionally preserve the
+// request method — is not available; that is immaterial in practice because the
+// requests reaching :80 are browsers issuing GET on a bare hostname.
+//
+// Hostname is deliberately not set, so the requested host is preserved and one
+// rule covers apex, wildcard and tenant domains.
+func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
+	scheme := "https"
+	status := 301
+	port := gatewayv1.PortNumber(443)
+	return gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+		Filters: []gatewayv1.HTTPRouteFilter{
+			{
+				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+					Scheme:     &scheme,
+					Port:       &port,
+					StatusCode: &status,
+				},
+			},
+		},
+	}
+}
+
 func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302
@@ -445,6 +489,19 @@ func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{}
 }
 
 func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
+	parentRef := gatewayParentRef(KernelPublicGatewayName)
+	if spec.sectionName != "" {
+		s := gatewayv1.SectionName(spec.sectionName)
+		parentRef.SectionName = &s
+	}
+
+	// An empty Hostnames list matches every host, which is what the :80
+	// redirect needs. Emitting []Hostname{""} instead would be rejected.
+	var hostnames []gatewayv1.Hostname
+	if spec.host != "" {
+		hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(spec.host)}
+	}
+
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.name,
@@ -457,10 +514,10 @@ func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
-					gatewayParentRef(KernelPublicGatewayName),
+					parentRef,
 				},
 			},
-			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(spec.host)},
+			Hostnames: hostnames,
 			Rules:     spec.rules,
 		},
 	}

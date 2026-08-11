@@ -1398,6 +1398,38 @@ gentian_report_abort() {
 }
 
 # =============================================================================
+# gentian_services_namespace — where the kernel SERVICES live
+#
+# Kernel services (the public Gateway, Keycloak, OpenFGA, the portal) live in
+# platform-kernel. That is the operator's servicesNamespace, whose chart default
+# is platform-kernel (charts/gentian-os/values.yaml) and which it uses to place
+# the Gateway, so it is the authoritative value.
+#
+# The shell half used to default to "gentian-<env>" instead, so the two halves
+# disagreed about which namespace was "services". That is what made the wildcard
+# certificate land somewhere the Gateway could not see it, leaving the cluster
+# serving nothing. Both halves now resolve to the same place.
+#
+# NOT the same thing as the mail namespace — see gentian_mail_namespace below.
+# =============================================================================
+gentian_services_namespace() {
+    echo "${SERVICES_NAMESPACE:-platform-kernel}"
+}
+
+# =============================================================================
+# gentian_mail_namespace — where kernel Postfix/Dovecot live
+#
+# Deliberately separate from gentian_services_namespace. Mail is deployed by
+# per-stage manifests into gentian-<env> and is env-scoped; the kernel services
+# are not. update.sh used to derive KERNEL_NAMESPACE from SERVICES_NAMESPACE,
+# so pointing the services namespace at platform-kernel would silently send
+# every mail lookup to a namespace with no Postfix in it.
+# =============================================================================
+gentian_mail_namespace() {
+    echo "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}"
+}
+
+# =============================================================================
 # gentian_cluster_claim_name — the Cluster claim's metadata.name for THIS cluster
 #
 # The name used to be the literal "dev-cluster" everywhere: the scaffolder wrote
@@ -1523,7 +1555,7 @@ upsert_gentian_cluster_config() {
     local _mail_mode="${MAIL_SERVICE_MODE:-external}"
     local _routing_mode="${ROUTING_MODE:-gateway}"
     local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
-    local _services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local _services_ns; _services_ns="$(gentian_services_namespace)"
     local _openbao_ns="${OPENBAO_NAMESPACE:-openbao}"
     local _smtp_host="${MAIL_SMTP_HOST:-postfix-${ENV:-dev}.${_services_ns}.svc.cluster.local}"
     local _kube_api_cidr=""
@@ -2078,7 +2110,7 @@ verify_keycloak_iframe_policy() {
         return 0
     fi
 
-    local services_ns="${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}"
+    local services_ns; services_ns="$(gentian_services_namespace)"
     local kernel_ns="${KERNEL_NAMESPACE:-${services_ns}}"
     local route_name="${KEYCLOAK_IDP_HTTPROUTE_NAME:-kernel-idp}"
     local timeout="${KEYCLOAK_FRAME_VERIFY_TIMEOUT:-300}"
