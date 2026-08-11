@@ -103,10 +103,22 @@ kernelServices:
 
 image:
   repository: ghcr.io/gentian-org/gentian-os
-  # Image Updater mutates image.tag on every new build, so a fresh tag
-  # always triggers a pull regardless of pullPolicy — IfNotPresent avoids
-  # re-pulling the same tag on unrelated pod restarts.
-  pullPolicy: IfNotPresent
+  # IfNotPresent was chosen on the assumption that Image Updater mutates
+  # image.tag on every build, making each pull a fresh tag. That does not hold
+  # as configured: the Application's image-list pins the candidate to the
+  # literal tag (gentianos=<repo>:develop), so "newest-build" resolves to
+  # develop every cycle and image.tag never changes — Image Updater logs
+  # images_considered=3 images_updated=0 forever. With a mutable tag and
+  # IfNotPresent, a node that has cached :develop never re-pulls, so CI can
+  # publish a new image and the cluster keeps running the old code through
+  # restarts and rollouts alike, with nothing reporting the drift.
+  #
+  # Always is the correct policy for a moving tag: the kubelet re-resolves it
+  # on every pod start, so a rollout restart actually picks up the new build.
+  # The proper fix is to publish immutable per-build tags (develop-<sha>) and
+  # let Image Updater track those — at which point IfNotPresent becomes right
+  # again, or better, set image.digest below and pin exactly.
+  pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   # Ignored when image.digest is set.
   tag: ""
