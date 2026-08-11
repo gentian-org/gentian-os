@@ -1396,14 +1396,26 @@ is_instance_deployed() {
 
 ensure_env_layout() {
   local _env_name="${1:-dev}"
-  local root
+  local root cluster_root
   root="$(tenant_tenants_root)"
+  cluster_root="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}"
 
-  if [[ ! -d "${root}" ]]; then
-    echo "ERROR: tenant path not found: ${root}" >&2
+  # A cluster directory that does not exist means the cluster name really is
+  # wrong — that is worth stopping for.
+  if [[ ! -d "${cluster_root}" ]]; then
+    echo "ERROR: cluster path not found: ${cluster_root}" >&2
     echo "Set GENTIAN_DEPLOYMENTS_CLUSTER (currently '${DEPLOYMENTS_CLUSTER}') in ${CONFIG_FILE}." >&2
     exit 1
   fi
+
+  # A missing tenants/ directory does NOT. It is the active GitOps path and only
+  # comes into being when the first tenant is deployed, so on a freshly
+  # bootstrapped cluster it is legitimately absent. Erroring here meant
+  # `tenants deploy` refused to run because the directory it would itself create
+  # was not there yet, and blamed GENTIAN_DEPLOYMENTS_CLUSTER for it — sending
+  # the operator to look for a config problem that does not exist. The function
+  # is called ensure_env_layout; ensure it.
+  mkdir -p "${root}"
 }
 
 append_instance_resource() {
