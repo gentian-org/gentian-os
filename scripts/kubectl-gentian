@@ -47,6 +47,14 @@ fi
 DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH:-}"
 DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
 DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+# The ONLY place "dev" may be defaulted. Nine functions used to carry their own
+# `${2:-dev}` fallback, which silently won every time a stage argument was
+# omitted — so on this prod cluster `gtnctl tenant undeploy gtn` announced
+# "undeployed in 'dev'" and committed "undeploy tenant instance from dev" to the
+# deployments repo. Paths are cluster-scoped (tenant_stage_dir ignores the stage
+# entirely), so nothing was deleted from the wrong place, but the git history —
+# the audit trail this tool exists to produce — recorded prod changes as dev.
+# Any new stage parameter must default to ${DEPLOYMENTS_STAGE}, never a literal.
 DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
 usage() {
@@ -725,7 +733,7 @@ DEOF
 
 scaffold_tenant_from_definition() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local definition_dir
   local target_dir
 
@@ -760,7 +768,7 @@ scaffold_tenant_from_definition() {
 
 ensure_tenant_instance_dir() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local dir
 
   dir="$(tenant_stage_dir "${instance}" "${env_name}")"
@@ -801,7 +809,7 @@ tenant_instance_kustomization() {
 
 tenant_instance_patch_file() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local dir
   dir="$(tenant_instance_dir "${instance}" "${env_name}")"
   if [[ -f "${dir}/patch.yaml" ]]; then
@@ -824,7 +832,7 @@ tenant_instance_patch_file() {
 # that only have a single YAML file.
 tenant_instance_resource_file() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local dir
   dir="$(tenant_instance_dir "${instance}" "${env_name}")"
   if [[ -f "${dir}/tenant.yaml" ]]; then
@@ -1471,12 +1479,12 @@ rollback_deploy() {
 
 is_instance_deployed() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   [[ -f "$(tenant_stage_dir "${instance}" "${env_name}")/tenant.yaml" ]]
 }
 
 ensure_env_layout() {
-  local _env_name="${1:-dev}"
+  local _env_name="${1:-${DEPLOYMENTS_STAGE}}"
   local root cluster_root
   root="$(tenant_tenants_root)"
   cluster_root="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}"
@@ -1647,7 +1655,7 @@ argocd_refresh_await_prune() {
 
 apply_tenant_instance() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local stage_dir
   local output
 
@@ -1742,7 +1750,7 @@ cmd_tenant_list() {
 
 cmd_tenant_deploy() {
   local instance="${1:-}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
 
   if [[ -z "${instance}" ]]; then
     echo "ERROR: usage: kubectl gentian tenants deploy <instance> [--env <env>]" >&2
@@ -1795,7 +1803,7 @@ cmd_tenant_deploy() {
 
 cmd_tenant_undeploy() {
   local instance="${1:-}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local purge="${3:-false}"
 
   if [[ -z "${instance}" ]]; then
