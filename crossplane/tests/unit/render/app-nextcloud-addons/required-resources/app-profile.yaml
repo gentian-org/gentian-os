@@ -41,13 +41,19 @@ spec:
           neverRendered:
             enabled: true
     # Mirrors nextcloud-base-ce: the recipe lives with the app, the platform only
-    # renders it. The token is replaced with the space-separated selection.
+    # renders it. __GENTIAN_ADDON_IDS__ is replaced with the space-separated
+    # selection. ${TENANT_NAMESPACE}/${TENANT_DOMAIN} exercise the same
+    # substitution extraValues gets — a live regression (TENANT_NAMESPACE:
+    # unbound variable, nextcloud crashlooping) shipped because this fixture
+    # didn't cover a script actually using them.
     addonActivation:
       valuesPath: nextcloud.hooks.before-starting
       script: |
         #!/bin/sh
         set -eu
         SELECTED="__GENTIAN_ADDON_IDS__"
+        COLLABORA="http://nextcloud-collabora.${TENANT_NAMESPACE}.svc.cluster.local:9980"
+        PUBLIC="https://collabora.${TENANT_DOMAIN}"
         for id in $SELECTED; do
           php /var/www/html/occ app:enable "$id" || true
         done

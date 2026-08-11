@@ -593,6 +593,19 @@ spec:
             {{- $activation := dig "customization" "addonActivation" dict $pSpec }}
             {{- if and $activation.valuesPath $activation.script }}
             {{- $script := $activation.script | replace "__GENTIAN_ADDON_IDS__" (join " " $addons) }}
+            {{- /* Same ${TENANT_DOMAIN}/${TENANT_NAMESPACE}/${TENANT_ID}/${APP_ID}
+                   substitution as extraValues above, because addonActivation.script
+                   is not part of extraValues and so never went through that pass —
+                   confirmed live: nextcloud-base-ce's script used ${TENANT_NAMESPACE}
+                   to address the Collabora Service, the token reached the container
+                   as literal text, and `set -u` in the hook killed the pod on every
+                   start with "TENANT_NAMESPACE: unbound variable". An addon script is
+                   exactly as app-specific as an extraValues hook, so it gets the same
+                   token vocabulary rather than a second, narrower one. */}}
+            {{- $script = $script | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $script = $script | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $script = $script | replace "${TENANT_ID}"        $tenant }}
+            {{- $script = $script | replace "${APP_ID}"           $app }}
             {{- $parts := splitList "." $activation.valuesPath }}
             {{- /* Append to whatever the app already puts at this path rather than
                    replacing it. Many charts expose a single lifecycle hook, and the app
