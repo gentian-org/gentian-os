@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
@@ -52,11 +53,29 @@ func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
 	}
 }
 
+// loadKubeAPIEndpointSlice returns the EndpointSlice backing the "kubernetes"
+// service so the baseline NetworkPolicy can allow egress to the real apiserver
+// addresses. Returning nil is only safe when the apiserver happens to sit inside
+// KUBE_APISERVER_CIDR; on clusters reached through a public IP it silently
+// leaves tenants unable to talk to the API. It used to swallow the error, so an
+// RBAC gap on endpointslices was indistinguishable from "no slices exist" —
+// both paths just returned nil. Log loudly instead: nil is still returned so a
+// genuinely absent slice degrades rather than blocking the reconcile.
 func (r *TenantReconciler) loadKubeAPIEndpointSlice(ctx context.Context) *discoveryv1.EndpointSlice {
+	logger := log.FromContext(ctx)
 	slices := &discoveryv1.EndpointSliceList{}
 	if err := r.List(ctx, slices, client.MatchingLabels{
 		"kubernetes.io/service-name": "kubernetes",
-	}); err != nil || len(slices.Items) == 0 {
+	}); err != nil {
+		logger.Error(err, "list kube-apiserver EndpointSlices; tenant NetworkPolicies "+
+			"will only allow egress to KUBE_APISERVER_CIDR and may block the apiserver",
+			"cidr", r.tenantNetPolicyConfig().KubeAPIServerCIDR)
+		return nil
+	}
+	if len(slices.Items) == 0 {
+		logger.Info("no EndpointSlice found for the kubernetes service; tenant "+
+			"NetworkPolicies will only allow egress to KUBE_APISERVER_CIDR",
+			"cidr", r.tenantNetPolicyConfig().KubeAPIServerCIDR)
 		return nil
 	}
 	return &slices.Items[0]

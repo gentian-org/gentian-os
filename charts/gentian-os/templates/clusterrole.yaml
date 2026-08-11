@@ -105,6 +105,19 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies", "ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # EndpointSlices back loadKubeAPIEndpointSlice (tenant_network_policy.go): the
+  # baseline tenant NetworkPolicy allows egress to KUBE_APISERVER_CIDR (default
+  # 10.0.0.0/8) and then adds a /32 rule per real kube-apiserver endpoint. When
+  # the API server sits OUTSIDE that CIDR — as on any cluster reached through a
+  # public IP, e.g. this one at 83.166.143.133 — the /32 rules are the only thing
+  # letting tenant workloads reach the API at all. Without this grant the List is
+  # forbidden, loadKubeAPIEndpointSlice swallows the error and returns nil, and
+  # every tenant silently gets a NetworkPolicy that blocks the apiserver. Nothing
+  # reports it: the only trace is a controller-runtime "Failed to watch
+  # *v1.EndpointSlice" line, and tenants merely behave as if the API is down.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
   # Gateway API (edge routing when ROUTING_MODE=gateway)
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["gateways", "gateways/status", "httproutes", "httproutes/status"]
