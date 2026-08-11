@@ -38,6 +38,16 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["appcatalogues/status"]
     verbs: ["get", "update", "patch"]
+  # OIDCPackCatalog — listed by internal/oidc (cluster_catalog.go, mba_groups.go)
+  # from inside the tenant reconcile. Missing this does not surface as a
+  # permission error: the list goes through the manager's cache, the informer
+  # cannot sync because the LIST is forbidden, and the cached read then blocks
+  # waiting for a sync that never comes. With one tenant worker that wedges
+  # tenant reconciliation entirely — no status, no namespace, no error, just a
+  # single "reconciling tenant" line and silence.
+  - apiGroups: ["gentianos.io"]
+    resources: ["oidcpackcatalogs"]
+    verbs: ["get", "list", "watch"]
   # Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
   # list+watch are required even though the code only calls Get: the manager's
   # client reads through the cache, so a Get starts an informer.
