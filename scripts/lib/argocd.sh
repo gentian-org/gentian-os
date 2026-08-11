@@ -80,6 +80,49 @@ resolve_argocd_url() {
     echo "kubectl port-forward -n argocd svc/argocd-server 8080:443"
 }
 
+# =============================================================================
+# tune_argocd_runtime — memory + concurrency settings for the ArgoCD controller
+#
+# Idempotent and safe to re-run; called on every install.sh run so an existing
+# cluster picks these up rather than only freshly-installed ones.
+#
+# Upstream ships no resources and high concurrency (20 status / 10 operation
+# processors), which on a small cluster produces an application-controller that
+# OOM-kills itself roughly 20 seconds into every boot — observed here as 48
+# restarts across four hours during which nothing in the cluster synced and
+# every Application silently sat on a stale revision.
+#
+# Peak memory tracks CONCURRENCY, not the number of Applications: each processor
+# holds the manifests of the app it is comparing. That is why the node still
+# showed free memory while the pod was being killed, and why a memory request
+# alone did not fix it — the request decides which pod the kernel picks under
+# node pressure, and this was not node pressure.
+#
+# Override per cluster with ARGOCD_STATUS_PROCESSORS / ARGOCD_OPERATION_PROCESSORS
+# / ARGOCD_KUBECTL_PARALLELISM; larger clusters can afford the upstream numbers.
+# =============================================================================
+tune_argocd_runtime() {
+    local ns="argocd"
+
+    kubectl -n "${ns}" patch configmap argocd-cmd-params-cm --type merge -p '{"data":{
+      "controller.status.processors":"'"${ARGOCD_STATUS_PROCESSORS:-4}"'",
+      "controller.operation.processors":"'"${ARGOCD_OPERATION_PROCESSORS:-2}"'",
+      "controller.kubectl.parallelism.limit":"'"${ARGOCD_KUBECTL_PARALLELISM:-4}"'"}}' >/dev/null 2>&1       || warn "  Could not patch argocd-cmd-params-cm (absent?)."
+
+    # Requests, not limits. A request lifts the pod out of BestEffort QoS so it
+    # is not the kernel's first choice under node pressure; a hard limit would
+    # convert an occasional node-level kill into a guaranteed self-inflicted one,
+    # because the controller's working set grows with the resources it tracks.
+    kubectl -n "${ns}" patch statefulset argocd-application-controller --type=json -p='[
+      {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"768Mi","cpu":"250m"}}}
+    ]' >/dev/null 2>&1 || true
+    kubectl -n "${ns}" patch deployment argocd-repo-server --type=json -p='[
+      {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"256Mi","cpu":"100m"}}}
+    ]' >/dev/null 2>&1 || true
+
+    success "ArgoCD runtime tuned (status=${ARGOCD_STATUS_PROCESSORS:-4} operation=${ARGOCD_OPERATION_PROCESSORS:-2})."
+}
+
 install_argocd() {
     banner "Step 4 — Installing ArgoCD"
 
@@ -89,6 +132,16 @@ install_argocd() {
         bash "${SCRIPT_DIR}/scripts/install-argocd.sh"
         success "ArgoCD installed."
     fi
+
+    # Runtime tuning is applied on EVERY run, not just first install.
+    #
+    # install-argocd.sh only executes when argocd-server is absent, so anything
+    # set there reaches new clusters and never reaches existing ones. That is
+    # exactly wrong for settings that fix a running cluster: the controller
+    # OOM-crashloop these values address would have persisted through any number
+    # of install.sh re-runs, because the one script that could have fixed it was
+    # skipped for being "already installed".
+    tune_argocd_runtime
 
     kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml"
     success "AppProject applied."
