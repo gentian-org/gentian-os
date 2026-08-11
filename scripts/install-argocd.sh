@@ -4,7 +4,17 @@
 
 set -euo pipefail
 
-ARGOCD_VERSION="${ARGOCD_VERSION:-v2.11.3}"
+# v2.11.3 (mid-2024) predates Kubernetes 1.35 and cannot build a typed value for
+# newer built-in fields, so every Application containing a Deployment or
+# StatefulSet failed to sync with
+#   error calculating structured merge diff: .status.terminatingReplicas:
+#   field not declared in schema
+# That is not cosmetic: it blocked syncing the operator chart itself, so RBAC
+# fixes committed to git could not be applied by Argo CD at all.
+#
+# Argo CD's tested-compatibility table lists 3.5 against Kubernetes v1.33-v1.36,
+# so it covers this cluster (1.35) and the next upgrade too.
+ARGOCD_VERSION="${ARGOCD_VERSION:-v3.5.0}"
 ARGOCD_NAMESPACE="argocd"
 
 echo "Installing ArgoCD ${ARGOCD_VERSION}..."

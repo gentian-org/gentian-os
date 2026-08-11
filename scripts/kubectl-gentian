@@ -1444,7 +1444,16 @@ rollback_deploy() {
       ns_name="tenant-${tenant_name}"
     fi
     echo "Deleting Tenant CR '${tenant_name}' and waiting for operator cleanup..."
-    kubectl delete tenant "${tenant_name}" --ignore-not-found=true
+    # --wait=false is essential. `kubectl delete` defaults to waiting with NO
+    # timeout, and the Tenant carries a gentianos.io/tenant-cleanup finalizer
+    # that only the operator can remove. If the operator cannot finish cleanup —
+    # missing RBAC, a wedged reconcile, or simply being down — this blocks
+    # forever and the only way out is Ctrl-C, after which the rollback never
+    # completes its remaining steps.
+    #
+    # wait_for_tenant_delete below already waits with a 300s bound and prints
+    # progress, so the blocking delete added nothing except the hang.
+    kubectl delete tenant "${tenant_name}" --ignore-not-found=true --wait=false
     if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${instance}" "${env_name}"; then
       echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
       return 1

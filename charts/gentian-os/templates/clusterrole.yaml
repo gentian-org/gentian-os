@@ -12,9 +12,11 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["appprofiles"]
     verbs: ["get", "list", "watch"]
+  # apps: app_reconciler.go CREATES App claims (r.Create on appClaimGVK), so
+  # read+delete alone is not enough.
   - apiGroups: ["gentianos.io"]
     resources: ["apps"]
-    verbs: ["get", "list", "watch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["gentianos.io"]
     resources: ["integrationbindings", "integrationbindings/status", "integrationbindings/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -114,9 +116,26 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["referencegrants"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
+  # reconciler creates them (ensureKernelClientTrafficPolicy) and tenant cleanup
+  # lists them for stale removal. Granting only backendtrafficpolicies made the
+  # tenant reconcile fail every pass with "list tenant ClientTrafficPolicies for
+  # stale cleanup: clienttrafficpolicies... is forbidden".
   - apiGroups: ["gateway.envoyproxy.io"]
-    resources: ["backendtrafficpolicies"]
+    resources: ["backendtrafficpolicies", "clienttrafficpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Crossplane Releases and Objects: tenant_cleanup lists Releases to remove a
+  # tenant's Helm releases; Object is read for composed-resource status.
+  - apiGroups: ["helm.crossplane.io"]
+    resources: ["releases"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["kubernetes.crossplane.io"]
+    resources: ["objects"]
+    verbs: ["get", "list", "watch"]
   # Batch
   - apiGroups: ["batch"]
     resources: ["jobs"]
