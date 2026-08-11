@@ -37,6 +37,32 @@ kubectl create namespace "${ARGOCD_NAMESPACE}" --dry-run=client -o yaml | kubect
 echo "Installing ArgoCD components..."
 kubectl apply -n "${ARGOCD_NAMESPACE}" -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
 
+# -----------------------------------------------------------------------------
+# Give the core components memory requests.
+#
+# Upstream install.yaml sets no resources at all, which makes every ArgoCD pod
+# BestEffort QoS — the first thing the kernel kills when a node runs short of
+# memory. The application-controller is the worst victim: it caches every
+# tracked resource, so on a cluster with a large app catalogue it is both the
+# largest consumer and the first to be killed. Observed here as
+# CrashLoopBackOff with 47 restarts, exitCode 137 (OOMKilled), roughly 19s per
+# life — long enough to start a reconcile sweep, never long enough to finish
+# one. Nothing in the cluster syncs while that is happening, and the only
+# outward symptom is Applications quietly going stale.
+#
+# A request (not a limit) is what matters: it moves the pod out of BestEffort
+# and lowers its oom_score_adj relative to genuinely idle pods. A hard limit is
+# deliberately NOT set — the controller's working set scales with the number of
+# tracked resources, and capping it converts an occasional node-level kill into
+# a guaranteed self-inflicted one.
+echo "Setting resource requests on ArgoCD core components..."
+kubectl -n "${ARGOCD_NAMESPACE}" patch statefulset argocd-application-controller --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"768Mi","cpu":"250m"}}}
+]' 2>/dev/null || echo "  (application-controller not patched — already set or absent)"
+kubectl -n "${ARGOCD_NAMESPACE}" patch deployment argocd-repo-server --type=json -p='[
+  {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"256Mi","cpu":"100m"}}}
+]' 2>/dev/null || echo "  (repo-server not patched — already set or absent)"
+
 # Wait for ArgoCD to be ready
 echo "Waiting for ArgoCD server to be ready..."
 kubectl wait --for=condition=available --timeout=300s \
