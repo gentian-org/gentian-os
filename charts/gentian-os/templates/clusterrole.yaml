@@ -9,9 +9,15 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["tenants", "tenants/status", "tenants/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # appprofiles needs update/patch: appstore_controller stamps catalogue labels
+  # onto each profile (its kubebuilder marker already says get;list;watch;update;patch,
+  # which this hand-maintained role had drifted from). Without it every
+  # AppCatalogue reconcile fails with 'failed to set profile catalogue labels:
+  # appprofiles.gentianos.io "<profile>" is forbidden' — once per profile, so the
+  # log fills with it while the catalogue silently never gets its labels.
   - apiGroups: ["gentianos.io"]
     resources: ["appprofiles"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   # apps: app_reconciler.go CREATES App claims (r.Create on appClaimGVK), so
   # read+delete alone is not enough.
   - apiGroups: ["gentianos.io"]
