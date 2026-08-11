@@ -58,6 +58,12 @@ manifests:
 		case "$$f" in *_apps.yaml|*_xtenants.yaml) continue ;; esac; \
 		cp "$$f" charts/gentian-os/crds/; \
 	done
+	@# RBAC is generated from the +kubebuilder:rbac markers, which live in
+	@# ./internal/... — NOT ./api/..., where the CRD run above looks. Scanning
+	@# only ./api/... is what let the chart's hand-written ClusterRole drift from
+	@# the markers for eleven separate permissions; see scripts/gen-clusterrole.py.
+	$(CONTROLLER_GEN) rbac:roleName=gentian-os paths="./internal/..." output:rbac:artifacts:config=config/rbac
+	python3 scripts/gen-clusterrole.py
 
 ## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
 gen-theme:
@@ -68,7 +74,7 @@ gen-all: generate manifests gen-theme
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ kernel/services/keycloak-idp/manifests/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:

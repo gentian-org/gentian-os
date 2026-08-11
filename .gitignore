@@ -21,3 +21,10 @@ install.secrets.env.backup
 bin/
 __pycache__/
 *.tgz
+
+# controller-gen RBAC output: a build intermediate, not a source artifact.
+# The committed artifact is charts/gentian-os/templates/clusterrole.yaml, which
+# scripts/gen-clusterrole.py renders from this file after re-normalising it, so
+# controller-gen version differences in key order or grouping cannot show up as
+# repo diffs.
+config/rbac/

@@ -42,6 +42,20 @@ import (
 
 // GatewayPlatformReconciler ensures cluster-scoped Gateway API foundation
 // resources: the shared GatewayClass and kernel-public-gateway.
+//
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gateways/status;httproutes;httproutes/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get;list;watch;create;update;patch
+//
+// ReferenceGrants authorise cross-namespace HTTPRoute -> Service references
+// (e.g. the kernel Gateway routing to Argo CD). gateway_reference_grant.go
+// creates them and tenant_edge_tls.go deletes them on teardown. A missing grant
+// does not crash the operator — it just never converges, failing every pass
+// with "ensure ArgoCD ReferenceGrant: referencegrants... is forbidden".
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
+//
+// ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
+// reconciler creates them and tenant cleanup lists them for stale removal.
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies,verbs=get;list;watch;create;update;patch;delete
 type GatewayPlatformReconciler struct {
 	client.Client
 	KernelDomain  string

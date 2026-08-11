@@ -139,6 +139,45 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;create
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+//
+// EndpointSlices back loadKubeAPIEndpointSlice (tenant_network_policy.go): the
+// baseline tenant NetworkPolicy allows egress to KUBE_APISERVER_CIDR and then
+// adds a /32 per real kube-apiserver endpoint. When the apiserver sits OUTSIDE
+// that CIDR — any cluster reached through a public IP — those /32 rules are the
+// only thing letting tenant workloads reach the API at all.
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+//
+// cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+//
+// Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
+// list+watch are required even though the code only calls Get: the manager's
+// client reads through the cache, so a Get starts an informer. xtenants needs
+// write verbs too — ensureTenantXR creates the composite when it is not found.
+// +kubebuilder:rbac:groups=gentianos.io,resources=xtenants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=xapps,verbs=get;list;watch
+//
+// app_reconciler.go CREATES App claims, so read+delete alone is not enough.
+// +kubebuilder:rbac:groups=gentianos.io,resources=apps,verbs=get;list;watch;create;update;patch;delete
+//
+// OIDCPackCatalog is listed by internal/oidc from inside the tenant reconcile.
+// A missing grant does not surface as a permission error: the list goes through
+// the manager's cache, the informer cannot sync because the LIST is forbidden,
+// and the cached read blocks waiting for a sync that never comes — wedging
+// tenant reconciliation with no error at all.
+// +kubebuilder:rbac:groups=gentianos.io,resources=oidcpackcatalogs,verbs=get;list;watch
+//
+// tenant_cleanup lists Crossplane Releases to remove a tenant's Helm releases;
+// Object is read for composed-resource status.
+// +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=kubernetes.crossplane.io,resources=objects,verbs=get;list;watch
 type TenantReconciler struct {
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The

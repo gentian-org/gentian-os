@@ -40,6 +40,10 @@ const (
 )
 
 // PlatformSecurityPolicyReconciler syncs cluster MAC waiver allowlist to a ConfigMap.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=platformsecuritypolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=platformsecuritypolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=platformsecuritypolicies/finalizers,verbs=update
 type PlatformSecurityPolicyReconciler struct {
 	client.Client
 	OperatorNamespace string

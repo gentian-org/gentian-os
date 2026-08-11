@@ -42,6 +42,10 @@ const (
 )
 
 // AppGrantReconciler syncs AppGrant objects to OpenFGA tuples.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/finalizers,verbs=update
 type AppGrantReconciler struct {
 	client.Client
 	OpenFGAURL   string

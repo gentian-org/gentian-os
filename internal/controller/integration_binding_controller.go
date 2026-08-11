@@ -37,6 +37,7 @@ type IntegrationBindingReconciler struct {
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 

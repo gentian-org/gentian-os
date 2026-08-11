@@ -1,3 +1,15 @@
+{{- /*
+  GENERATED FILE — DO NOT EDIT.
+
+  Rendered by scripts/gen-clusterrole.py from the +kubebuilder:rbac markers in
+  internal/..., via controller-gen. To change a permission, edit the marker next
+  to the code that needs it and run `make gen-all`. Editing this file by hand
+  will be reverted by the next generation run, and CI's verify-gen job fails on
+  any drift between the two.
+
+  The rationale for each grant lives with its marker, where it stays next to the
+  code that depends on it.
+*/ -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -5,173 +17,245 @@ metadata:
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
 rules:
-  # Gentian OS CRDs
-  - apiGroups: ["gentianos.io"]
-    resources: ["tenants", "tenants/status", "tenants/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # appprofiles needs update/patch: appstore_controller stamps catalogue labels
-  # onto each profile (its kubebuilder marker already says get;list;watch;update;patch,
-  # which this hand-maintained role had drifted from). Without it every
-  # AppCatalogue reconcile fails with 'failed to set profile catalogue labels:
-  # appprofiles.gentianos.io "<profile>" is forbidden' — once per profile, so the
-  # log fills with it while the catalogue silently never gets its labels.
-  - apiGroups: ["gentianos.io"]
-    resources: ["appprofiles"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  # apps: app_reconciler.go CREATES App claims (r.Create on appClaimGVK), so
-  # read+delete alone is not enough.
-  - apiGroups: ["gentianos.io"]
-    resources: ["apps"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["integrationbindings", "integrationbindings/status", "integrationbindings/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["appgrants", "appgrants/status", "appgrants/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["platformsecuritypolicies", "platformsecuritypolicies/status", "platformsecuritypolicies/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # AppCatalogue — watched by appstore_controller (For(&AppCatalogue{})).
-  # Omitting this does not merely break the App Store: the informer cannot list,
-  # so the manager's SHARED cache never syncs and every controller dies with
-  # "failed to wait for caches to sync" after 2m. The operator then
-  # CrashLoopBackOffs with no hint that RBAC is the cause — the only trace is one
-  # "Failed to watch ... is forbidden" line before the timeout. Verbs mirror the
-  # kubebuilder markers in appstore_controller.go, which this hand-maintained
-  # ClusterRole had drifted from.
-  - apiGroups: ["gentianos.io"]
-    resources: ["appcatalogues"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["appcatalogues/status"]
-    verbs: ["get", "update", "patch"]
-  # OIDCPackCatalog — listed by internal/oidc (cluster_catalog.go, mba_groups.go)
-  # from inside the tenant reconcile. Missing this does not surface as a
-  # permission error: the list goes through the manager's cache, the informer
-  # cannot sync because the LIST is forbidden, and the cached read then blocks
-  # waiting for a sync that never comes. With one tenant worker that wedges
-  # tenant reconciliation entirely — no status, no namespace, no error, just a
-  # single "reconciling tenant" line and silence.
-  - apiGroups: ["gentianos.io"]
-    resources: ["oidcpackcatalogs"]
-    verbs: ["get", "list", "watch"]
-  # Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
-  # list+watch are required even though the code only calls Get: the manager's
-  # client reads through the cache, so a Get starts an informer.
-  # xtenants needs WRITE verbs, not just read: ensureTenantXR creates the
-  # composite (tenant_controller.go, r.Create on a not-found XTenant). Granting
-  # only get/list/watch let the tenant reconcile run and then fail every pass
-  # with "xtenants.gentianos.io is forbidden" — the read verbs were inferred
-  # from the Get call and the Create three lines below it was missed.
-  - apiGroups: ["gentianos.io"]
-    resources: ["xtenants"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # xapps stays read-only — nothing writes it (applifecycle only Gets).
-  - apiGroups: ["gentianos.io"]
-    resources: ["xapps"]
-    verbs: ["get", "list", "watch"]
-  # Customization records — the operator computes derived debt state on status,
-  # but never authors records: those are written in git by humans and agents.
-  - apiGroups: ["gentianos.io"]
-    resources: ["customizations"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["customizations/status"]
-    verbs: ["get", "update", "patch"]
-  # Core resources
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["resourcequotas", "limitranges"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "create"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
-  # Networking
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies", "ingresses"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # EndpointSlices back loadKubeAPIEndpointSlice (tenant_network_policy.go): the
-  # baseline tenant NetworkPolicy allows egress to KUBE_APISERVER_CIDR (default
-  # 10.0.0.0/8) and then adds a /32 rule per real kube-apiserver endpoint. When
-  # the API server sits OUTSIDE that CIDR — as on any cluster reached through a
-  # public IP, e.g. this one at 83.166.143.133 — the /32 rules are the only thing
-  # letting tenant workloads reach the API at all. Without this grant the List is
-  # forbidden, loadKubeAPIEndpointSlice swallows the error and returns nil, and
-  # every tenant silently gets a NetworkPolicy that blocks the apiserver. Nothing
-  # reports it: the only trace is a controller-runtime "Failed to watch
-  # *v1.EndpointSlice" line, and tenants merely behave as if the API is down.
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["get", "list", "watch"]
-  # Gateway API (edge routing when ROUTING_MODE=gateway)
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "gateways/status", "httproutes", "httproutes/status"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # ReferenceGrants authorise cross-namespace HTTPRoute -> Service references
-  # (e.g. the kernel Gateway routing to ArgoCD). The gateway-platform controller
-  # creates them and tenant_edge_tls.go deletes them on teardown, but the role
-  # granted none — every reconcile failed with "ensure ArgoCD ReferenceGrant:
-  # referencegrants.gateway.networking.k8s.io is forbidden". Unlike the
-  # appcatalogues gap this did not crash the operator, so it showed up only as a
-  # controller that never converged.
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["referencegrants"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
-  # reconciler creates them (ensureKernelClientTrafficPolicy) and tenant cleanup
-  # lists them for stale removal. Granting only backendtrafficpolicies made the
-  # tenant reconcile fail every pass with "list tenant ClientTrafficPolicies for
-  # stale cleanup: clienttrafficpolicies... is forbidden".
-  - apiGroups: ["gateway.envoyproxy.io"]
-    resources: ["backendtrafficpolicies", "clienttrafficpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
-  - apiGroups: ["cert-manager.io"]
-    resources: ["certificates"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Crossplane Releases and Objects: tenant_cleanup lists Releases to remove a
-  # tenant's Helm releases; Object is read for composed-resource status.
-  - apiGroups: ["helm.crossplane.io"]
-    resources: ["releases"]
-    verbs: ["get", "list", "watch", "delete"]
-  - apiGroups: ["kubernetes.crossplane.io"]
-    resources: ["objects"]
-    verbs: ["get", "list", "watch"]
-  # Batch
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # ArgoCD Applications
-  - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # CloudNative-PG Databases
-  - apiGroups: ["postgresql.cnpg.io"]
-    resources: ["databases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # External Secrets
-  - apiGroups: ["external-secrets.io"]
-    resources: ["externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Leader election
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups:
+    - ''
+    resources:
+    - configmaps
+    - limitranges
+    - namespaces
+    - resourcequotas
+    - secrets
+    - services
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - ''
+    resources:
+    - events
+    verbs:
+    - create
+    - patch
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    verbs:
+    - get
+    - list
+    - create
+  - apiGroups:
+    - argoproj.io
+    resources:
+    - applications
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - batch
+    resources:
+    - jobs
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - cert-manager.io
+    resources:
+    - certificates
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - coordination.k8s.io
+    resources:
+    - leases
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - external-secrets.io
+    resources:
+    - externalsecrets
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gateway.envoyproxy.io
+    resources:
+    - backendtrafficpolicies
+    - clienttrafficpolicies
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gateway.networking.k8s.io
+    resources:
+    - gatewayclasses
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - gateway.networking.k8s.io
+    resources:
+    - gateways
+    - gateways/status
+    - httproutes
+    - httproutes/status
+    - referencegrants
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appcatalogues
+    - appgrants
+    - apps
+    - integrationbindings
+    - platformsecuritypolicies
+    - tenants
+    - xtenants
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appcatalogues/status
+    - appgrants/status
+    - customizations/status
+    - integrationbindings/status
+    - platformsecuritypolicies/status
+    - tenants/status
+    verbs:
+    - get
+    - update
+    - patch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appgrants/finalizers
+    - integrationbindings/finalizers
+    - platformsecuritypolicies/finalizers
+    - tenants/finalizers
+    verbs:
+    - update
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appprofiles
+    - customizations
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - oidcpackcatalogs
+    - xapps
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - helm.crossplane.io
+    resources:
+    - releases
+    verbs:
+    - get
+    - list
+    - watch
+    - delete
+  - apiGroups:
+    - kubernetes.crossplane.io
+    resources:
+    - objects
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - networking.k8s.io
+    resources:
+    - ingresses
+    - networkpolicies
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - postgresql.cnpg.io
+    resources:
+    - databases
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
