@@ -73,30 +73,44 @@ Authorization inside the console uses **RBAC groups in Keycloak** (ergonomic) ba
 | Realm | Purpose | Human users |
 |---|---|---|
 | `master` | Keycloak operator CLI only | No |
-| `kernel` | Shared portal OIDC (`gentian-portal`), **platform admins**, identity-first login router | Platform admins only |
-| `<tenant>` | **Authoritative store** for tenant members, groups, app OIDC clients | All tenant members and tenant admins |
+| `kernel` | Shared portal's own clients, platform admins | Platform admins only |
+| `<tenant>` | **Authoritative store** for tenant members, groups, app OIDC clients, **and where tenant members authenticate** | All tenant members and tenant admins |
 
-Users are **managed in the tenant realm**. The shared portal login flow uses the **kernel realm**, which **brokers** to the correct tenant realm by email / tenant resolution.
+Users are **managed and authenticated in the tenant realm** — each tenant realm
+has its own `Cookie → forms` browser flow, so tenant members sign in directly
+there rather than being brokered through `kernel`. `kernel` keeps its own job:
+platform operators, Argo CD, and the portal's own clients.
 
 ```mermaid
 flowchart TD
-    Login["portal.&lt;kernel&gt;/login"]
-    
-    KernelRealm["kernel realm<br>identity-first<br>gentian-portal client, platform admins"]
-    
-    Login --> KernelRealm
-    
-    KernelRealm -->|"OIDC broker (per tenant)"| Tenants
-    
-    subgraph Tenants ["(users live here)"]
+    TenantHost["&lt;tenant&gt;.&lt;kernel&gt;/login<br>(bookmarkable, canonical)"]
+    Apex["&lt;kernel&gt;/login<br>(email prompt only)"]
+
+    TenantHost -->|"email + password, one stage"| TenantRealm
+    Apex -->|"hands off to the tenant host,<br>carrying the email"| TenantHost
+
+    subgraph TenantRealm ["tenant realm — Cookie → forms"]
         direction LR
         TenantDemo["tenant:demo"]
         TenantAcme["tenant:acme"]
         TenantOthers["…"]
     end
+
+    Ops["platform operator"] -->|"Cookie → forms"| KernelRealm["kernel realm"]
 ```
 
-Tenant apps (Jitsi, Nextcloud, …) continue to use the **tenant realm** for OIDC. The tenant realm **brokers to the kernel IdP** so a user with an active portal session is not prompted again (`browser-kernel-idp` / `first-broker-login-gentian` flows).
+Every OIDC app (Jitsi, Nextcloud, Odoo, …) also uses the tenant realm as its
+IdP, which is why this matters: the session an app's redirect needs already
+lives in the same realm the portal just authenticated against, so it's reused
+silently — no broker hop, no second login screen.
+
+A realm is an isolated user store and a login page belongs to exactly one
+realm, so a single password form in front of users from several realms isn't
+possible — which is why the tenant host, not the apex, is what's meant to be
+bookmarked: it's the only entry point that knows the realm before rendering
+the form, so it can ask for both email and password in one stage. The apex
+only asks for an email, then hands the browser to that tenant's own host with
+the address attached so Keycloak can pre-fill it.
 
 ### 3.2 Login identifiers
 
@@ -165,14 +179,14 @@ One web app embedded in the Gentian shell (builtin desktop apps). Menu items sho
 
 1. `install.sh` seeds Suze + kernel realm.
 2. Job or bootstrap script creates `administrator@<KERNEL_DOMAIN>` in **kernel realm** with `gentian:platform:superadmin`.
-3. Admin signs in at `https://portal.<kernel>/login` → kernel broker not needed → Admin Console desktop.
+3. Admin signs in at `https://<kernel>/login` (kernel realm, `Cookie → forms`) → Admin Console desktop.
 
 **B) Tenant admin (`kubectl gentian tenants deploy demo`)**
 
 1. Operator seeds OpenBao `gentian-os/tenants/demo/admin`.
 2. Provisioning creates **tenant realm** `demo`, groups, tenant admin user, `gentian:tenant:demo:admins` membership.
 3. CLI prints login email + password (after Keycloak user is ready).
-4. Tenant admin signs in at shared portal → kernel brokers to tenant realm → Admin Console.
+4. Tenant admin signs in directly at `demo.<kernel>/login` (tenant realm, `Cookie → forms`) → Admin Console.
 
 **C) Tenant admin invites members**
 

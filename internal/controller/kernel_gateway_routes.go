@@ -188,7 +188,7 @@ func kernelHTTPRouteSpecs(
 	// Consequence worth knowing: tokens live in sessionStorage, which is per origin,
 	// so a user signed in on the tenant host is a separate session from the same
 	// user on portal.<kernel-domain>. Keycloak's SSO cookie makes crossing between
-	// them silent, but they are two sessions. See docs/login-cleanup.md.
+	// them silent, but they are two sessions.
 	for i, domain := range tenantEffectiveDomains {
 		if i >= len(tenantNames) {
 			break
