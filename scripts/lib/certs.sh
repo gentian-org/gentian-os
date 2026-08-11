@@ -607,7 +607,24 @@ install_kernel_wildcard() {
         success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
     fi
     # Propagate to all namespaces that reference wildcard-tls.
-    for _wc_ns in "${app_ns}" argocd; do
+    #
+    # platform-kernel is the important one and was missing: the kernel Gateway
+    # lives there (the operator creates it in servicesNamespace, whose chart
+    # default is "platform-kernel" — see charts/gentian-os/values.yaml), and its
+    # HTTPS listeners reference the wildcard-tls Secret by name. Without the copy
+    # both listeners sit at ResolvedRefs=False/InvalidCertificateRef, the Gateway
+    # never reaches Programmed, no address is assigned, Envoy never creates the
+    # data-plane LoadBalancer, and the cluster answers nothing at all.
+    #
+    # app_ns ("gentian-<env>") is kept because the shell half of the installer
+    # defaults SERVICES_NAMESPACE there — the two halves disagree about which
+    # namespace is "services", so copy to both rather than pick a side here.
+    local _wc_targets=("${app_ns}" "${SERVICES_NAMESPACE:-platform-kernel}" argocd)
+    local _wc_seen=""
+    for _wc_ns in "${_wc_targets[@]}"; do
+        [[ " ${_wc_seen} " == *" ${_wc_ns} "* ]] && continue
+        _wc_seen+=" ${_wc_ns}"
+        kubectl get namespace "${_wc_ns}" >/dev/null 2>&1 || continue
         info "Propagating wildcard-tls into namespace ${_wc_ns}..."
         kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
             | python3 -c "
