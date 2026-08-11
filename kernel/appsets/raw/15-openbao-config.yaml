@@ -41,7 +41,20 @@ spec:
       source:
         repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
-        path: "kernel/services/openbao-config/manifests/{{.env}}"
+        path: "kernel/services/openbao-config/manifests"
+        helm:
+          # env drives every stage-specific string in the chart, so adding a
+          # stage needs no new directory — the old manifests/<env> layout meant
+          # a missing directory failed as "app path does not exist" with the
+          # Application stuck Unknown and no values ConfigMaps created.
+          parameters:
+            - name: env
+              value: '{{.env}}'
+          # Only stages that genuinely differ carry a values file; the rest
+          # inherit the chart defaults.
+          valueFiles:
+            - values-{{.env}}.yaml
+          ignoreMissingValueFiles: true
       destination:
         server: https://kubernetes.default.svc
         namespace: crossplane-system

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: infra-minio
+description: |
+  Per-stage manifests for infra-minio, rendered from a single source.
+  The ApplicationSet passes env; adding a stage needs no new files.
+type: application
+version: 0.1.0

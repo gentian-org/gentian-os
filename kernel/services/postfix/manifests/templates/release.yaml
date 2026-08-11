@@ -1,0 +1,36 @@
+# UNTESTED — provider-helm Release for public bokysan/mail chart.
+# Chart repo: https://bokysan.github.io/docker-postfix/  Image: docker.io/boky/postfix
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: postfix-{{ .Values.env }}
+  annotations:
+    crossplane.io/external-name: postfix-{{ .Values.env }}
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  forProvider:
+    chart:
+      name: mail
+      repository: https://bokysan.github.io/docker-postfix/
+      version: "5.1.0"
+    namespace: gentian-{{ .Values.env }}
+    wait: true
+    waitTimeout: "5m"
+    valuesFrom:
+      - configMapKeyRef:
+          name: postfix-base-values
+          namespace: gentian-{{ .Values.env }}
+          key: values.yaml
+          optional: false
+      - configMapKeyRef:
+          name: postfix-{{ .Values.env }}-values
+          namespace: gentian-{{ .Values.env }}
+          key: values.yaml
+          optional: false
+      - secretKeyRef:
+          name: postfix-sensitive-values
+          namespace: gentian-{{ .Values.env }}
+          key: sensitive-values.yaml
+          optional: true
+  providerConfigRef:
+    name: kubernetes

@@ -1,0 +1,4 @@
+# dev pins the NFS class because that cluster's default is not RWX.
+# Other stages inherit the cluster default (STORAGE_CLASS handles the
+# per-cluster case), so they need no file here.
+storageClass: nfs-csi
