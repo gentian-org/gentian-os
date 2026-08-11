@@ -63,6 +63,40 @@ kubectl -n "${ARGOCD_NAMESPACE}" patch deployment argocd-repo-server --type=json
   {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"256Mi","cpu":"100m"}}}
 ]' 2>/dev/null || echo "  (repo-server not patched — already set or absent)"
 
+# -----------------------------------------------------------------------------
+# Bound the application-controller's concurrency.
+#
+# Upstream defaults are 20 status processors and 10 operation processors, sized
+# for clusters with far more memory per node than a small kernel deployment has.
+# Each processor holds the manifests of the app it is comparing, so peak memory
+# scales with concurrency, not with how many Applications exist in total.
+#
+# Observed here: with the defaults the controller reconciled happily for ~20
+# seconds and was then OOMKilled, over and over (48 restarts), while the node it
+# ran on still reported 2.6GiB free — the spike was transient and internal, not
+# node exhaustion, which is why adding a memory request alone did not stop it.
+# Nothing in the cluster synced for four hours and Applications simply sat on
+# stale revisions.
+#
+# These values are deliberately conservative. Raise them on clusters with
+# memory to spare; syncs are slower but nothing else changes.
+echo "Bounding ArgoCD controller concurrency..."
+kubectl -n "${ARGOCD_NAMESPACE}" patch configmap argocd-cmd-params-cm --type merge -p '{"data":{
+  "controller.status.processors":"'"${ARGOCD_STATUS_PROCESSORS:-4}"'",
+  "controller.operation.processors":"'"${ARGOCD_OPERATION_PROCESSORS:-2}"'",
+  "controller.kubectl.parallelism.limit":"'"${ARGOCD_KUBECTL_PARALLELISM:-4}"'"}}' \
+  2>/dev/null || echo "  (argocd-cmd-params-cm not patched)"
+
+# Also worth knowing, but NOT applied automatically: this cluster carries 521
+# CRDs, mostly from Crossplane's vault and keycloak providers, and the
+# controller opens an informer per resource type. Trimming that with
+# resource.exclusions in argocd-cm cuts cache memory substantially, but the
+# exclusion list depends on which provider groups a given cluster actually
+# manages through ArgoCD — here three of them are managed
+# (vault.vault.upbound.io, kubernetes.vault.upbound.io, keycloak.crossplane.io)
+# and excluding those would break the Applications that own them. Derive the
+# list per cluster rather than hardcoding one.
+
 # Wait for ArgoCD to be ready
 echo "Waiting for ArgoCD server to be ready..."
 kubectl wait --for=condition=available --timeout=300s \
