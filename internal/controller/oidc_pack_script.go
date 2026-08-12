@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -22,8 +21,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gentian-org/gentian-os/internal/oidc"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
 // buildOIDCPackScript provisions Keycloak client scope, mappers,

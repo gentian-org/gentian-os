@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -170,8 +169,8 @@ func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm, kernelExterna
 			Name:      tenantKernelBrokerJobName(tenantName),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				tenantLabel:                              tenantName,
-				managedByLabel:                           managedByValue,
+				tenantLabel:    tenantName,
+				managedByLabel: managedByValue,
 				"gentianos.io/keycloak-kernel-tenant-broker": kernelTenantBrokerVersion,
 			},
 		},

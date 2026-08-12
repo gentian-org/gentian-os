@@ -76,18 +76,35 @@ func TestBuildKernelGateway(t *testing.T) {
 	if len(gw.Spec.Listeners) != len(byName) {
 		t.Fatalf("duplicate listener names in %d listeners", len(gw.Spec.Listeners))
 	}
-	for _, want := range []struct{ name, hostname string }{
-		{"https-wildcard", "*.desk.gentian.org"},
-		{"https-apex", "desk.gentian.org"},
-		{"https-tenant-demo-wildcard", "*.demo.desk.gentian.org"},
-	} {
-		l, ok := byName[want.name]
-		if !ok {
-			t.Fatalf("listener %q missing; have %v", want.name, slices.Sorted(maps.Keys(byName)))
-		}
-		if l.Hostname == nil || string(*l.Hostname) != want.hostname {
-			t.Fatalf("listener %q hostname = %v, want %q", want.name, l.Hostname, want.hostname)
-		}
+	// The kernel HTTPS listener carries NO hostname on purpose.
+	//
+	// A listener's hostname both selects it by SNI and gates which routes may
+	// attach, and a route only attaches where its hostnames intersect. The
+	// kernel certificate covers desk.gentian.org and *.desk.gentian.org, so a
+	// browser may coalesce portal.desk.gentian.org onto an existing
+	// desk.gentian.org connection; with a listener scoped to the apex that
+	// request had nowhere to attach and Envoy returned a bare 404. Serving every
+	// name the certificate covers from one listener removes the hole.
+	wildcard, ok := byName["https-wildcard"]
+	if !ok {
+		t.Fatalf("listener https-wildcard missing; have %v", slices.Sorted(maps.Keys(byName)))
+	}
+	if wildcard.Hostname != nil {
+		t.Fatalf("kernel HTTPS listener hostname = %q, want none so coalesced requests still route", *wildcard.Hostname)
+	}
+	if _, exists := byName["https-apex"]; exists {
+		t.Fatal("https-apex listener still present: the catch-all serves the apex, and a narrow apex listener makes every other host unroutable on connections coalesced onto it")
+	}
+	// Tenant subdomains need the tenant certificate, so they keep a listener.
+	tenantL, ok := byName["https-tenant-demo-wildcard"]
+	if !ok {
+		t.Fatalf("listener https-tenant-demo-wildcard missing; have %v", slices.Sorted(maps.Keys(byName)))
+	}
+	if tenantL.Hostname == nil || string(*tenantL.Hostname) != "*.demo.desk.gentian.org" {
+		t.Fatalf("tenant listener hostname = %v", tenantL.Hostname)
+	}
+	if _, exists := byName["https-tenant-demo-apex"]; exists {
+		t.Fatal("https-tenant-demo-apex still present: the tenant apex is covered by the kernel certificate and served by the catch-all")
 	}
 
 	// The :80 redirect listener is hostname-less on purpose: it must match every
@@ -103,7 +120,6 @@ func TestBuildKernelGateway(t *testing.T) {
 		t.Fatalf("redirect listener hostname = %v, want nil (match all hosts)", *redirect.Hostname)
 	}
 
-	wildcard := byName["https-wildcard"]
 	if wildcard.AllowedRoutes == nil || wildcard.AllowedRoutes.Namespaces.From == nil ||
 		*wildcard.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
 		t.Fatalf("kernel gateway should allow cross-namespace routes, got %v", wildcard.AllowedRoutes)
@@ -126,8 +142,15 @@ func TestBuildTenantGateway(t *testing.T) {
 	if gw.Labels[tenantLabel] != "demo" {
 		t.Fatalf("tenant label = %q", gw.Labels[tenantLabel])
 	}
-	if string(*gw.Spec.Listeners[0].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("hostname = %v", gw.Spec.Listeners[0].Hostname)
+	// Hostname-less, like the kernel gateway: the listener serves whatever its
+	// certificate covers. Scoping it to *.<domain> would leave the tenant apex
+	// unroutable on a connection coalesced onto a subdomain, since the tenant
+	// certificate carries both names.
+	if gw.Spec.Listeners[0].Hostname != nil {
+		t.Fatalf("tenant HTTPS listener hostname = %q, want none", *gw.Spec.Listeners[0].Hostname)
+	}
+	if string(gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name) != "tenant-demo-wildcard-tls" {
+		t.Fatalf("tls secret = %q", gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name)
 	}
 }
 
@@ -576,7 +599,7 @@ func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
 // TestTenantAppRouteBindsToTenantListener covers the tenant side: tenant app
 // routes attach to the kernel Gateway too, and had the same unpinned parentRef.
 func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
-	refs := tenantGatewayParentRefs("demo", tenantGatewayListenerName("demo", false))
+	refs := tenantGatewayParentRefs("demo", tenantGatewayListenerName("demo"))
 	var kernelRef *gatewayv1.ParentReference
 	for i := range refs {
 		if string(refs[i].Name) == KernelPublicGatewayName {

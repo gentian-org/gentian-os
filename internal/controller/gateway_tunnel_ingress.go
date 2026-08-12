@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -67,9 +66,9 @@ func ensureKernelGatewayTunnelIngress(
 	}
 
 	hosts := map[string]struct{}{
-		kernelDomain:                      {},
-		kernelPortalHost(kernelDomain):    {},
-		"corp." + kernelDomain:            {},
+		kernelDomain:                   {},
+		kernelPortalHost(kernelDomain): {},
+		"corp." + kernelDomain:         {},
 	}
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames) {
 		if spec.host != "" {

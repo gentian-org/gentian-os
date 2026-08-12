@@ -128,7 +128,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 		for _, tenantName := range tenantNames {
 			name := fmt.Sprintf("tenant-%s-wildcard-escaped-slashes", tenantName)
-			sectionName := tenantGatewayListenerName(tenantName, false)
+			sectionName := tenantGatewayListenerName(tenantName)
 			if err := r.ensureKernelClientTrafficPolicyNamed(ctx, name, sectionName, escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
 				return fmt.Errorf("ensure kernel tenant wildcard escaped-slashes ClientTrafficPolicy: %w", err)
 			}
@@ -200,7 +200,7 @@ func kernelHTTPRouteSpecs(
 			// The tenant apex listener carries the tenant's own certificate.
 			// buildKernelGateway creates it from the same filtered tenant list
 			// that produced this route, so it is always present.
-			sectionName: tenantGatewayListenerName(tenantNames[i], true),
+			sectionName: wildcardListenerName,
 			rules:       kernelGentianPortalHTTPRouteRules(),
 		})
 	}
@@ -208,7 +208,7 @@ func kernelHTTPRouteSpecs(
 		kernelHTTPRouteSpec{
 			name:        kernelRouteKernelApex,
 			host:        kernelDomain,
-			sectionName: apexListenerName,
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelApexRedirectRule(kernelDomain),
 			},

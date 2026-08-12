@@ -73,9 +73,9 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			if providerProfile.Spec.Ingress.SubDomain != "" {
 				// We don't have KERNEL_DOMAIN here so we can't fully construct the URL if TenantDomain is empty
 				// But we can just use the internal service URL!
-				endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/remote.php/dav/", 
-					providerProfile.Spec.Ingress.ServiceName, 
-					ib.Namespace, 
+				endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/remote.php/dav/",
+					providerProfile.Spec.Ingress.ServiceName,
+					ib.Namespace,
 					providerProfile.Spec.Ingress.ServicePort)
 			}
 		}

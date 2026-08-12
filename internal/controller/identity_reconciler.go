@@ -31,17 +31,17 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
 	conditionIdentityReady = "IdentityReady"
 	keycloakAdminSecret    = "keycloak-admin"
-	appLabel                 = "gentianos.io/app"
-	identityRequeueAfter     = 2 * time.Second
+	appLabel               = "gentianos.io/app"
+	identityRequeueAfter   = 2 * time.Second
 )
 
 // realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.

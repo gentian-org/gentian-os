@@ -261,10 +261,16 @@ func buildAppHTTPRoute(
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				// An app served on the tenant apex belongs to the apex listener;
 				// anything else is a subdomain covered by the tenant wildcard.
-				ParentRefs: tenantGatewayParentRefs(
-					tenant.Name,
-					tenantGatewayListenerName(tenant.Name, host == effectiveDomain),
-				),
+				// An app on the tenant apex is served by the kernel catch-all
+				// listener (the kernel certificate covers <tenant>.<domain>);
+				// anything deeper needs the tenant certificate.
+				ParentRefs: func() []gatewayv1.ParentReference {
+					section := tenantGatewayListenerName(tenant.Name)
+					if host == effectiveDomain {
+						section = wildcardListenerName
+					}
+					return tenantGatewayParentRefs(tenant.Name, section)
+				}(),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
 			Rules:     rules,

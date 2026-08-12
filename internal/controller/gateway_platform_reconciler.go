@@ -211,9 +211,11 @@ func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) err
 }
 
 func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
-	extraListeners := []gatewayv1.Listener{
-		kernelApexListener(kernelDomain, kernelWildcardTLSSecretName),
-	}
+	// No apex listener. The catch-all HTTPS listener already serves gtn.host —
+	// the kernel certificate carries it alongside *.gtn.host — and a separate
+	// listener scoped to the apex only served to make portal.gtn.host
+	// unroutable on connections a browser had coalesced onto gtn.host.
+	var extraListeners []gatewayv1.Listener
 	for i := range tenants {
 		tenant := &tenants[i]
 		if tenant.DeletionTimestamp != nil {
@@ -225,9 +227,13 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 		}
 		nsName := tenantNamespaceName(tenant)
 		tlsSecret := tenantWildcardSecretName(tenant.Name)
+		// Subdomains only. <tenant>.<kernel-domain> is already covered by the
+		// kernel certificate and served by the catch-all listener; giving it its
+		// own narrow listener reintroduced the coalescing hole one level down,
+		// where a connection opened for the tenant apex could not route
+		// <app>.<tenant>.<kernel-domain>.
 		extraListeners = append(extraListeners,
-			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName, false),
-			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName, true),
+			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName),
 		)
 	}
 	return buildGateway(KernelPublicGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
@@ -248,28 +254,20 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 // being redirected. Every content route must name its HTTPS listener.
 const (
 	wildcardListenerName = "https-wildcard"
-	apexListenerName     = "https-apex"
 )
 
 // tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
 // own certificate, for the tenant's apex or its wildcard subdomains.
-func tenantGatewayListenerName(tenantName string, apex bool) string {
-	if apex {
-		return fmt.Sprintf("https-tenant-%s-apex", tenantName)
-	}
+// tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
+// own certificate for its subdomains. There is no apex variant: the tenant apex
+// is covered by the kernel certificate and served by the catch-all listener.
+func tenantGatewayListenerName(tenantName string) string {
 	return fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
 }
 
-func kernelApexListener(kernelDomain, tlsSecret string) gatewayv1.Listener {
-	return tlsListener(apexListenerName, gatewayv1.Hostname(kernelDomain), tlsSecret, servicesNamespace)
-}
-
-func tenantKernelGatewayListener(tenantName, effectiveDomain, tlsSecret, tlsSecretNamespace string, apex bool) gatewayv1.Listener {
+func tenantKernelGatewayListener(tenantName, effectiveDomain, tlsSecret, tlsSecretNamespace string) gatewayv1.Listener {
 	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", effectiveDomain))
-	if apex {
-		hostname = gatewayv1.Hostname(effectiveDomain)
-	}
-	return tlsListener(tenantGatewayListenerName(tenantName, apex), hostname, tlsSecret, tlsSecretNamespace)
+	return tlsListener(tenantGatewayListenerName(tenantName), hostname, tlsSecret, tlsSecretNamespace)
 }
 
 func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretNamespace string) gatewayv1.Listener {
@@ -284,11 +282,10 @@ func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretN
 		ns := gatewayv1.Namespace(tlsSecretNamespace)
 		ref.Namespace = &ns
 	}
-	return gatewayv1.Listener{
+	l := gatewayv1.Listener{
 		Name:     gatewayv1.SectionName(name),
 		Protocol: gatewayv1.HTTPSProtocolType,
 		Port:     port,
-		Hostname: &hostname,
 		TLS: &gatewayv1.GatewayTLSConfig{
 			Mode: &mode,
 			CertificateRefs: []gatewayv1.SecretObjectReference{
@@ -296,6 +293,23 @@ func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretN
 			},
 		},
 	}
+	// An empty hostname makes the listener match every SNI the certificate
+	// covers. A listener's hostname does double duty in Gateway API: it selects
+	// the listener by SNI AND gates which routes may attach, and a route only
+	// attaches where its hostnames intersect the listener's.
+	//
+	// Splitting one certificate across narrow listeners therefore breaks HTTP/2
+	// connection coalescing. The kernel certificate carries both gtn.host and
+	// *.gtn.host, so a browser may legitimately reuse the gtn.host connection
+	// for portal.gtn.host; the request then arrives on the apex listener, where
+	// portal.gtn.host could never attach, and Envoy answers 404 with no route.
+	// It reads as random because coalescing depends on which connection is open:
+	// arriving via the apex redirect coalesces, opening the host directly does
+	// not, and curl never reproduces it because it opens one connection per host.
+	if hostname != "" {
+		l.Hostname = &hostname
+	}
+	return l
 }
 
 // httpRedirectListenerName is the plaintext listener that exists solely so
@@ -333,9 +347,10 @@ func buildTenantGateway(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain
 }
 
 func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
-	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", domain))
+	// No hostname: this listener serves every name its certificate covers, which
+	// is what keeps connection coalescing working (see tlsListener).
 	listeners := []gatewayv1.Listener{
-		withAllowedRoutes(tlsListener(wildcardListenerName, hostname, tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
+		withAllowedRoutes(tlsListener(wildcardListenerName, "", tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
 		withAllowedRoutes(httpRedirectListener(), opts.allowCrossNamespaceRoutes),
 	}
 	for i := range opts.extraListeners {

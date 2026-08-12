@@ -97,7 +97,7 @@ func (r *TenantReconciler) ensurePortalShellSecret(ctx context.Context, tenant *
 			Labels: map[string]string{
 				tenantLabel:                   tenant.Name,
 				managedByLabel:                managedByValue,
-				"app.kubernetes.io/name":        "gentian-portal",
+				"app.kubernetes.io/name":      "gentian-portal",
 				"app.kubernetes.io/component": portalShellComponent,
 			},
 		},

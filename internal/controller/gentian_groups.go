@@ -35,4 +35,3 @@ func gentianTenantAdminsGroup(tenant string) string {
 func gentianGroupsJobName(tenantName string) string {
 	return kc.GroupsJobName(tenantName)
 }
-

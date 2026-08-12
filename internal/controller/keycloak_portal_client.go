@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -131,8 +130,8 @@ func makePortalPublicClientJob(tenantName, realmName, portalOrigin string) *batc
 			Name:      tenantPortalPublicClientJobName(tenantName),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				tenantLabel:                                  tenantName,
-				managedByLabel:                               managedByValue,
+				tenantLabel:    tenantName,
+				managedByLabel: managedByValue,
 				"gentianos.io/keycloak-portal-public-client": portalPublicClientVersion,
 			},
 		},

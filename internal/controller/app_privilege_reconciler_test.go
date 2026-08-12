@@ -54,8 +54,8 @@ func TestApplyAppPrivilegeReconcileRequest_clearsSyncAnnotations(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "demo",
 			Annotations: map[string]string{
-				appPrivilegeRequestedAtAnnotation:                "2026-07-03T12:00:00Z",
-				appPrivilegeProcessedAtAnnotation:                "2026-07-02T12:00:00Z",
+				appPrivilegeRequestedAtAnnotation:              "2026-07-03T12:00:00Z",
+				appPrivilegeProcessedAtAnnotation:              "2026-07-02T12:00:00Z",
 				appPrivilegeSyncAnnotationPrefix + "nextcloud": "fp-old",
 			},
 		},
