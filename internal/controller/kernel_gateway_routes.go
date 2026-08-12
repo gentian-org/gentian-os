@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -124,12 +123,12 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("detect escaped-slashes gateway policy need: %w", err)
 	}
 	if needsWildcard {
-		if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-escaped-slashes", "https-wildcard", escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
+		if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-escaped-slashes", wildcardListenerName, escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
 			return fmt.Errorf("ensure kernel wildcard escaped-slashes ClientTrafficPolicy: %w", err)
 		}
 		for _, tenantName := range tenantNames {
 			name := fmt.Sprintf("tenant-%s-wildcard-escaped-slashes", tenantName)
-			sectionName := fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
+			sectionName := tenantGatewayListenerName(tenantName, false)
 			if err := r.ensureKernelClientTrafficPolicyNamed(ctx, name, sectionName, escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
 				return fmt.Errorf("ensure kernel tenant wildcard escaped-slashes ClientTrafficPolicy: %w", err)
 			}
@@ -152,8 +151,9 @@ func kernelHTTPRouteSpecs(
 
 	specs := []kernelHTTPRouteSpec{
 		{
-			name: kernelRouteKeycloakIDP,
-			host: idHost,
+			name:        kernelRouteKeycloakIDP,
+			host:        idHost,
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(
 					kcService,
@@ -169,9 +169,10 @@ func kernelHTTPRouteSpecs(
 	// Gentian UI portal (API + SPA) runs in platform-kernel; edge traffic reaches
 	// kernel-public-gateway in servicesNamespace via Cloudflare tunnel.
 	specs = append(specs, kernelHTTPRouteSpec{
-		name:  kernelRouteGentianPortal,
-		host:  portalHost,
-		rules: kernelGentianPortalHTTPRouteRules(),
+		name:        kernelRouteGentianPortal,
+		host:        portalHost,
+		sectionName: wildcardListenerName,
+		rules:       kernelGentianPortalHTTPRouteRules(),
 	})
 	// Serve the portal on each tenant's own host, rather than redirecting there to
 	// the shared one.
@@ -194,15 +195,20 @@ func kernelHTTPRouteSpecs(
 			break
 		}
 		specs = append(specs, kernelHTTPRouteSpec{
-			name:  fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
-			host:  domain,
-			rules: kernelGentianPortalHTTPRouteRules(),
+			name: fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
+			host: domain,
+			// The tenant apex listener carries the tenant's own certificate.
+			// buildKernelGateway creates it from the same filtered tenant list
+			// that produced this route, so it is always present.
+			sectionName: tenantGatewayListenerName(tenantNames[i], true),
+			rules:       kernelGentianPortalHTTPRouteRules(),
 		})
 	}
 	specs = append(specs,
 		kernelHTTPRouteSpec{
-			name: kernelRouteKernelApex,
-			host: kernelDomain,
+			name:        kernelRouteKernelApex,
+			host:        kernelDomain,
+			sectionName: apexListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelApexRedirectRule(kernelDomain),
 			},
@@ -214,8 +220,9 @@ func kernelHTTPRouteSpecs(
 			rules:       []gatewayv1.HTTPRouteRule{kernelHTTPSRedirectRule()},
 		},
 		kernelHTTPRouteSpec{
-			name: kernelRouteArgoCD,
-			host: fmt.Sprintf("argocd.%s", kernelDomain),
+			name:        kernelRouteArgoCD,
+			host:        fmt.Sprintf("argocd.%s", kernelDomain),
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
 			},
@@ -226,8 +233,9 @@ func kernelHTTPRouteSpecs(
 	// until per-tenant access is designed (see docs/design/llms.md).
 	if os.Getenv("LLM_SUPPORT") == "true" {
 		specs = append(specs, kernelHTTPRouteSpec{
-			name: kernelRouteLiteLLM,
-			host: fmt.Sprintf("llm.%s", kernelDomain),
+			name:        kernelRouteLiteLLM,
+			host:        fmt.Sprintf("llm.%s", kernelDomain),
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(litellmProxyServiceName, kernelNamespace, litellmProxyPort, "/"),
 			},
@@ -533,7 +541,7 @@ func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicy(ctx context.
 	if spec.clientPolicy == nil {
 		return nil
 	}
-	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, "https-wildcard", spec.clientPolicy)
+	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, wildcardListenerName, spec.clientPolicy)
 }
 
 func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicyNamed(

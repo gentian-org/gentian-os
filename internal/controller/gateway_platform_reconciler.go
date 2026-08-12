@@ -239,18 +239,37 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 	})
 }
 
+// Listener names are the binding target for every route's parentRef
+// sectionName. A content route that omits sectionName attaches to EVERY
+// listener whose hostname matches — including the plaintext :80 redirect
+// listener, which is hostname-less and therefore matches everything. Gateway
+// API then ranks the content route's specific hostname above the redirect
+// route's absent one, so http://<any-host> was served in the clear instead of
+// being redirected. Every content route must name its HTTPS listener.
+const (
+	wildcardListenerName = "https-wildcard"
+	apexListenerName     = "https-apex"
+)
+
+// tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
+// own certificate, for the tenant's apex or its wildcard subdomains.
+func tenantGatewayListenerName(tenantName string, apex bool) string {
+	if apex {
+		return fmt.Sprintf("https-tenant-%s-apex", tenantName)
+	}
+	return fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
+}
+
 func kernelApexListener(kernelDomain, tlsSecret string) gatewayv1.Listener {
-	return tlsListener("https-apex", gatewayv1.Hostname(kernelDomain), tlsSecret, servicesNamespace)
+	return tlsListener(apexListenerName, gatewayv1.Hostname(kernelDomain), tlsSecret, servicesNamespace)
 }
 
 func tenantKernelGatewayListener(tenantName, effectiveDomain, tlsSecret, tlsSecretNamespace string, apex bool) gatewayv1.Listener {
-	name := fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
 	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", effectiveDomain))
 	if apex {
-		name = fmt.Sprintf("https-tenant-%s-apex", tenantName)
 		hostname = gatewayv1.Hostname(effectiveDomain)
 	}
-	return tlsListener(name, hostname, tlsSecret, tlsSecretNamespace)
+	return tlsListener(tenantGatewayListenerName(tenantName, apex), hostname, tlsSecret, tlsSecretNamespace)
 }
 
 func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretNamespace string) gatewayv1.Listener {
@@ -316,7 +335,7 @@ func buildTenantGateway(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain
 func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
 	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", domain))
 	listeners := []gatewayv1.Listener{
-		withAllowedRoutes(tlsListener("https-wildcard", hostname, tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
+		withAllowedRoutes(tlsListener(wildcardListenerName, hostname, tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
 		withAllowedRoutes(httpRedirectListener(), opts.allowCrossNamespaceRoutes),
 	}
 	for i := range opts.extraListeners {

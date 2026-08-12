@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -30,10 +29,10 @@ import (
 )
 
 const (
-	gatewayComponentLabel    = "gentianos.io/gateway-component"
-	gatewayComponentApp      = "app-route"
-	gatewayComponentApex     = "apex-redirect"
-	gatewayComponentKernel   = "kernel-route"
+	gatewayComponentLabel  = "gentianos.io/gateway-component"
+	gatewayComponentApp    = "app-route"
+	gatewayComponentApex   = "apex-redirect"
+	gatewayComponentKernel = "kernel-route"
 )
 
 type ingressIntent struct {
@@ -75,10 +74,25 @@ func kernelGatewayParentRef() gatewayv1.ParentReference {
 	return ref
 }
 
-func tenantGatewayParentRefs(tenantName string) []gatewayv1.ParentReference {
+// tenantGatewayParentRefs attaches a tenant route to the tenant's own Gateway
+// and to the shared kernel Gateway.
+//
+// kernelSectionName pins the kernel-Gateway attachment to one listener. Without
+// it the route also attached to the kernel Gateway's plaintext :80 redirect
+// listener, which is hostname-less and so matches every host; Gateway API then
+// ranked this route's specific hostname above the redirect route's absent one,
+// and http://<app>.<tenant-domain> was served in the clear instead of being
+// redirected to https. The tenant's own Gateway has no :80 listener, so its
+// attachment needs no pinning.
+func tenantGatewayParentRefs(tenantName, kernelSectionName string) []gatewayv1.ParentReference {
+	kernelRef := kernelGatewayParentRef()
+	if kernelSectionName != "" {
+		s := gatewayv1.SectionName(kernelSectionName)
+		kernelRef.SectionName = &s
+	}
 	return []gatewayv1.ParentReference{
 		gatewayParentRef(tenantGatewayName(tenantName)),
-		kernelGatewayParentRef(),
+		kernelRef,
 	}
 }
 
@@ -245,7 +259,12 @@ func buildAppHTTPRoute(
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: tenantGatewayParentRefs(tenant.Name),
+				// An app served on the tenant apex belongs to the apex listener;
+				// anything else is a subdomain covered by the tenant wildcard.
+				ParentRefs: tenantGatewayParentRefs(
+					tenant.Name,
+					tenantGatewayListenerName(tenant.Name, host == effectiveDomain),
+				),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
 			Rules:     rules,

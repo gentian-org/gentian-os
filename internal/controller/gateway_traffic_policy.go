@@ -64,7 +64,7 @@ func buildTenantEscapedSlashesClientTrafficPolicyObject(tenant *gentianov1alpha1
 			"group":       gatewayv1.GroupName,
 			"kind":        "Gateway",
 			"name":        tenantGatewayName(tenant.Name),
-			"sectionName": "https-wildcard",
+			"sectionName": wildcardListenerName,
 		},
 	}
 

@@ -509,3 +509,77 @@ func TestKernelApexRedirectRule(t *testing.T) {
 		t.Fatalf("hostname = %v", redirect.Hostname)
 	}
 }
+
+// TestKernelHTTPRouteSpecsAllBindToAListener guards the HTTP->HTTPS redirect.
+//
+// buildGateway gives every Gateway a hostname-less :80 listener carrying the
+// redirect. A route that omits sectionName attaches to EVERY listener whose
+// hostname matches, and a hostname-less listener matches everything — so each
+// content route silently attached to :80 as well. Gateway API then ranks a
+// route's specific hostname above the redirect route's absent one, so plaintext
+// requests were answered with content instead of a redirect and every kernel
+// host was reachable unencrypted (verified live: http://portal.<domain> -> 200).
+//
+// The invariant is therefore: every kernel route names exactly one listener.
+func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
+	t.Setenv("LLM_SUPPORT", "true")
+	specs := kernelHTTPRouteSpecs(
+		"desk.gentian.org",
+		[]string{"demo.desk.gentian.org"},
+		nil,
+		[]string{"demo"},
+	)
+	if len(specs) == 0 {
+		t.Fatal("no kernel route specs produced")
+	}
+	for _, s := range specs {
+		if s.sectionName == "" {
+			t.Errorf("route %q has no sectionName: it will also attach to the :80 "+
+				"redirect listener and be served in plaintext", s.name)
+		}
+	}
+}
+
+// TestKernelHTTPRedirectBindsOnlyToPort80 pins the other half of the invariant:
+// the catch-all redirect must stay on :80. If it ever attached to a :443
+// listener it would redirect https traffic back to itself, forever.
+func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
+	specs := kernelHTTPRouteSpecs("desk.gentian.org", nil, nil, nil)
+	var found bool
+	for _, s := range specs {
+		if s.name != kernelRouteHTTPRedirect {
+			continue
+		}
+		found = true
+		if s.sectionName != httpRedirectListenerName {
+			t.Fatalf("redirect route bound to %q, want %q", s.sectionName, httpRedirectListenerName)
+		}
+		if s.host != "" {
+			t.Fatalf("redirect route host = %q, want empty so it matches every host", s.host)
+		}
+	}
+	if !found {
+		t.Fatalf("route %q missing", kernelRouteHTTPRedirect)
+	}
+}
+
+// TestTenantAppRouteBindsToTenantListener covers the tenant side: tenant app
+// routes attach to the kernel Gateway too, and had the same unpinned parentRef.
+func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
+	refs := tenantGatewayParentRefs("demo", tenantGatewayListenerName("demo", false))
+	var kernelRef *gatewayv1.ParentReference
+	for i := range refs {
+		if string(refs[i].Name) == KernelPublicGatewayName {
+			kernelRef = &refs[i]
+		}
+	}
+	if kernelRef == nil {
+		t.Fatal("no kernel Gateway parentRef")
+	}
+	if kernelRef.SectionName == nil {
+		t.Fatal("kernel parentRef has no sectionName; route would also attach to :80")
+	}
+	if string(*kernelRef.SectionName) != "https-tenant-demo-wildcard" {
+		t.Fatalf("sectionName = %q", *kernelRef.SectionName)
+	}
+}
