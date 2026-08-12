@@ -41,6 +41,62 @@ html, body { height: 100%; margin: 0; }
 body.gentian-login {
   background: var(--gtn-paper-0);
   font-family: var(--gtn-font-sans);
+  /* Set a readable default. Only login and login-reset-password are overridden
+   * here; every other screen — "already authenticated as a different user",
+   * consent, OTP, account linking, error pages — is rendered by keycloak.v2 but
+   * still receives kcBodyClass=gentian-login and this stylesheet. Those screens
+   * inherited PatternFly's colour, which assumes PatternFly's own dark chrome,
+   * so their text came out near-white on this light paper background and was
+   * effectively invisible. */
+  color: var(--gtn-ink-1);
+}
+
+/* Readable text on the screens this theme does not template.
+ *
+ * Covers PatternFly 4 (pf-c-) and 5 (pf-v5-c-) because the prefix changes with
+ * the Keycloak release and the parent theme is deliberately tracked rather than
+ * pinned. Selectors are scoped to body.gentian-login so nothing here can leak
+ * into a realm using a different theme. */
+body.gentian-login #kc-content,
+body.gentian-login #kc-content-wrapper,
+body.gentian-login #kc-info,
+body.gentian-login #kc-info-wrapper,
+body.gentian-login .instruction,
+body.gentian-login .pf-c-alert__title,
+body.gentian-login .pf-v5-c-alert__title,
+body.gentian-login .pf-c-alert__description,
+body.gentian-login .pf-v5-c-alert__description,
+body.gentian-login .kc-feedback-text,
+body.gentian-login #kc-page-title,
+body.gentian-login h1,
+body.gentian-login h2,
+body.gentian-login p,
+body.gentian-login li,
+body.gentian-login label {
+  color: var(--gtn-ink-1);
+}
+
+/* Links need to stay distinguishable from body text, and "sign out first"
+ * screens are mostly a message plus a link. */
+body.gentian-login a {
+  color: var(--gtn-500);
+}
+body.gentian-login a:hover {
+  color: var(--gtn-600);
+}
+
+/* Keycloak's own alert blocks on non-overridden screens. Given a background so
+ * the message reads as a message rather than loose text, matching the
+ * .gentian-login__error / __info treatment used on the login card. */
+body.gentian-login .alert-error,
+body.gentian-login .pf-m-danger .pf-c-alert__title,
+body.gentian-login .pf-m-danger .pf-v5-c-alert__title {
+  color: var(--gtn-madder);
+}
+body.gentian-login .alert-warning,
+body.gentian-login .alert-info,
+body.gentian-login .alert-success {
+  color: var(--gtn-ink-2);
 }
 
 /* Neutralise PatternFly's own login chrome.

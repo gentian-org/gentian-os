@@ -50,6 +50,18 @@ data:
         #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
         # and no invite or password-reset mail could leave the cluster.
         ALLOWED_SENDER_DOMAINS: "{{ .Values.kernelDomain | default "example.domain" }}"
+        # Sign outbound mail with DKIM.
+        #
+        # Without this the image generates no keys and leaves smtpd_milters empty,
+        # so opendkim runs but never sees a message and everything leaves
+        # unsigned. Receiving providers weight an unsigned message from a new IP
+        # heavily towards spam, which is indistinguishable from mail being lost.
+        #
+        # The image generates one key per domain in ALLOWED_SENDER_DOMAINS on
+        # first start, writing /etc/opendkim/keys/<domain>.txt for publication as
+        # a TXT record. Keys therefore only cover the domains named above — a
+        # placeholder there yields a key nobody can verify.
+        DKIM_AUTOGENERATE: "1"
       postfix:
         myhostname: postfix-{{ .Values.env }}
 ---

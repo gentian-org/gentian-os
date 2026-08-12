@@ -509,11 +509,26 @@ kubectl get gateway kernel-public-gateway -n platform-kernel \
 | `TXT` | `<selector>._domainkey.<kernel-domain>` | the DKIM public key (below) |
 | `TXT` | `_dmarc.<kernel-domain>` | `v=DMARC1; p=none; rua=mailto:postmaster@<kernel-domain>` |
 
-Read the DKIM public key, which Postfix generates on first start:
+Read the DKIM public key. Postfix generates one key per domain in
+`ALLOWED_SENDER_DOMAINS` on first start:
 
 ```bash
 kubectl exec -n gentian-<stage> postfix-<stage>-0 -- \
-  sh -c 'cat /etc/opendkim/keys/*/*.txt'
+  cat /etc/opendkim/keys/<kernel-domain>.txt
+```
+
+The file contains the full record, selector included — publish it as-is. If it
+is missing, the pod started before DKIM was enabled: restart it and read again.
+
+```bash
+kubectl delete pod postfix-<stage>-0 -n gentian-<stage>
+```
+
+Confirm signing is active before relying on it — empty output means messages
+leave unsigned:
+
+```bash
+kubectl exec -n gentian-<stage> postfix-<stage>-0 -- postconf -h smtpd_milters
 ```
 
 Set reverse DNS (PTR) for `<edge-ip>` to a hostname in your domain. This is done
