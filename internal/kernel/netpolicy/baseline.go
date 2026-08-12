@@ -78,6 +78,13 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		namespaceIngress(meta.EnvoyGatewayInstallNamespace),
 		namespaceIngress(meta.KernelNamespace),
+		// The operator itself provisions *into* running tenant apps over their
+		// own admin APIs — AppProfile.spec.provisioning.privilegedRole is the
+		// first such case (see app_privilege_reconciler.go). It runs in
+		// OperatorNamespace, not KernelNamespace, so without this it cannot
+		// reach the very workloads it reconciles. This grants no new authority:
+		// the operator already has API-level control over these namespaces.
+		namespaceIngress(meta.OperatorNamespace),
 	}
 
 	return &networkingv1.NetworkPolicy{
