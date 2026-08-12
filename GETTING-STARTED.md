@@ -225,7 +225,8 @@ allocation step differs (MetalLB must own a pool containing that address).
 | `CI_BOT_PAT` | Optional | Fine-grained GitHub PAT with **Contents read/write** on `gentian-org/gentian-os` — uploaded to **both** `gentian-os` and `gentian-ui` Actions secrets by `install.sh` (gentian-ui pass-through for `workflow_call` only) |
 
 `MAIL_SERVICE_MODE=kernel` (the default) uses in-cluster Postfix instead — no
-relay credentials needed.
+relay credentials needed. See [Kernel mail mode](#kernel-mail-mode) for what it
+does and does not do, and the DNS records it needs.
 
 **3. `install.env`** — this repo, installer behavior and repo selection
 
@@ -464,6 +465,135 @@ Behavior depends on `spec.deletionPolicy` on the Tenant:
 2. `Delete`: run full cleanup (apps, identity, contracts, namespace resources).
 
 ---
+
+## Kernel mail mode
+
+`MAIL_SERVICE_MODE=kernel` runs Postfix and Dovecot inside the cluster instead
+of relaying through an external provider. Keycloak sends invite and
+password-reset mail through it.
+
+The path is:
+
+```
+Keycloak pod ──SMTP:587──▶ postfix-<stage>.gentian-<stage> ──LMTP:24──▶ dovecot-<stage> ──▶ INBOX
+                                    │
+                                    └──SMTP:25──▶ the internet (direct, no relay)
+```
+
+Postfix accepts mail from inside the cluster by `mynetworks`
+(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and does **not** offer SMTP
+AUTH, so Keycloak is configured with `auth: false` in this mode. Nothing
+outside the cluster can submit mail: the Service is `ClusterIP` on 587 only.
+
+### What works, and what does not
+
+| | Status |
+|---|---|
+| Tenant users receiving mail at `<user>@<tenant-domain>` (delivered via LMTP to Dovecot) | Works |
+| Keycloak invite / password-reset mail to internal addresses | Works |
+| Sending to external addresses (Gmail, etc.) | Works only with the DNS records below |
+| **Receiving mail from the internet** | **Not wired up** |
+
+Inbound SMTP has no ingress. The edge Gateway carries 80/443 only, and
+`postfix-<stage>` is a ClusterIP on 587 — nothing listens on port 25 from
+outside. Publishing an MX record would therefore not help; accepting external
+mail needs a LoadBalancer or TCP listener on 25 that does not exist yet.
+
+### DNS records (Cloudflare)
+
+Only needed for **outbound** mail. Without them, mail from the cluster is
+widely treated as spam or refused outright. Replace `<kernel-domain>` and
+`<edge-ip>` with your own — `<edge-ip>` is the address the edge Gateway holds.
+
+| Type | Name | Value | Why |
+|---|---|---|---|
+| `TXT` | `<kernel-domain>` | `v=spf1 ip4:<edge-ip> -all` | Authorises the cluster IP to send for the domain |
+| `TXT` | `<selector>._domainkey` | the OpenDKIM public key | Signs outbound mail; `opendkim` already runs in the Postfix pod |
+| `TXT` | `_dmarc` | `v=DMARC1; p=none; rua=mailto:postmaster@<kernel-domain>` | Reporting policy; start at `p=none` and tighten later |
+
+Read the DKIM public key from the running pod:
+
+```bash
+kubectl exec -n gentian-<stage> postfix-<stage>-0 --   sh -c 'cat /etc/opendkim/keys/*/*.txt'
+```
+
+**Reverse DNS (PTR) is set at your cloud provider, not in Cloudflare.** Point
+`<edge-ip>` at a hostname in your domain. Many large providers reject mail from
+IPs with no PTR regardless of SPF and DKIM, so this is not optional in practice.
+
+Outbound port 25 must also be reachable. Several clouds block it by default;
+Infomaniak does not. Check before assuming:
+
+```bash
+kubectl exec -n gentian-<stage> postfix-<stage>-0 -- \
+  timeout 8 bash -c 'exec 3<>/dev/tcp/gmail-smtp-in.l.google.com/25 && head -c 40 <&3'
+```
+
+A `220 mx.google.com ESMTP ...` banner means outbound 25 is open.
+
+### Verifying the path
+
+Deliver a message to an internal mailbox and watch it land — this exercises
+Postfix, the sender-domain check and LMTP delivery without emailing anyone:
+
+```bash
+kubectl exec -n platform-kernel <keycloak-pod> -c keycloak -- bash -c '
+exec 3<>/dev/tcp/postfix-<stage>.gentian-<stage>.svc.cluster.local/587
+printf "EHLO test\r\nMAIL FROM:<noreply@<kernel-domain>>\r\nRCPT TO:<admin-<tenant>@<kernel-domain>>\r\nQUIT\r\n" >&3
+cat <&3'
+```
+
+`250 2.1.5 Ok` on the `RCPT TO` is the check that matters. A
+`554 5.7.1 ... Recipient address rejected: Access denied` means the sender's
+domain is missing from `ALLOWED_SENDER_DOMAINS` — see below.
+
+Then confirm delivery:
+
+```bash
+kubectl logs -n gentian-<stage> postfix-<stage>-0 | grep 'status=sent'
+kubectl logs -n gentian-<stage> deploy/dovecot-<stage> | grep 'saved mail to INBOX'
+```
+
+### Troubleshooting
+
+**`554 5.7.1 <user@domain>: Recipient address rejected: Access denied`**
+
+Postfix permits only senders whose domain is in `/etc/postfix/allowed_senders`,
+because the chart's `smtpd_recipient_restrictions` chain ends in a bare
+`reject`. The value is rendered from `KERNEL_DOMAIN` through the root
+ApplicationSet; if it still reads `example.domain`, the cluster domain never
+reached the chart:
+
+```bash
+kubectl exec -n gentian-<stage> postfix-<stage>-0 -- cat /etc/postfix/allowed_senders
+```
+
+Do **not** fix this by patching the `postfix-base-values` ConfigMap. It is
+Argo CD-managed with `selfHeal`, so the patch is reverted on the next sync.
+
+**Postfix stuck in `ContainerCreating`**
+
+```
+MountVolume.SetUp failed for volume "postfix-virtual-mailbox-maps":
+configmap "postfix-kernel-virtual-mailbox-maps" not found
+```
+
+That ConfigMap is written by the installer from the tenant mail domains the
+operator registers. It is created even when no tenant exists yet, so if it is
+missing, re-run the installer's mail step.
+
+**Keycloak reports "Failed to send execute actions email"**
+
+Check the realm's SMTP settings really have `auth: false` in kernel mode — the
+in-cluster Postfix offers no AUTH mechanism, and Keycloak fails outright if it
+is told to authenticate:
+
+```bash
+kubectl exec -n gentian-<stage> postfix-<stage>-0 -- postconf -h smtpd_sasl_auth_enable
+```
+
+---
+
 
 ## Re-seal / unseal OpenBao
 
