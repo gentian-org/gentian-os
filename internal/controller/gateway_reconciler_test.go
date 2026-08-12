@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,33 +64,52 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 4 {
-		t.Fatalf("listeners = %d, want 4", len(gw.Spec.Listeners))
+	// Looked up by name rather than by index. These assertions used to be
+	// positional, so adding the :80 http-redirect listener — which buildGateway
+	// inserts second, before the caller's extraListeners — shifted https-apex and
+	// every tenant listener down one and failed the test on a count mismatch
+	// rather than on anything meaningful. Names are the stable identity here.
+	byName := map[string]gatewayv1.Listener{}
+	for _, l := range gw.Spec.Listeners {
+		byName[string(l.Name)] = l
 	}
-	if gw.Spec.Listeners[0].Name != "https-wildcard" {
-		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
+	if len(gw.Spec.Listeners) != len(byName) {
+		t.Fatalf("duplicate listener names in %d listeners", len(gw.Spec.Listeners))
 	}
-	if gw.Spec.Listeners[0].Hostname == nil || string(*gw.Spec.Listeners[0].Hostname) != "*.desk.gentian.org" {
-		t.Fatalf("wildcard listener hostname = %v", gw.Spec.Listeners[0].Hostname)
+	for _, want := range []struct{ name, hostname string }{
+		{"https-wildcard", "*.desk.gentian.org"},
+		{"https-apex", "desk.gentian.org"},
+		{"https-tenant-demo-wildcard", "*.demo.desk.gentian.org"},
+	} {
+		l, ok := byName[want.name]
+		if !ok {
+			t.Fatalf("listener %q missing; have %v", want.name, slices.Sorted(maps.Keys(byName)))
+		}
+		if l.Hostname == nil || string(*l.Hostname) != want.hostname {
+			t.Fatalf("listener %q hostname = %v, want %q", want.name, l.Hostname, want.hostname)
+		}
 	}
-	if gw.Spec.Listeners[1].Name != "https-apex" {
-		t.Fatalf("apex listener name = %q", gw.Spec.Listeners[1].Name)
+
+	// The :80 redirect listener is hostname-less on purpose: it must match every
+	// host so any plaintext request can be bounced to https.
+	redirect, ok := byName[httpRedirectListenerName]
+	if !ok {
+		t.Fatalf("listener %q missing; have %v", httpRedirectListenerName, slices.Sorted(maps.Keys(byName)))
 	}
-	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
-		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
+	if redirect.Port != 80 {
+		t.Fatalf("redirect listener port = %d, want 80", redirect.Port)
 	}
-	if gw.Spec.Listeners[2].Name != "https-tenant-demo-wildcard" {
-		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[2].Name)
+	if redirect.Hostname != nil {
+		t.Fatalf("redirect listener hostname = %v, want nil (match all hosts)", *redirect.Hostname)
 	}
-	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[2].Hostname)
+
+	wildcard := byName["https-wildcard"]
+	if wildcard.AllowedRoutes == nil || wildcard.AllowedRoutes.Namespaces.From == nil ||
+		*wildcard.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
+		t.Fatalf("kernel gateway should allow cross-namespace routes, got %v", wildcard.AllowedRoutes)
 	}
-	if gw.Spec.Listeners[0].AllowedRoutes == nil || gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From == nil ||
-		*gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
-		t.Fatalf("kernel gateway should allow cross-namespace routes, got %v", gw.Spec.Listeners[0].AllowedRoutes)
-	}
-	if string(gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
-		t.Fatalf("tls secret = %q", gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name)
+	if string(wildcard.TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
+		t.Fatalf("tls secret = %q", wildcard.TLS.CertificateRefs[0].Name)
 	}
 }
 
@@ -437,8 +458,26 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 	t.Setenv("LLM_SUPPORT", "true")
 	specs := kernelHTTPRouteSpecs("desk.gentian.org", nil, nil, nil)
-	if len(specs) != 5 {
-		t.Fatalf("spec count = %d, want 5 with LLM_SUPPORT=true", len(specs))
+	// 6, not 5: the :80 -> :443 redirect route (kernel-http-redirect) is emitted
+	// alongside the apex and argocd routes. The LLM route is still appended last,
+	// which is what the specs[len-1] lookup below relies on.
+	if len(specs) != 6 {
+		t.Fatalf("spec count = %d, want 6 with LLM_SUPPORT=true", len(specs))
+	}
+	var haveRedirect bool
+	for _, s := range specs {
+		if s.name == kernelRouteHTTPRedirect {
+			haveRedirect = true
+			if s.sectionName != httpRedirectListenerName {
+				t.Fatalf("redirect route sectionName = %q, want %q", s.sectionName, httpRedirectListenerName)
+			}
+			if s.host != "" {
+				t.Fatalf("redirect route host = %q, want empty (match all hosts)", s.host)
+			}
+		}
+	}
+	if !haveRedirect {
+		t.Fatalf("route %q missing from kernel specs", kernelRouteHTTPRedirect)
 	}
 	llmRoute := buildKernelHTTPRoute(specs[len(specs)-1])
 	if llmRoute.Name != kernelRouteLiteLLM {

@@ -13,9 +13,16 @@ ignore: |
   kernel/manifests/flux-crds/
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml
-  kernel/services/openfga/manifests/dev/externalsecret.yaml
-  kernel/services/openfga/manifests/prod/externalsecret.yaml
-  kernel/services/keycloak-idp/manifests/*/theme-configmap.yaml
+  # The appset-managed kernel services are Helm charts; everything under their
+  # templates/ is Go-templated and unparseable by yamllint, exactly like
+  # charts/gentian-os/templates/ above. The per-service dev/ and prod/ entries
+  # that used to be listed here were deleted in that conversion; this pattern
+  # replaces them and covers every service at once, so adding a service does not
+  # require another line here — and does not silently break CI when someone
+  # forgets. Ten services' templates/ appeared unexempted, which failed the lint
+  # job on every commit and, because the docker job depends on it, meant no
+  # operator image was ever published.
+  kernel/services/*/manifests/templates/
   kernel/appsets/templates/
 
 

@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -44,16 +43,16 @@ const (
 	authzRequeueInterval   = 5 * time.Minute
 )
 
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+
 // AuthzBridgeReconciler provisions OpenFGA and syncs Keycloak users into ReBAC tuples.
 // Stage 1 greenfield path — standalone Keycloak only.
-//
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 type AuthzBridgeReconciler struct {
 	client.Client
-	KernelRealm string
-	OpenFGAURL  string
+	KernelRealm  string
+	OpenFGAURL   string
 	OpenFGAToken string
-	Enabled     bool
+	Enabled      bool
 }
 
 func (r *AuthzBridgeReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {

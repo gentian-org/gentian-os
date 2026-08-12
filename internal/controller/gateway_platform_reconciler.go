@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -40,9 +39,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// GatewayPlatformReconciler ensures cluster-scoped Gateway API foundation
-// resources: the shared GatewayClass and kernel-public-gateway.
-//
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gateways/status;httproutes;httproutes/status,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get;list;watch;create;update;patch
 //
@@ -64,6 +60,9 @@ import (
 // could never have worked. list+watch accompany get because the manager's client
 // reads through its cache, so a Get starts an informer that must be able to list.
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;patch
+
+// GatewayPlatformReconciler ensures cluster-scoped Gateway API foundation
+// resources: the shared GatewayClass and kernel-public-gateway.
 type GatewayPlatformReconciler struct {
 	client.Client
 	KernelDomain  string

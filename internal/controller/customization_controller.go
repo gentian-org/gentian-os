@@ -49,6 +49,10 @@ const (
 	customizationResyncInterval = 12 * time.Hour
 )
 
+// +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+
 // CustomizationReconciler computes the derived state behind the customization debt
 // report: whether a record is overdue for review, whether the app it targets has
 // moved underneath it, and whether a cheaper rung has since become available.
@@ -57,10 +61,6 @@ const (
 // the interesting signals — has the chart version drifted past what this record was
 // tested against, does the target still exist — are properties of the live cluster,
 // not of the file.
-//
-// +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 type CustomizationReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

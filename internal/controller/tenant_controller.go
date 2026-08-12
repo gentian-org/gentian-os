@@ -125,8 +125,6 @@ var xTenantGVK = schema.GroupVersionKind{
 	Kind:    "XTenant",
 }
 
-// TenantReconciler reconciles Tenant objects.
-//
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/finalizers,verbs=update
@@ -178,6 +176,8 @@ var xTenantGVK = schema.GroupVersionKind{
 // Object is read for composed-resource status.
 // +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=kubernetes.crossplane.io,resources=objects,verbs=get;list;watch
+
+// TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The

@@ -22,6 +22,7 @@ change in the permission set can.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
 from collections import defaultdict
@@ -128,8 +129,45 @@ def main() -> int:
         )
         return 1
 
+    # An empty check is not enough on its own. controller-gen collects rbac
+    # markers as PACKAGE-level markers, so a marker block absorbed into a
+    # declaration's doc comment — no blank line between the block and the
+    # `type X struct` below it — is silently skipped. Seven of the eight
+    # controllers were in that state, and controller-gen happily emitted a
+    # 4-rule role covering one file while the operator needed 22. That is far
+    # from empty and would have quietly stripped most of the operator's
+    # permissions, which fails as a wedged reconcile with no permission error
+    # anywhere (see the oidcpackcatalogs and endpointslices cases).
+    #
+    # Compare against what is already on disk and refuse a large drop. Genuine
+    # removals happen, so this is overridable, but it has to be deliberate.
+    prev_pairs = 0
+    if OUT.exists():
+        prev = OUT.read_text()
+        if "rules:" in prev:
+            try:
+                prev_rules = yaml.safe_load("rules:\n" + prev.split("rules:", 1)[1])["rules"]
+                prev_pairs = sum(len(r["apiGroups"]) * len(r["resources"]) for r in prev_rules)
+            except Exception:  # noqa: BLE001 — a corrupt previous file must not block regeneration
+                prev_pairs = 0
+
+    pairs = sum(len(r["apiGroups"]) * len(r["resources"]) for r in rules)
+    if prev_pairs and pairs < prev_pairs / 2 and not os.environ.get("GENTIAN_ALLOW_RBAC_SHRINK"):
+        print(
+            f"error: generated role covers {pairs} group/resource pairs, down from "
+            f"{prev_pairs} — a drop this large usually means controller-gen did not "
+            "see the markers rather than that permissions were removed.\n"
+            "  Most likely cause: a +kubebuilder:rbac block sits directly above a "
+            "declaration with no blank line, so it reads as that declaration's doc "
+            "comment. rbac markers are package-level and must be a free-floating "
+            "comment block.\n"
+            "  If the reduction is intended, re-run with GENTIAN_ALLOW_RBAC_SHRINK=1.",
+            file=sys.stderr,
+        )
+        return 1
+
     OUT.write_text(render(rules))
-    print(f"wrote {OUT.relative_to(REPO)} ({len(rules)} rules)")
+    print(f"wrote {OUT.relative_to(REPO)} ({len(rules)} rules, {pairs} group/resource pairs)")
     return 0
 
 

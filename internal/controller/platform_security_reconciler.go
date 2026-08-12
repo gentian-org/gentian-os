@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -39,11 +38,11 @@ const (
 	platformSecurityRequeue        = 5 * time.Minute
 )
 
-// PlatformSecurityPolicyReconciler syncs cluster MAC waiver allowlist to a ConfigMap.
-//
 // +kubebuilder:rbac:groups=gentianos.io,resources=platformsecuritypolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=platformsecuritypolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=platformsecuritypolicies/finalizers,verbs=update
+
+// PlatformSecurityPolicyReconciler syncs cluster MAC waiver allowlist to a ConfigMap.
 type PlatformSecurityPolicyReconciler struct {
 	client.Client
 	OperatorNamespace string
