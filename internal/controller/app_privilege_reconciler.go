@@ -138,6 +138,15 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		}
 	}
 
+	// Forget apps that are no longer installed. A fingerprint left behind by an
+	// uninstalled app still matches unchanged membership, so reinstalling it
+	// would look already-synced and silently come back with no administrators.
+	// Done here rather than in the uninstall path so it self-heals however the
+	// app left — CLI, App Store, or a hand-edited tenant manifest.
+	if err := r.pruneAppPrivilegeFingerprints(ctx, tenant, privilegedApps); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if len(privilegedApps) == 0 {
 		if err := r.markAppPrivilegeRequestProcessed(ctx, tenant); err != nil {
 			return ctrl.Result{}, err
@@ -324,6 +333,34 @@ func (r *TenantReconciler) applySecret(ctx context.Context, desired *corev1.Secr
 	existing.Data = desired.Data
 	existing.StringData = desired.StringData
 	return r.Patch(ctx, existing, patch)
+}
+
+// pruneAppPrivilegeFingerprints drops the recorded fingerprint of every app
+// that is no longer installed on this tenant.
+func (r *TenantReconciler) pruneAppPrivilegeFingerprints(ctx context.Context, tenant *gentianov1alpha1.Tenant, installed []string) error {
+	if len(tenant.Annotations) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(installed))
+	for _, name := range installed {
+		keep[name] = true
+	}
+	orig := tenant.DeepCopy()
+	changed := false
+	for key := range tenant.Annotations {
+		if !strings.HasPrefix(key, appPrivilegeSyncAnnotationPrefix) {
+			continue
+		}
+		if keep[strings.TrimPrefix(key, appPrivilegeSyncAnnotationPrefix)] {
+			continue
+		}
+		delete(tenant.Annotations, key)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.Patch(ctx, tenant, client.MergeFrom(orig))
 }
 
 func (r *TenantReconciler) appPrivilegeSynced(tenant *gentianov1alpha1.Tenant, profileName, fingerprint string) bool {

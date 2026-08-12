@@ -17,10 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -90,5 +93,37 @@ func TestSetCondition_TracksObservedGeneration(t *testing.T) {
 
 	if got := conditionByType(tenant, "AppsReady").ObservedGeneration; got != 9 {
 		t.Fatalf("observedGeneration not refreshed: got %d, want 9", got)
+	}
+}
+
+// A fingerprint left behind by an uninstalled app still matches unchanged
+// membership, so a reinstall would look already-synced and come back with no
+// administrators. Pruning must be driven by what is installed now.
+func TestPruneAppPrivilegeFingerprints_ForgetsUninstalledApps(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "demo"
+	tenant.Annotations = map[string]string{
+		appPrivilegeSyncAnnotationPrefix + "kept-ce":    "fp-1",
+		appPrivilegeSyncAnnotationPrefix + "removed-ce": "fp-2",
+		"gentianos.io/unrelated":                        "keep me",
+	}
+
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy()).Build()
+	r := &TenantReconciler{Client: c}
+
+	if err := r.pruneAppPrivilegeFingerprints(context.Background(), tenant, []string{"kept-ce"}); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	if _, ok := tenant.Annotations[appPrivilegeSyncAnnotationPrefix+"removed-ce"]; ok {
+		t.Errorf("uninstalled app kept its fingerprint; a reinstall would skip provisioning")
+	}
+	if tenant.Annotations[appPrivilegeSyncAnnotationPrefix+"kept-ce"] != "fp-1" {
+		t.Errorf("installed app lost its fingerprint, forcing a needless re-sync")
+	}
+	if tenant.Annotations["gentianos.io/unrelated"] != "keep me" {
+		t.Errorf("pruning touched an unrelated annotation")
 	}
 }

@@ -279,6 +279,17 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Add a delegated-maintainer role to the customization approval matrix and RBAC.
   - `[ ]` Publish the ladder and record schema as an external specification.
 
+### 2.15 Remove LiteLLM Specifics from the Kernel (**)
+* **Target Domain**: Platform Infrastructure
+* **Context**: `internal/controller/app_reconciler.go` and `kernel_gateway_routes.go` hardcode one application: its Service name (`litellm-proxy`), base URL, master-key Secret, and direct calls to its `/key/generate` and `/key/info` HTTP API. This is the same class of boundary violation as the per-app privileged-role provisioner removed in §6h of the app-profile-guide — an application the kernel recognises by name is an application the kernel must be modified to support. LiteLLM is genuinely dual-natured, which is why this was never obviously wrong: it runs as a kernel singleton from `kernel/services/llm/`, and *also* ships a `litellm-me` catalogue profile. The kernel may know its own services; it must not know catalogue entries.
+* **Proposed Solution**: Decide which LiteLLM is — kernel service or catalogue app — and make the code say so. If it is a kernel service, express it the way the other kernel services are (discovered configuration rather than compiled-in constants, in the same shape as SMTP/S3/Keycloak endpoints) so a cluster can run a different LLM gateway or none. If it is a catalogue app, the virtual-key provisioning belongs in its profile via the generic `spec.provisioning.syncJob` mechanism, and the kernel keeps only the generic credential plumbing.
+* **Backlog Items**:
+  - `[ ]` Classify LiteLLM as kernel service or catalogue app and record the decision in `architecture.md`.
+  - `[ ]` Replace the `litellmProxy*`/`litellmMasterKey*` constants with values resolved from kernel service configuration (as `${S3_ENDPOINT}` and friends already are).
+  - `[ ]` Move virtual-key issuance (`/key/generate`, `/key/info`) out of the operator — to the app's own profile if it is a catalogue app, or behind a named kernel-service interface if it is not.
+  - `[ ]` Drop the app-catalogue `litellm` special-case in `kernel_gateway_routes.go`.
+  - `[ ]` Add a CI check that fails when a catalogue app name appears in gentian-os source, so this class of drift is caught rather than reviewed for.
+
 ---
 
 ## 3. User Management & Shell UI

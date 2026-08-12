@@ -413,6 +413,24 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 			PropagationPolicy: ptr(metav1.DeletePropagationBackground),
 		})
 	}
+	// Jobs the operator creates directly in the tenant namespace (the app-admins
+	// sync among them) have no owner that Crossplane deletes with the App claim,
+	// so sweeping only the kernel namespace left them behind — and a finished
+	// Job's pod keeps its logs and its mounted member list with it.
+	tenantJobs, err := s.clientset.BatchV1().Jobs(tenantNamespace(tenant)).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("list tenant jobs: %v", err))
+	} else {
+		for _, job := range tenantJobs.Items {
+			if err := s.clientset.BatchV1().Jobs(tenantNamespace(tenant)).
+				Delete(ctx, job.Name, metav1.DeleteOptions{
+					PropagationPolicy: ptr(metav1.DeletePropagationBackground),
+				}); err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete tenant job %s: %v", job.Name, err))
+			}
+		}
+	}
 	secrets, err := s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("list kernel secrets: %v", err))

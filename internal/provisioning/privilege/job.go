@@ -27,6 +27,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
@@ -152,8 +153,8 @@ func SyncJob(
 					Labels: podLabels,
 					Annotations: map[string]string{
 						FingerprintAnnotation: fingerprint,
-						"gentianos.io/app":    app,
-						"gentianos.io/tenant": tenant,
+						meta.AppLabel:         app,
+						meta.TenantLabel:      tenant,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -244,11 +245,14 @@ func FailureMessage(job *batchv1.Job) string {
 	return fmt.Sprintf("%d attempt(s) failed", job.Status.Failed)
 }
 
+// labels must stay exactly the selector the uninstall purge sweeps with
+// (applifecycle.purgeClusterArtifacts), or these objects outlive the app they
+// belong to. Shared constants rather than literals so the two cannot drift.
 func labels(tenant, app string) map[string]string {
 	return map[string]string{
-		"app.kubernetes.io/managed-by": "gentian-os",
-		"gentianos.io/tenant":          tenant,
-		"gentianos.io/app":             app,
+		meta.ManagedByLabel: meta.ManagedByValue,
+		meta.TenantLabel:    tenant,
+		meta.AppLabel:       app,
 	}
 }
 
