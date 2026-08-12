@@ -62,6 +62,17 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: gentian-system
+      # Only ever list fields the API server *adds by itself*, i.e. fields with a
+      # CRD default. Those appear on the live object without being in git, so
+      # without this every profile diffs forever.
+      #
+      # Never list a field a profile is meant to set. Argo does not just tolerate
+      # a difference here — it stops seeing one, reports Synced, and silently
+      # never applies the value. .spec.kernelRequirements.database.allowDynamicDatabaseCreation
+      # was in this list and became unsettable the moment it did something:
+      # Mathesar declared it, Argo reported Synced, the field never reached the
+      # cluster, and creating a database failed with "permission denied to
+      # create database". It has no CRD default and never belonged here.
       ignoreDifferences:
       - group: gentianos.io
         kind: AppProfile
@@ -70,9 +81,11 @@ spec:
       - group: gentianos.io
         kind: AppProfile
         jqPathExpressions:
+        # Reserved and ignored by the operator today (guide §5a), so a profile
+        # setting it changes nothing either way.
         - .spec.ingress.clusterIssuer
-        - .spec.kernelRequirements.database.allowDynamicDatabaseCreation
         - .spec.additionalIngresses[]?.clusterIssuer
+        # Genuine CRD defaults: forward-bearer and true.
         - .spec.browserProxy[]?.authMode
         - .spec.browserProxy[]?.stripPrefix
       syncPolicy:
