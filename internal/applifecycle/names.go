@@ -30,6 +30,19 @@ func dbRoleName(tenant, app string) string {
 	return strings.ReplaceAll(tenant, "-", "_") + "_" + strings.ReplaceAll(app, "-", "_")
 }
 
+// pgRoleName returns the PostgreSQL login role for a tenant + app. It mirrors
+// roleUserName in the database reconciler, which joins the names verbatim: the
+// *database* has hyphens replaced to satisfy identifier rules, the *role* does
+// not, so "docmost-ce" owns database demo_docmost_ce as role demo_docmost-ce.
+//
+// Purge used one name for both. DROP DATABASE happened to match, DROP ROLE
+// never did, so every purged app left its login role behind -- and the
+// ownership lookup that finds databases the app created at runtime searched
+// under a role that does not exist, stranding those too.
+func pgRoleName(tenant, app string) string {
+	return tenant + "_" + app
+}
+
 func databaseName(tenant *gentianov1alpha1.Tenant, app string) string {
 	prefix := tenant.Name + "_"
 	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.DatabasePrefix != "" {

@@ -68,7 +68,7 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 	}
 	switch dbEngine {
 	case gentianov1alpha1.DatabaseEnginePostgreSQL:
-		warnings = append(warnings, s.purgePostgres(ctx, tenant.Name, app)...)
+		warnings = append(warnings, s.purgePostgres(ctx, tenant, app)...)
 	case gentianov1alpha1.DatabaseEngineMariaDB:
 		warnings = append(warnings, s.runMariaDBDeleteJob(ctx, tenant, app)...)
 	case "":
@@ -118,8 +118,11 @@ func sidecarNames(profile *gentianov1alpha1.AppProfile) []string {
 	return out
 }
 
-func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []string {
-	dbName := dbRoleName(tenant, app)
+func (s *Service) purgePostgres(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
+	// The database and the role are named differently -- see pgRoleName -- and
+	// conflating them meant the role always survived a purge.
+	dbName := databaseName(tenant, app)
+	roleName := pgRoleName(tenant.Name, app)
 	pod, err := s.postgresPod(ctx)
 	if err != nil || pod == "" {
 		return []string{fmt.Sprintf("Postgres pod not found; skipped purge for %s", dbName)}
@@ -130,9 +133,9 @@ func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []strin
 	// the shared cluster under a role nobody can log in as any more. Ownership
 	// is the join: CREATE DATABASE makes the creating role the owner, so this
 	// finds them without the platform having to track names it never chose.
-	extra, err := s.databasesOwnedBy(ctx, pod, dbName)
+	extra, err := s.databasesOwnedBy(ctx, pod, roleName)
 	if err != nil {
-		return []string{fmt.Sprintf("Postgres purge could not list databases owned by %s: %v", dbName, err)}
+		return []string{fmt.Sprintf("Postgres purge could not list databases owned by %s: %v", roleName, err)}
 	}
 
 	var statements []string
@@ -145,7 +148,13 @@ func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []strin
 	statements = append(statements,
 		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", dbName),
 		fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, dbName),
-		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, dbName),
+		// Anything the role still owns outside its own databases would block
+		// the drop and strand the role; DROP OWNED clears those grants first.
+		// Guarded because DROP OWNED errors on a missing role, and purge has to
+		// stay re-runnable -- it is retried whenever an uninstall is repeated.
+		fmt.Sprintf(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') `+
+			`THEN EXECUTE 'DROP OWNED BY "%s"'; END IF; END $$;`, roleName, roleName),
+		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, roleName),
 	)
 
 	for _, sql := range statements {
