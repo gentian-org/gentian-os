@@ -2683,7 +2683,15 @@ case "${SUBCOMMAND}" in
   tenant|tenants)
     TENANT_CMD="${1:-}"
     shift || true
-    TENANT_ENV="dev"
+    # The stage the tenant subcommands report and commit, overridden by --env.
+    #
+    # This was a bare `TENANT_ENV="dev"`, and because the dispatcher passes it
+    # positionally (cmd_tenant_deploy "$TENANT_INSTANCE" "$TENANT_ENV") it always
+    # won over the ${2:-${DEPLOYMENTS_STAGE}} defaults inside those functions —
+    # so fixing them alone changed nothing visible. A prod cluster still logged
+    # "Applying tenant desired state for 'dev'" and committed "undeploy tenant
+    # instance from dev" to the deployments repo, which is the audit trail.
+    TENANT_ENV="${DEPLOYMENTS_STAGE}"
     case "${TENANT_CMD}" in
       list)
         while [[ $# -gt 0 ]]; do
