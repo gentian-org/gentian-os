@@ -893,15 +893,29 @@ func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condTyp
 	now := metav1.Now()
 	for i, c := range tenant.Status.Conditions {
 		if c.Type == condType {
-			if c.Status == status && c.Reason == reason {
-				return
+			// Message and observedGeneration are refreshed even when status and
+			// reason are unchanged. Returning early here froze the first
+			// failure's text in place for as long as the condition kept the same
+			// status/reason pair: an app whose sync first failed with
+			// "connection refused" and later failed with a connect timeout went
+			// on reporting the original error indefinitely, pointing whoever was
+			// debugging at a problem that had already been fixed.
+			//
+			// lastTransitionTime still marks a change of *status* only, per the
+			// Kubernetes API conventions — reason and message churn while a
+			// condition legitimately stays False, and treating that as a
+			// transition would destroy the "how long has this been broken"
+			// signal that makes the field worth having.
+			transition := c.LastTransitionTime
+			if c.Status != status {
+				transition = now
 			}
 			tenant.Status.Conditions[i] = metav1.Condition{
 				Type:               condType,
 				Status:             status,
 				Reason:             reason,
 				Message:            message,
-				LastTransitionTime: now,
+				LastTransitionTime: transition,
 				ObservedGeneration: tenant.Generation,
 			}
 			return
