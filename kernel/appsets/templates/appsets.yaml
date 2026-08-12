@@ -8,5 +8,7 @@
 */ -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
 ---
-{{ $.Files.Get $path | replace "env: dev" (printf "env: %s" $.Values.stage) }}
+{{ $.Files.Get $path
+     | replace "env: dev" (printf "env: %s" $.Values.stage)
+     | replace "kernel.domain.placeholder" $.Values.kernelDomain }}
 {{- end }}

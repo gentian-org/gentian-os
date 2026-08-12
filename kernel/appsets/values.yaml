@@ -2,3 +2,8 @@
 # raw/*.yaml ApplicationSet gets rewritten to. Set via --set stage=<value>
 # (root-applicationset.yaml.tmpl passes it from ${GENTIAN_DEPLOYMENTS_STAGE}).
 stage: dev
+
+# kernelDomain replaces the "kernel.domain.placeholder" literal carried by
+# raw/*.yaml, so per-service charts can render values that depend on the
+# cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.
+kernelDomain: ""

@@ -43,6 +43,12 @@ spec:
       parameters:
       - name: stage
         value: "${GENTIAN_DEPLOYMENTS_STAGE}"
+      # Reaches the per-service charts through kernel/appsets, which rewrites
+      # the kernel.domain.placeholder literal in raw/*.yaml. Postfix needs it
+      # for ALLOWED_SENDER_DOMAINS; without a real value it rejects every
+      # recipient with 554 "Access denied".
+      - name: kernelDomain
+        value: "${KERNEL_DOMAIN}"
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

@@ -53,6 +53,11 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
+            # Postfix renders ALLOWED_SENDER_DOMAINS from this. It is rewritten
+            # from the literal below by kernel/appsets/templates/appsets.yaml,
+            # the same mechanism that rewrites "env: dev".
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
           # Only stages that genuinely differ carry a values file; the rest
           # inherit the chart defaults.
           valueFiles:

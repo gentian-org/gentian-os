@@ -38,8 +38,18 @@ data:
     config:
       general:
         TZ: "UTC"
-        # Placeholder — patched from KERNEL_DOMAIN by scripts/mail-lib.sh on install/update.
-        ALLOWED_SENDER_DOMAINS: "example.domain"
+        # Rendered from the cluster's kernel domain, NOT patched in afterwards.
+        #
+        # This used to ship the literal "example.domain" for scripts/mail-lib.sh
+        # to kubectl-patch on install. That ConfigMap is Argo CD-managed with
+        # selfHeal, so the patch was reverted to the placeholder on the next
+        # sync. The failure is severe and silent: the bokysan chart builds
+        # smtpd_recipient_restrictions ending in a bare `reject`, permitting only
+        # senders listed in /etc/postfix/allowed_senders, so with the placeholder
+        # in place Postfix answered EVERY recipient with
+        #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
+        # and no invite or password-reset mail could leave the cluster.
+        ALLOWED_SENDER_DOMAINS: "{{ .Values.kernelDomain | default "example.domain" }}"
       postfix:
         myhostname: postfix-{{ .Values.env }}
 ---

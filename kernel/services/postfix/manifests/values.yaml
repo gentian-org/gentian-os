@@ -4,3 +4,9 @@ env: dev
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
+
+# Supplied by the ApplicationSet (helm.parameters), which receives it from the
+# root ApplicationSet. Empty falls back to the upstream placeholder, which
+# rejects all mail — deliberately visible rather than silently accepting
+# from an unintended domain.
+kernelDomain: ""
