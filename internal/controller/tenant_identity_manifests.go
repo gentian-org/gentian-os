@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -51,6 +53,12 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
 	}
+	stampScriptHashes(jobs)
+	// A Job's pod template is immutable, so re-applying a changed script does
+	// nothing to a Job that already ran: the old script stays the last thing
+	// that touched the cluster, silently. Retire the finished ones whose script
+	// has changed and let Crossplane recreate them from the manifests below.
+	r.retireStaleProvisioningJobs(ctx, jobs)
 	jobsPayload, err := serializeProvisioningJobs(jobs)
 	if err != nil {
 		return fmt.Errorf("serialize tenant provisioning jobs: %w", err)
@@ -311,7 +319,7 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 
 func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) (string, error) {
 	type groupSpec struct {
-		Name       string            `json:"name"`
+		Name       string              `json:"name"`
 		Attributes map[string][]string `json:"attributes"`
 	}
 
@@ -400,4 +408,60 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 		return "", fmt.Errorf("failed to marshal groups JSON: %w", err)
 	}
 	return string(data), nil
+}
+
+// provisioningScriptHashAnnotation records which script a provisioning Job was
+// built from, so a finished Job can be told apart from one whose desired script
+// has since changed.
+const provisioningScriptHashAnnotation = "gentianos.io/script-hash"
+
+// scriptHash digests what a Job actually executes. Only the image and the
+// command line are hashed — env values (a freshly generated ROLE_PW among them)
+// change on every reconcile and would make every Job look permanently stale.
+func scriptHash(job *batchv1.Job) string {
+	h := sha256.New()
+	for _, c := range job.Spec.Template.Spec.Containers {
+		h.Write([]byte(c.Image))
+		for _, part := range append(append([]string{}, c.Command...), c.Args...) {
+			h.Write([]byte(part))
+			h.Write([]byte{0})
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func stampScriptHashes(jobs []batchv1.Job) {
+	for i := range jobs {
+		if jobs[i].Annotations == nil {
+			jobs[i].Annotations = map[string]string{}
+		}
+		jobs[i].Annotations[provisioningScriptHashAnnotation] = scriptHash(&jobs[i])
+	}
+}
+
+// retireStaleProvisioningJobs deletes finished provisioning Jobs whose script no
+// longer matches the desired one, so they are re-created and re-run.
+//
+// Only finished Jobs are touched: a running one is either about to converge
+// anyway or is being watched by a reconcile that expects it to exist. Jobs
+// predating this annotation are treated as stale, which re-runs them once —
+// safe, because every provisioning script here is written to be re-runnable.
+func (r *TenantReconciler) retireStaleProvisioningJobs(ctx context.Context, jobs []batchv1.Job) {
+	for i := range jobs {
+		desired := jobs[i].Annotations[provisioningScriptHashAnnotation]
+		live := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name: jobs[i].Name, Namespace: kernelNamespace,
+		}, live); err != nil {
+			continue
+		}
+		if live.Annotations[provisioningScriptHashAnnotation] == desired {
+			continue
+		}
+		if live.Status.Succeeded == 0 && live.Status.Failed == 0 {
+			continue
+		}
+		prop := metav1.DeletePropagationBackground
+		_ = r.Delete(ctx, live, &client.DeleteOptions{PropagationPolicy: &prop})
+	}
 }
