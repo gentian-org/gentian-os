@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -25,6 +24,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
@@ -32,7 +33,10 @@ import (
 )
 
 const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
-const tenantSMTPVersion = "2"
+
+// Bumped whenever buildTenantSMTPConfigureScript changes in a way that must
+// reach realms already configured; replaceOutdatedTenantSMTPJob acts on it.
+const tenantSMTPVersion = "3"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
@@ -60,6 +64,14 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}")
+# The kernel Postfix accepts relaying from inside the cluster by mynetworks and
+# advertises no AUTH mechanism, so asking Keycloak to authenticate against it
+# fails outright. Only the external relay expects credentials.
+if [ "${MAIL_SERVICE_MODE:-external}" = "kernel" ]; then
+  SMTP_AUTH="false"
+else
+  SMTP_AUTH="true"
+fi
 SMTP_JSON=$(jq -n \
   --arg host "${SMTP_HOST}" \
   --arg port "${SMTP_PORT}" \
@@ -68,17 +80,19 @@ SMTP_JSON=$(jq -n \
   --arg pass "${SMTP_PASSWORD}" \
   --arg ssl "${SMTP_SSL}" \
   --arg starttls "${SMTP_STARTTLS}" \
+  --arg auth "${SMTP_AUTH}" \
   '{
     host: $host,
     port: $port,
     from: $from,
     fromDisplayName: "Gentian",
-    auth: "true",
-    user: $user,
-    password: $pass,
+    auth: $auth,
     ssl: $ssl,
     starttls: $starttls
-  }')
+  }
+  # Keycloak keeps a stored user/password even when auth is off and will try to
+  # use them again if auth is ever flipped back on; omit them entirely instead.
+  + (if $auth == "true" then {user: $user, password: $pass} else {} end)')
 UPDATED=$(printf '%%s' "${REALM_JSON}" | jq --argjson smtp "${SMTP_JSON}" '.smtpServer = $smtp')
 curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}" \
   -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
@@ -89,6 +103,8 @@ echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
 
 func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	// Older installs predate the mail_service_mode key in the SMTP secret.
+	optionalKey := true
 	c := keycloakContainer("tenant-smtp", buildTenantSMTPConfigureScript(fmt.Sprintf("%q", realmName)))
 	c.Env = append(c.Env,
 		corev1.EnvVar{
@@ -163,14 +179,33 @@ func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
 				},
 			},
 		},
+		corev1.EnvVar{
+			// Decides whether Keycloak authenticates to the SMTP host. The
+			// kernel Postfix is reachable only inside the cluster and permits
+			// relaying by mynetworks, so it runs with smtpSASLAuthEnable "no"
+			// and advertises no AUTH at all. Keycloak was told auth=true
+			// unconditionally and could not authenticate against a server that
+			// offers no mechanism, so every invite failed with "Failed to send
+			// execute actions email".
+			Name: "MAIL_SERVICE_MODE",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: keycloakSMTPCredentialsSecret},
+					Key:                  "mail_service_mode",
+					// Older installs predate this key; default to the external
+					// relay behaviour rather than failing the Job.
+					Optional: &optionalKey,
+				},
+			},
+		},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantSMTPJobName(tenantName),
 			Namespace: kernelNamespace,
 			Labels: map[string]string{
-				tenantLabel:                        tenantName,
-				managedByLabel:                     managedByValue,
+				tenantLabel:                         tenantName,
+				managedByLabel:                      managedByValue,
 				"gentianos.io/keycloak-tenant-smtp": tenantSMTPVersion,
 			},
 		},
@@ -203,5 +238,36 @@ func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gent
 	if err != nil || !realmDone {
 		return false, err
 	}
+	if err := r.replaceOutdatedTenantSMTPJob(ctx, tenant.Name); err != nil {
+		return false, err
+	}
 	return r.waitForProvisioningJob(ctx, tenant.Name, tenantSMTPJobName(tenant.Name))
+}
+
+// replaceOutdatedTenantSMTPJob deletes a completed SMTP Job that was created by
+// an older version of the configure script, so the current one runs.
+//
+// tenantSMTPVersion was stamped onto the Job as a label but nothing ever read
+// it: waitForProvisioningJob only recreates a Job that FAILED or is absent, and
+// a Job's spec is immutable once created. So a script change — such as no
+// longer asking Keycloak to authenticate against the kernel Postfix — reached
+// new tenants only, while every existing realm kept whatever the first run
+// wrote. The label now decides, which is what it was there for.
+func (r *TenantReconciler) replaceOutdatedTenantSMTPJob(ctx context.Context, tenantName string) error {
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: tenantSMTPJobName(tenantName), Namespace: kernelNamespace}, job)
+	if err != nil {
+		// Absent is the normal path; waitForProvisioningJob creates it.
+		return client.IgnoreNotFound(err)
+	}
+	if job.Labels["gentianos.io/keycloak-tenant-smtp"] == tenantSMTPVersion {
+		return nil
+	}
+	prop := metav1.DeletePropagationBackground
+	if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	log.FromContext(ctx).Info("replaced outdated tenant SMTP job",
+		"tenant", tenantName, "had", job.Labels["gentianos.io/keycloak-tenant-smtp"], "want", tenantSMTPVersion)
+	return nil
 }

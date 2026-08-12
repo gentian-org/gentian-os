@@ -131,7 +131,16 @@ config:
     myhostname: postfix-${ENV:-dev}
     virtual_transport: "lmtp:[${dovecot_host}]:24"
     virtual_mailbox_domains: "${domains}"
-    virtual_mailbox_maps: "lmdb:/etc/postfix/virtual_mailbox_maps"
+    # texthash:, not lmdb:. The map is a ConfigMap mounted read-only, so it is
+    # plain text that can never be compiled — lmdb: made Postfix look for
+    # /etc/postfix/virtual_mailbox_maps.lmdb, log
+    #   error: open database /etc/postfix/virtual_mailbox_maps.lmdb: No such file
+    # and then reject every recipient in a virtual domain with
+    #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
+    # since a virtual_mailbox_domain whose map cannot be read has no valid
+    # addresses at all. texthash: reads the file directly at lookup time and
+    # needs no postmap run, which is what a read-only mount requires.
+    virtual_mailbox_maps: "texthash:/etc/postfix/virtual_mailbox_maps"
 
 extraVolumes:
   - name: postfix-virtual-mailbox-maps
@@ -167,14 +176,28 @@ _sync_kernel_postfix_virtual_mailbox_maps() {
     ns="$(_mail_kernel_namespace)"
     domains="$(_postfix_kernel_virtual_domains)"
 
+    # The ConfigMap is created even with no domains yet, deliberately.
+    #
+    # It used to return early here, but the Helm values mount it
+    # UNCONDITIONALLY (extraVolumes -> configMap: postfix-kernel-virtual-mailbox-maps).
+    # On a fresh cluster no tenant has registered a mail domain, so the map was
+    # skipped, the volume could not be mounted, and Postfix sat in
+    # ContainerCreating forever:
+    #
+    #   FailedMount (x901 over 30h): configmap
+    #   "postfix-kernel-virtual-mailbox-maps" not found
+    #
+    # Nothing re-runs this when a tenant later registers a domain, so the kernel
+    # mail stack stayed dead until someone noticed and re-ran the installer.
+    # An empty map is valid: Postfix starts, serves no virtual mailboxes yet,
+    # and picks up domains the next time this runs.
     if [[ -z "${domains}" ]]; then
-        info "  No tenant mail domains registered yet — skipping virtual_mailbox_maps"
-        return 0
+        info "  No tenant mail domains registered yet — writing an empty virtual_mailbox_maps"
+    else
+        for d in ${domains}; do
+            map_lines+="@${d} ${d}/"$'\n'
+        done
     fi
-
-    for d in ${domains}; do
-        map_lines+="@${d} ${d}/"$'\n'
-    done
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         info "  [dry-run] Would create ConfigMap postfix-kernel-virtual-mailbox-maps"
@@ -186,7 +209,7 @@ _sync_kernel_postfix_virtual_mailbox_maps() {
         --from-literal=virtual_mailbox_maps="${map_lines}" \
         --dry-run=client -o yaml \
         | kubectl apply -f - >/dev/null
-    success "  synced postfix-kernel-virtual-mailbox-maps for: ${domains}"
+    success "  synced postfix-kernel-virtual-mailbox-maps for: ${domains:-<none yet>}"
 }
 
 # Align the live postfix-${ENV:-dev} pod env with the desired relay mode.
