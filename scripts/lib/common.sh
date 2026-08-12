@@ -1488,7 +1488,14 @@ apply_bootstrap_application() {
             error "  resolve_storage_class() should have set it during pre-flight."
             exit 1
         fi
-        envsubst "\${STORAGE_CLASS}" < "${base}.yaml.tmpl" | kubectl apply -f -
+        if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
+            error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}-application.yaml.tmpl."
+            exit 1
+        fi
+        # Allowlisted, not a bare envsubst: these templates also contain Argo CD
+        # and Helm expressions such as $values, which a substitute-everything run
+        # would silently blank.
+        envsubst "\${STORAGE_CLASS} \${GENTIAN_DEPLOYMENTS_STAGE}" < "${base}.yaml.tmpl" | kubectl apply -f -
     else
         kubectl apply -f "${base}.yaml"
     fi

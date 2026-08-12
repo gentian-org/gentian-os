@@ -7,6 +7,20 @@
 #   - 02-external-secrets.yaml  (ESO must be running for ExternalSecrets to sync)
 #   - globals-application.yaml  (ClusterSecretStore/openbao must exist)
 #
+# The name and path are rendered from GENTIAN_DEPLOYMENTS_STAGE. Both were the
+# literal "dev", so every cluster — whatever its stage — got the dev manifests.
+# Those carry the shared-infra ExternalSecrets, whose hosts are stage-qualified:
+#
+#   redis-dev-master.gentian-infra-dev.svc.cluster.local
+#   gentian-mariadb-dev.gentian-infra-dev...
+#   minio-dev.gentian-infra-dev...
+#
+# On a prod cluster none of those names resolve, so redis-admin, mariadb-admin
+# and minio-admin pointed at services that do not exist. The failure is
+# indirect: the Redis ACL Job for a tenant app crash-loops on "Name does not
+# resolve", the app's cache user is never created, and an app using Redis for
+# sessions — Nextcloud does — serves static pages but 500s on login.
+#
 # Managed resources:
 #   platform-kernel/Cluster/postgres
 #   platform-kernel/ExternalSecret/cnpg-superuser  → Secret/cnpg-superuser
@@ -14,7 +28,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cnpg-cluster-dev
+  name: cnpg-cluster-${GENTIAN_DEPLOYMENTS_STAGE}
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "14"   # after infra (wave 12–13), before kernel services (wave 30+)
@@ -25,7 +39,7 @@ spec:
   source:
     repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: develop
-    path: kernel/services/postgresql/manifests/dev
+    path: kernel/services/postgresql/manifests/${GENTIAN_DEPLOYMENTS_STAGE}
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel
