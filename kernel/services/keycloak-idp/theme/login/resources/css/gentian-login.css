@@ -76,6 +76,101 @@ body.gentian-login label {
   color: var(--gtn-ink-1);
 }
 
+/* Form controls on the screens this theme does not template.
+ *
+ * Ported from the portal's .gentian-login__input (gentian-ui
+ * frontend/src/styles/shell.css) so an OTP prompt or a password-update screen
+ * looks like the login card rather than like PatternFly. Without this they keep
+ * keycloak.v2's own control styling, which is built for its dark chrome: on this
+ * light paper background the fields read as heavy dark blocks.
+ *
+ * Both PatternFly prefixes are matched, plus bare element selectors, because the
+ * templates this theme inherits are not fixed — keycloak.v2 tracks the Keycloak
+ * release, and a screen may use a plain <input> or a pf-styled one.
+ */
+/* :not() excludes the login card's own controls. These selectors are more
+ * specific than .gentian-login__input, so without it they would take over the
+ * templated screens too — invisibly today, because the values are ported from
+ * that rule, but any later change to the card would stop having an effect. */
+body.gentian-login input[type="text"]:not([class*="gentian-login__"]),
+body.gentian-login input[type="email"]:not([class*="gentian-login__"]),
+body.gentian-login input[type="password"]:not([class*="gentian-login__"]),
+body.gentian-login input[type="number"]:not([class*="gentian-login__"]),
+body.gentian-login input[type="tel"]:not([class*="gentian-login__"]),
+body.gentian-login input[type="url"]:not([class*="gentian-login__"]),
+body.gentian-login select:not([class*="gentian-login__"]),
+body.gentian-login textarea:not([class*="gentian-login__"]),
+body.gentian-login .pf-c-form-control,
+body.gentian-login .pf-v5-c-form-control,
+body.gentian-login .pf-v5-c-form-control > input,
+body.gentian-login .pf-v5-c-form-control > select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--gtn-border);
+  border-radius: var(--gtn-r1);
+  font: inherit;
+  font-size: 15px;
+  color: var(--gtn-ink-1);
+  background: var(--gtn-paper-3);
+  box-sizing: border-box;
+  /* PatternFly draws its field affordance as a bottom border and its own
+   * background image; both fight the flat card look. */
+  background-image: none;
+  box-shadow: none;
+}
+
+body.gentian-login input:not([class*="gentian-login__"]):focus,
+body.gentian-login select:not([class*="gentian-login__"]):focus,
+body.gentian-login textarea:not([class*="gentian-login__"]):focus,
+body.gentian-login .pf-c-form-control:focus,
+body.gentian-login .pf-v5-c-form-control:focus-within {
+  outline: none;
+  box-shadow: var(--gtn-focus-ring);
+  border-color: var(--gtn-400);
+}
+
+body.gentian-login input::placeholder,
+body.gentian-login textarea::placeholder {
+  color: var(--gtn-ink-2);
+  opacity: 0.55;
+}
+
+/* Buttons, matching .gentian-login__btn. PatternFly's primary is its own blue,
+ * which is the one colour on these screens that is unmistakably not Gentian. */
+body.gentian-login .pf-c-button.pf-m-primary,
+body.gentian-login .pf-v5-c-button.pf-m-primary,
+body.gentian-login input[type="submit"]:not([class*="gentian-login__"]),
+body.gentian-login button[type="submit"]:not([class*="gentian-login__"]) {
+  padding: 10px 24px;
+  background: var(--gtn-500);
+  color: #fff;
+  border: none;
+  border-radius: var(--gtn-r1);
+  font-family: var(--gtn-font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+body.gentian-login .pf-c-button.pf-m-primary:hover,
+body.gentian-login .pf-v5-c-button.pf-m-primary:hover,
+body.gentian-login input[type="submit"]:not([class*="gentian-login__"]):hover,
+body.gentian-login button[type="submit"]:not([class*="gentian-login__"]):hover {
+  background: var(--gtn-600);
+}
+
+/* Secondary / link buttons keep the brand colour rather than PatternFly blue. */
+body.gentian-login .pf-c-button.pf-m-secondary,
+body.gentian-login .pf-v5-c-button.pf-m-secondary,
+body.gentian-login .pf-c-button.pf-m-link,
+body.gentian-login .pf-v5-c-button.pf-m-link {
+  color: var(--gtn-500);
+  background: transparent;
+  border: 1px solid var(--gtn-border);
+  border-radius: var(--gtn-r1);
+  font-family: var(--gtn-font-sans);
+}
+
 /* Links need to stay distinguishable from body text, and "sign out first"
  * screens are mostly a message plus a link. */
 body.gentian-login a {
