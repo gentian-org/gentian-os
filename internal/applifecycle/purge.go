@@ -431,6 +431,24 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 			}
 		}
 	}
+	// Pods outlive their Job when whatever deleted the Job did not cascade —
+	// Crossplane removing the wrapping Object for a post-install Job orphans its
+	// pods exactly this way, so a purged app left completed pods sitting in the
+	// namespace with their logs and mounted config. Sweeping by the app selector
+	// catches them whatever orphaned them; live pods of the app itself are gone
+	// with the Helm release long before this runs.
+	tenantPods, err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("list tenant pods: %v", err))
+	} else {
+		for _, pod := range tenantPods.Items {
+			if err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+				Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete tenant pod %s: %v", pod.Name, err))
+			}
+		}
+	}
 	secrets, err := s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("list kernel secrets: %v", err))
