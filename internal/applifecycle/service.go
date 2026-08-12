@@ -131,12 +131,26 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 			if err := s.provisionAppGroupUsers(ctx, req.Tenant, req.Profile); err != nil {
 				return nil, fmt.Errorf("failed to provision users: %w", err)
 			}
+			// Readiness is the app's, not this call's. Granting group access
+			// says nothing about whether the workload is running, and reporting
+			// Ready unconditionally here told the user "X is ready" while the
+			// app list — correctly — still showed it installing.
+			ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
+			if err != nil {
+				return nil, err
+			}
+			if !ready && msg == "" {
+				msg = "Access granted — the application is still starting"
+			}
+			if ready {
+				msg = "All existing users successfully added to the application access group."
+			}
 			return &Result{
 				Status:  "provisioned",
 				Tenant:  req.Tenant,
 				Profile: req.Profile,
-				Ready:   true,
-				Message: "All existing users successfully added to the application access group.",
+				Ready:   ready,
+				Message: msg,
 			}, nil
 		}
 		ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
