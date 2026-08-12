@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -23,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,20 +33,22 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/provisioning/mathesar"
 	"github.com/gentian-org/gentian-os/internal/provisioning/privilege"
 )
 
 const (
 	conditionAppPrivilegesReady = "AppPrivilegesReady"
 	appPrivilegeRequeueAfter    = 5 * time.Minute
+	// Cadence while an app's sync Job is still running, as opposed to the idle
+	// re-check above.
+	appPrivilegeJobPollAfter = 10 * time.Second
 
 	// appPrivilegeRequestedAtAnnotation is set by the Admin Console BFF when
 	// gentian:tenant:<t>:app-admins membership changes. The operator clears
 	// per-app sync fingerprints while requested != processed.
-	appPrivilegeRequestedAtAnnotation  = "gentianos.io/app-privilege-requested-at"
-	appPrivilegeProcessedAtAnnotation  = "gentianos.io/app-privilege-processed-at"
-	appPrivilegeSyncAnnotationPrefix   = "gentianos.io/app-privilege-sync-"
+	appPrivilegeRequestedAtAnnotation = "gentianos.io/app-privilege-requested-at"
+	appPrivilegeProcessedAtAnnotation = "gentianos.io/app-privilege-processed-at"
+	appPrivilegeSyncAnnotationPrefix  = "gentianos.io/app-privilege-sync-"
 )
 
 // ensureAppPrivileges maps gentian:tenant:<t>:app-admins members into each
@@ -83,6 +85,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 
 	var privilegedApps []string
 	syncFailed := false
+	syncPending := false
 	for _, app := range tenant.Spec.Apps {
 		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
 		if err != nil {
@@ -115,10 +118,19 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			continue
 		}
 
-		if err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members); err != nil {
+		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, fingerprint)
+		if err != nil {
 			syncFailed = true
 			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
 				"SyncFailed", fmt.Sprintf("%s: %s", profileName, err.Error()))
+			continue
+		}
+		if !done {
+			// The Job is still running. Only a completed run may record the
+			// fingerprint, or a crashed sync would be remembered as applied.
+			syncPending = true
+			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
+				"Syncing", fmt.Sprintf("Applying app administrators to %s", profileName))
 			continue
 		}
 		if err := r.persistAppPrivilegeFingerprint(ctx, tenant, profileName, fingerprint); err != nil {
@@ -136,6 +148,11 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 	}
 	if syncFailed {
 		return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
+	}
+	if syncPending {
+		// Come back sooner than the idle cadence: a Job that takes seconds
+		// should not leave the tenant reporting "Syncing" for five minutes.
+		return ctrl.Result{RequeueAfter: appPrivilegeJobPollAfter}, nil
 	}
 	if err := r.markAppPrivilegeRequestProcessed(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
@@ -214,6 +231,14 @@ func (r *TenantReconciler) loadKeycloakAdmin(ctx context.Context) (url, user, pa
 	return url, user, pass, nil
 }
 
+// syncAppPrivilegedRole applies app-admins membership to one app by running
+// the Job that app supplied. The operator resolves and publishes the
+// membership; the script decides what that means for its own application.
+//
+// Nothing here may branch on a profile name, family or protocol: an app the
+// kernel has to recognise by name is an app the kernel would have to be
+// modified to support, which is precisely what the platform boundary in
+// gentian-apps/docs/app-profile-guide.md forbids.
 func (r *TenantReconciler) syncAppPrivilegedRole(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
@@ -221,132 +246,84 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	profile *gentianov1alpha1.AppProfile,
 	role *gentianov1alpha1.PrivilegedRoleSpec,
 	members []authz.KeycloakUser,
-) error {
+	fingerprint string,
+) (done bool, err error) {
 	switch role.Kind {
 	case gentianov1alpha1.PrivilegedRoleKindGroup:
 	default:
-		return fmt.Errorf("unsupported privileged role kind %q", role.Kind)
+		return false, fmt.Errorf("unsupported privileged role kind %q", role.Kind)
 	}
-	// Protocol is a wire protocol the operator knows how to speak, not an app
-	// name — see the field doc on PrivilegedRoleSpec. Add a case here (and a
-	// client package under internal/provisioning/) for each protocol a
-	// profile declares; never branch on profileName/family here.
-	switch role.Protocol {
-	case "mathesar-rpc":
-		return r.syncMathesarPrivilegedRole(ctx, tenant, profileName, profile, members)
+	jobSpec := profile.Spec.Provisioning.SyncJob
+	if jobSpec == nil {
+		return false, fmt.Errorf(
+			"profile %q declares provisioning.privilegedRole but no provisioning.syncJob, "+
+				"so the platform has no way to apply it", profileName)
+	}
+
+	ns := tenantNamespaceName(tenant)
+	membersJSON, err := privilege.MembersJSON(members)
+	if err != nil {
+		return false, fmt.Errorf("encode app-admins members: %w", err)
+	}
+
+	// Script and member list travel in one Secret so they are always mounted as
+	// a matched pair; a Job cannot end up running last reconcile's script
+	// against this reconcile's membership.
+	secret := privilege.MembersSecret(tenant.Name, profileName, ns, membersJSON)
+	secret.StringData = map[string]string{"run.sh": jobSpec.Script}
+	if err := r.applySecret(ctx, secret); err != nil {
+		return false, fmt.Errorf("publish app-admins members: %w", err)
+	}
+
+	existing := &batchv1.Job{}
+	err = r.Get(ctx, types.NamespacedName{Name: privilege.JobName(profileName), Namespace: ns}, existing)
+	switch {
+	case errors.IsNotFound(err):
+		job := privilege.SyncJob(tenant.Name, profileName, ns, fingerprint, role, jobSpec)
+		if err := r.Create(ctx, job); err != nil {
+			return false, fmt.Errorf("create privilege sync job: %w", err)
+		}
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+
+	// A Job built for different membership is stale whatever its result: a
+	// success only ever proves the membership it was given was applied.
+	if existing.Annotations[privilege.FingerprintAnnotation] != fingerprint {
+		policy := metav1.DeletePropagationBackground
+		if err := r.Delete(ctx, existing, &client.DeleteOptions{PropagationPolicy: &policy}); err != nil && !errors.IsNotFound(err) {
+			return false, fmt.Errorf("replace stale privilege sync job: %w", err)
+		}
+		return false, nil
+	}
+
+	switch privilege.StateOf(existing) {
+	case privilege.JobSucceeded:
+		return true, nil
+	case privilege.JobFailed:
+		return false, fmt.Errorf("privilege sync job failed: %s", privilege.FailureMessage(existing))
 	default:
-		return fmt.Errorf("privileged role sync is not implemented for profile %q (protocol %q)", profileName, role.Protocol)
+		return false, nil
 	}
 }
 
-const (
-	// mathesarBootstrapUsername is the fixed, protocol-defined username of the
-	// technical Mathesar superuser this sync authenticates as. It is not a
-	// per-tenant human account (app-admins members get their own accounts,
-	// provisioned below) and not a secret itself — only its password is. A
-	// "mathesar-rpc" profile's spec.postInstallJob must create exactly this
-	// account (see profiles/mathesar/mathesar-ce/profile.yaml in gentian-apps
-	// for the reference script).
-	mathesarBootstrapUsername = "gentian-bootstrap-admin"
-
-	// mathesarBootstrapPasswordKey is the key inside
-	// "<profileName>-sensitive-values" (the same per-app Secret every
-	// AppProfile's valueMapping/appSecrets already populate — see the
-	// app-default composition and docs/app-profile-guide.md §4) holding that
-	// account's password. The profile must declare it via
-	// spec.appSecrets[].name: bootstrap_admin_password.
-	mathesarBootstrapPasswordKey = "internal-bootstrap_admin_password" //nolint:gosec // secret key name, not a credential.
-)
-
-// syncMathesarPrivilegedRole reconciles gentian:tenant:<t>:app-admins
-// membership into Mathesar's is_superuser flag via its own /api/rpc/v0/
-// JSON-RPC endpoint (see internal/provisioning/mathesar). There is no OIDC
-// claim Mathesar reads for this — upstream always creates new SSO logins as
-// regular users (mathesar/sso.py) — so a technical bootstrap superuser
-// (created once by the profile's spec.postInstallJob) authenticates every
-// call this makes.
-func (r *TenantReconciler) syncMathesarPrivilegedRole(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	profileName string,
-	profile *gentianov1alpha1.AppProfile,
-	members []authz.KeycloakUser,
-) error {
-	if profile.Spec.Ingress == nil || profile.Spec.Ingress.ServiceName == "" || profile.Spec.Ingress.ServicePort == 0 {
-		return fmt.Errorf("mathesar-rpc requires spec.ingress.serviceName/servicePort on profile %q", profileName)
+// applySecret creates or updates a Secret the operator owns.
+func (r *TenantReconciler) applySecret(ctx context.Context, desired *corev1.Secret) error {
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
 	}
-	ns := tenantNamespaceName(tenant)
-
-	secret := &corev1.Secret{}
-	secretName := profileName + "-sensitive-values"
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ns}, secret); err != nil {
-		return fmt.Errorf("load bootstrap credentials from %s/%s: %w", ns, secretName, err)
-	}
-	bootstrapPass := string(secret.Data[mathesarBootstrapPasswordKey])
-	if bootstrapPass == "" {
-		return fmt.Errorf("secret %s/%s is missing the bootstrap admin credential (key %q)",
-			ns, secretName, mathesarBootstrapPasswordKey)
-	}
-
-	// Internal service DNS, never the public tenant hostname — this is a
-	// kernel-component-to-tenant-app call (docs/app-profile-guide.md §2).
-	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
-		profile.Spec.Ingress.ServiceName, ns, profile.Spec.Ingress.ServicePort)
-	rpc := mathesar.NewClient(baseURL, mathesarBootstrapUsername, bootstrapPass)
-
-	users, err := rpc.ListUsers(ctx)
 	if err != nil {
-		return fmt.Errorf("list mathesar users: %w", err)
+		return err
 	}
-	byEmail := make(map[string]mathesar.User, len(users))
-	for _, u := range users {
-		if u.Email != "" {
-			byEmail[strings.ToLower(u.Email)] = u
-		}
-	}
-
-	wantAdmin := make(map[string]bool, len(members))
-	for _, m := range members {
-		if m.Email == "" {
-			// Mathesar links accounts by email; a Keycloak member without one
-			// can never be matched to (or provisioned as) a Mathesar user.
-			continue
-		}
-		email := strings.ToLower(m.Email)
-		wantAdmin[email] = true
-
-		existing, ok := byEmail[email]
-		switch {
-		case ok && !existing.IsSuperuser:
-			if _, err := rpc.SetSuperuser(ctx, existing, true); err != nil {
-				return fmt.Errorf("promote mathesar user %s: %w", email, err)
-			}
-		case !ok:
-			username := m.Username
-			if username == "" {
-				username = email
-			}
-			// Pre-provisions the account so the eventual first SSO login
-			// links to it (matched by email) instead of creating a fresh,
-			// non-superuser one — see mathesar/sso.py's save_user upstream.
-			if _, err := rpc.AddUser(ctx, username, email, true); err != nil {
-				return fmt.Errorf("provision mathesar user %s: %w", email, err)
-			}
-		}
-	}
-
-	// Demote accounts that lost app-admins membership. The technical
-	// bootstrap account is matched by username, not membership — it is what
-	// authenticates this very sync and is never a human app-admins member.
-	for email, u := range byEmail {
-		if u.Username == mathesarBootstrapUsername || !u.IsSuperuser || wantAdmin[email] {
-			continue
-		}
-		if _, err := rpc.SetSuperuser(ctx, u, false); err != nil {
-			return fmt.Errorf("demote mathesar user %s: %w", email, err)
-		}
-	}
-	return nil
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Labels = desired.Labels
+	existing.Type = desired.Type
+	existing.Data = desired.Data
+	existing.StringData = desired.StringData
+	return r.Patch(ctx, existing, patch)
 }
 
 func (r *TenantReconciler) appPrivilegeSynced(tenant *gentianov1alpha1.Tenant, profileName, fingerprint string) bool {

@@ -248,6 +248,88 @@ type ProvisioningSpec struct {
 	// administrator role (for example the Nextcloud "admin" group).
 	// +optional
 	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
+
+	// SyncJob is how this app applies PrivilegedRole. The operator resolves
+	// app-admins membership, publishes it, and runs this Job; the script inside
+	// speaks whatever protocol the application happens to expose.
+	//
+	// The division is deliberate and load-bearing: resolving a Keycloak group,
+	// detecting membership changes and running a Job to completion are platform
+	// concerns, so they live here. Knowing that one app wants a JSON-RPC call
+	// and another an OCS POST is not, so it lives in the catalogue entry that
+	// owns that app. No application's protocol, endpoint or account model may
+	// be encoded in the kernel — see the platform boundary in
+	// gentian-apps/docs/app-profile-guide.md.
+	// +optional
+	SyncJob *ProvisioningJobSpec `json:"syncJob,omitempty"`
+}
+
+// ProvisioningJobSpec is an app-supplied Job the operator runs to apply a
+// provisioning decision the platform has made.
+type ProvisioningJobSpec struct {
+	// Image the script runs in. Usually the application's own image, which
+	// already has whatever client library its API needs.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+
+	// Script executed with /bin/sh. It is re-run whenever membership changes,
+	// so it must be idempotent: converge the app to exactly the membership it
+	// is given rather than applying a delta.
+	//
+	// The operator provides:
+	//   GENTIAN_APP_ADMINS_FILE  path to a JSON array of the privileged
+	//                            members, each {"id","username","email"}
+	//   GENTIAN_PRIVILEGED_ROLE  spec.provisioning.privilegedRole.name
+	//   GENTIAN_TENANT           tenant name
+	//   GENTIAN_APP              this profile's name
+	// plus every key of envFrom below.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Script string `json:"script"`
+
+	// Env binds individual Secret keys to environment variables. Prefer this
+	// over EnvFrom for platform-managed credentials: the keys of an app's
+	// sensitive-values Secret are hyphenated (db-host, internal-admin_password),
+	// and Kubernetes silently drops any envFrom key that is not a valid
+	// identifier — the variable simply never appears and the script fails on
+	// something unrelated.
+	// +optional
+	Env []ProvisioningEnvVar `json:"env,omitempty"`
+
+	// EnvFrom names Secrets in the tenant namespace whose keys become
+	// environment variables. Only useful when every key is already a valid
+	// environment variable name; see Env above.
+	// +optional
+	EnvFrom []string `json:"envFrom,omitempty"`
+
+	// ServiceAccountName runs the Job under an existing ServiceAccount.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+}
+
+// ProvisioningEnvVar binds one key of a Secret in the tenant namespace to an
+// environment variable in the Job.
+type ProvisioningEnvVar struct {
+	// Name of the environment variable.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
+	Name string `json:"name"`
+
+	// SecretKeyRef is the Secret key to read it from.
+	// +kubebuilder:validation:Required
+	SecretKeyRef ProvisioningSecretKeyRef `json:"secretKeyRef"`
+}
+
+// ProvisioningSecretKeyRef selects one key of one Secret.
+type ProvisioningSecretKeyRef struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
 }
 
 // PrivilegedRoleKind is the native app role type referenced by PrivilegedRoleSpec.
@@ -267,30 +349,13 @@ type PrivilegedRoleSpec struct {
 	Kind PrivilegedRoleKind `json:"kind"`
 
 	// Name is the in-app role identifier (for example Nextcloud group "admin").
-	// Protocols whose privilege model has no named role (for example
-	// "mathesar-rpc", which maps membership to a boolean is_superuser flag)
-	// ignore this field — set a descriptive placeholder for readability.
+	// It is passed to the sync Job as GENTIAN_PRIVILEGED_ROLE. Apps whose
+	// privilege model is a flag rather than a named role may ignore it; set a
+	// descriptive value anyway so the declaration reads honestly.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	Name string `json:"name"`
-
-	// Protocol selects how the operator talks to the app to reconcile
-	// membership into Name/the mapped privilege. Each value is a wire
-	// protocol the operator knows how to speak — not an app name — so a
-	// future app that happens to expose the same shape can reuse one.
-	// Unset means sync is not implemented for this profile yet (the operator
-	// reports that explicitly rather than silently doing nothing).
-	//
-	// "mathesar-rpc": HTTP Basic Auth (a per-tenant bootstrap superuser
-	// credential, see spec.appSecrets) against the app's own
-	// /api/rpc/v0/ JSON-RPC endpoint (users.list/users.add/users.patch_other).
-	// The endpoint is derived from this profile's spec.ingress
-	// serviceName/servicePort; Name is ignored (is_superuser is boolean, not
-	// a named group).
-	// +optional
-	// +kubebuilder:validation:Enum=mathesar-rpc
-	Protocol string `json:"protocol,omitempty"`
 }
 
 // TileSpec configures a Gentian portal tile icon (52×52 SVG).
