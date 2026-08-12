@@ -443,7 +443,13 @@ func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 	status := 302
 	port := gatewayv1.PortNumber(443)
 	pathType := gatewayv1.FullPathHTTPPathModifier
-	loginPath := "/login/"
+	// No trailing slash. The portal's router declares the route as "/login"
+	// (frontend/src/router.tsx) and TanStack Router does not normalise the
+	// difference — "/login/" matches nothing and renders its not-found page. The
+	// static server answers both with 200 and index.html, so this is invisible
+	// from the outside: only the browser sees the 404, and only via the apex
+	// redirect, since nothing in the app ever links to "/login/".
+	loginPath := "/login"
 	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
 	return gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},

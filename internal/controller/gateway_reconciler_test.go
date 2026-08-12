@@ -508,6 +508,16 @@ func TestKernelApexRedirectRule(t *testing.T) {
 	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.desk.gentian.org" {
 		t.Fatalf("hostname = %v", redirect.Hostname)
 	}
+	// No trailing slash: the portal router declares "/login" and TanStack Router
+	// does not normalise "/login/", so the apex redirect landed users on the
+	// app's not-found page. The static server answers both paths with 200 and
+	// index.html, so nothing outside the browser could see it.
+	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil {
+		t.Fatalf("apex redirect has no path modifier: %+v", redirect)
+	}
+	if got := *redirect.Path.ReplaceFullPath; got != "/login" {
+		t.Fatalf("apex redirect path = %q, want %q", got, "/login")
+	}
 }
 
 // TestKernelHTTPRouteSpecsAllBindToAListener guards the HTTP->HTTPS redirect.
