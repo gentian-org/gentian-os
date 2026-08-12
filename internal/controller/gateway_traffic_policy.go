@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -54,30 +53,6 @@ func buildAppBackendTrafficPolicyObject(
 		gatewayComponentLabel: gatewayComponentApp,
 	})
 	_ = unstructured.SetNestedField(obj.Object, spec, "spec")
-	return obj
-}
-
-func buildTenantEscapedSlashesClientTrafficPolicyObject(tenant *gentianov1alpha1.Tenant, nsName string) *unstructured.Unstructured {
-	policySpec := escapedSlashesKeepUnchangedClientTrafficPolicySpec()
-	policySpec["targetRefs"] = []interface{}{
-		map[string]interface{}{
-			"group":       gatewayv1.GroupName,
-			"kind":        "Gateway",
-			"name":        tenantGatewayName(tenant.Name),
-			"sectionName": wildcardListenerName,
-		},
-	}
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(clientTrafficPolicyGVK)
-	obj.SetName(tenantEscapedSlashesClientTrafficPolicyName(tenant.Name))
-	obj.SetNamespace(nsName)
-	obj.SetLabels(map[string]string{
-		tenantLabel:           tenant.Name,
-		managedByLabel:        managedByValue,
-		gatewayComponentLabel: gatewayComponentApp,
-	})
-	_ = unstructured.SetNestedField(obj.Object, policySpec, "spec")
 	return obj
 }
 

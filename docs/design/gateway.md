@@ -18,10 +18,10 @@ The edge plane has three responsibilities:
 The control model is:
 
 - **GatewayClass**: `gentian-envoy`
-- **Kernel Gateway**: shared platform entry points (`portal`, `id`, Argo CD, and
-  other kernel hosts)
-- **Tenant Gateways**: one Gateway per tenant namespace for tenant app hostnames
-- **HTTPRoute**: one route object per exposed app endpoint
+- **Gateway**: a single cluster Gateway, `kernel-public-gateway`, terminating TLS
+  for every external hostname — kernel hosts and tenant app hosts alike
+- **HTTPRoute**: one route object per exposed app endpoint, living in the
+  namespace that owns its backend
 - **Envoy policy CRDs**: security, traffic, and header policy attached to
   Gateway/HTTPRoute resources
 
@@ -29,38 +29,77 @@ The control model is:
 
 ## 2. Resource Topology
 
-### 2.1 Kernel scope
+### 2.1 The cluster Gateway
 
-Kernel services are exposed through a shared Gateway in the kernel services
-namespace.
+`kernel-public-gateway` lives in the kernel services namespace and owns the
+cluster's external address. Every externally reachable hostname is served by it.
 
-- Gateway: `kernel-public-gateway`
-- Listener protocol: HTTPS
-- Hostnames: `portal.<kernelDomain>`, `id.<kernelDomain>`, and kernel service
-  hosts
-- TLS: kernel wildcard certificate managed by cert-manager
+One Gateway, rather than one per tenant, is a requirement rather than a
+simplification. A Gateway maps to an Envoy deployment with its own Service, and
+each such Service claims the cluster's external address; two of them contend for
+one address, and a client's TLS handshake succeeds or fails depending on which
+one holds it at that moment.
+
+Its listeners are:
+
+| Listener | Port | Hostname | Certificate |
+| --- | --- | --- | --- |
+| `http-redirect` | 80 | none | none — redirects to `https` |
+| `https-wildcard` | 443 | none | kernel wildcard, `kernel-wildcard-tls` |
+| `https-tenant-<name>-wildcard` | 443 | none | `tenant-<name>-wildcard-tls` |
+
+HTTPS listeners carry no hostname. Envoy selects a certificate by SNI, so an
+unset hostname means "serve whatever this certificate covers" and the certificate
+alone defines the listener's reach. A listener hostname would instead act as a
+second, narrower filter, and the two disagree whenever a browser coalesces
+requests: with HTTP/2, a browser reuses one connection for every hostname the
+presented certificate covers, so a request for `${effectiveDomain}` may arrive on
+a connection opened with SNI `<subDomain>.${effectiveDomain}`. Under a
+`*.${effectiveDomain}` listener hostname the apex request finds no matching
+listener and is answered with a 404 by the wrong listener's route table.
+
+The listener hostname also gates route attachment: a route attaches only where
+its hostnames intersect the listener's. Leaving it unset keeps attachment under
+the control of `parentRefs.sectionName`, which is explicit.
+
+Tenant listeners are added to and removed from the Gateway as tenants are
+created and deleted. `mergeGateways` is enabled on the `EnvoyProxy`, so all
+listeners are programmed into one Envoy deployment.
 
 ### 2.2 Tenant scope
 
-Each tenant namespace contains its own Gateway.
+A tenant namespace owns its certificate and its routes, not a Gateway.
 
-- Gateway name: `tenant-<name>-gateway`
-- Listener protocol: HTTPS
-- Listener hostname: `*.${effectiveDomain}`
-- TLS certificate: `tenant-<name>-wildcard-tls`
-- Route attachment: HTTPRoutes in the same namespace
+- TLS certificate: `tenant-<name>-wildcard-tls`, in the tenant namespace
+- Gateway listener: `https-tenant-<name>-wildcard` on `kernel-public-gateway`
+- ReferenceGrant: permits the Gateway to read that certificate across the
+  namespace boundary
+- HTTPRoutes: in the tenant namespace, attached to the tenant's listener
 
-This keeps hostname ownership, certificate ownership, and RBAC boundaries aligned
-with tenant isolation.
+The certificate stays under tenant ownership and is never copied into the kernel
+namespace; the ReferenceGrant is the only thing that crosses the boundary, and it
+is granted per tenant, for one Secret, in one direction.
 
 ### 2.3 Route model
 
 For each app endpoint, Gentian OS creates an HTTPRoute with:
 
-- `parentRefs` pointing to the tenant Gateway
+- `parentRefs` naming `kernel-public-gateway` in the kernel services namespace,
+  with `sectionName` pinning it to one listener
 - `hostnames` set to `<subDomain>.<effectiveDomain>`
 - one `PathPrefix` match for `/`
 - one backendRef to the app Service
+
+`sectionName` is mandatory. Without it a route attaches to every listener whose
+hostname permits it, including the hostname-less `http-redirect` listener on
+port 80. Gateway API ranks a route with a specific hostname above the redirect
+route's absent one, so an unpinned route serves the app in the clear on `:80`
+instead of redirecting to `https`.
+
+The listener a route pins to follows its certificate: hosts under
+`<subDomain>.${effectiveDomain}` pin to `https-tenant-<name>-wildcard`, and hosts
+covered by the kernel wildcard — including the tenant apex under multi-tenancy —
+pin to `https-wildcard`.
 
 Additional app hosts (for example sidecar hosts such as `meet.<effectiveDomain>`)
 are represented as separate HTTPRoutes.
@@ -83,7 +122,8 @@ TLS issuance is handled by cert-manager:
   - DNS names: `*.${effectiveDomain}` and `${effectiveDomain}`
   - Secret name: `tenant-<name>-wildcard-tls`
 
-Gateway listeners consume these certificate secrets directly.
+Gateway listeners consume these certificate secrets directly, reading tenant
+secrets across namespaces under the tenant's ReferenceGrant.
 
 ---
 
@@ -123,8 +163,11 @@ filters or Envoy extension policies where advanced behavior is needed.
 
 Tenant isolation is preserved in four layers:
 
-1. **Namespace-scoped Gateways and HTTPRoutes** for ownership boundaries.
-2. **Tenant-scoped TLS secrets** for certificate separation.
+1. **Namespace-scoped HTTPRoutes** for ownership boundaries: a route lives with
+   the backend it fronts, and a tenant may only create routes in its own
+   namespace.
+2. **Tenant-scoped TLS secrets** for certificate separation, exposed to the
+   Gateway one Secret at a time by per-tenant ReferenceGrants.
 3. **NetworkPolicies** allowing ingress from Envoy data-plane namespaces to
    tenant workloads, and egress from tenant pods to the Envoy Gateway Service
    ClusterIP (via namespace selector on `envoy-gateway-system`) so in-cluster
@@ -167,9 +210,12 @@ Operational visibility is provided by:
 
 Edge failures are scoped by resource layer:
 
-- Route errors are isolated to affected HTTPRoutes.
-- Tenant Gateway issues affect one tenant namespace.
-- Kernel Gateway issues affect only kernel endpoints.
+- Route errors are isolated to the affected HTTPRoutes.
+- A listener that fails to program — most often an unissued certificate — takes
+  down the hostnames on that listener only; the Gateway keeps serving the rest.
+- Gateway-level failures affect every external endpoint, so Gateway changes are
+  reconciled as whole-object updates and validated through
+  `Gateway.status.listeners`.
 
 ### 8.3 Drift and reconciliation
 
@@ -184,7 +230,8 @@ The edge plane enforces:
 
 - TLS everywhere for external entry points
 - explicit embedding policy instead of implicit browser behavior
-- per-tenant hostname and certificate ownership
+- per-tenant hostname and certificate ownership, with cross-namespace
+  certificate access granted explicitly per tenant
 - least-privilege cross-namespace references
 - auditable, declarative edge policy
 

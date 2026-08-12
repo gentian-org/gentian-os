@@ -74,26 +74,19 @@ func kernelGatewayParentRef() gatewayv1.ParentReference {
 	return ref
 }
 
-// tenantGatewayParentRefs attaches a tenant route to the tenant's own Gateway
-// and to the shared kernel Gateway.
+// tenantGatewayParentRefs attaches a tenant route to the kernel Gateway.
 //
-// kernelSectionName pins the kernel-Gateway attachment to one listener. Without
-// it the route also attached to the kernel Gateway's plaintext :80 redirect
-// listener, which is hostname-less and so matches every host; Gateway API then
-// ranked this route's specific hostname above the redirect route's absent one,
-// and http://<app>.<tenant-domain> was served in the clear instead of being
-// redirected to https. The tenant's own Gateway has no :80 listener, so its
-// attachment needs no pinning.
-func tenantGatewayParentRefs(tenantName, kernelSectionName string) []gatewayv1.ParentReference {
+// kernelSectionName names the listener to bind. Pinning is required: an
+// unpinned route attaches to every listener whose hostname matches, and the
+// Gateway's plaintext :80 listener is hostname-less, so the route would outrank
+// the redirect route there and serve the app over http.
+func tenantGatewayParentRefs(kernelSectionName string) []gatewayv1.ParentReference {
 	kernelRef := kernelGatewayParentRef()
 	if kernelSectionName != "" {
 		s := gatewayv1.SectionName(kernelSectionName)
 		kernelRef.SectionName = &s
 	}
-	return []gatewayv1.ParentReference{
-		gatewayParentRef(tenantGatewayName(tenantName)),
-		kernelRef,
-	}
+	return []gatewayv1.ParentReference{kernelRef}
 }
 
 func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
@@ -264,12 +257,15 @@ func buildAppHTTPRoute(
 				// An app on the tenant apex is served by the kernel catch-all
 				// listener (the kernel certificate covers <tenant>.<domain>);
 				// anything deeper needs the tenant certificate.
+				// An app on the tenant apex is served by the kernel catch-all
+				// listener (the kernel certificate covers <tenant>.<domain>);
+				// anything deeper needs the tenant certificate's listener.
 				ParentRefs: func() []gatewayv1.ParentReference {
 					section := tenantGatewayListenerName(tenant.Name)
 					if host == effectiveDomain {
 						section = wildcardListenerName
 					}
-					return tenantGatewayParentRefs(tenant.Name, section)
+					return tenantGatewayParentRefs(section)
 				}(),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},

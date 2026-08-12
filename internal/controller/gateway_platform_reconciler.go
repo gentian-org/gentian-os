@@ -339,13 +339,6 @@ type gatewayBuildOptions struct {
 	extraListeners            []gatewayv1.Listener
 }
 
-func buildTenantGateway(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, tlsSecret string) *gatewayv1.Gateway {
-	return buildGateway(tenantGatewayName(tenant.Name), nsName, effectiveDomain, tlsSecret, map[string]string{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	}, gatewayBuildOptions{})
-}
-
 func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
 	// No hostname: this listener serves every name its certificate covers, which
 	// is what keeps connection coalescing working (see tlsListener).

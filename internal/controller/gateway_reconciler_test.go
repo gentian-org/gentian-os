@@ -129,31 +129,6 @@ func TestBuildKernelGateway(t *testing.T) {
 	}
 }
 
-func TestBuildTenantGateway(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	gw := buildTenantGateway(tenant, "tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls")
-	if gw.Name != "tenant-demo-gateway" {
-		t.Fatalf("name = %q", gw.Name)
-	}
-	if gw.Namespace != "tenant-demo" {
-		t.Fatalf("namespace = %q", gw.Namespace)
-	}
-	if gw.Labels[tenantLabel] != "demo" {
-		t.Fatalf("tenant label = %q", gw.Labels[tenantLabel])
-	}
-	// Hostname-less, like the kernel gateway: the listener serves whatever its
-	// certificate covers. Scoping it to *.<domain> would leave the tenant apex
-	// unroutable on a connection coalesced onto a subdomain, since the tenant
-	// certificate carries both names.
-	if gw.Spec.Listeners[0].Hostname != nil {
-		t.Fatalf("tenant HTTPS listener hostname = %q, want none", *gw.Spec.Listeners[0].Hostname)
-	}
-	if string(gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name) != "tenant-demo-wildcard-tls" {
-		t.Fatalf("tls secret = %q", gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name)
-	}
-}
-
 func TestGatewayProgrammed(t *testing.T) {
 	t.Parallel()
 	scheme := runtime.NewScheme()
@@ -161,10 +136,9 @@ func TestGatewayProgrammed(t *testing.T) {
 		t.Fatalf("install gateway scheme: %v", err)
 	}
 
-	gw := buildTenantGateway(
-		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
-		"tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls",
-	)
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: KernelPublicGatewayName, Namespace: "platform-kernel"},
+	}
 	gw.Status.Conditions = []metav1.Condition{
 		{Type: string(gatewayv1.GatewayConditionProgrammed), Status: metav1.ConditionTrue, Reason: "Programmed"},
 	}
@@ -183,10 +157,9 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 		t.Fatalf("install gateway scheme: %v", err)
 	}
 
-	gw := buildTenantGateway(
-		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
-		"tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls",
-	)
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: KernelPublicGatewayName, Namespace: "platform-kernel"},
+	}
 	gw.Status.Conditions = []metav1.Condition{
 		{
 			Type:   string(gatewayv1.GatewayConditionProgrammed),
@@ -233,17 +206,19 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.desk.gentian.org" {
 		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
 	}
-	if len(route.Spec.ParentRefs) != 2 {
-		t.Fatalf("parent refs = %d, want 2", len(route.Spec.ParentRefs))
+	// One parent: the kernel Gateway, pinned to this tenant's listener.
+	if len(route.Spec.ParentRefs) != 1 {
+		t.Fatalf("parent refs = %d, want 1", len(route.Spec.ParentRefs))
 	}
-	if route.Spec.ParentRefs[0].Name != "tenant-demo-gateway" {
-		t.Fatalf("tenant parent = %v", route.Spec.ParentRefs[0].Name)
+	if route.Spec.ParentRefs[0].Name != KernelPublicGatewayName {
+		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[0].Name)
 	}
-	if route.Spec.ParentRefs[1].Name != KernelPublicGatewayName {
-		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[1].Name)
+	if route.Spec.ParentRefs[0].Namespace == nil || string(*route.Spec.ParentRefs[0].Namespace) != servicesNamespace {
+		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[0].Namespace)
 	}
-	if route.Spec.ParentRefs[1].Namespace == nil || string(*route.Spec.ParentRefs[1].Namespace) != servicesNamespace {
-		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[1].Namespace)
+	if route.Spec.ParentRefs[0].SectionName == nil ||
+		string(*route.Spec.ParentRefs[0].SectionName) != tenantGatewayListenerName("demo") {
+		t.Fatalf("kernel parent sectionName = %v", route.Spec.ParentRefs[0].SectionName)
 	}
 	if len(route.Spec.Rules[0].Filters) == 0 {
 		t.Fatal("expected embedding response filters")
@@ -596,10 +571,14 @@ func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
 	}
 }
 
-// TestTenantAppRouteBindsToTenantListener covers the tenant side: tenant app
-// routes attach to the kernel Gateway too, and had the same unpinned parentRef.
+// Tenant app routes bind to the kernel Gateway pinned to the tenant listener.
+// Without the pin they would also attach to the hostname-less :80 listener and
+// outrank the redirect route there, serving the app in the clear.
 func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
-	refs := tenantGatewayParentRefs("demo", tenantGatewayListenerName("demo"))
+	refs := tenantGatewayParentRefs(tenantGatewayListenerName("demo"))
+	if len(refs) != 1 {
+		t.Fatalf("want exactly the kernel Gateway parentRef, got %d", len(refs))
+	}
 	var kernelRef *gatewayv1.ParentReference
 	for i := range refs {
 		if string(refs[i].Name) == KernelPublicGatewayName {
