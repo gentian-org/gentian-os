@@ -10,3 +10,11 @@ storageClass: ""
 # rejects all mail — deliberately visible rather than silently accepting
 # from an unintended domain.
 kernelDomain: ""
+
+# Outbound relay, e.g. "[smtp.example.com]:587". Empty means deliver directly,
+# which is what MAIL_SERVICE_MODE=kernel wants — it runs its own Postfix and
+# needs no upstream. Set this only for MAIL_SERVICE_MODE=external, together
+# with relay credentials in OpenBao (gentian-os/kernel/mail/postfix); a relay
+# host without credentials bounces every message with 530 Authentication
+# Required, after Keycloak has already reported the invite as sent.
+relayHost: ""
