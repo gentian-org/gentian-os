@@ -875,12 +875,20 @@ spec:
                     properties:
                       allowDynamicDatabaseCreation:
                         description: |-
-                          AllowDynamicDatabaseCreation grants the app user privileges to create new databases
-                          dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-                          Only supported by the mariadb engine. Omitted is equivalent to false, which
-                          is also Go's zero value for bool — left undefaulted at the schema level so
-                          profiles that omit it don't permanently diff against GitOps tooling that
-                          applies CRD defaults server-side.
+                          AllowDynamicDatabaseCreation lets the app create databases of its own at
+                          runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                          CREATEDB. Ask for it only when creating databases is what the app is for
+                          (a data explorer, say); an app that merely stores its own state must not.
+
+                          Databases created this way are still purged with the app: they are owned
+                          by the app role, and uninstall --purge drops everything that role owns.
+                          They are not otherwise governed — the tenant chooses the names, and they
+                          do not appear in the catalogue's provisioning model.
+
+                          Omitted is equivalent to false, which is also Go's zero value for bool —
+                          left undefaulted at the schema level so profiles that omit it don't
+                          permanently diff against GitOps tooling that applies CRD defaults
+                          server-side.
                         type: boolean
                       databasePerTenant:
                         default: true
@@ -1715,12 +1723,20 @@ spec:
                           properties:
                             allowDynamicDatabaseCreation:
                               description: |-
-                                AllowDynamicDatabaseCreation grants the app user privileges to create new databases
-                                dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-                                Only supported by the mariadb engine. Omitted is equivalent to false, which
-                                is also Go's zero value for bool — left undefaulted at the schema level so
-                                profiles that omit it don't permanently diff against GitOps tooling that
-                                applies CRD defaults server-side.
+                                AllowDynamicDatabaseCreation lets the app create databases of its own at
+                                runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                                CREATEDB. Ask for it only when creating databases is what the app is for
+                                (a data explorer, say); an app that merely stores its own state must not.
+
+                                Databases created this way are still purged with the app: they are owned
+                                by the app role, and uninstall --purge drops everything that role owns.
+                                They are not otherwise governed — the tenant chooses the names, and they
+                                do not appear in the catalogue's provisioning model.
+
+                                Omitted is equivalent to false, which is also Go's zero value for bool —
+                                left undefaulted at the schema level so profiles that omit it don't
+                                permanently diff against GitOps tooling that applies CRD defaults
+                                server-side.
                               type: boolean
                             databasePerTenant:
                               default: true

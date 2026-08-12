@@ -124,16 +124,62 @@ func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []strin
 	if err != nil || pod == "" {
 		return []string{fmt.Sprintf("Postgres pod not found; skipped purge for %s", dbName)}
 	}
-	for _, sql := range []string{
+	// Apps that declare allowDynamicDatabaseCreation own every database their
+	// users made, not just the provisioned one. Dropping the role would fail
+	// while it still owns objects, and leaving them would strand tenant data on
+	// the shared cluster under a role nobody can log in as any more. Ownership
+	// is the join: CREATE DATABASE makes the creating role the owner, so this
+	// finds them without the platform having to track names it never chose.
+	extra, err := s.databasesOwnedBy(ctx, pod, dbName)
+	if err != nil {
+		return []string{fmt.Sprintf("Postgres purge could not list databases owned by %s: %v", dbName, err)}
+	}
+
+	var statements []string
+	for _, db := range extra {
+		statements = append(statements,
+			fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", db),
+			fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, db),
+		)
+	}
+	statements = append(statements,
 		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", dbName),
 		fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, dbName),
 		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, dbName),
-	} {
+	)
+
+	for _, sql := range statements {
 		if out, err := s.execPostgres(ctx, pod, sql); err != nil || strings.Contains(strings.ToUpper(out), "ERROR") {
 			return []string{fmt.Sprintf("Postgres purge failed for %s: %s", dbName, out)}
 		}
 	}
 	return nil
+}
+
+// databasesOwnedBy lists databases owned by role, excluding the app's own
+// provisioned database, which the caller drops last.
+func (s *Service) databasesOwnedBy(ctx context.Context, pod, role string) ([]string, error) {
+	out, err := s.execPostgres(ctx, pod, fmt.Sprintf(
+		"SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "+
+			"WHERE r.rolname = '%s' AND d.datname <> '%s' AND NOT d.datistemplate;", role, role))
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(strings.ToUpper(out), "ERROR") {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(out))
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		name := strings.TrimSpace(line)
+		// psql's default output frames the rows with a header, a rule and a
+		// "(N rows)" footer; only the indented value lines are database names.
+		if name == "" || strings.HasPrefix(name, "datname") || strings.HasPrefix(name, "-") ||
+			strings.HasPrefix(name, "(") {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 func (s *Service) postgresPod(ctx context.Context) (string, error) {

@@ -145,6 +145,18 @@ func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.
 	return gentianov1alpha1.SchemaPreferenceAppSchema
 }
 
+// allowsDynamicDatabaseCreation reports whether the app may create databases of
+// its own at runtime. Only apps whose whole purpose is letting a user make
+// databases should ask for it — every database created this way is owned by the
+// app role, which is what lets the purge find and drop them again.
+func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.AppProfile) bool {
+	if profile == nil || profile.Spec.KernelRequirements == nil ||
+		profile.Spec.KernelRequirements.Database == nil {
+		return false
+	}
+	return profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
+}
+
 // ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.
 func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
 	crName := databaseCRName(tenant.Name, appName)
@@ -214,10 +226,10 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // that exact password to the role via CREATE/ALTER ROLE, so the live
 // PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
 // generates a random password locally (legacy behaviour).
-func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string, schemaPref gentianov1alpha1.SchemaPreference) *batchv1.Job {
+func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	roleName := roleUserName(tenant.Name, appName)
-	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref), nsName)
+	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB), nsName)
 	if rolePassword != "" {
 		container.Env = append(container.Env, corev1.EnvVar{
 			Name:  "ROLE_PW",
@@ -296,7 +308,7 @@ func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
-func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference) string {
+func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) string {
 	// When ROLE_PW is provided (Inc 21a — Seeder enabled) the script applies
 	// that exact password to the role via CREATE/ALTER ROLE WITH PASSWORD,
 	// keeping the live PostgreSQL password in lockstep with OpenBao. When
@@ -310,7 +322,7 @@ func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.Schema
 		searchPath = fmt.Sprintf("public, \\\"%s\\\"", dbName)
 	}
 
-	return fmt.Sprintf(`set -euo pipefail
+	script := fmt.Sprintf(`set -euo pipefail
 if [ -z "${ROLE_PW:-}" ]; then
   ROLE_PW=$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
 fi
@@ -335,6 +347,16 @@ psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
 psql -c "ALTER ROLE \"%s\" SET search_path TO %s;" postgres
 echo "schema %s ensured"
 echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
+
+	// Stated both ways rather than only when enabled: a profile that turns the
+	// permission back off must actually lose it, and this Job is the only thing
+	// that ever reconciles the role.
+	if allowCreateDB {
+		script += fmt.Sprintf("\npsql -c \"ALTER ROLE \\\"%s\\\" WITH CREATEDB;\" postgres\necho \"createdb granted\"", roleName)
+	} else {
+		script += fmt.Sprintf("\npsql -c \"ALTER ROLE \\\"%s\\\" WITH NOCREATEDB;\" postgres\necho \"createdb revoked\"", roleName)
+	}
+	return script
 }
 
 // --- Status helpers ----------------------------------------------------------
