@@ -378,6 +378,28 @@ tenant — it isn't live until you deploy it, next.
 
 ### Deploy a tenant
 
+> **Provisioning a tenant briefly disrupts the shared kernel — plan it like a
+> maintenance window.**
+>
+> Tenant provisioning is not isolated to the new tenant's namespace. It mutates
+> two resources every existing tenant and the platform portal depend on:
+>
+> - **The shared portal's Keycloak client.** A `keycloak-portal-bff-<tenant>`
+>   Job in `platform-kernel` rewrites the portal BFF client. While it runs,
+>   logins at `portal.<kernel-domain>` can fail.
+> - **The kernel Gateway.** Two listeners are added for the new tenant
+>   (`https-tenant-<name>-wildcard` and `-apex`), which forces Envoy to reload
+>   its configuration for *every* host it serves.
+>
+> The observed symptom is a transient `404 Not Found` from
+> `portal.<kernel-domain>` — Envoy answering before the new configuration is
+> live, not the portal being down. It clears on its own; the portal pods do not
+> restart. Undeploying a tenant does the same in reverse.
+>
+> Provision tenants outside business hours where that matters, and do not treat
+> a 404 during provisioning as a failed install — re-check once the tenant
+> reaches `Ready`.
+
 ```bash
 # Deploy the demo tenant definition (Element; Jitsi is an Element sidecar)
 kubectl gentian tenants deploy demo

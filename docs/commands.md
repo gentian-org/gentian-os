@@ -41,6 +41,19 @@ kubectl get tenants
 
 ## 3. Provision a Tenant
 
+> **Deploying or undeploying a tenant briefly disrupts the shared kernel.**
+> Tenant provisioning is not confined to the tenant's own namespace. It rewrites
+> the shared portal's Keycloak BFF client (a `keycloak-portal-bff-<tenant>` Job
+> in `platform-kernel`) and adds two listeners to the kernel Gateway, forcing an
+> Envoy configuration reload across every host the gateway serves.
+>
+> Expect transient `404 Not Found` responses from `portal.<kernel-domain>` while
+> that happens — Envoy answering before the new configuration is live, not the
+> portal crashing (its pods do not restart). Undeploy does the same in reverse.
+> Treat `tenants deploy` / `tenants undeploy` as a maintenance-window operation
+> on a cluster with live users, and re-check the portal once the tenant reports
+> `Ready` before concluding anything is broken.
+
 Each cluster maintains tenant **definitions** under
 `clusters/<cluster>/definitions/<tenant>/`. Fresh installs leave
 `clusters/<cluster>/tenants/` empty until a definition is deployed. There's
