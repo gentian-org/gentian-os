@@ -46,26 +46,34 @@ func ingressFrameAncestorsPolicy(
 	if mode == "" {
 		mode = gatewayFrameAncestorsReplace
 	}
+	seen := make(map[string]struct{})
 	var origins []string
+	add := func(origin string) {
+		if origin == "" {
+			return
+		}
+		if _, dup := seen[origin]; dup {
+			return
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
 	for _, token := range spec.Origins {
 		switch strings.TrimSpace(token) {
 		case gatewayFrameAncestorsOriginPortal:
-			if kernelDomain != "" {
-				origins = append(origins, fmt.Sprintf("https://portal.%s", kernelDomain))
+			for _, origin := range portalOrigins(kernelDomain, effectiveDomain) {
+				add(origin)
 			}
 		case gatewayFrameAncestorsOriginMainApp:
 			if effectiveDomain != "" && mainIngressSubDomain != "" {
 				if mainIngressSubDomain == "@" {
-					origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+					add(fmt.Sprintf("https://%s", effectiveDomain))
 				} else {
-					origins = append(origins, fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
+					add(fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
 				}
 			}
 		default:
-			expanded := strings.ReplaceAll(token, "${TENANT_DOMAIN}", effectiveDomain)
-			if expanded != "" {
-				origins = append(origins, expanded)
-			}
+			add(strings.ReplaceAll(token, "${TENANT_DOMAIN}", effectiveDomain))
 		}
 	}
 	if len(origins) == 0 {

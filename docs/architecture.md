@@ -377,12 +377,22 @@ creates:
 
 For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single
-`frame-ancestors 'self' https://portal.<kernel_domain>` policy — many charts
-only emit `frame-ancestors 'self'`, and **appending** a second CSP header
-leaves both active so browsers still block the portal iframe. Per-tenant portal
-hostnames are not used; tenants authenticate via the kernel portal. Apps with
+`frame-ancestors 'self' https://portal.<kernel_domain>
+https://<tenant-effective-domain> https://*.<tenant-effective-domain>` policy —
+many charts only emit `frame-ancestors 'self'`, and **appending** a second CSP
+header leaves both active so browsers still block the portal iframe. The portal
+answers on the tenant apex as well as `portal.<kernel_domain>`, and the top frame
+is whichever of the two the user signed in on, so both are named. Apps with
 extra edge snippet needs keep those lines; frame-ancestors is still injected on
 each route according to its role.
+
+A route may narrow that list with the
+`gentianos.io/gateway-frame-ancestors` annotation, whose `portal` token resolves
+to the same routed portal hosts (`portalOrigins`) rather than its own list.
+Enumerating them per policy is how document editing broke once already: the
+annotation kept naming only `portal.<kernel_domain>` after the portal gained the
+tenant apex, and the server side gives no sign of it — the browser drops the
+frame after a `200`.
 
 **IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
 `chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The

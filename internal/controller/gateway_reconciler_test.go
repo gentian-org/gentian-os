@@ -295,6 +295,53 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	if !strings.Contains(policy.Origins, "https://portal.desk.gentian.org") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
+	// The portal answers on the tenant apex too, and that is the host a tenant
+	// user is normally signed in on. Leaving it out passes every server-side
+	// check and still blocks the iframe in the browser, so assert it explicitly.
+	if !strings.Contains(policy.Origins, "https://demo.desk.gentian.org") {
+		t.Fatalf("origins = %q", policy.Origins)
+	}
+}
+
+// The "portal" token must resolve to the same hosts the portal is actually
+// routed on, so a policy that opts out of the computed default does not silently
+// carry a narrower list than the default it replaced.
+func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *testing.T) {
+	t.Parallel()
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["portal"]}`,
+		},
+	}
+	policy, ok, err := ingressFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "cloud", ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected custom policy")
+	}
+	want := strings.Join(portalOrigins("desk.gentian.org", "demo.desk.gentian.org"), " ")
+	if policy.Origins != want {
+		t.Fatalf("origins = %q, want %q", policy.Origins, want)
+	}
+}
+
+// mainApp and portal collapse to one origin when the app is the tenant apex;
+// a repeated origin in the header is noise, not a second permission.
+func TestIngressGatewayFrameAncestorsDeduplicatesOrigins(t *testing.T) {
+	t.Parallel()
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
+		},
+	}
+	policy, _, err := ingressFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "@", ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(policy.Origins, "https://demo.desk.gentian.org"); got != 1 {
+		t.Fatalf("origins = %q, want demo apex once", policy.Origins)
+	}
 }
 
 func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {

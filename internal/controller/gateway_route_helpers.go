@@ -396,13 +396,34 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
+// portalOrigins lists every origin the portal answers on for one tenant. There
+// are two: the shared kernel host, and the tenant's own apex, which
+// kernelHTTPRouteSpecs serves the same portal deployment from. Anything an
+// embedded app may be framed by has to name both, since frame-ancestors is
+// checked against the whole ancestor chain and the top frame is whichever host
+// the user happens to be signed in on.
+//
+// Both the computed default below and the "portal" token in
+// ingressFrameAncestorsPolicy resolve through here. They used to enumerate the
+// hosts separately, and when the portal gained the tenant apex the token kept
+// naming only portal.<kernel-domain> — so the one route that opts out of the
+// default (Collabora) lost the origin the user was actually on, and every
+// document open failed with "Failed to load Nextcloud Office" while the server
+// side stayed healthy. A third portal hostname must reach both policies at once.
+func portalOrigins(kernelDomain, effectiveDomain string) []string {
 	var origins []string
 	if kernelDomain != "" {
-		origins = append(origins, fmt.Sprintf("https://portal.%s", kernelDomain))
+		origins = append(origins, fmt.Sprintf("https://%s", kernelPortalHost(kernelDomain)))
 	}
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+	}
+	return origins
+}
+
+func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
+	origins := portalOrigins(kernelDomain, effectiveDomain)
+	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
 	}
 	if len(origins) > 0 {

@@ -147,8 +147,12 @@ embedding rules through explicit response header policy attached to routes.
 Default app policy:
 
 - remove upstream `X-Frame-Options`
-- enforce `Content-Security-Policy` with `frame-ancestors 'self'` plus
-  `https://portal.<kernelDomain>`
+- enforce `Content-Security-Policy` with `frame-ancestors 'self'` plus every
+  origin the portal answers on — `https://portal.<kernelDomain>` and
+  `https://<tenantEffectiveDomain>` — plus `https://*.<tenantEffectiveDomain>`
+- a route may replace that list via `gentianos.io/gateway-frame-ancestors`; its
+  `portal` token expands through the same `portalOrigins` helper, so a narrowed
+  policy cannot fall behind the hosts the portal is actually routed on
 
 Keycloak OIDC broker policy:
 
