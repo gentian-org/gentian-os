@@ -308,6 +308,7 @@ gentian_envoyproxy_static_ip_manifest() {
 #
 #   metallb    loadBalancerIP + metallb.universe.tf/loadBalancerIPs
 #   openstack  loadBalancerIP + keep-floatingip (survives Service deletion)
+#              + enable-health-monitor (see below)
 #   gcp        loadBalancerIP (reserved regional static address)
 #   aws        NLBs IGNORE loadBalancerIP — the address comes from an EIP
 #              allocation annotation, so the field is omitted entirely to avoid
@@ -329,6 +330,20 @@ _edge_lb_annotations() {
     case "${LB_PROVIDER:-}" in
         openstack)
             lines+=("loadbalancer.openstack.org/keep-floatingip: \"true\"")
+            # Envoy Gateway sets externalTrafficPolicy: Local on the data-plane
+            # Service, so only a node actually running an Envoy pod serves the
+            # NodePort — every other node refuses. Octavia adds all nodes as pool
+            # members and round-robins across them, so without a health monitor it
+            # keeps handing connections to members that cannot answer: it never
+            # probes them, and nothing removes them. One Envoy replica across two
+            # members means every second connection is dropped after the TCP
+            # handshake, which surfaces as intermittent TLS failures on every
+            # hostname the cluster serves.
+            #
+            # The CCM only creates the monitor when asked. Its defaults (delay,
+            # timeout, retries) are fine; override via LB_ANNOTATIONS with
+            # loadbalancer.openstack.org/health-monitor-* if a cluster needs it.
+            lines+=("loadbalancer.openstack.org/enable-health-monitor: \"true\"")
             ;;
         metallb)
             lines+=("metallb.universe.tf/loadBalancerIPs: \"${NODE_IP}\"")
