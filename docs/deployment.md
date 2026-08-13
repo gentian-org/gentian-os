@@ -148,6 +148,38 @@ inside `gentian-deployments`, not in separate deployment branches, and not
 
 ## 3. Bootstrapping a new cluster
 
+### Control plane sizing
+
+Provision a control plane with **at least 8 GB of memory**. On managed
+Kubernetes, check the tier's control-plane specification before creating the
+cluster — a 4 GB control plane does not run a Gentian kernel.
+
+API server memory tracks the number of objects in etcd and the number of
+cluster-wide watches, and the kernel is heavy on both. ArgoCD watches every
+resource type to compute drift; Crossplane, cert-manager, Envoy Gateway,
+ExternalSecrets, CNPG, Gateway API and `gentianos.io` each register CRDs that
+carry their own watch caches. Tenant provisioning adds Secrets, Jobs and Events
+on top.
+
+An undersized control plane is OOM-killed, and the failure is easy to
+misread: the API endpoint stops accepting connections entirely — refusing TCP
+while still answering ICMP — while every workload keeps serving traffic, because
+nodes need no API server to keep running what is already scheduled. Reaching a
+cluster's own edge but not its API is the signature.
+
+Measure what a running cluster actually holds:
+
+```bash
+kubectl get --raw /metrics | grep apiserver_storage_objects | sort -t= -k2 -rn | head -30
+kubectl get events -A --no-headers | wc -l
+```
+
+Keep the count down by narrowing ArgoCD's tracked resource types, and by
+confirming that TTLs on finished Jobs are firing — Events and completed Jobs
+accumulate faster than anything else the kernel creates.
+
+### What `install.sh` does
+
 `install.sh` does two genuinely different jobs, and they have different
 safety rules:
 

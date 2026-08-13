@@ -32,6 +32,10 @@ You need a running, reachable cluster. Both `install.sh` and
 
 **Requirements:**
 - Kubernetes 1.26+
+- A control plane with at least 8 GB of memory. On managed Kubernetes, check the
+  tier's control-plane specification before creating the cluster: 4 GB is not
+  enough, and an undersized control plane is OOM-killed once the kernel is
+  running. See [docs/deployment.md](docs/deployment.md) §3 for what consumes it.
 - Default StorageClass available (configure per cluster in `gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env`)
 - Edge routing via Gateway API + Envoy Gateway (`ROUTING_MODE=gateway`; installed by `install.sh` Step 2c — see [docs/design/gateway.md](docs/design/gateway.md) and [docs/faq.md](docs/faq.md))
 - DNS for `KERNEL_DOMAIN` (kernel UIs) and tenant app zones (`<tenant>.<kernel_domain>` or vanity domains); see [docs/design/multi-tenancy.md](docs/design/multi-tenancy.md) §3
