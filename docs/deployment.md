@@ -308,9 +308,13 @@ stage-specific `ImageUpdater` CR. See [design/operations.md](design/operations.m
 | **staging** | Release candidates | Semver tags, including `v*-rc.*` |
 | **prod** | Conservative (`semver`) | Stable `v*.*.*` tags only |
 
-`install.sh` sets the Argo `targetRevision` for the gentian-os Helm chart
-from the **git branch checked out** when install runs (defaults to
-`develop`). For production, check out the release tag before bootstrapping.
+`GENTIAN_OS_BRANCH` (`install.env`) is the ref every in-cluster Application
+tracks — the kernel ApplicationSets, the operator Application and the
+bootstrap Applications all follow it. Left empty it defaults to the branch
+`install.sh` runs from, which is what a dev cluster wants. **Pinning a
+cluster to a release means setting it explicitly**, not checking out the
+tag: a detached checkout resolves to `HEAD`, which `resolve_gentian_os_branch`
+treats as undetectable and falls back to `develop`. See §5.4.
 
 ---
 
@@ -383,15 +387,57 @@ cluster's path to the prod cluster's path (a different `clusters/<cluster>/`
 tree entirely — see §1 on why there's no `<stage>/` subdirectory to promote
 *within* one cluster's tree) via a pull request on `main`.
 
-### 5.4 First production release checklist
+### 5.4 Release runbook
 
-1. Finish `clusters/<prod-cluster>/kernel/values.yaml` (image tag) and
-   confirm `claims/cluster.yaml` has the right domain.
-2. Stabilise on the dev cluster tracking `develop`.
-3. Merge `develop` → `main`; create semver tag `v1.0.0`.
-4. Check out the tag locally; run `./install.sh` with
-   `GENTIAN_DEPLOYMENTS_STAGE=prod` for the new cluster.
-5. Add prod tenant definitions; deploy and commit.
+Cutting a release is a repository operation; rolling it onto a cluster is a
+separate one, done per cluster and repeatable. The first production release
+runs both back to back, which is why they are listed together.
+
+**Preconditions**
+
+- CI is green on `develop`. The tag rebuilds the same tree, so a red
+  `develop` is a red release.
+- The dev cluster has been running that tree long enough to trust it (§4,
+  `newest-build`).
+
+**Cut the release**
+
+1. On `develop`, bump `version` and `appVersion` in
+   `charts/gentian-os/Chart.yaml` to `X.Y.Z` as its own `chore(release):`
+   commit. This is load-bearing, not bookkeeping: the operator Deployment
+   renders `image.tag | default .Chart.AppVersion`, so `appVersion` is the
+   image a pinned cluster pulls until Image Updater writes a tag back. It
+   must match what CI publishes — `docker/metadata-action` strips the `v`,
+   so tag `vX.Y.Z` becomes image `:X.Y.Z`.
+2. Merge `develop` → `main`.
+3. Create an annotated tag `vX.Y.Z` on `main` whose message names what the
+   release contains.
+4. Wait for CI on the tag. Its `docker` job publishes
+   `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y`; nothing downstream can
+   adopt the release until that lands.
+
+**Roll it onto a cluster**
+
+5. Set `GENTIAN_OS_BRANCH=vX.Y.Z` in that cluster's `install.env` (§4 — the
+   tag must be named explicitly; checking it out is not enough).
+6. Pin the portal in the same file if this cluster should not follow the
+   portal's `develop`: `GENTIAN_UI_BRANCH` and `PORTAL_IMAGE_TAG` are
+   independent of `GENTIAN_OS_BRANCH` and each default to `develop`.
+7. Re-run `./install.sh`. It is idempotent; the bootstrap Applications are
+   re-rendered against the new ref and Argo CD follows the tag from there.
+8. Confirm the cluster actually moved:
+
+   ```bash
+   kubectl -n gentian-system get deploy gentian-os \
+     -o jsonpath='{.spec.template.spec.containers[0].image}'
+   ```
+
+**Additionally, when the target is a new production cluster**
+
+- Finish `clusters/<prod-cluster>/kernel/values.yaml` and confirm
+  `claims/cluster.yaml` carries the right domain, before step 7.
+- Run install with `GENTIAN_DEPLOYMENTS_STAGE=prod`.
+- Add prod tenant definitions, then deploy and commit them (§5.3).
 
 ---
 
@@ -445,6 +491,10 @@ flowchart TD
 1. `develop` → homelab dev (automatic).
 2. Tag `vX.Y.Z-rc.N` on `main` → staging Image Updater adopts RC.
 3. After validation, tag `vX.Y.Z` → prod Image Updater adopts stable release.
+
+Each tag is cut and rolled out by the §5.4 runbook — an RC differs only in
+the tag it creates, and still needs its own chart bump so the staging
+cluster pulls the RC image rather than the last stable one.
 
 **Stage policy (`gentian-deployments/profiles/`):** edit `staging.yaml` or
 `prod.yaml` directly — since it's shared by every cluster of that tier,
