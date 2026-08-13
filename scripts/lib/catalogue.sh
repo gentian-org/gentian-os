@@ -342,7 +342,8 @@ handoff_gentian_os_to_argocd() {
     # this is called from anywhere else.
     local openfga_token_in_bao="${2:-0}"
     local gentian_os_branch
-    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    resolve_gentian_os_branch
+    gentian_os_branch="${GENTIAN_OS_BRANCH}"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"

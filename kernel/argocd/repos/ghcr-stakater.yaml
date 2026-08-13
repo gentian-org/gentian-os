@@ -1,7 +1,7 @@
 ---
 # ArgoCD Repository registration for ghcr.io/stakater/charts OCI Helm charts.
 # This is a PUBLIC registry — no credentials required.
-# Required for: argocd/bootstrap/reloader-application.yaml
+# Required for: kernel/bootstrap/reloader-application.yaml.tmpl
 #
 # To apply manually (bootstrap step):
 #   kubectl apply -f argocd/repos/ghcr-stakater.yaml

@@ -35,7 +35,7 @@ spec:
         value: "${STORAGE_CLASS}"
   # Source 2: Values file from Git (referenced as $values by Source 1)
   - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: ${GENTIAN_OS_BRANCH}
     ref: values
   destination:
     server: https://kubernetes.default.svc

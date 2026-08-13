@@ -3,12 +3,18 @@
   their content as a Helm template — critical, since those files use their
   own Go-template syntax ({{.app}}, {{.env}}) that ArgoCD's ApplicationSet
   controller evaluates at its own sync time, not at Helm render time).
-  The only thing this chart does is swap the literal "env: dev" generator
-  element for the actual stage.
+  The only thing this chart does is swap literals: the "env: dev" generator
+  element for the actual stage, the domain placeholder, and the git ref the
+  children track back to this repo.
+
+  The revision swap matches "targetRevision: develop" exactly, so the pinned
+  third-party chart versions in the same files ("2.2.9", "3.3.7", …) are left
+  alone — only sources that point at gentian-os carry the branch literal.
 */ -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
 ---
 {{ $.Files.Get $path
      | replace "env: dev" (printf "env: %s" $.Values.stage)
+     | replace "targetRevision: develop" (printf "targetRevision: %s" $.Values.targetRevision)
      | replace "kernel.domain.placeholder" $.Values.kernelDomain }}
 {{- end }}

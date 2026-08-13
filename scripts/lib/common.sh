@@ -1462,6 +1462,34 @@ gentian_infradata_claim_name() { gentian_claim_name infra-data dev-infra-data; }
 gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 
 # =============================================================================
+# resolve_gentian_os_branch — the git ref every in-cluster Application tracks
+# back to this repo.
+#
+# Exports GENTIAN_OS_BRANCH so both renderers can reach it: envsubst in
+# apply_bootstrap_application, and the sed passes that fill %GENTIAN_OS_BRANCH%.
+# Set GENTIAN_OS_BRANCH in install.env to pin a cluster to a branch or release
+# tag; otherwise it follows the checkout the installer is running from, which is
+# what a dev cluster wants.
+#
+# Detached HEAD returns the literal "HEAD" from rev-parse, which is not a ref
+# ArgoCD can track — every Application would sit Unknown pointing at a revision
+# that does not resolve. Treat it as "no branch" and fall back, the same as a
+# missing .git.
+# =============================================================================
+resolve_gentian_os_branch() {
+    if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
+        export GENTIAN_OS_BRANCH
+        return 0
+    fi
+    local detected
+    detected="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ -z "${detected}" || "${detected}" == "HEAD" ]]; then
+        detected="develop"
+    fi
+    export GENTIAN_OS_BRANCH="${detected}"
+}
+
+# =============================================================================
 # apply_bootstrap_application — kubectl apply a bootstrap Application, rendering
 # it first when it ships as a .yaml.tmpl.
 #
@@ -1492,10 +1520,12 @@ apply_bootstrap_application() {
             error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}-application.yaml.tmpl."
             exit 1
         fi
+        resolve_gentian_os_branch
         # Allowlisted, not a bare envsubst: these templates also contain Argo CD
         # and Helm expressions such as $values, which a substitute-everything run
         # would silently blank.
-        envsubst "\${STORAGE_CLASS} \${GENTIAN_DEPLOYMENTS_STAGE}" < "${base}.yaml.tmpl" | kubectl apply -f -
+        envsubst "\${STORAGE_CLASS} \${GENTIAN_DEPLOYMENTS_STAGE} \${GENTIAN_OS_BRANCH}" \
+            < "${base}.yaml.tmpl" | kubectl apply -f -
     else
         kubectl apply -f "${base}.yaml"
     fi

@@ -786,6 +786,7 @@ bootstrap_root_appset() {
     banner "Step 10d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
 
     export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    resolve_gentian_os_branch
     envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."

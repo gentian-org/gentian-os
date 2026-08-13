@@ -37,7 +37,7 @@ spec:
     - /metadata/finalizers
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: develop
+    targetRevision: ${GENTIAN_OS_BRANCH}
     path: kernel/appsets
     helm:
       parameters:
@@ -49,6 +49,12 @@ spec:
       # recipient with 554 "Access denied".
       - name: kernelDomain
         value: "${KERNEL_DOMAIN}"
+      # Every child ApplicationSet points back at this repo. Without this the
+      # children would keep the literal branch baked into raw/*.yaml while the
+      # parent tracked another one, so a cluster pinned to a release tag would
+      # still pull its kernel services off develop.
+      - name: targetRevision
+        value: "${GENTIAN_OS_BRANCH}"
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

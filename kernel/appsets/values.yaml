@@ -3,6 +3,12 @@
 # (root-applicationset.yaml.tmpl passes it from ${GENTIAN_DEPLOYMENTS_STAGE}).
 stage: dev
 
+# targetRevision is the git ref every child ApplicationSet tracks back to
+# gentian-os, replacing the "targetRevision: develop" literal in raw/*.yaml.
+# Passed by root-applicationset.yaml.tmpl from ${GENTIAN_OS_BRANCH}, so the
+# children follow whatever branch or release tag the parent was installed from.
+targetRevision: develop
+
 # kernelDomain replaces the "kernel.domain.placeholder" literal carried by
 # raw/*.yaml, so per-service charts can render values that depend on the
 # cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.

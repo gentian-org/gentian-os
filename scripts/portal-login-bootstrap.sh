@@ -1385,7 +1385,9 @@ apply_gentian_portal_argocd_application() {
     local gentian_os_branch gentian_ui_branch portal_tag rendered tmpl
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-test}"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
-    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    resolve_gentian_os_branch
+
+    gentian_os_branch="${GENTIAN_OS_BRANCH}"
     gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"
     portal_tag="${PORTAL_IMAGE_TAG:-develop}"
     tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-portal-application.yaml.tmpl"
