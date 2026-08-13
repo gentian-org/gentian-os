@@ -334,7 +334,7 @@ Example `install.env` per machine:
 GENTIAN_DEPLOYMENTS_CLUSTER=test
 GENTIAN_DEPLOYMENTS_STAGE=dev
 GENTIAN_DEPLOYMENTS_BRANCH=main
-KERNEL_DOMAIN=desk.gentian.org
+KERNEL_DOMAIN=platform.example.com
 ACME_ENV=staging
 
 # Cloud production

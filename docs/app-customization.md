@@ -551,15 +551,16 @@ ladder — same image, same drop-in dirs, same plugin API — so it never restat
 `grade`, `rubricScore` or `supportedRungs`.
 
 **Editions** are `ce · me · pro`, and say *who supplies the entry*, not how much of
-it you get. `od` is not an edition: openDesk is a vendor, so an openDesk profile is
-a `pro` edition with `spec.author: openDesk`. Editions are technically compatible
-with one another; what gates a `pro` addon is **entitlement**, and what constrains
-addon↔base compatibility is **version**. There is therefore one addon set per
-family and no per-edition compatibility matrix.
+it you get. A vendor's name is never an edition: a vendor-supplied profile is a
+`pro` edition carrying that vendor in `spec.author`. Editions are technically
+compatible with one another; what gates a `pro` addon is **entitlement**, and what
+constrains addon↔base compatibility is **version**. There is therefore one addon
+set per family and no per-edition compatibility matrix.
 
-An **edition shares a family name and nothing else** — `nextcloud-base-od` deploys
-the openDesk AIO chart from a credentialed registry, `nextcloud-base-ce` the
-community chart — so it inherits no ladder and must be characterised on its own.
+An **edition shares a family name and nothing else** — `nextcloud-base-pro` may
+deploy a vendor's all-in-one chart from a credentialed registry where
+`nextcloud-base-ce` deploys the community chart — so it inherits no ladder and must
+be characterised on its own.
 
 **Naming is a hint, not a contract.** Two profiles may both be edition `pro` from
 different authors under unrelated names. `spec.edition` and `spec.author` are the

@@ -28,7 +28,7 @@ spec:
                 kernelDomain:
                   type: string
                   description: >
-                    Cluster-wide platform DNS suffix, e.g. "desk.gentian.org".
+                    Cluster-wide platform DNS suffix, e.g. "platform.example.com".
                     All kernel services are reachable under this domain.
                 masterPasswordSecretRef:
                   type: object

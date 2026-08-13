@@ -42,8 +42,8 @@ func TestBuildKernelTenantBrokerScript(t *testing.T) {
 }
 
 func TestKernelExternalURLIncludesAuthPath(t *testing.T) {
-	got := kernelExternalURL("desk.gentian.org")
-	want := "https://id.desk.gentian.org/auth"
+	got := kernelExternalURL("platform.example.test")
+	want := "https://id.platform.example.test/auth"
 	if got != want {
 		t.Fatalf("kernelExternalURL = %q, want %q", got, want)
 	}

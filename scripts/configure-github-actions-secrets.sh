@@ -2,7 +2,7 @@
 # Upload GitHub Actions secrets for gentian-os automation (optional ArgoCD sync).
 #
 # Usage (normally called from install.sh):
-#   CI_BOT_PAT=... KERNEL_DOMAIN=desk.example.com \
+#   CI_BOT_PAT=... KERNEL_DOMAIN=platform.example.com \
 #     ./scripts/configure-github-actions-secrets.sh
 #
 # Requires: gh CLI authenticated with permission to manage secrets on both repos.

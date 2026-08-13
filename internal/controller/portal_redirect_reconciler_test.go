@@ -32,7 +32,7 @@ import (
 
 func TestKernelPortalHost(t *testing.T) {
 	t.Parallel()
-	if got := kernelPortalHost("desk.gentian.org"); got != "portal.desk.gentian.org" {
+	if got := kernelPortalHost("platform.example.test"); got != "portal.platform.example.test" {
 		t.Fatalf("kernelPortalHost = %q", got)
 	}
 	if kernelPortalHost("") != "" {
@@ -58,7 +58,7 @@ func TestPortalRedirectIsDeletedNotRecreated(t *testing.T) {
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = gatewayv1.Install(scheme)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
-	r := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "desk.gentian.org"}
+	r := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "platform.example.test"}
 
 	if err := r.ensurePortalRedirect(context.Background(), tenant); err != nil {
 		t.Fatalf("ensurePortalRedirect: %v", err)
@@ -79,8 +79,8 @@ func TestPortalRedirectIsDeletedNotRecreated(t *testing.T) {
 func TestTenantHostGetsAPortalRouteWithTheSameBackends(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs(
-		"desk.gentian.org",
-		[]string{"demo.desk.gentian.org"},
+		"platform.example.test",
+		[]string{"demo.platform.example.test"},
 		nil,
 		[]string{"demo"},
 	)
@@ -93,7 +93,7 @@ func TestTenantHostGetsAPortalRouteWithTheSameBackends(t *testing.T) {
 	if found == nil {
 		t.Fatal("no portal route for the tenant host")
 	}
-	if found.host != "demo.desk.gentian.org" {
+	if found.host != "demo.platform.example.test" {
 		t.Fatalf("host = %q", found.host)
 	}
 	// Same backends as the shared route: one portal deployment answering on more

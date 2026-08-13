@@ -33,7 +33,7 @@ metadata:
     uid: ""
 spec:
   compositionUpdatePolicy: Automatic
-  domain: render-fixture.desk.example.test
+  domain: render-fixture.platform.example.test
   profileRef:
     name: catalogue-test-app
   tenantNamespace: tenant-render-fixture

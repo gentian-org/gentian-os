@@ -50,7 +50,7 @@ const (
 // tenant realm so users logged into the portal don't need a second login for tenant apps.
 type realmBrokerParams struct {
 	kernelRealm       string // Keycloak realm name for the shared SSO realm, e.g. "kernel"
-	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.desk.gentian.org"
+	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.platform.example.com"
 }
 
 // ensureIdentity provisions a Keycloak realm and OIDC/SAML clients for the tenant.

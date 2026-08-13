@@ -186,7 +186,7 @@ watchNamespaces: []
 
 # Optional Cloudflare edge-DNS adapter. When all fields are set, the operator
 # ensures a proxied CNAME *.<effectiveDomain> per tenant so Total TLS can mint
-# edge certs for tenant app hostnames (e.g. meet.demo.desk.gentian.org) that
+# edge certs for tenant app hostnames (e.g. meet.demo.platform.example.com) that
 # Universal SSL does not cover. Origin TLS is still issued by cert-manager in
 # the tenant namespace. Leave empty to disable (use grey-cloud DNS or passthrough).
 cloudflare:

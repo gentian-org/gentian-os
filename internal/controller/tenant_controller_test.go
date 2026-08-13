@@ -275,7 +275,7 @@ func TestMain(m *testing.M) {
 		Client:                   mgr.GetClient(),
 		APIReader:                mgr.GetAPIReader(),
 		Scheme:                   mgr.GetScheme(),
-		KernelDomain:             "desk.gentian.org",
+		KernelDomain:             "platform.example.test",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,

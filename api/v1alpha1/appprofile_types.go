@@ -71,7 +71,7 @@ type AppProfileSpec struct {
 	// (vendor), an organisation, or an individual. It describes the entry, not the
 	// upstream project: the same application can appear as several profiles from
 	// different authors, e.g. a "ce" edition packaged by Gentian alongside a "pro"
-	// edition supplied by openDesk.
+	// edition supplied by a third-party vendor.
 	//
 	// This is why the edition must never be inferred from a profile's name. Two
 	// profiles may both be edition "pro" from different authors and carry entirely

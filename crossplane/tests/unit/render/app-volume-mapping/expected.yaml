@@ -83,9 +83,9 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://demo.demo.desk.example.test/
+    - https://demo.demo.platform.example.test/
     validRedirectUris:
-    - https://demo.demo.desk.example.test/oidc/callback
+    - https://demo.demo.platform.example.test/oidc/callback
     webOrigins:
     - +
   providerConfigRef:

@@ -7,7 +7,7 @@ metadata:
 spec:
   displayName: Render Fixture
   adminEmail: admin-render@example.test
-  kernelDomain: desk.example.test
+  kernelDomain: platform.example.test
   apps:
     - name: catalogue-test-app
       profile: catalogue-test-app

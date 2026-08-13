@@ -29,8 +29,8 @@ import (
 
 // ensureKernelGatewayTunnelIngress programs explicit kernel and tenant apex hostnames
 // on the Cloudflare tunnel to reach kernel-public-gateway. Wildcard tunnel hostname
-// rules such as *.desk.gentian.org are unreliable for multi-label kernel domains;
-// tenant app wildcards (*.demo.desk.gentian.org) are handled per-tenant separately.
+// rules such as *.platform.example.com are unreliable for multi-label kernel domains;
+// tenant app wildcards (*.demo.platform.example.com) are handled per-tenant separately.
 func ensureKernelGatewayTunnelIngress(
 	ctx context.Context,
 	c client.Client,

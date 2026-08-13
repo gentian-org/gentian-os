@@ -62,12 +62,12 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(parent).Build()
 	r := &TenantReconciler{
 		Client:       c,
-		KernelDomain: "desk.example.com",
+		KernelDomain: "platform.example.com",
 	}
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Domain: "demo.desk.example.com",
+			Domain: "demo.platform.example.com",
 			Apps:   []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
 		},
 	}

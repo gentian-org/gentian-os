@@ -6,4 +6,4 @@ metadata:
 spec:
   displayName: Schema Fixture
   adminEmail: admin@schema-fixture.example.com
-  kernelDomain: desk.example.test
+  kernelDomain: platform.example.test

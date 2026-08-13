@@ -41,15 +41,15 @@ func TestEffectiveDomainTenancyModes(t *testing.T) {
 	tenant := &Tenant{}
 	tenant.Name = "demo"
 
-	if got := tenant.EffectiveDomain("desk.gentian.org", TenancyModeMulti); got != "demo.desk.gentian.org" {
+	if got := tenant.EffectiveDomain("platform.example.test", TenancyModeMulti); got != "demo.platform.example.test" {
 		t.Fatalf("multi: got %q", got)
 	}
-	if got := tenant.EffectiveDomain("desk.gentian.org", TenancyModeSingle); got != "desk.gentian.org" {
+	if got := tenant.EffectiveDomain("platform.example.test", TenancyModeSingle); got != "platform.example.test" {
 		t.Fatalf("single: got %q", got)
 	}
 
 	tenant.Spec.Domain = "acme.com"
-	if got := tenant.EffectiveDomain("desk.gentian.org", TenancyModeMulti); got != "acme.com" {
+	if got := tenant.EffectiveDomain("platform.example.test", TenancyModeMulti); got != "acme.com" {
 		t.Fatalf("vanity overrides mode: got %q", got)
 	}
 }

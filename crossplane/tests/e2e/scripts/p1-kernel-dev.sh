@@ -11,7 +11,7 @@
 #   7. Spot-check key managed resources are present
 #
 # Usage:  make e2e-p1
-#         KERNEL_DOMAIN=desk.example.com make e2e-p1
+#         KERNEL_DOMAIN=platform.example.com make e2e-p1
 # Rollback: kubectl delete cluster dev-cluster -n crossplane-system
 #           kubectl delete xcluster dev-cluster
 #

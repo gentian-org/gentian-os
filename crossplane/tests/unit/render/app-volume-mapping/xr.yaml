@@ -11,4 +11,4 @@ spec:
   profileRef:
     name: demo-app
   tenantNamespace: tenant-demo
-  domain: demo.desk.example.test
+  domain: demo.platform.example.test

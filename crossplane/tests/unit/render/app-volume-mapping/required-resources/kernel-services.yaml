@@ -8,6 +8,6 @@ metadata:
 data:
   # Staging CA is what makes the platform mount a trust bundle into the app.
   ACME_STAGING: "true"
-  KERNEL_DOMAIN: desk.example.test
+  KERNEL_DOMAIN: platform.example.test
   S3_ENDPOINT: https://s3.example.invalid
   MYSQL_HOST: mysql.example.invalid

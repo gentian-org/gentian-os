@@ -7,7 +7,7 @@
 # internal/controller/tenant_edge_tls.go and docs/design/multi-tenancy.md §3.
 #
 # Templated on:
-#   ${KERNEL_DOMAIN}           — single platform-wide DNS suffix (e.g. desk.gentian.org)
+#   ${KERNEL_DOMAIN}           — single platform-wide DNS suffix (e.g. platform.example.com)
 #   ${DNS01_CLUSTER_ISSUER}    — ClusterIssuer name (production or staging DNS-01)
 #
 # See docs/architecture.md §2.5.

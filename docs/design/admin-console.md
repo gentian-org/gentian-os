@@ -116,7 +116,7 @@ the address attached so Keycloak can pre-fill it.
 
 | Field | Rule |
 |---|---|
-| **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.desk.gentian.org`) |
+| **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.platform.example.com`) |
 | **`inviteEmail`** | Optional secondary address for **invite**, **password reset**, and **account recovery** only |
 | **Tenant admin bootstrap** | Username `admin-<tenant>`; login email from `Tenant.spec.adminEmail`; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
 | **Platform admin bootstrap** | `administrator@<KERNEL_DOMAIN>`; password derived from install `MASTER_PASSWORD` |
@@ -621,7 +621,7 @@ These stay outside the Admin Console — cluster admin, GitOps, or dedicated too
 
 | Topic | Notes |
 |---|---|
-| **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.desk.gentian.org`) and `single` tenancy (`user@desk.gentian.org`). Reuse `Tenant.EffectiveDomain()` logic. |
+| **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.platform.example.com`) and `single` tenancy (`user@platform.example.com`). Reuse `Tenant.EffectiveDomain()` logic. |
 | **Authz bridge** | Currently syncs users; group/entitlement sync needed for accurate portal tiles (P6). |
 | **OIDC pack field names** | Catalogue uses `entitlementGroup` to map packs to `gentian:tenant:<t>:app:<profile>` groups. |
 | **Platform vs tenant admin UI** | Single console with scoped menus; BFF enforces tenant boundary on every mutation. |

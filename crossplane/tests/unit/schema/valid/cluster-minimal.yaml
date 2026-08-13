@@ -6,5 +6,5 @@ metadata:
   name: test-minimal
   namespace: default
 spec:
-  kernelDomain: desk.example.test
+  kernelDomain: platform.example.test
   compositeDeletePolicy: Background

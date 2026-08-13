@@ -41,22 +41,22 @@ Both modes use the **same central IdP** at `id.<KERNEL_DOMAIN>/realms/<tenant>`.
 
 | Mode | Cluster profile | Default `effectiveDomain` | Example Jitsi URL |
 |---|---|---|---|
-| **`multi`** | Shared SaaS | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.desk.gentian.org` |
-| **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.desk.gentian.org` |
+| **`multi`** | Shared SaaS | `<tenant>.<KERNEL_DOMAIN>` | `https://meet.demo.platform.example.com` |
+| **`single`** | Dedicated / demanding customer | `<KERNEL_DOMAIN>` (flat) | `https://meet.platform.example.com` |
 
 **Single-tenancy rules:** exactly one `Tenant` CR named `default`, operator env `TENANCY_MODE=single`. Vanity `spec.domain` still overrides
 in either mode.
 
 | Plane | Domain | Example hosts | Origin TLS (cert-manager) | DNS responsibility |
 |---|---|---|---|---|
-| **Kernel** | `KERNEL_DOMAIN` | `portal.desk.gentian.org`, `id.desk.gentian.org` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
-| **Tenant apps** | `effectiveDomain` | `meet.demo.desk.gentian.org` (multi) or `meet.desk.gentian.org` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
+| **Kernel** | `KERNEL_DOMAIN` | `portal.platform.example.com`, `id.platform.example.com` | One DNS-01 wildcard `*.<kernel_domain>` at install | Cluster operator (kernel namespace only) |
+| **Tenant apps** | `effectiveDomain` | `meet.demo.platform.example.com` (multi) or `meet.platform.example.com` (single) | One DNS-01 wildcard `*.<effectiveDomain>` **per tenant** | Platform zone for default tenants; customer for vanity |
 
 **Effective domain** (same for edge routing, mail, OIDC redirect URIs to apps):
 
 - If `Tenant.spec.domain` is set → use it (customer vanity, e.g. `acme.com`).
 - Else if `TENANCY_MODE=single` → `<KERNEL_DOMAIN>` (flat URLs).
-- Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.desk.gentian.org`).
+- Else (`multi`) → `<tenant-name>.<KERNEL_DOMAIN>` (e.g. `demo.platform.example.com`).
 
 App hostnames are always `{subDomain}.{effectiveDomain}`.
 
@@ -71,11 +71,11 @@ The gentian-os operator creates, for every tenant with edge-routed apps:
 3. One Gateway API `HTTPRoute` per app host, attached to the tenant Gateway and
    `kernel-public-gateway`, all using that TLS secret on the tenant listener.
 
-The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant namespaces. It does not cover `meet.demo.desk.gentian.org` (only one DNS label under the kernel domain).
+The kernel wildcard (`*.<kernel_domain>`) is **never** replicated into tenant namespaces. It does not cover `meet.demo.platform.example.com` (only one DNS label under the kernel domain).
 
 ### Why per-tenant wildcard (not kernel wildcard reuse)
 
-- **Correct SANs:** `*.demo.desk.gentian.org` covers all app subdomains for that tenant.
+- **Correct SANs:** `*.demo.platform.example.com` covers all app subdomains for that tenant.
 - **Rate limits:** One ACME certificate per tenant, not one per app host.
 - **CSP edge:** Multi-level names need their own edge cert when proxied (see below).
 - **Customer vanity:** Same code path when `spec.domain` is `acme.com` — only DNS delegation changes.
@@ -88,7 +88,7 @@ Wildcard certificates require **DNS-01**. The operator uses a single cluster-wid
 
 ### Edge TLS (optional, CSP-specific)
 
-When traffic is **proxied** (e.g. Cloudflare orange cloud), the CSP must also present a valid certificate for each hostname. Universal SSL on `*.desk.gentian.org` does **not** cover `meet.demo.desk.gentian.org`.
+When traffic is **proxied** (e.g. Cloudflare orange cloud), the CSP must also present a valid certificate for each hostname. Universal SSL on `*.platform.example.com` does **not** cover `meet.demo.platform.example.com`.
 
 Optional operator integration (Cloudflare today): proxied CNAME `*.<effectiveDomain>` → tunnel target so **Total TLS** issues `*.<effectiveDomain>` at the edge. If disabled, use DNS-only (grey cloud) or TLS passthrough to the cluster origin cert.
 
@@ -106,13 +106,13 @@ The Cloudflare (or other) API token for the **kernel** wildcard lives only in th
 
 ### ACME rate limits and dev staging
 
-Let's Encrypt production enforces per-account and per-registered-domain limits (notably **50 certificates per registered domain per week** for `desk.gentian.org` and descendants). Each **reinstall** or issuer change that re-orders the kernel wildcard plus one wildcard per tenant can consume several certificates quickly.
+Let's Encrypt production enforces per-account and per-registered-domain limits (notably **50 certificates per registered domain per week** for `platform.example.com` and descendants). Each **reinstall** or issuer change that re-orders the kernel wildcard plus one wildcard per tenant can consume several certificates quickly.
 
 | Environment | Recommendation |
 |---|---|
 | **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/profiles/dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./update.sh --acme-issuers`. |
 | **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `uninstall.sh -f` loops that re-issue everything. |
-| **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.desk.gentian.org` gets an edge cert — Universal SSL on `*.desk.gentian.org` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
+| **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.platform.example.com` gets an edge cert — Universal SSL on `*.platform.example.com` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
 | **Switching issuer on a live cluster** | Patch operator Helm value, run `./update.sh --acme-issuers`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
 
 Manifests: production `cluster-issuers.yaml`; staging `cluster-issuers-staging.yaml`. Kernel wildcard `wildcard-kernel-cert.yaml` templates `DNS01_CLUSTER_ISSUER` from `ACME_ENV` at install time.

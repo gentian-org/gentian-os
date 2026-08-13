@@ -167,8 +167,8 @@ func TestLadderSurfaceLeavesANonAddonAlone(t *testing.T) {
 	t.Parallel()
 	// An edition shares a family name and nothing else, so it must be read as it
 	// stands rather than borrowing another profile's reachability.
-	od := &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-od"},
+	pro := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-pro"},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			Customization: &gentianov1alpha1.CustomizationSurface{
 				Grade:          gentianov1alpha1.GradeUnknown,
@@ -178,9 +178,9 @@ func TestLadderSurfaceLeavesANonAddonAlone(t *testing.T) {
 	}
 	ce := baseProfile("nextcloud-base-ce",
 		gentianov1alpha1.RungConfigure, gentianov1alpha1.RungExtension)
-	r := newLadderReconciler(ce, od)
+	r := newLadderReconciler(ce, pro)
 
-	surface := r.ladderSurfaceFor(context.Background(), od)
+	surface := r.ladderSurfaceFor(context.Background(), pro)
 	if customization.SupportsRung(surface, gentianov1alpha1.RungExtension) {
 		t.Fatal("an edition must not inherit L3 from a same-family profile")
 	}

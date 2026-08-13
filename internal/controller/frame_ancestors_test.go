@@ -24,18 +24,18 @@ import (
 func TestKeycloakOIDCAncestorOrigins(t *testing.T) {
 	t.Parallel()
 	origins := keycloakOIDCAncestorOrigins(
-		"desk.gentian.org",
-		[]string{"demo.desk.gentian.org"},
+		"platform.example.test",
+		[]string{"demo.platform.example.test"},
 		map[string][]string{"demo": {"chat", "cloud"}},
 		[]string{"demo"},
 	)
 	for _, want := range []string{
-		"https://portal.desk.gentian.org",
-		"https://id.desk.gentian.org",
-		"https://*.desk.gentian.org",
-		"https://*.demo.desk.gentian.org",
-		"https://chat.demo.desk.gentian.org",
-		"https://cloud.demo.desk.gentian.org",
+		"https://portal.platform.example.test",
+		"https://id.platform.example.test",
+		"https://*.platform.example.test",
+		"https://*.demo.platform.example.test",
+		"https://chat.demo.platform.example.test",
+		"https://cloud.demo.platform.example.test",
 	} {
 		if !strings.Contains(origins, want) {
 			t.Fatalf("origins %q missing %q", origins, want)

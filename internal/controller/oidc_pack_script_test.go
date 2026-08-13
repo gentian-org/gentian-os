@@ -51,13 +51,13 @@ func TestBuildOIDCPackScript(t *testing.T) {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
-		[]string{"https://app.demo.desk.gentian.org/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
+		[]string{"https://app.demo.platform.example.test/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
 	for _, want := range []string{
 		"catalogue-test-client-scope",
 		"catalogue-test-client-access-control",
 		"gentian:tenant:demo:app:catalogue-test-client",
 		"PUBLIC_CLIENT=true",
-		"https://app.demo.desk.gentian.org/*",
+		"https://app.demo.platform.example.test/*",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
@@ -167,10 +167,10 @@ func TestBuildOIDCBrowserFlowScriptSetsTheLoginTheme(t *testing.T) {
 
 func TestSubstituteTenantDomainInURIs(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
-	tenant.Spec.Domain = "demo.desk.gentian.org"
+	tenant.Spec.Domain = "demo.platform.example.test"
 	uris := substituteTenantDomainInURIs(tenant,
-		[]string{"https://app.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
-	if len(uris) != 1 || uris[0] != "https://app.demo.desk.gentian.org/*" {
+		[]string{"https://app.${TENANT_DOMAIN}/*"}, "platform.example.test", gentianov1alpha1.TenancyModeMulti)
+	if len(uris) != 1 || uris[0] != "https://app.demo.platform.example.test/*" {
 		t.Fatalf("redirects: %v", uris)
 	}
 }

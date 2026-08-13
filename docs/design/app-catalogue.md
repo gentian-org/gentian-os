@@ -349,7 +349,7 @@ gentian-apps/
 │   ├── ox-appsuite.yaml
 │   ├── element.yaml          # includes Jitsi sidecar (spec.sidecars)
 │   ├── xwiki.yaml
-│   ├── od-nextcloud.yaml     # Gentian-packaged Nextcloud profile
+│   ├── nextcloud-pro.yaml    # vendor-packaged Nextcloud profile
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml

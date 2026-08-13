@@ -83,9 +83,9 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://demo.demo.desk.example.test/
+    - https://demo.demo.platform.example.test/
     validRedirectUris:
-    - https://demo.demo.desk.example.test/oidc/callback
+    - https://demo.demo.platform.example.test/oidc/callback
     webOrigins:
     - +
   providerConfigRef:
@@ -204,7 +204,7 @@ spec:
             set -eu
             SELECTED="calendar mail"
             COMPANION="http://demo-app-companion.tenant-demo.svc.cluster.local:9980"
-            PUBLIC="https://companion.demo.desk.example.test"
+            PUBLIC="https://companion.demo.platform.example.test"
             for id in $SELECTED; do
               demo-app-cli addon:enable "$id" || true
             done

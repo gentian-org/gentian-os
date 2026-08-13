@@ -189,7 +189,7 @@ type TenantReconciler struct {
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
-	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
+	// KernelDomain is the cluster-wide platform domain (e.g. `platform.example.com`)
 	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
 	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
 	// unset. Sourced from KERNEL_DOMAIN at startup.
@@ -208,7 +208,7 @@ type TenantReconciler struct {
 	// CloudflareDNS is an optional edge-DNS adapter: when set, the operator
 	// ensures a proxied CNAME *.<effectiveDomain> → tunnel so Cloudflare Total
 	// TLS can provision edge certs for tenant app hostnames (e.g.
-	// meet.demo.desk.gentian.org). Nil when CLOUDFLARE_* env vars are unset;
+	// meet.demo.platform.example.com). Nil when CLOUDFLARE_* env vars are unset;
 	// use DNS-only (grey cloud) or passthrough to origin in that case.
 	CloudflareDNS *CloudflareDNSClient
 	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.

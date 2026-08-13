@@ -138,7 +138,7 @@ A full dependency-graph walk for a single `Tenant` claim is in
 ### 3.1 How provisioning works on the cluster today
 
 This section matches a running dev cluster (e.g. kernel domain
-`desk.gentian.org`, a provisioned tenant such as `demo` with Element). It is the
+`platform.example.com`, a provisioned tenant such as `demo` with Element). It is the
 authoritative “today” view; §3’s diagram is the stable mental model.
 
 Fresh installs leave **no tenants** in Git or on the cluster until a cluster
@@ -184,7 +184,7 @@ via `tenant-default`; app Compositions deploy charts via **`provider-helm`
 
 The platform ships **`app-default`** in `crossplane/compositions/`. Catalogue
 profiles with custom MR graphs set `spec.compositionRef` to a Composition bundled
-in their own catalogue repository (e.g. `app-od-element`). Those compositions
+in their own catalogue repository (e.g. `app-element-pro`). Those compositions
 emit `openidclient.keycloak.crossplane.io/Client` MRs; the operator skips
 duplicate OIDC client Jobs for those apps.
 
@@ -569,7 +569,7 @@ are in [design/mail.md](design/mail.md).
 ## 9b. Collabora (catalogue app)
 
 Collaborative document editing (Collabora) is a **catalogue app**, not a kernel
-service. Profiles in `gentian-apps` (e.g. `nextcloud`, `od-nextcloud`, Collabora
+service. Profiles in `gentian-apps` (e.g. `nextcloud`, `nextcloud-pro`, Collabora
 integration packs) declare the Helm charts and OIDC packs; Crossplane
 `app-default` deploys them into the tenant namespace when listed in
 `Tenant.spec.apps`.

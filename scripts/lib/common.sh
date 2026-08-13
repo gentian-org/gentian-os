@@ -919,7 +919,7 @@ prompt_kernel_domain() {
     echo ""
     info "Kernel domain (single platform-wide DNS suffix used for all kernel UIs"
     info "and as the default base for tenant apps without a vanity domain):"
-    info "  examples: platform.example.com, desk.example.org"
+    info "  examples: platform.example.com, apps.example.org"
 
     local v=""
     while [[ -z "$v" ]]; do

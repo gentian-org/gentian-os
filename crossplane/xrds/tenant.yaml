@@ -39,7 +39,7 @@ spec:
                 kernelDomain:
                   type: string
                   description: >
-                    Cluster-wide platform DNS suffix (e.g. "desk.gentian.org").
+                    Cluster-wide platform DNS suffix (e.g. "platform.example.com").
                     Injected by the TenantReconciler from its KernelDomain field.
                 isolation:
                   type: object

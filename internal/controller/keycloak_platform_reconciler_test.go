@@ -35,7 +35,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "demo"
-	tenant.Spec.Domain = "demo.desk.gentian.org"
+	tenant.Spec.Domain = "demo.platform.example.test"
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -60,7 +60,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, route).Build()
 
-	if err := reconcileKeycloakIDPGatewayRoute(context.Background(), c, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti); err != nil {
+	if err := reconcileKeycloakIDPGatewayRoute(context.Background(), c, "platform.example.test", gentianov1alpha1.TenancyModeMulti); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 			break
 		}
 	}
-	if csp == "" || !strings.Contains(csp, "https://portal.desk.gentian.org") || !strings.Contains(csp, "https://*.demo.desk.gentian.org") {
+	if csp == "" || !strings.Contains(csp, "https://portal.platform.example.test") || !strings.Contains(csp, "https://*.demo.platform.example.test") {
 		t.Fatalf("unexpected CSP: %q", csp)
 	}
 }
