@@ -6,11 +6,71 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: demo-app-externalsecret, demo-app-keycloak-client,
-      demo-app-keycloak-default-scopes, and 7 more'
+    message: 'Unready resources: demo-app-admin-password-kv, demo-app-admin-password-seed-secret,
+      demo-app-externalsecret, and 9 more'
     reason: Creating
     status: "False"
     type: Ready
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-admin-password-kv
+    crossplane.io/external-name: secret/data/gentian-os/tenants/demo/apps/demo-app/internal/admin_password
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-admin-password-seed-kv
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: render-demo-app-fixture-admin-password-seed
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/tenants/demo/apps/demo-app/internal/admin_password
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-admin-password-seed-secret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-admin-password-seed
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: render-demo-app-fixture-admin-password-seed
+        namespace: crossplane-system
+      stringData:
+        data.json: '{"value":"0c872744d729b26421a470dc9d285c3fcf85d849d9f6704d5ade94ed0cbb6c31"}'
+      type: Opaque
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -41,6 +101,10 @@ spec:
             key: gentian-os/tenants/demo/apps/demo-app/oidc
             property: client-secret
           secretKey: oidc-client-secret
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/internal/admin_password
+            property: value
+          secretKey: internal-admin_password
         refreshInterval: 1h
         secretStoreRef:
           kind: ClusterSecretStore
@@ -206,6 +270,7 @@ kind: SecretV2
 metadata:
   annotations:
     crossplane.io/composition-resource-name: demo-app-mcp-service-password-kv
+    crossplane.io/external-name: secret/data/gentian-os/tenants/demo/apps/demo-app-mcp/internal/service_password
   labels:
     crossplane.io/composite: render-demo-app-fixture
   name: render-demo-app-fixture-mcp-service-password-seed-kv
@@ -360,6 +425,12 @@ spec:
       valueFrom:
         secretKeyRef:
           key: oidc-client-secret
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    - name: demo-app.admin.password
+      valueFrom:
+        secretKeyRef:
+          key: internal-admin_password
           name: demo-app-sensitive-values
           namespace: tenant-demo
     skipCRDs: true

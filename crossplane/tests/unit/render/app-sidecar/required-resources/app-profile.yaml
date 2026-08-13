@@ -24,6 +24,14 @@ spec:
   valueMapping:
     oidc:
       clientSecretKey: demo-app.oidc.secret
+  # A primary-app secret as well as the sidecar's, so the golden covers both
+  # KV paths. Only the sidecar's was covered before, which left the branch
+  # every ordinary app actually uses unexercised -- including the
+  # external-name that decides whether a reinstall reuses an existing secret
+  # or overwrites it.
+  appSecrets:
+    - name: admin_password
+      valuePath: demo-app.admin.password
   sidecars:
     - name: mcp
       chart:

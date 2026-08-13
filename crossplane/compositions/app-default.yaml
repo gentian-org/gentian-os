@@ -334,6 +334,20 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-kv
+                # Ties this managed resource to the KV path rather than to the
+                # install that happened to create it. Without it the provider
+                # has nothing to observe against, treats the path as absent,
+                # and Creates -- overwriting a secret the app's database is
+                # still hashed against. The MR name carries the composite's
+                # generated suffix, so every reinstall minted a new MR, and a
+                # new MR meant a new value. This is what makes a secret live as
+                # long as the app rather than as long as one installation of
+                # it: purge deletes the path and the next install writes a
+                # fresh value, while a plain reinstall observes what is already
+                # there and keeps it. Format is the Terraform resource id for
+                # vault_kv_secret_v2, "<mount>/data/<name>" -- see
+                # status.atProvider.id on any existing instance.
+                crossplane.io/external-name: secret/data/{{ $kvPath }}
               name: {{ $seedName }}-kv
             spec:
               deletionPolicy: Orphan
@@ -1284,6 +1298,10 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-{{ $scSafeName }}-kv
+                # Same reasoning as the primary app's secrets above: identify
+                # the resource by its KV path so a reinstall observes the
+                # existing value instead of overwriting it.
+                crossplane.io/external-name: secret/data/{{ $scKvPath }}
               name: {{ $scSeedName }}-kv
             spec:
               deletionPolicy: Orphan
