@@ -6,5 +6,5 @@ metadata:
   name: test-minimal
   namespace: default
 spec:
-  kernelDomain: desk.gentian.org
+  kernelDomain: desk.example.test
   compositeDeletePolicy: Background

@@ -6,8 +6,8 @@ metadata:
     crossplane.io/external-name: render-fixture
 spec:
   displayName: Render Fixture
-  adminEmail: admin-render@gentian.org
-  kernelDomain: desk.gentian.org
+  adminEmail: admin-render@example.test
+  kernelDomain: desk.example.test
   apps:
     - name: catalogue-test-app
       profile: catalogue-test-app

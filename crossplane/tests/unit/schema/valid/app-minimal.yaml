@@ -8,4 +8,4 @@ spec:
   profileRef:
     name: element
   tenantNamespace: tenant-schema-fixture
-  domain: schema-fixture.desk.gentian.org
+  domain: schema-fixture.desk.example.test

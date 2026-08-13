@@ -464,6 +464,22 @@ install_gentian_os_operator() {
     local value_files=()
     _gentian_os_collect_operator_value_files value_files
 
+    # Cluster-supplied kernel-service passthrough. Any GENTIAN_KERNEL_SERVICE_<KEY>
+    # in the environment is published as <KEY> in the gentian-kernel-services
+    # ConfigMap, so an app profile that needs a cluster-provided value (a licence
+    # token, a third-party endpoint) can get one without the installer or the
+    # chart carrying a field named after that app.
+    local -a kernel_service_extra_args=()
+    local _ks_var _ks_key
+    for _ks_var in "${!GENTIAN_KERNEL_SERVICE_@}"; do
+        _ks_key="${_ks_var#GENTIAN_KERNEL_SERVICE_}"
+        [[ -z "${_ks_key}" || -z "${!_ks_var}" ]] && continue
+        # --set-string, and the key escaped: Helm reads "." and "," inside a --set
+        # path as structure, so an unescaped key with either would silently create
+        # nested maps instead of one ConfigMap entry.
+        kernel_service_extra_args+=(--set-string "kernelServices.extra.${_ks_key//./\\.}=${!_ks_var}")
+    done
+
     if [[ ! -d "$crd_dir" ]]; then
         error "CRD directory not found: ${crd_dir}"
         exit 1
@@ -488,7 +504,7 @@ install_gentian_os_operator() {
         "${authz_token_args[@]}" \
         --set infraNamespace="${_infra_ns}" \
         --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
-        ${OPENPROJECT_ENTERPRISE_TOKEN:+--set "kernelServices.openprojectEnterpriseToken=${OPENPROJECT_ENTERPRISE_TOKEN}"} \
+        "${kernel_service_extra_args[@]}" \
         --set "image.tag=${operator_tag}" \
         --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
         --wait --timeout 5m

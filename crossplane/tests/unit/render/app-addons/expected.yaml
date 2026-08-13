@@ -83,9 +83,9 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://demo.demo.desk.gentian.org/
+    - https://demo.demo.desk.example.test/
     validRedirectUris:
-    - https://demo.demo.desk.gentian.org/oidc/callback
+    - https://demo.demo.desk.example.test/oidc/callback
     webOrigins:
     - +
   providerConfigRef:
@@ -192,14 +192,7 @@ spec:
           namespace: tenant-demo
     skipCRDs: true
     values:
-      demoSubchart:
-        enabled: true
-      global:
-        imagePullSecrets:
-        - registry-credentials
-      imagePullSecrets:
-      - registry-credentials
-      nextcloud:
+      demoApp:
         hooks:
           before-starting: |
             #!/bin/bash
@@ -210,11 +203,18 @@ spec:
             #!/bin/sh
             set -eu
             SELECTED="calendar mail"
-            COLLABORA="http://nextcloud-collabora.tenant-demo.svc.cluster.local:9980"
-            PUBLIC="https://collabora.demo.desk.gentian.org"
+            COMPANION="http://demo-app-companion.tenant-demo.svc.cluster.local:9980"
+            PUBLIC="https://companion.demo.desk.example.test"
             for id in $SELECTED; do
-              php /var/www/html/occ app:enable "$id" || true
+              demo-app-cli addon:enable "$id" || true
             done
+      demoSubchart:
+        enabled: true
+      global:
+        imagePullSecrets:
+        - registry-credentials
+      imagePullSecrets:
+      - registry-credentials
       podLabels:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo

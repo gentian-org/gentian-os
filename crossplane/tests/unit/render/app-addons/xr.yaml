@@ -11,7 +11,7 @@ spec:
   profileRef:
     name: demo-app
   tenantNamespace: tenant-demo
-  domain: demo.desk.gentian.org
+  domain: demo.desk.example.test
   # The tenant picked two of the nine staged addons.
   addons:
     - calendar

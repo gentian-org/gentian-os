@@ -405,12 +405,24 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 	}
 }
 
-func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secrets.TenantAdminCreds) *batchv1.Job {
+// makeAdminJob builds the tenant-admin provisioning Job. effectiveDomain is the
+// tenant's ingress domain, used only to synthesise a contact address when
+// spec.adminEmail is empty — the CRD marks it required, so this is a defensive
+// path. The address is derived from the cluster's own domain rather than any
+// fixed operator domain: gentian-os runs on whatever domain the installer gave
+// it and must not assume one.
+func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, effectiveDomain string, creds secrets.TenantAdminCreds) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
 	adminEmail := tenant.Spec.AdminEmail
 	if adminEmail == "" {
-		adminEmail = creds.Username + "@gentian.org"
+		domain := effectiveDomain
+		if domain == "" {
+			// No domain configured at all: .invalid is reserved by RFC 2606 and
+			// can never resolve, which is the honest representation of "unknown".
+			domain = tenant.Name + ".invalid"
+		}
+		adminEmail = creds.Username + "@" + domain
 	}
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},

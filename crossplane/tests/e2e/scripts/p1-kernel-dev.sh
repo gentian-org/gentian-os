@@ -11,6 +11,7 @@
 #   7. Spot-check key managed resources are present
 #
 # Usage:  make e2e-p1
+#         KERNEL_DOMAIN=desk.example.com make e2e-p1
 # Rollback: kubectl delete cluster dev-cluster -n crossplane-system
 #           kubectl delete xcluster dev-cluster
 #
@@ -22,6 +23,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+
+# The kernel domain is a property of the cluster under test, not of this repo —
+# set KERNEL_DOMAIN to the domain the cluster actually serves. The default is an
+# RFC 2606 reserved name so an unconfigured run cannot collide with, or mint
+# certificates for, anyone's real zone.
+KERNEL_DOMAIN="${KERNEL_DOMAIN:-e2e.test}"
 
 TIMEOUT_PROVIDERS=10m
 TIMEOUT_XR=15m
@@ -104,14 +111,14 @@ info "Applying dev-cluster Cluster claim..."
 # installs get their Cluster claim from
 # gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml
 # (scaffolded by install.sh; see install.sh's apply_cluster_xr()).
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
   name: dev-cluster
   namespace: crossplane-system
 spec:
-  kernelDomain: desk.gentian.org
+  kernelDomain: ${KERNEL_DOMAIN}
 EOF
 
 # ── Step 5: Wait for XCluster to be Ready ───────────────────────────────────

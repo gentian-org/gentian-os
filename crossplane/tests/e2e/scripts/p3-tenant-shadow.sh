@@ -18,6 +18,10 @@
 set -euo pipefail
 
 SHADOW_TENANT="${SHADOW_TENANT:-shadow-e2e}"
+# adminEmail only has to satisfy the CRD's pattern and be deliverable nowhere:
+# .invalid is reserved by RFC 2606, so the throwaway tenant cannot mail a real
+# address on any cluster this runs against.
+SHADOW_ADMIN_EMAIL="${SHADOW_ADMIN_EMAIL:-${SHADOW_TENANT}@e2e.invalid}"
 TIMEOUT_XTENANT="${TIMEOUT_XTENANT:-25m}"
 TIMEOUT_CM="${TIMEOUT_CM:-5m}"
 KERNEL_NS="${KERNEL_NS:-platform-kernel}"
@@ -81,7 +85,7 @@ kind: Tenant
 metadata:
   name: ${SHADOW_TENANT}
 spec:
-  adminEmail: ${SHADOW_TENANT}@gentian.org
+  adminEmail: ${SHADOW_ADMIN_EMAIL}
   displayName: Shadow E2E
   deletionPolicy: Delete
   isolation:

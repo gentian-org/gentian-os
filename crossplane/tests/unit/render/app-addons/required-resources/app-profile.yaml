@@ -23,7 +23,7 @@ spec:
           - "https://demo.${TENANT_DOMAIN}/"
   extraValues:
     # The app already uses this hook — activation must append, not replace.
-    nextcloud:
+    demoApp:
       hooks:
         before-starting: |
           #!/bin/bash
@@ -40,22 +40,23 @@ spec:
         values:
           neverRendered:
             enabled: true
-    # Mirrors nextcloud-base-ce: the recipe lives with the app, the platform only
-    # renders it. __GENTIAN_ADDON_IDS__ is replaced with the space-separated
-    # selection. ${TENANT_NAMESPACE}/${TENANT_DOMAIN} exercise the same
-    # substitution extraValues gets — a live regression (TENANT_NAMESPACE:
-    # unbound variable, nextcloud crashlooping) shipped because this fixture
-    # didn't cover a script actually using them.
+    # The activation recipe lives with the app profile; the platform only renders
+    # it and never knows what the app's own addon system calls things.
+    # __GENTIAN_ADDON_IDS__ is replaced with the space-separated selection.
+    # ${TENANT_NAMESPACE}/${TENANT_DOMAIN} exercise the same substitution
+    # extraValues gets — a live regression (TENANT_NAMESPACE: unbound variable,
+    # the app crashlooping) shipped because this fixture didn't cover a script
+    # actually using them.
     addonActivation:
-      valuesPath: nextcloud.hooks.before-starting
+      valuesPath: demoApp.hooks.before-starting
       script: |
         #!/bin/sh
         set -eu
         SELECTED="__GENTIAN_ADDON_IDS__"
-        COLLABORA="http://nextcloud-collabora.${TENANT_NAMESPACE}.svc.cluster.local:9980"
-        PUBLIC="https://collabora.${TENANT_DOMAIN}"
+        COMPANION="http://demo-app-companion.${TENANT_NAMESPACE}.svc.cluster.local:9980"
+        PUBLIC="https://companion.${TENANT_DOMAIN}"
         for id in $SELECTED; do
-          php /var/www/html/occ app:enable "$id" || true
+          demo-app-cli addon:enable "$id" || true
         done
   valueMapping:
     oidc:

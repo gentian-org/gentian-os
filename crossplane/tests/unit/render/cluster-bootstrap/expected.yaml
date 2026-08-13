@@ -78,7 +78,7 @@ spec:
         name: letsencrypt-http01
       spec:
         acme:
-          email: admin@desk.gentian.org
+          email: admin@desk.example.test
           privateKeySecretRef:
             name: letsencrypt-http01-account-key
           server: https://acme-v02.api.letsencrypt.org/directory

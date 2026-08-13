@@ -193,7 +193,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	if err != nil {
 		return nil, err
 	}
-	jobs = append(jobs, *makeAdminJob(tenant, realmName, adminCreds))
+	jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantEffectiveDomain(tenant), adminCreds))
 
 	if len(oidcConfigs) > 0 {
 		jobs = append(jobs, *makeOIDCBrowserFlowJob(tenant, realmName))

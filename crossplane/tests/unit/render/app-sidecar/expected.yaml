@@ -147,9 +147,9 @@ spec:
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
-    - https://demo.demo.desk.gentian.org/
+    - https://demo.demo.desk.example.test/
     validRedirectUris:
-    - https://demo.demo.desk.gentian.org/oidc/callback
+    - https://demo.demo.desk.example.test/oidc/callback
     webOrigins:
     - +
   providerConfigRef:
@@ -259,7 +259,7 @@ spec:
     values:
       image:
         tag: 0.1.0
-      upstreamUrl: https://demo.demo.desk.gentian.org
+      upstreamUrl: https://demo.demo.desk.example.test
     wait: false
   providerConfigRef:
     name: kubernetes

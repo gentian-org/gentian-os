@@ -69,10 +69,11 @@ authzBridge:
 platformSecurityPolicy:
   create: true
   allowedMacWaivers: []
-  # Example (dev Element Jitsi sidecar):
-  # - profile: element
+  # Shape of an entry (scope narrows the waiver to one workload of the profile,
+  # e.g. a sidecar, instead of the whole app):
+  # - profile: <app-profile-name>
   #   policy: gentian-require-non-root
-  #   scope: sidecar-jitsi
+  #   scope: <workload-scope>
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
 # Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
@@ -81,7 +82,8 @@ infraNamespace: ""
 # openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
 openbaoNamespace: "openbao"
 
-# servicesNamespace hosts platform services (Postfix, Nextcloud, …).
+# servicesNamespace hosts kernel platform services (Postfix, Dovecot, …).
+# Tenant apps never live here — they get their own tenant-* namespaces.
 # "platform-kernel" is this platform's fixed naming convention, not a
 # per-stage or per-cluster choice — override in a cluster's own
 # gentian-deployments values.yaml only if a specific cluster truly needs
@@ -95,9 +97,10 @@ servicesNamespace: "platform-kernel"
 #   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
 #   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
 #   ${REDIS_HOST}   — Redis primary hostname (no port)
-#   ${TURN_*}       — Shared TURN server settings for Element + Jitsi
-#   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path); Synapse uses this
-#                           for token/userinfo/JWKS while the browser keeps https://id.*
+#   ${TURN_*}       — Shared TURN server settings for apps doing WebRTC
+#   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path), for apps whose
+#                           server-side OIDC calls (token/userinfo/JWKS) must not
+#                           leave the cluster while the browser keeps https://id.*
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
@@ -112,9 +115,16 @@ kernelServices:
   turnTLSPort: "5349"
   turnTransport: "udp"
   turnCredentials: ""
-  # OpenProject Enterprise token (host must match projects.<tenant-domain>).
-  # Set via install.secrets.env OPENPROJECT_ENTERPRISE_TOKEN; enables portal OIDC SSO.
-  openprojectEnterpriseToken: ""
+  # extra publishes additional cluster-supplied key/value pairs into the
+  # ConfigMap verbatim, so a cluster can hand a value to an app profile without
+  # gentian-os growing a field named after that app. Keys are used as-is: a
+  # profile whose extraValues reference ${FOO} just needs `extra.FOO` set here,
+  # in the cluster's own gentian-deployments values (or via a
+  # GENTIAN_KERNEL_SERVICE_FOO env var at install time).
+  # This is a plain ConfigMap, readable by anything with get access to
+  # gentian-system/platform-kernel — put only values you are willing to expose
+  # at that blast radius here. Credentials belong in OpenBao + ExternalSecret.
+  extra: {}
 
 image:
   repository: ghcr.io/gentian-org/gentian-os

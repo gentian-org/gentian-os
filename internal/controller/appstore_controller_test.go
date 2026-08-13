@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -198,14 +199,21 @@ func TestAppCatalogue_InstalledCountUpdatesOnTenantChange(t *testing.T) {
 		t.Fatalf("InstalledCount did not reach 1: %v", err)
 	}
 
-	// Re-fetch before update to get the latest resourceVersion (avoid conflict).
-	if err := testClient.Get(ctx, types.NamespacedName{Name: tenant.Name}, tenant); err != nil {
-		t.Fatalf("re-fetch tenant: %v", err)
-	}
-	// Remove all apps from the tenant (simulate uninstall).
-	tenant.Spec.Apps = nil
-	if err := testClient.Update(ctx, tenant); err != nil {
-		t.Fatalf("update tenant: %v", err)
+	// Remove all apps from the tenant (simulate uninstall). Retry on conflict:
+	// a single re-fetch is not enough, because the tenant reconciler is running
+	// and may write to the tenant between our Get and Update.
+	for {
+		if err := testClient.Get(ctx, types.NamespacedName{Name: tenant.Name}, tenant); err != nil {
+			t.Fatalf("re-fetch tenant: %v", err)
+		}
+		tenant.Spec.Apps = nil
+		if err := testClient.Update(ctx, tenant); err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			t.Fatalf("update tenant: %v", err)
+		}
+		break
 	}
 
 	// Wait until InstalledCount == 0.

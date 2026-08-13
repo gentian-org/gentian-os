@@ -678,7 +678,7 @@ type StorageRequirement struct {
 	// +optional
 	S3 *S3Requirement `json:"s3,omitempty"`
 
-	// Files requests WebDAV access to the tenant's Nextcloud instance.
+	// Files requests WebDAV access to the tenant's file-storage service.
 	// +optional
 	Files *FilesRequirement `json:"files,omitempty"`
 }

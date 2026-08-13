@@ -1067,7 +1067,7 @@ spec:
                     properties:
                       files:
                         description: Files requests WebDAV access to the tenant's
-                          Nextcloud instance.
+                          file-storage service.
                         properties:
                           capabilities:
                             description: Capabilities lists the required access capabilities.
@@ -1916,7 +1916,7 @@ spec:
                           properties:
                             files:
                               description: Files requests WebDAV access to the tenant's
-                                Nextcloud instance.
+                                file-storage service.
                               properties:
                                 capabilities:
                                   description: Capabilities lists the required access

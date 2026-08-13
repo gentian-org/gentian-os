@@ -29,7 +29,6 @@ const (
 	GentianGatewayClassName      = "gentian-envoy"
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
 	KernelPublicGatewayName      = "kernel-public-gateway"
-	kernelCollaboraListenerName  = "https-office"
 	kernelWildcardTLSSecretName  = "wildcard-tls"
 	envoyGatewayInstallNamespace = "envoy-gateway-system"
 	gatewayPlatformReconcileKey  = "gateway-platform"

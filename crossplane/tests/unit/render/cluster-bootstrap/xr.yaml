@@ -5,7 +5,7 @@ metadata:
   annotations:
     crossplane.io/external-name: dev-cluster
 spec:
-  kernelDomain: desk.gentian.org
+  kernelDomain: desk.example.test
   masterPasswordSecretRef:
     name: gentian-os-master-password
     namespace: crossplane-system
@@ -21,6 +21,6 @@ spec:
     namespace: external-secrets
     serviceAccount: external-secrets
   certManager:
-    letsencryptEmail: admin@desk.gentian.org
+    letsencryptEmail: admin@desk.example.test
   compositeDeletePolicy: Background
   resourceRefs: []
