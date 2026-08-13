@@ -49,10 +49,6 @@ func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
 }
 
-func tenantEscapedSlashesClientTrafficPolicyName(tenantName string) string {
-	return fmt.Sprintf("ctp-%s-escaped-slashes", tenantName)
-}
-
 func tenantApexRedirectRouteName(tenantName string) string {
 	return tenantPortalRedirectName(tenantName)
 }
