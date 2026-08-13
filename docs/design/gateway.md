@@ -46,21 +46,33 @@ Its listeners are:
 | --- | --- | --- | --- |
 | `http-redirect` | 80 | none | none — redirects to `https` |
 | `https-wildcard` | 443 | none | kernel wildcard, `kernel-wildcard-tls` |
-| `https-tenant-<name>-wildcard` | 443 | none | `tenant-<name>-wildcard-tls` |
+| `https-tenant-<name>-wildcard` | 443 | `*.${effectiveDomain}` | `tenant-<name>-wildcard-tls` |
 
-HTTPS listeners carry no hostname. Envoy selects a certificate by SNI, so an
-unset hostname means "serve whatever this certificate covers" and the certificate
-alone defines the listener's reach. A listener hostname would instead act as a
+`https-wildcard` carries no hostname. Envoy selects a certificate by SNI, so an
+unset hostname means "serve whatever this certificate covers", and the
+certificate alone defines the listener's reach. A hostname would instead act as a
 second, narrower filter, and the two disagree whenever a browser coalesces
-requests: with HTTP/2, a browser reuses one connection for every hostname the
-presented certificate covers, so a request for `${effectiveDomain}` may arrive on
-a connection opened with SNI `<subDomain>.${effectiveDomain}`. Under a
-`*.${effectiveDomain}` listener hostname the apex request finds no matching
-listener and is answered with a 404 by the wrong listener's route table.
+requests: over HTTP/2 a browser reuses one connection for every hostname the
+presented certificate covers, so a request for `portal.<kernelDomain>` may arrive
+on a connection opened with SNI `<kernelDomain>`. A listener scoped to a subset
+of its own certificate answers such a request from the wrong route table, with a
+404.
+
+Tenant listeners must carry `*.${effectiveDomain}`: Gateway API requires
+listeners sharing a port to be distinguishable, and only one listener on `:443`
+can leave its hostname unset.
+
+Because a tenant certificate also covers `${effectiveDomain}` itself, a browser
+may coalesce a request for the tenant apex onto a connection opened for
+`<subDomain>.${effectiveDomain}`, where the tenant listener's hostname does not
+match it. Keep the tenant apex off the critical path; it carries only the
+redirect described in §5, and that redirect is also reachable through the kernel
+wildcard listener under multi-tenancy, where `${effectiveDomain}` is
+`<tenant>.<kernelDomain>`.
 
 The listener hostname also gates route attachment: a route attaches only where
-its hostnames intersect the listener's. Leaving it unset keeps attachment under
-the control of `parentRefs.sectionName`, which is explicit.
+its hostnames intersect the listener's. `parentRefs.sectionName` narrows that
+further and is what routes rely on.
 
 Tenant listeners are added to and removed from the Gateway as tenants are
 created and deleted. `mergeGateways` is enabled on the `EnvoyProxy`, so all
