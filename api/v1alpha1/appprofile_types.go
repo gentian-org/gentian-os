@@ -50,8 +50,8 @@ type AppProfileSpec struct {
 	CatalogueVersion string `json:"catalogueVersion,omitempty"`
 
 	// Edition selects the edition: ce (community, as upstream publishes it), me
-	// (ce plus active Gentian maintenance) or pro (commercial, supplied by the
-	// vendor named in spec.author).
+	// (ce plus active Gentian maintenance) or ee (commercially licensed and
+	// entitlement-gated, supplied by whoever spec.author names).
 	// +optional
 	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`
@@ -70,11 +70,11 @@ type AppProfileSpec struct {
 	// Author is who supplies and maintains *this* catalogue entry — a company
 	// (vendor), an organisation, or an individual. It describes the entry, not the
 	// upstream project: the same application can appear as several profiles from
-	// different authors, e.g. a "ce" edition packaged by Gentian alongside a "pro"
+	// different authors, e.g. a "ce" edition packaged by Gentian alongside an "ee"
 	// edition supplied by a third-party vendor.
 	//
 	// This is why the edition must never be inferred from a profile's name. Two
-	// profiles may both be edition "pro" from different authors and carry entirely
+	// profiles may both be edition "ee" from different authors and carry entirely
 	// unrelated names; spec.edition and spec.author are the authoritative pair, the
 	// name is only a hint. See gentian-os/docs/app-customization.md §4.2.
 	// +optional

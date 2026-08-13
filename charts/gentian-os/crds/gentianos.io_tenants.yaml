@@ -87,7 +87,7 @@ spec:
 
                         The App Store writes this list — pre-filled from an AppPackage preset when
                         one is chosen, then editable afterwards. Entries the tenant is not entitled
-                        to are rejected; entitlement is what gates a pro addon, not compatibility.
+                        to are rejected; entitlement is what gates an ee addon, not compatibility.
                         See gentian-os/docs/app-customization.md §4.2.
                       items:
                         type: string
@@ -173,11 +173,11 @@ spec:
                               type: string
                             edition:
                               default: ce
-                              description: Edition selects the edition (ce, me, pro).
+                              description: Edition selects the edition (ce, me, ee).
                               enum:
                               - ce
                               - me
-                              - pro
+                              - ee
                               type: string
                             family:
                               description: Family is the stable logical application

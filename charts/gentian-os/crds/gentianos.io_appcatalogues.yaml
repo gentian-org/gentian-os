@@ -90,7 +90,7 @@ spec:
                       enum:
                       - ce
                       - me
-                      - pro
+                      - ee
                       type: string
                     family:
                       description: Family is the logical application id (shared across

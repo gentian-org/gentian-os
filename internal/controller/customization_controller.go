@@ -168,7 +168,7 @@ func (r *CustomizationReconciler) resolveTargetProfile(
 // exactly that. CI resolved the inheritance and the operator did not, so the two
 // disagreed about the same record.
 //
-// Editions are not addons and inherit nothing: nextcloud-base-pro shares a family
+// Editions are not addons and inherit nothing: nextcloud-base-ee shares a family
 // name with nextcloud-base-ce and no artifact, so it carries its own declaration.
 func (r *CustomizationReconciler) ladderSurfaceFor(
 	ctx context.Context,

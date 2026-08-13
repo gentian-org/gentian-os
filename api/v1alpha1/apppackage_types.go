@@ -61,7 +61,7 @@ type AppPackageSpec struct {
 	// Entries are a starting point, not a constraint: the user may untick any of
 	// them, and may add addons the preset does not list. A preset that names an
 	// addon the tenant is not entitled to still renders — with a Buy button rather
-	// than a tick — so a package can advertise a pro addon without gating install.
+	// than a tick — so a package can advertise an ee addon without gating install.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=set

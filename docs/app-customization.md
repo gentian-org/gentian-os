@@ -550,19 +550,22 @@ installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
 ladder — same image, same drop-in dirs, same plugin API — so it never restates
 `grade`, `rubricScore` or `supportedRungs`.
 
-**Editions** are `ce · me · pro`, and say *who supplies the entry*, not how much of
-it you get. A vendor's name is never an edition: a vendor-supplied profile is a
-`pro` edition carrying that vendor in `spec.author`. Editions are technically
-compatible with one another; what gates a `pro` addon is **entitlement**, and what
-constrains addon↔base compatibility is **version**. There is therefore one addon
-set per family and no per-edition compatibility matrix.
+**Editions** are `ce · me · ee`, and say *how the entry is licensed*, not who
+publishes it: `ce` is upstream's community edition, `me` is that plus active
+Gentian maintenance, `ee` is commercially licensed and entitlement-gated. `ee` is
+deliberately not "the upstream's enterprise build" — a third party's proprietary
+distribution is equally an `ee`, and `spec.author` is what names the supplier. A
+supplier's name is never an edition. Editions are technically compatible with one
+another; what gates an `ee` addon is **entitlement**, and what constrains
+addon↔base compatibility is **version**. There is therefore one addon set per
+family and no per-edition compatibility matrix.
 
-An **edition shares a family name and nothing else** — `nextcloud-base-pro` may
-deploy a vendor's all-in-one chart from a credentialed registry where
+An **edition shares a family name and nothing else** — `nextcloud-base-ee` may
+deploy a supplier's all-in-one chart from a credentialed registry where
 `nextcloud-base-ce` deploys the community chart — so it inherits no ladder and must
 be characterised on its own.
 
-**Naming is a hint, not a contract.** Two profiles may both be edition `pro` from
+**Naming is a hint, not a contract.** Two profiles may both be edition `ee` from
 different authors under unrelated names. `spec.edition` and `spec.author` are the
 authoritative pair; never infer either from a profile name.
 
@@ -766,7 +769,8 @@ specific things low. That was rejected: it makes a directory's location depend o
 *how many things currently use it*, so a second consumer forces a physical move.
 The customization ladder has the same property and resolves it the same way:
 `scope` (tenant/profile/platform) is a **field on the record**, not a directory
-level, exactly as `spec.tier` is a field rather than a `free/`–`pro/` split.
+level, exactly as `spec.trustTier` is a field rather than a `certified/`–
+`experimental/` split.
 Anything that changes over time belongs in a field, where it can be queried and
 validated; only stable identity belongs in a path.
 
