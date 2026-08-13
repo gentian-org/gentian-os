@@ -341,15 +341,13 @@ handoff_gentian_os_to_argocd() {
     # which would silently resolve to the caller's local and break the moment
     # this is called from anywhere else.
     local openfga_token_in_bao="${2:-0}"
-    local gentian_os_branch
     resolve_gentian_os_branch
-    gentian_os_branch="${GENTIAN_OS_BRANCH}"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
     local rendered
     rendered="$(mktemp)"
-    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+    sed -e "s|%GENTIAN_OS_BRANCH%|${GENTIAN_OS_BRANCH}|g" \
         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
         -e "s|%CLUSTER%|${cluster}|g" \
@@ -357,7 +355,7 @@ handoff_gentian_os_to_argocd() {
         "$tmpl" >"$rendered"
 
     info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
-    info "  operator branch:    ${gentian_os_branch}"
+    info "  operator branch:    ${GENTIAN_OS_BRANCH}"
     info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
     info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
     info "  deployments cluster:${cluster}"

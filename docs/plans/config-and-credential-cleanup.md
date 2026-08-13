@@ -746,3 +746,63 @@ before reducing it.
 The mitigation is Phase 6 — composition gating with named, actionable non-Ready conditions —
 which converts "something is not Ready" into "requirement `private-charts-registry` is unsatisfied".
 Phase 6 should not be deferred past Phase 4b.
+
+---
+
+## 12. Repository Hygiene Backlog
+
+Findings from a structural review of the repository (see
+[../folder-structure.md](../folder-structure.md)). Most are independent of the credential
+work and can land at any time; the ones marked **Phase 4b** are direct evidence for the
+`scripts/lib/` open question in §10 and should be folded into that refactor rather than
+fixed twice.
+
+### 12.1 Correctness — fix regardless of this plan
+
+| Finding | Evidence | Disposition |
+|---|---|---|
+| **`manager` binary tracked in Git** — a 45.6 MB compiled artefact committed in `02235d7` (2026-06-07). `.gitignore` covers `bin/` and `*.test` but not this path. | `git ls-files manager` | `git rm --cached manager`, add `/manager` to `.gitignore`. History rewrite optional. |
+| **Kernel mail install path applies directories that no longer exist.** `deploy_kernel_mail_services()` runs `kubectl apply -f kernel/services/{postfix,dovecot}/manifests/${env}/`, but those services were converted to env-parameterised Helm charts (`manifests/Chart.yaml` + `templates/` + `values.yaml`) with no per-stage subdirectory. It also waits on `externalsecret/dovecot-sensitive-values`, which the dovecot chart does not template. Any `MAIL_SERVICE_MODE=kernel` install fails here. | `scripts/lib/common.sh:2032`, `:2041` | **Phase 4b.** Postfix and Dovecot already arrive via the `09-infra-helm` ApplicationSet; delete `deploy_kernel_mail_services` rather than repair it. |
+| **`make clean` destroys hand-maintained fixtures.** `rm -rf config/crd/*.yaml` also deletes the envtest stubs (`gentianos.io_apps.yaml`, `gentianos.io_xtenants.yaml`) and six vendored third-party CRDs, none of which `make manifests` regenerates. `make clean && make manifests` silently breaks the envtest suite. | `Makefile:92` | Narrow the glob to `config/crd/gentianos.io_{appcatalogues,appgrants,apppackages,appprofiles,customizations,integrationbindings,oidcpackcatalogs,platformsecuritypolicies,tenants}.yaml`, or move the hand-maintained files to `config/crd/fixtures/`. |
+
+### 12.2 Dead code and empty scaffolding
+
+| Finding | Evidence | Disposition |
+|---|---|---|
+| `internal/tiles/` has zero importers outside its own test — `resolver.go` plus a 20 KB embedded `catalogue.json`. | `grep -r 'internal/tiles"'` | Delete, or state in the package doc which consumer is pending. |
+| `kernel/argocd/install/argocd.yaml` is unreferenced; its own header says "This is a reference file". It pins ArgoCD **v2.11.3**. | no callers | Delete. `scripts/install-argocd.sh` is the real path. |
+| `crossplane/tests/unit/functions/` contains only `.gitkeep`, so `make test-unit-functions` always prints SKIP — yet CI spends a step on `pip install pytest`. The root `.pytest_cache/` and `.ruff_cache/` are residue. | `Makefile:166`, `.github/workflows/ci.yaml:181` | Either land the first function test or drop the target and the CI step. |
+| `crossplane/functions/` and `crossplane/tests/e2e/fixtures/` are `.gitkeep`-only. | — | Keep only if a named piece of work will fill them; otherwise remove. |
+| `scripts/verify-authz-model.sh` and `scripts/normalize-go-headers.sh` are wired to neither `make` nor CI. | 0 references | Wire `verify-authz-model.sh` into the lint job (there is an `authz/model/v0/tests.fga.yaml` to run); `normalize-go-headers.sh` is a completed one-off — delete. |
+| `export/gentian-apps.tar.gz` and `export/gentian-apps-*.bundle` (255 KB tracked) are no longer listed in `export/README.md`'s export table. | `export/README.md` | Delete; the catalogue has its own repo. |
+
+### 12.3 Orphaned configuration — relevant to Phase 10
+
+These are `.env`-adjacent value files with **no consumer**, kept in sync by convention. They
+are the same failure mode §2 describes, and should be swept in Phase 10 alongside the
+`.env` templates.
+
+| Finding | Evidence | Disposition |
+|---|---|---|
+| `kernel/services/{minio,redis}/values/` and `kernel/services/{postfix,dovecot}/values/` are referenced only from comments (`# Source of truth: …`) in the `infra-*` ConfigMap templates and from `charts/infra/*/UPSTREAM.md`. The effective values are inlined in the charts. | `kernel/services/infra-minio/manifests/templates/configmap.yaml:4` | Delete, or make the ConfigMap templates actually read them. Manual-sync-by-comment will drift. |
+| `kernel/values/env/{dev,prod,functional}.yaml` likewise have only comment references, and describe an `apps/{app}/values/_base.yaml` layout that does not exist in this repo. | `kernel/values/env/functional.yaml:5` | Fold the intent into the `XCluster` schema (Phase 10) and delete. |
+
+### 12.4 Local operator cruft
+
+Not tracked, but present in a working tree and worth an explicit cleanup note in
+`GETTING-STARTED.md`:
+
+`controller.test` (80 MB), `bin/manager` (45 MB), root `minio-16.0.10.tgz` and
+`redis-18.6.1.tgz` (duplicates of `charts/infra/packages/`), `.install-state.env`,
+`install.env.backup`, and **`install.secrets.env.backup`** — a stale credential file that
+outlives the install it belonged to. That last one is a concrete instance of the
+`load_creds_cache` concern in §1: the audit in Phase 1 should cover every local file the
+installer writes containing secret material, not just the cache.
+
+### 12.5 Documentation drift
+
+| Finding | Disposition |
+|---|---|
+| `architecture.md` §8 "Repository Structure" claims `crossplane/functions/` holds composition functions (it is empty) and omits `internal/`, `api/`, `charts/`, `scripts/`, `authz/`, `config/`. | Replace the tree with a pointer to `docs/folder-structure.md`. |
+| `charts/infra/{mariadb,postgresql}/README.md.gotmpl.tpl` are Bitnami readme-generator leftovers sitting beside the real `.gotmpl`. | Delete; note in the chart's `UPSTREAM.md`. |
+| The baseline in §1 of this document (`install.sh` at 1,544 lines / 74 KB) is stale — the file has since grown past 1,900 lines. | Re-measure when Phase 1 starts; the target in §7 is a property, not a line count, so the baseline is only useful as a before/after datum. |

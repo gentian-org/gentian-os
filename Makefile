@@ -80,9 +80,23 @@ verify-gen: gen-all
 tidy:
 	go mod tidy
 
+## Run every linter the CI Lint job runs (Go, YAML, shell)
+lint: lint-go lint-yaml lint-shell
+
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
-lint:
+lint-go:
 	golangci-lint run ./...
+
+## Run yamllint over the repo, as .github/workflows/ci.yaml does
+lint-yaml:
+	yamllint -c .yamllint.yml .
+
+## Run shellcheck over every tracked shell script, as .github/workflows/ci.yaml does.
+## The file list and flags must match CI exactly: -x follows sourced files, and no
+## -S filter means info/style findings fail the build too. Hand-rolling a narrower
+## invocation is how an SC2153 reached develop green-looking.
+lint-shell:
+	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Build the operator container image
 docker-build:

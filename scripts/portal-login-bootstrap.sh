@@ -1382,12 +1382,10 @@ release_gentian_portal_helm_bootstrap() {
 }
 
 apply_gentian_portal_argocd_application() {
-    local gentian_os_branch gentian_ui_branch portal_tag rendered tmpl
+    local gentian_ui_branch portal_tag rendered tmpl
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-test}"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     resolve_gentian_os_branch
-
-    gentian_os_branch="${GENTIAN_OS_BRANCH}"
     gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"
     portal_tag="${PORTAL_IMAGE_TAG:-develop}"
     tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-portal-application.yaml.tmpl"
@@ -1398,7 +1396,7 @@ apply_gentian_portal_argocd_application() {
         return 1
     fi
 
-    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+    sed -e "s|%GENTIAN_OS_BRANCH%|${GENTIAN_OS_BRANCH}|g" \
         -e "s|%GENTIAN_UI_BRANCH%|${gentian_ui_branch}|g" \
         -e "s|%PORTAL_IMAGE_TAG%|${portal_tag}|g" \
         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
@@ -1406,7 +1404,7 @@ apply_gentian_portal_argocd_application() {
         -e "s|%CLUSTER%|${cluster}|g" \
         -e "s|%STAGE%|${stage}|g" \
         "${tmpl}" >"${rendered}"
-    info "Registering gentian-portal ArgoCD Application (os=${gentian_os_branch}, ui=${gentian_ui_branch}, tag=${portal_tag}, cluster=${cluster}, stage=${stage})..."
+    info "Registering gentian-portal ArgoCD Application (os=${GENTIAN_OS_BRANCH}, ui=${gentian_ui_branch}, tag=${portal_tag}, cluster=${cluster}, stage=${stage})..."
     kubectl apply -f "${rendered}"
     rm -f "${rendered}"
 }

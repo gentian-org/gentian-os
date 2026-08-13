@@ -632,9 +632,7 @@ op_argocd_bootstrap() {
 
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
-    local gentian_os_branch
     resolve_gentian_os_branch
-    gentian_os_branch="${GENTIAN_OS_BRANCH}"
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
 
     if [[ "${DRY_RUN}" == "1" ]]; then
@@ -644,8 +642,8 @@ op_argocd_bootstrap() {
     fi
 
     if [[ -f "${tmpl}" ]]; then
-        info "Re-applying gentian-os Application + gentian-tenants ApplicationSet (branch=${gentian_os_branch})..."
-        sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
+        info "Re-applying gentian-os Application + gentian-tenants ApplicationSet (branch=${GENTIAN_OS_BRANCH})..."
+        sed -e "s|%GENTIAN_OS_BRANCH%|${GENTIAN_OS_BRANCH}|g" \
             -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO:-https://git.example.domain/gentian-deployments}|g" \
             -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH:-main}|g" \
             -e "s|%CLUSTER%|${cluster}|g" \
