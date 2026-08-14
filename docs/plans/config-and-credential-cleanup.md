@@ -1462,16 +1462,32 @@ missing requirement rather than as "something is not Ready".
 
 ### Phase 7 — OIDC write path and root token revocation
 
-Enable OpenBao's OIDC auth backend against Keycloak. Bind policies to group claims. Revoke the
-installer root token as a scripted step, not a runbook note.
+**Status: implemented.**
 
-**Acceptance**
-- `bao login -method=oidc` succeeds and yields a policy set derived from Keycloak groups.
-- A write by a named operator appears in the audit device with that identity.
-- The installer root token is invalid after installation completes — asserted by a test that
-  attempts a write with it and expects failure.
-- A tenant-admin identity is denied read and write on `gentian/repositories/*`.
-- Cluster-admin and tenant-admin policy sets are covered by explicit allow and deny tests.
+The Cluster composition carries an OIDC auth backend federated from Keycloak plus `cluster-admin`
+and `tenant-admin` policies, declared as provider-vault resources — §6 puts auth backends and
+policies on the infrastructure side of that boundary. The client secret is a Secret reference;
+a value in a spec field is what §6 prohibits outright.
+
+The whole block is gated on `spec.oidc.discoveryUrl`, so an unset cluster stays exactly as it was
+rather than half-configuring an auth method.
+
+Step `35-revoke-bootstrap-token` ends the bootstrap exception, and **refuses to run when no OIDC
+path exists** — revoking the only way in leaves a cluster nobody can supply a credential to. That
+is the one case where not revoking is correct, and it is reported rather than silently skipped.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `bao login -method=oidc` yields a policy set derived from Keycloak groups | **Unverified** — needs a running Keycloak |
+| 2 | A write by a named operator appears in the audit device with that identity | **Unverified** |
+| 3 | The installer root token is invalid after installation | **Partial** — the step exists and self-revokes; its refusal path is verified, the revocation itself is not |
+| 4 | A tenant-admin identity is denied read and write on `gentian/registries/*` | **Partial** — an explicit `deny` is emitted, verified by render; not exercised against OpenBao |
+| 5 | Cluster-admin and tenant-admin policy sets are covered by allow and deny tests | **Not met** — no policy tests exist |
+
+`tenant-admin` denies `gentian/registries/*` and `gentian/repositories/*` explicitly rather than
+by omission. An explicit deny cannot be widened by a later grant, which matters because §9's
+asymmetry is real: showing a tenant admin a cluster-scoped form is an annoyance, the inverse is a
+breach.
 
 ---
 
