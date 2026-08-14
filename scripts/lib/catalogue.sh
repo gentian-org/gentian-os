@@ -154,21 +154,6 @@ create_deployments_git_credentials() {
     success "Deployments git credentials Secret ready in ${ns}."
 }
 
-# =============================================================================
-# Upload CI_BOT_PAT (and optional ArgoCD sync secrets) to gentian-os GitHub repo
-# =============================================================================
-configure_github_actions_secrets() {
-    if [[ -z "${CI_BOT_PAT:-}" ]]; then
-        warn "CI_BOT_PAT not set — skipping GitHub Actions secret upload for image-pin workflows."
-        warn "  CI_BOT_PAT not configured — gentian-os git automation from Actions may fail."
-        warn "  See GETTING-STARTED.md"
-        return 0
-    fi
-
-    banner "GitHub Actions secrets (gentian-os image pin)"
-    bash "${SCRIPT_DIR}/scripts/configure-github-actions-secrets.sh"
-}
-
 # Adopt cluster-scoped chart resources left from a prior ArgoCD or manual install so
 # helm upgrade --install gentian-os can proceed (missing meta.helm.sh/release-*).
 # =============================================================================

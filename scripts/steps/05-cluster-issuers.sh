@@ -10,6 +10,34 @@
 # ever issued and every Gateway listener sits at ResolvedRefs=False with a
 # message about a missing Secret.
 
+# _wait_for_cert_manager_webhook — shared by every mode.
+#
+# The namespace is detected rather than assumed: a cluster where cert-manager
+# came from a distro addon puts the webhook somewhere else, and applying an
+# issuer against the wrong namespace fails in a way that reads as a cert-manager
+# fault rather than a lookup one.
+_wait_for_cert_manager_webhook() {
+    local ns="${CERT_MANAGER_NAMESPACE:-cert-manager}"
+    if ! kubectl get deploy cert-manager-webhook -n "${ns}" >/dev/null 2>&1; then
+        local detected
+        detected="$(kubectl get deploy -A -o json 2>/dev/null |
+            jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' |
+            head -1 || true)"
+        [[ -n "${detected}" ]] && ns="${detected}"
+    fi
+    CERT_MANAGER_NAMESPACE="${ns}"
+    export CERT_MANAGER_NAMESPACE
+
+    if ! kubectl get deploy cert-manager-webhook -n "${ns}" >/dev/null 2>&1; then
+        error "cert-manager webhook not found in any namespace."
+        error "  Fix cert-manager first (step 04), then re-run this step."
+        return 1
+    fi
+    info "Waiting for the cert-manager webhook in ${ns}..."
+    kubectl rollout status -n "${ns}" deploy/cert-manager-webhook --timeout=180s >/dev/null ||
+        warn "cert-manager-webhook not Ready within 180s; issuer admission may fail."
+}
+
 _issuer_mode() {
     # The claim is authoritative once it exists; the env var is how the
     # installer carries the answer before that.
@@ -39,9 +67,17 @@ apply() {
     local mode; mode="$(_issuer_mode)"
     info "Trust anchor: ${mode}"
 
+    # Every mode needs the webhook up first: cert-manager validates ClusterIssuer
+    # admission through it, so applying one before it is Ready fails with an
+    # admission error that names the webhook rather than the issuer.
+    _wait_for_cert_manager_webhook
+
     case "${mode}" in
         acme-dns01|acme-http01)
-            apply_gentian_cluster_issuers
+            # install_kernel_cert_resources rather than apply_gentian_cluster_issuers:
+            # it also honours INSTALL_CLUSTER_INFRA and an unset KERNEL_DOMAIN,
+            # and reports which issuer set landed.
+            install_kernel_cert_resources
             ;;
         self-signed)
             gentian_run kubectl apply -f \

@@ -14,6 +14,69 @@ GENTIAN_BOOTSTRAP_LOADED=1
 # Crossplane 0 — Install Crossplane core
 # (mirrors the logic of crossplane/tests/e2e/scripts/p0-crossplane-install.sh)
 # =============================================================================
+_ensure_crossplane_package_crds() {
+    local required missing=()
+    required=(
+        providers.pkg.crossplane.io
+        providerrevisions.pkg.crossplane.io
+        functions.pkg.crossplane.io
+        functionrevisions.pkg.crossplane.io
+        deploymentruntimeconfigs.pkg.crossplane.io
+    )
+
+    for crd in "${required[@]}"; do
+        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+            missing+=("${crd}")
+        fi
+    done
+
+    if [[ "${#missing[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    warn "Crossplane package CRDs missing: ${missing[*]}"
+    info "Re-applying Crossplane CRDs from Helm chart..."
+    helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update >/dev/null
+    helm repo update >/dev/null
+    # --server-side, not plain apply: some of these CRDs' embedded OpenAPI
+    # schemas exceed the 256 KiB single-annotation limit once client-side
+    # apply embeds the full manifest into kubectl.kubernetes.io/last-applied-
+    # configuration (deploymentruntimeconfigs.pkg.crossplane.io hits this on
+    # Crossplane 2.x). Server-side apply uses field-manager tracking instead
+    # and has no such limit. --force-conflicts is safe here: these are
+    # Crossplane's own canonical chart-managed objects, never hand-edited.
+    helm template crossplane crossplane-stable/crossplane \
+        --version "${CROSSPLANE_VERSION}" \
+        --namespace "${CROSSPLANE_NAMESPACE}" \
+        --include-crds \
+        | kubectl apply --server-side --force-conflicts -f - >/dev/null
+
+    # Some chart packaging modes do not include CRDs in Helm output. Ensure the
+    # required package CRDs are explicitly applied from upstream release assets.
+    local crossplane_minor="${CROSSPLANE_VERSION%.*}"
+    for crd in providers providerrevisions functions functionrevisions deploymentruntimeconfigs; do
+        kubectl apply --server-side --force-conflicts \
+            -f "https://raw.githubusercontent.com/crossplane/crossplane/release-${crossplane_minor}/cluster/crds/pkg.crossplane.io_${crd}.yaml" \
+            >/dev/null 2>&1 || true
+    done
+
+    for crd in "${required[@]}"; do
+        kubectl wait --for=condition=Established "crd/${crd}" --timeout=90s >/dev/null 2>&1 || true
+    done
+
+    local unresolved=()
+    for crd in "${required[@]}"; do
+        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+            unresolved+=("${crd}")
+        fi
+    done
+    if [[ "${#unresolved[@]}" -gt 0 ]]; then
+        error "Crossplane CRDs still missing after re-apply: ${unresolved[*]}"
+        exit 1
+    fi
+    success "Crossplane package CRDs are present."
+}
+
 install_crossplane() {
     banner "Step 0 — Install Crossplane core"
 
