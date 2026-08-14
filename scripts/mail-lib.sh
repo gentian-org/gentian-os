@@ -357,7 +357,12 @@ install_kernel_mail() {
     fi
 
     info "MAIL_SERVICE_MODE=kernel — deploying in-cluster Postfix + Dovecot."
-    deploy_kernel_mail_services
+    # Postfix and Dovecot arrive through the 09-infra-helm ApplicationSet.
+    # The imperative path applied kernel/services/{postfix,dovecot}/manifests/<env>/,
+    # a per-stage layout that no longer exists since those services became
+    # env-parameterised charts — so MAIL_SERVICE_MODE=kernel failed here on
+    # every install. Deleted rather than repaired: the ApplicationSet is the
+    # real path and was already doing the work.
     _sync_kernel_postfix_virtual_mailbox_maps
     _patch_postfix_configmap kernel
     _patch_postfix_allowed_sender_domains

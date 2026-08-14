@@ -1356,9 +1356,27 @@ Two safety properties in that ApplicationSet are worth keeping when it is edited
 - **`prune: false`.** Crossplane garbage-collects everything a claim owns, which is far too much
   to do as a side effect of a branch change.
 
-**4b, second half — the applications.** Steps 23, 28, 29, 30 and 34 still name applications: mail,
-LLM serving, portal login and the per-tenant reconcilers. They need per-service ApplicationSets,
-and until they land the acceptance grep does not come back empty.
+**4b, second half — and a correction to how it was scoped.** This phase assumed steps 11d–16
+become "entries in the root ApplicationSet or `AppProfile` instances". That is true for the ones
+that apply YAML. It is **not** true for the rest, and the remaining steps split three ways:
+
+| Work | Example | Correct destination |
+|---|---|---|
+| Applies manifests | LLM serving | An ApplicationSet |
+| Calls a running service's API | Keycloak realm SMTP, LiteLLM Teams | **The operator.** ArgoCD cannot POST to an admin API |
+| Guards and validates | Mail mode vs network mode compatibility | Stays in the step, or becomes admission |
+
+The middle row is the correction. `configure_keycloak_realm_smtp` and the per-tenant reconcilers
+in step 34 configure services through their APIs; no ApplicationSet can express that. Their home
+is a reconciler, and the operator already has `mail_reconciler.go` and `identity_reconciler.go` in
+exactly that space — `identity_reconciler` runs a tenant realm SMTP Job today.
+
+**Which means 4b has a prerequisite this plan did not name: an audit of which reconciler already
+covers which shell step.** Deleting a step because a reconciler looks like it does the same thing
+is how the Phase 0a regression happened. Until that audit exists, the API-driven steps stay.
+
+Steps 23, 28, 29, 30 and 34 therefore still name applications, and the acceptance grep does not
+come back empty.
 
 ---
 
@@ -1744,7 +1762,8 @@ scope and should be folded into it rather than fixed twice.
 | **Step knowledge is encoded three times** — `install.sh` applies it, `update.sh` re-applies it as `op_*`, `uninstall.sh` reverses it as 18 `_delete_*` helpers, and `uninstall.sh` does not source `scripts/lib/load.sh` so it duplicates the primitives too. Nothing enforces that the three agree, and a step added to one is silently absent from the others. | §1 baseline | **Phase 0b.** This is the finding the driver-and-steps structure exists to fix. |
 | **Repository credentials are applied imperatively.** `scripts/create-deployments-git-credentials.sh` runs `kubectl create secret generic` for the operator's `.git-credentials`, and `kernel/argocd/repos/*.yaml` are hand-written ArgoCD repository Secrets. Both are the §6 anti-pattern — a Secret with no `ExternalSecret` pointing at it — and neither can carry a private credential. | `scripts/create-deployments-git-credentials.sh`, `kernel/argocd/repos/` | **Phase 5.** Both become `Repository` claims. |
 | **`manager` binary tracked in Git** — a 45.6 MB compiled artefact committed in `02235d7` (2026-06-07). `.gitignore` covers `bin/` and `*.test` but not this path. | `git ls-files manager` | `git rm --cached manager`, add `/manager` to `.gitignore`. History rewrite optional. |
-| **Kernel mail install path applies directories that no longer exist.** `deploy_kernel_mail_services()` runs `kubectl apply -f kernel/services/{postfix,dovecot}/manifests/${env}/`, but those services were converted to env-parameterised Helm charts (`manifests/Chart.yaml` + `templates/` + `values.yaml`) with no per-stage subdirectory. It also waits on `externalsecret/dovecot-sensitive-values`, which the dovecot chart does not template. Any `MAIL_SERVICE_MODE=kernel` install fails here. | `scripts/lib/common.sh:2032`, `:2041` | **Phase 4b.** Postfix and Dovecot already arrive via the `09-infra-helm` ApplicationSet; delete `deploy_kernel_mail_services` rather than repair it. |
+| ~~**Kernel mail install path applies directories that no longer exist.**~~ **Fixed.** `deploy_kernel_mail_services` and its call site are deleted; Postfix and Dovecot arrive through the `09-infra-helm` ApplicationSet, which was already doing the work. |  |  |
+| **(original finding, for reference)** `deploy_kernel_mail_services()` runs `kubectl apply -f kernel/services/{postfix,dovecot}/manifests/${env}/`, but those services were converted to env-parameterised Helm charts (`manifests/Chart.yaml` + `templates/` + `values.yaml`) with no per-stage subdirectory. It also waits on `externalsecret/dovecot-sensitive-values`, which the dovecot chart does not template. Any `MAIL_SERVICE_MODE=kernel` install fails here. | `scripts/lib/common.sh:2032`, `:2041` | **Phase 4b.** Postfix and Dovecot already arrive via the `09-infra-helm` ApplicationSet; delete `deploy_kernel_mail_services` rather than repair it. |
 | **`make clean` destroys hand-maintained fixtures.** `rm -rf config/crd/*.yaml` also deletes the envtest stubs (`gentianos.io_apps.yaml`, `gentianos.io_xtenants.yaml`) and six vendored third-party CRDs, none of which `make manifests` regenerates. `make clean && make manifests` silently breaks the envtest suite. | `Makefile:92` | Narrow the glob to `config/crd/gentianos.io_{appcatalogues,appgrants,apppackages,appprofiles,customizations,integrationbindings,oidcpackcatalogs,platformsecuritypolicies,tenants}.yaml`, or move the hand-maintained files to `config/crd/fixtures/`. |
 
 ### 14.2 Dead code and empty scaffolding
